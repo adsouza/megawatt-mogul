@@ -90,18 +90,15 @@ fn system_with(region: &RegionDefinition, defs: &[PlantDef]) -> PowerSystem {
     PowerSystem::new(network, plants, cities, NetworkModel::CopperPlate)
 }
 
-/// The start fleet committed all day on auto-follow, with initial targets
-/// sharing the tick-0 forecast in proportion to capacity.
+/// The start fleet committed all day on auto-follow, left at its default
+/// initial targets: `begin_day` balances the boundary itself.
 fn auto_follow_fleet(region: &RegionDefinition) -> PowerSystem {
     let mut sys = system_with(region, &start_fleet(region));
-    let forecast = sys.connected_demand_forecast(region, april(), 0);
-    let total: Megawatts = sys.plants().values().map(|p| p.spec().capacity).sum();
     let ids: Vec<PlantId> = sys.plants().keys().copied().collect();
     for id in ids {
         let p = sys.plant_mut(id).unwrap();
         p.set_commitment(CommitmentSchedule::all_day());
         p.set_auto_follow(true).unwrap();
-        p.set_initial_target(p.spec().capacity * (forecast / total));
     }
     sys
 }
@@ -418,8 +415,8 @@ fn surplus_beyond_solar_forces_agc_to_minimum_then_curtails_all_solar() {
     assert_eq!(sys.plant(PlantId(4)).unwrap().output(), Megawatts::ZERO);
 }
 
-/// Non-AGC coal (500 MW) and CCGT (200 MW) plus an auto-follow peaker at
-/// 100 MW: 800 MW of thermal under ~850 MW of midday demand, so the solar
+/// Non-AGC coal (500 MW) and CCGT (200 MW) plus a peaker at 100 MW (put on
+/// AGC by [`begin_surplus_day`]): 800 MW of thermal under ~850 MW of midday demand, so the solar
 /// plant (plant 4) alone pushes the grid into surplus.
 fn solar_surplus_system(region: &RegionDefinition) -> PowerSystem {
     let mut defs = start_fleet(region);
@@ -430,11 +427,23 @@ fn solar_surplus_system(region: &RegionDefinition) -> PowerSystem {
         p.set_commitment(CommitmentSchedule::all_day());
         p.set_initial_target(Megawatts::new(mw));
     }
-    sys.plant_mut(PlantId(3))
+    sys
+}
+
+/// Begins the day with the peaker (plant 3) at its hand-set 100 MW, then puts
+/// it on AGC: the boundary balances auto-follow plants, which would otherwise
+/// erase the deliberate midday surplus this fixture builds.
+fn begin_surplus_day(sys: &mut PowerSystem, region: &RegionDefinition, rng: &mut SimRng) {
+    let peaker = PlantId(3);
+    sys.plant_mut(peaker)
+        .unwrap()
+        .set_auto_follow(false)
+        .unwrap();
+    sys.begin_day(region, april(), rng);
+    sys.plant_mut(peaker)
         .unwrap()
         .set_auto_follow(true)
         .unwrap();
-    sys
 }
 
 #[test]
@@ -444,7 +453,7 @@ fn solar_driven_surplus_is_curtailed_until_frequency_recovers() {
     let mut sys = solar_surplus_system(&region);
     let peaker = PlantId(3);
     let mut rng = SimRng::from_seed(21);
-    sys.begin_day(&region, april(), &mut rng);
+    begin_surplus_day(&mut sys, &region, &mut rng);
     let (first, events) = sys.tick(&region, april(), 700, &mut rng);
     assert!(
         sys.deviation() > curtail_above,
@@ -490,7 +499,7 @@ fn curtailment_is_released_when_the_surplus_disappears() {
     let mut sys = solar_surplus_system(&region);
     let coal = PlantId(1);
     let mut rng = SimRng::from_seed(22);
-    sys.begin_day(&region, april(), &mut rng);
+    begin_surplus_day(&mut sys, &region, &mut rng);
     let mut last = None;
     for t in 700..760 {
         last = Some(sys.tick(&region, april(), t, &mut rng).0);
@@ -679,7 +688,7 @@ fn begin_day_carries_nothing_over_from_the_previous_day() {
     let region = tiny_region();
     let mut used = solar_surplus_system(&region);
     let mut rng = SimRng::from_seed(23);
-    used.begin_day(&region, april(), &mut rng);
+    begin_surplus_day(&mut used, &region, &mut rng);
     let (s, _) = run_ticks(&mut used, &region, 700..760, &mut rng)
         .pop()
         .unwrap();
@@ -688,10 +697,78 @@ fn begin_day_carries_nothing_over_from_the_previous_day() {
     // next day's first tick is identical (noise, curtailment, frequency reset).
     let mut fresh = solar_surplus_system(&region);
     let mut fresh_rng = rng.clone();
-    used.begin_day(&region, april(), &mut rng);
-    fresh.begin_day(&region, april(), &mut fresh_rng);
+    begin_surplus_day(&mut used, &region, &mut rng);
+    begin_surplus_day(&mut fresh, &region, &mut fresh_rng);
     assert_eq!(
         used.tick(&region, april(), 700, &mut rng),
         fresh.tick(&region, april(), 700, &mut fresh_rng)
     );
+}
+
+#[test]
+fn auto_follow_fleet_starts_the_day_balanced() {
+    let region = tiny_region();
+    let params = region.frequency();
+    let deviation = |s: &TickSummary| (s.frequency - params.nominal).value();
+    for seed in 0..20 {
+        let mut sys = auto_follow_fleet(&region);
+        let mut rng = SimRng::from_seed(seed);
+        sys.begin_day(&region, april(), &mut rng);
+        let ticks = run_ticks(&mut sys, &region, 0..60, &mut rng);
+        for (s, events) in &ticks {
+            let at = format!("seed {seed} tick {}", s.tick);
+            assert_eq!(s.mode, GridMode::Normal, "{at}");
+            assert_eq!(s.shed, Ratio::ZERO, "{at}");
+            assert_eq!(s.unserved, Megawatts::ZERO, "{at}");
+            assert!(!events.contains(&DomainEvent::Blackout), "{at}");
+            // Demand noise moves frequency, but never as far as load shedding.
+            assert!(deviation(s) > params.shed_below.value(), "{at}");
+        }
+        // The day opens balanced: the first tick is inside the normal band.
+        assert!(deviation(&ticks[0].0).abs() < params.normal_band.value());
+    }
+}
+
+#[test]
+fn begin_day_balances_the_boundary_against_load_net_of_manual_and_solar() {
+    let region = tiny_region();
+    let mut defs = start_fleet(&region);
+    defs.push(connected(PlantKind::Solar, cell(5, 5)));
+    let mut sys = system_with(&region, &defs);
+    for id in 1..=3 {
+        let p = sys.plant_mut(PlantId(id)).unwrap();
+        p.set_commitment(CommitmentSchedule::all_day());
+        p.set_auto_follow(id != 2).unwrap();
+    }
+    sys.plant_mut(PlantId(2))
+        .unwrap()
+        .set_initial_target(Megawatts::new(450.0));
+    sys.begin_day(&region, april(), &mut SimRng::from_seed(2));
+    let load = sys.connected_demand_forecast(&region, april(), 0)
+        - sys.expected_solar(&region, april(), 0);
+    let output = |id: u32| sys.plant(PlantId(id)).unwrap().output();
+    // The manual plant keeps its own initial target; the others carry the rest.
+    assert_eq!(output(2), Megawatts::new(450.0));
+    assert!(output(1) + output(3) + output(2) >= load - Megawatts::new(1e-9));
+    let followers = output(1) + output(3);
+    let expected = (load - Megawatts::new(450.0)).max(
+        sys.plant(PlantId(1)).unwrap().spec().min_output()
+            + sys.plant(PlantId(3)).unwrap().spec().min_output(),
+    );
+    assert!((followers - expected).abs().value() < 1e-9);
+}
+
+#[test]
+fn begin_day_draw_count_is_unchanged() {
+    let region = tiny_region();
+    let (mut a, mut b) = (auto_follow_fleet(&region), auto_follow_fleet(&region));
+    let (mut rng_a, mut rng_b) = (SimRng::from_seed(13), SimRng::from_seed(13));
+    a.begin_day(&region, april(), &mut rng_a);
+    b.begin_day(&region, april(), &mut rng_b);
+    // Identical state draws identically, and the only draw is the day's clearness.
+    assert_eq!(a, b);
+    assert_eq!(rng_a, rng_b);
+    let mut reference = SimRng::from_seed(13);
+    reference.standard_normal();
+    assert_eq!(rng_a, reference);
 }

@@ -103,6 +103,51 @@ pub fn agc_retarget(
     if raising { leftover } else { -leftover }
 }
 
+/// Sets the balanced state at instant 0 of a representative day: a pure
+/// merit-order fill of `load` over the auto-follow, online, dispatchable
+/// plants in `plants` (the caller passes only connected ones).
+///
+/// Each participant starts at minimum stable output; output is then added in
+/// ascending `(marginal_cost, id)` order, each plant up to
+/// `min(available, capacity)` (a plant missing from `available` is capped by
+/// capacity), until `load` is met. Output and target are set together,
+/// directly: this is a synthetic boundary state, so there is no ramp limit and
+/// no events. Minimum outputs that already exceed `load` are left as they are;
+/// AGC lowers them after the first tick within the ramp limits. Plants that
+/// do not participate are untouched.
+///
+/// Returns the load the participants could not meet (zero when it was met).
+pub fn boundary_dispatch(
+    plants: &mut [&mut Plant],
+    available: &BTreeMap<PlantId, Megawatts>,
+    load: Megawatts,
+) -> Megawatts {
+    let mut order: Vec<usize> = (0..plants.len())
+        .filter(|&i| plants[i].auto_follow() && is_dispatchable_online(plants[i]))
+        .collect();
+    order.sort_by(|&a, &b| by_cost_then_id(plants[a], plants[b]));
+
+    let minimum: f64 = order
+        .iter()
+        .map(|&i| plants[i].spec().min_output().value())
+        .sum();
+    let mut remaining = load.value() - minimum;
+    for i in order {
+        let plant = &mut *plants[i];
+        let min = plant.spec().min_output();
+        let cap = available
+            .get(&plant.id())
+            .copied()
+            .unwrap_or(plant.spec().capacity)
+            .min(plant.spec().capacity);
+        let room = (cap - min).value().max(0.0);
+        let add = room.min(remaining.max(0.0));
+        remaining -= add;
+        plant.set_boundary_output(min + Megawatts::new(add));
+    }
+    Megawatts::new(if remaining < EPSILON { 0.0 } else { remaining })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -307,6 +352,125 @@ mod tests {
         let left = agc_retarget(&mut [&mut ccgt], &none_available(), Megawatts::new(1e-12));
         assert_eq!(left, Megawatts::ZERO);
         assert_eq!(target_of(&ccgt), ccgt.output());
+    }
+
+    fn output_of(p: &Plant) -> Megawatts {
+        p.output()
+    }
+
+    /// Nuclear (min 770, cap 1100, 10 $/MWh), CCGT (min 200, cap 500, 45) and
+    /// peaker (min 40, cap 200, 150), all online and auto-follow.
+    fn boundary_fleet() -> [Plant; 3] {
+        [
+            follower(3, PlantKind::Peaker),
+            follower(1, PlantKind::Nuclear),
+            follower(2, PlantKind::Ccgt),
+        ]
+    }
+
+    #[test]
+    fn boundary_dispatch_fills_in_merit_order() {
+        let mut plants = boundary_fleet();
+        let [peaker, nuclear, ccgt] = &mut plants;
+        let unmet = boundary_dispatch(
+            &mut [peaker, nuclear, ccgt],
+            &none_available(),
+            Megawatts::new(1400.0),
+        );
+        let [peaker, nuclear, ccgt] = &plants;
+        assert_eq!(unmet, Megawatts::ZERO);
+        // Cheapest first: nuclear to capacity, ccgt takes the rest, peaker stays at minimum.
+        assert_eq!(output_of(nuclear), Megawatts::new(1100.0));
+        assert_eq!(output_of(ccgt), Megawatts::new(260.0));
+        assert_eq!(output_of(peaker), Megawatts::new(40.0));
+        let total: Megawatts = plants.iter().map(output_of).sum();
+        assert!((total - Megawatts::new(1400.0)).abs().value() < 1e-9);
+        // The target moves with the output, so AGC starts from a settled plant.
+        for p in &plants {
+            assert_eq!(target_of(p), p.output());
+        }
+    }
+
+    #[test]
+    fn boundary_dispatch_leaves_manual_plants_at_initial_target() {
+        let mut manual = online_plant(1, PlantKind::Nuclear);
+        manual.set_target(Megawatts::new(900.0)).unwrap();
+        let mut follower_plant = follower(2, PlantKind::Ccgt);
+        let mut solar = online_plant(3, PlantKind::Solar);
+        let before = (manual.clone(), solar.clone());
+        let unmet = boundary_dispatch(
+            &mut [&mut manual, &mut follower_plant, &mut solar],
+            &none_available(),
+            Megawatts::new(450.0),
+        );
+        assert_eq!(unmet, Megawatts::ZERO);
+        assert_eq!((manual, solar), before);
+        assert_eq!(follower_plant.output(), Megawatts::new(450.0));
+    }
+
+    #[test]
+    fn boundary_dispatch_ignores_plants_that_are_not_online() {
+        let mut offline = Plant::new_commissioned(
+            PlantId(1),
+            NodeId(1),
+            CellCoord { x: 0, y: 0 },
+            tiny_region().spec(PlantKind::Ccgt).clone(),
+            SimMonth::new(2027, 4).unwrap(),
+        );
+        offline.set_auto_follow(true).unwrap();
+        let before = offline.clone();
+        let unmet = boundary_dispatch(
+            &mut [&mut offline],
+            &none_available(),
+            Megawatts::new(100.0),
+        );
+        assert_eq!(unmet, Megawatts::new(100.0));
+        assert_eq!(offline, before);
+    }
+
+    #[test]
+    fn boundary_dispatch_reports_unmet_load() {
+        let mut plants = boundary_fleet();
+        let [peaker, nuclear, ccgt] = &mut plants;
+        let unmet = boundary_dispatch(
+            &mut [peaker, nuclear, ccgt],
+            &none_available(),
+            Megawatts::new(2000.0),
+        );
+        assert!((unmet - Megawatts::new(200.0)).abs().value() < 1e-9);
+        for p in &plants {
+            assert_eq!(p.output(), p.spec().capacity);
+        }
+    }
+
+    #[test]
+    fn boundary_dispatch_surplus_minimum_output_is_left_as_is() {
+        let mut plants = boundary_fleet();
+        let [peaker, nuclear, ccgt] = &mut plants;
+        let unmet = boundary_dispatch(
+            &mut [peaker, nuclear, ccgt],
+            &none_available(),
+            Megawatts::new(100.0),
+        );
+        assert_eq!(unmet, Megawatts::ZERO);
+        for p in &plants {
+            assert_eq!(p.output(), p.spec().min_output());
+        }
+    }
+
+    #[test]
+    fn boundary_dispatch_respects_availability() {
+        let mut nuclear = follower(1, PlantKind::Nuclear);
+        let mut ccgt = follower(2, PlantKind::Ccgt);
+        let avail = BTreeMap::from([(PlantId(1), Megawatts::new(900.0))]);
+        let unmet = boundary_dispatch(
+            &mut [&mut nuclear, &mut ccgt],
+            &avail,
+            Megawatts::new(1200.0),
+        );
+        assert_eq!(nuclear.output(), Megawatts::new(900.0));
+        assert_eq!(ccgt.output(), Megawatts::new(300.0));
+        assert_eq!(unmet, Megawatts::ZERO);
     }
 
     const KINDS: [PlantKind; 4] = [

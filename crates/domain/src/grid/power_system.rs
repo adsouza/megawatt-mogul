@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use super::dispatch::agc_retarget;
+use super::dispatch::{agc_retarget, boundary_dispatch};
 use super::frequency::{FrequencyBand, band, next_deviation};
 use super::network::Network;
 use super::protection::{GridMode, ProtectionOutcome, ProtectionState, evaluate};
@@ -155,7 +155,10 @@ impl PowerSystem {
     /// day's clearness is drawn (exactly one normal), every plant is
     /// initialised from its cyclic pattern (clearing operating overrides),
     /// frequency and protection return to nominal and `Normal`, and the demand
-    /// forecast error and solar curtailment return to zero.
+    /// forecast error and solar curtailment return to zero. Last, the
+    /// auto-follow fleet is dispatched to balance the tick-0 load (the cyclic
+    /// day's boundary state), so a day does not open in a deficit that
+    /// ramp-limited AGC cannot recover; plants on manual targets keep theirs.
     pub fn begin_day(
         &mut self,
         region: &RegionDefinition,
@@ -184,7 +187,33 @@ impl PowerSystem {
         self.protection = ProtectionState::default();
         self.noise = DemandNoise::default();
         self.curtailment = Megawatts::ZERO;
+        self.balance_boundary(region, month);
         DayInitialisation { boundary_starts }
+    }
+
+    /// Sets the dispatch state at instant 0 as the end of the previous,
+    /// identical day left it: the auto-follow fleet fills the tick-0 forecast
+    /// in merit order (see [`boundary_dispatch`]). The load is the connected
+    /// demand forecast less expected solar and less the output of connected
+    /// online plants that are not auto-follow, which keep their initial
+    /// target. Draws no random numbers.
+    fn balance_boundary(&mut self, region: &RegionDefinition, month: SimMonth) {
+        let manual: Megawatts = self
+            .connected_plants()
+            .filter(|p| p.is_online() && !p.auto_follow())
+            .map(Plant::output)
+            .sum();
+        let load = self.connected_demand_forecast(region, month, 0)
+            - self.expected_solar(region, month, 0)
+            - manual;
+        let (available, _, _) = self.availability(region, month, 0);
+        let network = &self.network;
+        let mut connected: Vec<&mut Plant> = self
+            .plants
+            .values_mut()
+            .filter(|p| is_commissioned(p) && network.is_connected(p.node()))
+            .collect();
+        boundary_dispatch(&mut connected, &available, load);
     }
 
     /// The most `plant` can produce this tick given its resource.

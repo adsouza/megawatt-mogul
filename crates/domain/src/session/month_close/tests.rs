@@ -56,36 +56,8 @@ fn robust_fleet(s: &mut GameSession) -> PlantId {
     extra
 }
 
-/// Sets the midnight targets of the plants committed at hour 0 to share the
-/// forecast midnight load in proportion to capacity, as a player would in
-/// Planning, so the day does not open with a deficit AGC cannot ramp away.
-fn balance_midnight(s: &mut GameSession) {
-    let demand = s
-        .power()
-        .connected_demand_forecast(s.region(), s.clock().month(), 0);
-    let network = s.power().network();
-    let running: Vec<(PlantId, Megawatts, Megawatts)> = s
-        .power()
-        .plants()
-        .values()
-        .filter(|p| {
-            p.kind().is_dispatchable()
-                && !matches!(p.status(), PlantStatus::UnderConstruction { .. })
-                && p.commitment().is_committed(0)
-                && network.is_connected(p.node())
-        })
-        .map(|p| (p.id(), p.spec().min_output(), p.spec().capacity))
-        .collect();
-    let total: Megawatts = running.iter().map(|(_, _, cap)| *cap).sum();
-    for (id, min, cap) in running {
-        let share = (cap * (demand / total)).clamp(min, cap);
-        s.set_dispatch_target(id, share).unwrap();
-    }
-}
-
 /// Plays the current month's day to its close; returns every event.
 fn play_day(s: &mut GameSession) -> Vec<DomainEvent> {
-    balance_midnight(s);
     let mut events = s.begin_operating().unwrap();
     events.extend(finish_day(s));
     events
@@ -472,7 +444,6 @@ fn daily_restart_costs_days_starts_without_boundary_duplicate() {
     hours[8..=20].fill(true);
     s.commit_plant(returning, hours).unwrap();
     let february = s.clock().month();
-    balance_midnight(&mut s);
     s.begin_operating().unwrap();
     assert!(s.day_boundary_starts().is_empty());
     let events = finish_day(&mut s);
@@ -499,7 +470,6 @@ fn month_boundary_initialisation_is_not_a_second_start_event() {
     let mut hours = [false; 24];
     hours[0..=5].fill(true);
     s.commit_plant(returning, hours).unwrap();
-    balance_midnight(&mut s);
     s.begin_operating().unwrap();
     assert!(s.power().plant(returning).unwrap().is_online());
     assert!(s.day_boundary_starts().is_empty());
@@ -526,7 +496,6 @@ fn manual_operation_counts_as_a_month_online() {
         .plant_mut(ccgt)
         .unwrap()
         .set_previous_month_offline(true);
-    balance_midnight(&mut s);
     s.begin_operating().unwrap();
     for _ in 0..600 {
         s.tick().unwrap();

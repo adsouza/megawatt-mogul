@@ -330,6 +330,22 @@ impl Plant {
         Ok(())
     }
 
+    /// Sets an online dispatchable plant's output and target together,
+    /// clamped into `[min_output, capacity]`. Boundary initialisation only: it
+    /// bypasses the ramp limit and emits no events, so it is valid solely for
+    /// the synthetic state at instant 0 of a representative day (see
+    /// [`Plant::initialise_pattern_day`]); operating code must use
+    /// [`Plant::set_target`]. No effect in any other state.
+    pub(crate) fn set_boundary_output(&mut self, mw: Megawatts) {
+        if self.is_online() && self.spec.kind.is_dispatchable() {
+            let mw = mw.clamp(self.spec.min_output(), self.spec.capacity);
+            self.status = PlantStatus::Online {
+                output: mw,
+                target: mw,
+            };
+        }
+    }
+
     fn go_online(&mut self) {
         let min = self.spec.min_output();
         self.status = PlantStatus::Online {
