@@ -40,25 +40,37 @@ The invariants the property tests must cover:
   and online output stays between minimum stable output and capacity.
 - **Merit order:** AGC never leaves a cheaper auto-follow plant with headroom while raising a more
   expensive one, and the reverse holds when lowering.
-- **Conservation:** each tick, generation = served + curtailed + overgeneration, and unserved energy
-  is never negative. (This plan extends the spec's rule with overgeneration: surplus that raises
-  frequency and is never paid for.)
+- **Conservation:** each tick, generation = served + curtailed + imbalance (signed), unserved =
+  demand × shed, and 0 ≤ served ≤ demand. Unserved energy is shed load only; a residual mismatch is
+  absorbed by system inertia and shows up as frequency deviation.
 - **Money:** the change in cash always equals the sum of the ledger entries, exactly.
-- **Weighting:** each month's ledger entries equal the played day's priced totals x `days_in_month`,
-  with exactly one rounding step per entry.
+- **Commitment:** validate cyclic off-gaps against shutdown plus start-up, including midnight and
+  exact-fit boundaries. Nuclear accepts all-day/all-off only. Initial state follows the pattern;
+  physical start-up state does not cross representative months. Operating starts beyond midnight
+  fail unchanged; stops/trips suppress automatic actions without mutating the base pattern.
+- **Weighting:** daily energy and restarts use `days_in_month`; distinct boundary starts use a
+  weight of one. No recurring/boundary duplicate or synthetic-initialisation charge; exactly one
+  rounding step per ledger entry.
 - **Hydro:** the energy a hydro plant produces in a played day never exceeds that day's budget.
-- **Determinism:** the same seed plus the same commands produce an identical state hash.
+- **Determinism:** the same verified versions, settings, region content, seed and commands produce
+  an identical state hash. Test version/fingerprint mismatches before command execution, exact-byte
+  region archival, and recovery after shipped data is retuned or removed. Missing/corrupt archives
+  never silently fall back to installed data; failed archive/header initialisation prevents new games.
 - **Robustness:** any random sequence of commands (state-machine test) never panics, and all
   invariants hold afterwards.
 - **Parsing:** malformed region DTOs produce typed errors, never panics.
 - **Rate review:** the new tariff x the past year's served energy = the revenue requirement (within
-  one cent); the allowed return always stays within the PBR band; disallowance is zero whenever firm
-  capacity is within the reserve margin, and never exceeds the capital newly added that year.
+  one cent); the allowed return always stays within the PBR band. Assess reserves against the higher
+  of actual and projected coincident peaks, including December connections. First excess review
+  holds capital without return; useful portions are released; only portions still excess at a second
+  consecutive review are written off, bounded by remaining book value. Held history survives annual
+  resets, partial releases preserve the right history, previews never mutate it, and capital
+  adjustments never change cash. Held portions continue book depreciation.
 
 ## Snapshots
 
 Canonical scenarios ("East winter peak", "West duck-curve day", "Overreach: city connected without
-capacity", "Overbuild: rate review with disallowance") snapshot their `MonthlyReport`s with `insta`,
+capacity", "Overbuild: hold followed by second-review disallowance") snapshot their `MonthlyReport`s with `insta`,
 so tuning changes show up as reviewable diffs.
 
 1. Run the tests; a changed snapshot fails and writes a `.snap.new` file.

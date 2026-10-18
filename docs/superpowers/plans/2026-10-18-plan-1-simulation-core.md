@@ -15,7 +15,7 @@ Infrastructure parses RON region files into DTOs, rasterises them and maps them 
 domain's validating constructors.
 
 **Tech Stack:** Rust 1.98 (edition 2024), rand_chacha 0.10, thiserror 2.0, tracing 0.1, serde 1.0,
-ron 0.12, proptest 1.12, proptest-state-machine 0.9, insta 1.49, tempfile 3.27, cargo-nextest 0.9,
+ron 0.12, sha2 0.11, proptest 1.12, proptest-state-machine 0.9, insta 1.49, tempfile 3.27, cargo-nextest 0.9,
 cargo-mutants 27.
 
 **Spec:** `docs/superpowers/specs/2026-10-18-megawatt-mogul-design.md`
@@ -33,13 +33,16 @@ build on this plan's public API.
 - `application` dependencies are `domain`, `thiserror`, `tracing 0.1`. Its dev-dependencies are
   `proptest`, `proptest-state-machine 0.9`, `insta`, and `domain` with the `test-fixtures` feature.
 - `infrastructure` dependencies are `application`, `domain`, `serde 1.0` (derive), `ron 0.12`,
-  `thiserror`, `tracing`. Its dev-dependencies are `tempfile 3.27`, `proptest`, and `domain` with
-  `test-fixtures`.
+  `thiserror`, `tracing`, and `sha2 0.11` for region-source fingerprints. Its dev-dependencies are
+  `tempfile 3.27`, `proptest`, and `domain` with `test-fixtures`.
 - **Time:** 1 tick = 1 game minute; `TICKS_PER_HOUR = 60`; `TICKS_PER_DAY = 1_440`. One played day
   is the representative day of a calendar month, and a game year is 12 played days.
+  Commitment is a repeating daily pattern; physical plant state is initialised from the pattern
+  at each `BeginOperating`, never carried between representative months.
 - **Money:** `Money` is `i64` cents. Nothing is priced per tick. Physical totals are priced once per
   ledger entry at month close: `price × energy × days_in_month`, rounded once with
-  `f64::round_ties_even` to whole cents.
+  `f64::round_ties_even` to whole cents. Recurring starts use the daily weight; a distinct
+  month-boundary start is charged once, with no duplicate charge for a recurring restart.
 - **Determinism:** use `BTreeMap`/`BTreeSet` (never iterate a `HashMap`), no wall-clock time, all
   randomness through `SimRng`, a single-threaded tick, and tie-breaks by ID.
 - **Domain errors:** the domain never panics on player input; it returns `DomainError`. A command
@@ -63,17 +66,24 @@ build on this plan's public API.
    must not divide by zero; the tariff stays at its previous value. The test lives in Task 14.
 3. **Commands after game over** (bankrupt or licence revoked). They return
    `DomainError::GameOver`, never panic, and leave `state_hash` unchanged. The test lives in Task 16.
-4. **A commitment whose start-up time exceeds the time left before the committed hour** (e.g.
-   nuclear committed from hour 10, with a 48 h start-up). The plant starts immediately and comes
-   online late; this is not an error. The test lives in Task 7.
+4. **Cyclic commitment feasibility.** Every off-gap, including across midnight, must fit worst-case
+   shutdown plus start-up. Nuclear accepts only all-day/all-off patterns. Reject infeasible patterns
+   unchanged; initialise early-hour starts from the implied previous-day state. Tasks 7 and 15.
 5. **Building on an invalid cell** (out of bounds, water, too little cooling water, no hydro site).
    This returns `InvalidSite` with a typed `SiteError` reason. The test lives in Task 15.
+6. **December expansion and held capital.** Assess the higher of actual and projected connected
+   peaks; retain held portions across years and write off only after two consecutive excess reviews.
+   Preview queries must not advance review history. Tasks 13, 14, 16 and 19.
+7. **Replay compatibility.** Verify format/rules versions, settings and source-byte fingerprints
+   before commands. Archive the exact bytes read by the catalog before starting a game. Tasks 17,
+   21 and 23; recovery after shipped data changes must use the archived region.
 
 ## Clarifications of the spec made by this plan
 
-- **`overgeneration`:** the spec's conservation rule (*generation = served + curtailed*) is extended
-  to *generation = served + curtailed + overgeneration*. Overgeneration is surplus that raises the
-  frequency, and it is never paid for.
+- **Unserved energy is shed load only:** `served = demand × (1 − shed)`, `unserved = demand × shed`,
+  and the residual is a signed `imbalance = generation − curtailed − served` (positive surplus,
+  negative deficit) absorbed by system inertia and visible as frequency deviation (spec §5.4). A
+  one-tick AGC lag is therefore never unserved energy and never paid for.
 - **Blackout restoration:** in `GridMode::Blackout`, frequency is held at nominal while load
   reconnects in `shed_step` increments, but only while supply covers the next step. This avoids an
   endless blackout loop and models real black-start restoration.
@@ -84,8 +94,12 @@ build on this plan's public API.
 - **Plant keys:** plants are keyed by `PlantKind` (one spec per kind per region), so the spec's
   `PlantSpecId` becomes `PlantKind`.
 - **Lines need a book life too:** `LineParams.book_life_months` is region data.
-- **Stopping a committed plant:** `StopPlant` on a committed plant clears its commitment for the
-  rest of the day, so automatic commitment never fights the player.
+- **Stopping a committed plant:** an Operating stop or trip suppresses automatic commitment for
+  that plant for the rest of the day; it does not mutate the validated cyclic base pattern.
+- **Revised design contracts:** spec §§2.3, 2.5, 6.1 and 7.1 define repeating commitment patterns,
+  separate start-charge weights, held capital and verified replay inputs. The interfaces and tests
+  below implement these contracts; the previous arrive-late and immediate-disallowance rules are
+  superseded.
 - **Mutation-testing skips** are `exclude_re` entries with justification comments in
   `.cargo/mutants.toml`. A `mutants` attribute crate would break the domain's dependency limits.
 
@@ -522,14 +536,16 @@ proptest! { #[test] fn year_has_365_or_366_days(y in 1900i32..2400) {
   - **`enum PlantStatus`**: `UnderConstruction { months_left: u32 }`, `Offline`,
     `Starting { ticks_left: u32 }`, `Online { output: Megawatts, target: Megawatts }`,
     `Stopping { output: Megawatts }`.
-  - **`CommitmentSchedule([bool; 24])`**, defined here (rules come in Task 7): `new([bool; 24])`,
-    `none()`, `is_committed(hour: u8)`, `hours() -> [bool; 24]`, `clear_from(hour: u8)`.
+  - **`CommitmentSchedule([bool; 24])`**, defined here with `none()`, `all_day()`,
+    `is_committed(hour: u8)` and `hours() -> [bool; 24]` only. The validating constructor
+    `try_new([bool; 24], &PlantSpec) -> Result<Self, DomainError>` arrives in Task 7. No public
+    unchecked mutation.
   - **`Plant`**, with these methods:
     - `new_under_construction(id, node, cell, spec)` and
       `new_commissioned(id, node, cell, spec, month)`. A commissioned solar plant starts
       `Online { 0, 0 }`; every other kind starts `Offline`.
     - Getters: `id(), node(), cell(), kind(), spec(), status(), output()`, `is_online()`,
-      `auto_follow()`, `commitment()`, `commitment_mut()`, `commissioned_on()`,
+      `auto_follow()`, `commitment()`, `commissioned_on()`,
       `hydro_budget() -> Option<MegawattHours>`.
     - `set_auto_follow(on) -> Result<(), DomainError>`.
     - `start() -> Result<Vec<DomainEvent>, DomainError>` and `stop() -> Result<Vec<DomainEvent>, DomainError>`.
@@ -541,6 +557,12 @@ proptest! { #[test] fn year_has_365_or_366_days(y in 1900i32..2400) {
     - `reset_hydro_budget(MegawattHours)` and `hydro_available() -> Megawatts` (the remaining
       budget × 60 MW, capped at capacity).
     - `advance_construction(month: SimMonth) -> Vec<DomainEvent>`.
+    - `set_commitment(CommitmentSchedule)`, `set_initial_target(Megawatts)`,
+      `initialise_pattern_day()`, and `suppress_commitment_for_day()`.
+      Retain `previous_month_offline` (false for the established starter fleet, true on new
+      commissioning), `initial_target` and a resettable operating override flag. Initialisation
+      returns typed start-charge information, not duplicate physical start events. Task 7 defines
+      the implied boundary state; Task 16 updates the whole-month offline summary.
   - **`enum DomainEvent`** (`Debug, Clone, PartialEq`), with first variants
     `PlantStarting { plant }`, `PlantOnline { plant }`, `PlantStopped { plant }`,
     `PlantTripped { plant }`, `PlantCommissioned { plant, kind }` and
@@ -607,22 +629,42 @@ proptest! { #[test] fn online_output_respects_ramp_and_bounds(targets in prop::c
 
 ---
 
-### Task 7: Automatic commitment actions
+### Task 7: Cyclic commitment validation, initialisation and actions
 
 **Files:**
 - Create: `crates/domain/src/generation/commitment.rs` (move `CommitmentSchedule` here from Task 6); Modify: `generation/mod.rs`
 - Test: inline
 
 **Interfaces:**
-- Produces **`enum CommitmentAction { Start(PlantId), Stop(PlantId) }`** and
+- Produces **`CommitmentSchedule::try_new([bool; 24], &PlantSpec) -> Result<Self, DomainError>`**,
+  **`DomainError::CommitmentInfeasible { gap, shutdown, startup }`**,
+  **`enum CommitmentAction { Start(PlantId), Stop(PlantId) }`** and
   **`fn commitment_actions<'a>(plants: impl IntoIterator<Item = &'a Plant>, tick: u32) -> Vec<CommitmentAction>`**,
   ordered by `PlantId`.
 - **Rules:**
-  - **Start:** the plant is `Offline` and has a committed hour `h ≥ current hour` with
-    `h × 60 − startup_ticks ≤ tick`. If the lead time has already passed, it starts immediately.
-  - **Stop:** only at an hour boundary (`tick % 60 == 0`, `tick > 0`), when hour `h − 1` is committed,
-    hour `h` is not, and the plant is `Online` or `Starting`.
-  - Plants with no commitment are never touched.
+  - `CommitmentSchedule::try_new` examines every maximal off-gap on a 24-hour circle. Require
+    `gap_ticks >= ceil(capacity / ramp_per_tick) + startup_ticks`. All-day/all-off are valid special
+    cases with no recurring start; do not treat all-off as a 24-hour restart gap. Reject with
+    `CommitmentInfeasible { gap: SimDuration, shutdown: SimDuration, startup: SimDuration }` before
+    mutating the plant. Nuclear therefore accepts all-day/all-off only.
+  - **Initialise:** committed at hour 0 → Online at the validated initial target (minimum by
+    default). Otherwise initialise Starting if the next committed run's lead time began before
+    midnight; initialise a crossing shutdown tail from capacity minus the elapsed ramp; else Offline.
+    This is a synthetic pattern boundary, never continuation of last month's physical state.
+  - **Start:** for each off→on boundary, schedule at `(boundary_tick − startup_ticks) mod 1440`.
+    A start preparing an early-hour run can therefore occur late in the representative day.
+    There is no arrive-late fallback. **Stop:** at each on→off boundary, begin ramp-down.
+    Emit `Start` only for an `Offline` plant and `Stop` only for an `Online` or `Starting` plant, so a
+    plant started by hand inside an off-gap gets no redundant scheduled start or error.
+    Apply actions before plant progression so completion occurs at the intended committed boundary;
+    verify this with an end-to-end tick test, not only action-list tests.
+  - Operating manual stops and protection trips set a per-day suppression flag; no automatic actions
+    occur afterwards for that plant. All-off manual plants are otherwise untouched. Reset suppression
+    on the next pattern initialisation, without changing the validated base schedule.
+  - Classify real daily/manual start actions as recurring; synthetic initialisation does not emit
+    an extra daily start. An all-day plant returning from a whole month offline gets one boundary
+    start charge, not `days` starts. A scheduled recurring restart already covers returning from
+    offline; do not add a duplicate boundary charge. Task 16 handles the weighted ledger entries.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -632,10 +674,19 @@ proptest! { #[test] fn online_output_respects_ramp_and_bounds(targets in prop::c
     assert!(commitment_actions([&p], 239).is_empty());
     assert_eq!(commitment_actions([&p], 240), vec![CommitmentAction::Start(p.id())]);
 }
-#[test] fn late_commitment_starts_immediately() { // nuclear committed 10..=23, startup 48 h
-    let p = offline_with(PlantKind::Nuclear, 10..=23);
-    assert_eq!(commitment_actions([&p], 0), vec![CommitmentAction::Start(p.id())]);
-}
+#[test] fn nuclear_partial_day_is_infeasible() { /* 10..=23 → CommitmentInfeasible; state unchanged */ }
+#[test] fn nuclear_all_day_is_online_at_tick_zero() { /* 48 h start-up is not carried across months */ }
+#[test] fn nuclear_all_off_is_valid() { /* no restart requirement */ }
+#[test] fn off_gap_includes_shutdown_time() { /* gap == startup alone fails; gap == shutdown + startup succeeds */ }
+#[test] fn midnight_gap_is_validated() { /* last/first off fragments form one cyclic gap */ }
+#[test] fn early_run_initialises_starting_before_midnight() { /* CCGT first run at hour 1 → Starting with 60 ticks left */ }
+#[test] fn late_action_prepares_next_days_early_run() { /* same pattern starts at hour 23 */ }
+#[test] fn shutdown_tail_can_cross_midnight() { /* run ends at midnight → initial Stopping, bounded by capacity */ }
+#[test] fn scheduled_start_is_online_at_committed_boundary() { /* run PowerSystem ticks; no one-tick delay */ }
+#[test] fn no_scheduled_start_for_a_plant_already_running() { /* manual start inside an off-gap → no Start action at the boundary lead time, no error */ }
+proptest! { #[test] fn accepted_patterns_fit_all_cyclic_gaps(hours in any::<[bool; 24]>()) {
+    // independent enumeration of cyclic gaps; every accepted mixed pattern fits shutdown + startup
+}}
 #[test] fn stops_at_first_uncommitted_hour_boundary() {
     let p = online_with(PlantKind::Ccgt, 6..=17);
     assert!(commitment_actions([&p], 1079).is_empty());
@@ -648,7 +699,7 @@ proptest! { #[test] fn online_output_respects_ramp_and_bounds(targets in prop::c
 ```
 
 - [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain commitment`. Expected: FAIL to compile.
-- [ ] **Step 3: Implement `commitment_actions`.**
+- [ ] **Step 3: Implement validating construction, boundary initialisation and `commitment_actions`.**
 - [ ] **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain commitment`. Expected: PASS.
 - [ ] **Step 5: Commit**: `git commit -am "feat(domain): automatic commitment actions"`
 
@@ -858,13 +909,17 @@ proptest! { #[test] fn shed_stays_in_unit_interval(devs in prop::collection::vec
 - Consumes: Tasks 6–11.
 - Produces:
   - **`TickSummary`**:
-    `{ tick: u32, demand, served, unserved, generation, curtailed, overgeneration: Megawatts, by_kind: BTreeMap<PlantKind, Megawatts>, by_plant: BTreeMap<PlantId, Megawatts>, frequency: Hertz, mode: GridMode, shed: Ratio }`.
+    `{ tick: u32, demand, served, unserved, generation, curtailed, imbalance: Megawatts, by_kind: BTreeMap<PlantKind, Megawatts>, by_plant: BTreeMap<PlantId, Megawatts>, frequency: Hertz, mode: GridMode, shed: Ratio }`.
     `frequency` is the absolute value (nominal + deviation).
   - **`PowerSystem`**:
     - `new(network: Network, plants: BTreeMap<PlantId, Plant>, cities: BTreeMap<CityId, DemandCenter>, model: NetworkModel)`.
-    - `begin_day(&mut self, region: &RegionDefinition, month: SimMonth, rng: &mut SimRng)`. This
+    - `begin_day(&mut self, region: &RegionDefinition, month: SimMonth, rng: &mut SimRng) -> DayInitialisation`. This
       resets each commissioned hydro plant's budget to
-      `capacity × 24 h × hydro_potential(cell) × monthly_flow[m]` and draws the day's clearness.
+      `capacity × 24 h × hydro_potential(cell) × monthly_flow[m]`, draws the day's clearness and
+      initialises each commissioned plant from its cyclic pattern (Task 7), clearing operating
+      overrides, and resets frequency to nominal/protection to Normal. It returns
+      `DayInitialisation { boundary_starts: BTreeMap<PlantId, u32> }` to the session accumulator; no
+      previous representative day's lifecycle/output/start-up ticks are carried forward.
     - `tick(&mut self, region: &RegionDefinition, month: SimMonth, tick: u32, rng: &mut SimRng) -> (TickSummary, Vec<DomainEvent>)`.
     - Accessors: `plants()`, `plant(id)`, `plant_mut(id)`, `insert_plant(Plant)`, `cities()`,
       `network()`, `network_mut()`, `deviation()`, `protection()`.
@@ -875,6 +930,9 @@ proptest! { #[test] fn shed_stays_in_unit_interval(devs in prop::collection::vec
       `ticks_left ≤ w` contribute `min_output + ramp.over_ticks(w − ticks_left)`, capped at
       capacity.
     - `firm_capacity() -> Megawatts`: Σ capacity × capacity_credit over commissioned plants.
+    - `projected_connected_peak(region, first_month: SimMonth) -> Megawatts`: maximum of the summed
+      hourly mean connected-city profiles over the following 12 calendar months. Use review-time
+      connectivity after construction; no RNG, no sum of individual city peaks.
   - **`enum NetworkModel { CopperPlate }`**, defined here and re-exported by `session` in Task 15.
   - New `DomainEvent` variants: `TickCompleted(TickSummary)`, `FrequencyDeviated { band }`
     (emitted only when the band changes), `LoadShed { mw }`, `SolarCurtailed { mw }`, `Blackout`,
@@ -882,17 +940,18 @@ proptest! { #[test] fn shed_stays_in_unit_interval(devs in prop::collection::vec
 - **Order inside `tick`** (spec steps 2–10; only connected plants and cities count):
   1. Demand = Σ `base_load × shape_factor × (1 + noise.step)`.
   2. Solar and hydro availability.
-  3. `step` every plant.
-  4. Apply `commitment_actions`.
+  3. Apply `commitment_actions` for the interval, skipping suppressed plants.
+  4. `step` every plant, with start/online boundary semantics tested in Task 7.
   5. `agc_retarget(shortfall = demand × (1 − shed) − supply)`.
   6. Imbalance.
   7. `next_deviation` (held at 0 in Blackout mode).
   8. `evaluate`:
      - `Curtail` reduces solar output by `min(solar, supply − demand × (1 − shed))` and calls
        `force_to_minimum` on AGC plants.
-     - `Blackout` trips every plant (emitting `PlantTripped` for each) and resets the deviation.
-  9. `served = min(supply − curtailed, demand × (1 − shed))`, `unserved = demand − served`, and
-     `overgeneration = supply − curtailed − served`.
+     - `Blackout` trips every plant (emitting `PlantTripped` for each), suppresses its automatic
+       commitment for the day and resets the deviation. Manual restarts still check the day horizon.
+  9. `served = demand × (1 − shed)`, `unserved = demand × shed`, and the signed
+     `imbalance = supply − curtailed − served`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -903,7 +962,7 @@ proptest! { #[test] fn shed_stays_in_unit_interval(devs in prop::collection::vec
 #[test] fn hydro_budget_uses_cell_potential_and_month_flow() { /* hydro at (10,1), April: 800×24×0.8×1.2 = 18_432 MWh */ }
 proptest! { #[test] fn energy_is_conserved_every_tick(seed in any::<u64>(), targets in prop::collection::vec(0.0f64..1.0, 3)) {
     // tiny fleet online at random fractions; 200 ticks; each summary:
-    // |generation − (served + curtailed + overgeneration)| < 1e-6, unserved ≥ −1e-9, served ≤ demand + 1e-9
+    // |generation − (served + curtailed + imbalance)| < 1e-6, |unserved − demand × shed| < 1e-9, 0 ≤ served ≤ demand + 1e-9
 }}
 ```
 
@@ -946,10 +1005,24 @@ proptest! { #[test] fn energy_is_conserved_every_tick(seed in any::<u64>(), targ
     - `add(asset, cost, book_life_months, month)`.
     - `depreciate_month() -> Money`: the total for the month; an asset's final month takes its
       exact remainder.
-    - `total() -> Money`, `added_in_year(year: i32) -> Money`.
-    - `write_down_added_in_year(year, fraction: Ratio) -> Money`: proportional across those
-      assets, rounded half-even, with the remainder applied to the last asset. It returns the
-      amount disallowed.
+    - `total() -> Money`, `eligible_total() -> Money`, `held_total() -> Money`.
+    - Track held slices per asset, with remaining book value, associated firm capacity (for plant
+      slices), `last_excess_review: i32` and `consecutive_excess_reviews: u8`. A slice can split when
+      only part remains excess; use stable asset/slice IDs. Written-off capital remains associated
+      with the physical asset but cannot earn return or future depreciation recovery.
+    - `preview_reserve_review(inputs) -> CapitalAssessment` is pure; `apply_reserve_review` applies
+      it once per review year and emits typed `CapitalHeld`, `CapitalReleased`, `CapitalDisallowed`.
+      Existing held portions remain candidates across commissioning-year boundaries. Re-test them
+      before new additions, cap allocations by physical excess, then allocate remaining excess
+      proportionally to new plant capacity and associated new line capital, with ID rounding ties.
+      A plant's associated line capital is every line commissioned in the same review year with an
+      endpoint at that plant's node; lines with no plant endpoint are never held (spec §2.5).
+      Release portions no longer excess and reset their count; write off only portions still excess
+      at the second consecutive annual review. Repeated application for the same year cannot age
+      them. Bound all changes by remaining book value; write-offs do not change cash.
+    - Depreciation continues straight-line for held portions and is included in the revenue
+      requirement. Holding excludes their remaining value from `eligible_total()` for return;
+      permanent write-off removes only the remaining book value and its future depreciation.
   - New `DomainEvent::LedgerEntryRecorded(LedgerEntry)`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -962,7 +1035,15 @@ proptest! { #[test] fn cash_change_equals_ledger_sum(amounts in prop::collection
 }}
 #[test] fn depreciation_puts_remainder_in_final_month() { /* 1_000 cents over 3 months → 333, 333, 334 then 0 */ }
 proptest! { #[test] fn depreciation_over_life_equals_original(cents in 1i64..10_000_000_000, life in 1u32..600) { /* Σ depreciate_month() over life+5 months == cents */ } }
-#[test] fn write_down_is_proportional_and_exact() { /* two assets 300 + 100 added 2027, fraction 0.5 → returns 200, remaining 150 + 50 */ }
+#[test] fn first_excess_review_holds_without_writeoff() { /* held > 0, no allowed return on it; cash unchanged */ }
+#[test] fn second_consecutive_excess_review_writes_off_held_remainder() { /* includes an asset commissioned last year */ }
+#[test] fn useful_held_capacity_is_released_and_resets_counter() { /* hold → release; future review cannot disallow it using stale held history */ }
+#[test] fn partial_release_ages_only_the_still_excess_slice() { /* split held portion; no history transfer to unrelated new capital */ }
+#[test] fn held_capital_keeps_book_depreciation() { /* book remainder falls normally; held + eligible == total */ }
+#[test] fn estimates_and_duplicate_review_do_not_age_holdings() { /* preview pure; applying same year twice cannot trigger writeoff */ }
+proptest! { #[test] fn capital_adjustments_are_bounded_and_non_cash(actions in arb_capital_review_sequence()) {
+    // eligible/held/written-off slices reconcile; no double recovery or cash ledger mutation
+}}
 #[test] fn bankrupt_after_three_negative_closes() { /* negative cash: close ×2 → false, 3rd → true; positive in between resets */ }
 #[test] fn reliability_window_keeps_three_months() { /* push 4 months; reliability uses last 3 */ }
 #[test] fn satisfaction_target_is_100_at_target_and_reference() { /* reliability 0.999, tariff = reference → 100.0 */ }
@@ -996,22 +1077,26 @@ proptest! { #[test] fn depreciation_over_life_equals_original(cents in 1i64..10_
     - `assess_month_reliability(&mut self, demand: MegawattHours, unserved: MegawattHours, p: &RegulatorParams) -> Vec<DomainEvent>`.
     - `apply_rate_review(&mut self, outcome: &RateReviewOutcome) -> Vec<DomainEvent>`, which
       emits `RateReviewCompleted` and resets the tally.
-  - **`RateReviewInputs { tally: YearTally, depreciation: Money, rate_base: Money, firm_capacity: Megawatts, previous_tariff: Price, previous_cost_per_mwh: Option<f64> }`**.
+  - **`RateReviewInputs { tally: YearTally, depreciation: Money, eligible_rate_base: Money, firm_capacity: Megawatts, projected_peak: Megawatts, previous_tariff: Price, previous_cost_per_mwh: Option<f64> }`**.
   - **`RateReviewOutcome { tariff: Price, allowed_return: Ratio, revenue_requirement: Money, cost_per_mwh: Option<f64> }`**.
-  - **`fn disallowed_fraction(firm: Megawatts, firm_added: Megawatts, peak: Megawatts, reserve_margin: Ratio) -> Ratio`**:
-    `excess = firm − peak × (1 + margin)`. It returns 0 if `excess ≤ 0` or `firm_added ≤ 0`, and
-    otherwise `min(1, excess / firm_added)`.
+  - **`fn reserve_excess(firm, actual_peak, projected_peak: Megawatts, reserve_margin: Ratio) -> Megawatts`**:
+    `review_peak = max(actual_peak, projected_peak)`;
+    `excess = max(0, firm − review_peak × (1 + margin))`.
+    This is a capacity amount, not an immediate write-off fraction. Task 13 allocates it to held
+    portions and new capital, retaining per-slice history. All physical commissioned capacity still
+    counts, including held or previously written-off plants.
   - **`fn compute_rate_review(i: &RateReviewInputs, p: &RegulatorParams) -> RateReviewOutcome`**:
     - `reliability = served / demand`, or the target when demand is 0.
     - `cost_per_mwh = operating_cost / served`, or `None` when served is 0.
     - `return = base + return_per_reliability × (reliability − target)`, plus
       `return_per_cost_improvement × (prev − cur) / prev` when both values exist, clamped to
       `[min, max]`.
-    - `RR = operating_cost + depreciation + round_ties_even(return × rate_base)`.
+    - `RR = operating_cost + depreciation + round_ties_even(return × eligible_rate_base)`.
     - `tariff = RR / served`, or `previous_tariff` when served is 0.
   - New `DomainEvent` variants: `StrikeIssued { strikes: u8 }`, `StrikeExpired { strikes: u8 }`,
     `LicenseRevoked`, `RateReviewCompleted { tariff, allowed_return }`,
-    `CapitalDisallowed { amount: Money }`.
+    `CapitalHeld { asset: AssetRef, amount: Money }`, `CapitalReleased { asset: AssetRef, amount: Money }`,
+    `CapitalDisallowed { asset: AssetRef, amount: Money }`.
 - **Strike rules:**
   - When `unserved / demand > strike_threshold` (never when demand is 0), issue a strike and reset
     `clean_months` to 0.
@@ -1028,13 +1113,12 @@ proptest! {
         prop_assert!((o.tariff.value() * served - o.revenue_requirement.cents() as f64 / 100.0).abs() < 0.01);
     }
     #[test] fn allowed_return_stays_in_band(served in 0.0f64..1e9, demand in 0.0f64..1e9, prev in proptest::option::of(1.0f64..500.0)) { /* min ≤ return ≤ max */ }
-    #[test] fn disallowance_bounds(firm in 0.0f64..1e5, added in 0.0f64..1e5, peak in 0.0f64..1e5) {
-        let f = disallowed_fraction(Megawatts::new(firm), Megawatts::new(added), Megawatts::new(peak), Ratio::new(0.2).unwrap());
-        if firm <= peak * 1.2 || added == 0.0 { prop_assert_eq!(f, Ratio::ZERO); }
-        prop_assert!(f.value() <= 1.0);
+    #[test] fn reserve_excess_uses_larger_peak(firm in 0.0f64..1e5, actual in 0.0f64..1e5, projected in 0.0f64..1e5) {
+        // excess == max(0, firm − max(actual, projected) × (1 + margin)); never negative
     }
 }
 #[test] fn zero_served_energy_keeps_previous_tariff() { /* served 0, demand 0 → tariff == previous_tariff, no panic */ }
+#[test] fn held_capital_is_excluded_from_allowed_return() { /* RR uses eligible, not total, book value */ }
 #[test] fn third_strike_revokes_licence() { /* three months over threshold → events contain StrikeIssued{1},{2},{3} and LicenseRevoked once */ }
 #[test] fn strike_expires_after_three_clean_months() { /* 1 strike then 3 clean months → StrikeExpired{0} */ }
 #[test] fn no_strike_without_demand() { /* demand 0 → no StrikeIssued */ }
@@ -1077,12 +1161,18 @@ proptest! {
         `cost = cost_per_cell × ceil(len) as i64`, split into instalments.
       - It emits `LineConstructionStarted { line }`.
     - `commit_plant(&mut self, plant, hours: [bool; 24]) -> Result<Vec<DomainEvent>, DomainError>`
-      (Planning only; the plant must be commissioned and dispatchable).
+      (Planning only; the plant must be commissioned and dispatchable). Construct a validated cyclic
+      `CommitmentSchedule` before mutation; reject any insufficient off-gap unchanged.
     - `set_dispatch_target(plant, mw)`, `set_auto_follow(plant, on)`, `start_plant(plant)` and
-      `stop_plant(plant)`, valid in Planning or Operating. `stop_plant` also calls
-      `commitment_mut().clear_from(current hour)`.
+      `stop_plant(plant)`, valid in Planning or Operating. During Planning, start/stop select
+      all-day/all-off and target changes set the initial target. During Operating, `start_plant`
+      checks the complete start-up fits before or at midnight, returning
+      `StartUpBeyondDay { remaining: SimDuration, startup: SimDuration }` otherwise. An Operating
+      stop suppresses automatic actions for the rest of the day without mutating the base pattern.
+      Validate before mutation; a rejected command preserves the session hash.
     - `begin_operating(&mut self) -> Result<Vec<DomainEvent>, DomainError>`: Planning → Operating,
-      calls `power.begin_day`, emits `PhaseChanged { from, to }`.
+      calls `power.begin_day` to initialise the pattern and seed boundary-start counts, then emits
+      `PhaseChanged { from, to }`. Never carry previous-month physical plant state into the day.
     - `tick(&mut self) -> Result<Vec<DomainEvent>, DomainError>` (Operating only). It advances the
       clock, runs `power.tick` and appends `TickCompleted`. At day end it calls
       `self.close_month()`. In this task, `close_month` only moves the phase to `Review` and emits
@@ -1132,7 +1222,12 @@ proptest! {
 #[test] fn failed_command_leaves_state_unchanged() { /* hash before == hash after a rejected build_plant */ }
 #[test] fn building_is_planning_only_and_ticking_is_operating_only() { /* begin_operating; build_plant → WrongPhase{Operating}; new session tick() → WrongPhase{Planning} */ }
 #[test] fn full_day_moves_to_review() { /* begin_operating; 1440 ticks → phase Review; tick() → WrongPhase{Review}; finish_review → Planning, month May */ }
-#[test] fn stopping_committed_plant_clears_rest_of_day() { /* commit coal 0..=23, begin, tick 600, stop_plant → commitment hours 10.. false, earlier unchanged */ }
+#[test] fn stopping_committed_plant_suppresses_actions_without_changing_pattern() { /* coal all-day, stop at tick 600; no automatic restart; pattern unchanged */ }
+#[test] fn planning_start_and_stop_select_patterns_without_advancing_time() { /* nuclear start → all-day; stop → all-off; no clock/RNG change */ }
+#[test] fn manual_start_beyond_midnight_is_rejected_unchanged() { /* nuclear during Operating → typed error; hash unchanged */ }
+#[test] fn manual_start_finishing_exactly_at_midnight_is_allowed() { /* remaining == startup */ }
+#[test] fn next_month_reinitialises_physical_state_from_pattern() { /* trip in March; April all-day → Online, not Starting from March */ }
+#[test] fn next_month_resets_frequency_and_protection_without_erasing_history() { /* nominal/Normal; March reliability and incidents retained */ }
 #[test] fn same_seed_and_commands_give_same_hash() { /* two sessions seed 5: same commands + 1440 ticks → equal state_hash; seed 6 → different */ }
 ```
 
@@ -1151,8 +1246,9 @@ proptest! {
 
 **Interfaces:**
 - Produces:
-  - **`MonthAccumulator`**: per-plant energy and starts, plus demand, served, unserved, curtailed,
-    overgeneration (MWh), peak demand and incidents. It has
+  - **`MonthAccumulator`**: per-plant energy, recurring daily starts, boundary starts and whether
+    any physical operation occurred during the month, plus demand, served, unserved, curtailed,
+    signed imbalance (MWh), peak demand and incidents. It has
     `add_tick(&mut self, &TickSummary, &[DomainEvent])` and `reset()`.
   - **`enum IncidentKind { LoadShed { mw: Megawatts }, Blackout, BlackoutRestored }`** and
     **`Incident { tick: u32, kind }`**.
@@ -1167,7 +1263,8 @@ proptest! {
   1. Ledger entries:
      - revenue `+tariff.cost_of(served, days)`;
      - per plant, fuel `−marginal_cost.cost_of(energy, days)`;
-     - start-ups `−startup_cost × starts × days`;
+     - start-ups `−startup_cost × (daily_starts × days + boundary_starts)`; synthetic initialisation
+       is not an extra recurring event, and a daily restart never also gets a boundary charge;
      - fixed O&M `−fixed_om_per_month` for each commissioned plant;
      - one popped construction instalment per asset under construction.
   2. Construction progress for plants and lines. Each newly commissioned asset is added to the
@@ -1178,12 +1275,19 @@ proptest! {
      `GameOver(LicenseRevoked)`.
   5. `company.push_reliability(...)` and `update_satisfaction(...)`.
   6. In December only:
-     - compute `disallowed_fraction`, then `write_down_added_in_year`, and emit
-       `CapitalDisallowed` if the amount is above 0;
-     - run `compute_rate_review` and then `apply_rate_review`, and reset `year_depreciation`.
+     - compute the forward coincident peak over the next 12 months using connectivity **after**
+       step 2, including December's newly connected cities; the forecast starts at `month.next()`;
+     - compute `reserve_excess(firm, actual_year_peak, projected_peak, margin)`;
+     - preview then apply the per-asset capital assessment once for this year: hold first-review
+       excess, release useful portions, and permanently disallow only still-excess held portions
+       at a second consecutive review;
+     - run `compute_rate_review` using the resulting `eligible_total()`, then `apply_rate_review`,
+       and reset `year_depreciation`. Keep held-capital history when resetting annual tallies.
   7. If `company.close_solvency_month()` returns true, set `GameOver(Bankrupt)` and emit `Bankrupt`.
-  8. Emit `MonthClosed(report)`, set phase to `Review` and emit `PhaseChanged`. Reset the
-     accumulator.
+  8. Persist each plant's whole-month offline summary (including manual operation), emit
+     `MonthClosed(report)`, set phase to `Review` and emit `PhaseChanged`. Reset the accumulator.
+     Newly commissioned plants start with `previous_month_offline = true`; do not overwrite this
+     from missing operating data. The next `BeginOperating` derives fresh lifecycle state.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1194,6 +1298,12 @@ proptest! { #[test] fn revenue_is_weighted_and_rounded_once(seed in any::<u64>()
 #[test] fn ledger_matches_cash_after_a_month() { /* check_invariants() == Ok(()) after close */ }
 #[test] fn peaker_commissions_after_twelve_months_with_exact_instalments() { /* build peaker + line; play 12 months; PlantCommissioned in month 12; Σ Construction entries for that asset == −$200,000,000 */ }
 #[test] fn december_runs_rate_review() { /* start month set to December via fixture parts; after close: RateReviewCompleted emitted, report.rate_review is Some */ }
+#[test] fn december_capacity_and_city_connection_are_assessed_together() { /* actual peak 1 GW; new connection raises forward peak to 2 GW; firm 2.3 GW (clear of the 2.4 GW limit) → no excess; the same firm against the 1 GW actual peak alone would be excess */ }
+#[test] fn first_review_holds_second_review_disallows_if_still_excess() { /* preserve held history across annual tally reset */ }
+#[test] fn all_day_return_from_offline_costs_one_start() { /* boundary_starts 1, daily_starts 0; never × days */ }
+#[test] fn continuing_all_day_pattern_has_no_restart_charge() { /* established fleet or previous active month */ }
+#[test] fn daily_restart_costs_days_starts_without_boundary_duplicate() { /* returning mixed pattern, leap-February weight */ }
+#[test] fn month_boundary_initialisation_is_not_a_second_start_event() { /* cross-midnight pattern; no double-count */ }
 #[test] fn bankruptcy_ends_game_and_freezes_state() {
     // fixture with start cash −$1,000,000,000,000 → after 3 month closes: status GameOver(Bankrupt), Bankrupt emitted
     // then: let h = s.state_hash(); assert_eq!(s.begin_operating(), Err(DomainError::GameOver { reason: GameOverReason::Bankrupt })); assert_eq!(s.state_hash(), h);
@@ -1214,6 +1324,7 @@ proptest! { #[test] fn revenue_is_weighted_and_rounded_once(seed in any::<u64>()
 **Files:**
 - Create: `crates/application/src/{command.rs, error.rs, ports.rs, game.rs}`, `crates/application/src/pipeline/{mod.rs, core.rs, tracing_layer.rs, invariant_layer.rs, command_log_layer.rs}`
 - Modify: `crates/application/src/lib.rs`, `Cargo.toml`
+- Modify: `crates/domain/src/lib.rs` (expose the `SIM_RULES_VERSION` constant; no dependency changes)
 - Test: inline, plus `crates/application/tests/pipeline.rs`
 
 **Interfaces:**
@@ -1225,7 +1336,7 @@ proptest! { #[test] fn revenue_is_weighted_and_rounded_once(seed in any::<u64>()
     `SetDispatchTarget { plant, mw: Megawatts }`, `SetAutoFollow { plant, on: bool }`,
     `StartPlant { plant }`, `StopPlant { plant }`, `AdvanceTicks { n: u32 }`, `FinishReview`.
   - **`enum CommandError`** (`thiserror`): `Domain(#[from] DomainError)`,
-    `Region(#[from] RegionLoadError)`.
+    `Region(#[from] RegionLoadError)`, `Log(#[from] CommandLogError)` (new-game initialisation).
   - **`trait CommandHandler { fn handle(&mut self, session: &mut GameSession, command: &Command) -> Result<Vec<DomainEvent>, CommandError>; }`**.
   - **`CoreHandler`**: maps each variant to its session method. `AdvanceTicks` loops `tick()`
     and stops early as soon as the phase is no longer `Operating`.
@@ -1241,22 +1352,39 @@ proptest! { #[test] fn revenue_is_weighted_and_rounded_once(seed in any::<u64>()
   - **Ports:**
     - `RegionSummary { id: RegionId, name_key: String }`;
     - `enum RegionLoadError { NotFound(RegionId), Io { region: RegionId, message: String }, Parse { region: RegionId, message: String }, Invalid { region: RegionId, error: RegionError } }`;
-    - `trait RegionCatalog { fn list(&self) -> Result<Vec<RegionSummary>, RegionLoadError>; fn load(&self, id: &RegionId) -> Result<RegionDefinition, RegionLoadError>; }`;
-    - `enum LogRecord { Header { region: RegionId, seed: u64 }, Command(Command) }`;
+    - `LoadedRegion { definition: Arc<RegionDefinition>, source_bytes: Vec<u8>, fingerprint: RegionFingerprint }`;
+      `RegionFingerprint([u8; 32])` is an opaque application value. Adapters guarantee all three
+      fields come from the same single read; application/domain do not hash or parse RON.
+    - `trait RegionCatalog { fn list(&self) -> Result<Vec<RegionSummary>, RegionLoadError>; fn load(&self, id: &RegionId) -> Result<LoadedRegion, RegionLoadError>; }`;
+    - `LogHeader { log_format_version: u32, sim_rules_version: u32, settings: GameSettings, region: RegionId, seed: u64, region_fingerprint: RegionFingerprint }`;
+      `LOG_FORMAT_VERSION` belongs to application; `SIM_RULES_VERSION` belongs to domain. Bump
+      the latter for outcome-changing rules, RNG/numerical changes and region-mapping changes.
+    - `enum LogRecord { Header(LogHeader), Command(Command) }`;
     - `CommandLogError { message: String }`;
-    - `trait CommandLogSink { fn append(&mut self, record: &LogRecord) -> Result<(), CommandLogError>; }`;
-    - `InMemoryCommandLog` (`Clone`, holding `Arc<Mutex<Vec<LogRecord>>>`) with `records() -> Vec<LogRecord>`.
+    - `trait CommandLogSink { fn initialize(&mut self, header: &LogHeader, region_source: &[u8]) -> Result<(), CommandLogError>; fn append(&mut self, record: &LogRecord) -> Result<(), CommandLogError>; }`;
+      `initialize` archives source bytes and records the single header before append accepts commands.
+    - `InMemoryCommandLog` (`Clone`, shared records and region-source bytes) with
+      `records() -> Vec<LogRecord>` and `region_source() -> Vec<u8>`; it follows the same initialisation
+      contract as the file adapter.
   - **`Game`**:
     - `start_new(catalog: &dyn RegionCatalog, region: &RegionId, seed: u64, settings: GameSettings, sink: Box<dyn CommandLogSink>) -> Result<Game, CommandError>`,
-      which appends `Header` first;
+      which loads once, constructs the full header and calls `sink.initialize` with those exact
+      source bytes before constructing the session or accepting commands. Propagate archive/header
+      errors; do not fall back to a game with missing initial replay inputs;
     - `execute(&mut self, command: Command) -> Result<Vec<DomainEvent>, CommandError>`;
     - `session(&self) -> &GameSession`.
-  - **`fn replay(region: Arc<RegionDefinition>, seed: u64, settings: GameSettings, commands: &[Command]) -> Result<GameSession, CommandError>`**
-    (uses `CoreHandler` only).
+  - **`fn replay(region: LoadedRegion, header: &LogHeader, commands: &[Command]) -> Result<GameSession, ReplayError>`**:
+    check format version, rules version and fingerprint in that order before session construction
+    or executing any commands; use the header's settings and seed. Errors are
+    `LogFormatVersionMismatch { recorded, supported }`, `RulesVersionMismatch { recorded, supported }`,
+    `RegionFingerprintMismatch { expected, actual }`, or a wrapped command error. Use `CoreHandler`
+    only after verification. Infrastructure normally supplies the archived `LoadedRegion` (Task 23);
+    explicit alternate input must pass the same fingerprint check.
   - **`fn auto_select_region(regions: &[RegionSummary]) -> Option<&RegionId>`**: `Some` only
     when there is exactly one region.
 
-- [ ] **Step 1: Write the failing tests** (in `tests/pipeline.rs`, with a `StaticCatalog` test double that returns `tiny_region()`)
+- [ ] **Step 1: Write the failing tests** (in `tests/pipeline.rs`, with a `StaticCatalog` returning
+  a `LoadedRegion` fixture; use a shared `tiny_loaded_region()` helper for live/replay inputs)
 
 ```rust
 #[test] fn advance_ticks_stops_at_month_close() {
@@ -1269,9 +1397,12 @@ proptest! { #[test] fn revenue_is_weighted_and_rounded_once(seed in any::<u64>()
     let log = InMemoryCommandLog::default(); let mut g = game_with_log(log.clone());
     g.execute(Command::AdvanceTicks { n: 1 }).unwrap_err(); // wrong phase
     g.execute(Command::BeginOperating).unwrap();
-    assert_eq!(log.records(), vec![LogRecord::Header { region: RegionId::new("tiny"), seed: 1 }, LogRecord::Command(Command::BeginOperating)]);
+    assert_eq!(log.records(), vec![LogRecord::Header(tiny_header(1)), LogRecord::Command(Command::BeginOperating)]);
 }
 #[test] fn replay_reproduces_live_session() { /* run a scripted day live; replay the logged commands; equal state_hash */ }
+#[test] fn header_records_all_replay_inputs() { /* versions, full settings, seed, fingerprint and display ID round-trip */ }
+#[test] fn version_or_region_mismatch_prevents_any_command() { /* incompatible input + invalid first command → compatibility error first */ }
+#[test] fn archive_or_header_initialisation_failure_prevents_new_game() { /* failing sink → typed Log error, no commands/session */ }
 #[test] fn domain_errors_pass_through_unchanged() { /* Err(CommandError::Domain(WrongPhase{Planning})) for AdvanceTicks in Planning */ }
 #[test] fn auto_select_only_with_exactly_one_region() { /* 0 → None, 1 → Some(id), 2 → None */ }
 ```
@@ -1345,9 +1476,12 @@ proptest! { #[test] fn revenue_is_weighted_and_rounded_once(seed in any::<u64>()
   - **Domain queries:**
     - `GameSession::forecast_net_load(tick: u32) -> Megawatts`, equal to
       `connected_demand_forecast − expected_solar`;
-    - `GameSession::rate_review_estimate() -> RateReviewEstimate { projected_return: Ratio, reserve_margin: f64, capital_at_risk: Money }`.
-      It runs `compute_rate_review` and `disallowed_fraction` on the year-to-date tally;
-      `reserve_margin = firm / peak − 1`, or 0 when peak is 0.
+    - `GameSession::rate_review_estimate() -> RateReviewEstimate { projected_return: Ratio, reserve_margin: f64, capital_to_hold: Money, capital_to_release: Money, capital_at_risk: Money }`.
+      Run the pure capital-assessment preview, then `compute_rate_review` on projected eligible
+      book value. `capital_at_risk` means a possible second-review permanent write-off, not a
+      first-review hold. Use `review_peak = max(actual_year_peak, projected_connected_peak)`;
+      `reserve_margin = firm / review_peak − 1`, or 0 when that peak is 0. Repeated reads do not
+      mutate held portions or their review counts.
   - **`RampWarning { at_tick: u32, horizon_minutes: u32, net_load_change: Megawatts, capability: Megawatts }`**
     and **`fn ramp_warning(at_tick, net_now: Megawatts, net_ahead: Megawatts, capability: Megawatts) -> Option<RampWarning>`**:
     `Some` when `net_ahead − net_now > capability`, with `horizon_minutes = 60`.
@@ -1355,7 +1489,7 @@ proptest! { #[test] fn revenue_is_weighted_and_rounded_once(seed in any::<u64>()
     `tick % 5 == 0`, it evaluates the warning using `forecast_net_load(t)`,
     `forecast_net_load(min(t + 60, 1439))` and `power().ramp_capability_up(60 min)`.
   - **`RateReviewProjection`**: `estimate() -> Option<&RateReviewEstimate>`, refreshed on
-    `MonthClosed`, `PlantCommissioned` and `PhaseChanged`.
+    `MonthClosed`, `PlantCommissioned`, `CityConnected`, capital-assessment events and `PhaseChanged`.
   - **`enum Lesson`**:
     - `ExpensivePeaking { energy: MegawattHours, cost: Money, alternative: Price }`
       (`alternative` = the region's CCGT marginal cost);
@@ -1383,7 +1517,8 @@ proptest! { #[test] fn revenue_is_weighted_and_rounded_once(seed in any::<u64>()
 }
 #[test] fn lessons_follow_priority_and_cap_at_three() { /* report triggering rules 1–5 → [ExpensivePeaking, UnservedEnergy, SolarCurtailed] */ }
 #[test] fn clean_month_is_all_clear() { /* zero peaker, unserved, curtailment, low start-ups, no review → [AllClear] */ }
-#[test] fn rate_review_estimate_flags_overbuild() { /* tiny session + 3 extra commissioned CCGTs → capital_at_risk > 0, reserve_margin > 0.2 */ }
+#[test] fn rate_review_estimate_distinguishes_hold_and_writeoff() { /* new excess → capital_to_hold; prior held excess → capital_at_risk */ }
+#[test] fn rate_review_estimate_is_pure() { /* repeated reads preserve state hash and held-review history */ }
 #[test] fn ramp_projection_updates_every_fifth_tick() { /* TickCompleted ticks 1..=4 → current None-evaluated; tick 5 evaluated (use a duck-curve fixture: 1500 MW solar at sunset hour, assert Some) */ }
 ```
 
@@ -1397,13 +1532,15 @@ proptest! { #[test] fn revenue_is_weighted_and_rounded_once(seed in any::<u64>()
 ### Task 20: Scenario snapshots, determinism and state-machine tests
 
 **Files:**
-- Create: `crates/application/tests/support/mod.rs`, `crates/application/tests/{scenarios.rs, determinism.rs, state_machine.rs}`
+- Create: `crates/application/tests/support/mod.rs`, `crates/application/tests/{scenarios.rs, determinism.rs, state_machine.rs, rules_version_guard.rs}`
 - Test: those files; snapshots go in `crates/application/tests/snapshots/`
 
 **Interfaces:**
 - Consumes: `Game`, `replay`, `InMemoryCommandLog`, domain `test-fixtures`.
 - Produces (test support only):
-  - `StaticCatalog(Vec<RegionDefinition>)`, which implements `RegionCatalog`;
+  - `StaticCatalog(Vec<LoadedRegion>)`, which implements `RegionCatalog`; test helpers attach
+    deterministic source bytes/fingerprints to their in-code definitions. Only infrastructure tests
+    need real RON parsing and cryptographic checks; application test doubles preserve input identity;
   - `fn game_on(parts: RegionDefinitionParts, seed: u64) -> (Game, InMemoryCommandLog)`;
   - `fn play_month(game: &mut Game, plan: impl FnOnce(&mut Game))`, which runs `plan` in Planning,
     then `BeginOperating`, `AdvanceTicks { n: 1440 }` and `FinishReview`;
@@ -1415,7 +1552,7 @@ proptest! { #[test] fn revenue_is_weighted_and_rounded_once(seed in any::<u64>()
     - `overreach()`: city 3's base load raised to 2,500 MW, with the plan building a line to it in
       month 1;
     - `overbuild()`: start month January, with the plan building 4 CCGTs plus lines in month 1, then
-      playing 36 months so that they commission and a December review runs.
+      playing 48 months so that they commission and two consecutive December reviews run.
 
 - [ ] **Step 1: Write the scenario snapshot tests**
 
@@ -1424,7 +1561,7 @@ proptest! { #[test] fn revenue_is_weighted_and_rounded_once(seed in any::<u64>()
     insta::assert_debug_snapshot!(g.projections().monthly_reports.latest().unwrap()); }
 #[test] fn duck_curve_month() { /* same pattern; additionally assert the report's curtailed or a RampWarning occurred during the day */ }
 #[test] fn overreach_city_without_capacity() { /* after the line commissions, a month's report has unserved > 0 and a StrikeIssued event */ }
-#[test] fn overbuild_rate_review_disallowance() { /* CapitalDisallowed emitted with amount > 0 in the first December after commissioning; snapshot that December's report */ }
+#[test] fn overbuild_rate_review_disallowance() { /* first December after commissioning: CapitalHeld, no writeoff; next December still excess: CapitalDisallowed > 0; snapshot second review */ }
 ```
 
 - [ ] **Step 2: Write the determinism property**
@@ -1437,7 +1574,8 @@ proptest! { #![proptest_config(ProptestConfig::with_cases(32))]
     for c in script { let _ = g.execute(c); }
     let _ = g.execute(Command::BeginOperating); let _ = g.execute(Command::AdvanceTicks { n: 1440 });
     let commands: Vec<Command> = log.records().into_iter().filter_map(|r| match r { LogRecord::Command(c) => Some(c), _ => None }).collect();
-    let replayed = replay(Arc::new(tiny_region()), seed, GameSettings::default(), &commands).unwrap();
+    let header = log.records().into_iter().find_map(|r| match r { LogRecord::Header(h) => Some(h), _ => None }).unwrap();
+    let replayed = replay(tiny_loaded_region(), &header, &commands).unwrap();
     prop_assert_eq!(replayed.state_hash(), g.session().state_hash());
 }}
 ```
@@ -1453,6 +1591,22 @@ proptest! { #![proptest_config(ProptestConfig::with_cases(32))]
 - Config: `cases = 64`, up to 40 transitions each. The test runs in debug, so
   `InvariantCheckLayer` is active.
 
+- [ ] **Step 3b: Write the rules-version guard**
+
+```rust
+// tests/rules_version_guard.rs — fixed seed 2027 + a fixed scripted month (auto_follow_all, then one
+// BuildPlant) on tiny_region(). Digest the *outcomes*, not state_hash (Debug output changes on
+// harmless renames): every MonthlyReport money field, energy totals, reliability and the ledger
+// amounts, formatted with fixed precision.
+#[test] fn outcome_digest_is_pinned_to_rules_version() {
+    insta::assert_snapshot!(format!("SIM_RULES_VERSION={}\n{}", domain::SIM_RULES_VERSION, outcome_digest()));
+}
+```
+
+If this snapshot changes, outcomes changed: either the change is a bug, or `SIM_RULES_VERSION` must
+be bumped in the same commit (the snapshot's first line makes a missing bump visible in review).
+Add a matching line to `TESTING.md` under "Writing a new test".
+
 - [ ] **Step 4: Run them, review and accept the snapshots, then re-run**
 
 Run: `cargo insta test -p application --review` (accept after reading each report for plausibility:
@@ -1466,7 +1620,7 @@ Expected: PASS, with 4 snapshot files committed.
 ### Task 21: Infrastructure: region DTOs, rasteriser, mapping and `RonRegionCatalog`
 
 **Files:**
-- Create: `crates/infrastructure/src/region/{mod.rs, dto.rs, raster.rs, mapping.rs, catalog.rs}`; Modify: `lib.rs`, `Cargo.toml`
+- Create: `crates/infrastructure/src/region/{mod.rs, dto.rs, raster.rs, mapping.rs, catalog.rs}`; Modify: `lib.rs`, `Cargo.toml`, root `Cargo.toml` (add `sha2 = "0.11"` to `[workspace.dependencies]`)
 - Test: inline in `raster.rs`; `crates/infrastructure/tests/region_catalog.rs` with `tests/support/minimal_region.ron`
 
 **Interfaces:**
@@ -1494,7 +1648,12 @@ Expected: PASS, with 4 snapshot files committed.
   - **`fn map_region(file: RegionFile) -> Result<RegionDefinition, RegionError>`**.
   - **`RonRegionCatalog::new(dir: impl Into<PathBuf>)`**, which implements `RegionCatalog`.
     - `list()` parses every `*.ron` file in the directory, sorted by file name.
-    - `load(id)` reads `{dir}/{id}.ron`; a missing file gives `NotFound`.
+    - `load(id)` reads `{dir}/{id}.ron` **once** into bytes, computes SHA-256 using infrastructure's
+      `sha2` dependency, parses/maps those same bytes, and returns a `LoadedRegion` with the
+      definition, bytes and fingerprint. A missing file gives `NotFound`. Region files are
+      self-contained; do not support includes or mutable external inputs.
+    - Factor `load_region_bytes(source_bytes) -> Result<LoadedRegion, RegionLoadError>` so Task 23
+      can load archived source with exactly the same parser/mapper/fingerprinting contract.
     - RON errors become `Parse { message }`, including the line and column.
 
 - [ ] **Step 1: Write the failing tests**
@@ -1506,6 +1665,7 @@ Expected: PASS, with 4 snapshot files committed.
 #[test] fn blob_peaks_at_its_centre() { /* base 0.2, blob value 0.5 at cell centre → 0.7 ± 1e-9; clamps at 1.0 for value 2.0 */ }
 // tests/region_catalog.rs (each test: TempDir, copy minimal_region.ron in)
 #[test] fn loads_a_valid_region() { /* load(RegionId::new("minimal")) is Ok, terrain width matches */ }
+#[test] fn loaded_definition_fingerprint_and_archive_source_share_one_read() { /* returned bytes equal original; SHA-256 matches known vector; later source edits do not affect LoadedRegion */ }
 #[test] fn lists_regions_sorted_by_file_name() { /* copy as b.ron and a.ron (ids edited) → ids [a, b] */ }
 #[test] fn missing_region_is_not_found() { /* NotFound */ }
 #[test] fn malformed_ron_reports_position() { /* truncate file → Parse { message contains "1:" or line number } */ }
@@ -1583,11 +1743,26 @@ fn catalog() -> RonRegionCatalog { RonRegionCatalog::new(concat!(env!("CARGO_MAN
 **Interfaces:**
 - Produces:
   - **`FileCommandLog::create(path: &Path) -> Result<FileCommandLog, CommandLogError>`**, which uses
-    `create_new` and fails if the file exists. It implements `CommandLogSink` by writing one RON
-    record per line and flushing after each append.
+    `create_new` and fails if the file exists. `initialize(header, source_bytes)` exclusively creates
+    `<log-name>.region.ron` beside it, verifies the bytes match the header fingerprint, writes and
+    flushes those exact bytes, then writes/flushes the header. Until this succeeds no command append
+    is accepted. Never overwrite an existing sidecar or header, and never re-read shipped data.
+    A partial initialisation is an error, not a usable new game. It implements `CommandLogSink` by
+    writing one RON record per line and flushing after each append.
   - **`fn read_command_log(path: &Path) -> Result<Vec<LogRecord>, CommandLogError>`**.
-  - **`LogRecordDto` and `CommandDto`**: serde mirrors of `LogRecord` and `Command`, with
-    `From`/`TryFrom` both ways.
+    Decode/check the small header version envelope before interpreting version-specific command
+    DTOs; reject an absent/duplicate header or unsupported format with a typed error.
+  - **`fn load_replay(path: &Path) -> Result<ReplayInput, ReplayLoadError>`**, with
+    `ReplayInput { header: LogHeader, region: LoadedRegion, commands: Vec<Command> }`. Read the
+    adjacent archive by its fixed derived name, never a path supplied by log contents. Check rules
+    compatibility before mapping region data; parse/map/fingerprint the archive via Task 21, then
+    verify the fingerprint before returning inputs. Application `replay` checks again before
+    commands. Preserve typed version/fingerprint mismatches; missing or malformed archives fail
+    explicitly, without fallback to installed assets.
+  - **`LogRecordDto`, `LogHeaderDto`, `GameSettingsDto` and `CommandDto`**: serde mirrors with
+    `From`/`TryFrom` both ways. Version constants and opaque fingerprints require no serde in domain
+    or application. The region archive allows recovery after data retuning; a changed rules version
+    still requires the matching engine or an explicit future migration.
 
 - [ ] **Step 1: Write the failing tests** (each with its own `TempDir`)
 
@@ -1595,12 +1770,21 @@ fn catalog() -> RonRegionCatalog { RonRegionCatalog::new(concat!(env!("CARGO_MAN
 proptest! { #[test] fn round_trips_any_command_sequence(cmds in prop::collection::vec(arb_command(), 0..50)) {
     let dir = tempfile::tempdir().unwrap(); let path = dir.path().join("game.log");
     let mut log = FileCommandLog::create(&path).unwrap();
-    let records: Vec<LogRecord> = std::iter::once(LogRecord::Header { region: RegionId::new("tiny"), seed: 3 }).chain(cmds.into_iter().map(LogRecord::Command)).collect();
-    for r in &records { log.append(r).unwrap(); }
+    let source = minimal_region_bytes(); let header = header_for(&source, 3);
+    log.initialize(&header, &source).unwrap();
+    let records: Vec<LogRecord> = std::iter::once(LogRecord::Header(header)).chain(cmds.into_iter().map(LogRecord::Command)).collect();
+    for r in records.iter().skip(1) { log.append(r).unwrap(); }
     prop_assert_eq!(read_command_log(&path).unwrap(), records);
 }}
 #[test] fn refuses_to_overwrite_existing_log() { /* create twice → second Err */ }
 #[test] fn file_log_replays_to_identical_session() { /* Game with FileCommandLog plays a day; read log; application::replay → equal state_hash */ }
+#[test] fn archive_is_byte_for_byte_original_region() { /* include comments and whitespace; do not reserialise */ }
+#[test] fn replay_survives_retuned_or_deleted_shipped_region() { /* use load_replay archive; same state hash */ }
+#[test] fn explicitly_supplied_retuned_region_fails_fingerprint_check() { /* same ID, different bytes → RegionFingerprintMismatch */ }
+#[test] fn mismatched_rules_and_formats_fail_before_commands() { /* typed errors, no commands applied */ }
+#[test] fn corrupted_or_missing_archive_never_uses_shipped_fallback() { /* fingerprint/load error even when installed region exists */ }
+#[test] fn archive_or_header_failure_prevents_initialisation() { /* portable injected I/O failure; no session, no appends */ }
+#[test] fn refuses_to_overwrite_existing_archive() { /* exclusive sidecar creation */ }
 ```
 
 - [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p infrastructure command_log`. Expected: FAIL to compile.

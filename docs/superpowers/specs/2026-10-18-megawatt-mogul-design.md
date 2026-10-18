@@ -54,7 +54,12 @@ stands for.
 - **The physics is literal.** The 24 hours played are one real day, at 1,440 ticks.
 - **The accounting is weighted.** Energy, costs and revenue for the played day are multiplied by
   the number of days in that month (Gregorian, including leap years) to give the month's totals.
-  Start-up costs scale too: the representative day stands for that month's every day.
+  Daily restarts scale too. A separate month-boundary start, needed when returning from a month
+  offline, is charged once; it is not multiplied by the number of days (§6.1).
+- **Commitment is a repeating daily pattern.** Each representative day starts from the state
+  implied by that month's pattern, including any start-up already in progress across midnight.
+  Physical plant state never carries from March's representative day into April's. Persistent
+  construction, company and regulator state still advances by calendar month.
 - **Seasons change visibly every few played days.** Months drive the demand shape, solar
   irradiance and hydro water budgets, so seasonal swings become central to play.
 - **Build times are counted in months** (= played days, §3.2), so they read naturally and keep
@@ -101,7 +106,7 @@ ratemaking (PBR)**:
 - **Annual rate review.** When December closes, the regulator resets the tariff ($/MWh) for the
   coming year:
   `tariff = revenue_requirement / energy served over the past year`, where
-  `revenue_requirement = prudent operating costs (fuel, start-up, O&M) + depreciation + allowed_return × rate_base`.
+  `revenue_requirement = prudent operating costs (fuel, start-up, O&M) + depreciation + allowed_return × eligible_rate_base`.
   Year 1 uses a starting tariff from region data.
 - **Rate base** is the undepreciated capital cost of plants and lines in service. Depreciation is
   straight-line over each type's book life (region data). Construction capital is paid in cash in
@@ -110,10 +115,30 @@ ratemaking (PBR)**:
   or down by the year's **reliability** (against a target, e.g. 99.9% served) and **cost
   performance** (operating cost per MWh served against the previous year), within a band (e.g.
   7–11%).
-- **"Used and useful" disallowance.** If firm capacity exceeds the year's peak connected demand by
-  more than the allowed **planning reserve margin** (e.g. 20%), that excess fraction of the *newly
-  added* rate base is disallowed. It is written off and never recovered through the tariff.
-  Firm capacity is the sum of `capacity × capacity_credit` (§3.2).
+- **Forward-looking reserve assessment.** The review peak is the higher of the past year's actual
+  peak and the projected coincident peak over the next 12 calendar months of all cities connected
+  at review time, including connections commissioned at that month's close. The projection uses
+  the sum of their hourly mean load profiles, with seasonal/monthly factors and no random noise;
+  it is not the sum of individual cities' separate peaks. Unbuilt connections do not count.
+  Firm capacity is the sum of `capacity × capacity_credit` (§3.2), and the allowed **planning
+  reserve margin** (e.g. 20%) is applied to this review peak.
+- **"Plant held for future use" before disallowance.** Excess capacity is assessed against newly
+  added capital and capital already held from the previous review. The excess portion earns no
+  return in the tariff set by that review, but is re-tested at the next annual review. A held
+  portion that becomes useful is released and its consecutive-excess count resets. Only the same
+  portion still excess at **two consecutive reviews** is permanently written off. Retain asset IDs,
+  held capacity/capital portions and their review history; a held asset remains a candidate after
+  its commissioning year. Re-test existing held portions first, then allocate remaining excess
+  proportionally across new additions, with deterministic ID tie-breaking. Plants remain available
+  to dispatch even when their capital is held or written off.
+- **Held-capital accounting.** Holding suspends the allowed return on the held portion, not its
+  straight-line book depreciation. Depreciation continues to enter the revenue requirement; a
+  permanent write-off removes only the remaining held book value and future recovery of that value.
+  Holding, release and write-off are non-cash rate-base adjustments. The eligible rate base is the
+  remaining book value excluding held and written-off portions. A plant's **associated line capital**
+  is every line commissioned in the same review year with an endpoint at that plant's node; it is
+  allocated the plant's assessed excess fraction, while held line portions keep their own history.
+  Lines with no plant endpoint (substation-to-city, city-to-city) are never held.
 - **Satisfaction** depends on reliability and on the tariff relative to the region's reference
   tariff. Overbuilding therefore hurts twice: through disallowance and through a higher tariff.
 
@@ -154,7 +179,8 @@ is shown.
 - Demand centres with daily, seasonal and noise profiles, plus forecasts.
 - The full day cycle (one representative day per month), frequency model, protection, economics, regulator, scoring and failure.
 - An egui HUD for every phase, and dev tools behind a `dev` feature.
-- Command logging (seed + commands) as the basis for future replays and saves.
+- Command logging with versioned replay inputs and an archived region file as the basis for future
+  replays and saves (§7).
 - Localisation scaffolding with en-US only.
 
 ### 3.2 Plant types (initial tuning values, stored as region data and not in code)
@@ -224,6 +250,7 @@ game ──▶ application ──▶ domain
   does not list Bevy, so an import is impossible rather than merely discouraged.
 - `application` depends on `domain` (plus `tracing` for the pipeline layer).
 - `infrastructure` depends on `application` and `domain` (plus `serde`, `ron`, `tempfile` in tests).
+  SHA-256 region fingerprinting also lives in infrastructure (`sha2`), never in domain.
 - `game` depends on all three, plus Bevy, bevy_egui, egui_plot and, optionally, bevy-inspector-egui.
 - `cargo test -p domain` and `cargo test -p application` never compile Bevy, so feedback takes
   seconds.
@@ -281,6 +308,11 @@ These are immutable newtypes, and no bare `f64` crosses a module boundary.
   `UnderConstruction { months_left }`, `Offline`, `Starting { ticks_left }`,
   `Online { output, target }`, `Stopping`.
 
+  The commitment is a validated cyclic pattern (§6.1). The plant also retains whether it was
+  offline for the previous whole month, an initial dispatch target, and separate recurring and
+  month-boundary start counts. Lifecycle/output/remaining start-up ticks are reinitialised from
+  the pattern at `BeginOperating`; they are not restored from the previous representative day.
+
   Invariants: output stays between minimum stable output and capacity while online; output changes
   by no more than the ramp rate per tick; hydro output never exceeds the remaining budget.
 - **`demand`**: `DemandCenter`, `LoadProfile` (a daily curve × a monthly factor) and `Forecast`.
@@ -296,9 +328,10 @@ These are immutable newtypes, and no bare `f64` crosses a module boundary.
     limits.
   - **`FrequencyModel`** (§5.4).
   - **`Protection`**: load shedding, curtailment and blackout.
-- **`company`**: the **`Company` aggregate**: cash, a `Ledger` of typed entries (fuel, start-up,
-  O&M, construction instalments, revenue, write-offs), the rate base and its depreciation
-  schedule, and satisfaction.
+- **`company`**: the **`Company` aggregate**: cash, a `Ledger` of typed cash entries (fuel, start-up,
+  O&M, construction instalments, revenue), the rate base and its depreciation schedule, held
+  capital portions and consecutive-review history, and satisfaction. Depreciation and write-offs
+  are non-cash rate-base changes, not cash ledger entries.
 - **`regulation`**: the **`Regulator` aggregate**. The regulator is a separate actor with its own
   rules, so it gets its own bounded context. It holds the current tariff, allowed return, strikes,
   licence status, and the year's performance tallies used in the rate review.
@@ -333,7 +366,10 @@ built. No placeholder exists today; `Plant::commissioned_on` is the only seam.
   | Below −0.5 Hz | Under-frequency load shedding in 5% steps, spread proportionally across connected cities |
   | Below −1.5 Hz, or shedding for N consecutive ticks | **Blackout**: all plants trip to `Offline`, and the player must restart them |
   | Above +0.5 Hz | Solar curtailed first, then AGC plants pushed to minimum stable output |
-- Unserved energy is accumulated and drives reliability, strikes and lessons.
+- **Unserved energy is shed load only:** `served = demand × (1 − shed)` and `unserved = demand × shed`.
+  A residual mismatch between supply and served load is a signed `imbalance` absorbed by system
+  inertia and visible as frequency deviation; it is neither unserved nor paid for. Unserved energy
+  is accumulated and drives reliability, strikes and lessons.
 
 ### 5.5 Domain events
 
@@ -344,7 +380,8 @@ Ticks and commands return `Vec<DomainEvent>`. Nothing is pushed through a framew
 - `FrequencyDeviated { band }`, `LoadShed { mw }`, `SolarCurtailed { mw }`, `Blackout`
 - `HydroBudgetExhausted { plant }`
 - `LedgerEntryRecorded`, `StrikeIssued`, `StrikeExpired`
-- `RateReviewCompleted { tariff, allowed_return }`, `CapitalDisallowed { amount }`
+- `RateReviewCompleted { tariff, allowed_return }`, `CapitalHeld { asset, amount }`,
+  `CapitalReleased { asset, amount }`, `CapitalDisallowed { asset, amount }`
 - `PhaseChanged`, `MonthClosed(MonthlyReport)`, `Bankrupt`, `LicenseRevoked`, `MilestoneReached`
 
 ### 5.6 Domain policies (event → reaction, inside the domain)
@@ -352,8 +389,8 @@ Ticks and commands return `Vec<DomainEvent>`. Nothing is pushed through a framew
 - **Regulator (reliability):** `MonthClosed` with unserved energy above the threshold →
   `StrikeIssued`. Three active strikes → `LicenseRevoked`.
 - **Regulator (rate review):** `MonthClosed` for December → compute the revenue requirement,
-  the PBR-adjusted return and any used-and-useful disallowance → `RateReviewCompleted` (and
-  `CapitalDisallowed` if any).
+  the PBR-adjusted return and the forward-looking reserve assessment → hold, release or disallow
+  the affected capital portions, then `RateReviewCompleted` using the eligible rate base.
 - **Solvency:** cash below zero at `MonthClosed` for 3 consecutive months → `Bankrupt`.
 
 ### 5.7 Determinism (a hard invariant)
@@ -362,7 +399,8 @@ Ticks and commands return `Vec<DomainEvent>`. Nothing is pushed through a framew
 - No wall-clock time.
 - No iteration order that depends on a `HashMap`; use `BTreeMap`, or `Vec` indexed by ID.
 - Single-threaded tick.
-- The same seed + the same command log must produce an identical state hash.
+- The same seed, settings, region content, simulation rules version and command log must produce
+  an identical state hash. Replay verifies these inputs before executing any commands (§7).
 
 ## 6. Application layer (`crates/application`)
 
@@ -380,9 +418,42 @@ Every command is a plain struct handled as
 | `AdvanceTicks { n }` | Operating |
 | `FinishReview` | Review → the next month's Planning |
 
-Starting a plant mid-day is allowed, and start-up time is what makes it costly. This lets realism
-replace an arbitrary rule. Committed plants are started automatically so that they are online by
-their committed hour (lead time = start-up time).
+**Commitment is a daily pattern that repeats throughout the month.** Treat the 24 hourly flags as
+a circle. `CommitPlant` validates every off-gap between committed runs, including the gap across
+midnight. Each must fit both shutdown and start-up. Since the pattern does not constrain the
+plant's output at shutdown, reserve the worst-case shutdown duration
+`ceil(capacity / ramp_per_tick)` ticks, then `startup` ticks. An insufficient gap returns
+`CommitmentInfeasible { gap, shutdown, startup }`, without changing the session. A gap equal to the
+required sum is valid. All-day and all-off patterns have no daily restart and are valid; nuclear's
+48 h start-up therefore makes it must-run for the month or off for the month.
+
+**Initial state comes from the pattern.** At `BeginOperating`, a plant committed at hour 0 is
+already online at its selected initial target (minimum stable output by default). An off plant
+whose next run needs a start before midnight begins in `Starting` with the implied remaining
+ticks. Shutdown tails crossing midnight are initialised conservatively from capacity and their
+elapsed ramp-down time. Other dispatchable plants begin offline. This boundary initialisation is
+not an operating tick, and does not carry a 48 h start-up between calendar months. Solar availability
+and hydro budgets are initialised independently as before.
+Frequency starts at nominal and protection at normal for the new representative day; the previous
+month's incidents and reliability totals remain in its report and company/regulator history.
+
+**Start-up charges have two weights.** Each cyclic off→on run has one recurring daily restart,
+including a start begun before midnight; charge `daily_starts × days_in_month`. A plant returning
+from a whole month offline also incurs a single month-boundary start only when that start is not
+already represented by a recurring restart (notably an all-day pattern). Charge
+`startup_cost × (daily_starts × days_in_month + boundary_starts)`. Do not count synthetic
+initialisation events a second time. The first game's starter fleet is treated as established;
+newly commissioned plants are treated as previously offline. A manual restart within the played
+day is a recurring event and receives the daily weight.
+
+**Manual commands respect the horizon.** During Operating, a start with
+`current_tick + startup_ticks > 1,440` returns `StartUpBeyondDay { remaining, startup }` unchanged;
+one that finishes exactly at midnight is allowed. A manual stop or protection trip suppresses that
+plant's automatic commitment actions for the rest of the representative day, so it cannot be
+immediately auto-started again. These operating overrides do not rewrite the validated base pattern
+or carry into the next month. During Planning, `StartPlant` selects the all-day pattern and
+`StopPlant` selects all-off; neither advances physical time. Planning target changes set the initial
+target. `BeginOperating` freezes the month's pattern and initialises its implied state.
 
 ### 6.2 Command pipeline (cross-cutting layers)
 
@@ -405,8 +476,8 @@ The presentation layer never reads aggregate internals.
   - `PlantHistoryProjection`: starts, trips, energy and revenue per plant.
   - `MilestoneProjection`: progress toward milestones.
   - `RateReviewProjection`: a running estimate of the next review (projected allowed return,
-    current reserve margin, and capital at risk of disallowance), so the player can see the
-    consequences before December.
+    current reserve margin, held capital, capital released, and capital at risk of a second-review
+    write-off), so the player can see the consequences before December.
   - `RampWarningProjection`: compares the next 60 minutes of forecast net load with the committed
     *ramp capability* and produces warnings such as "Sunset ramp: solar −6.2 GW in 40 min; fast
     capacity covers 4.9 GW".
@@ -419,22 +490,25 @@ The presentation layer never reads aggregate internals.
 2. Compute actual demand for connected cities.
 3. Compute solar availability.
 4. Update hydro budgets.
-5. Plants progress (construction completes at month boundaries; start-up; ramp toward target).
-6. Auto-start or stop committed plants for the upcoming hours.
+5. Apply scheduled start/stop actions for the current interval, respecting operating overrides.
+6. Plants progress (start-up; ramp toward target). Construction completes at month close.
 7. AGC re-targets auto-follow plants.
 8. Imbalance = supply − demand.
 9. Frequency update.
 10. Protection (shed, curtail or blackout).
-11. Accounting: accumulate energy per plant (MWh), start-ups and *served* energy. Nothing is priced
-    per tick. At month close, each total is priced, weighted by `days_in_month` and **rounded to
-    cents once per ledger entry** (round-half-even), so money never accumulates fractional cents.
+11. Accounting: accumulate energy per plant (MWh), recurring daily starts, month-boundary starts
+    and *served* energy. Nothing is priced per tick. At month close, apply each total's weight
+    (§6.1) and **round to cents once per ledger entry** (round-half-even), so money never accumulates
+    fractional cents. Retain only the whole-month offline summary for next month's start charging.
 12. Collect events. At tick 1,440: the month's totals are weighted, `MonthClosed`, policies run, and the phase moves to Review.
 
 ### 6.5 Ports
 
 - `RegionCatalog`: `list() -> Vec<RegionSummary>` and
-  `load(RegionId) -> Result<RegionDefinition, RegionLoadError>`.
-- `CommandLogSink`: `append(&LoggedCommand)`.
+  `load(RegionId) -> Result<LoadedRegion, RegionLoadError>`. `LoadedRegion` carries the validating
+  domain definition, source bytes and opaque fingerprint from the same read (§7.1).
+- `CommandLogSink`: `initialize(&LogHeader, region_source: &[u8])` archives the source and records
+  the header; `append(&LogRecord)` records subsequent commands. Both return typed errors.
 - (Later) `SnapshotStore`.
 
 ## 7. Infrastructure (`crates/infrastructure`)
@@ -443,10 +517,34 @@ The presentation layer never reads aggregate internals.
   the domain's validating constructors ("parse, don't validate"). Errors carry file and field
   context.
 - **`FileCommandLog`**: writes the seed plus commands, one RON record per line, to a path supplied
-  by the caller.
+  by the caller, with the replay contract below.
 - The region data is authored at a coarse cell resolution (on the order of 100 × 60 cells per
   region), with cities as named points and hand-tuned resource layers. Geographic accuracy follows
   real interconnection boundaries at the level of a stylised diorama, not GIS.
+
+### 7.1 Replay inputs and region archive
+
+- The header records `log_format_version`, `SIM_RULES_VERSION`, the full `GameSettings`, seed,
+  region ID for display, and `region_fingerprint`. Bump `SIM_RULES_VERSION` whenever changes to
+  rules, RNG algorithms, numerical behaviour or region mapping alter outcomes.
+- The fingerprint is SHA-256 of the **exact source bytes** of the self-contained region RON file.
+  This deliberately treats formatting changes as different content too. Infrastructure computes
+  it; the domain gains no I/O, serde or hashing dependency. Region files may not depend on external
+  includes or mutable side inputs. The same bytes must supply the parsed `RegionDefinition`, the
+  fingerprint and the archive; do not re-read the source separately for each purpose.
+- Before accepting commands, save a byte-for-byte copy beside the log as `<log-name>.region.ron`,
+  then write the header. Use exclusive creation; never overwrite an archive. Failure to archive or
+  initialise the header fails new-game creation with a typed error. The catalog passes source bytes
+  and the fingerprint alongside the domain definition through an application-owned load result.
+- On replay, validate the log format, rules version and region bytes before creating a session or
+  running commands. Unsupported formats return `LogFormatVersionMismatch`; incompatible rules
+  return `RulesVersionMismatch`; different bytes return `RegionFingerprintMismatch`. Missing or
+  malformed archived files return typed load errors. Never substitute current shipped data silently.
+- Replay normally uses the archived region file, so retuning shipped data does not break recovery.
+  Explicitly supplying a different region file still performs the fingerprint check. A region
+  archive does not migrate old simulation rules: replay after a rules change requires a matching
+  engine version or a future explicit migration. The Milestone 1 test harness verifies replay;
+  player-facing save/load remains out of scope.
 
 ## 8. Presentation (`crates/game`)
 
@@ -496,9 +594,9 @@ is shed). Lines show only an "energised" pulse. It shows no per-line loading unt
 | Concern | Approach |
 |---|---|
 | Observability | A `TracingLayer` span per command (command, outcome, emitted events); `#[tracing::instrument]` on handlers; Bevy's Tracy feature for frame profiling. The domain stays free of logging. |
-| Persistence | Command sourcing: `CommandLogLayer` records seed + commands through the `CommandLogSink` port. Aggregates are persistence-ignorant. Snapshots and save/load come in a later milestone. |
+| Persistence | Command sourcing with a versioned header, settings, seed, region fingerprint and adjacent source archive (§7.1). `CommandLogLayer` records commands through `CommandLogSink`; aggregates are persistence-ignorant. Snapshots and player-facing save/load come later. |
 | Error handling | Typed `Result`s at every layer (`DomainError` → `CommandError` with `thiserror`). The domain never panics on player input; `panic!` and `debug_assert!` are only for bugs. Errors are mapped for display once, at the Bevy boundary. |
-| Data integrity | Types first: newtypes, validating constructors and state enums. Debug and test builds run `InvariantCheckLayer` after each command or tick (generation = served + curtailed; cash change = ledger sum; plant bounds). |
+| Data integrity | Types first: newtypes, validating constructors and state enums. Debug and test builds run `InvariantCheckLayer` after each command or tick (generation = served + curtailed + imbalance; cash change = ledger sum; plant bounds). |
 | Localisation | The domain never produces user-facing text, only typed events, errors and lessons with parameters. Fluent `.ftl` files live under `assets/locales/en-US/`, and region data refers to translation keys. Milestone 1 ships en-US only. |
 
 ## 10. Testing strategy
@@ -520,19 +618,29 @@ is shed). Lines show only an "energised" pulse. It shows no per-line loading unt
   rate, and online output stays between minimum stable output and capacity.
 - **Merit order:** AGC never leaves a cheaper auto-follow plant with headroom while raising a more
   expensive one, and the reverse holds when lowering.
-- **Conservation:** each tick, generation = served + curtailed, and unserved energy is never
-  negative.
+- **Conservation:** each tick, generation = served + curtailed + imbalance (signed), unserved =
+  demand × shed, and 0 ≤ served ≤ demand.
 - **Money:** the change in cash always equals the sum of the ledger entries, exactly.
-- **Weighting:** each month's ledger entries equal the played day's priced totals × `days_in_month`,
-  with exactly one rounding step per entry.
+- **Commitment:** every cyclic off-gap fits worst-case shutdown plus start-up; all-day/all-off are
+  valid; invalid patterns leave the session unchanged. Test cross-midnight starts/shutdowns and
+  exact-fit gaps. Nuclear is all-day or all-off, never carried in `Starting` across months.
+- **Weighting:** daily energy and restarts use `days_in_month`; month-boundary starts are charged
+  once, without double-counting a recurring restart. Exactly one rounding step applies per entry.
 - **Hydro:** the energy a hydro plant produces in a played day never exceeds that day's budget.
-- **Determinism:** the same seed + the same commands produce an identical state hash.
+- **Rules-version guard:** a fixed scripted month's outcome digest (report and ledger figures, not
+  `Debug` output) is snapshotted together with `SIM_RULES_VERSION`, so an outcome change without a
+  version bump fails review.
+- **Determinism:** the same verified replay inputs and commands produce an identical state hash.
+  Mismatched rules, format or region bytes fail before any command; the archived file replays after
+  shipped data changes.
 - **Robustness:** any random sequence of commands (state-machine test) never panics, and all
   invariants hold afterwards.
 - **Parsing:** malformed region DTOs produce typed errors, never panics.
 - **Rate review:** the new tariff × the past year's served energy = the revenue requirement (within
-  one cent); the allowed return always stays within the PBR band; disallowance is zero whenever firm
-  capacity is within the reserve margin, and never exceeds the capital newly added that year.
+  one cent); the allowed return always stays within the PBR band. Reserve assessment uses the higher
+  of actual and forward coincident peaks, including December connections. Held capital earns no
+  return, useful held portions are released, and only portions excess at two consecutive reviews
+  are written off, bounded by their remaining book value. Repeated estimates do not age holdings.
 
 ### 10.3 Balance snapshots
 
@@ -566,7 +674,7 @@ Test-driven development throughout: failing test → minimal code → refactor.
 |---|---|
 | Transmission congestion | A new `NetworkModel::DcPowerFlow` variant; a settings toggle once it exists |
 | Equipment ageing and maintenance | `Plant::commissioned_on`; a new field in `SimulationFidelity` |
-| Save/load and replays | The command log plus seed (already recorded); a `SnapshotStore` port |
+| Save/load and replays | Versioned command log, settings, seed, region fingerprint and archived region bytes; a `SnapshotStore` port |
 | More regions | A new `.ron` file; the picker already appears for two or more regions |
 | More plant types (wind, storage) | `PlantSpec` is data-driven; new behaviour goes in the `generation` module |
 | More languages | New `assets/locales/<lang>/` folder |

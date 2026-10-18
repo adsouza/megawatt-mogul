@@ -69,16 +69,20 @@ policies (event to reaction, such as strikes or bankruptcy) run inside the domai
 
 ## Command sourcing (Plan 1 — not yet built)
 
-Persistence is command sourcing, not event sourcing: `CommandLogLayer` records the seed plus the
-commands through the `CommandLogSink` port, and the aggregates know nothing about persistence. Because
-the simulation is deterministic, the same seed and command log replay to an identical state hash.
+Persistence is command sourcing, not event sourcing: `CommandLogLayer` records commands through
+the `CommandLogSink` port, and the aggregates know nothing about persistence. The header preserves
+log/rules versions, settings, seed and a SHA-256 fingerprint of the exact region source bytes.
+Infrastructure archives those same bytes as `<log-name>.region.ron` before the session starts.
+Replay verifies versions and fingerprints before executing commands and uses the archive when
+shipped data changes. A rules change still needs a matching engine or a future explicit migration.
 Event sourcing would force every domain event to be a stable, versioned persistence format, which
 fights the goal of keeping the domain free to change. Commands are the smaller, more stable surface.
 Save/load and replays build on the log in a later milestone.
 
 ## Determinism rules
 
-The same seed plus the same command log must produce an identical state hash.
+The same verified versions, settings, region content, seed and command log must produce an identical
+state hash.
 
 - Use `BTreeMap` / `BTreeSet`. Never iterate a `HashMap`.
 - No wall-clock time.
@@ -92,6 +96,23 @@ year is 12 played days. `Money` is `i64` cents. Nothing is priced per tick: phys
 priced once per ledger entry at month close as `price x energy x days_in_month`, rounded once with
 `f64::round_ties_even` to whole cents.
 
+Commitments are cyclic daily patterns. Every off-gap, including across midnight, must fit worst-case
+shutdown from capacity plus start-up; all-day/all-off patterns need no daily restart. At each
+`BeginOperating`, initialise physical plant state from the pattern, including cross-midnight starts
+and shutdown tails. A 48-hour nuclear start never carries from one representative month to another.
+Frequency/protection start at nominal/Normal; prior incidents and reliability remain in history.
+Recurring daily starts are weighted by `days_in_month`; a distinct return from a whole month offline
+costs one boundary start. Never charge that boundary start again when a recurring restart covers it.
+Operating manual starts must finish by midnight; stops/trips suppress automatic actions for the day
+without rewriting the validated base pattern. Planning start/stop select all-day/all-off patterns.
+
+Annual reserve assessment uses the higher of the actual year peak and the next 12 months' projected
+coincident peak for all cities connected at review time, including December's new connections.
+Excess new capital is held without allowed return, re-tested next year, and written off only when
+the same portion remains excess at two consecutive reviews. Per-asset held portions and review
+history survive annual tally resets; preview queries never age them. Held capital still depreciates;
+only eligible remaining book value earns return. Holding and write-off do not change cash.
+
 ## The tick (Plan 1 — not yet built)
 
 `GameSession::tick` runs these steps in a fixed order:
@@ -100,14 +121,14 @@ priced once per ledger entry at month close as `price x energy x days_in_month`,
 2. Compute actual demand for connected cities.
 3. Compute solar availability.
 4. Update hydro budgets.
-5. Plants progress (construction completes at month boundaries; start-up; ramp toward target).
-6. Auto-start or stop committed plants for the upcoming hours.
+5. Apply scheduled start/stop actions for the current interval, respecting operating overrides.
+6. Plants progress (start-up; ramp toward target). Construction completes at month close.
 7. AGC re-targets auto-follow plants.
 8. Imbalance = supply - demand.
 9. Frequency update.
 10. Protection (shed, curtail or blackout).
-11. Accounting: accumulate energy per plant (MWh), start-ups and served energy. Nothing is priced
-    per tick.
+11. Accounting: accumulate energy per plant (MWh), recurring and boundary starts separately, and
+    served energy. Nothing is priced per tick; apply the appropriate weights at month close.
 12. Collect events. At tick 1,440 the month's totals are weighted, `MonthClosed` is emitted,
     policies run, and the phase moves to Review.
 
