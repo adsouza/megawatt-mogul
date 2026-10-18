@@ -1,12 +1,13 @@
 //! Read-only views of the session for projections and display.
 
 use super::{DayPhase, GameSession};
+use crate::company::{CapitalChange, ReserveReviewInputs};
 use crate::demand::{ForecastPoint, hourly_forecast};
 use crate::generation::{Plant, PlantStatus};
 use crate::grid::{GridMode, TickSummary};
 use crate::ids::{CellCoord, CityId, NodeId, PlantId};
 use crate::region::PlantKind;
-use crate::regulation::Licence;
+use crate::regulation::{Licence, RateReviewInputs, compute_rate_review, reserve_excess};
 use crate::time::SimMonth;
 use crate::units::{Hertz, MegawattHours, Megawatts, Money, Price, Ratio};
 
@@ -61,6 +62,25 @@ pub struct CompanyView {
     pub allowed_return: Ratio,
     pub strikes: u8,
     pub licence: Licence,
+}
+
+/// What the next annual reviews would do if they ran on today's state.
+///
+/// An estimate, not a promise: it uses the year so far and today's grid.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RateReviewEstimate {
+    /// The allowed return the rate review would set.
+    pub projected_return: Ratio,
+    /// Firm capacity over the review's peak, minus one: spare capacity as a
+    /// fraction of that peak (zero when the peak is zero).
+    pub reserve_margin: f64,
+    /// Book value a first reserve review would hold out of the rate base.
+    pub capital_to_hold: Money,
+    /// Book value a reserve review would release back into the rate base.
+    pub capital_to_release: Money,
+    /// Held book value a second consecutive reserve review would write off
+    /// permanently.
+    pub capital_at_risk: Money,
 }
 
 impl GameSession {
@@ -137,6 +157,73 @@ impl GameSession {
             allowed_return: self.regulator.allowed_return(),
             strikes: self.regulator.strikes(),
             licence: self.regulator.licence(),
+        }
+    }
+
+    /// Expected (noise-free) demand of connected cities less the expected
+    /// output of connected solar at `tick` of the current month: the load the
+    /// dispatchable fleet has to follow.
+    pub fn forecast_net_load(&self, tick: u32) -> Megawatts {
+        let month = self.clock.month();
+        self.power
+            .connected_demand_forecast(&self.region, month, tick)
+            - self.power.expected_solar(&self.region, month, tick)
+    }
+
+    /// What the next reserve review and rate review would do on today's
+    /// state. Pure: the reserve review is only previewed, so held portions
+    /// and their review counts are untouched.
+    ///
+    /// The review peak is `max(year's peak so far, projected peak)`, as in
+    /// December's real review, with the projection starting next month.
+    pub fn rate_review_estimate(&self) -> RateReviewEstimate {
+        let params = self.region.regulator();
+        let month = self.clock.month();
+        let firm = self.power.firm_capacity();
+        let projected = self
+            .power
+            .projected_connected_peak(&self.region, month.next());
+        let tally = self.regulator.tally().clone();
+        let review_peak = tally.peak_demand.max(projected);
+        let excess = reserve_excess(firm, tally.peak_demand, projected, params.reserve_margin);
+        let capital = self
+            .company
+            .rate_base()
+            .preview_reserve_review(&ReserveReviewInputs {
+                year: month.year(),
+                excess,
+            });
+        let outcome = compute_rate_review(
+            &RateReviewInputs {
+                tally,
+                depreciation: self.year_depreciation,
+                eligible_rate_base: capital.eligible_total,
+                firm_capacity: firm,
+                projected_peak: projected,
+                previous_tariff: self.regulator.tariff(),
+                previous_cost_per_mwh: self.regulator.last_cost_per_mwh(),
+            },
+            params,
+        );
+
+        let (mut hold, mut release, mut at_risk) = (Money::ZERO, Money::ZERO, Money::ZERO);
+        for change in &capital.changes {
+            match change {
+                CapitalChange::Held { amount, .. } => hold += *amount,
+                CapitalChange::Released { amount, .. } => release += *amount,
+                CapitalChange::Disallowed { amount, .. } => at_risk += *amount,
+            }
+        }
+        RateReviewEstimate {
+            projected_return: outcome.allowed_return,
+            reserve_margin: if review_peak > Megawatts::ZERO {
+                firm / review_peak - 1.0
+            } else {
+                0.0
+            },
+            capital_to_hold: hold,
+            capital_to_release: release,
+            capital_at_risk: at_risk,
         }
     }
 }

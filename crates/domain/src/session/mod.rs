@@ -21,7 +21,7 @@ mod tests;
 pub use invariants::InvariantViolation;
 pub use report::{Incident, IncidentKind, MeritOrderEntry, MonthAccumulator, MonthlyReport};
 pub use settings::{GameSettings, SimulationFidelity};
-pub use views::{CityView, CompanyView, GridSnapshot, PlantView};
+pub use views::{CityView, CompanyView, GridSnapshot, PlantView, RateReviewEstimate};
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;

@@ -3,21 +3,24 @@
 //!
 //! Projections are pure functions of the event stream (plus the session, for
 //! facts an event only hints at), so they are deterministic and rebuildable.
-//!
-//! Task 19 adds the remaining projections (`ramp_warnings`, `rate_review`,
-//! `lessons`) to [`Projections`]; they do not exist yet.
 
+mod lessons;
 mod milestones;
 mod monthly_report;
 mod plant_history;
+mod ramp_warning;
+mod rate_review;
 mod timeline;
 
 use domain::events::DomainEvent;
 use domain::session::GameSession;
 
+pub use lessons::{Lesson, LessonsProjection, lessons_for};
 pub use milestones::{MILESTONES, MilestoneKind, MilestoneProjection};
 pub use monthly_report::MonthlyReportProjection;
 pub use plant_history::{PlantHistory, PlantHistoryProjection};
+pub use ramp_warning::{RampWarning, RampWarningProjection, ramp_warning};
+pub use rate_review::RateReviewProjection;
 pub use timeline::{TIMELINE_CAPACITY, TimelinePoint, TimelineProjection};
 
 /// One read model, updated one event at a time.
@@ -36,6 +39,9 @@ pub struct Projections {
     pub monthly_reports: MonthlyReportProjection,
     pub plant_history: PlantHistoryProjection,
     pub milestones: MilestoneProjection,
+    pub ramp_warnings: RampWarningProjection,
+    pub rate_review: RateReviewProjection,
+    pub lessons: LessonsProjection,
 }
 
 impl Projections {
@@ -46,17 +52,24 @@ impl Projections {
             monthly_reports: MonthlyReportProjection::default(),
             plant_history: PlantHistoryProjection::default(),
             milestones: MilestoneProjection::new(session),
+            ramp_warnings: RampWarningProjection::default(),
+            rate_review: RateReviewProjection::new(session),
+            lessons: LessonsProjection::default(),
         }
     }
 
     /// Applies each event, in order, to each projection in a fixed order:
-    /// timeline, monthly reports, plant history, milestones.
+    /// timeline, monthly reports, plant history, milestones, ramp warnings,
+    /// rate review, lessons.
     pub fn apply_all(&mut self, events: &[DomainEvent], session: &GameSession) {
         for event in events {
             self.timeline.apply(event, session);
             self.monthly_reports.apply(event, session);
             self.plant_history.apply(event, session);
             self.milestones.apply(event, session);
+            self.ramp_warnings.apply(event, session);
+            self.rate_review.apply(event, session);
+            self.lessons.apply(event, session);
         }
     }
 }

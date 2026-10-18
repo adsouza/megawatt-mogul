@@ -377,6 +377,29 @@ fn game_updates_projections_after_execute() {
 }
 
 #[test]
+fn game_updates_forward_looking_and_lesson_projections() {
+    let mut g = game();
+    assert_eq!(
+        g.projections().rate_review.estimate(),
+        Some(&g.session().rate_review_estimate())
+    );
+    assert!(g.projections().lessons.latest().is_empty());
+
+    g.execute(Command::BeginOperating).unwrap();
+    // The fleet is offline, so the morning demand ramp outruns it.
+    g.execute(Command::AdvanceTicks { n: 366 }).unwrap();
+    assert!(g.projections().ramp_warnings.current().is_some());
+
+    g.execute(Command::AdvanceTicks { n: 2_000 }).unwrap();
+    assert_eq!(g.session().phase(), DayPhase::Review);
+    assert!(!g.projections().lessons.latest().is_empty());
+    assert_eq!(
+        g.projections().rate_review.estimate(),
+        Some(&g.session().rate_review_estimate())
+    );
+}
+
+#[test]
 fn failed_command_leaves_projections_unchanged() {
     let mut g = game();
     g.execute(Command::AdvanceTicks { n: 10 }).unwrap_err(); // wrong phase

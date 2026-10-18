@@ -409,3 +409,38 @@ fn invariants_hold_through_a_healthy_day() {
     s.finish_review().unwrap();
     assert_eq!(s.check_invariants(), Ok(()));
 }
+
+#[test]
+fn forecast_net_load_is_demand_less_expected_solar() {
+    let s = session();
+    let region = s.region().clone();
+    for tick in [0, 600, 1_020, 1_439] {
+        let demand = s
+            .power()
+            .connected_demand_forecast(&region, s.clock().month(), tick);
+        let solar = s.power().expected_solar(&region, s.clock().month(), tick);
+        assert_eq!(s.forecast_net_load(tick), demand - solar);
+    }
+    // The tiny fleet has no solar, so net load is just demand.
+    assert_eq!(
+        s.forecast_net_load(600),
+        s.power()
+            .connected_demand_forecast(&region, s.clock().month(), 600)
+    );
+}
+
+#[test]
+fn rate_review_estimate_of_a_fresh_game_holds_nothing() {
+    let s = session();
+    let estimate = s.rate_review_estimate();
+    assert_eq!(estimate.capital_to_hold, Money::ZERO);
+    assert_eq!(estimate.capital_to_release, Money::ZERO);
+    assert_eq!(estimate.capital_at_risk, Money::ZERO);
+    let region = s.region().clone();
+    let peak = s
+        .power()
+        .projected_connected_peak(&region, s.clock().month().next());
+    let firm = s.power().firm_capacity();
+    assert_eq!(estimate.reserve_margin, firm / peak - 1.0);
+    assert!(estimate.projected_return.value() > 0.0);
+}
