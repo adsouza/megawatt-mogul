@@ -1,0 +1,164 @@
+---
+source: crates/application/tests/scenarios.rs
+expression: report
+---
+MonthlyReport {
+    month: SimMonth {
+        year: 2027,
+        month: 6,
+    },
+    days: 30,
+    revenue: Money(
+        6434688811,
+    ),
+    fuel: Money(
+        -1925934400,
+    ),
+    start_up: Money(
+        0,
+    ),
+    fixed_om: Money(
+        -527000000,
+    ),
+    construction: Money(
+        0,
+    ),
+    net: Money(
+        3981754411,
+    ),
+    energy_by_kind: {
+        Coal: MegawattHours(
+            279825.7124654014,
+        ),
+        Ccgt: MegawattHours(
+            145434.94731334332,
+        ),
+        Peaker: MegawattHours(
+            28799.99999999941,
+        ),
+        Solar: MegawattHours(
+            223381.52788473334,
+        ),
+    },
+    merit_order: [
+        MeritOrderEntry {
+            plant: PlantId(
+                15,
+            ),
+            kind: Solar,
+            marginal_cost: Price(
+                0.0,
+            ),
+            energy: MegawattHours(
+                44676.30557694667,
+            ),
+        },
+        MeritOrderEntry {
+            plant: PlantId(
+                18,
+            ),
+            kind: Solar,
+            marginal_cost: Price(
+                0.0,
+            ),
+            energy: MegawattHours(
+                44676.30557694667,
+            ),
+        },
+        MeritOrderEntry {
+            plant: PlantId(
+                21,
+            ),
+            kind: Solar,
+            marginal_cost: Price(
+                0.0,
+            ),
+            energy: MegawattHours(
+                44676.30557694667,
+            ),
+        },
+        MeritOrderEntry {
+            plant: PlantId(
+                24,
+            ),
+            kind: Solar,
+            marginal_cost: Price(
+                0.0,
+            ),
+            energy: MegawattHours(
+                44676.30557694667,
+            ),
+        },
+        MeritOrderEntry {
+            plant: PlantId(
+                27,
+            ),
+            kind: Solar,
+            marginal_cost: Price(
+                0.0,
+            ),
+            energy: MegawattHours(
+                44676.30557694667,
+            ),
+        },
+        MeritOrderEntry {
+            plant: PlantId(
+                6,
+            ),
+            kind: Coal,
+            marginal_cost: Price(
+                30.0,
+            ),
+            energy: MegawattHours(
+                279825.7124654014,
+            ),
+        },
+        MeritOrderEntry {
+            plant: PlantId(
+                9,
+            ),
+            kind: Ccgt,
+            marginal_cost: Price(
+                45.0,
+            ),
+            energy: MegawattHours(
+                145434.94731334332,
+            ),
+        },
+        MeritOrderEntry {
+            plant: PlantId(
+                12,
+            ),
+            kind: Peaker,
+            marginal_cost: Price(
+                150.0,
+            ),
+            energy: MegawattHours(
+                28799.99999999941,
+            ),
+        },
+    ],
+    demand: MegawattHours(
+        677335.6643116286,
+    ),
+    served: MegawattHours(
+        677335.6643116286,
+    ),
+    unserved: MegawattHours(
+        0.0,
+    ),
+    curtailed: MegawattHours(
+        34857.521641202075,
+    ),
+    imbalance: MegawattHours(
+        106.52335184944792,
+    ),
+    peak_demand: Megawatts(
+        1188.7168137236386,
+    ),
+    reliability: Ratio(
+        1.0,
+    ),
+    incidents: [],
+    rate_review: None,
+}

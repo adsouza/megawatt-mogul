@@ -1,0 +1,106 @@
+---
+source: crates/application/tests/scenarios.rs
+expression: report
+---
+MonthlyReport {
+    month: SimMonth {
+        year: 2027,
+        month: 7,
+    },
+    days: 31,
+    revenue: Money(
+        0,
+    ),
+    fuel: Money(
+        0,
+    ),
+    start_up: Money(
+        0,
+    ),
+    fixed_om: Money(
+        -277000000,
+    ),
+    construction: Money(
+        0,
+    ),
+    net: Money(
+        -277000000,
+    ),
+    energy_by_kind: {
+        Coal: MegawattHours(
+            0.0,
+        ),
+        Ccgt: MegawattHours(
+            0.0,
+        ),
+        Peaker: MegawattHours(
+            0.0,
+        ),
+    },
+    merit_order: [
+        MeritOrderEntry {
+            plant: PlantId(
+                6,
+            ),
+            kind: Coal,
+            marginal_cost: Price(
+                30.0,
+            ),
+            energy: MegawattHours(
+                0.0,
+            ),
+        },
+        MeritOrderEntry {
+            plant: PlantId(
+                9,
+            ),
+            kind: Ccgt,
+            marginal_cost: Price(
+                45.0,
+            ),
+            energy: MegawattHours(
+                0.0,
+            ),
+        },
+        MeritOrderEntry {
+            plant: PlantId(
+                12,
+            ),
+            kind: Peaker,
+            marginal_cost: Price(
+                150.0,
+            ),
+            energy: MegawattHours(
+                0.0,
+            ),
+        },
+    ],
+    demand: MegawattHours(
+        2693844.605319813,
+    ),
+    served: MegawattHours(
+        0.0,
+    ),
+    unserved: MegawattHours(
+        2693844.605319813,
+    ),
+    curtailed: MegawattHours(
+        0.0,
+    ),
+    imbalance: MegawattHours(
+        0.0,
+    ),
+    peak_demand: Megawatts(
+        4680.209188884308,
+    ),
+    reliability: Ratio(
+        0.0,
+    ),
+    incidents: [
+        Incident {
+            tick: 0,
+            kind: Blackout,
+        },
+    ],
+    rate_review: None,
+}

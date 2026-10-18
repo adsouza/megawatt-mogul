@@ -1,47 +1,25 @@
-use std::sync::Arc;
+#[allow(dead_code)]
+mod support;
 
 use application::{
     Command, CommandError, CommandLogError, CommandLogSink, Game, InMemoryCommandLog,
-    LOG_FORMAT_VERSION, LoadedRegion, LogHeader, LogRecord, RegionCatalog, RegionFingerprint,
-    RegionLoadError, RegionSummary, ReplayError, auto_select_region, replay,
+    LOG_FORMAT_VERSION, LogHeader, LogRecord, RegionFingerprint, RegionLoadError, RegionSummary,
+    ReplayError, auto_select_region, replay,
 };
 use domain::SIM_RULES_VERSION;
 use domain::error::DomainError;
 use domain::events::DomainEvent;
 use domain::ids::{CellCoord, PlantId, RegionId};
 use domain::region::PlantKind;
-use domain::region::fixtures::tiny_region;
 use domain::session::{DayPhase, GameSettings};
+use support::{StaticCatalog, logged_commands, tiny_loaded_region};
 
-const TINY_SOURCE: &[u8] = b"fake tiny region source bytes";
-const TINY_FINGERPRINT: [u8; 32] = [0x11; 32];
-
-/// The same fixture serves live play and replay.
-fn tiny_loaded_region() -> LoadedRegion {
-    LoadedRegion {
-        definition: Arc::new(tiny_region()),
-        source_bytes: TINY_SOURCE.to_vec(),
-        fingerprint: RegionFingerprint::new(TINY_FINGERPRINT),
-    }
+fn tiny_catalog() -> StaticCatalog {
+    StaticCatalog(vec![tiny_loaded_region()])
 }
 
-struct StaticCatalog;
-
-impl RegionCatalog for StaticCatalog {
-    fn list(&self) -> Result<Vec<RegionSummary>, RegionLoadError> {
-        Ok(vec![RegionSummary {
-            id: RegionId::new("tiny"),
-            name_key: "region-tiny".to_owned(),
-        }])
-    }
-
-    fn load(&self, id: &RegionId) -> Result<LoadedRegion, RegionLoadError> {
-        if id.as_str() == "tiny" {
-            Ok(tiny_loaded_region())
-        } else {
-            Err(RegionLoadError::NotFound(id.clone()))
-        }
-    }
+fn tiny_fingerprint() -> RegionFingerprint {
+    tiny_loaded_region().fingerprint
 }
 
 fn tiny_header(seed: u64) -> LogHeader {
@@ -51,13 +29,13 @@ fn tiny_header(seed: u64) -> LogHeader {
         settings: GameSettings::default(),
         region: RegionId::new("tiny"),
         seed,
-        region_fingerprint: RegionFingerprint::new(TINY_FINGERPRINT),
+        region_fingerprint: tiny_fingerprint(),
     }
 }
 
 fn game_with_log(log: InMemoryCommandLog) -> Game {
     Game::start_new(
-        &StaticCatalog,
+        &tiny_catalog(),
         &RegionId::new("tiny"),
         1,
         GameSettings::default(),
@@ -68,17 +46,6 @@ fn game_with_log(log: InMemoryCommandLog) -> Game {
 
 fn game() -> Game {
     game_with_log(InMemoryCommandLog::default())
-}
-
-/// The commands logged after the header.
-fn logged_commands(log: &InMemoryCommandLog) -> Vec<Command> {
-    log.records()
-        .into_iter()
-        .filter_map(|record| match record {
-            LogRecord::Command(command) => Some(command),
-            LogRecord::Header(_) => None,
-        })
-        .collect()
 }
 
 fn plant_of(g: &Game, kind: PlantKind) -> PlantId {
@@ -159,7 +126,7 @@ fn replay_reproduces_live_session() {
 fn header_records_all_replay_inputs() {
     let log = InMemoryCommandLog::default();
     let _game = Game::start_new(
-        &StaticCatalog,
+        &tiny_catalog(),
         &RegionId::new("tiny"),
         42,
         GameSettings::default(),
@@ -176,8 +143,8 @@ fn header_records_all_replay_inputs() {
     assert_eq!(header.settings, GameSettings::default());
     assert_eq!(header.seed, 42);
     assert_eq!(header.region, RegionId::new("tiny"));
-    assert_eq!(header.region_fingerprint.as_bytes(), &TINY_FINGERPRINT);
-    assert_eq!(log.region_source(), TINY_SOURCE);
+    assert_eq!(header.region_fingerprint, tiny_fingerprint());
+    assert_eq!(log.region_source(), tiny_loaded_region().source_bytes);
 }
 
 #[test]
@@ -212,7 +179,7 @@ fn version_or_region_mismatch_prevents_any_command() {
     assert_eq!(
         replay(other_region.clone(), &tiny_header(1), &commands).unwrap_err(),
         ReplayError::RegionFingerprintMismatch {
-            expected: RegionFingerprint::new(TINY_FINGERPRINT),
+            expected: tiny_fingerprint(),
             actual: other_fingerprint,
         }
     );
@@ -272,7 +239,7 @@ impl CommandLogSink for FailingSink {
 #[test]
 fn archive_or_header_initialisation_failure_prevents_new_game() {
     let result = Game::start_new(
-        &StaticCatalog,
+        &tiny_catalog(),
         &RegionId::new("tiny"),
         1,
         GameSettings::default(),
@@ -293,7 +260,7 @@ fn archive_or_header_initialisation_failure_prevents_new_game() {
 fn unknown_region_prevents_new_game() {
     let missing = RegionId::new("nowhere");
     let result = Game::start_new(
-        &StaticCatalog,
+        &tiny_catalog(),
         &missing,
         1,
         GameSettings::default(),
@@ -308,7 +275,7 @@ fn unknown_region_prevents_new_game() {
 #[test]
 fn a_failing_log_append_never_fails_the_command() {
     let mut g = Game::start_new(
-        &StaticCatalog,
+        &tiny_catalog(),
         &RegionId::new("tiny"),
         1,
         GameSettings::default(),
@@ -335,10 +302,11 @@ fn in_memory_log_rejects_append_before_initialize() {
 #[test]
 fn in_memory_log_accepts_only_one_header() {
     let mut log = InMemoryCommandLog::default();
-    log.initialize(&tiny_header(1), TINY_SOURCE).unwrap();
+    let source = tiny_loaded_region().source_bytes;
+    log.initialize(&tiny_header(1), &source).unwrap();
     assert!(log.initialize(&tiny_header(2), b"other").is_err());
     assert_eq!(log.records(), vec![LogRecord::Header(tiny_header(1))]);
-    assert_eq!(log.region_source(), TINY_SOURCE);
+    assert_eq!(log.region_source(), source);
 }
 
 #[test]

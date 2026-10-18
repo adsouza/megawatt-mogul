@@ -105,3 +105,6 @@ Exceptions are `exclude_re` entries in `.cargo/mutants.toml`, each with a justif
 - [ ] Invariants get a property test, not only hand-picked examples.
 - [ ] Error paths assert both the typed `Err` and that state is unchanged.
 - [ ] Snapshot tests have a descriptive name, and the diff was reviewed.
+- [ ] A change that alters outcomes for the same inputs changes the rules-version guard snapshot
+      (`application/tests/snapshots/rules_version_guard__*.snap`): either it is a bug, or
+      `domain::SIM_RULES_VERSION` is bumped in the same commit.

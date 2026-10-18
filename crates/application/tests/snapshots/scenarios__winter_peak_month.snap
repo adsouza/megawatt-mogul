@@ -1,0 +1,101 @@
+---
+source: crates/application/tests/scenarios.rs
+expression: g.projections().monthly_reports.latest().unwrap()
+---
+MonthlyReport {
+    month: SimMonth {
+        year: 2027,
+        month: 1,
+    },
+    days: 31,
+    revenue: Money(
+        6885310386,
+    ),
+    fuel: Money(
+        -2999339573,
+    ),
+    start_up: Money(
+        0,
+    ),
+    fixed_om: Money(
+        -277000000,
+    ),
+    construction: Money(
+        0,
+    ),
+    net: Money(
+        3608970813,
+    ),
+    energy_by_kind: {
+        Coal: MegawattHours(
+            424884.6399069439,
+        ),
+        Ccgt: MegawattHours(
+            264139.853017437,
+        ),
+        Peaker: MegawattHours(
+            35737.0876276868,
+        ),
+    },
+    merit_order: [
+        MeritOrderEntry {
+            plant: PlantId(
+                6,
+            ),
+            kind: Coal,
+            marginal_cost: Price(
+                30.0,
+            ),
+            energy: MegawattHours(
+                424884.6399069439,
+            ),
+        },
+        MeritOrderEntry {
+            plant: PlantId(
+                9,
+            ),
+            kind: Ccgt,
+            marginal_cost: Price(
+                45.0,
+            ),
+            energy: MegawattHours(
+                264139.853017437,
+            ),
+        },
+        MeritOrderEntry {
+            plant: PlantId(
+                12,
+            ),
+            kind: Peaker,
+            marginal_cost: Price(
+                150.0,
+            ),
+            energy: MegawattHours(
+                35737.0876276868,
+            ),
+        },
+    ],
+    demand: MegawattHours(
+        724769.5142838807,
+    ),
+    served: MegawattHours(
+        724769.5142838807,
+    ),
+    unserved: MegawattHours(
+        0.0,
+    ),
+    curtailed: MegawattHours(
+        0.0,
+    ),
+    imbalance: MegawattHours(
+        -7.933731813090708,
+    ),
+    peak_demand: Megawatts(
+        1238.3065494334758,
+    ),
+    reliability: Ratio(
+        1.0,
+    ),
+    incidents: [],
+    rate_review: None,
+}
