@@ -4,8 +4,9 @@
 
 use crate::company::{AssetRef, LedgerEntry};
 use crate::grid::{FrequencyBand, TickSummary};
-use crate::ids::PlantId;
+use crate::ids::{CellCoord, LineId, PlantId};
 use crate::region::PlantKind;
+use crate::session::DayPhase;
 use crate::units::{Megawatts, Money, Price, Ratio};
 
 /// Something noteworthy that happened during a simulation step.
@@ -58,4 +59,14 @@ pub enum DomainEvent {
         tariff: Price,
         allowed_return: Ratio,
     },
+    /// The session moved from one day phase to the next.
+    PhaseChanged { from: DayPhase, to: DayPhase },
+    /// The player ordered a plant; it is now under construction.
+    PlantConstructionStarted {
+        plant: PlantId,
+        kind: PlantKind,
+        cell: CellCoord,
+    },
+    /// The player ordered a transmission line; it is now under construction.
+    LineConstructionStarted { line: LineId },
 }

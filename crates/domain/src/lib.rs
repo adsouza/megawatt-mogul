@@ -10,5 +10,6 @@ pub mod ids;
 pub mod region;
 pub mod regulation;
 pub mod rng;
+pub mod session;
 pub mod time;
 pub mod units;

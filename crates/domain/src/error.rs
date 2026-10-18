@@ -5,7 +5,9 @@
 
 use thiserror::Error;
 
-use crate::ids::{LineId, NodeId, PlantId};
+use crate::ids::{CellCoord, LineId, NodeId, PlantId};
+use crate::region::{PlantKind, SiteError};
+use crate::session::{DayPhase, GameOverReason};
 use crate::time::SimDuration;
 use crate::units::Megawatts;
 
@@ -59,4 +61,29 @@ pub enum DomainError {
     /// A line id is already present in the network.
     #[error("duplicate line id {line:?}")]
     DuplicateLineId { line: LineId },
+    /// No plant has this id.
+    #[error("unknown plant {plant:?}")]
+    UnknownPlant { plant: PlantId },
+    /// The command is not valid in the current day phase.
+    #[error("command not valid in phase {actual:?}")]
+    WrongPhase { actual: DayPhase },
+    /// The game has ended; no further commands are accepted.
+    #[error("game over: {reason:?}")]
+    GameOver { reason: GameOverReason },
+    /// The plant kind cannot be built on this cell.
+    #[error("cannot site {kind:?} at {cell:?}: {reason}")]
+    InvalidSite {
+        kind: PlantKind,
+        cell: CellCoord,
+        reason: SiteError,
+    },
+    /// The plant is still under construction.
+    #[error("plant {plant:?} is not commissioned")]
+    PlantNotCommissioned { plant: PlantId },
+    /// A manual start would not finish before the representative day ends.
+    #[error("start-up {startup:?} exceeds the {remaining:?} left in the day")]
+    StartUpBeyondDay {
+        remaining: SimDuration,
+        startup: SimDuration,
+    },
 }
