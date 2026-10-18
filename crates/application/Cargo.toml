@@ -6,8 +6,14 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+domain = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
+proptest = { workspace = true }
+insta = { workspace = true }
+domain = { workspace = true, features = ["test-fixtures"] }
 
 [lints]
 workspace = true
