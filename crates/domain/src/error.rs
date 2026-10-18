@@ -5,6 +5,9 @@
 
 use thiserror::Error;
 
+use crate::ids::PlantId;
+use crate::units::Megawatts;
+
 /// Every recoverable failure the domain can report. A command returning `Err`
 /// leaves the session unchanged.
 #[derive(Debug, Clone, PartialEq, Error)]
@@ -15,4 +18,22 @@ pub enum DomainError {
     /// A month number was outside `1..=12`.
     #[error("invalid month: {month}")]
     InvalidMonth { month: u8 },
+    /// The operation needs a plant whose output the operator can choose.
+    #[error("plant {plant:?} is not dispatchable")]
+    PlantNotDispatchable { plant: PlantId },
+    /// The plant must be offline for this operation.
+    #[error("plant {plant:?} is not offline")]
+    PlantNotOffline { plant: PlantId },
+    /// The plant must be online for this operation.
+    #[error("plant {plant:?} is not online")]
+    PlantNotOnline { plant: PlantId },
+    /// The plant must be starting or online for this operation.
+    #[error("plant {plant:?} is not running")]
+    PlantNotRunning { plant: PlantId },
+    /// A requested target is below the plant's minimum stable output.
+    #[error("target below minimum stable output {min:?} for plant {plant:?}")]
+    BelowMinimumStableOutput { plant: PlantId, min: Megawatts },
+    /// A requested target is above the plant's capacity.
+    #[error("target above capacity {max:?} for plant {plant:?}")]
+    AboveCapacity { plant: PlantId, max: Megawatts },
 }
