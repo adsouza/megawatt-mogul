@@ -1,9 +1,10 @@
-//! A generating plant: its lifecycle state machine, ramping and commitment data.
+//! A generating plant: its lifecycle state machine, ramping and pattern-day initialisation.
 //!
 //! The plant owns only its own physical state. Resource availability (sun,
 //! water) is passed in by the caller each tick, so the plant stays free of
 //! weather and market concerns.
 
+use super::commitment::{BoundaryStart, CommitmentSchedule};
 use crate::error::DomainError;
 use crate::events::DomainEvent;
 use crate::ids::{CellCoord, NodeId, PlantId};
@@ -12,7 +13,7 @@ use crate::time::{SimMonth, TICKS_PER_HOUR};
 use crate::units::{MegawattHours, Megawatts};
 
 /// Below this a float is treated as sitting on its boundary (0 MW, 0 MWh).
-const EPSILON: f64 = 1e-9;
+pub(super) const EPSILON: f64 = 1e-9;
 
 /// Where a plant is in its life.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -31,31 +32,6 @@ pub enum PlantStatus {
     Stopping {
         output: Megawatts,
     },
-}
-
-/// Which hours of the day (0..=23) a plant is committed to run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CommitmentSchedule([bool; 24]);
-
-impl CommitmentSchedule {
-    /// Committed in no hour.
-    pub fn none() -> Self {
-        Self([false; 24])
-    }
-
-    /// Committed in every hour.
-    pub fn all_day() -> Self {
-        Self([true; 24])
-    }
-
-    /// Whether `hour` is committed. Hours past 23 are never committed.
-    pub fn is_committed(&self, hour: u8) -> bool {
-        self.0.get(usize::from(hour)).copied().unwrap_or(false)
-    }
-
-    pub fn hours(&self) -> [bool; 24] {
-        self.0
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -250,6 +226,49 @@ impl Plant {
     /// Clears the per-day overrides (currently just the suppression flag).
     pub fn clear_day_overrides(&mut self) {
         self.commitment_suppressed = false;
+    }
+
+    /// Sets the physical state at instant 0 of a new representative day from
+    /// the commitment pattern alone. This is a synthetic boundary, not an
+    /// operating tick: last month's physical state is discarded (no 48 h
+    /// start-up carries across months) and no events are emitted.
+    ///
+    /// - Clears the day overrides and clamps the initial target into
+    ///   `[min_output, capacity]`.
+    /// - Committed at hour 0: `Online` at the initial target. Otherwise a run
+    ///   whose shutdown tail crosses midnight is `Stopping` (conservatively from
+    ///   capacity), a run whose start-up began before midnight is `Starting`
+    ///   with the implied ticks left, and anything else is `Offline`.
+    /// - Solar is always reconnected `Online` at 0 MW; it cannot be commanded.
+    /// - Plants under construction are left untouched.
+    ///
+    /// Returns [`BoundaryStart::Charged`] only for an all-day pattern on a plant
+    /// that sat offline all last month. A mixed pattern's restart is counted
+    /// when its `Start` action fires (including a late-day start preparing an
+    /// hour-0 run), so initialisation never counts it a second time.
+    pub fn initialise_pattern_day(&mut self) -> BoundaryStart {
+        if matches!(self.status, PlantStatus::UnderConstruction { .. }) {
+            return BoundaryStart::None;
+        }
+        self.clear_day_overrides();
+        if !self.spec.kind.is_dispatchable() {
+            self.status = PlantStatus::Online {
+                output: Megawatts::ZERO,
+                target: Megawatts::ZERO,
+            };
+            return BoundaryStart::None;
+        }
+        self.initial_target = self
+            .initial_target
+            .clamp(self.spec.min_output(), self.spec.capacity);
+        self.status = self
+            .commitment
+            .initial_status(&self.spec, self.initial_target);
+        if self.previous_month_offline && self.commitment.is_all_day() {
+            BoundaryStart::Charged
+        } else {
+            BoundaryStart::None
+        }
     }
 
     /// `Offline` to `Starting`. A zero-length start-up goes straight online at
@@ -861,15 +880,6 @@ mod tests {
             new_plant(PlantKind::Solar).set_auto_follow(true),
             Err(DomainError::PlantNotDispatchable { plant: PlantId(1) })
         );
-    }
-
-    #[test]
-    fn commitment_schedule_basics() {
-        assert!(!CommitmentSchedule::none().is_committed(3));
-        let all = CommitmentSchedule::all_day();
-        assert!(all.is_committed(0) && all.is_committed(23) && !all.is_committed(24));
-        assert_eq!(all.hours(), [true; 24]);
-        assert_eq!(CommitmentSchedule::none().hours(), [false; 24]);
     }
 
     #[test]

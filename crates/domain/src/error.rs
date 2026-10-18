@@ -6,6 +6,7 @@
 use thiserror::Error;
 
 use crate::ids::PlantId;
+use crate::time::SimDuration;
 use crate::units::Megawatts;
 
 /// Every recoverable failure the domain can report. A command returning `Err`
@@ -36,4 +37,11 @@ pub enum DomainError {
     /// A requested target is above the plant's capacity.
     #[error("target above capacity {max:?} for plant {plant:?}")]
     AboveCapacity { plant: PlantId, max: Megawatts },
+    /// A commitment off-gap is too short to ramp down from capacity and start again.
+    #[error("off-gap {gap:?} shorter than shutdown {shutdown:?} plus start-up {startup:?}")]
+    CommitmentInfeasible {
+        gap: SimDuration,
+        shutdown: SimDuration,
+        startup: SimDuration,
+    },
 }
