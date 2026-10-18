@@ -11,11 +11,13 @@ use crate::pipeline::{CoreHandler, build_pipeline};
 use crate::ports::{
     CommandLogSink, LOG_FORMAT_VERSION, LoadedRegion, LogHeader, RegionCatalog, RegionSummary,
 };
+use crate::projections::Projections;
 
 /// One running game: the session and the pipeline every command goes through.
 pub struct Game {
     session: GameSession,
     handler: Box<dyn CommandHandler>,
+    projections: Projections,
 }
 
 impl Game {
@@ -39,18 +41,28 @@ impl Game {
             region_fingerprint: loaded.fingerprint,
         };
         sink.initialize(&header, &loaded.source_bytes)?;
+        let session = GameSession::new(loaded.definition, seed, settings);
+        let projections = Projections::new(&session);
         Ok(Game {
-            session: GameSession::new(loaded.definition, seed, settings),
+            session,
             handler: build_pipeline(sink),
+            projections,
         })
     }
 
     pub fn execute(&mut self, command: Command) -> Result<Vec<DomainEvent>, CommandError> {
-        self.handler.handle(&mut self.session, &command)
+        let events = self.handler.handle(&mut self.session, &command)?;
+        self.projections.apply_all(&events, &self.session);
+        Ok(events)
     }
 
     pub fn session(&self) -> &GameSession {
         &self.session
+    }
+
+    /// The read models, updated after every successful command.
+    pub fn projections(&self) -> &Projections {
+        &self.projections
     }
 }
 

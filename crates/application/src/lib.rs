@@ -1,13 +1,15 @@
 #![forbid(unsafe_code)]
 
 //! Application layer: the write side of CQRS (commands, the command pipeline
-//! and the `Game` service) plus the ports that adapters implement.
+//! and the `Game` service), the read-side projections, and the ports that
+//! adapters implement.
 
 pub mod command;
 pub mod error;
 pub mod game;
 pub mod pipeline;
 pub mod ports;
+pub mod projections;
 
 pub use command::{Command, CommandHandler};
 pub use error::{CommandError, ReplayError};

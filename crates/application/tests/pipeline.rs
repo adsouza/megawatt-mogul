@@ -366,3 +366,19 @@ fn auto_select_only_with_exactly_one_region() {
         None
     );
 }
+
+#[test]
+fn game_updates_projections_after_execute() {
+    let mut g = game();
+    assert_eq!(g.projections().timeline.points().count(), 0);
+    g.execute(Command::BeginOperating).unwrap();
+    g.execute(Command::AdvanceTicks { n: 10 }).unwrap();
+    assert_eq!(g.projections().timeline.points().count(), 10);
+}
+
+#[test]
+fn failed_command_leaves_projections_unchanged() {
+    let mut g = game();
+    g.execute(Command::AdvanceTicks { n: 10 }).unwrap_err(); // wrong phase
+    assert_eq!(g.projections().timeline.points().count(), 0);
+}
