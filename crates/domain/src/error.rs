@@ -5,7 +5,7 @@
 
 use thiserror::Error;
 
-use crate::ids::PlantId;
+use crate::ids::{LineId, NodeId, PlantId};
 use crate::time::SimDuration;
 use crate::units::Megawatts;
 
@@ -44,4 +44,19 @@ pub enum DomainError {
         shutdown: SimDuration,
         startup: SimDuration,
     },
+    /// A node id is already present in the network.
+    #[error("duplicate node {node:?}")]
+    DuplicateNode { node: NodeId },
+    /// A line referenced a node the network does not contain.
+    #[error("unknown node {node:?}")]
+    UnknownNode { node: NodeId },
+    /// A line's endpoints were the same node.
+    #[error("line from node {node:?} to itself")]
+    LineToSelf { node: NodeId },
+    /// The two nodes are already joined by a line, in either direction.
+    #[error("nodes {from:?} and {to:?} are already joined by a line")]
+    DuplicateLine { from: NodeId, to: NodeId },
+    /// A line id is already present in the network.
+    #[error("duplicate line id {line:?}")]
+    DuplicateLineId { line: LineId },
 }
