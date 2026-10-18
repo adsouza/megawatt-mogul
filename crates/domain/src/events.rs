@@ -6,7 +6,7 @@ use crate::company::{AssetRef, LedgerEntry};
 use crate::grid::{FrequencyBand, TickSummary};
 use crate::ids::PlantId;
 use crate::region::PlantKind;
-use crate::units::{Megawatts, Money};
+use crate::units::{Megawatts, Money, Price, Ratio};
 
 /// Something noteworthy that happened during a simulation step.
 #[derive(Debug, Clone, PartialEq)]
@@ -47,4 +47,15 @@ pub enum DomainEvent {
     /// A reserve review permanently wrote off `amount` of held book value
     /// still excess at its second consecutive review (non-cash).
     CapitalDisallowed { asset: AssetRef, amount: Money },
+    /// The company took a reliability strike; `strikes` is the new total.
+    StrikeIssued { strikes: u8 },
+    /// A strike lapsed after clean months; `strikes` is the new total.
+    StrikeExpired { strikes: u8 },
+    /// Too many strikes: the company lost its licence.
+    LicenseRevoked,
+    /// A rate review set a new tariff and allowed return.
+    RateReviewCompleted {
+        tariff: Price,
+        allowed_return: Ratio,
+    },
 }
