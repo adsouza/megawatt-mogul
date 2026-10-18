@@ -49,6 +49,13 @@ pub enum RegionLoadError {
         region: RegionId,
         error: RegionError,
     },
+    /// The source was requested as one region but declares another id, e.g. a
+    /// renamed file or an archive paired with the wrong log.
+    #[error("region id mismatch: requested {requested:?}, source declares {found:?}")]
+    IdMismatch {
+        requested: RegionId,
+        found: RegionId,
+    },
 }
 
 /// One region, loaded once. Adapters guarantee all three fields come from the

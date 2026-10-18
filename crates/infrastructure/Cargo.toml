@@ -6,8 +6,18 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+application = { workspace = true }
+domain = { workspace = true }
+serde = { workspace = true }
+ron = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+sha2 = { workspace = true }
 
 [dev-dependencies]
+tempfile = { workspace = true }
+proptest = { workspace = true }
+domain = { workspace = true, features = ["test-fixtures"] }
 
 [lints]
 workspace = true
