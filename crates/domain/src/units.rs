@@ -7,9 +7,7 @@ use std::iter::Sum;
 use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign};
 
 use crate::error::DomainError;
-
-/// One tick is one game minute.
-const TICKS_PER_HOUR: f64 = 60.0;
+use crate::time::TICKS_PER_HOUR;
 
 /// Instantaneous power in megawatts. Signed, so it can express imbalances.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
@@ -45,7 +43,7 @@ impl Megawatts {
 
     /// Energy produced by holding this power for `ticks` game minutes.
     pub fn energy_over_ticks(self, ticks: u32) -> MegawattHours {
-        MegawattHours(self.0 * f64::from(ticks) / TICKS_PER_HOUR)
+        MegawattHours(self.0 * f64::from(ticks) / f64::from(TICKS_PER_HOUR))
     }
 }
 

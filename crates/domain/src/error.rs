@@ -12,4 +12,7 @@ pub enum DomainError {
     /// A ratio was NaN or outside `0.0..=1.0`.
     #[error("invalid ratio: {value}")]
     InvalidRatio { value: f64 },
+    /// A month number was outside `1..=12`.
+    #[error("invalid month: {month}")]
+    InvalidMonth { month: u8 },
 }
