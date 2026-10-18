@@ -17,7 +17,7 @@ equal to demand. Clean Architecture + DDD; see ARCHITECTURE.md, and the spec in 
 ## Architecture rules
 
 - Dependency rule: `game` -> `application` -> `domain`, and `infrastructure` -> `application` + `domain`.
-  `domain` depends only on `rand_chacha` and `thiserror`: no Bevy, serde, I/O or tracing.
+  `domain` may depend only on `rand_chacha` and `thiserror`: no Bevy, serde, I/O or tracing.
 - No user-facing strings in `domain` or `application`: use typed values and `name_key` translation keys.
 - Plant tuning numbers live only in region RON data and the `test-fixtures` fixture, never as constants.
 - Determinism: `BTreeMap`/`BTreeSet` only, no wall-clock time, all randomness via `SimRng`,

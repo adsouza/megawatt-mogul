@@ -5,7 +5,10 @@ is a pure Rust core. Bevy is an outer adapter. The full design is in the
 [spec](docs/superpowers/specs/2026-10-18-megawatt-mogul-design.md); this page is the short version
 for people changing code.
 
-Crates marked *planned* do not exist yet.
+**Status:** only the workspace scaffold exists (three empty crates and the dependency-rule test). The
+sections below describe the design Plan 1 implements; the types and modules named here (`GameSession`,
+`CommandHandler`, `SimRng`, `Megawatts`, `NetworkModel`, ...) do not exist yet. The `game` crate is
+additionally planned for Plans 2-3.
 
 ## Layers and the dependency rule
 
@@ -16,7 +19,7 @@ game (planned) ──▶ application ──▶ domain
 
 | Crate | Role |
 |---|---|
-| `domain` | Model, rules and events. Pure Rust: no Bevy, no serde, no I/O. Depends only on `rand_chacha` and `thiserror`. |
+| `domain` | Model, rules and events. Pure Rust: no Bevy, no serde, no I/O. May depend only on `rand_chacha` and `thiserror`. |
 | `application` | Commands, handlers, pipeline layers, queries, projections and ports. Depends on `domain` (plus `tracing`). |
 | `infrastructure` | Adapters that implement ports: the RON region loader (DTOs plus mapping) and the command-log writer. |
 | `game` (*planned*, Plans 2-3) | The Bevy binary. Depends on all three. The only crate that may use Bevy. |
@@ -25,7 +28,7 @@ The rule is enforced by the compiler: `domain/Cargo.toml` does not list Bevy, so
 impossible, and `crates/domain/tests/dependency_rule.rs` fails if a framework or I/O crate appears
 there. `cargo test -p domain` and `-p application` never compile Bevy, so feedback takes seconds.
 
-## Where things go
+## Where things go (planned layout)
 
 | What | Where |
 |---|---|
@@ -38,7 +41,7 @@ there. `cargo test -p domain` and `-p application` never compile Bevy, so feedba
 Region data (plant tuning numbers, cities, regulator parameters) lives in `assets/regions/*.ron`,
 never as code constants.
 
-## Write side: commands
+## Write side: commands (Plan 1 — not yet built)
 
 Every command is a plain struct handled as `handle(&mut GameSession, cmd) -> Result<Vec<DomainEvent>,
 CommandError>`. Layers wrap the handler through one `CommandHandler` trait and are assembled in a
@@ -53,7 +56,7 @@ PlayerCommand ─▶ TracingLayer ─▶ InvariantCheckLayer* ─▶ CommandLogL
 The domain never panics on player input. It returns `DomainError`, and a command that returns `Err`
 leaves the session unchanged. Panics are reserved for bugs (invariant violations).
 
-## Read side: queries and projections (CQRS)
+## Read side: queries and projections (CQRS) (Plan 1 — not yet built)
 
 The presentation layer never reads aggregate internals. It uses cheap snapshot queries
 (`GridSnapshot`, `PlantView`, `CompanyView`, ...) and projections that are updated from domain events
@@ -64,7 +67,7 @@ domain events.
 Ticks and commands return `Vec<DomainEvent>`. Nothing is pushed through an event framework, and
 policies (event to reaction, such as strikes or bankruptcy) run inside the domain.
 
-## Command sourcing
+## Command sourcing (Plan 1 — not yet built)
 
 Persistence is command sourcing, not event sourcing: `CommandLogLayer` records the seed plus the
 commands through the `CommandLogSink` port, and the aggregates know nothing about persistence. Because
@@ -89,7 +92,7 @@ year is 12 played days. `Money` is `i64` cents. Nothing is priced per tick: phys
 priced once per ledger entry at month close as `price x energy x days_in_month`, rounded once with
 `f64::round_ties_even` to whole cents.
 
-## The tick
+## The tick (Plan 1 — not yet built)
 
 `GameSession::tick` runs these steps in a fixed order:
 
@@ -108,7 +111,7 @@ priced once per ledger entry at month close as `price x energy x days_in_month`,
 12. Collect events. At tick 1,440 the month's totals are weighted, `MonthClosed` is emitted,
     policies run, and the phase moves to Review.
 
-## Settings seams
+## Settings seams (Plan 1 — not yet built)
 
 ```rust
 pub struct GameSettings { pub fidelity: SimulationFidelity }

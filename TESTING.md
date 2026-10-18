@@ -67,9 +67,9 @@ so tuning changes show up as reviewable diffs.
 
 ## Mutation testing
 
-`cargo-mutants` runs on `domain` and `application` on demand and in a scheduled CI job, not on every
-commit. The target is zero surviving mutants in `domain`. Exceptions are `exclude_re` entries in
-`.cargo/mutants.toml`, each with a justification comment. The `game` crate is excluded.
+`cargo-mutants` runs on `domain` and `application` on demand; a scheduled CI job is planned (it does
+not exist yet). It is never run on every commit. The target is zero surviving mutants in `domain`.
+Exceptions are `exclude_re` entries in `.cargo/mutants.toml`, each with a justification comment. The `game` crate is excluded.
 
 ## Isolation rules (all I/O tests)
 
