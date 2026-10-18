@@ -202,9 +202,20 @@ fn hydro_budget_uses_cell_potential_and_month_flow() {
     assert!((budget.value() - 18_432.0).abs() < 1e-9);
 }
 
-/// Random fixed (not auto-follow) targets for the start fleet, as fractions of capacity.
+/// 200 ticks around solar noon, so solar and curtailment are exercised.
+const MIDDAY: std::ops::Range<u32> = 660..860;
+
+/// The most a tiny-region solar plant could produce at `tick` (clear sky).
+fn clear_sky_solar(region: &RegionDefinition, tick: u32) -> f64 {
+    300.0 * 0.8 * sun_factor(region.solar(), april(), tick)
+}
+
+/// The start fleet at random fixed (not auto-follow) targets, as fractions of
+/// capacity, plus a connected solar plant (plant 4).
 fn fixed_target_fleet(region: &RegionDefinition, targets: &[f64]) -> PowerSystem {
-    let mut sys = system_with(region, &start_fleet(region));
+    let mut defs = start_fleet(region);
+    defs.push(connected(PlantKind::Solar, cell(5, 5)));
+    let mut sys = system_with(region, &defs);
     for (id, frac) in (1u32..).zip(targets) {
         let p = sys.plant_mut(PlantId(id)).unwrap();
         p.set_commitment(CommitmentSchedule::all_day());
@@ -220,12 +231,32 @@ proptest! {
         let mut sys = fixed_target_fleet(&region, &targets);
         let mut rng = SimRng::from_seed(seed);
         sys.begin_day(&region, april(), &mut rng);
-        for (s, _) in run_ticks(&mut sys, &region, 0..200, &mut rng) {
-            let balance = s.served + s.curtailed + s.imbalance;
+        for t in MIDDAY {
+            let (s, _) = sys.tick(&region, april(), t, &mut rng);
+            // Curtailment is physical (R13), so curtailed availability is
+            // outside generation: the brief's `served + curtailed + imbalance`
+            // becomes `served + imbalance`.
+            let balance = s.served + s.imbalance;
             prop_assert!((s.generation - balance).abs().value() < 1e-6);
             prop_assert!((s.unserved - s.demand * s.shed.value()).abs().value() < 1e-9);
             prop_assert!(s.served.value() >= 0.0);
             prop_assert!(s.served.value() <= s.demand.value() + 1e-9);
+            // Generation is what the connected plants actually produce.
+            let by_plant: Megawatts = s.by_plant.values().copied().sum();
+            let by_kind: Megawatts = s.by_kind.values().copied().sum();
+            let produced: Megawatts = sys
+                .plants()
+                .values()
+                .filter(|p| sys.network().is_connected(p.node()))
+                .map(Plant::output)
+                .sum();
+            prop_assert!((by_plant - s.generation).abs().value() < 1e-6);
+            prop_assert!((by_kind - s.generation).abs().value() < 1e-6);
+            prop_assert!((produced - s.generation).abs().value() < 1e-6);
+            // Curtailment withholds part of the solar availability, never more.
+            let solar = s.by_kind.get(&PlantKind::Solar).copied().unwrap_or(Megawatts::ZERO);
+            prop_assert!(s.curtailed >= Megawatts::ZERO);
+            prop_assert!((s.curtailed + solar).value() <= clear_sky_solar(&region, t) + 1e-6);
         }
     }
 
@@ -237,7 +268,7 @@ proptest! {
         let mut rng = SimRng::from_seed(seed);
         sys.begin_day(&region, april(), &mut rng);
         let mut last = FrequencyBand::Normal;
-        for t in 0..200 {
+        for t in MIDDAY {
             let (_, events) = sys.tick(&region, april(), t, &mut rng);
             let now = band(sys.deviation(), &p);
             let fired: Vec<DomainEvent> = events
@@ -339,7 +370,7 @@ fn blackout_restoration_reconnects_load_and_solar() {
 }
 
 #[test]
-fn overfrequency_curtails_solar_and_forces_agc_to_minimum() {
+fn surplus_beyond_solar_forces_agc_to_minimum_then_curtails_all_solar() {
     let region = tiny_region();
     let mut defs = start_fleet(&region);
     defs.push(connected(PlantKind::Solar, cell(5, 5)));
@@ -356,11 +387,16 @@ fn overfrequency_curtails_solar_and_forces_agc_to_minimum() {
         .unwrap();
     let mut rng = SimRng::from_seed(4);
     sys.begin_day(&region, april(), &mut rng);
-    // Solar noon, with 1300 MW of thermal output against ~850 MW of demand.
+    // Solar noon: 1300 MW of thermal against ~850 MW of demand, far more than
+    // the solar output can cover.
     let (s, events) = sys.tick(&region, april(), 762, &mut rng);
     let solar_output = s.by_kind[&PlantKind::Solar];
     assert!(solar_output > Megawatts::ZERO);
-    assert_eq!(s.curtailed, solar_output);
+    assert_eq!(
+        s.curtailed,
+        Megawatts::ZERO,
+        "curtailment acts from the next tick"
+    );
     assert!(events.contains(&DomainEvent::SolarCurtailed { mw: solar_output }));
     let min = region.spec(PlantKind::Peaker).min_output();
     assert_eq!(
@@ -375,6 +411,113 @@ fn overfrequency_curtails_solar_and_forces_agc_to_minimum() {
         sys.plant(coal).unwrap().output(),
         region.spec(PlantKind::Coal).capacity
     );
+    // Next tick the (slightly lower, past noon) solar availability is withheld entirely.
+    let (s, _) = sys.tick(&region, april(), 763, &mut rng);
+    assert!(s.curtailed > Megawatts::ZERO);
+    assert_eq!(s.by_kind[&PlantKind::Solar], Megawatts::ZERO);
+    assert_eq!(sys.plant(PlantId(4)).unwrap().output(), Megawatts::ZERO);
+}
+
+/// Non-AGC coal (500 MW) and CCGT (200 MW) plus an auto-follow peaker at
+/// 100 MW: 800 MW of thermal under ~850 MW of midday demand, so the solar
+/// plant (plant 4) alone pushes the grid into surplus.
+fn solar_surplus_system(region: &RegionDefinition) -> PowerSystem {
+    let mut defs = start_fleet(region);
+    defs.push(connected(PlantKind::Solar, cell(5, 5)));
+    let mut sys = system_with(region, &defs);
+    for (id, mw) in [(1, 500.0), (2, 200.0), (3, 100.0)] {
+        let p = sys.plant_mut(PlantId(id)).unwrap();
+        p.set_commitment(CommitmentSchedule::all_day());
+        p.set_initial_target(Megawatts::new(mw));
+    }
+    sys.plant_mut(PlantId(3))
+        .unwrap()
+        .set_auto_follow(true)
+        .unwrap();
+    sys
+}
+
+#[test]
+fn solar_driven_surplus_is_curtailed_until_frequency_recovers() {
+    let region = tiny_region();
+    let curtail_above = region.frequency().curtail_above;
+    let mut sys = solar_surplus_system(&region);
+    let peaker = PlantId(3);
+    let mut rng = SimRng::from_seed(21);
+    sys.begin_day(&region, april(), &mut rng);
+    let (first, events) = sys.tick(&region, april(), 700, &mut rng);
+    assert!(
+        sys.deviation() > curtail_above,
+        "solar surplus trips over-frequency"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, DomainEvent::SolarCurtailed { .. }))
+    );
+    // Solar covers the surplus, so the AGC peaker only ramps; it is not forced to minimum.
+    assert_eq!(
+        sys.plant(peaker).unwrap().status(),
+        PlantStatus::Online {
+            output: Megawatts::new(100.0),
+            target: Megawatts::new(60.0)
+        }
+    );
+    let solar_before = first.by_kind[&PlantKind::Solar];
+    for t in 701..820 {
+        let (s, _) = sys.tick(&region, april(), t, &mut rng);
+        assert!(s.curtailed > Megawatts::ZERO, "tick {t}: surplus persists");
+        assert!(s.by_kind[&PlantKind::Solar] < solar_before);
+        if t >= 710 {
+            assert!(
+                sys.deviation() < curtail_above,
+                "tick {t}: {:?}",
+                sys.deviation()
+            );
+        }
+    }
+    // Cheaper solar displaces the AGC peaker down to its minimum.
+    assert_eq!(
+        sys.plant(peaker).unwrap().output(),
+        region.spec(PlantKind::Peaker).min_output()
+    );
+    assert_eq!(sys.protection().mode, GridMode::Normal);
+}
+
+#[test]
+fn curtailment_is_released_when_the_surplus_disappears() {
+    let region = tiny_region();
+    let mut sys = solar_surplus_system(&region);
+    let coal = PlantId(1);
+    let mut rng = SimRng::from_seed(22);
+    sys.begin_day(&region, april(), &mut rng);
+    let mut last = None;
+    for t in 700..760 {
+        last = Some(sys.tick(&region, april(), t, &mut rng).0);
+    }
+    let engaged = last.unwrap();
+    assert!(engaged.curtailed > Megawatts::ZERO);
+    // The coal plant is turned down by more than the curtailed solar, so the
+    // grid would be short without every megawatt of solar.
+    let target = sys.plant(coal).unwrap().output() - engaged.curtailed - Megawatts::new(20.0);
+    sys.plant_mut(coal).unwrap().set_target(target).unwrap();
+    let mut released = None;
+    for t in 760..860 {
+        let (s, _) = sys.tick(&region, april(), t, &mut rng);
+        if s.curtailed == Megawatts::ZERO {
+            released = Some(s);
+            break;
+        }
+    }
+    let released = released.expect("curtailment is released");
+    assert!(released.by_kind[&PlantKind::Solar] > engaged.by_kind[&PlantKind::Solar]);
+    assert_eq!(released.mode, GridMode::Normal);
+    assert_eq!(released.shed, Ratio::ZERO);
+    // Solar now runs at its full availability, every following tick too.
+    for t in 860..880 {
+        let (s, _) = sys.tick(&region, april(), t, &mut rng);
+        assert_eq!(s.curtailed, Megawatts::ZERO);
+    }
 }
 
 #[test]
@@ -529,4 +672,26 @@ fn projected_peak_uses_summed_hourly_means_and_current_connectivity() {
         .unwrap();
     let got = sys.projected_connected_peak(&region, april());
     assert!((got.value() - 1300.0 * peak_factor(april())).abs() < 1e-9);
+}
+
+#[test]
+fn begin_day_carries_nothing_over_from_the_previous_day() {
+    let region = tiny_region();
+    let mut used = solar_surplus_system(&region);
+    let mut rng = SimRng::from_seed(23);
+    used.begin_day(&region, april(), &mut rng);
+    let (s, _) = run_ticks(&mut used, &region, 700..760, &mut rng)
+        .pop()
+        .unwrap();
+    assert!(s.curtailed > Megawatts::ZERO);
+    // Same RNG position, one system with a day behind it and one fresh: the
+    // next day's first tick is identical (noise, curtailment, frequency reset).
+    let mut fresh = solar_surplus_system(&region);
+    let mut fresh_rng = rng.clone();
+    used.begin_day(&region, april(), &mut rng);
+    fresh.begin_day(&region, april(), &mut fresh_rng);
+    assert_eq!(
+        used.tick(&region, april(), 700, &mut rng),
+        fresh.tick(&region, april(), 700, &mut fresh_rng)
+    );
 }

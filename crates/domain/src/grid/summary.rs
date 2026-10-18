@@ -10,16 +10,20 @@ use crate::units::{Hertz, Megawatts, Ratio};
 /// The balance of one tick over the connected grid.
 ///
 /// **Right-endpoint convention:** the summary for tick `t` reports the state
-/// after tick `t`'s plant step, i.e. at instant `t + 1` (see the timing
-/// convention in `generation::commitment`). The energy of tick `t` is that
-/// power held for one minute, so a plant reaching `Online` at instant `b`
-/// contributes its minimum output to tick `b − 1`. Protection actions taken at
-/// the end of tick `t` (forcing AGC plants to minimum, tripping every plant in
-/// a blackout) first show in tick `t + 1`; solar curtailment is accounted in
-/// tick `t` itself.
+/// at instant `t + 1`: after tick `t`'s plant step and the protection actions
+/// that follow it (see the timing convention in `generation::commitment`). The
+/// energy of tick `t` is that power held for one minute, so a plant reaching
+/// `Online` at instant `b` contributes its minimum output to tick `b − 1`.
+/// Forcing AGC plants to minimum and blackout trips show in tick `t` itself;
+/// the solar curtailment set in tick `t` is withheld from tick `t + 1`.
+/// Frequency and protection in tick `t` acted on the supply measured just
+/// after the step, so on a tick where protection changed outputs, `imbalance`
+/// is not the residual that moved the frequency.
 ///
-/// Only connected plants and cities count. The fields always satisfy
-/// `generation = served + curtailed + imbalance` and `unserved = demand × shed`.
+/// Only connected plants and cities count. Curtailment is physical: curtailed
+/// solar availability is never produced, so it is outside `generation`. The
+/// fields always satisfy `generation = Σ by_plant = served + imbalance` and
+/// `unserved = demand × shed`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TickSummary {
     pub tick: u32,
@@ -29,12 +33,12 @@ pub struct TickSummary {
     pub served: Megawatts,
     /// Load shed by protection: `demand × shed`.
     pub unserved: Megawatts,
-    /// Total output of connected plants, including solar that was then curtailed.
+    /// Total output of connected plants.
     pub generation: Megawatts,
-    /// Solar output curtailed by over-frequency protection.
+    /// Solar availability withheld this tick by over-frequency curtailment.
     pub curtailed: Megawatts,
-    /// Signed residual `generation − curtailed − served`: positive is surplus,
-    /// negative a deficit, both absorbed by system inertia.
+    /// Signed residual `generation − served`: positive is surplus, negative a
+    /// deficit, both absorbed by system inertia.
     pub imbalance: Megawatts,
     /// Generation per plant kind, over the kinds present on the grid.
     pub by_kind: BTreeMap<PlantKind, Megawatts>,

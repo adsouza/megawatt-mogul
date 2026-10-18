@@ -28,7 +28,8 @@ pub enum DomainEvent {
     FrequencyDeviated { band: FrequencyBand },
     /// Under-frequency protection shed more load; `mw` is the total now shed.
     LoadShed { mw: Megawatts },
-    /// Over-frequency protection curtailed this much solar output.
+    /// Over-frequency protection set solar curtailment to `mw`, withheld from
+    /// solar availability from the next tick.
     SolarCurtailed { mw: Megawatts },
     /// Protection blacked out the grid: every plant tripped.
     Blackout,

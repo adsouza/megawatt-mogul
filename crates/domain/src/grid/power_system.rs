@@ -58,6 +58,13 @@ pub struct PowerSystem {
     /// The band last reported, so `FrequencyDeviated` fires only on a change.
     band: FrequencyBand,
     protection: ProtectionState,
+    /// Solar availability withheld by over-frequency protection, applied from
+    /// the next tick (see [`PowerSystem::tick`], step 8).
+    curtailment: Megawatts,
+}
+
+fn is_curtailable(plant: &Plant) -> bool {
+    plant.kind() == PlantKind::Solar && plant.is_online()
 }
 
 fn is_commissioned(plant: &Plant) -> bool {
@@ -81,6 +88,7 @@ impl PowerSystem {
             deviation: Hertz::ZERO,
             band: FrequencyBand::Normal,
             protection: ProtectionState::default(),
+            curtailment: Megawatts::ZERO,
         }
     }
 
@@ -145,9 +153,9 @@ impl PowerSystem {
     /// from the previous day: each commissioned hydro plant's budget is reset
     /// to `capacity × 24 h × hydro_potential(cell) × monthly_flow[month]`, the
     /// day's clearness is drawn (exactly one normal), every plant is
-    /// initialised from its cyclic pattern (clearing operating overrides), and
-    /// frequency and protection return to nominal and `Normal`. The demand
-    /// forecast error is a continuing process and is not reset.
+    /// initialised from its cyclic pattern (clearing operating overrides),
+    /// frequency and protection return to nominal and `Normal`, and the demand
+    /// forecast error and solar curtailment return to zero.
     pub fn begin_day(
         &mut self,
         region: &RegionDefinition,
@@ -174,6 +182,8 @@ impl PowerSystem {
         self.deviation = Hertz::ZERO;
         self.band = FrequencyBand::Normal;
         self.protection = ProtectionState::default();
+        self.noise = DemandNoise::default();
+        self.curtailment = Megawatts::ZERO;
         DayInitialisation { boundary_starts }
     }
 
@@ -194,21 +204,37 @@ impl PowerSystem {
     /// In order (spec §6.4 steps 2–10):
     /// 1. Demand of connected cities: forecast × (1 + forecast error). The
     ///    error advances by exactly one normal draw every tick, in any state.
-    /// 2. Solar and hydro availability for every plant.
+    /// 2. Solar and hydro availability for every plant. The standing solar
+    ///    curtailment is withheld from connected online solar pro rata to each
+    ///    plant's availability.
     /// 3. The commitment actions due at `tick` (suppressed plants get none).
     /// 4. Every plant steps once.
     /// 5. AGC re-targets connected auto-follow plants toward the load to serve:
     ///    `demand × (1 − shed)`, or in a blackout `demand × min(1, 1 − shed +
     ///    shed_step)` so supply is pre-positioned for the next restoration step.
+    ///    While solar is curtailed, AGC also makes room for the withheld solar,
+    ///    so the cheaper solar returns as thermal ramps down.
     /// 6. Imbalance between connected supply and served load.
     /// 7. Frequency update, held at nominal in a blackout. System size is the
     ///    connected demand.
-    /// 8. Protection: shedding, curtailing solar and forcing AGC plants to
-    ///    minimum, or a blackout that trips every plant, suppresses its
-    ///    commitment for the day and resets the deviation. Tripped solar
-    ///    reconnects once restoration first re-energises the grid.
-    /// 9. The summary (see [`TickSummary`] for its conventions), also emitted
-    ///    last as `TickCompleted`.
+    /// 8. Protection: load shedding; a blackout that trips every plant,
+    ///    suppresses its commitment for the day and resets the deviation and
+    ///    the curtailment; and solar curtailment, described below. Tripped
+    ///    solar reconnects once restoration first re-energises the grid.
+    /// 9. The summary of the state after protection (see [`TickSummary`]),
+    ///    also emitted last as `TickCompleted`. Steps 5–8 decide on the supply
+    ///    measured after step 4.
+    ///
+    /// **Solar curtailment** is physical: it lowers solar availability from
+    /// the next tick. It engages on an over-frequency `Curtail` outcome and is
+    /// then recomputed every tick as the surplus AGC cannot absorb within its
+    /// one-tick ramp (the negated leftover of step 5), clamped to the solar
+    /// available to curtail. It therefore follows the surplus down as demand
+    /// rises, solar falls or AGC makes room, and disengages at zero, so solar is
+    /// never stranded and nothing oscillates. AGC plants are forced to minimum
+    /// only on a `Curtail` tick where curtailing every connected solar plant
+    /// still could not cover that surplus; the curtailment is then reduced by
+    /// what forcing removes.
     pub fn tick(
         &mut self,
         region: &RegionDefinition,
@@ -223,29 +249,14 @@ impl PowerSystem {
         let demand = (self.connected_demand_forecast(region, month, tick) * (1.0 + error))
             .max(Megawatts::ZERO);
 
-        let sun = sun_factor(region.solar(), month, tick);
-        let available: BTreeMap<PlantId, Megawatts> = self
-            .plants
-            .values()
-            .map(|p| (p.id(), self.available(region, p, sun)))
-            .collect();
+        let (available, curtailable, withheld) = self.availability(region, month, tick);
 
         self.apply_commitment(tick, &mut events);
         for (id, plant) in &mut self.plants {
             events.extend(plant.step(available[id]));
         }
 
-        let by_plant: BTreeMap<PlantId, Megawatts> = self
-            .connected_plants()
-            .map(|p| (p.id(), p.output()))
-            .collect();
-        let mut by_kind: BTreeMap<PlantKind, Megawatts> = BTreeMap::new();
-        for (id, output) in &by_plant {
-            *by_kind
-                .entry(self.plants[id].kind())
-                .or_insert(Megawatts::ZERO) += *output;
-        }
-        let supply: Megawatts = by_plant.values().copied().sum();
+        let supply: Megawatts = self.connected_plants().map(Plant::output).sum();
 
         let mode = self.protection.mode;
         let shed = self.protection.shed.value();
@@ -253,7 +264,7 @@ impl PowerSystem {
             GridMode::Normal => 1.0 - shed,
             GridMode::Blackout => (1.0 - shed + params.shed_step.value()).min(1.0),
         };
-        self.retarget_agc(&available, demand * to_serve - supply);
+        let leftover = self.retarget_agc(&available, demand * to_serve - supply - withheld);
 
         let imbalance = supply - demand * (1.0 - shed);
         self.deviation = match mode {
@@ -263,16 +274,10 @@ impl PowerSystem {
 
         let outcome = evaluate(&mut self.protection, self.deviation, params, supply, demand);
         let shed = self.protection.shed;
-        let served = demand * (1.0 - shed.value());
-        let solar = by_kind
-            .get(&PlantKind::Solar)
-            .copied()
-            .unwrap_or(Megawatts::ZERO);
-        let curtailed = match outcome {
-            ProtectionOutcome::Curtail => solar.min(supply - served).max(Megawatts::ZERO),
-            _ => Megawatts::ZERO,
-        };
-        self.apply_protection(outcome, demand * shed.value(), curtailed, &mut events);
+        if outcome == ProtectionOutcome::Curtail || self.curtailment > Megawatts::ZERO {
+            self.update_curtailment(outcome, -leftover, curtailable, &mut events);
+        }
+        self.apply_protection(outcome, demand * shed.value(), &mut events);
         if mode == GridMode::Blackout && shed < Ratio::ONE {
             // Restoration has re-energised the grid: grid-following solar resynchronises.
             self.plants.values_mut().for_each(Plant::reconnect);
@@ -284,14 +289,27 @@ impl PowerSystem {
             events.push(DomainEvent::FrequencyDeviated { band: now });
         }
 
+        // The summary reports instant t + 1, after protection acted.
+        let by_plant: BTreeMap<PlantId, Megawatts> = self
+            .connected_plants()
+            .map(|p| (p.id(), p.output()))
+            .collect();
+        let mut by_kind: BTreeMap<PlantKind, Megawatts> = BTreeMap::new();
+        for (id, output) in &by_plant {
+            *by_kind
+                .entry(self.plants[id].kind())
+                .or_insert(Megawatts::ZERO) += *output;
+        }
+        let generation: Megawatts = by_plant.values().copied().sum();
+        let served = demand * (1.0 - shed.value());
         let summary = TickSummary {
             tick,
             demand,
             served,
             unserved: demand * shed.value(),
-            generation: supply,
-            curtailed,
-            imbalance: supply - curtailed - served,
+            generation,
+            curtailed: withheld,
+            imbalance: generation - served,
             by_kind,
             by_plant,
             frequency: params.nominal + self.deviation,
@@ -300,6 +318,80 @@ impl PowerSystem {
         };
         events.push(DomainEvent::TickCompleted(summary.clone()));
         (summary, events)
+    }
+
+    /// Every plant's availability this tick, with the standing curtailment
+    /// withheld pro rata from connected online solar. Also returns that solar's
+    /// total availability before curtailment and the amount withheld.
+    fn availability(
+        &self,
+        region: &RegionDefinition,
+        month: SimMonth,
+        tick: u32,
+    ) -> (BTreeMap<PlantId, Megawatts>, Megawatts, Megawatts) {
+        let sun = sun_factor(region.solar(), month, tick);
+        let mut available: BTreeMap<PlantId, Megawatts> = self
+            .plants
+            .values()
+            .map(|p| (p.id(), self.available(region, p, sun)))
+            .collect();
+        let solar: Vec<PlantId> = self
+            .connected_plants()
+            .filter(|p| is_curtailable(p))
+            .map(Plant::id)
+            .collect();
+        let curtailable: Megawatts = solar.iter().map(|id| available[id]).sum();
+        let withheld = self.curtailment.min(curtailable);
+        if withheld > Megawatts::ZERO {
+            let keep = 1.0 - withheld / curtailable;
+            for id in &solar {
+                if let Some(mw) = available.get_mut(id) {
+                    *mw = *mw * keep;
+                }
+            }
+        }
+        (available, curtailable, withheld)
+    }
+
+    /// Recomputes the solar curtailment from the surplus AGC cannot absorb (see
+    /// [`PowerSystem::tick`]), forcing AGC plants to minimum on a `Curtail`
+    /// tick when solar alone cannot cover it.
+    fn update_curtailment(
+        &mut self,
+        outcome: ProtectionOutcome,
+        surplus: Megawatts,
+        curtailable: Megawatts,
+        events: &mut Vec<DomainEvent>,
+    ) {
+        let mut needed = surplus.max(Megawatts::ZERO);
+        if outcome == ProtectionOutcome::Curtail {
+            if needed > curtailable {
+                needed -= self.force_agc_to_minimum();
+            }
+            needed = needed.clamp(Megawatts::ZERO, curtailable);
+            if needed > Megawatts::ZERO {
+                events.push(DomainEvent::SolarCurtailed { mw: needed });
+            }
+        }
+        self.curtailment = needed.min(curtailable);
+    }
+
+    /// Forces connected AGC plants to minimum stable output. Returns how far
+    /// that lowers their next-tick output below the targets AGC just set.
+    fn force_agc_to_minimum(&mut self) -> Megawatts {
+        let network = &self.network;
+        self.plants
+            .values_mut()
+            .filter(|p| p.auto_follow() && p.is_online() && network.is_connected(p.node()))
+            .map(|p| {
+                let before = match p.status() {
+                    PlantStatus::Online { target, .. } => target,
+                    _ => Megawatts::ZERO,
+                };
+                p.force_to_minimum();
+                (before - p.spec().min_output()).max(Megawatts::ZERO)
+            })
+            .sum()
     }
 
     fn apply_commitment(&mut self, tick: u32, events: &mut Vec<DomainEvent>) {
@@ -317,7 +409,12 @@ impl PowerSystem {
         }
     }
 
-    fn retarget_agc(&mut self, available: &BTreeMap<PlantId, Megawatts>, shortfall: Megawatts) {
+    /// Runs AGC over connected plants; returns the signed unallocated shortfall.
+    fn retarget_agc(
+        &mut self,
+        available: &BTreeMap<PlantId, Megawatts>,
+        shortfall: Megawatts,
+    ) -> Megawatts {
         let network = &self.network;
         let mut connected: Vec<&mut Plant> = self
             .plants
@@ -328,28 +425,17 @@ impl PowerSystem {
             .iter()
             .map(|p| (p.id(), available[&p.id()]))
             .collect();
-        agc_retarget(&mut connected, &caps, shortfall);
+        agc_retarget(&mut connected, &caps, shortfall)
     }
 
     fn apply_protection(
         &mut self,
         outcome: ProtectionOutcome,
         shed_mw: Megawatts,
-        curtailed: Megawatts,
         events: &mut Vec<DomainEvent>,
     ) {
         match outcome {
             ProtectionOutcome::Shed => events.push(DomainEvent::LoadShed { mw: shed_mw }),
-            ProtectionOutcome::Curtail => {
-                if curtailed > Megawatts::ZERO {
-                    events.push(DomainEvent::SolarCurtailed { mw: curtailed });
-                }
-                let network = &self.network;
-                self.plants
-                    .values_mut()
-                    .filter(|p| p.auto_follow() && network.is_connected(p.node()))
-                    .for_each(Plant::force_to_minimum);
-            }
             ProtectionOutcome::Blackout => {
                 events.push(DomainEvent::Blackout);
                 for plant in self.plants.values_mut() {
@@ -357,9 +443,11 @@ impl PowerSystem {
                     plant.suppress_commitment_for_day();
                 }
                 self.deviation = Hertz::ZERO;
+                self.curtailment = Megawatts::ZERO;
             }
             ProtectionOutcome::BlackoutRestored => events.push(DomainEvent::BlackoutRestored),
-            ProtectionOutcome::None | ProtectionOutcome::Restored => {}
+            // Curtailment is handled by `update_curtailment`.
+            ProtectionOutcome::None | ProtectionOutcome::Restored | ProtectionOutcome::Curtail => {}
         }
     }
 
