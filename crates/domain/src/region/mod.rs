@@ -284,9 +284,11 @@ fn validate_shapes(parts: &RegionDefinitionParts) -> Result<(), RegionError> {
     check_shape(all_positive(&d.shoulder), "demand.shoulder")?;
     check_shape(all_positive(&d.monthly), "demand.monthly")?;
     let s = &parts.solar;
-    let daylight_ok = s.daylight.iter().all(|&(rise, set)| {
-        rise.is_finite() && set.is_finite() && 0.0 <= rise && rise < set && set <= 24.0
-    });
+    // NaN and infinities fail these comparisons, so no separate finiteness check is needed.
+    let daylight_ok = s
+        .daylight
+        .iter()
+        .all(|&(rise, set)| 0.0 <= rise && rise < set && set <= 24.0);
     check_shape(daylight_ok, "solar.daylight")?;
     check_shape(all_positive(&s.clearness_mean), "solar.clearness_mean")?;
     check_shape(
@@ -521,6 +523,179 @@ mod tests {
                 .hydro_potential
                 .value(),
             0.8
+        );
+    }
+
+    fn parts_with(edit: impl FnOnce(&mut RegionDefinitionParts)) -> RegionDefinitionParts {
+        let mut p = fixtures::tiny_region_parts();
+        edit(&mut p);
+        p
+    }
+
+    fn band(min: f64, base: f64, max: f64) -> Result<RegionDefinition, RegionError> {
+        RegionDefinition::try_from(parts_with(|p| {
+            p.regulator.min_return = Ratio::new(min).unwrap();
+            p.regulator.base_return = Ratio::new(base).unwrap();
+            p.regulator.max_return = Ratio::new(max).unwrap();
+        }))
+    }
+
+    #[test]
+    fn name_key_is_the_authored_key() {
+        assert_eq!(fixtures::tiny_region().name_key(), "region-tiny");
+    }
+
+    #[test]
+    fn site_rules_accept_exactly_the_minimum() {
+        let mut p = fixtures::tiny_region_parts();
+        // Cell (2, 1) has cooling water 0.2 and (10, 1) hydro potential 0.8.
+        p.catalog[0].siting = SitingRule::CoolingWater {
+            min: Ratio::new(0.2).unwrap(),
+        };
+        p.catalog[5].siting = SitingRule::HydroSite {
+            min: Ratio::new(0.8).unwrap(),
+        };
+        let r = RegionDefinition::try_from(p).unwrap();
+        assert_eq!(
+            r.site_check(PlantKind::Nuclear, CellCoord { x: 2, y: 1 }),
+            Ok(())
+        );
+        assert_eq!(
+            r.site_check(PlantKind::Hydro, CellCoord { x: 10, y: 1 }),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn demand_shapes_must_be_positive_and_finite() {
+        for (field, edit) in [
+            (
+                "demand.winter",
+                (|d: &mut DemandShape| d.winter[5] = 0.0) as fn(&mut DemandShape),
+            ),
+            ("demand.summer", |d| d.summer[23] = -0.1),
+            ("demand.shoulder", |d| d.shoulder[0] = f64::NAN),
+            ("demand.monthly", |d| d.monthly[11] = f64::INFINITY),
+        ] {
+            let r = RegionDefinition::try_from(parts_with(|p| edit(&mut p.demand)));
+            assert_eq!(
+                r.unwrap_err(),
+                RegionError::InvalidShape { field },
+                "{field}"
+            );
+        }
+    }
+
+    #[test]
+    fn daylight_must_be_an_ordered_window_within_a_day() {
+        let bad: [(f64, f64); 7] = [
+            (-1.0, 18.0),
+            (f64::NAN, 18.0),
+            (6.0, f64::NAN),
+            (12.0, 12.0),
+            (13.0, 12.0),
+            (6.0, 24.5),
+            (f64::NEG_INFINITY, 12.0),
+        ];
+        for window in bad {
+            let r = RegionDefinition::try_from(parts_with(|p| p.solar.daylight[3] = window));
+            assert_eq!(
+                r.unwrap_err(),
+                RegionError::InvalidShape {
+                    field: "solar.daylight"
+                }
+            );
+        }
+        for window in [(0.0, 24.0), (5.0, 5.5)] {
+            let r = RegionDefinition::try_from(parts_with(|p| p.solar.daylight[3] = window));
+            assert!(r.is_ok(), "{window:?}");
+        }
+    }
+
+    #[test]
+    fn clearness_sd_must_be_finite_and_non_negative() {
+        for sd in [-0.1, f64::NAN, f64::INFINITY] {
+            let r = RegionDefinition::try_from(parts_with(|p| p.solar.clearness_sd = sd));
+            assert_eq!(
+                r.unwrap_err(),
+                RegionError::InvalidShape {
+                    field: "solar.clearness_sd"
+                }
+            );
+        }
+        assert!(RegionDefinition::try_from(parts_with(|p| p.solar.clearness_sd = 0.0)).is_ok());
+    }
+
+    #[test]
+    fn return_band_is_inclusive_and_ordered() {
+        let invalid = || {
+            Err(RegionError::InvalidBand {
+                field: "regulator.return",
+            })
+        };
+        assert!(band(0.07, 0.07, 0.11).is_ok());
+        assert!(band(0.07, 0.11, 0.11).is_ok());
+        assert!(band(0.09, 0.09, 0.09).is_ok());
+        assert_eq!(band(0.07, 0.06, 0.11), invalid());
+        assert_eq!(band(0.07, 0.12, 0.11), invalid());
+        assert_eq!(band(0.12, 0.09, 0.11), invalid());
+    }
+
+    #[test]
+    fn start_plant_on_water_is_rejected_as_not_land() {
+        let p = parts_with(|p| {
+            p.start.fleet.push(StartPlantDef {
+                kind: PlantKind::Peaker,
+                cell: CellCoord { x: 0, y: 2 },
+            });
+        });
+        assert_eq!(
+            RegionDefinition::try_from(p).unwrap_err(),
+            RegionError::InvalidStartSite {
+                kind: PlantKind::Peaker,
+                cell: CellCoord { x: 0, y: 2 },
+                reason: SiteError::NotLand,
+            }
+        );
+    }
+
+    #[test]
+    fn with_two_faults_the_earlier_validation_stage_reports() {
+        // catalog, then cities, then start, then shapes, then bands.
+        let bad_band = |p: &mut RegionDefinitionParts| p.regulator.min_return = Ratio::ONE;
+        let bad_shape = |p: &mut RegionDefinitionParts| p.demand.winter[0] = 0.0;
+        let bad_start =
+            |p: &mut RegionDefinitionParts| p.start.substation = CellCoord { x: 0, y: 0 };
+        let bad_city = |p: &mut RegionDefinitionParts| p.cities[0].cell = CellCoord { x: 50, y: 4 };
+        let bad_catalog = |p: &mut RegionDefinitionParts| {
+            p.catalog.pop();
+        };
+
+        let err = |a: &dyn Fn(&mut RegionDefinitionParts),
+                   b: &dyn Fn(&mut RegionDefinitionParts)| {
+            RegionDefinition::try_from(parts_with(|p| {
+                a(p);
+                b(p);
+            }))
+            .unwrap_err()
+        };
+        assert_eq!(
+            err(&bad_band, &bad_shape),
+            RegionError::InvalidShape {
+                field: "demand.winter"
+            }
+        );
+        assert_eq!(
+            err(&bad_shape, &bad_start),
+            RegionError::SubstationNotOnLand
+        );
+        assert_eq!(
+            err(&bad_start, &bad_city),
+            RegionError::CityOutOfBounds(CityId(1))
+        );
+        assert_eq!(
+            err(&bad_city, &bad_catalog),
+            RegionError::MissingPlantSpec(PlantKind::Hydro)
         );
     }
 }

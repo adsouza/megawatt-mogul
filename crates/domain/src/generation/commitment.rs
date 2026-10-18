@@ -773,4 +773,49 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn off_gaps_are_ordered_by_the_hour_each_begins() {
+        // On at 5 and 23: the gap 0..=4 begins at hour 0, the gap 6..=22 at hour 6,
+        // although the walk from the first committed hour meets them the other way round.
+        let schedule = CommitmentSchedule(hours_of([5, 23]));
+        assert_eq!(schedule.off_gaps(), vec![5 * 60, 17 * 60]);
+    }
+
+    #[test]
+    fn worst_case_shutdown_rounds_up_but_forgives_float_noise() {
+        let with = |capacity: f64, ramp: f64| {
+            let mut s = spec(PlantKind::Coal);
+            s.capacity = Megawatts::new(capacity);
+            s.ramp = crate::units::RampRate::mw_per_minute(ramp);
+            worst_case_shutdown_ticks(&s)
+        };
+        assert_eq!(with(100.0, 25.0), 4);
+        assert_eq!(with(100.0, 30.0), 4);
+        assert_eq!(with(100.0, 20.0), 5);
+        assert_eq!(with(4.0 + 5e-10, 1.0), 4);
+        assert_eq!(with(4.0 - 5e-10, 1.0), 4);
+        assert_eq!(with(4.0 + 2e-9, 1.0), 5);
+        assert_eq!(with(100.0, 0.0), u32::MAX);
+    }
+
+    #[test]
+    fn initial_status_tail_must_exceed_epsilon_to_count_as_stopping() {
+        // A plant that cannot ramp keeps its (tiny) capacity as the tail: exactly
+        // EPSILON is already negligible, so the plant is not still stopping.
+        let mut s = spec(PlantKind::Coal);
+        s.capacity = Megawatts::new(EPSILON);
+        s.ramp = crate::units::RampRate::mw_per_minute(0.0);
+        s.startup = SimDuration::from_ticks(600);
+        let schedule = CommitmentSchedule(hours_of([5]));
+        assert_eq!(
+            schedule.initial_status(&s, Megawatts::ZERO),
+            PlantStatus::Starting { ticks_left: 300 }
+        );
+        s.capacity = Megawatts::new(EPSILON * 2.0);
+        assert!(matches!(
+            schedule.initial_status(&s, Megawatts::ZERO),
+            PlantStatus::Stopping { .. }
+        ));
+    }
 }

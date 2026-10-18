@@ -1,6 +1,9 @@
 # Cargo build output
 /target/
 
+# cargo-mutants output (see TESTING.md)
+mutants.out*/
+
 # Cargo.lock is committed: this is a binary (game), so builds should be reproducible.
 
 # rustfmt / editor backups

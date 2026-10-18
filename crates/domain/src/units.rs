@@ -452,4 +452,98 @@ mod tests {
             Megawatts::new(20.0)
         );
     }
+
+    #[test]
+    fn megawatt_operators_follow_arithmetic() {
+        let (a, b) = (Megawatts::new(7.0), Megawatts::new(2.5));
+        assert_eq!(a + b, Megawatts::new(9.5));
+        assert_eq!(a - b, Megawatts::new(4.5));
+        assert_eq!(-a, Megawatts::new(-7.0));
+        assert_eq!(a * 3.0, Megawatts::new(21.0));
+        let mut c = a;
+        c += b;
+        assert_eq!(c, Megawatts::new(9.5));
+        c -= Megawatts::new(4.0);
+        assert_eq!(c, Megawatts::new(5.5));
+        let total: Megawatts = [a, b, Megawatts::new(0.5)].into_iter().sum();
+        assert_eq!(total, Megawatts::new(10.0));
+        assert_eq!(a.value(), 7.0);
+    }
+
+    #[test]
+    fn energy_operators_follow_arithmetic() {
+        let (a, b) = (MegawattHours::new(7.0), MegawattHours::new(2.5));
+        assert_eq!(a + b, MegawattHours::new(9.5));
+        assert_eq!(a - b, MegawattHours::new(4.5));
+        assert_eq!(a * 2.0, MegawattHours::new(14.0));
+        let mut c = a;
+        c += b;
+        assert_eq!(c, MegawattHours::new(9.5));
+        let total: MegawattHours = [a, b].into_iter().sum();
+        assert_eq!(total, MegawattHours::new(9.5));
+        assert_eq!(a.value(), 7.0);
+    }
+
+    #[test]
+    fn hertz_operators_follow_arithmetic() {
+        let (a, b) = (Hertz::new(60.0), Hertz::new(0.25));
+        assert_eq!(a + b, Hertz::new(60.25));
+        assert_eq!(a - b, Hertz::new(59.75));
+        assert_eq!(-b, Hertz::new(-0.25));
+        assert_eq!(b.value(), 0.25);
+        assert_eq!(Hertz::ZERO, Hertz::new(0.0));
+    }
+
+    #[test]
+    fn money_operators_follow_arithmetic() {
+        let (a, b) = (Money::from_cents(700), Money::from_cents(250));
+        assert_eq!(a + b, Money::from_cents(950));
+        assert_eq!(a - b, Money::from_cents(450));
+        assert_eq!(-a, Money::from_cents(-700));
+        assert_eq!(a * 3, Money::from_cents(2_100));
+        let mut c = a;
+        c += b;
+        assert_eq!(c, Money::from_cents(950));
+        c -= Money::from_cents(400);
+        assert_eq!(c, Money::from_cents(550));
+        let total: Money = [a, b, Money::from_cents(50)].into_iter().sum();
+        assert_eq!(total, Money::from_cents(1_000));
+    }
+
+    #[test]
+    fn money_is_negative_only_below_zero() {
+        assert!(Money::from_cents(-1).is_negative());
+        assert!(!Money::ZERO.is_negative());
+        assert!(!Money::from_cents(1).is_negative());
+    }
+
+    #[test]
+    fn price_value_is_dollars_per_mwh() {
+        assert_eq!(Price::per_mwh(42.5).value(), 42.5);
+    }
+
+    #[test]
+    fn split_even_rounds_toward_zero_with_remainder_last_for_negatives() {
+        assert_eq!(
+            Money::from_cents(-10).split_even(3),
+            vec![
+                Money::from_cents(-3),
+                Money::from_cents(-3),
+                Money::from_cents(-4)
+            ]
+        );
+        assert_eq!(
+            Money::from_cents(-7).split_even(1),
+            vec![Money::from_cents(-7)]
+        );
+    }
+
+    proptest! {
+        #[test]
+        fn split_even_sums_exactly_for_any_sign(cents in -1_000_000_000_000i64..1_000_000_000_000, parts in 1u32..=120) {
+            let split = Money::from_cents(cents).split_even(parts);
+            prop_assert_eq!(split.len() as u32, parts);
+            prop_assert_eq!(split.iter().copied().sum::<Money>(), Money::from_cents(cents));
+        }
+    }
 }

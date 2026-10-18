@@ -444,3 +444,97 @@ fn rate_review_estimate_of_a_fresh_game_holds_nothing() {
     assert_eq!(estimate.reserve_margin, firm / peak - 1.0);
     assert!(estimate.projected_return.value() > 0.0);
 }
+
+fn session_with(edit: impl FnOnce(&mut crate::region::RegionDefinitionParts)) -> GameSession {
+    let mut parts = crate::region::fixtures::tiny_region_parts();
+    edit(&mut parts);
+    let region = crate::region::RegionDefinition::try_from(parts).unwrap();
+    GameSession::new(Arc::new(region), 1, GameSettings::default())
+}
+
+#[test]
+fn snapshot_frequency_is_nominal_plus_the_current_deviation() {
+    let mut s = session();
+    for id in s.power().plants().keys().copied().collect::<Vec<_>>() {
+        s.start_plant(id).unwrap();
+        s.set_auto_follow(id, true).unwrap();
+    }
+    s.begin_operating().unwrap();
+    run_ticks(&mut s, 30);
+    let deviation = s.power().deviation();
+    assert_ne!(deviation, Hertz::ZERO);
+    let nominal = s.region().frequency().nominal;
+    assert_eq!(s.grid_snapshot().frequency, nominal + deviation);
+}
+
+#[test]
+fn net_load_is_the_forecast_less_expected_solar() {
+    let mut s = session();
+    s.insert_commissioned_plant(PlantKind::Solar, CellCoord { x: 5, y: 5 });
+    let region = s.region().clone();
+    let month = s.clock().month();
+    let forecast = s.power().connected_demand_forecast(&region, month, 700);
+    let solar = s.power().expected_solar(&region, month, 700);
+    assert!(solar > Megawatts::ZERO);
+    assert_eq!(s.forecast_net_load(700), forecast - solar);
+}
+
+#[test]
+fn rate_review_estimate_holds_new_capital_when_there_is_excess() {
+    // No connected city: no demand at all, so every megawatt of firm capacity is excess.
+    let mut s = session_with(|p| p.start.connected_cities.clear());
+    let firm = s.power().firm_capacity();
+    let asset = AssetRef::Plant(PlantId(900));
+    let cost = Money::from_cents(1_000_000);
+    s.company.rate_base_mut().add(
+        asset,
+        cost,
+        100,
+        s.clock.month(),
+        AssetProfile::Plant {
+            firm: Megawatts::new(100.0),
+            node: NodeId(900),
+        },
+    );
+    let estimate = s.rate_review_estimate();
+    assert_eq!(estimate.capital_to_hold, cost);
+    assert_eq!(estimate.capital_to_release, Money::ZERO);
+    assert_eq!(estimate.capital_at_risk, Money::ZERO);
+    // With no peak at all the reserve margin is reported as zero, not infinite.
+    assert!(firm > Megawatts::ZERO);
+    assert_eq!(estimate.reserve_margin, 0.0);
+    // Previewing never changes the rate base.
+    assert_eq!(s.company().rate_base().held_total(), Money::ZERO);
+}
+
+#[test]
+fn rate_review_estimate_splits_held_capital_into_release_and_write_off() {
+    let mut s = session_with(|p| p.start.connected_cities.clear());
+    let firm = |mw: f64, node: u32| AssetProfile::Plant {
+        firm: Megawatts::new(mw),
+        node: NodeId(node),
+    };
+    let last_year = SimMonth::new(2026, 4).unwrap();
+    let cost = Money::from_cents(1_000_000);
+    for id in [900, 901] {
+        let asset = AssetRef::Plant(PlantId(id));
+        s.company
+            .rate_base_mut()
+            .add(asset, cost, 100, last_year, firm(800.0, id));
+    }
+    // Last year's review held both plants in full (1,600 MW of excess).
+    s.company
+        .rate_base_mut()
+        .apply_reserve_review(&crate::company::ReserveReviewInputs {
+            year: 2026,
+            excess: Megawatts::new(1_600.0),
+        });
+    assert_eq!(s.company().rate_base().held_total(), cost * 2);
+
+    // This year only the start fleet's 1,235 MW is excess: 617.5 MW of each
+    // 800 MW slice stays excess (and is written off); the rest is released.
+    let estimate = s.rate_review_estimate();
+    assert_eq!(estimate.capital_at_risk, Money::from_cents(2 * 771_875));
+    assert_eq!(estimate.capital_to_release, Money::from_cents(2 * 228_125));
+    assert_eq!(estimate.capital_to_hold, Money::ZERO);
+}

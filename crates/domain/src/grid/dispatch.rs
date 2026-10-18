@@ -473,6 +473,57 @@ mod tests {
         assert_eq!(unmet, Megawatts::ZERO);
     }
 
+    /// A follower whose minimum stable output is zero, online at 0 MW.
+    fn zero_minimum_follower(id: u32) -> Plant {
+        let mut spec = tiny_region().spec(PlantKind::Ccgt).clone();
+        spec.min_stable = crate::units::Ratio::ZERO;
+        let mut p = online_from_spec(id, spec);
+        p.set_auto_follow(true).unwrap();
+        p
+    }
+
+    #[test]
+    fn shortfall_of_exactly_epsilon_is_still_allocated() {
+        let mut ccgt = follower(1, PlantKind::Ccgt);
+        let out = ccgt.output();
+        let left = agc_retarget(&mut [&mut ccgt], &none_available(), Megawatts::new(EPSILON));
+        assert_eq!(left, Megawatts::ZERO);
+        assert!(target_of(&ccgt) > out);
+    }
+
+    #[test]
+    fn leftover_of_exactly_epsilon_is_reported_not_snapped() {
+        // Online at zero minimum with no headroom: nothing can absorb the shortfall.
+        let mut ccgt = zero_minimum_follower(1);
+        let avail = BTreeMap::from([(PlantId(1), Megawatts::ZERO)]);
+        let left = agc_retarget(&mut [&mut ccgt], &avail, Megawatts::new(EPSILON));
+        assert_eq!(left, Megawatts::new(EPSILON));
+        let left = agc_retarget(&mut [&mut ccgt], &avail, Megawatts::new(-EPSILON));
+        assert_eq!(left, Megawatts::new(-EPSILON));
+    }
+
+    #[test]
+    fn sub_epsilon_residue_after_allocation_is_snapped_to_zero() {
+        let mut ccgt = follower(1, PlantKind::Ccgt);
+        // One tick of CCGT ramp is 25 MW; 5e-10 MW more cannot be allocated but is noise.
+        let left = agc_retarget(
+            &mut [&mut ccgt],
+            &none_available(),
+            Megawatts::new(25.0 + 5e-10),
+        );
+        assert_eq!(left, Megawatts::ZERO);
+    }
+
+    #[test]
+    fn boundary_unmet_of_exactly_epsilon_is_reported_not_snapped() {
+        let mut ccgt = zero_minimum_follower(1);
+        let avail = BTreeMap::from([(PlantId(1), Megawatts::ZERO)]);
+        let unmet = boundary_dispatch(&mut [&mut ccgt], &avail, Megawatts::new(EPSILON));
+        assert_eq!(unmet, Megawatts::new(EPSILON));
+        let unmet = boundary_dispatch(&mut [&mut ccgt], &avail, Megawatts::new(EPSILON / 2.0));
+        assert_eq!(unmet, Megawatts::ZERO);
+    }
+
     const KINDS: [PlantKind; 4] = [
         PlantKind::Nuclear,
         PlantKind::Coal,

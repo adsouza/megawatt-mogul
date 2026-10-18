@@ -242,4 +242,30 @@ mod tests {
             [MilestoneKind::ConnectCities { count: 10 }]
         );
     }
+
+    #[test]
+    fn connected_cities_are_counted_at_the_start_and_on_connection_events() {
+        use domain::ids::CityId;
+        use domain::region::RegionDefinition;
+        use domain::region::fixtures::tiny_region_parts;
+        use domain::session::GameSettings;
+        use std::sync::Arc;
+
+        let two = session();
+        let mut milestones = MilestoneProjection::new(&two);
+        assert_eq!(milestones.connected_cities, 2);
+
+        let mut parts = tiny_region_parts();
+        parts.start.connected_cities.push(CityId(3));
+        let three = GameSession::new(
+            Arc::new(RegionDefinition::try_from(parts).unwrap()),
+            1,
+            GameSettings::default(),
+        );
+        // Unrelated events never recount; a connection event does.
+        milestones.apply(&DomainEvent::Blackout, &three);
+        assert_eq!(milestones.connected_cities, 2);
+        milestones.apply(&DomainEvent::CityConnected { city: CityId(3) }, &three);
+        assert_eq!(milestones.connected_cities, 3);
+    }
 }

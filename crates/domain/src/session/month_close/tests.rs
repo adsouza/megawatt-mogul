@@ -3,6 +3,7 @@ use std::sync::Arc;
 use proptest::prelude::*;
 
 use super::super::*;
+use super::{LedgerTotals, is_zero_capital, share};
 use crate::company::LedgerCategory;
 use crate::generation::PlantStatus;
 use crate::ids::CityId;
@@ -694,4 +695,61 @@ fn plant_under_construction_keeps_its_returning_state_through_a_close() {
         PlantStatus::UnderConstruction { months_left: 11 }
     );
     assert!(plant.previous_month_offline());
+}
+
+#[test]
+fn reliability_share_is_served_over_demand_clamped_and_defaults_to_one() {
+    let mwh = MegawattHours::new;
+    assert_eq!(share(mwh(50.0), mwh(100.0)).value(), 0.5);
+    assert_eq!(share(mwh(100.0), mwh(100.0)), Ratio::ONE);
+    assert_eq!(share(mwh(150.0), mwh(100.0)), Ratio::ONE);
+    assert_eq!(share(mwh(-5.0), mwh(100.0)), Ratio::ZERO);
+    assert_eq!(share(mwh(0.0), mwh(0.0)), Ratio::ONE);
+    assert_eq!(share(mwh(10.0), mwh(0.0)), Ratio::ONE);
+    assert_eq!(share(mwh(10.0), mwh(-1.0)), Ratio::ONE);
+}
+
+#[test]
+fn only_capital_adjustments_of_no_money_are_noise() {
+    let asset = AssetRef::Plant(PlantId(1));
+    let zero = Money::ZERO;
+    let some = Money::from_cents(1);
+    assert!(is_zero_capital(&DomainEvent::CapitalHeld {
+        asset,
+        amount: zero
+    }));
+    assert!(is_zero_capital(&DomainEvent::CapitalReleased {
+        asset,
+        amount: zero
+    }));
+    assert!(is_zero_capital(&DomainEvent::CapitalDisallowed {
+        asset,
+        amount: zero
+    }));
+    assert!(!is_zero_capital(&DomainEvent::CapitalHeld {
+        asset,
+        amount: some
+    }));
+    assert!(!is_zero_capital(&DomainEvent::CapitalReleased {
+        asset,
+        amount: some
+    }));
+    assert!(!is_zero_capital(&DomainEvent::CapitalDisallowed {
+        asset,
+        amount: some
+    }));
+    assert!(!is_zero_capital(&DomainEvent::Blackout));
+}
+
+#[test]
+fn ledger_totals_split_operating_cost_from_the_net() {
+    let totals = LedgerTotals {
+        revenue: Money::from_cents(1_000),
+        fuel: Money::from_cents(-100),
+        start_up: Money::from_cents(-20),
+        fixed_om: Money::from_cents(-3),
+        construction: Money::from_cents(-50),
+    };
+    assert_eq!(totals.operating_cost(), Money::from_cents(123));
+    assert_eq!(totals.net(), Money::from_cents(827));
 }

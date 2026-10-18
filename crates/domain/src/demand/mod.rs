@@ -179,4 +179,20 @@ mod tests {
         assert_eq!(c.node(), NodeId(7));
         assert_eq!(c.def(), &def);
     }
+
+    #[test]
+    fn noise_step_is_persistence_times_error_plus_scaled_innovation() {
+        let r = tiny_region();
+        let shape = r.demand();
+        let (phi, sigma) = (shape.error_persistence, shape.forecast_error.value());
+        for seed in 0..10 {
+            let mut shadow = SimRng::from_seed(seed);
+            let z = shadow.standard_normal();
+            let mut n = DemandNoise { error: 0.02 };
+            let got = n.step(shape, &mut SimRng::from_seed(seed));
+            let expected = phi * 0.02 + sigma * (1.0 - phi * phi).sqrt() * z;
+            assert!((got - expected).abs() < 1e-15, "seed {seed}");
+            assert_eq!(n.error, got);
+        }
+    }
 }

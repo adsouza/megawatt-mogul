@@ -669,6 +669,40 @@ proptest! {
                             other => prop_assert!(false, "unexpected event {:?}", other),
                         }
                     }
+                    let review_year = now.year();
+                    for event in &events {
+                        match event {
+                            // New holds target only this year's non-legacy capital that was not already held.
+                            DomainEvent::CapitalHeld { asset, .. } => {
+                                let b = before.asset(*asset).unwrap();
+                                prop_assert!(b.held_slice().is_none());
+                                prop_assert!(b.is_new_in(review_year));
+                            }
+                            // Releases and write-offs come only from slices held before the review.
+                            DomainEvent::CapitalReleased { asset, .. }
+                            | DomainEvent::CapitalDisallowed { asset, .. } => {
+                                prop_assert!(before.asset(*asset).unwrap().held_slice().is_some());
+                            }
+                            _ => {}
+                        }
+                    }
+                    // Held firm capacity never exceeds the excess it was held against.
+                    let held_firm: f64 = rb
+                        .assets()
+                        .filter_map(|a| a.held_firm())
+                        .map(Megawatts::value)
+                        .sum();
+                    // (A review for a year already reviewed is a no-op and holds nothing new.)
+                    if rb.last_review_year() != before.last_review_year() {
+                        prop_assert!(held_firm <= excess.max(0.0) + 1e-6, "held {held_firm} > excess {excess}");
+                    }
+                    // A held line slice always follows a plant that is itself still held.
+                    for a in rb.assets() {
+                        if let Some(followed) = a.held_slice().and_then(HeldSlice::follows) {
+                            prop_assert!(matches!(a.asset, AssetRef::Line(_)));
+                            prop_assert!(rb.asset(AssetRef::Plant(followed)).unwrap().held_slice().is_some());
+                        }
+                    }
                     // Write-offs never exceed the book value there was to write off.
                     for (a, b) in rb.assets().zip(before.assets()) {
                         prop_assert!(a.written_off() - b.written_off() <= b.remaining);
@@ -700,4 +734,136 @@ proptest! {
         prop_assert_eq!(company.cash(), starting);
         prop_assert!(company.ledger().is_empty());
     }
+}
+
+#[test]
+fn accessors_report_the_slice_and_the_review_history() {
+    let mut rb = RateBase::default();
+    assert_eq!(rb.last_review_year(), None);
+    rb.add(
+        plant(1),
+        cents(100_000),
+        120,
+        month(2028, 1),
+        plant_at(100.0, 1),
+    );
+    rb.add(
+        line(5),
+        cents(10_000),
+        100,
+        month(2028, 1),
+        line_between(1, 0),
+    );
+    assert_eq!(rb.asset(plant(1)).unwrap().months_left(), 120);
+    assert_eq!(rb.asset(line(5)).unwrap().months_left(), 100);
+    rb.depreciate_month();
+    assert_eq!(rb.asset(plant(1)).unwrap().months_left(), 119);
+
+    rb.apply_reserve_review(&review(2028, 25.0));
+    assert_eq!(rb.last_review_year(), Some(2028));
+    let plant_slice = rb.asset(plant(1)).unwrap().held_slice().unwrap();
+    assert_eq!(plant_slice.follows(), None);
+    assert_eq!(plant_slice.fraction(), 0.25);
+    let line_slice = rb.asset(line(5)).unwrap().held_slice().unwrap();
+    assert_eq!(line_slice.follows(), Some(PlantId(1)));
+    assert_eq!(line_slice.fraction(), 0.25);
+}
+
+#[test]
+fn write_off_shrinks_the_live_capacity_and_respreads_depreciation() {
+    let mut rb = RateBase::default();
+    rb.add(
+        plant(1),
+        cents(100_000),
+        100,
+        month(2028, 1),
+        plant_at(100.0, 1),
+    );
+    rb.apply_reserve_review(&review(2028, 100.0));
+    // 40 of the 100 held MW are still excess a year on: 40% is written off, 60% released.
+    rb.apply_reserve_review(&review(2029, 40.0));
+    let a = rb.asset(plant(1)).unwrap();
+    assert_eq!(a.written_off(), cents(40_000));
+    assert_eq!(a.remaining, cents(60_000));
+    assert_eq!(a.live_share, SHARE_UNITS / 10 * 6);
+    assert_eq!(a.live_firm(), 100.0 * 0.6);
+    // The remaining book value is spread over the remaining months.
+    assert_eq!(a.monthly_depreciation, cents(600));
+}
+
+#[test]
+fn write_off_after_the_book_life_does_not_divide_by_zero() {
+    let mut rb = RateBase::default();
+    rb.add(
+        plant(1),
+        cents(1_000),
+        1,
+        month(2028, 1),
+        plant_at(100.0, 1),
+    );
+    rb.apply_reserve_review(&review(2028, 100.0));
+    rb.depreciate_month();
+    assert_eq!(rb.asset(plant(1)).unwrap().months_left(), 0);
+    // Nothing is left to write off, but the second review must still cope.
+    rb.apply_reserve_review(&review(2029, 100.0));
+    assert_eq!(rb.total(), Money::ZERO);
+}
+
+#[test]
+fn share_for_firm_rejects_unusable_requests() {
+    let asset =
+        |profile| RateBaseAsset::new(plant(1), cents(1_000), 10, month(2028, 1), profile, false);
+    let plant_asset = asset(plant_at(100.0, 1));
+    assert_eq!(plant_asset.share_for_firm(25.0), SHARE_UNITS / 4);
+    assert_eq!(
+        plant_asset.share_for_firm(500.0),
+        SHARE_UNITS,
+        "capped by the live capacity"
+    );
+    assert_eq!(plant_asset.share_for_firm(0.0), 0);
+    assert_eq!(plant_asset.share_for_firm(-5.0), 0);
+    assert_eq!(plant_asset.share_for_firm(f64::NAN), 0);
+    assert_eq!(asset(plant_at(0.0, 1)).share_for_firm(5.0), 0);
+    assert_eq!(asset(plant_at(-3.0, 1)).share_for_firm(5.0), 0);
+    assert_eq!(asset(line_between(1, 0)).share_for_firm(5.0), 0);
+}
+
+#[test]
+fn division_rounds_half_to_even_for_both_signs() {
+    let table: [(i128, i128, i128); 13] = [
+        (0, 5, 0),
+        (1, 3, 0),
+        (2, 3, 1),
+        (3, 2, 2),
+        (5, 2, 2),
+        (7, 2, 4),
+        (9, 2, 4),
+        (10, 4, 2),
+        (-1, 3, 0),
+        (-2, 3, -1),
+        (-5, 2, -2),
+        (-7, 2, -4),
+        (-9, 2, -4),
+    ];
+    for (n, d, expected) in table {
+        assert_eq!(div_round_half_even(n, d), expected, "{n} / {d}");
+    }
+    assert_eq!(prorate(cents(1_000), 1, 3), cents(333));
+    assert_eq!(prorate(cents(1_000), 2, 3), cents(667));
+    assert_eq!(prorate(cents(5), 1, 2), cents(2));
+    assert_eq!(scale_share(10, 1, 4), 2);
+    assert_eq!(scale_share(10, 3, 4), 8);
+}
+
+#[test]
+fn allocate_splits_in_proportion_and_degrades_safely() {
+    assert_eq!(allocate(f64::NAN, &[1.0, 2.0]), vec![0.0, 0.0]);
+    assert_eq!(allocate(-5.0, &[1.0, 2.0]), vec![0.0, 0.0]);
+    assert_eq!(allocate(0.0, &[1.0, 2.0]), vec![0.0, 0.0]);
+    assert_eq!(allocate(10.0, &[1.0, 2.0]), vec![1.0, 2.0]);
+    assert_eq!(allocate(3.0, &[]), Vec::<f64>::new());
+    let parts = allocate(1.5, &[1.0, 2.0]);
+    assert!((parts[0] - 0.5).abs() < 1e-12 && (parts[1] - 1.0).abs() < 1e-12);
+    // The last entry takes the rounding remainder but never more than its weight.
+    assert!((parts.iter().sum::<f64>() - 1.5).abs() < 1e-12);
 }

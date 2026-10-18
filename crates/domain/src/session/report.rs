@@ -310,4 +310,67 @@ mod tests {
         assert!(!acc.operated(PlantId(3)));
         assert_eq!(acc.plant_energy()[&PlantId(3)], MegawattHours::ZERO);
     }
+
+    #[test]
+    fn blackout_restoration_is_an_incident() {
+        let mut acc = MonthAccumulator::default();
+        acc.add_command_events(9, &[DomainEvent::Blackout, DomainEvent::BlackoutRestored]);
+        assert_eq!(
+            acc.incidents(),
+            &[
+                Incident {
+                    tick: 9,
+                    kind: IncidentKind::Blackout
+                },
+                Incident {
+                    tick: 9,
+                    kind: IncidentKind::BlackoutRestored
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn observe_plants_notes_every_physically_running_plant() {
+        use crate::ids::{CellCoord, NodeId};
+        use crate::region::PlantKind;
+        use crate::region::fixtures::tiny_region;
+        use crate::time::SimMonth;
+
+        let region = tiny_region();
+        let new = |id: u32, kind: PlantKind| {
+            Plant::new_commissioned(
+                PlantId(id),
+                NodeId(id),
+                CellCoord { x: 7, y: 3 },
+                region.spec(kind).clone(),
+                SimMonth::new(2027, 4).unwrap(),
+            )
+        };
+        let offline = new(1, PlantKind::Coal);
+        let mut starting = new(2, PlantKind::Coal);
+        starting.start().unwrap();
+        let mut online = new(3, PlantKind::Peaker);
+        online.start().unwrap();
+        while !online.is_online() {
+            online.step(Megawatts::new(200.0));
+        }
+        let mut stopping = new(4, PlantKind::Peaker);
+        stopping.start().unwrap();
+        while !stopping.is_online() {
+            stopping.step(Megawatts::new(200.0));
+        }
+        stopping.stop().unwrap();
+        let under_construction = Plant::new_under_construction(
+            PlantId(5),
+            NodeId(5),
+            CellCoord { x: 7, y: 3 },
+            region.spec(PlantKind::Coal).clone(),
+        );
+
+        let mut acc = MonthAccumulator::default();
+        acc.observe_plants([&offline, &starting, &online, &stopping, &under_construction]);
+        let operated: Vec<bool> = (1..=5).map(|id| acc.operated(PlantId(id))).collect();
+        assert_eq!(operated, [false, true, true, true, false]);
+    }
 }

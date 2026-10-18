@@ -40,7 +40,7 @@ Requires Rust 1.98 and [`cargo-nextest`](https://nexte.st) (`cargo install --loc
 cargo nextest run --workspace                 # run every test
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check
-cargo mutants -p domain -p application        # mutation testing (slow; on demand)
+cargo mutants -p domain -p application -j 4  # mutation testing (slow; weekly in CI, see TESTING.md)
 ```
 
 See [TESTING.md](TESTING.md) for the test layers and [ARCHITECTURE.md](ARCHITECTURE.md) for how the

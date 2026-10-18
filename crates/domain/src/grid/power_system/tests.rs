@@ -772,3 +772,335 @@ fn begin_day_draw_count_is_unchanged() {
     reference.standard_normal();
     assert_eq!(rng_a, reference);
 }
+
+// ---- Mutation-killing tests: exact single-tick oracles ----
+
+/// The tiny region with every plant able to ramp 1,000 MW per tick, so AGC is
+/// limited by headroom to minimum output rather than by the ramp.
+fn fast_ramp_region() -> RegionDefinition {
+    let mut parts = crate::region::fixtures::tiny_region_parts();
+    for spec in &mut parts.catalog {
+        spec.ramp = crate::units::RampRate::mw_per_minute(1_000.0);
+    }
+    RegionDefinition::try_from(parts).unwrap()
+}
+
+fn supply(sys: &PowerSystem) -> Megawatts {
+    sys.connected_plants().map(Plant::output).sum()
+}
+
+fn target_of(sys: &PowerSystem, id: u32) -> Megawatts {
+    match sys.plant(PlantId(id)).unwrap().status() {
+        PlantStatus::Online { target, .. } => target,
+        other => panic!("plant {id} is {other:?}"),
+    }
+}
+
+fn close(a: Megawatts, b: Megawatts) -> bool {
+    (a - b).abs().value() < 1e-6
+}
+
+#[test]
+fn tick_demand_is_the_forecast_times_one_plus_the_drawn_error() {
+    let region = tiny_region();
+    let mut sys = auto_follow_fleet(&region);
+    let mut rng = SimRng::from_seed(5);
+    sys.begin_day(&region, april(), &mut rng);
+    for t in 0..40 {
+        let mut shadow_rng = rng.clone();
+        let mut shadow_noise = sys.noise;
+        let error = shadow_noise.step(region.demand(), &mut shadow_rng);
+        let forecast = sys.connected_demand_forecast(&region, april(), t);
+        let (s, _) = sys.tick(&region, april(), t, &mut rng);
+        assert!(close(s.demand, forecast * (1.0 + error)), "tick {t}");
+    }
+}
+
+#[test]
+fn shed_load_is_not_served_by_agc_and_does_not_count_in_the_imbalance() {
+    let region = fast_ramp_region();
+    let params = region.frequency();
+    let mut sys = auto_follow_fleet(&region);
+    let mut rng = SimRng::from_seed(3);
+    sys.begin_day(&region, april(), &mut rng);
+    let shed = 0.1;
+    sys.protection.shed = Ratio::new(shed).unwrap();
+    let before = supply(&sys);
+    let coal_output = sys.plant(PlantId(1)).unwrap().output();
+    let (s, _) = sys.tick(&region, april(), 0, &mut rng);
+
+    // Only coal has headroom to lower; it absorbs the whole (negative) shortfall.
+    let shortfall = s.demand * (1.0 - shed) - before;
+    assert!(shortfall < Megawatts::ZERO);
+    assert!(close(target_of(&sys, 1), coal_output + shortfall));
+
+    let imbalance = before - s.demand * (1.0 - shed);
+    let expected = next_deviation(Hertz::ZERO, imbalance, s.demand, params);
+    assert!((sys.deviation() - expected).value().abs() < 1e-9);
+    assert!(sys.deviation() > Hertz::ZERO);
+    assert!(
+        (s.frequency - (params.nominal + sys.deviation()))
+            .value()
+            .abs()
+            < 1e-12
+    );
+}
+
+#[test]
+fn blackout_pre_positions_supply_for_the_next_restoration_step() {
+    let region = fast_ramp_region();
+    let params = region.frequency();
+    let mut sys = auto_follow_fleet(&region);
+    let mut rng = SimRng::from_seed(3);
+    sys.begin_day(&region, april(), &mut rng);
+    let shed = 0.2;
+    sys.protection = ProtectionState {
+        mode: GridMode::Blackout,
+        shed: Ratio::new(shed).unwrap(),
+        shed_ticks: 3,
+    };
+    let before = supply(&sys);
+    let coal_output = sys.plant(PlantId(1)).unwrap().output();
+    let (s, _) = sys.tick(&region, april(), 0, &mut rng);
+
+    let to_serve = 1.0 - shed + params.shed_step.value();
+    let shortfall = s.demand * to_serve - before;
+    assert!(shortfall < Megawatts::ZERO);
+    assert!(close(target_of(&sys, 1), coal_output + shortfall));
+    assert_eq!(sys.deviation(), Hertz::ZERO);
+    assert_eq!(s.frequency, params.nominal);
+}
+
+#[test]
+fn grid_following_solar_resynchronises_only_once_load_is_being_restored() {
+    let region = tiny_region();
+    let mut defs = start_fleet(&region);
+    defs.push(connected(PlantKind::Solar, cell(5, 5)));
+    let solar = PlantId(4);
+
+    // A tripped solar plant stays out in normal operation: it is not re-synchronised.
+    let mut sys = system_with(&region, &defs);
+    let mut rng = SimRng::from_seed(11);
+    sys.begin_day(&region, april(), &mut rng);
+    sys.plant_mut(solar).unwrap().trip();
+    sys.tick(&region, april(), 0, &mut rng);
+    assert_eq!(sys.plant(solar).unwrap().status(), PlantStatus::Offline);
+
+    // During a blackout it stays out while nothing has been restored (shed = 1).
+    let mut sys = system_with(&region, &defs);
+    let mut rng = SimRng::from_seed(2);
+    sys.begin_day(&region, april(), &mut rng);
+    let (_, events) = sys.tick(&region, april(), 0, &mut rng);
+    assert!(events.contains(&DomainEvent::Blackout));
+    for t in 1..30 {
+        let (s, _) = sys.tick(&region, april(), t, &mut rng);
+        assert_eq!(
+            (s.mode, s.shed),
+            (GridMode::Blackout, Ratio::ONE),
+            "tick {t}"
+        );
+        assert_eq!(
+            sys.plant(solar).unwrap().status(),
+            PlantStatus::Offline,
+            "tick {t}"
+        );
+    }
+}
+
+#[test]
+fn force_agc_to_minimum_returns_the_targets_it_removed() {
+    let region = tiny_region();
+    let mut sys = auto_follow_fleet(&region);
+    sys.begin_day(&region, april(), &mut SimRng::from_seed(1));
+    let (coal, ccgt, peaker) = (PlantId(1), PlantId(2), PlantId(3));
+    sys.plant_mut(coal)
+        .unwrap()
+        .set_target(Megawatts::new(400.0))
+        .unwrap();
+    sys.plant_mut(ccgt)
+        .unwrap()
+        .set_target(Megawatts::new(300.0))
+        .unwrap();
+    sys.plant_mut(peaker)
+        .unwrap()
+        .set_target(Megawatts::new(40.0))
+        .unwrap();
+    // A plant on manual dispatch is left alone.
+    sys.plant_mut(peaker)
+        .unwrap()
+        .set_auto_follow(false)
+        .unwrap();
+    sys.plant_mut(peaker)
+        .unwrap()
+        .set_target(Megawatts::new(100.0))
+        .unwrap();
+
+    let removed = sys.force_agc_to_minimum();
+
+    assert_eq!(removed, Megawatts::new((400.0 - 240.0) + (300.0 - 200.0)));
+    assert_eq!(target_of(&sys, 1), Megawatts::new(240.0));
+    assert_eq!(target_of(&sys, 2), Megawatts::new(200.0));
+    assert_eq!(target_of(&sys, 3), Megawatts::new(100.0));
+}
+
+#[test]
+fn curtailment_is_what_forcing_agc_down_cannot_cover() {
+    let region = tiny_region();
+    let mut sys = auto_follow_fleet(&region);
+    sys.begin_day(&region, april(), &mut SimRng::from_seed(1));
+    sys.plant_mut(PlantId(1))
+        .unwrap()
+        .set_target(Megawatts::new(310.0))
+        .unwrap();
+    sys.plant_mut(PlantId(2))
+        .unwrap()
+        .set_target(Megawatts::new(200.0))
+        .unwrap();
+    sys.plant_mut(PlantId(3))
+        .unwrap()
+        .set_target(Megawatts::new(40.0))
+        .unwrap();
+    let mut events = Vec::new();
+
+    // 100 MW of surplus, 60 MW of solar to curtail, and forcing AGC to minimum
+    // removes 70 MW of targets: only 30 MW of solar then has to be curtailed.
+    sys.update_curtailment(
+        ProtectionOutcome::Curtail,
+        Megawatts::new(100.0),
+        Megawatts::new(60.0),
+        &mut events,
+    );
+
+    assert_eq!(
+        events,
+        vec![DomainEvent::SolarCurtailed {
+            mw: Megawatts::new(30.0)
+        }]
+    );
+    assert_eq!(sys.curtailment, Megawatts::new(30.0));
+    assert_eq!(target_of(&sys, 1), Megawatts::new(240.0));
+}
+
+#[test]
+fn nothing_is_curtailed_or_forced_when_there_is_no_surplus_to_cover() {
+    let region = tiny_region();
+    let mut sys = auto_follow_fleet(&region);
+    sys.begin_day(&region, april(), &mut SimRng::from_seed(1));
+    let targets: Vec<Megawatts> = (1..=3).map(|id| target_of(&sys, id)).collect();
+    let mut events = Vec::new();
+
+    sys.update_curtailment(
+        ProtectionOutcome::Curtail,
+        Megawatts::ZERO,
+        Megawatts::ZERO,
+        &mut events,
+    );
+
+    assert!(events.is_empty());
+    assert_eq!(sys.curtailment, Megawatts::ZERO);
+    let after: Vec<Megawatts> = (1..=3).map(|id| target_of(&sys, id)).collect();
+    assert_eq!(after, targets);
+}
+
+#[test]
+fn surplus_without_over_frequency_is_not_curtailed() {
+    // Thermal plants hold 50 MW more than load: below the curtail threshold,
+    // so the sub-ramp surplus is left to frequency, not withheld from solar.
+    let region = tiny_region();
+    let mut defs = start_fleet(&region);
+    defs.push(connected(PlantKind::Solar, cell(5, 5)));
+    let mut sys = system_with(&region, &defs);
+    for id in 1..=3 {
+        let p = sys.plant_mut(PlantId(id)).unwrap();
+        p.set_commitment(CommitmentSchedule::all_day());
+    }
+    let mut rng = SimRng::from_seed(21);
+    let tick = 700;
+    // Fixed targets for the thermal fleet, chosen from the day's own numbers.
+    sys.plant_mut(PlantId(2))
+        .unwrap()
+        .set_initial_target(Megawatts::new(200.0));
+    sys.plant_mut(PlantId(3))
+        .unwrap()
+        .set_initial_target(Megawatts::new(40.0));
+    sys.begin_day(&region, april(), &mut rng);
+    let (available, _, _) = sys.availability(&region, april(), tick);
+    let solar_mw = available[&PlantId(4)];
+    let forecast = sys.connected_demand_forecast(&region, april(), tick);
+    let coal_mw = forecast + Megawatts::new(50.0) - solar_mw - Megawatts::new(240.0);
+    sys.plant_mut(PlantId(1))
+        .unwrap()
+        .set_boundary_output(coal_mw);
+    // Coal alone is on AGC, with only a 6 MW ramp to give back.
+    sys.plant_mut(PlantId(1))
+        .unwrap()
+        .set_auto_follow(true)
+        .unwrap();
+
+    let (s, events) = sys.tick(&region, april(), tick, &mut rng);
+
+    assert!(s.imbalance > Megawatts::new(30.0), "{:?}", s.imbalance);
+    assert!(sys.deviation() < region.frequency().curtail_above);
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, DomainEvent::SolarCurtailed { .. }))
+    );
+    assert_eq!(sys.curtailment, Megawatts::ZERO);
+}
+
+#[test]
+fn hydro_availability_is_its_remaining_budget_spread_over_an_hour() {
+    let region = tiny_region();
+    let mut sys = system_with(&region, &[connected(PlantKind::Hydro, cell(10, 1))]);
+    sys.begin_day(&region, april(), &mut SimRng::from_seed(1));
+    sys.plant_mut(PlantId(1))
+        .unwrap()
+        .reset_hydro_budget(MegawattHours::new(2.0));
+    let (available, _, _) = sys.availability(&region, april(), 700);
+    assert_eq!(available[&PlantId(1)], Megawatts::new(120.0));
+}
+
+#[test]
+fn begin_day_budgets_only_commissioned_hydro() {
+    let region = tiny_region();
+    let mut sys = system_with(&region, &[]);
+    let spec = region.spec(PlantKind::Hydro).clone();
+    sys.insert_plant(Plant::new_under_construction(
+        PlantId(7),
+        NodeId(107),
+        cell(10, 1),
+        spec,
+    ));
+    sys.begin_day(&region, april(), &mut SimRng::from_seed(1));
+    assert_eq!(
+        sys.plant(PlantId(7)).unwrap().hydro_budget(),
+        Some(MegawattHours::ZERO)
+    );
+}
+
+#[test]
+fn begin_day_dispatches_only_connected_plants() {
+    let region = tiny_region();
+    let mut defs = start_fleet(&region);
+    defs.push(PlantDef {
+        kind: PlantKind::Ccgt,
+        cell: cell(4, 4),
+        connected: false,
+    });
+    let mut sys = system_with(&region, &defs);
+    for id in 1..=4 {
+        let p = sys.plant_mut(PlantId(id)).unwrap();
+        p.set_commitment(CommitmentSchedule::all_day());
+        p.set_auto_follow(true).unwrap();
+    }
+    sys.begin_day(&region, april(), &mut SimRng::from_seed(1));
+    // The isolated plant keeps its minimum; the connected coal plant takes the load.
+    assert_eq!(
+        sys.plant(PlantId(4)).unwrap().output(),
+        Megawatts::new(200.0)
+    );
+    let load = sys.connected_demand_forecast(&region, april(), 0);
+    let connected_total: Megawatts = supply(&sys);
+    assert!(close(connected_total, load));
+}

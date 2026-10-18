@@ -516,3 +516,24 @@ fn manual_start_of_a_running_plant_reports_its_state() {
         s.start_plant(coal)
     });
 }
+
+#[test]
+fn planning_target_accepts_exactly_minimum_and_capacity() {
+    let mut s = session();
+    let coal = plant_of(&s, PlantKind::Coal);
+    for mw in [240.0, 600.0] {
+        s.set_dispatch_target(coal, Megawatts::new(mw)).unwrap();
+        assert_eq!(
+            s.power().plant(coal).unwrap().initial_target(),
+            Megawatts::new(mw)
+        );
+    }
+    rejected(
+        &mut s,
+        DomainError::AboveCapacity {
+            plant: coal,
+            max: Megawatts::new(600.0),
+        },
+        |s| s.set_dispatch_target(coal, Megawatts::new(600.1)),
+    );
+}

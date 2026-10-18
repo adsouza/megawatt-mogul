@@ -243,4 +243,25 @@ mod tests {
             j.previous_tariff
         );
     }
+
+    #[test]
+    fn no_demand_means_target_reliability_even_if_energy_was_served() {
+        let region = tiny_region();
+        let mut i = inputs(100.0, 1_000_000, 1_000_000);
+        i.tally = tally(0.0, 100.0, 1_000_000);
+        let o = compute_rate_review(&i, region.regulator());
+        assert_eq!(o.allowed_return, region.regulator().base_return);
+    }
+
+    #[test]
+    fn a_zero_previous_cost_contributes_no_improvement_term() {
+        let region = tiny_region();
+        let mut i = inputs(1000.0, 10_000_000, 0);
+        i.tally = tally(1000.0, 1000.0, 10_000_000);
+        let without = compute_rate_review(&i, region.regulator());
+        i.previous_cost_per_mwh = Some(0.0);
+        let with_zero = compute_rate_review(&i, region.regulator());
+        assert_eq!(with_zero.allowed_return, without.allowed_return);
+        assert_eq!(with_zero.allowed_return.value(), 0.09 + 2.0 * 0.001);
+    }
 }

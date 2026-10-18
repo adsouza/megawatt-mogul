@@ -1,0 +1,60 @@
+# cargo-mutants configuration. See TESTING.md ("Mutation testing") for how to run and read it.
+#
+# Run: cargo mutants -p domain -p application -j 4
+# Target: zero missed mutants in `domain`. Every entry in `exclude_re` below is a provably
+# equivalent mutant (no observable behaviour change) or genuinely untestable code, and says why.
+
+examine_globs = ["crates/domain/src/**/*.rs", "crates/application/src/**/*.rs"]
+test_tool = "nextest"
+timeout_multiplier = 3.0
+
+# Stop at the first failing test and terminate running tests at once (see
+# `[profile.mutants]` in .config/nextest.toml), so a mutant that makes a loop spin forever is
+# caught by the first failing test instead of timing out.
+additional_cargo_test_args = ["--profile", "mutants"]
+
+# Patterns match the mutant name as printed by `cargo mutants --list`:
+# "<file>:<line>:<col>: replace <old> with <new> in <function>". Line numbers drift, so they
+# are matched with `\d+`; where one function has both an equivalent and a killable mutant of
+# the same operator, the column pins the equivalent one.
+exclude_re = [
+    # GameSettings and NetworkModel each have a single value today (CopperPlate), so
+    # `Default::default()` is indistinguishable from the real field. Revisit when a second
+    # NetworkModel variant exists.
+    'replace GameSession::settings -> &GameSettings with Box::leak\(Box::new\(Default::default\(\)\)\)',
+    'replace PowerSystem::model -> NetworkModel with Default::default\(\)',
+
+    # balance_boundary is only ever evaluated at tick 0 (midnight), where expected solar is
+    # exactly zero (region validation requires sunrise >= 0 and sun_factor is 0 at midnight),
+    # so adding it instead of subtracting it changes nothing. Column 13 is the solar term;
+    # the manual-output term on the next line is covered.
+    'power_system\.rs:\d+:13: replace - with \+ in PowerSystem::balance_boundary',
+
+    # agc_retarget: a shortfall (or remaining allocation) of exactly zero allocates exactly
+    # zero either way, so `> 0.0` and `>= 0.0` behave identically.
+    'replace > with >= in agc_retarget',
+
+    # reset_hydro_budget: a budget of exactly 0.0 and MegawattHours::ZERO compare equal.
+    'replace > with >= in Plant::reset_hydro_budget',
+
+    # off_gaps walks the circle from `first_on + 1`; starting at `first_on` instead only
+    # revisits a committed hour first, which closes no gap. Column 31 is that start.
+    'commitment\.rs:\d+:31: replace \+ with \* in CommitmentSchedule::off_gaps',
+
+    # action_for: `on()` reduces hours modulo 24 and a day is exactly 24 hours, so adding a day
+    # of ticks instead of taking the remainder selects the same hour of the pattern.
+    'replace % with \+ in action_for',
+
+    # snapped: |value - 1.0| equals SNAP (1e-9) exactly for no f64 (spacing near 1.0 is
+    # 2.2e-16 and 1e-9 is not a multiple of it), so `<` and `<=` agree on every input.
+    'protection\.rs:\d+:35: replace < with <= in snapped',
+
+    # A held slice that survives a review is always one created this year (anything older is
+    # either released or, on its second review, written off), so its stored count is always 1.
+    # The counter is vestigial state the write-off rule never reads past 1.
+    'replace HeldSlice::consecutive_excess_reviews -> u8 with 1',
+
+    # review: a new plant with zero live firm capacity contributes weight 0 to the
+    # proportional allocation and holds nothing, so filtering it out or not is unobservable.
+    'replace > with >= in RateBase::review',
+]

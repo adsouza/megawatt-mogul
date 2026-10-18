@@ -14,8 +14,11 @@ commit leaves `cargo nextest run --workspace`, clippy and `cargo fmt --check` gr
 | Mutation | `domain`, `application` | `cargo-mutants` |
 | Runner | Everything | `cargo-nextest` |
 
-Only the dependency-rule test (`crates/domain/tests/dependency_rule.rs`) exists so far; the other
-layers arrive with the code they test.
+Every layer above has tests except the `game` adapter (the crate does not exist yet, so its headless
+`App` tests are still planned). Beyond the inline unit and property tests, the integration suites are
+`application/tests/{scenarios,determinism,state_machine,pipeline,rules_version_guard}.rs`, the adapter
+suites are `infrastructure/tests/{region_catalog,shipped_regions,command_log}.rs`, and
+`domain/tests/dependency_rule.rs` enforces the dependency rule.
 
 ## Running each layer
 
@@ -79,9 +82,79 @@ so tuning changes show up as reviewable diffs.
 
 ## Mutation testing
 
-`cargo-mutants` runs on `domain` and `application` on demand; a scheduled CI job is planned (it does
-not exist yet). It is never run on every commit. The target is zero surviving mutants in `domain`.
-Exceptions are `exclude_re` entries in `.cargo/mutants.toml`, each with a justification comment. The `game` crate is excluded.
+`cargo-mutants` mutates each function in `domain` and `application` (flipping operators, replacing
+bodies with defaults) and reruns the tests; a mutant the tests do not fail on is "missed" and points at
+an assertion that is missing or too weak. The `game` crate is out of scope. It is never run on every
+commit.
+
+**Target:** zero missed mutants in `domain`. The only exceptions are `exclude_re` entries in
+`.cargo/mutants.toml`, each with a `#` comment proving the mutant equivalent (or the code untestable).
+`application` is held to the same standard.
+
+### Commands
+
+```sh
+cargo mutants -p domain -p application -j 4          # the full run (what the weekly job does)
+cargo mutants -p domain --list | wc -l               # size the job (about 1,500 mutants for domain)
+cargo mutants -p domain -j 4 -F "grid/dispatch.rs"   # one file while fixing survivors
+cargo mutants -p domain -j 4 --shard 3/8 --output target/mutants-domain-3   # one slice of eight
+```
+
+A full local run takes roughly 20 minutes at `-j 4`. To keep each command short, run the shards
+`0/8` through `7/8` one after another, each with its own `--output` directory. Use `-F` (an examine
+regex), not `-f`, to narrow to a file: `-f` is merged with the configured `examine_globs` and still
+runs everything. Mutants run in scratch copies of the tree, so `cargo mutants` never touches your
+working directory; tests are hermetic (see below), which is what makes the parallel runs safe.
+
+`.cargo/mutants.toml` selects nextest and the `mutants` nextest profile (`.config/nextest.toml`). That
+profile stops at the first failure and terminates running tests immediately, so a mutant that makes a
+loop spin forever fails fast instead of waiting out `timeout_multiplier`.
+
+### Reading `mutants.out/`
+
+| File | Meaning |
+|---|---|
+| `missed.txt` | Mutants every test passed against. Each one needs a stronger test (or a justified exclusion). |
+| `caught.txt` | Mutants at least one test failed against. |
+| `timeout.txt` | Mutants whose tests did not finish. They count as detected (an infinite loop is a failure), but check they are not hiding a slow test. |
+| `unviable.txt` | Mutants that do not compile; nothing to do. |
+| `outcomes.json`, `log/`, `diff/` | Per-mutant detail: the test output and the exact source change for each mutant. |
+
+To kill a survivor, open its file under `diff/` to see the change, then write a test that fails against
+it: prefer a property test with boundary values (a ramp exactly at the limit, a reserve margin exactly
+at its threshold) over a one-off example. Before excluding a mutant, show that no input can tell it
+apart from the original; an operator that is only unreachable at one boundary is usually still
+testable with a hand-built state.
+
+### Scheduled job
+
+`.github/workflows/mutants.yml` runs the full `cargo mutants -p domain -p application -j 4` every
+Monday at 06:00 UTC and on demand (`workflow_dispatch`), then uploads `mutants.out/` as the
+`mutants-out` artifact. The job goes red when anything is missed; download the artifact and read
+`missed.txt`. Output directories (`mutants.out*/`) are git-ignored.
+
+### Mutation testing status
+
+Last full run (this branch, 8 shards of `domain`, 2 of `application`):
+
+| Crate | Mutants | Caught | Missed | Timeout | Unviable |
+|---|---|---|---|---|---|
+| `domain` | 1,476 | 1,110 | 0 | 0 | 366 |
+| `application` | 139 | 101 | 0 | 0 | 38 |
+
+Both crates are at the zero-missed target, so there is no application backlog to record. The first
+baseline found 123 missed (and 10 timed-out) mutants in `domain` and 6 in `application`; all were
+killed with tests except the equivalent mutants excluded in `.cargo/mutants.toml`. Those are the
+exceptions to keep an eye on:
+
+- `GameSession::settings` and `PowerSystem::model` return a value of a type with one inhabitant
+  (`NetworkModel::CopperPlate`); they become testable when a second network model exists.
+- `HeldSlice::consecutive_excess_reviews` returns a count that is always 1 for any slice that
+  survives a review, because a second consecutive review writes the slice off. The counter is
+  vestigial state the write-off rule never reads past 1.
+- The remaining entries are arithmetic that cannot change a result: expected solar at tick 0 is zero,
+  a zero shortfall allocates zero, `% 24` on an hour already reduced modulo 24, a float distance that
+  can never equal `1e-9`, and a zero-weight allocation.
 
 ## Isolation rules (all I/O tests)
 

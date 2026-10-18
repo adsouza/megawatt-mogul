@@ -260,4 +260,68 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn thresholds_are_strict_at_exactly_the_limit() {
+        let p = params();
+        let (shed_below, blackout_below, curtail_above, band) = (
+            p.shed_below.value(),
+            p.blackout_below.value(),
+            p.curtail_above.value(),
+            p.normal_band.value(),
+        );
+        // Exactly at the shed threshold: not yet shedding.
+        let mut s = ProtectionState::default();
+        assert_eq!(
+            eval(&mut s, shed_below, 100.0, 100.0),
+            ProtectionOutcome::None
+        );
+        assert_eq!(s.shed, Ratio::ZERO);
+        // Exactly at the blackout threshold: shedding, not yet blackout.
+        let mut s = ProtectionState::default();
+        assert_eq!(
+            eval(&mut s, blackout_below, 100.0, 100.0),
+            ProtectionOutcome::Shed
+        );
+        assert_eq!(s.mode, GridMode::Normal);
+        // Exactly at the curtail threshold: not curtailing.
+        let mut s = ProtectionState::default();
+        assert_eq!(
+            eval(&mut s, curtail_above, 100.0, 100.0),
+            ProtectionOutcome::None
+        );
+        // The bottom of the normal band restores shed load; just below it does not.
+        let shedding = || ProtectionState {
+            shed: Ratio::new(0.10).unwrap(),
+            shed_ticks: 4,
+            ..ProtectionState::default()
+        };
+        let mut s = shedding();
+        assert_eq!(
+            eval(&mut s, -band, 100.0, 100.0),
+            ProtectionOutcome::Restored
+        );
+        assert_eq!(s.shed_ticks, 0);
+        let mut s = shedding();
+        assert_eq!(
+            eval(&mut s, -band - 1e-6, 100.0, 100.0),
+            ProtectionOutcome::None
+        );
+        assert_eq!(s.shed_ticks, 4);
+    }
+
+    #[test]
+    fn snapped_lands_on_the_boundaries_only_strictly_inside_the_snap_distance() {
+        assert_eq!(snapped(0.0), Ratio::ZERO);
+        assert_eq!(snapped(SNAP / 2.0), Ratio::ZERO);
+        assert_eq!(snapped(-SNAP / 2.0), Ratio::ZERO);
+        assert_eq!(snapped(SNAP).value(), SNAP);
+        assert_eq!(snapped(1.0 - SNAP / 2.0), Ratio::ONE);
+        assert_eq!(snapped(1.0 + SNAP / 2.0), Ratio::ONE);
+        assert_eq!(snapped(1.0 - 1e-6).value(), 1.0 - 1e-6);
+        // Out-of-range values clamp rather than snap to the far end.
+        assert_eq!(snapped(-1.0), Ratio::ZERO);
+        assert_eq!(snapped(2.0), Ratio::ONE);
+        assert_eq!(snapped(0.5).value(), 0.5);
+    }
 }

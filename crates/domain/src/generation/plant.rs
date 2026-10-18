@@ -346,6 +346,16 @@ impl Plant {
         }
     }
 
+    /// Test support: puts the plant online at exactly `output`, bypassing
+    /// every bound, so tests can corrupt state to exercise invariant checks.
+    #[cfg(test)]
+    pub(crate) fn set_output_unchecked(&mut self, output: Megawatts) {
+        self.status = PlantStatus::Online {
+            output,
+            target: output,
+        };
+    }
+
     fn go_online(&mut self) {
         let min = self.spec.min_output();
         self.status = PlantStatus::Online {
@@ -969,5 +979,87 @@ mod tests {
                 prop_assert!(p.output().value() >= 200.0 - 1e-9 && p.output().value() <= 500.0 + 1e-9);
             }
         }
+    }
+
+    #[test]
+    fn boundary_output_applies_only_to_online_dispatchable_plants() {
+        let mw = Megawatts::new(450.0);
+        let mut offline = new_plant(PlantKind::Ccgt);
+        offline.set_boundary_output(mw);
+        assert_eq!(offline.status(), PlantStatus::Offline);
+
+        let mut solar = online(PlantKind::Solar);
+        solar.step(Megawatts::new(120.0));
+        let before = solar.status();
+        solar.set_boundary_output(Megawatts::new(250.0));
+        assert_eq!(solar.status(), before);
+
+        let mut ccgt = online(PlantKind::Ccgt);
+        ccgt.set_boundary_output(mw);
+        assert_eq!(
+            ccgt.status(),
+            PlantStatus::Online {
+                output: mw,
+                target: mw
+            }
+        );
+        // Clamped into [min_output, capacity].
+        ccgt.set_boundary_output(Megawatts::new(10_000.0));
+        assert_eq!(ccgt.output(), Megawatts::new(500.0));
+        ccgt.set_boundary_output(Megawatts::ZERO);
+        assert_eq!(ccgt.output(), Megawatts::new(200.0));
+    }
+
+    #[test]
+    fn hydro_budget_is_deducted_without_exhaustion_while_energy_remains() {
+        let mut p = online(PlantKind::Hydro);
+        p.reset_hydro_budget(MegawattHours::new(10.0));
+        p.set_target(Megawatts::new(100.0)).unwrap();
+        let events = p.step(Megawatts::new(800.0));
+        assert!(events.is_empty());
+        // 100 MW for one minute is 100/60 MWh.
+        let left = p.hydro_budget().unwrap();
+        assert!((left.value() - (10.0 - 100.0 / 60.0)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn hydro_exhaustion_is_reported_once_when_the_budget_runs_out() {
+        let mut p = online(PlantKind::Hydro);
+        p.reset_hydro_budget(MegawattHours::new(0.5));
+        p.set_target(Megawatts::new(100.0)).unwrap();
+        let mut exhausted = 0;
+        for _ in 0..5 {
+            exhausted += p
+                .step(Megawatts::new(800.0))
+                .iter()
+                .filter(|e| matches!(e, DomainEvent::HydroBudgetExhausted { .. }))
+                .count();
+        }
+        assert_eq!(exhausted, 1);
+        assert_eq!(p.hydro_budget(), Some(MegawattHours::ZERO));
+    }
+
+    #[test]
+    fn reset_hydro_budget_treats_negative_as_zero_and_ignores_other_kinds() {
+        let mut hydro = new_plant(PlantKind::Hydro);
+        hydro.reset_hydro_budget(MegawattHours::new(-3.0));
+        assert_eq!(hydro.hydro_budget(), Some(MegawattHours::ZERO));
+        hydro.reset_hydro_budget(MegawattHours::new(3.0));
+        assert_eq!(hydro.hydro_budget(), Some(MegawattHours::new(3.0)));
+        let mut coal = new_plant(PlantKind::Coal);
+        coal.reset_hydro_budget(MegawattHours::new(3.0));
+        assert_eq!(coal.hydro_budget(), None);
+    }
+
+    #[test]
+    fn headroom_is_zero_for_non_dispatchable_and_inactive_plants() {
+        let mut solar = online(PlantKind::Solar);
+        solar.step(Megawatts::new(120.0));
+        assert_eq!(solar.output(), Megawatts::new(120.0));
+        assert_eq!(solar.headroom_down(), Megawatts::ZERO);
+        assert_eq!(solar.headroom_up(Megawatts::new(300.0)), Megawatts::ZERO);
+        let coal = new_plant(PlantKind::Coal);
+        assert_eq!(coal.headroom_down(), Megawatts::ZERO);
+        assert_eq!(coal.headroom_up(Megawatts::new(600.0)), Megawatts::ZERO);
     }
 }

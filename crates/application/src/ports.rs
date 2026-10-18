@@ -172,3 +172,19 @@ impl CommandLogSink for InMemoryCommandLog {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fingerprint_exposes_exactly_the_bytes_it_was_given() {
+        let bytes: [u8; 32] = std::array::from_fn(|i| i as u8 + 1);
+        let fingerprint = RegionFingerprint::new(bytes);
+        assert_eq!(fingerprint.as_bytes(), &bytes);
+        assert_ne!(
+            RegionFingerprint::new([0; 32]).as_bytes(),
+            RegionFingerprint::new([1; 32]).as_bytes()
+        );
+    }
+}
