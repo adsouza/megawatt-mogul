@@ -453,6 +453,18 @@ impl Plant {
         }
     }
 
+    /// A tripped solar plant re-synchronises with a re-energised grid: `Offline`
+    /// becomes `Online` at 0 MW. No effect on any other kind or state, since
+    /// dispatchable plants must be restarted.
+    pub fn reconnect(&mut self) {
+        if !self.spec.kind.is_dispatchable() && self.status == PlantStatus::Offline {
+            self.status = PlantStatus::Online {
+                output: Megawatts::ZERO,
+                target: Megawatts::ZERO,
+            };
+        }
+    }
+
     /// Sets an online dispatchable plant's output and target to its minimum
     /// stable output. No effect in any other state.
     pub fn force_to_minimum(&mut self) {
@@ -868,6 +880,24 @@ mod tests {
         let mut off = new_plant(PlantKind::Ccgt);
         off.force_to_minimum();
         assert_eq!(off.status(), PlantStatus::Offline);
+    }
+
+    #[test]
+    fn reconnect_brings_tripped_solar_back_at_zero_only() {
+        let mut solar = new_plant(PlantKind::Solar);
+        solar.step(Megawatts::new(120.0));
+        solar.trip();
+        solar.reconnect();
+        assert_eq!(
+            solar.status(),
+            PlantStatus::Online {
+                output: Megawatts::ZERO,
+                target: Megawatts::ZERO
+            }
+        );
+        let mut coal = new_plant(PlantKind::Coal);
+        coal.reconnect();
+        assert_eq!(coal.status(), PlantStatus::Offline);
     }
 
     #[test]

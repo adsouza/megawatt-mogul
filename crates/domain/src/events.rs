@@ -2,8 +2,10 @@
 //!
 //! Events carry ids and typed values only, never text. Later tasks add variants.
 
+use crate::grid::{FrequencyBand, TickSummary};
 use crate::ids::PlantId;
 use crate::region::PlantKind;
+use crate::units::Megawatts;
 
 /// Something noteworthy that happened during a simulation step.
 #[derive(Debug, Clone, PartialEq)]
@@ -20,4 +22,16 @@ pub enum DomainEvent {
     PlantCommissioned { plant: PlantId, kind: PlantKind },
     /// A hydro plant's energy budget just ran out.
     HydroBudgetExhausted { plant: PlantId },
+    /// The power system finished a tick.
+    TickCompleted(TickSummary),
+    /// The frequency deviation moved into a different band.
+    FrequencyDeviated { band: FrequencyBand },
+    /// Under-frequency protection shed more load; `mw` is the total now shed.
+    LoadShed { mw: Megawatts },
+    /// Over-frequency protection curtailed this much solar output.
+    SolarCurtailed { mw: Megawatts },
+    /// Protection blacked out the grid: every plant tripped.
+    Blackout,
+    /// Black-start restoration reconnected the last of the load.
+    BlackoutRestored,
 }
