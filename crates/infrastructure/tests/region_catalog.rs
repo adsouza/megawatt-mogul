@@ -279,3 +279,75 @@ proptest! {
         let _ = load_region_bytes(bytes, &RegionId::new("minimal"));
     }
 }
+
+fn load_edited(from: &str, to: &str) -> Result<application::LoadedRegion, RegionLoadError> {
+    assert!(MINIMAL.contains(from), "{from}");
+    load_region_bytes(
+        MINIMAL.replacen(from, to, 1).into_bytes(),
+        &RegionId::new("minimal"),
+    )
+}
+
+fn invalid_field(result: Result<application::LoadedRegion, RegionLoadError>) -> &'static str {
+    match result {
+        Err(RegionLoadError::Invalid {
+            error: RegionError::InvalidShape { field },
+            ..
+        }) => field,
+        other => panic!("expected InvalidShape, got {other:?}"),
+    }
+}
+
+#[test]
+fn points_outside_the_bounds_are_rejected_not_snapped_to_an_edge() {
+    let city_lon = "(id: 1, name_key: \"city-tiny-1\", lon: 6.5,";
+    assert_eq!(
+        invalid_field(load_edited(
+            city_lon,
+            "(id: 1, name_key: \"city-tiny-1\", lon: 50.0,"
+        )),
+        "cities.lon"
+    );
+    assert_eq!(
+        invalid_field(load_edited("lon: 8.5, lat: 1.5,", "lon: 8.5, lat: -1.0,")),
+        "cities.lat"
+    );
+    assert_eq!(
+        invalid_field(load_edited(
+            "substation: (7.5, 3.5)",
+            "substation: (75.0, 3.5)"
+        )),
+        "start.substation"
+    );
+    assert_eq!(
+        invalid_field(load_edited("(Coal, 7.5, 4.5)", "(Coal, 7.5, 45.0)")),
+        "start.fleet"
+    );
+}
+
+#[test]
+fn points_exactly_on_the_upper_or_lower_bound_still_map() {
+    // lon == east maps to the last column (land); lat == south to the last row.
+    let loaded = load_edited("(Peaker, 6.5, 2.5)", "(Peaker, 12.0, 0.0)").unwrap();
+    let peaker = loaded
+        .definition
+        .start()
+        .fleet
+        .iter()
+        .find(|p| p.kind == domain::region::PlantKind::Peaker)
+        .unwrap();
+    assert_eq!(peaker.cell, CellCoord { x: 11, y: 7 });
+    // lon == west is the water column, so a city there is a land error, not a bounds error.
+    let err = load_edited(
+        "(id: 1, name_key: \"city-tiny-1\", lon: 6.5,",
+        "(id: 1, name_key: \"city-tiny-1\", lon: 0.0,",
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        RegionLoadError::Invalid {
+            error: RegionError::CityNotOnLand(CityId(1)),
+            ..
+        }
+    ));
+}

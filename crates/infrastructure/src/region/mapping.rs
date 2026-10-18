@@ -146,6 +146,25 @@ fn check_field(field: &Field, name: &'static str) -> Result<()> {
     }
 }
 
+/// `to_cell` clamps to the grid, which would silently turn a mistyped
+/// coordinate into an edge cell. Authored points must lie inside the bounds
+/// (inclusive: `lon == east` maps to the last column). NaN fails too.
+fn within_lon(file: &RegionFile, lon: f64, field: &'static str) -> Result<()> {
+    if (file.bounds.west..=file.bounds.east).contains(&lon) {
+        Ok(())
+    } else {
+        Err(invalid(field))
+    }
+}
+
+fn within_lat(file: &RegionFile, lat: f64, field: &'static str) -> Result<()> {
+    if (file.bounds.south..=file.bounds.north).contains(&lat) {
+        Ok(())
+    } else {
+        Err(invalid(field))
+    }
+}
+
 fn map_kind(kind: PlantKindDto) -> PlantKind {
     match kind {
         PlantKindDto::Nuclear => PlantKind::Nuclear,
@@ -206,8 +225,8 @@ fn map_spec(spec: &PlantSpecDto) -> Result<PlantSpec> {
 }
 
 fn map_city(file: &RegionFile, city: &CityDto) -> Result<CityDef> {
-    finite(city.lon, "cities.lon")?;
-    finite(city.lat, "cities.lat")?;
+    within_lon(file, city.lon, "cities.lon")?;
+    within_lat(file, city.lat, "cities.lat")?;
     Ok(CityDef {
         id: CityId(city.id),
         name_key: city.name_key.clone(),
@@ -309,8 +328,8 @@ fn map_lines(l: &LinesDto) -> Result<LineParams> {
 fn map_start(file: &RegionFile) -> Result<StartDef> {
     let start = &file.start;
     let at = |lon: f64, lat: f64, field| -> Result<CellCoord> {
-        finite(lon, field)?;
-        finite(lat, field)?;
+        within_lon(file, lon, field)?;
+        within_lat(file, lat, field)?;
         Ok(to_cell(file, lon, lat))
     };
     Ok(StartDef {
