@@ -2,10 +2,11 @@
 //!
 //! Events carry ids and typed values only, never text. Later tasks add variants.
 
+use crate::company::{AssetRef, LedgerEntry};
 use crate::grid::{FrequencyBand, TickSummary};
 use crate::ids::PlantId;
 use crate::region::PlantKind;
-use crate::units::Megawatts;
+use crate::units::{Megawatts, Money};
 
 /// Something noteworthy that happened during a simulation step.
 #[derive(Debug, Clone, PartialEq)]
@@ -35,4 +36,15 @@ pub enum DomainEvent {
     Blackout,
     /// Black-start restoration reconnected the last of the load.
     BlackoutRestored,
+    /// A cash movement was booked to the company ledger.
+    LedgerEntryRecorded(LedgerEntry),
+    /// A reserve review held `amount` of an asset's book value out of the
+    /// eligible rate base as plant held for future use (non-cash).
+    CapitalHeld { asset: AssetRef, amount: Money },
+    /// A reserve review returned `amount` of held book value to the eligible
+    /// rate base because the capacity became useful (non-cash).
+    CapitalReleased { asset: AssetRef, amount: Money },
+    /// A reserve review permanently wrote off `amount` of held book value
+    /// still excess at its second consecutive review (non-cash).
+    CapitalDisallowed { asset: AssetRef, amount: Money },
 }

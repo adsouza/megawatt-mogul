@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod company;
 pub mod demand;
 pub mod error;
 pub mod events;
