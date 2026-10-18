@@ -1,0 +1,9 @@
+---
+source: crates/domain/src/rng.rs
+expression: "[r.next_u64(), r.next_u64(), r.next_u64()]"
+---
+[
+    12578764544318200737,
+    17529487244874322312,
+    7886285670807131020,
+]

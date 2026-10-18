@@ -8,10 +8,12 @@ license.workspace = true
 # The dependency rule (see ARCHITECTURE.md): this section may only ever list small, pure crates.
 # tests/dependency_rule.rs fails the test suite if a framework or I/O crate appears here.
 [dependencies]
+rand_chacha = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+insta = { workspace = true }
 
 [features]
 # Exposes in-code fixture builders to the test suites of downstream crates.
