@@ -169,7 +169,10 @@ impl GameSession {
                 startup,
             });
         }
-        self.operable_mut(plant).start()
+        let events = self.operable_mut(plant).start()?;
+        self.month_to_date
+            .add_command_events(self.clock.tick(), &events);
+        Ok(events)
     }
 
     /// Planning: selects the all-off pattern. Operating: stops a running plant

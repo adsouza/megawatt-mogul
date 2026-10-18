@@ -10,6 +10,8 @@
 
 mod commands;
 mod invariants;
+mod month_close;
+mod report;
 mod settings;
 mod views;
 
@@ -17,6 +19,7 @@ mod views;
 mod tests;
 
 pub use invariants::InvariantViolation;
+pub use report::{Incident, IncidentKind, MeritOrderEntry, MonthAccumulator, MonthlyReport};
 pub use settings::{GameSettings, SimulationFidelity};
 pub use views::{CityView, CompanyView, GridSnapshot, PlantView};
 
@@ -86,10 +89,12 @@ pub struct GameSession {
     regulator: Regulator,
     /// Construction instalments still to pay, per asset, earliest first.
     instalments: BTreeMap<AssetRef, VecDeque<Money>>,
-    /// One-off month-boundary starts reported when today's pattern was
-    /// initialised, for month-close accounting.
-    day_boundary_starts: BTreeMap<PlantId, u32>,
-    /// Every tick summary of the current day, oldest first.
+    /// The played day so far, for the month close.
+    month_to_date: MonthAccumulator,
+    /// Rate-base depreciation booked since the last annual rate review.
+    year_depreciation: Money,
+    /// Every tick summary of the current day, oldest first; cleared when the
+    /// month closes.
     day_ticks: Vec<TickSummary>,
 }
 
@@ -175,7 +180,8 @@ impl GameSession {
             company,
             regulator,
             instalments: BTreeMap::new(),
-            day_boundary_starts: BTreeMap::new(),
+            month_to_date: MonthAccumulator::default(),
+            year_depreciation: Money::ZERO,
             day_ticks: Vec::new(),
             region,
         }
@@ -183,13 +189,18 @@ impl GameSession {
 
     /// Planning → Operating. Initialises the day from each plant's pattern
     /// (no physical state carries over from last month), resets frequency and
-    /// protection, and keeps the month-boundary start counts for accounting.
+    /// protection, and starts the month's accumulator with the month-boundary
+    /// start counts and the plants running at midnight.
     pub fn begin_operating(&mut self) -> Result<Vec<DomainEvent>, DomainError> {
         self.require_phase(&[DayPhase::Planning])?;
         let init = self
             .power
             .begin_day(&self.region, self.clock.month(), &mut self.rng);
-        self.day_boundary_starts = init.boundary_starts;
+        self.month_to_date.reset();
+        self.month_to_date
+            .record_boundary_starts(init.boundary_starts);
+        self.month_to_date
+            .observe_plants(self.power.plants().values());
         self.day_ticks.clear();
         Ok(vec![self.change_phase(DayPhase::Operating)])
     }
@@ -205,16 +216,14 @@ impl GameSession {
             self.clock.tick(),
             &mut self.rng,
         );
+        self.month_to_date.add_tick(&summary, &events);
+        self.month_to_date
+            .observe_plants(self.power.plants().values());
         self.day_ticks.push(summary);
         if self.clock.advance() {
             events.extend(self.close_month());
         }
         Ok(events)
-    }
-
-    /// Closes the played month and moves to `Review`.
-    fn close_month(&mut self) -> Vec<DomainEvent> {
-        vec![self.change_phase(DayPhase::Review)]
     }
 
     /// Review → the next month's Planning.
@@ -279,17 +288,6 @@ impl GameSession {
         &self.regulator
     }
 
-    /// Construction instalments still to pay for `asset`, earliest first;
-    /// `None` once nothing is owed (or nothing was ever built).
-    pub fn pending_instalments(&self, asset: AssetRef) -> Option<&VecDeque<Money>> {
-        self.instalments.get(&asset)
-    }
-
-    /// One-off month-boundary starts per plant for the current month.
-    pub fn day_boundary_starts(&self) -> &BTreeMap<PlantId, u32> {
-        &self.day_boundary_starts
-    }
-
     /// FNV-1a 64 over the session's `Debug` output: equal hashes mean equal
     /// state, so replays can be compared cheaply.
     pub fn state_hash(&self) -> u64 {
@@ -301,6 +299,17 @@ impl GameSession {
 
 #[cfg(test)]
 impl GameSession {
+    /// Construction instalments still to pay for `asset`, earliest first;
+    /// `None` once nothing is owed (or nothing was ever built).
+    pub(crate) fn pending_instalments(&self, asset: AssetRef) -> Option<&VecDeque<Money>> {
+        self.instalments.get(&asset)
+    }
+
+    /// One-off month-boundary starts per plant for the current day.
+    pub(crate) fn day_boundary_starts(&self) -> &BTreeMap<PlantId, u32> {
+        self.month_to_date.boundary_starts()
+    }
+
     /// Test support: a commissioned plant of `kind` at `cell`, on its own node
     /// joined to the substation by an in-service line.
     pub(crate) fn insert_commissioned_plant(

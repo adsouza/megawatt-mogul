@@ -4,9 +4,9 @@
 
 use crate::company::{AssetRef, LedgerEntry};
 use crate::grid::{FrequencyBand, TickSummary};
-use crate::ids::{CellCoord, LineId, PlantId};
+use crate::ids::{CellCoord, CityId, LineId, PlantId};
 use crate::region::PlantKind;
-use crate::session::DayPhase;
+use crate::session::{DayPhase, MonthlyReport};
 use crate::units::{Megawatts, Money, Price, Ratio};
 
 /// Something noteworthy that happened during a simulation step.
@@ -69,4 +69,12 @@ pub enum DomainEvent {
     },
     /// The player ordered a transmission line; it is now under construction.
     LineConstructionStarted { line: LineId },
+    /// A transmission line finished construction and is in service.
+    LineCommissioned { line: LineId },
+    /// A city became energised from the substation and is now a customer.
+    CityConnected { city: CityId },
+    /// The played month closed; boxed because the report is large.
+    MonthClosed(Box<MonthlyReport>),
+    /// Cash was negative at too many consecutive month closes: game over.
+    Bankrupt,
 }

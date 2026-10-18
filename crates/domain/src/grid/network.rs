@@ -165,6 +165,10 @@ impl Network {
         self.nodes.iter().map(|(id, node)| (*id, node))
     }
 
+    pub fn line(&self, id: LineId) -> Option<&Line> {
+        self.lines.get(&id)
+    }
+
     /// Lines in id order.
     pub fn lines(&self) -> impl Iterator<Item = &Line> {
         self.lines.values()

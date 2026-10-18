@@ -1,0 +1,313 @@
+//! What a played month did: the running accumulator filled tick by tick, and
+//! the report the month close publishes from it.
+//!
+//! The accumulator holds the representative day's physical quantities
+//! unweighted. The report weights every energy figure by the month's days,
+//! so a 30-day month reports thirty copies of its one played day.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use crate::events::DomainEvent;
+use crate::generation::{Plant, PlantStatus};
+use crate::grid::TickSummary;
+use crate::ids::PlantId;
+use crate::region::PlantKind;
+use crate::regulation::RateReviewOutcome;
+use crate::time::SimMonth;
+use crate::units::{MegawattHours, Megawatts, Money, Price, Ratio};
+
+/// A protection action worth reporting to the player.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum IncidentKind {
+    /// Under-frequency protection shed more load; `mw` is the total now shed.
+    LoadShed {
+        mw: Megawatts,
+    },
+    Blackout,
+    BlackoutRestored,
+}
+
+/// An incident and the tick of the played day it happened in.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Incident {
+    pub tick: u32,
+    pub kind: IncidentKind,
+}
+
+/// One connected plant's place in the month's dispatch stack.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MeritOrderEntry {
+    pub plant: PlantId,
+    pub kind: PlantKind,
+    pub marginal_cost: Price,
+    /// Energy over the month (weighted by days).
+    pub energy: MegawattHours,
+}
+
+/// The closed month, as published in `MonthClosed`.
+///
+/// Money figures are the signed sums of the month's ledger entries in each
+/// category (revenue positive, costs negative), so `net` is exactly the
+/// month's change in cash. Energy figures are weighted by `days`.
+/// `reliability` is this month's served share of demand (one when nothing
+/// was demanded), not the company's rolling score.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MonthlyReport {
+    pub month: SimMonth,
+    pub days: u32,
+    pub revenue: Money,
+    pub fuel: Money,
+    pub start_up: Money,
+    pub fixed_om: Money,
+    pub construction: Money,
+    pub net: Money,
+    pub energy_by_kind: BTreeMap<PlantKind, MegawattHours>,
+    /// Sorted by `(marginal_cost, plant)`.
+    pub merit_order: Vec<MeritOrderEntry>,
+    pub demand: MegawattHours,
+    pub served: MegawattHours,
+    pub unserved: MegawattHours,
+    pub curtailed: MegawattHours,
+    /// Signed `generation − served`, summed over the month.
+    pub imbalance: MegawattHours,
+    pub peak_demand: Megawatts,
+    pub reliability: Ratio,
+    pub incidents: Vec<Incident>,
+    /// The annual rate review, in December only.
+    pub rate_review: Option<RateReviewOutcome>,
+}
+
+/// The current representative day so far, unweighted.
+///
+/// Fed by the session: [`record_boundary_starts`](Self::record_boundary_starts)
+/// and [`observe_plants`](Self::observe_plants) when the day begins,
+/// [`add_tick`](Self::add_tick) and `observe_plants` after every tick, and
+/// [`add_command_events`](Self::add_command_events) for manual commands.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MonthAccumulator {
+    /// Energy of every plant that appeared in a tick's `by_plant`.
+    energy: BTreeMap<PlantId, MegawattHours>,
+    /// `PlantStarting` events during the played day: recurring daily starts.
+    daily_starts: BTreeMap<PlantId, u32>,
+    /// One-off month-boundary starts reported when the day was initialised.
+    boundary_starts: BTreeMap<PlantId, u32>,
+    /// Plants that physically operated at any instant of the day.
+    operated: BTreeSet<PlantId>,
+    demand: MegawattHours,
+    served: MegawattHours,
+    unserved: MegawattHours,
+    curtailed: MegawattHours,
+    imbalance: MegawattHours,
+    peak_demand: Megawatts,
+    incidents: Vec<Incident>,
+}
+
+impl Default for MonthAccumulator {
+    fn default() -> Self {
+        Self {
+            energy: BTreeMap::new(),
+            daily_starts: BTreeMap::new(),
+            boundary_starts: BTreeMap::new(),
+            operated: BTreeSet::new(),
+            demand: MegawattHours::ZERO,
+            served: MegawattHours::ZERO,
+            unserved: MegawattHours::ZERO,
+            curtailed: MegawattHours::ZERO,
+            imbalance: MegawattHours::ZERO,
+            peak_demand: Megawatts::ZERO,
+            incidents: Vec::new(),
+        }
+    }
+}
+
+impl MonthAccumulator {
+    /// Adds one tick: its energies (one minute of each power), the peak, the
+    /// starts and incidents among `events`, and which plants produced.
+    pub fn add_tick(&mut self, summary: &TickSummary, events: &[DomainEvent]) {
+        let minute = |mw: Megawatts| mw.energy_over_ticks(1);
+        for (plant, output) in &summary.by_plant {
+            *self.energy.entry(*plant).or_insert(MegawattHours::ZERO) += minute(*output);
+            if *output > Megawatts::ZERO {
+                self.operated.insert(*plant);
+            }
+        }
+        self.demand += minute(summary.demand);
+        self.served += minute(summary.served);
+        self.unserved += minute(summary.unserved);
+        self.curtailed += minute(summary.curtailed);
+        self.imbalance += minute(summary.imbalance);
+        self.peak_demand = self.peak_demand.max(summary.demand);
+        self.add_events(summary.tick, events);
+    }
+
+    /// Adds the events of a player command issued during tick `tick`: a
+    /// manual start is a recurring daily start like a scheduled one.
+    pub fn add_command_events(&mut self, tick: u32, events: &[DomainEvent]) {
+        self.add_events(tick, events);
+    }
+
+    fn add_events(&mut self, tick: u32, events: &[DomainEvent]) {
+        for event in events {
+            let kind = match event {
+                DomainEvent::PlantStarting { plant } => {
+                    *self.daily_starts.entry(*plant).or_insert(0) += 1;
+                    self.operated.insert(*plant);
+                    continue;
+                }
+                DomainEvent::LoadShed { mw } => IncidentKind::LoadShed { mw: *mw },
+                DomainEvent::Blackout => IncidentKind::Blackout,
+                DomainEvent::BlackoutRestored => IncidentKind::BlackoutRestored,
+                _ => continue,
+            };
+            self.incidents.push(Incident { tick, kind });
+        }
+    }
+
+    /// Notes the plants physically running now (starting, online or
+    /// stopping), connected or not.
+    pub fn observe_plants<'a>(&mut self, plants: impl IntoIterator<Item = &'a Plant>) {
+        let running = plants.into_iter().filter(|p| {
+            matches!(
+                p.status(),
+                PlantStatus::Starting { .. }
+                    | PlantStatus::Online { .. }
+                    | PlantStatus::Stopping { .. }
+            )
+        });
+        self.operated.extend(running.map(Plant::id));
+    }
+
+    /// Keeps the month-boundary starts reported when the day was initialised.
+    pub fn record_boundary_starts(&mut self, starts: BTreeMap<PlantId, u32>) {
+        self.boundary_starts = starts;
+    }
+
+    /// Clears everything for a new day.
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Day energy per plant that was connected and commissioned at some tick.
+    pub fn plant_energy(&self) -> &BTreeMap<PlantId, MegawattHours> {
+        &self.energy
+    }
+
+    pub fn daily_starts(&self) -> &BTreeMap<PlantId, u32> {
+        &self.daily_starts
+    }
+
+    pub fn boundary_starts(&self) -> &BTreeMap<PlantId, u32> {
+        &self.boundary_starts
+    }
+
+    /// Whether `plant` physically operated at any point of the day.
+    pub fn operated(&self, plant: PlantId) -> bool {
+        self.operated.contains(&plant)
+    }
+
+    pub fn demand(&self) -> MegawattHours {
+        self.demand
+    }
+
+    pub fn served(&self) -> MegawattHours {
+        self.served
+    }
+
+    pub fn unserved(&self) -> MegawattHours {
+        self.unserved
+    }
+
+    pub fn curtailed(&self) -> MegawattHours {
+        self.curtailed
+    }
+
+    pub fn imbalance(&self) -> MegawattHours {
+        self.imbalance
+    }
+
+    pub fn peak_demand(&self) -> Megawatts {
+        self.peak_demand
+    }
+
+    pub fn incidents(&self) -> &[Incident] {
+        &self.incidents
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::grid::GridMode;
+    use crate::units::Hertz;
+
+    fn summary(tick: u32, demand: f64, served: f64, by_plant: &[(u32, f64)]) -> TickSummary {
+        let by_plant: BTreeMap<PlantId, Megawatts> = by_plant
+            .iter()
+            .map(|(id, mw)| (PlantId(*id), Megawatts::new(*mw)))
+            .collect();
+        let generation: Megawatts = by_plant.values().copied().sum();
+        TickSummary {
+            tick,
+            demand: Megawatts::new(demand),
+            served: Megawatts::new(served),
+            unserved: Megawatts::new(demand - served),
+            generation,
+            curtailed: Megawatts::new(6.0),
+            imbalance: generation - Megawatts::new(served),
+            by_kind: BTreeMap::new(),
+            by_plant,
+            frequency: Hertz::new(60.0),
+            mode: GridMode::Normal,
+            shed: Ratio::ZERO,
+        }
+    }
+
+    #[test]
+    fn add_tick_accumulates_minutes_peak_starts_and_incidents() {
+        let mut acc = MonthAccumulator::default();
+        acc.add_tick(&summary(0, 120.0, 120.0, &[(1, 60.0), (2, 0.0)]), &[]);
+        let events = [
+            DomainEvent::PlantStarting { plant: PlantId(2) },
+            DomainEvent::LoadShed {
+                mw: Megawatts::new(6.0),
+            },
+            DomainEvent::Blackout,
+        ];
+        acc.add_tick(&summary(1, 180.0, 120.0, &[(1, 60.0), (2, 30.0)]), &events);
+        assert_eq!(acc.demand(), MegawattHours::new(5.0));
+        assert_eq!(acc.served(), MegawattHours::new(4.0));
+        assert_eq!(acc.unserved(), MegawattHours::new(1.0));
+        assert_eq!(acc.curtailed(), MegawattHours::new(0.2));
+        assert_eq!(acc.imbalance(), MegawattHours::new(-1.5));
+        assert_eq!(acc.peak_demand(), Megawatts::new(180.0));
+        assert_eq!(acc.plant_energy()[&PlantId(1)], MegawattHours::new(2.0));
+        assert_eq!(acc.plant_energy()[&PlantId(2)], MegawattHours::new(0.5));
+        assert_eq!(acc.daily_starts(), &BTreeMap::from([(PlantId(2), 1)]));
+        assert!(acc.operated(PlantId(1)) && acc.operated(PlantId(2)));
+        assert_eq!(
+            acc.incidents(),
+            &[
+                Incident {
+                    tick: 1,
+                    kind: IncidentKind::LoadShed {
+                        mw: Megawatts::new(6.0)
+                    }
+                },
+                Incident {
+                    tick: 1,
+                    kind: IncidentKind::Blackout
+                },
+            ]
+        );
+        acc.reset();
+        assert_eq!(acc, MonthAccumulator::default());
+    }
+
+    #[test]
+    fn zero_output_alone_is_not_operation() {
+        let mut acc = MonthAccumulator::default();
+        acc.add_tick(&summary(0, 10.0, 10.0, &[(3, 0.0)]), &[]);
+        assert!(!acc.operated(PlantId(3)));
+        assert_eq!(acc.plant_energy()[&PlantId(3)], MegawattHours::ZERO);
+    }
+}

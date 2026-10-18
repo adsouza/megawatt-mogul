@@ -177,8 +177,9 @@ fn full_day_moves_to_review() {
         .filter(|e| matches!(e, DomainEvent::TickCompleted(_)))
         .count();
     assert_eq!(completed, TICKS_PER_DAY as usize);
-    assert_eq!(s.day_ticks.len(), TICKS_PER_DAY as usize);
-    assert_eq!(s.grid_snapshot().last_tick.unwrap().tick, TICKS_PER_DAY - 1);
+    // The close publishes the day in its report and clears it.
+    assert!(s.day_ticks.is_empty());
+    assert_eq!(s.grid_snapshot().last_tick, None);
     assert_eq!(
         s.tick().unwrap_err(),
         DomainError::WrongPhase {
