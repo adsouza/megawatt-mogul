@@ -1,0 +1,379 @@
+//! Merit-order dispatch and automatic generation control (AGC).
+//!
+//! The merit order ranks online dispatchable plants by marginal cost. AGC
+//! spreads a system shortfall (positive: raise output) or surplus (negative:
+//! lower output) over the auto-follow plants, cheapest first when raising and
+//! most expensive first when lowering, each within its one-tick ramp.
+
+use std::cmp::Ordering;
+use std::collections::BTreeMap;
+
+use crate::generation::Plant;
+use crate::ids::PlantId;
+use crate::units::Megawatts;
+
+/// Below this a shortfall is treated as zero, and a leftover as fully allocated.
+const EPSILON: f64 = 1e-9;
+
+/// Cheapest first, ties broken by plant id so the order is total and stable.
+fn by_cost_then_id(a: &Plant, b: &Plant) -> Ordering {
+    a.spec()
+        .marginal_cost
+        .value()
+        .total_cmp(&b.spec().marginal_cost.value())
+        .then_with(|| a.id().cmp(&b.id()))
+}
+
+fn is_dispatchable_online(plant: &Plant) -> bool {
+    plant.is_online() && plant.spec().kind.is_dispatchable()
+}
+
+/// Online dispatchable plants sorted by `(marginal_cost, id)`.
+pub fn merit_order<'a>(plants: impl IntoIterator<Item = &'a Plant>) -> Vec<PlantId> {
+    let mut online: Vec<&Plant> = plants
+        .into_iter()
+        .filter(|p| is_dispatchable_online(p))
+        .collect();
+    online.sort_by(|a, b| by_cost_then_id(a, b));
+    online.into_iter().map(Plant::id).collect()
+}
+
+/// Spreads `shortfall` over the auto-follow, online, dispatchable plants.
+///
+/// A positive shortfall raises targets in ascending merit order; a negative
+/// one lowers them in descending order. Each plant moves by at most its
+/// one-tick headroom. `available` caps how high a plant may rise (a plant
+/// missing from it is capped by its capacity). Participants that receive no
+/// allocation are held at their current output. Plants that do not
+/// participate are left untouched.
+///
+/// Returns the part of the shortfall that could not be allocated, with the
+/// shortfall's sign (zero when it was fully allocated).
+pub fn agc_retarget(
+    plants: &mut [&mut Plant],
+    available: &BTreeMap<PlantId, Megawatts>,
+    shortfall: Megawatts,
+) -> Megawatts {
+    let raising = shortfall.value() > 0.0;
+    let mut remaining = if shortfall.value().abs() < EPSILON {
+        0.0
+    } else {
+        shortfall.value().abs()
+    };
+
+    let mut order: Vec<usize> = (0..plants.len())
+        .filter(|&i| plants[i].auto_follow() && is_dispatchable_online(plants[i]))
+        .collect();
+    order.sort_by(|&a, &b| by_cost_then_id(plants[a], plants[b]));
+    if !raising {
+        order.reverse();
+    }
+
+    for i in order {
+        let plant = &mut *plants[i];
+        let output = plant.output();
+        let alloc = if remaining > 0.0 {
+            let headroom = if raising {
+                let cap = available
+                    .get(&plant.id())
+                    .copied()
+                    .unwrap_or(plant.spec().capacity);
+                plant.headroom_up(cap)
+            } else {
+                plant.headroom_down()
+            };
+            headroom.value().min(remaining)
+        } else {
+            0.0
+        };
+        remaining -= alloc;
+        if remaining < EPSILON {
+            remaining = 0.0;
+        }
+        let signed = if raising { alloc } else { -alloc };
+        // A plant pulled below minimum stable output by its resource (dry
+        // hydro) cannot hold that output as a target, so clamp into bounds.
+        let target = (output + Megawatts::new(signed))
+            .clamp(plant.spec().min_output(), plant.spec().capacity);
+        let result = plant.set_target(target);
+        debug_assert!(result.is_ok(), "AGC target {target:?} rejected: {result:?}");
+    }
+
+    let leftover = Megawatts::new(remaining);
+    if raising { leftover } else { -leftover }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::generation::PlantStatus;
+    use crate::ids::{CellCoord, NodeId};
+    use crate::region::fixtures::tiny_region;
+    use crate::region::{PlantKind, PlantSpec};
+    use crate::time::SimMonth;
+    use crate::units::Price;
+    use proptest::prelude::*;
+
+    /// A commissioned plant built from `spec`, brought online at minimum output.
+    fn online_from_spec(id: u32, spec: PlantSpec) -> Plant {
+        let mut p = Plant::new_commissioned(
+            PlantId(id),
+            NodeId(id),
+            CellCoord { x: 7, y: 3 },
+            spec,
+            SimMonth::new(2027, 4).unwrap(),
+        );
+        if p.is_online() {
+            return p;
+        }
+        p.start().unwrap();
+        while !p.is_online() {
+            p.step(p.spec().capacity);
+        }
+        p
+    }
+
+    fn online_plant(id: u32, kind: PlantKind) -> Plant {
+        online_from_spec(id, tiny_region().spec(kind).clone())
+    }
+
+    /// Ramps an online dispatchable plant to `min + fraction * (cap - min)`.
+    fn ramp_to_fraction(p: &mut Plant, fraction: f64) {
+        let min = p.spec().min_output();
+        let goal = min + (p.spec().capacity - min) * fraction;
+        p.set_target(goal).unwrap();
+        for _ in 0..10_000 {
+            if p.output() == goal {
+                return;
+            }
+            p.step(p.spec().capacity);
+        }
+        panic!("plant never reached {goal:?}");
+    }
+
+    fn follower(id: u32, kind: PlantKind) -> Plant {
+        let mut p = online_plant(id, kind);
+        p.set_auto_follow(true).unwrap();
+        p
+    }
+
+    fn target_of(p: &Plant) -> Megawatts {
+        let PlantStatus::Online { target, .. } = p.status() else {
+            panic!("plant {:?} not online", p.id());
+        };
+        target
+    }
+
+    fn none_available() -> BTreeMap<PlantId, Megawatts> {
+        BTreeMap::new()
+    }
+
+    #[test]
+    fn merit_order_sorts_by_cost_then_id_and_skips_solar_and_offline() {
+        let nuclear = online_plant(4, PlantKind::Nuclear);
+        let coal = online_plant(3, PlantKind::Coal);
+        let ccgt = online_plant(2, PlantKind::Ccgt);
+        let peaker = online_plant(1, PlantKind::Peaker);
+        let solar = online_plant(5, PlantKind::Solar);
+        let offline_ccgt = Plant::new_commissioned(
+            PlantId(6),
+            NodeId(6),
+            CellCoord { x: 7, y: 3 },
+            tiny_region().spec(PlantKind::Ccgt).clone(),
+            SimMonth::new(2027, 4).unwrap(),
+        );
+        let plants = [peaker, ccgt, solar, offline_ccgt, coal, nuclear];
+        assert_eq!(
+            merit_order(&plants),
+            vec![PlantId(4), PlantId(3), PlantId(2), PlantId(1)]
+        );
+    }
+
+    #[test]
+    fn merit_order_breaks_cost_ties_by_id() {
+        let tied = |id: u32, kind: PlantKind| {
+            let mut spec = tiny_region().spec(kind).clone();
+            spec.marginal_cost = Price::per_mwh(50.0);
+            online_from_spec(id, spec)
+        };
+        let (a, b) = (tied(9, PlantKind::Ccgt), tied(2, PlantKind::Coal));
+        assert_eq!(merit_order([&a, &b]), vec![PlantId(2), PlantId(9)]);
+    }
+
+    #[test]
+    fn raises_cheapest_first_within_ramp() {
+        let mut ccgt = follower(1, PlantKind::Ccgt);
+        let mut peaker = follower(2, PlantKind::Peaker);
+        let (c0, p0) = (ccgt.output(), peaker.output());
+        let left = agc_retarget(
+            &mut [&mut peaker, &mut ccgt],
+            &none_available(),
+            Megawatts::new(50.0),
+        );
+        assert_eq!(target_of(&ccgt), c0 + Megawatts::new(25.0));
+        assert_eq!(target_of(&peaker), p0 + Megawatts::new(25.0));
+        assert_eq!(left, Megawatts::ZERO);
+    }
+
+    #[test]
+    fn returns_unallocated_when_headroom_exhausted() {
+        let mut ccgt = follower(1, PlantKind::Ccgt);
+        let mut peaker = follower(2, PlantKind::Peaker);
+        let left = agc_retarget(
+            &mut [&mut ccgt, &mut peaker],
+            &none_available(),
+            Megawatts::new(1000.0),
+        );
+        assert_eq!(left, Megawatts::new(935.0));
+    }
+
+    #[test]
+    fn lowers_most_expensive_first_and_returns_unallocated_surplus() {
+        let mut ccgt = follower(1, PlantKind::Ccgt);
+        let mut peaker = follower(2, PlantKind::Peaker);
+        ramp_to_fraction(&mut ccgt, 1.0);
+        ramp_to_fraction(&mut peaker, 1.0);
+        let (c0, p0) = (ccgt.output(), peaker.output());
+        let left = agc_retarget(
+            &mut [&mut ccgt, &mut peaker],
+            &none_available(),
+            Megawatts::new(-50.0),
+        );
+        assert_eq!(target_of(&peaker), p0 - Megawatts::new(40.0));
+        assert_eq!(target_of(&ccgt), c0 - Megawatts::new(10.0));
+        assert_eq!(left, Megawatts::ZERO);
+
+        let left = agc_retarget(
+            &mut [&mut ccgt, &mut peaker],
+            &none_available(),
+            Megawatts::new(-500.0),
+        );
+        assert_eq!(left, Megawatts::new(-435.0));
+    }
+
+    #[test]
+    fn unallocated_plants_are_held_at_output() {
+        let mut ccgt = follower(1, PlantKind::Ccgt);
+        let mut peaker = follower(2, PlantKind::Peaker);
+        ramp_to_fraction(&mut peaker, 0.5);
+        peaker.set_target(peaker.spec().capacity).unwrap();
+        let left = agc_retarget(
+            &mut [&mut ccgt, &mut peaker],
+            &none_available(),
+            Megawatts::new(10.0),
+        );
+        assert_eq!(left, Megawatts::ZERO);
+        assert_eq!(target_of(&peaker), peaker.output());
+    }
+
+    #[test]
+    fn non_participants_are_untouched() {
+        let mut manual = online_plant(1, PlantKind::Ccgt);
+        manual.set_target(Megawatts::new(300.0)).unwrap();
+        let mut solar = online_plant(2, PlantKind::Solar);
+        let mut offline = Plant::new_commissioned(
+            PlantId(3),
+            NodeId(3),
+            CellCoord { x: 0, y: 0 },
+            tiny_region().spec(PlantKind::Ccgt).clone(),
+            SimMonth::new(2027, 4).unwrap(),
+        );
+        offline.set_auto_follow(true).unwrap();
+        let before = (manual.clone(), solar.clone(), offline.clone());
+        let left = agc_retarget(
+            &mut [&mut manual, &mut solar, &mut offline],
+            &none_available(),
+            Megawatts::new(100.0),
+        );
+        assert_eq!(left, Megawatts::new(100.0));
+        assert_eq!((manual, solar, offline), before);
+    }
+
+    #[test]
+    fn availability_caps_the_raise() {
+        let mut ccgt = follower(1, PlantKind::Ccgt);
+        let out = ccgt.output();
+        let avail = BTreeMap::from([(PlantId(1), out + Megawatts::new(10.0))]);
+        let left = agc_retarget(&mut [&mut ccgt], &avail, Megawatts::new(20.0));
+        assert_eq!(target_of(&ccgt), out + Megawatts::new(10.0));
+        assert_eq!(left, Megawatts::new(10.0));
+    }
+
+    #[test]
+    fn negligible_shortfall_holds_everyone() {
+        let mut ccgt = follower(1, PlantKind::Ccgt);
+        ramp_to_fraction(&mut ccgt, 0.5);
+        ccgt.set_target(ccgt.spec().capacity).unwrap();
+        let left = agc_retarget(&mut [&mut ccgt], &none_available(), Megawatts::new(1e-12));
+        assert_eq!(left, Megawatts::ZERO);
+        assert_eq!(target_of(&ccgt), ccgt.output());
+    }
+
+    const KINDS: [PlantKind; 4] = [
+        PlantKind::Nuclear,
+        PlantKind::Coal,
+        PlantKind::Ccgt,
+        PlantKind::Peaker,
+    ];
+
+    fn spec_plant(index: usize, cost: f64, fraction: f64) -> Plant {
+        let mut spec = tiny_region().spec(KINDS[index % KINDS.len()]).clone();
+        spec.marginal_cost = Price::per_mwh(cost);
+        let mut p = online_from_spec(index as u32 + 1, spec);
+        p.set_auto_follow(true).unwrap();
+        ramp_to_fraction(&mut p, fraction);
+        p
+    }
+
+    proptest! {
+        #[test]
+        fn never_raises_expensive_while_cheaper_has_headroom(
+            specs in prop::collection::vec((1.0f64..300.0, 0.0f64..1.0), 1..8),
+            shortfall in -500.0f64..500.0,
+        ) {
+            let mut plants: Vec<Plant> = specs
+                .iter()
+                .enumerate()
+                .map(|(i, &(cost, fraction))| spec_plant(i, cost, fraction))
+                .collect();
+            let raising = shortfall > 0.0;
+            let headroom: Vec<f64> = plants
+                .iter()
+                .map(|p| {
+                    if raising {
+                        p.headroom_up(p.spec().capacity).value()
+                    } else {
+                        p.headroom_down().value()
+                    }
+                })
+                .collect();
+            let outputs: Vec<f64> = plants.iter().map(|p| p.output().value()).collect();
+
+            let mut refs: Vec<&mut Plant> = plants.iter_mut().collect();
+            let left = agc_retarget(&mut refs, &none_available(), Megawatts::new(shortfall));
+
+            let allocs: Vec<f64> = plants
+                .iter()
+                .zip(&outputs)
+                .map(|(p, out)| (target_of(p).value() - out).abs())
+                .collect();
+            for (i, p) in plants.iter().enumerate() {
+                let moved = target_of(p).value() - outputs[i];
+                let right_way = if raising { moved >= 0.0 } else { moved <= 0.0 };
+                prop_assert!(right_way);
+                for (j, q) in plants.iter().enumerate() {
+                    let (ci, cj) = (p.spec().marginal_cost.value(), q.spec().marginal_cost.value());
+                    // Raising favours the cheaper plant; lowering favours the dearer one.
+                    let (favoured, other) = if raising { (ci < cj, j) } else { (ci > cj, j) };
+                    if favoured && allocs[other] > 1e-9 {
+                        prop_assert!(headroom[i] - allocs[i] <= 1e-9);
+                    }
+                }
+            }
+            let total_alloc: f64 = allocs.iter().sum();
+            let total_headroom: f64 = headroom.iter().sum();
+            prop_assert!((total_alloc - shortfall.abs().min(total_headroom)).abs() <= 1e-6);
+            prop_assert!((left.value().abs() - (shortfall.abs() - total_alloc)).abs() <= 1e-6);
+        }
+    }
+}
