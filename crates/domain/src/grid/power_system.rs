@@ -252,6 +252,11 @@ impl PowerSystem {
     /// pattern gives it; when an outage is ordered the boundary is then
     /// dispatched again against the reduced load. The share is reported in
     /// [`DayInitialisation::outage`].
+    ///
+    /// *Builder's call (size after a first boundary dispatch).* Sizing
+    /// straight after the hydro plan would read the pattern's initial outputs
+    /// (AGC plants at minimum stable output) and order outages on days the
+    /// fleet covers.
     pub fn begin_day(
         &mut self,
         region: &RegionDefinition,
@@ -356,17 +361,26 @@ impl PowerSystem {
     ///    curtailment is withheld from connected online solar pro rata to each
     ///    plant's availability.
     /// 3. The commitment actions due at `tick` (suppressed plants get none).
-    /// 4. Every plant steps once.
+    /// 4. Every plant steps once. If a connected dispatchable plant came
+    ///    online in Normal mode, the current hour's outage is re-sized
+    ///    (controller ruling R5): a tick event, not a command.
     /// 5. The tick's **load** is `demand × (1 − outage)`, with the outage in
     ///    effect now; steps 7–9 read it wherever they read demand before. In
-    ///    Normal mode the outage then moves one tick toward its target for the
-    ///    load from tick t + 1 (see [`PowerSystem::next_outage`]): AGC's targets
-    ///    set in step 6 act on tick t + 1's step, so AGC aims at the load they
-    ///    will meet, and a moved step of load never opens a one-tick
-    ///    imbalance that AGC has not dispatched for. A fall needs the AGC
-    ///    fleet's one-tick headroom for `effect_tick` (as at the trip gate and
-    ///    in hydro recovery), net of the shortfall step 6 is about to face, to
-    ///    cover `shed_step × demand`.
+    ///    Normal mode the outage then moves toward its target for the load
+    ///    from tick t + 1, paced by the AGC fleet's one-tick ramp room (see
+    ///    [`PowerSystem::next_outage`]).
+    ///
+    ///    *Builder's call (the move comes before AGC, not after protection).*
+    ///    AGC's targets set in step 6 act on tick t + 1's step, so AGC aims at
+    ///    the load they will meet; moving after protection would open a
+    ///    one-tick imbalance of every moved share that AGC had not dispatched
+    ///    for, a standing deficit while restoring.
+    ///
+    ///    *Builder's call (the covers are net).* Both covers are measured on
+    ///    the post-step outputs, with the hydro ceilings for `effect_tick`,
+    ///    and net of AGC's signed requirement at the current outage: a deficit
+    ///    the fleet is already behind by uses up headroom and adds to the room
+    ///    for a cut; a surplus does the reverse, as in hydro recovery.
     /// 6. AGC re-targets connected auto-follow plants toward the load to serve:
     ///    `demand × (1 − outage) × (1 − shed)` with the moved outage, or in a
     ///    blackout `demand × min(1, 1 − shed + shed_step)` so supply is
@@ -430,8 +444,20 @@ impl PowerSystem {
         let (available, curtailable, withheld) = self.availability(region, month, tick);
 
         self.apply_commitment(tick, &mut events);
+        let mut came_online = false;
         for (id, plant) in &mut self.plants {
-            events.extend(plant.step(available[id]));
+            let stepped = plant.step(available[id]);
+            came_online |= plant.kind().is_dispatchable()
+                && self.network.is_connected(plant.node())
+                && stepped.contains(&DomainEvent::PlantOnline { plant: *id });
+            events.extend(stepped);
+        }
+        if came_online && self.protection.mode == GridMode::Normal {
+            // A plant whose start-up just completed can deliver this hour:
+            // re-size it now rather than leaving its output with no load to
+            // meet until the next boundary.
+            let hour = u8::try_from(tick / TICKS_PER_HOUR).unwrap_or(u8::MAX);
+            events.extend(self.order_outage(region, month, hour));
         }
 
         let supply: Megawatts = self.connected_plants().map(Plant::output).sum();
@@ -441,13 +467,15 @@ impl PowerSystem {
         // The targets AGC sets now first act on the next tick's step.
         let effect_tick = tick + 1;
         let load = demand * (1.0 - self.outage.value());
-        if mode == GridMode::Normal {
+        if mode == GridMode::Normal && self.outage != self.outage_target {
+            // AGC's signed requirement at the outage in effect: positive when
+            // the fleet is already behind, negative in a surplus.
+            let shortfall = load * (1.0 - shed) - supply - withheld;
             let cover = if self.outage > self.outage_target {
                 let ceilings = self.agc_ceilings(effect_tick);
-                let shortfall = load * (1.0 - shed) - supply - withheld;
                 self.agc_headroom(&available, &ceilings, None) - shortfall
             } else {
-                Megawatts::ZERO
+                self.agc_headroom_down() + shortfall
             };
             self.outage = self.next_outage(params.shed_step, demand, cover);
         }
@@ -754,6 +782,18 @@ impl PowerSystem {
         self.connected_plants()
             .filter(|p| Some(p.id()) != except && p.auto_follow())
             .map(|p| p.headroom_up(agc_cap(available, ceilings, p.id())))
+            .sum()
+    }
+
+    /// The one-tick ramp-down room of the connected auto-follow plants: for
+    /// each, `min(ramp, output − min_output)` (see [`Plant::headroom_down`]),
+    /// summed; offline and non-dispatchable plants have none. The downward
+    /// counterpart of [`PowerSystem::agc_headroom`], used to pace a
+    /// rotating-outage cut (see [`PowerSystem::next_outage`]).
+    fn agc_headroom_down(&self) -> Megawatts {
+        self.connected_plants()
+            .filter(|p| p.auto_follow())
+            .map(Plant::headroom_down)
             .sum()
     }
 

@@ -177,19 +177,20 @@ fn begin_operating_orders_hour_zeros_rotating_outage() {
         s.start_plant(plant).unwrap();
         s.set_auto_follow(plant, true).unwrap();
     }
+    let events = s.begin_operating().unwrap();
+    assert_eq!(events.len(), 2);
     assert_eq!(
-        s.begin_operating().unwrap(),
-        vec![
-            DomainEvent::PhaseChanged {
-                from: DayPhase::Planning,
-                to: DayPhase::Operating
-            },
-            DomainEvent::RotatingOutageOrdered {
-                hour: 0,
-                share: Ratio::new(0.5).unwrap()
-            },
-        ]
+        events[0],
+        DomainEvent::PhaseChanged {
+            from: DayPhase::Planning,
+            to: DayPhase::Operating
+        }
     );
+    // The exact share short: 1 − 1,300 / 2,520.
+    let DomainEvent::RotatingOutageOrdered { hour: 0, share } = events[1] else {
+        panic!("hour 0's outage is ordered: {events:?}");
+    };
+    assert!((share.value() - (1.0 - 1300.0 / 2520.0)).abs() < 1e-9);
 }
 
 #[test]

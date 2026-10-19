@@ -3139,8 +3139,9 @@ fn share(value: f64) -> Ratio {
     Ratio::new(value).unwrap()
 }
 
-fn same_share(a: Ratio, b: f64) -> bool {
-    (a.value() - b).abs() < 1e-12
+/// Equal to float noise in sums of megawatts.
+fn near_share(a: Ratio, b: f64) -> bool {
+    (a.value() - b).abs() < 1e-9
 }
 
 fn is_outage_order(e: &DomainEvent) -> bool {
@@ -3193,19 +3194,27 @@ fn outage_sizes_to_the_worse_end_of_the_hour() {
     // 1 MW/min, so it counts 300 MW at minute 0 and 359 MW at minute 59; the
     // CCGT holds a manual 400 MW and the peaker on AGC sits at its 200 MW
     // capacity. 900 MW covers minute 0, but at minute 59 959 MW leaves
-    // 33.745 / 992.745 = 0.034, which rounds up to 0.05.
+    // 33.745 / 992.745 = 0.034 short, exactly the share ordered.
     place(&mut sys, 1, 300.0, Some(600.0));
     place(&mut sys, 2, 400.0, Some(400.0));
     place(&mut sys, 3, 200.0, None);
-    assert!(same_share(sys.size_outage(&region, april(), 6), 0.05));
+    let d59 = forecast(&sys, 419).value();
+    assert!(near_share(
+        sys.size_outage(&region, april(), 6),
+        (d59 - 959.0) / d59
+    ));
 
     // Minute 0 binds. The CCGT now ramps from 200 MW toward a manual 500 MW,
     // so it counts 200 MW at minute 0 and 500 MW at minute 59, and coal holds
-    // a manual 300 MW: 700 MW at minute 0 leaves 189.2 / 889.2 = 0.213, which
-    // rounds up to 0.25, while 1,000 MW covers minute 59.
+    // a manual 300 MW: 700 MW at minute 0 leaves 189.2 / 889.2 = 0.213,
+    // while 1,000 MW covers minute 59.
     place(&mut sys, 1, 300.0, Some(300.0));
     place(&mut sys, 2, 200.0, Some(500.0));
-    assert!(same_share(sys.size_outage(&region, april(), 6), 0.25));
+    let d0 = forecast(&sys, 360).value();
+    assert!(near_share(
+        sys.size_outage(&region, april(), 6),
+        (d0 - 700.0) / d0
+    ));
 }
 
 #[test]
@@ -3227,31 +3236,18 @@ fn load_following_agc_counts_its_reach_at_both_ends() {
     assert_eq!(sys.size_outage(&region, april(), 20), Ratio::ZERO);
     // The reach is ramp-limited: coal at 240 MW on 1 MW/min reaches only
     // 299 MW by minute 59, so with the CCGT at its 500 MW the hour falls
-    // short: (1,064.7 − 799) / 1,064.7 = 0.2496 at minute 0 rounds up to 0.25.
+    // short: (1,064.7 − 799) / 1,064.7 = 0.2496 at minute 0.
     place(&mut sys, 1, 240.0, None);
     place(&mut sys, 2, 500.0, None);
-    assert!(same_share(sys.size_outage(&region, april(), 20), 0.25));
+    let expected = (d0.value() - 799.0) / d0.value();
+    assert!(near_share(sys.size_outage(&region, april(), 20), expected));
 }
 
 #[test]
-fn outage_target_is_a_minimal_multiple_of_the_shed_step() {
-    let step = tiny_region().frequency().shed_step;
-    // 0.10 / 0.05 is 2.0000000000000004 in floating point: an exact multiple
-    // gets no extra step.
-    assert!(same_share(
-        outage::round_up_to(step, 0.10000000000000002),
-        0.10
-    ));
-    assert!(same_share(outage::round_up_to(step, 0.55), 0.55));
-    assert!(same_share(outage::round_up_to(step, 0.10 + 1e-6), 0.15));
-    assert!(same_share(outage::round_up_to(step, 0.10 - 1e-6), 0.10));
-    assert_eq!(outage::round_up_to(step, 0.0), Ratio::ZERO);
-    assert_eq!(outage::round_up_to(step, -0.3), Ratio::ZERO);
-    assert_eq!(outage::round_up_to(step, 1.0), Ratio::ONE);
-    assert_eq!(outage::round_up_to(step, 1.7), Ratio::ONE);
-
+fn outage_target_is_the_exact_shortfall_share() {
     // Hour 12 is flat at shape 0.94: D = 1,099.8 MW at both ends. Manual
-    // plants deliver exactly 90% of it, a 10% shortfall to the last bit.
+    // plants deliver 90% of it: the target is that 10% exactly, with no
+    // rounding up to the shed step (ruling R3).
     let region = rising_hour_six();
     let mut sys = system_with(&region, &start_fleet(&region));
     let d = sys.connected_demand_forecast(&region, april(), 720);
@@ -3259,11 +3255,21 @@ fn outage_target_is_a_minimal_multiple_of_the_shed_step() {
     place(&mut sys, 1, 600.0, Some(600.0));
     let ccgt = (d * 0.9).value() - 600.0;
     place(&mut sys, 2, ccgt, Some(ccgt));
-    assert!(same_share(sys.size_outage(&region, april(), 12), 0.10));
-    // 1 MW less is a step more.
-    let ccgt = ccgt - 1.0;
-    place(&mut sys, 2, ccgt, Some(ccgt));
-    assert!(same_share(sys.size_outage(&region, april(), 12), 0.15));
+    assert!(near_share(sys.size_outage(&region, april(), 12), 0.10));
+    // 1 MW less is 1 MW more, not a step more.
+    place(&mut sys, 2, ccgt - 1.0, Some(ccgt - 1.0));
+    let expected = 0.10 + 1.0 / d.value();
+    assert!(near_share(sys.size_outage(&region, april(), 12), expected));
+    // Covering the hour exactly, or more, orders exactly nothing.
+    place(&mut sys, 2, d.value() - 600.0, Some(d.value() - 600.0));
+    assert_eq!(sys.size_outage(&region, april(), 12), Ratio::ZERO);
+    place(&mut sys, 2, 500.0, Some(500.0));
+    assert_eq!(sys.size_outage(&region, april(), 12), Ratio::ZERO);
+    // With nothing online the whole demand is short: exactly 1.
+    for id in 1..=2 {
+        sys.plant_mut(PlantId(id)).unwrap().trip();
+    }
+    assert_eq!(sys.size_outage(&region, april(), 12), Ratio::ONE);
 }
 
 /// Cities 1–3 with 4,000 MW of base load against the 1,300 MW start fleet.
@@ -3279,24 +3285,27 @@ fn half_short_region(
 #[test]
 fn the_day_starts_at_hour_zeros_outage() {
     // Hour 0: D0 = 4,000 × 0.90 × 0.70 = 2,520 MW and D59 = 2,378.4 MW. The
-    // fleet's 1,300 MW leaves 0.484 and 0.453, so hour 0 orders 0.50.
+    // fleet's 1,300 MW leaves 0.484 and 0.453, so hour 0 orders 0.484.
     let region = half_short_region(|_| {});
     for seed in [1, 5] {
         let mut sys = auto_follow_fleet(&region);
         let mut rng = SimRng::from_seed(seed);
         let init = sys.begin_day(&region, april(), &mut rng);
-        assert!(same_share(sys.outage_target, 0.50));
+        let target = 1.0 - 1300.0 / 2520.0;
+        assert!(near_share(sys.outage_target, target));
         assert_eq!(sys.outage, sys.outage_target);
         assert_eq!(init.outage, sys.outage_target);
-        // The boundary dispatch balances against the reduced load.
+        // The boundary dispatch balances against the reduced load: the whole
+        // fleet, exactly.
         let d0 = sys.connected_demand_forecast(&region, april(), 0);
-        assert!(close(supply(&sys), d0 * 0.5));
+        assert!(close(supply(&sys), d0 * (1.0 - sys.outage.value())));
+        assert!(close(supply(&sys), Megawatts::new(1300.0)));
         let (s, events) = sys.tick(&region, april(), 0, &mut rng);
         assert_eq!(s.mode, GridMode::Normal);
         assert_eq!(s.shed, Ratio::ZERO);
-        assert!(same_share(s.outage, 0.50));
-        assert!(close(s.served, s.demand * 0.5));
-        assert!(close(s.unserved, s.demand * 0.5));
+        assert!(near_share(s.outage, target));
+        assert!(close(s.served, s.demand * (1.0 - target)));
+        assert!(close(s.unserved, s.demand * target));
         assert!(
             !events.iter().any(is_outage_order),
             "tick 0 orders nothing new"
@@ -3334,19 +3343,22 @@ fn a_noise_free_shortage_day_sheds_nothing_unplanned() {
             peak = if s.outage > peak { s.outage } else { peak };
             orders += events.iter().filter(|e| is_outage_order(e)).count();
         }
-        assert!(
-            peak.value() >= 0.2 - 1e-9,
-            "seed {seed}: peak outage {peak:?}"
-        );
+        assert!(peak.value() >= 0.17, "seed {seed}: peak outage {peak:?}");
         assert!(orders >= 2, "seed {seed}: {orders} orders");
     }
 }
 
 /// April at 12:30 (flat hour 12, D = 1,099.8 MW with cities 1–3 and no
-/// noise), with a 10% outage ordered down to 5%. Coal, CCGT and, when
-/// `peaker` is given, the peaker run on AGC at the given outputs, already at
-/// their targets so the tick's step leaves them there.
-fn restoring_state(coal: f64, ccgt: f64, peaker: Option<f64>) -> (RegionDefinition, PowerSystem) {
+/// noise), with the outage at `outage` and its target at `target`. Coal,
+/// CCGT and, when `peaker` is given, the peaker run on AGC at the given
+/// outputs, already at their targets so the tick's step leaves them there.
+fn paced_state(
+    outage: f64,
+    target: f64,
+    coal: f64,
+    ccgt: f64,
+    peaker: Option<f64>,
+) -> (RegionDefinition, PowerSystem) {
     let region = region_with(|p| {
         noise_free(p);
         connect_city_3(p, 300.0);
@@ -3364,14 +3376,20 @@ fn restoring_state(coal: f64, ccgt: f64, peaker: Option<f64>) -> (RegionDefiniti
     }
     sys.protection = ProtectionState::default();
     sys.deviation = Hertz::ZERO;
-    sys.outage = share(0.10);
-    sys.outage_target = share(0.05);
+    sys.outage = share(outage);
+    sys.outage_target = share(target);
     (region, sys)
 }
 
-/// The outage after tick 750 (12:30) of `restoring_state`.
-fn outage_after_restoring_tick(coal: f64, ccgt: f64, peaker: Option<f64>) -> Ratio {
-    let (region, mut sys) = restoring_state(coal, ccgt, peaker);
+/// The outage after tick 750 (12:30) of `paced_state`.
+fn outage_after_paced_tick(
+    outage: f64,
+    target: f64,
+    coal: f64,
+    ccgt: f64,
+    peaker: Option<f64>,
+) -> Ratio {
+    let (region, mut sys) = paced_state(outage, target, coal, ccgt, peaker);
     let mut rng = SimRng::from_seed(1);
     let (s, _) = sys.tick(&region, april(), 750, &mut rng);
     assert_eq!(s.shed, Ratio::ZERO);
@@ -3379,38 +3397,60 @@ fn outage_after_restoring_tick(coal: f64, ccgt: f64, peaker: Option<f64>) -> Rat
     sys.outage
 }
 
+const PACED_DEMAND: f64 = 1099.8;
+
 #[test]
 fn restoring_outage_load_waits_for_headroom() {
-    // Restoring one step adds 0.05 × 1,099.8 = 54.99 MW of load. A 10% outage
-    // leaves 989.82 MW to serve.
-    let served = 1099.8 * 0.9;
+    // From 10% toward 5%: a 10% outage leaves 989.82 MW to serve, and a full
+    // step would add 0.05 × 1,099.8 = 54.99 MW. The outage falls by
+    // min(step, cover / demand), cover being the AGC fleet's one-tick
+    // headroom net of the shortfall it already faces (ruling R2).
+    let served = PACED_DEMAND * 0.9;
+    let restore = |coal, ccgt, peaker| outage_after_paced_tick(0.10, 0.05, coal, ccgt, peaker);
+    let after = |cover: f64| 0.10 - cover / PACED_DEMAND;
     // Coal (6 MW/min) and the CCGT (25 MW/min) balanced, both with room:
-    // 31 MW of one-tick headroom is not enough, so the outage holds.
-    assert!(same_share(
-        outage_after_restoring_tick(served - 400.0, 400.0, None),
-        0.10
+    // 31 MW restores 31 MW, part of a step.
+    assert!(near_share(
+        restore(served - 400.0, 400.0, None),
+        after(31.0)
     ));
-    // A 24 MW surplus over the load counts as cover: 31 + 24 = 55 ≥ 54.99.
-    assert!(same_share(
-        outage_after_restoring_tick(served - 400.0, 424.0, None),
-        0.05
-    ));
-    // With the peaker (40 MW/min) the fleet has 71 MW: the outage steps down.
-    assert!(same_share(
-        outage_after_restoring_tick(served - 440.0, 400.0, Some(40.0)),
-        0.05
-    ));
-    // A 17 MW shortfall AGC already faces uses headroom: 71 − 17 = 54 < 54.99.
-    assert!(same_share(
-        outage_after_restoring_tick(served - 457.0, 400.0, Some(40.0)),
-        0.10
+    // A 24 MW surplus counts as cover: 31 + 24 = 55 MW is more than a step,
+    // so the outage falls the full step, to its target.
+    assert_eq!(restore(served - 400.0, 424.0, None), share(0.05));
+    // A 17 MW shortfall AGC already faces uses headroom: 71 − 17 = 54 MW.
+    assert!(near_share(
+        restore(served - 457.0, 400.0, Some(40.0)),
+        after(54.0)
     ));
     // Headroom is limited by room as well as ramp: a peaker 10 MW below its
-    // capacity adds only 10 MW, so 41 MW is not enough.
-    assert!(same_share(
-        outage_after_restoring_tick(served - 590.0, 400.0, Some(190.0)),
-        0.10
+    // capacity adds only 10 MW, so 41 MW.
+    assert!(near_share(
+        restore(served - 590.0, 400.0, Some(190.0)),
+        after(41.0)
     ));
+    // A shortfall beyond the headroom leaves no cover: the outage holds.
+    assert_eq!(restore(served - 520.0, 400.0, Some(40.0)), share(0.10));
+}
+
+#[test]
+fn cutting_outage_load_waits_for_ramp_down_room() {
+    // From 5% toward 10%: a 5% outage leaves 1,044.81 MW to serve. The
+    // outage rises by min(step, cover / demand), cover being the AGC fleet's
+    // one-tick ramp-down room plus the shortfall it is already behind by
+    // (ruling R1).
+    let served = PACED_DEMAND * 0.95;
+    let cut = |coal, ccgt| outage_after_paced_tick(0.05, 0.10, coal, ccgt, None);
+    let after = |cover: f64| 0.05 + cover / PACED_DEMAND;
+    // Balanced, with coal (6 MW/min) and the CCGT (25 MW/min) above minimum:
+    // 31 MW of ramp-down room cuts 31 MW.
+    assert!(near_share(cut(600.0, served - 600.0), after(31.0)));
+    // A 20 MW deficit is room too: the cut closes it first, 31 + 20 = 51 MW.
+    assert!(near_share(cut(580.0, served - 600.0), after(51.0)));
+    // A 20 MW surplus uses room up: 31 − 20 = 11 MW.
+    assert!(near_share(cut(600.0, served - 580.0), after(11.0)));
+    // A 40 MW deficit: 71 MW of room is more than a step, so the outage
+    // rises the full step, to its target.
+    assert_eq!(cut(560.0, served - 600.0), share(0.10));
 }
 
 #[test]
@@ -3427,7 +3467,7 @@ fn a_blackout_freezes_the_outage_and_restores_to_it() {
     let mut rng = SimRng::from_seed(3);
     sys.begin_day(&region, april(), &mut rng);
     let target = sys.outage_target;
-    assert!(same_share(target, 0.50));
+    assert!(near_share(target, 1.0 - 1300.0 / 2520.0));
     run_ticks(&mut sys, &region, 0..50, &mut rng);
     assert_eq!(sys.protection().mode, GridMode::Normal);
     assert_eq!(sys.outage, target);
@@ -3482,7 +3522,7 @@ fn a_blackout_freezes_the_outage_and_restores_to_it() {
     let s = restored.expect("restoration completes at the frozen target");
     assert_eq!((s.mode, s.shed), (GridMode::Normal, Ratio::ZERO));
     assert_eq!(s.outage, target);
-    assert!(close(s.served, s.demand * 0.5));
+    assert!(close(s.served, s.demand * (1.0 - target.value())));
     assert_eq!((sys.outage, sys.protection().shed), (target, Ratio::ZERO));
     assert_eq!(sys.protection().mode, GridMode::Normal);
 }
@@ -3491,10 +3531,17 @@ fn a_blackout_freezes_the_outage_and_restores_to_it() {
 fn a_rotating_outage_alone_keeps_the_hydro_cap() {
     // The West-like fleet in January against cities 1–3 with 3,500 MW of
     // base load: hydro's rationed water leaves the thermal fleet far short
-    // all day.
+    // all day. Thermal ramps fast, as in the other hydro tests, so a
+    // foreseen hydro fall never outruns it (the slow-fleet envelope residual
+    // parked for Plan 2 would otherwise shed at 21:00).
     let region = region_with(|p| {
         noise_free(p);
         connect_city_3(p, 2_500.0);
+        for spec in &mut p.catalog {
+            if spec.kind != PlantKind::Hydro {
+                spec.ramp = crate::units::RampRate::mw_per_minute(1_000.0);
+            }
+        }
     });
     let mut sys = west_like_fleet(&region);
     let mut rng = SimRng::from_seed(6);
@@ -3542,7 +3589,6 @@ fn sizing_counts_hydro_by_its_plan_or_its_manual_target() {
     // ends, and January's flow rations the water, so the hour-12 allocation
     // is partial.
     let region = tiny_region();
-    let step = region.frequency().shed_step;
     let month = january();
     let mut sys = system_with(&region, &[connected(PlantKind::Hydro, cell(10, 1))]);
     let hydro = PlantId(1);
@@ -3556,21 +3602,23 @@ fn sizing_counts_hydro_by_its_plan_or_its_manual_target() {
     // Scheduled hydro counts its allocation for the hour, whatever its output.
     let allocation = sys.hydro_plan[&hydro].hourly[12];
     assert!(allocation > Megawatts::ZERO && allocation < d);
-    let expected = outage::round_up_to(step, (d - allocation) / d);
+    let expected = (d - allocation) / d;
     for output in [0.0, 400.0, 800.0] {
         sys.plant_mut(hydro)
             .unwrap()
             .set_output_unchecked(Megawatts::new(output));
-        assert_eq!(sys.size_outage(&region, month, 12), expected, "{output} MW");
+        let sized = sys.size_outage(&region, month, 12);
+        assert!(near_share(sized, expected), "{output} MW");
     }
 
     // Manual hydro counts its target while its budget lasts to minute 59:
-    // (1,034 − 500) / 1,034 = 0.516 rounds up to 0.55.
+    // (1,034 − 500) / 1,034 = 0.516.
     sys.set_auto_follow(hydro, false).unwrap();
     sys.plant_mut(hydro)
         .unwrap()
         .set_output_unchecked(Megawatts::new(500.0));
-    assert!(same_share(sys.size_outage(&region, month, 12), 0.55));
+    let manual = (d.value() - 500.0) / d.value();
+    assert!(near_share(sys.size_outage(&region, month, 12), manual));
     // 500 MWh lasts the hour at 500 MW (491.7 MWh by minute 59); 450 MWh
     // runs dry first, so minute 59 has nothing.
     let budget = |sys: &mut PowerSystem, mwh| {
@@ -3579,7 +3627,7 @@ fn sizing_counts_hydro_by_its_plan_or_its_manual_target() {
             .reset_hydro_budget(MegawattHours::new(mwh));
     };
     budget(&mut sys, 500.0);
-    assert!(same_share(sys.size_outage(&region, month, 12), 0.55));
+    assert!(near_share(sys.size_outage(&region, month, 12), manual));
     budget(&mut sys, 450.0);
     assert_eq!(sys.size_outage(&region, month, 12), Ratio::ONE);
 
@@ -3593,8 +3641,8 @@ fn sizing_counts_hydro_by_its_plan_or_its_manual_target() {
 fn a_plant_stopping_at_the_boundary_counts_nothing() {
     // April's hour 12 is flat at D = 846 MW. Coal holds a manual 600 MW; the
     // peaker on AGC at 200 MW is committed only until noon, so its commitment
-    // stops it at the 12:00 boundary: (846 − 600) / 846 = 0.29 rounds up to
-    // 0.30, where counting the peaker would order only 0.10.
+    // stops it at the 12:00 boundary: (846 − 600) / 846 = 0.291, where
+    // counting the peaker would order only (846 − 800) / 846 = 0.054.
     let region = tiny_region();
     let mut sys = system_with(&region, &start_fleet(&region));
     place(&mut sys, 1, 600.0, Some(600.0));
@@ -3604,9 +3652,16 @@ fn a_plant_stopping_at_the_boundary_counts_nothing() {
     let peaker = sys.plant_mut(PlantId(3)).unwrap();
     let morning = CommitmentSchedule::try_new(hours, peaker.spec()).unwrap();
     peaker.set_commitment(morning);
-    assert!(same_share(sys.size_outage(&region, april(), 12), 0.30));
-    // An hour earlier it is still committed and counts.
-    assert!(same_share(sys.size_outage(&region, april(), 11), 0.10));
+    assert!(near_share(
+        sys.size_outage(&region, april(), 12),
+        246.0 / 846.0
+    ));
+    // An hour earlier it is still committed and counts; hour 11 is flat at
+    // shape 0.94 too, so D = 846 MW there as well.
+    assert!(near_share(
+        sys.size_outage(&region, april(), 11),
+        46.0 / 846.0
+    ));
 }
 
 #[test]
@@ -3667,4 +3722,65 @@ fn the_over_frequency_surplus_gate_reads_the_load() {
             .any(|e| matches!(e, DomainEvent::OverFrequencyTrip { .. }))
     );
     assert_eq!(sys.protection().over_ticks, params.trip_after_ticks);
+}
+
+#[test]
+fn a_plant_coming_online_mid_hour_lowers_the_outage() {
+    // Nothing committed: the day starts in a full rotating outage. At 00:30
+    // the player starts the peaker on AGC; when its 10-minute start-up
+    // completes, the hour is re-sized with the peaker counted (ruling R5)
+    // and the outage falls toward the new target at the restore pace.
+    let region = region_with(noise_free);
+    let step = region.frequency().shed_step.value();
+    let peaker = PlantId(3);
+    let mut sys = system_with(&region, &start_fleet(&region));
+    let mut rng = SimRng::from_seed(4);
+    sys.begin_day(&region, april(), &mut rng);
+    assert_eq!(sys.outage, Ratio::ONE);
+    run_ticks(&mut sys, &region, 0..30, &mut rng);
+    sys.set_auto_follow(peaker, true).unwrap();
+    sys.plant_mut(peaker).unwrap().start().unwrap();
+
+    let (mut online_at, mut previous) = (None, sys.outage);
+    for t in 30..60 {
+        let (s, events) = sys.tick(&region, april(), t, &mut rng);
+        assert_eq!(s.mode, GridMode::Normal, "tick {t}");
+        assert!(
+            !events.iter().any(|e| matches!(
+                e,
+                DomainEvent::OverFrequencyTrip { .. } | DomainEvent::PlantTripped { .. }
+            )),
+            "tick {t}: {events:?}"
+        );
+        if events.contains(&DomainEvent::PlantOnline { plant: peaker }) {
+            online_at = Some(t);
+            // The peaker reaches its 200 MW by minute 59: (630 − 200) / 630.
+            let d0 = sys.connected_demand_forecast(&region, april(), 0).value();
+            let ordered = events.iter().find_map(|e| match e {
+                DomainEvent::RotatingOutageOrdered { hour: 0, share } => Some(*share),
+                _ => None,
+            });
+            assert!(near_share(
+                ordered.expect("re-sized on coming online"),
+                (d0 - 200.0) / d0
+            ));
+        }
+        if online_at.is_none() {
+            assert_eq!(s.outage, Ratio::ONE, "tick {t}");
+        }
+        // It falls, never faster than a step a tick, and never below the target.
+        assert!(s.outage <= previous, "tick {t}");
+        assert!(
+            previous.value() - s.outage.value() <= step + 1e-9,
+            "tick {t}"
+        );
+        assert!(s.outage >= sys.outage_target, "tick {t}");
+        previous = s.outage;
+    }
+    assert!(online_at.is_some());
+    assert_eq!(
+        sys.outage, sys.outage_target,
+        "restored to the target by 00:59"
+    );
+    assert!(sys.plant(peaker).unwrap().is_online());
 }
