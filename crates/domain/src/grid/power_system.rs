@@ -203,9 +203,9 @@ impl PowerSystem {
             .filter(|p| p.is_online() && !p.auto_follow())
             .map(Plant::output)
             .sum();
-        let load = self.connected_demand_forecast(region, month, 0)
-            - self.expected_solar(region, month, 0)
-            - manual;
+        let forecast = self.connected_demand_forecast(region, month, 0);
+        let solar = self.expected_solar(region, month, 0);
+        let load = forecast - solar - manual;
         let (available, _, _) = self.availability(region, month, 0);
         let network = &self.network;
         let mut connected: Vec<&mut Plant> = self
