@@ -153,6 +153,9 @@ MonthlyReport {
     imbalance: MegawattHours(
         106.52335184944792,
     ),
+    overgeneration: MegawattHours(
+        1005.2148275469772,
+    ),
     peak_demand: Megawatts(
         1188.7168137236386,
     ),
@@ -160,5 +163,11 @@ MonthlyReport {
         1.0,
     ),
     incidents: [],
+    over_frequency_trips: 0,
+    out_of_band_share: Ratio(
+        0.008333333333333333,
+    ),
+    frequency_failed: false,
+    frequency_notice: false,
     rate_review: None,
 }

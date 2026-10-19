@@ -1,0 +1,399 @@
+---
+source: crates/application/tests/scenarios.rs
+expression: "OverbuildOutcome { status, timeline, minimum_generation, last_report, }"
+---
+OverbuildOutcome {
+    status: GameOver(
+        LicenseRevoked,
+    ),
+    timeline: [
+        (
+            SimMonth {
+                year: 2027,
+                month: 7,
+            },
+            FrequencyNoticeIssued {
+                month: SimMonth {
+                    year: 2027,
+                    month: 7,
+                },
+            },
+        ),
+        (
+            SimMonth {
+                year: 2027,
+                month: 8,
+            },
+            StrikeIssued {
+                strikes: 1,
+                reason: UnservedEnergy,
+            },
+        ),
+        (
+            SimMonth {
+                year: 2027,
+                month: 11,
+            },
+            StrikeExpired {
+                strikes: 0,
+            },
+        ),
+        (
+            SimMonth {
+                year: 2027,
+                month: 12,
+            },
+            RateReviewCompleted {
+                tariff: Price(
+                    96.04433166747101,
+                ),
+                allowed_return: Ratio(
+                    0.09005265709550173,
+                ),
+            },
+        ),
+        (
+            SimMonth {
+                year: 2028,
+                month: 7,
+            },
+            FrequencyNoticeIssued {
+                month: SimMonth {
+                    year: 2028,
+                    month: 7,
+                },
+            },
+        ),
+        (
+            SimMonth {
+                year: 2028,
+                month: 8,
+            },
+            StrikeIssued {
+                strikes: 1,
+                reason: FrequencyPerformance,
+            },
+        ),
+        (
+            SimMonth {
+                year: 2028,
+                month: 11,
+            },
+            StrikeExpired {
+                strikes: 0,
+            },
+        ),
+        (
+            SimMonth {
+                year: 2028,
+                month: 12,
+            },
+            RateReviewCompleted {
+                tariff: Price(
+                    95.39745494639574,
+                ),
+                allowed_return: Ratio(
+                    0.09017305703677496,
+                ),
+            },
+        ),
+        (
+            SimMonth {
+                year: 2029,
+                month: 6,
+            },
+            PlantCommissioned {
+                plant: PlantId(
+                    15,
+                ),
+                kind: Ccgt,
+            },
+        ),
+        (
+            SimMonth {
+                year: 2029,
+                month: 6,
+            },
+            PlantCommissioned {
+                plant: PlantId(
+                    18,
+                ),
+                kind: Ccgt,
+            },
+        ),
+        (
+            SimMonth {
+                year: 2029,
+                month: 6,
+            },
+            PlantCommissioned {
+                plant: PlantId(
+                    21,
+                ),
+                kind: Ccgt,
+            },
+        ),
+        (
+            SimMonth {
+                year: 2029,
+                month: 6,
+            },
+            PlantCommissioned {
+                plant: PlantId(
+                    24,
+                ),
+                kind: Ccgt,
+            },
+        ),
+        (
+            SimMonth {
+                year: 2029,
+                month: 7,
+            },
+            FrequencyNoticeIssued {
+                month: SimMonth {
+                    year: 2029,
+                    month: 7,
+                },
+            },
+        ),
+        (
+            SimMonth {
+                year: 2029,
+                month: 8,
+            },
+            StrikeIssued {
+                strikes: 1,
+                reason: FrequencyPerformance,
+            },
+        ),
+        (
+            SimMonth {
+                year: 2029,
+                month: 9,
+            },
+            StrikeIssued {
+                strikes: 2,
+                reason: FrequencyPerformance,
+            },
+        ),
+        (
+            SimMonth {
+                year: 2029,
+                month: 10,
+            },
+            StrikeIssued {
+                strikes: 3,
+                reason: FrequencyPerformance,
+            },
+        ),
+        (
+            SimMonth {
+                year: 2029,
+                month: 10,
+            },
+            LicenseRevoked,
+        ),
+    ],
+    minimum_generation: Some(
+        MinimumGenerationWarning {
+            hour: 2,
+            committed_minimum: Megawatts(
+                1280.0,
+            ),
+            net_load: Megawatts(
+                584.2,
+            ),
+            excess: Megawatts(
+                695.8,
+            ),
+        },
+    ),
+    last_report: MonthlyReport {
+        month: SimMonth {
+            year: 2029,
+            month: 10,
+        },
+        days: 31,
+        revenue: Money(
+            5430267381,
+        ),
+        fuel: Money(
+            -2186168245,
+        ),
+        start_up: Money(
+            0,
+        ),
+        fixed_om: Money(
+            -517000000,
+        ),
+        construction: Money(
+            0,
+        ),
+        net: Money(
+            2727099136,
+        ),
+        energy_by_kind: {
+            Coal: MegawattHours(
+                275365.02887711034,
+            ),
+            Ccgt: MegawattHours(
+                301962.92395840073,
+            ),
+            Peaker: MegawattHours(
+                82.66666666666666,
+            ),
+        },
+        merit_order: [
+            MeritOrderEntry {
+                plant: PlantId(
+                    6,
+                ),
+                kind: Coal,
+                marginal_cost: Price(
+                    30.0,
+                ),
+                energy: MegawattHours(
+                    275365.02887711034,
+                ),
+            },
+            MeritOrderEntry {
+                plant: PlantId(
+                    9,
+                ),
+                kind: Ccgt,
+                marginal_cost: Price(
+                    45.0,
+                ),
+                energy: MegawattHours(
+                    929.9999999999999,
+                ),
+            },
+            MeritOrderEntry {
+                plant: PlantId(
+                    15,
+                ),
+                kind: Ccgt,
+                marginal_cost: Price(
+                    45.0,
+                ),
+                energy: MegawattHours(
+                    1446.6666666666667,
+                ),
+            },
+            MeritOrderEntry {
+                plant: PlantId(
+                    18,
+                ),
+                kind: Ccgt,
+                marginal_cost: Price(
+                    45.0,
+                ),
+                energy: MegawattHours(
+                    1963.333333333334,
+                ),
+            },
+            MeritOrderEntry {
+                plant: PlantId(
+                    21,
+                ),
+                kind: Ccgt,
+                marginal_cost: Price(
+                    45.0,
+                ),
+                energy: MegawattHours(
+                    148822.92395840038,
+                ),
+            },
+            MeritOrderEntry {
+                plant: PlantId(
+                    24,
+                ),
+                kind: Ccgt,
+                marginal_cost: Price(
+                    45.0,
+                ),
+                energy: MegawattHours(
+                    148800.00000000032,
+                ),
+            },
+            MeritOrderEntry {
+                plant: PlantId(
+                    12,
+                ),
+                kind: Peaker,
+                marginal_cost: Price(
+                    150.0,
+                ),
+                energy: MegawattHours(
+                    82.66666666666666,
+                ),
+            },
+        ],
+        demand: MegawattHours(
+            569225.6029699383,
+        ),
+        served: MegawattHours(
+            569225.6029699383,
+        ),
+        unserved: MegawattHours(
+            0.0,
+        ),
+        curtailed: MegawattHours(
+            0.0,
+        ),
+        imbalance: MegawattHours(
+            8185.016532239409,
+        ),
+        overgeneration: MegawattHours(
+            8791.672498540762,
+        ),
+        peak_demand: Megawatts(
+            932.5589796394694,
+        ),
+        reliability: Ratio(
+            1.0,
+        ),
+        incidents: [
+            Incident {
+                tick: 4,
+                kind: OverFrequencyTrip {
+                    plant: PlantId(
+                        12,
+                    ),
+                },
+            },
+            Incident {
+                tick: 9,
+                kind: OverFrequencyTrip {
+                    plant: PlantId(
+                        9,
+                    ),
+                },
+            },
+            Incident {
+                tick: 14,
+                kind: OverFrequencyTrip {
+                    plant: PlantId(
+                        15,
+                    ),
+                },
+            },
+            Incident {
+                tick: 19,
+                kind: OverFrequencyTrip {
+                    plant: PlantId(
+                        18,
+                    ),
+                },
+            },
+        ],
+        over_frequency_trips: 4,
+        out_of_band_share: Ratio(
+            0.2013888888888889,
+        ),
+        frequency_failed: true,
+        frequency_notice: false,
+        rate_review: None,
+    },
+}

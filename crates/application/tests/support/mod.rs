@@ -18,7 +18,7 @@ use domain::generation::PlantStatus;
 use domain::ids::{CellCoord, CityId, PlantId, RegionId};
 use domain::region::fixtures::tiny_region_parts;
 use domain::region::{PlantKind, RegionDefinition, RegionDefinitionParts, StartPlantDef};
-use domain::session::{DayPhase, GameSettings};
+use domain::session::{DayPhase, GameSettings, SessionStatus};
 use domain::time::{SimMonth, TICKS_PER_DAY};
 
 /// A catalog over regions already held in memory.
@@ -105,6 +105,23 @@ pub fn logged_commands(log: &InMemoryCommandLog) -> Vec<Command> {
 /// `FinishReview`, so the next month is ready for planning. Returns the events
 /// of the operated day, ending with the month close.
 pub fn play_month(game: &mut Game, plan: impl FnOnce(&mut Game)) -> Vec<DomainEvent> {
+    let (events, status) = play_month_to_close(game, plan);
+    assert_eq!(
+        status,
+        SessionStatus::Active,
+        "the month close ended the game"
+    );
+    events
+}
+
+/// Like [`play_month`], but a month close that ends the game stops there: the
+/// session stays in `Review` and `FinishReview` is not sent, because a game
+/// that is over rejects every command. Returns the operated day's events
+/// (ending with the month close) and the status after the close.
+pub fn play_month_to_close(
+    game: &mut Game,
+    plan: impl FnOnce(&mut Game),
+) -> (Vec<DomainEvent>, SessionStatus) {
     assert_eq!(
         game.session().phase(),
         DayPhase::Planning,
@@ -116,8 +133,11 @@ pub fn play_month(game: &mut Game, plan: impl FnOnce(&mut Game)) -> Vec<DomainEv
     let events = game
         .execute(Command::AdvanceTicks { n: TICKS_PER_DAY })
         .expect("advance the day");
-    game.execute(Command::FinishReview).expect("finish review");
-    events
+    let status = game.session().status();
+    if status == SessionStatus::Active {
+        game.execute(Command::FinishReview).expect("finish review");
+    }
+    (events, status)
 }
 
 /// Commits every dispatchable, commissioned plant for hours 0-23 and turns
