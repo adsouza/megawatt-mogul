@@ -259,6 +259,9 @@ impl StateMachineTest for SessionTest {
         } else {
             assert_eq!(session.phase(), model.phase);
             assert_eq!(session.status(), SessionStatus::Active);
+            if model.phase == DayPhase::Operating {
+                assert_eq!(session.clock().tick(), model.tick, "tick within the day");
+            }
         }
     }
 }
