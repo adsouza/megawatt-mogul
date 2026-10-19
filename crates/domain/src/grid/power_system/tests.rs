@@ -4034,3 +4034,95 @@ fn a_grid_with_no_load_connected_holds_nominal_frequency() {
         );
     }
 }
+
+#[test]
+fn a_restore_ignores_surplus_from_an_unrecoverable_fall() {
+    // April 12:30 (D = 1,099.8 MW), the outage at 0.6 ordered down to 0.3.
+    // Coal holds a manual 240 MW and the CCGT on AGC sits at its 200 MW
+    // minimum, while the peaker is stopping from 200 MW: its output is a
+    // surplus about to vanish, so restoring it as load would be shed again
+    // (ruling N1). The restore keeps to one step and nothing is shed.
+    let (region, mut sys) = paced_state(0.6, 0.3, 600.0, 200.0, Some(200.0));
+    place(&mut sys, 1, 240.0, Some(240.0));
+    sys.plant_mut(PlantId(3)).unwrap().stop().unwrap();
+    let step = region.frequency().shed_step.value();
+    let mut rng = SimRng::from_seed(1);
+    let (s, _) = sys.tick(&region, april(), 750, &mut rng);
+    assert!(
+        s.outage.value() >= 0.6 - step - 1e-9,
+        "first restore {:?}",
+        s.outage
+    );
+    assert_eq!(s.shed, Ratio::ZERO);
+    for t in 751..770 {
+        let (s, events) = sys.tick(&region, april(), t, &mut rng);
+        assert_eq!(s.shed, Ratio::ZERO, "tick {t}");
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, DomainEvent::LoadShed { .. })),
+            "tick {t}"
+        );
+    }
+}
+
+#[test]
+fn a_black_start_to_a_full_outage_needs_generation() {
+    // The outage is ordered up to 1.0 when the last plant trips: the grid
+    // blacks out with a frozen target of 1.0. With nothing producing it stays
+    // dark (ruling N2); once the peaker is restarted and producing it
+    // restores, into a fully cut Normal grid at nominal frequency.
+    let region = region_with(noise_free);
+    let mut sys = system_with(&region, &start_fleet(&region));
+    let mut rng = SimRng::from_seed(4);
+    sys.begin_day(&region, april(), &mut rng);
+    place(&mut sys, 3, 60.0, None);
+    sys.outage = share(0.9);
+    sys.outage_target = Ratio::ONE;
+    sys.trip_plant(PlantId(3));
+    let (s, events) = sys.tick(&region, april(), 10, &mut rng);
+    assert!(events.contains(&DomainEvent::Blackout));
+    assert_eq!(
+        (s.mode, sys.outage_target),
+        (GridMode::Blackout, Ratio::ONE)
+    );
+    for t in 11..20 {
+        let (s, events) = sys.tick(&region, april(), t, &mut rng);
+        assert_eq!(s.mode, GridMode::Blackout, "tick {t}");
+        assert!(!events.contains(&DomainEvent::BlackoutRestored), "tick {t}");
+    }
+    sys.plant_mut(PlantId(3)).unwrap().start().unwrap();
+    let mut restored = None;
+    for t in 20..40 {
+        let (s, events) = sys.tick(&region, april(), t, &mut rng);
+        if events.contains(&DomainEvent::BlackoutRestored) {
+            assert!(s.generation > Megawatts::ZERO, "tick {t}");
+            restored = Some(t);
+            break;
+        }
+        assert_eq!(
+            s.generation,
+            Megawatts::ZERO,
+            "tick {t}: restores once producing"
+        );
+    }
+    assert!(restored.is_some(), "restores once the peaker produces");
+    assert_eq!(sys.protection().mode, GridMode::Normal);
+    assert_eq!(sys.deviation(), Hertz::ZERO);
+}
+
+#[test]
+fn protections_own_restoration_does_not_count_as_outage_surplus() {
+    // April 12:30 (D = 1,099.8 MW), the outage at 0.30 ordered down to 0, and
+    // protection still shedding 15% of the 769.86 MW load the outage leaves.
+    // Supply matches that load, so it exceeds what is served, but that gap
+    // is protection's shed load, which protection restores itself. The
+    // surplus over the outage's load is zero, so the outage falls by one
+    // step, not by the 115 MW gap as well (ruling N1).
+    let load = PACED_DEMAND * 0.7;
+    let (region, mut sys) = paced_state(0.30, 0.0, load - 240.0, 200.0, Some(40.0));
+    sys.protection.shed = share(0.15);
+    let (s, events) = sys.tick(&region, april(), 750, &mut SimRng::from_seed(1));
+    assert!(near_share(s.outage, 0.25), "{:?}", s.outage);
+    assert!(!events.contains(&DomainEvent::Blackout));
+}

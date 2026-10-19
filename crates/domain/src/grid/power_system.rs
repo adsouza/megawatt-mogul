@@ -479,7 +479,18 @@ impl PowerSystem {
         if mode == GridMode::Normal && self.outage != self.outage_target {
             let served = load * (1.0 - shed);
             let cover = self.outage_cover(&available, served - supply - withheld, effect_tick);
-            let surplus = (supply - served).max(Megawatts::ZERO);
+            // Only a surplus that persists may be restored as load at once
+            // (ruling N1): none while any plant is losing output AGC cannot
+            // hold, judged as at the trip gate. The surplus is over the
+            // outage's load, so protection's own restoration does not stack
+            // on it.
+            let falling =
+                self.has_unrecoverable_ramp_down(None, &self.foreseen_ceilings(effect_tick));
+            let surplus = if falling {
+                Megawatts::ZERO
+            } else {
+                (supply - load).max(Megawatts::ZERO)
+            };
             self.outage = self.next_outage(params.shed_step, demand, cover, surplus);
         }
         let to_serve = match mode {
@@ -939,7 +950,10 @@ impl PowerSystem {
         let ceilings = self.agc_ceilings(redispatch.effect_tick);
         let headroom = self.agc_headroom(redispatch.available, &ceilings, Some(id));
         if self.plants[&id].output() - surplus > headroom
-            || self.has_unrecoverable_ramp_down(id, &self.foreseen_ceilings(redispatch.effect_tick))
+            || self.has_unrecoverable_ramp_down(
+                Some(id),
+                &self.foreseen_ceilings(redispatch.effect_tick),
+            )
         {
             self.protection.withhold_trip(params);
             return;
@@ -997,14 +1011,16 @@ impl PowerSystem {
     /// - a manual dispatchable plant above its target.
     ///
     /// An AGC plant ramping down toward its AGC target does not count: the
-    /// redispatch retargets it.
+    /// redispatch retargets it. Also used, with no exception, to keep a
+    /// rotating-outage restore from taking a surplus that is about to vanish
+    /// (see [`PowerSystem::next_outage`]).
     fn has_unrecoverable_ramp_down(
         &self,
-        except: PlantId,
+        except: Option<PlantId>,
         ceilings: &BTreeMap<PlantId, Megawatts>,
     ) -> bool {
         self.connected_plants()
-            .filter(|p| p.id() != except)
+            .filter(|p| Some(p.id()) != except)
             .any(|p| match p.status() {
                 PlantStatus::Stopping { output } => output > Megawatts::ZERO,
                 PlantStatus::Online { output, .. } if p.auto_follow() => {

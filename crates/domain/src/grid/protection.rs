@@ -178,7 +178,8 @@ pub fn restoration_step(shed: Ratio, step: Ratio, restore_to: Ratio) -> Ratio {
 ///
 /// In Blackout the deviation is held at zero by the caller, so it is ignored:
 /// load comes back one step at a time while supply covers the next step (see
-/// [`restoration_step`]), and the over-frequency counter is left alone. Restoration completes, returning
+/// [`restoration_step`]) and some generation is online, and the
+/// over-frequency counter is left alone. Restoration completes, returning
 /// `BlackoutRestored`, when `shed` reaches `restore_to` (snapped within 1e-9),
 /// the rotating-outage target frozen during the blackout, and leaves `shed`
 /// there: the caller takes that share over as its outage and zeroes `shed`.
@@ -228,7 +229,9 @@ pub fn evaluate(
         let next = restoration_step(state.shed, p.shed_step, restore_to);
         // Tolerance: the floor and the fleet can meet within a few ulps.
         let needed = demand.value() * (1.0 - next.value());
-        if supply.value() >= needed - SNAP {
+        // Black start needs generation online (ruling N2): with a floor of
+        // 1.0 the last step needs no supply at all.
+        if supply.value() > 0.0 && supply.value() >= needed - SNAP {
             state.shed = next;
             if next.value() <= restore_to.value() + SNAP {
                 state.shed = restore_to;

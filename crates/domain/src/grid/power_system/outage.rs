@@ -206,11 +206,15 @@ impl PowerSystem {
     ///   left.
     /// - **Restoring** (above the target), by `min(gap, max(shed_step,
     ///   surplus / demand), cover / demand)`, where `surplus` is supply less
-    ///   the load served this tick, floored at 0. Restoring load that only
-    ///   absorbs an existing surplus is always safe: it can only lower
-    ///   frequency, and `cover` already counts the surplus. So a unit whose
-    ///   minimum output exceeds a step of demand, started into a deep outage,
-    ///   is given its load at once.
+    ///   the outage's load this tick, floored at 0. Restoring load that only
+    ///   absorbs a persisting surplus is safe: it can only lower frequency,
+    ///   and `cover` already counts the surplus. So a unit whose minimum
+    ///   output exceeds a step of demand, started into a deep outage, is given
+    ///   its load at once. The caller passes no surplus while any plant is in
+    ///   an unrecoverable ramp-down (a commitment stop, a manual plant above
+    ///   its target, scheduled hydro above its foreseen ceiling): that surplus
+    ///   is about to vanish, and restoring it as load would be shed again
+    ///   (ruling N1).
     ///
     /// A negative cover counts as none. Any positive cover moves the outage,
     /// so shares in transit need not be multiples of `shed_step`. With no
