@@ -32,9 +32,11 @@ impl CommandHandler for CoreHandler {
 }
 
 /// Ticks up to `n` times, stopping as soon as the phase leaves `Operating`.
-/// Only the first tick can fail (wrong phase or game over), before anything
-/// has changed, so an `Err` still leaves the session untouched.
+/// The game must be active and operating, checked up front so `n = 0` is
+/// validated like any other count. After that check no tick can fail, so an
+/// `Err` always leaves the session untouched.
 fn advance_ticks(session: &mut GameSession, n: u32) -> Result<Vec<DomainEvent>, CommandError> {
+    session.require_operating()?;
     let mut events = Vec::new();
     for _ in 0..n {
         events.extend(session.tick()?);

@@ -209,7 +209,7 @@ impl GameSession {
     /// end with its `TickCompleted`; after the day's last tick the month is
     /// closed as well.
     pub fn tick(&mut self) -> Result<Vec<DomainEvent>, DomainError> {
-        self.require_phase(&[DayPhase::Operating])?;
+        self.require_operating()?;
         let (summary, mut events) = self.power.tick(
             &self.region,
             self.clock.month(),
@@ -236,6 +236,12 @@ impl GameSession {
     fn change_phase(&mut self, to: DayPhase) -> DomainEvent {
         let from = std::mem::replace(&mut self.phase, to);
         DomainEvent::PhaseChanged { from, to }
+    }
+
+    /// The check [`GameSession::tick`] makes: `GameOver` if the game has
+    /// ended, then `WrongPhase` unless the day is being operated.
+    pub fn require_operating(&self) -> Result<(), DomainError> {
+        self.require_phase(&[DayPhase::Operating])
     }
 
     /// Rejects a command when the game is over, then when the phase is not

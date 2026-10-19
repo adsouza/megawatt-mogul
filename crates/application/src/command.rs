@@ -39,7 +39,8 @@ pub enum Command {
         plant: PlantId,
     },
     /// Runs up to `n` ticks, stopping early once the day is no longer being
-    /// operated (the month closed). `n = 0` does nothing.
+    /// operated (the month closed). Like any tick it needs an active game in
+    /// `Operating`, even for `n = 0`, which then changes nothing.
     AdvanceTicks {
         n: u32,
     },

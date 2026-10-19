@@ -11,7 +11,7 @@ use domain::error::DomainError;
 use domain::events::DomainEvent;
 use domain::ids::{CellCoord, PlantId, RegionId};
 use domain::region::PlantKind;
-use domain::session::{DayPhase, GameSettings};
+use domain::session::{DayPhase, GameSettings, SessionStatus};
 use support::{StaticCatalog, logged_commands, tiny_loaded_region};
 
 fn tiny_catalog() -> StaticCatalog {
@@ -372,4 +372,42 @@ fn failed_command_leaves_projections_unchanged() {
     let mut g = game();
     g.execute(Command::AdvanceTicks { n: 10 }).unwrap_err(); // wrong phase
     assert_eq!(g.projections().timeline.points().count(), 0);
+}
+
+#[test]
+fn zero_ticks_in_planning_is_the_wrong_phase_and_not_logged() {
+    let log = InMemoryCommandLog::default();
+    let mut g = game_with_log(log.clone());
+    assert_eq!(
+        g.execute(Command::AdvanceTicks { n: 0 }).unwrap_err(),
+        CommandError::Domain(DomainError::WrongPhase {
+            actual: DayPhase::Planning
+        })
+    );
+    assert_eq!(log.records(), vec![LogRecord::Header(tiny_header(1))]);
+}
+
+#[test]
+fn zero_ticks_after_game_over_is_refused_and_not_logged() {
+    // The start fleet sits offline every month, so strikes soon end the game.
+    let log = InMemoryCommandLog::default();
+    let mut g = game_with_log(log.clone());
+    while g.session().status() == SessionStatus::Active {
+        if g.session().phase() == DayPhase::Review {
+            g.execute(Command::FinishReview).unwrap();
+        }
+        g.execute(Command::BeginOperating).unwrap();
+        g.execute(Command::AdvanceTicks { n: 1_440 }).unwrap();
+    }
+    let SessionStatus::GameOver(reason) = g.session().status() else {
+        unreachable!("the loop ends only once the game is over");
+    };
+    let logged = log.records().len();
+    let hash = g.session().state_hash();
+    assert_eq!(
+        g.execute(Command::AdvanceTicks { n: 0 }).unwrap_err(),
+        CommandError::Domain(DomainError::GameOver { reason })
+    );
+    assert_eq!(log.records().len(), logged);
+    assert_eq!(g.session().state_hash(), hash);
 }

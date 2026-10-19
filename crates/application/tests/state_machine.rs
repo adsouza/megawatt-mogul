@@ -113,7 +113,7 @@ fn hours() -> impl Strategy<Value = [bool; 24]> {
 }
 
 fn advance() -> impl Strategy<Value = Command> {
-    select(vec![1u32, 60, 1440]).prop_map(|n| Command::AdvanceTicks { n })
+    select(vec![0u32, 1, 60, 1440]).prop_map(|n| Command::AdvanceTicks { n })
 }
 
 struct SessionMachine;

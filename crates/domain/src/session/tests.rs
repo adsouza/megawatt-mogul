@@ -538,3 +538,23 @@ fn rate_review_estimate_splits_held_capital_into_release_and_write_off() {
     assert_eq!(estimate.capital_to_release, Money::from_cents(2 * 228_125));
     assert_eq!(estimate.capital_to_hold, Money::ZERO);
 }
+
+#[test]
+fn require_operating_checks_status_then_phase() {
+    let mut s = session();
+    assert_eq!(
+        s.require_operating(),
+        Err(DomainError::WrongPhase {
+            actual: DayPhase::Planning
+        })
+    );
+    s.begin_operating().unwrap();
+    assert_eq!(s.require_operating(), Ok(()));
+    s.status = SessionStatus::GameOver(GameOverReason::LicenseRevoked);
+    assert_eq!(
+        s.require_operating(),
+        Err(DomainError::GameOver {
+            reason: GameOverReason::LicenseRevoked
+        })
+    );
+}
