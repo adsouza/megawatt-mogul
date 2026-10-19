@@ -2,7 +2,8 @@
 
 - **Date:** 2026-10-18
 - **Status:** Draft for review
-- **Amendments:** A1, a hydro peak-shaving schedule (§12, 2026-10-18)
+- **Amendments:** A1, a hydro peak-shaving schedule (§12, 2026-10-18); A2, proration of the
+  partial-year rate review (§13, 2026-10-18)
 - **Engine:** Rust 1.98, Bevy 0.20, bevy_egui 0.43, bevy-inspector-egui 0.38
 
 ## 1. Vision and goals
@@ -107,8 +108,9 @@ ratemaking (PBR)**:
 - **Annual rate review.** When December closes, the regulator resets the tariff ($/MWh) for the
   coming year:
   `tariff = revenue_requirement / energy served over the past year`, where
-  `revenue_requirement = prudent operating costs (fuel, start-up, O&M) + depreciation + allowed_return × eligible_rate_base`.
-  Year 1 uses a starting tariff from region data.
+  `revenue_requirement = prudent operating costs (fuel, start-up, O&M) + depreciation + allowed_return × eligible_rate_base × (months in the review period ÷ 12)`.
+  Year 1 uses a starting tariff from region data. A review period shorter than a year, such as a
+  first year that didn't start in January, earns a prorated return (Amendment A2, §13).
 - **Rate base** is the undepreciated capital cost of plants and lines in service. Depreciation is
   straight-line over each type's book life (region data). Construction capital is paid in cash in
   equal monthly instalments over the build. It enters the rate base when the asset is commissioned.
@@ -812,3 +814,42 @@ lesson is added.)*
   schedules more than the remaining budget.
 - **End to end.** With realistic Western January flows, hydro output stays above 0 through 20:00–21:00
   whenever it started the day with water. The reliability of the existing smoke runs does not fall.
+
+## 13. Amendment A2: Proration of the partial-year rate review (2026-10-18)
+
+### 13.1 Why
+
+The annual review adds a **full year's** return on the rate base to the revenue requirement, but
+divides by the energy served over only the months actually tallied. Depreciation, operating cost and
+energy already cover the actual months. So a first review period shorter than twelve months
+over-recovers return by a factor of 12 ÷ months. A game starting in April (the test fixture)
+over-recovers by about a third: the rules-version guard shows the tariff jumping from $95 to
+$103.87.
+
+The shipped regions start in January, so play is unaffected today. Requiring January starts would
+hide the formula's assumption behind a data rule, and any future mid-year scenario would bring the
+bug back.
+
+### 13.2 Rule
+
+- `YearTally` gains `months: u8`, the number of months recorded since the last review (or since the
+  start of the game). `record_month` increments it and `apply_rate_review` resets it with the rest
+  of the tally.
+- The return term becomes
+  `round_ties_even(allowed_return × eligible_rate_base × months ÷ 12)`, rounded once in cents, as
+  before. Everything else in `compute_rate_review` is unchanged, including PBR return adjustment,
+  disallowance and the tariff formula.
+- `months` is between 1 and 12 whenever a review runs (a review is triggered by December's close).
+  Treat 0 as "no return" rather than as a panic.
+- The rate-review estimate (Task 19) shares the same input assembly (Task 10's fix wave), so it
+  prorates automatically. A mid-year estimate reflects the months tallied so far.
+
+### 13.3 Properties (tests)
+
+- **A full year is unchanged:** a 12-month tally gives exactly the same outcome as before.
+- **Linear:** the return term for k months equals the 12-month term × k/12, within one cent.
+- **No over-recovery at an April start:** a fixture starting in April, with otherwise steady
+  months, sets the same first-review tariff (within one cent) as a game whose first year starts in
+  January.
+- **Versioning:** outcomes change for non-January starts, so this lands under the same
+  `SIM_RULES_VERSION` bump to 2 as Amendment A1, with the snapshot diffs reviewed together.

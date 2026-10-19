@@ -63,7 +63,8 @@ Each ruling ends with what it costs if it turns out to be wrong.
   tuned to cope. Consider water-value pacing, plus a HUD warning.
 - **Held capital:** `HeldSlice::consecutive_excess_reviews` never exceeds 1 in practice. Either drop
   the field or make the write-off threshold configurable.
-- **First-year rate review:** if a game starts in any month other than January, the first review
+- **First-year rate review, decided:** resolved by spec Amendment A2 (§13, prorating the return by
+  the months in the review period), part of Plan 1a. The original problem: if a game starts in any month other than January, the first review
   applies an annual return to a partial year of energy. The shipped regions start in January, so
   this is latent. Prorate the return, or require a January start.
 
