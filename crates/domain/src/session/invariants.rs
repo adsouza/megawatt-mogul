@@ -4,7 +4,7 @@
 use thiserror::Error;
 
 use super::GameSession;
-use crate::generation::PlantStatus;
+use crate::generation::{Plant, PlantStatus};
 use crate::grid::TickSummary;
 use crate::ids::PlantId;
 use crate::region::PlantKind;
@@ -26,15 +26,20 @@ pub enum InvariantViolation {
     PlantOutOfBounds { plant: PlantId },
     #[error("tick {tick} does not conserve energy")]
     ConservationBroken { tick: u32 },
+    #[error("tick {tick} does not match the live plant outputs")]
+    GenerationMismatch { tick: u32 },
 }
 
 impl GameSession {
     /// Checks, in order: that cash less starting cash equals the ledger sum;
     /// that every online dispatchable plant's output lies within
     /// `[min_output, capacity]` (hydro may fall to zero, since its reservoir
-    /// caps output below minimum); and that the last tick summary satisfies
-    /// `generation = Σ by_plant = served + imbalance` and
-    /// `served + unserved = demand`.
+    /// caps output below minimum); that the last tick summary satisfies
+    /// `generation = Σ by_plant = Σ by_kind = served + imbalance`,
+    /// `served + unserved = demand`, `0 ≤ served ≤ demand` and
+    /// `curtailed ≥ 0`; and that its `by_plant` is exactly the connected,
+    /// commissioned plants at their live outputs, so `generation` is what the
+    /// plants actually produce.
     pub fn check_invariants(&self) -> Result<(), InvariantViolation> {
         let cash_delta = self.company.cash() - self.company.starting_cash();
         let ledger_sum = self.company.ledger_sum();
@@ -67,17 +72,51 @@ impl GameSession {
             Some(summary) if !conserves(summary) => {
                 Err(InvariantViolation::ConservationBroken { tick: summary.tick })
             }
+            Some(summary) if !self.reports_live_outputs(summary) => {
+                Err(InvariantViolation::GenerationMismatch { tick: summary.tick })
+            }
             _ => Ok(()),
         }
+    }
+
+    /// Whether `s.by_plant` holds exactly the connected, commissioned plants,
+    /// each at its live output. The summary copies those outputs, so they
+    /// compare exactly. The one command that can move an output after a tick
+    /// is a zero-length manual start, straight from 0 MW to online.
+    fn reports_live_outputs(&self, s: &TickSummary) -> bool {
+        let network = self.power.network();
+        let live: Vec<&Plant> = self
+            .power
+            .plants()
+            .values()
+            .filter(|p| {
+                !matches!(p.status(), PlantStatus::UnderConstruction { .. })
+                    && network.is_connected(p.node())
+            })
+            .collect();
+        live.len() == s.by_plant.len()
+            && live.iter().all(|p| {
+                s.by_plant.get(&p.id()).is_some_and(|&reported| {
+                    reported == p.output()
+                        || (reported == Megawatts::ZERO && p.spec().startup.ticks() == 0)
+                })
+            })
     }
 }
 
 fn conserves(s: &TickSummary) -> bool {
     let near = |a: Megawatts, b: Megawatts| (a - b).value().abs() <= TOLERANCE;
+    // `a ≥ b`, within the tolerance.
+    let at_least = |a: Megawatts, b: Megawatts| b.value() - a.value() <= TOLERANCE;
     let by_plant: Megawatts = s.by_plant.values().copied().sum();
+    let by_kind: Megawatts = s.by_kind.values().copied().sum();
     near(s.generation, by_plant)
+        && near(s.generation, by_kind)
         && near(s.generation, s.served + s.imbalance)
         && near(s.served + s.unserved, s.demand)
+        && at_least(s.served, Megawatts::ZERO)
+        && at_least(s.demand, s.served)
+        && at_least(s.curtailed, Megawatts::ZERO)
 }
 
 #[cfg(test)]
@@ -86,11 +125,12 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::grid::GridMode;
-    use crate::ids::CellCoord;
+    use crate::grid::{GridMode, LineStatus};
+    use crate::ids::{CellCoord, LineId};
     use crate::region::RegionDefinition;
     use crate::region::fixtures::tiny_region_parts;
     use crate::session::GameSettings;
+    use crate::time::SimDuration;
     use crate::units::{Hertz, Ratio};
 
     fn session_with(edit: impl FnOnce(&mut crate::region::RegionDefinitionParts)) -> GameSession {
@@ -218,7 +258,7 @@ mod tests {
             generation: Megawatts::new(generation),
             curtailed: Megawatts::ZERO,
             imbalance: Megawatts::new(imbalance),
-            by_kind: BTreeMap::new(),
+            by_kind: BTreeMap::from([(PlantKind::Coal, Megawatts::new(by_plant.iter().sum()))]),
             by_plant: by_plant
                 .iter()
                 .enumerate()
@@ -250,16 +290,125 @@ mod tests {
     }
 
     #[test]
+    fn conservation_also_needs_by_kind_served_bounds_and_curtailment() {
+        let t = TOLERANCE;
+        let ok = summary(100.0, 90.0, 95.0, 5.0, &[60.0, 35.0]);
+        assert!(conserves(&ok));
+
+        // Σ by_kind must equal generation, within the tolerance.
+        let mut s = ok.clone();
+        s.by_kind.insert(PlantKind::Coal, Megawatts::new(94.0));
+        assert!(!conserves(&s));
+        s.by_kind
+            .insert(PlantKind::Coal, Megawatts::new(95.0 + 5e-7));
+        assert!(conserves(&s));
+
+        // 0 ≤ served, inclusive of the tolerance.
+        assert!(conserves(&summary(0.0, -t, 0.0, t, &[])));
+        assert!(!conserves(&summary(0.0, -2.0 * t, 0.0, 2.0 * t, &[])));
+
+        // served ≤ demand, inclusive of the tolerance (2t − t = t exactly).
+        assert!(conserves(&summary(t, 2.0 * t, 2.0 * t, 0.0, &[2.0 * t])));
+        assert!(!conserves(&summary(t, 3.0 * t, 3.0 * t, 0.0, &[3.0 * t])));
+
+        // curtailed ≥ 0, inclusive of the tolerance.
+        let mut s = ok.clone();
+        s.curtailed = Megawatts::new(-t);
+        assert!(conserves(&s));
+        s.curtailed = Megawatts::new(-2.0 * t);
+        assert!(!conserves(&s));
+    }
+
+    #[test]
     fn a_broken_last_tick_is_reported_with_its_tick() {
         let mut s = session_with(|_| {});
-        s.day_ticks
-            .push(summary(100.0, 90.0, 95.0, 5.0, &[60.0, 35.0]));
+        s.begin_operating().unwrap();
+        s.tick().unwrap();
         assert_eq!(s.check_invariants(), Ok(()));
-        s.day_ticks
-            .push(summary(100.0, 90.0, 95.0, 4.0, &[60.0, 35.0]));
+        let last = s.day_ticks.last_mut().unwrap();
+        last.imbalance += Megawatts::new(1.0);
         assert_eq!(
             s.check_invariants(),
-            Err(InvariantViolation::ConservationBroken { tick: 7 })
+            Err(InvariantViolation::ConservationBroken { tick: 0 })
+        );
+    }
+
+    fn operating_after_one_tick(
+        edit: impl FnOnce(&mut crate::region::RegionDefinitionParts),
+    ) -> GameSession {
+        let mut s = session_with(edit);
+        s.begin_operating().unwrap();
+        s.tick().unwrap();
+        assert_eq!(s.check_invariants(), Ok(()));
+        s
+    }
+
+    #[test]
+    fn the_last_tick_must_report_every_live_plant_output() {
+        // The start fleet is uncommitted, so coal reported 0 MW.
+        let mut s = operating_after_one_tick(|_| {});
+        let coal = plant_id(&s, PlantKind::Coal);
+        set_output(&mut s, coal, 300.0);
+        assert_eq!(
+            s.check_invariants(),
+            Err(InvariantViolation::GenerationMismatch { tick: 0 })
+        );
+
+        // A connected plant missing from the summary is a mismatch too.
+        let mut s = operating_after_one_tick(|_| {});
+        let coal = plant_id(&s, PlantKind::Coal);
+        s.day_ticks.last_mut().unwrap().by_plant.remove(&coal);
+        assert_eq!(
+            s.check_invariants(),
+            Err(InvariantViolation::GenerationMismatch { tick: 0 })
+        );
+    }
+
+    #[test]
+    fn only_connected_commissioned_plants_count_as_live() {
+        let mut s = session_with(|_| {});
+        let (built, _) = s
+            .build_plant(PlantKind::Peaker, CellCoord { x: 4, y: 4 })
+            .unwrap();
+        let (unlinked, _) = s
+            .build_plant(PlantKind::Peaker, CellCoord { x: 5, y: 5 })
+            .unwrap();
+        s.begin_operating().unwrap();
+        s.tick().unwrap();
+        // Under construction but connected: still not live.
+        let node = s.power.plant(built).unwrap().node();
+        s.power
+            .network_mut()
+            .add_line(LineId(900), node, s.substation, LineStatus::InService)
+            .unwrap();
+        assert_eq!(s.check_invariants(), Ok(()));
+        // Commissioned (online) but unconnected: not live either.
+        set_output(&mut s, unlinked, 100.0);
+        assert_eq!(s.check_invariants(), Ok(()));
+    }
+
+    #[test]
+    fn a_zero_length_manual_start_after_the_tick_is_not_a_mismatch() {
+        let instant = |parts: &mut crate::region::RegionDefinitionParts| {
+            for spec in &mut parts.catalog {
+                if spec.kind == PlantKind::Peaker {
+                    spec.startup = SimDuration::from_ticks(0);
+                }
+            }
+        };
+        let mut s = operating_after_one_tick(instant);
+        let peaker = plant_id(&s, PlantKind::Peaker);
+        // Offline at 0 MW in the summary, online at minimum now.
+        s.start_plant(peaker).unwrap();
+        assert!(s.power.plant(peaker).unwrap().is_online());
+        assert_eq!(s.check_invariants(), Ok(()));
+        // Once the summary reports it running, its output must match again.
+        s.tick().unwrap();
+        assert_eq!(s.check_invariants(), Ok(()));
+        set_output(&mut s, peaker, 100.0);
+        assert_eq!(
+            s.check_invariants(),
+            Err(InvariantViolation::GenerationMismatch { tick: 1 })
         );
     }
 }
