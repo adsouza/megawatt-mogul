@@ -107,3 +107,18 @@ pub fn auto_select_region(regions: &[RegionSummary]) -> Option<&RegionId> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_send_sync<T: Send + Sync>() {}
+
+    /// A Bevy `Resource` must be `Send + Sync`; this fails to compile otherwise.
+    #[test]
+    fn game_and_its_parts_are_send_and_sync() {
+        assert_send_sync::<Game>();
+        assert_send_sync::<GameSession>();
+        assert_send_sync::<Projections>();
+    }
+}

@@ -99,8 +99,9 @@ pub struct CommandLogError {
     pub message: String,
 }
 
-/// Where commands are recorded.
-pub trait CommandLogSink {
+/// Where commands are recorded. `Send + Sync` so the pipeline that owns a
+/// sink, and the `Game` around it, can live in a Bevy `Resource`.
+pub trait CommandLogSink: Send + Sync {
     /// Archives the region source and records the single header. Must be
     /// called once, before `append` accepts anything.
     fn initialize(

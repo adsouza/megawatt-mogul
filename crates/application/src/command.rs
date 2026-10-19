@@ -48,8 +48,9 @@ pub enum Command {
 }
 
 /// One stage of the command pipeline. Layers wrap an inner handler and the
-/// innermost one applies the command to the session.
-pub trait CommandHandler {
+/// innermost one applies the command to the session. `Send + Sync` so a
+/// `Game` holding the pipeline can live in a Bevy `Resource`.
+pub trait CommandHandler: Send + Sync {
     fn handle(
         &mut self,
         session: &mut GameSession,
