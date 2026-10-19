@@ -3509,7 +3509,7 @@ fn a_blackout_freezes_the_outage_and_restores_to_it() {
     for t in 62..120 {
         let (s, events) = sys.tick(&region, april(), t, &mut rng);
         if events.contains(&DomainEvent::BlackoutRestored) {
-            restored = Some(s);
+            restored = Some((s, events));
             break;
         }
         assert_eq!(
@@ -3519,12 +3519,37 @@ fn a_blackout_freezes_the_outage_and_restores_to_it() {
         );
         assert!(s.shed.value() > target.value(), "tick {t}");
     }
-    let s = restored.expect("restoration completes at the frozen target");
+    let (s, events) = restored.expect("restoration completes at the frozen target");
     assert_eq!((s.mode, s.shed), (GridMode::Normal, Ratio::ZERO));
     assert_eq!(s.outage, target);
+    // Normal mode resumes, so the hour is re-sized with the restarted fleet
+    // (ruling M1): 01:xx's forecast is lower than hour 0's, so the target
+    // falls, ordered once.
+    let resized = sys.size_outage(&region, april(), 1);
+    assert_eq!(sys.outage_target, resized);
+    assert!(resized < target);
+    let orders: Vec<&DomainEvent> = events.iter().filter(|e| is_outage_order(e)).collect();
+    assert_eq!(
+        orders,
+        [&DomainEvent::RotatingOutageOrdered {
+            hour: 1,
+            share: resized
+        }]
+    );
     assert!(close(s.served, s.demand * (1.0 - target.value())));
     assert_eq!((sys.outage, sys.protection().shed), (target, Ratio::ZERO));
     assert_eq!(sys.protection().mode, GridMode::Normal);
+    // AGC was pre-positioned for exactly the floor, not a full step past it,
+    // so the first Normal tick is quiet even though demand has fallen since
+    // hour 0 was sized (ruling I1).
+    let (s, _) = sys.tick(&region, april(), s.tick + 1, &mut rng);
+    assert_eq!(s.mode, GridMode::Normal);
+    let normal_band = region.frequency().normal_band.value();
+    assert!(
+        sys.deviation().value().abs() < normal_band,
+        "{:?}",
+        sys.deviation()
+    );
 }
 
 #[test]
@@ -3724,71 +3749,100 @@ fn the_over_frequency_surplus_gate_reads_the_load() {
     assert_eq!(sys.protection().over_ticks, params.trip_after_ticks);
 }
 
-#[test]
-fn a_plant_coming_online_mid_hour_lowers_the_outage() {
-    // Nothing committed: the day starts in a full rotating outage. At 00:30
-    // the player starts the peaker on AGC; when its 10-minute start-up
-    // completes, the hour is re-sized with the peaker counted (ruling R5)
-    // and the outage falls toward the new target at the restore pace.
+/// What one day of a plant started into a full rotating outage did.
+struct ComingOnline {
+    online_at: Option<u32>,
+    max_dev: f64,
+    ticks_above_trip: u32,
+}
+
+/// Nothing committed, so the day starts in a full rotating outage; plant
+/// `id` is started on AGC at `start_at`. Checks every tick: Normal mode, no
+/// over-frequency trip and no plant tripped, over-frequency protection never
+/// armed, and nominal frequency on every dark tick (rulings R8, I3, M7).
+/// `each` sees every tick's summary and events, with the outage before it.
+fn start_into_full_outage(
+    id: u32,
+    start_at: u32,
+    mut each: impl FnMut(&PowerSystem, u32, Ratio, &TickSummary, &[DomainEvent]),
+) -> ComingOnline {
     let region = region_with(noise_free);
     let params = region.frequency().clone();
-    let step = params.shed_step.value();
-    let peaker = PlantId(3);
+    let plant = PlantId(id);
     let mut sys = system_with(&region, &start_fleet(&region));
     let mut rng = SimRng::from_seed(4);
     sys.begin_day(&region, april(), &mut rng);
     assert_eq!(sys.outage, Ratio::ONE);
-
-    let (mut online_at, mut previous) = (None, sys.outage);
-    let (mut max_dev, mut ticks_above_trip) = (f64::MIN, 0);
+    let mut run = ComingOnline {
+        online_at: None,
+        max_dev: f64::MIN,
+        ticks_above_trip: 0,
+    };
     for t in 0..TICKS_PER_DAY {
-        if t == 30 {
-            sys.set_auto_follow(peaker, true).unwrap();
-            sys.plant_mut(peaker).unwrap().start().unwrap();
+        if t == start_at {
+            sys.set_auto_follow(plant, true).unwrap();
+            sys.plant_mut(plant).unwrap().start().unwrap();
         }
-        let dark = sys.outage == Ratio::ONE;
+        let before = sys.outage;
         let (s, events) = sys.tick(&region, april(), t, &mut rng);
+        let at = format!("plant {id} tick {t}");
         let dev = (s.frequency - params.nominal).value();
-        max_dev = max_dev.max(dev);
-        ticks_above_trip += u32::from(dev > params.trip_above.value());
-        // Over-frequency protection never arms, dark or not.
-        assert!(!sys.protection().over_armed, "tick {t}");
-        assert_eq!(s.mode, GridMode::Normal, "tick {t}");
+        run.max_dev = run.max_dev.max(dev);
+        run.ticks_above_trip += u32::from(dev > params.trip_above.value());
+        assert_eq!(s.mode, GridMode::Normal, "{at}");
+        assert!(!sys.protection().over_armed, "{at}");
         assert!(
             !events.iter().any(|e| matches!(
                 e,
-                DomainEvent::OverFrequencyTrip { .. } | DomainEvent::PlantTripped { .. }
+                DomainEvent::OverFrequencyTrip { .. }
+                    | DomainEvent::PlantTripped { .. }
+                    | DomainEvent::Blackout
             )),
-            "tick {t}: {events:?}"
+            "{at}: {events:?}"
         );
-        if dark {
-            // A fully cut grid holds nominal frequency (ruling R8).
-            assert_eq!(sys.deviation(), Hertz::ZERO, "tick {t}");
-            assert!(!sys.protection().over_armed, "tick {t}");
-            assert_eq!(sys.protection().over_ticks, 0, "tick {t}");
+        if before == Ratio::ONE {
+            // A fully cut grid holds nominal frequency.
+            assert_eq!(sys.deviation(), Hertz::ZERO, "{at}");
+            assert_eq!(sys.protection().over_ticks, 0, "{at}");
         }
-        if events.contains(&DomainEvent::PlantOnline { plant: peaker }) {
-            online_at = Some(t);
+        if events.contains(&DomainEvent::PlantOnline { plant }) {
+            run.online_at = Some(t);
+        }
+        each(&sys, t, before, &s, &events);
+    }
+    assert!(sys.plant(plant).unwrap().is_online(), "plant {id}");
+    run
+}
+
+#[test]
+fn a_plant_coming_online_mid_hour_lowers_the_outage() {
+    // The peaker, started at 00:30, comes online at 00:39: the hour is
+    // re-sized with it counted (ruling R5) and the outage falls to the new
+    // target, absorbing the peaker's 40 MW minimum at once (ruling I2).
+    let step = tiny_region().frequency().shed_step.value();
+    let peaker = start_into_full_outage(3, 30, |sys, t, before, s, events| {
+        if events.contains(&DomainEvent::PlantOnline { plant: PlantId(3) }) {
             // The peaker reaches its 200 MW by minute 59: (630 − 200) / 630.
-            let d0 = sys.connected_demand_forecast(&region, april(), 0).value();
-            let ordered = events.iter().find_map(|e| match e {
-                DomainEvent::RotatingOutageOrdered { hour: 0, share } => Some(*share),
-                _ => None,
-            });
-            let ordered = ordered.expect("re-sized on coming online");
-            assert!(near_share(ordered, (d0 - 200.0) / d0));
+            let d0 = sys
+                .connected_demand_forecast(&tiny_region(), april(), 0)
+                .value();
+            let ordered: Vec<Ratio> = events
+                .iter()
+                .filter_map(|e| match e {
+                    DomainEvent::RotatingOutageOrdered { hour: 0, share } => Some(*share),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(ordered.len(), 1, "tick {t}");
+            assert!(near_share(ordered[0], (d0 - 200.0) / d0), "tick {t}");
         }
         if t < 60 {
-            if online_at.is_none() {
-                assert_eq!(s.outage, Ratio::ONE, "tick {t}");
-            }
-            // It falls, never faster than a step a tick, and never below
-            // the target.
-            assert!(s.outage <= previous, "tick {t}");
-            assert!(
-                previous.value() - s.outage.value() <= step + 1e-9,
-                "tick {t}"
-            );
+            // It falls, by at most a step or the surplus it absorbs, and
+            // never below the target.
+            let surplus = (s.generation - s.demand * (1.0 - before.value())).max(Megawatts::ZERO);
+            let pace = step.max(surplus / s.demand);
+            assert!(s.outage <= before, "tick {t}");
+            assert!(before.value() - s.outage.value() <= pace + 1e-9, "tick {t}");
             assert!(s.outage >= sys.outage_target, "tick {t}");
             if t == 59 {
                 assert_eq!(
@@ -3797,19 +3851,186 @@ fn a_plant_coming_online_mid_hour_lowers_the_outage() {
                 );
             }
         }
-        previous = s.outage;
+    });
+    assert_eq!(peaker.online_at, Some(39));
+    assert_eq!(
+        peaker.ticks_above_trip, 0,
+        "peaker max deviation {}",
+        peaker.max_dev
+    );
+}
+
+#[test]
+fn a_unit_larger_than_a_step_comes_online_into_a_full_outage_safely() {
+    // A CCGT (200 MW minimum) and coal (240 MW minimum) each exceed one step
+    // of demand (about 30 MW). Restoring the load that absorbs their surplus
+    // at once keeps over-frequency protection from ever arming (ruling I2).
+    let table = [(3, 30, "peaker"), (2, 30, "CCGT"), (1, 0, "coal")];
+    for (id, start_at, name) in table {
+        let run = start_into_full_outage(id, start_at, |_, _, _, _, _| {});
+        assert!(run.online_at.is_some(), "{name}");
+        assert!(
+            run.ticks_above_trip <= 1,
+            "{name}: {} ticks",
+            run.ticks_above_trip
+        );
     }
-    assert_eq!(online_at, Some(39));
-    assert!(sys.plant(peaker).unwrap().is_online());
-    // The first lit tick (00:40) serves one restored step, 30.3 MW, against
-    // the peaker's 40 MW minimum output: +1.60 Hz for that tick alone, above
-    // `trip_above` but far short of a trip window.
+}
+
+#[test]
+fn a_black_start_completes_at_a_floor_off_the_step_grid() {
+    // Hour 11 is flat at D = 4,000 × 0.90 × 0.94 = 3,384 MW, so its target
+    // is 1 − 1,300 / 3,384 = 0.616, not a multiple of the shed step. After a
+    // blackout at 11:40 the last restoration step goes from 0.65 to that
+    // floor, which needs exactly the whole 1,300 MW fleet: it completes once
+    // the fleet reaches it (ruling I1) instead of stalling for a step it can
+    // never afford, and the first Normal tick is quiet.
+    let region = half_short_region(|p| {
+        noise_free(p);
+        for spec in &mut p.catalog {
+            spec.startup = SimDuration::from_ticks(0);
+            spec.ramp = crate::units::RampRate::mw_per_minute(1_000.0);
+        }
+    });
+    let params = region.frequency().clone();
+    let mut sys = auto_follow_fleet(&region);
+    let mut rng = SimRng::from_seed(3);
+    sys.begin_day(&region, april(), &mut rng);
+    run_ticks(&mut sys, &region, 0..700, &mut rng);
+    let target = sys.outage_target;
+    assert!(near_share(target, 1.0 - 1300.0 / 3384.0));
+    lose_dispatchable_supply(&mut sys);
+    let (s, _) = sys.tick(&region, april(), 700, &mut rng);
+    assert_eq!(s.mode, GridMode::Blackout);
+    for id in 1..=3 {
+        sys.plant_mut(PlantId(id)).unwrap().start().unwrap();
+    }
+    let mut restored_at = None;
+    for t in 701..720 {
+        let (s, events) = sys.tick(&region, april(), t, &mut rng);
+        if events.contains(&DomainEvent::BlackoutRestored) {
+            assert!(close(s.generation, Megawatts::new(1300.0)), "tick {t}");
+            assert!(
+                close(s.served, s.demand * (1.0 - target.value())),
+                "tick {t}"
+            );
+            restored_at = Some(t);
+            break;
+        }
+    }
+    let restored_at = restored_at.expect("restoration completes within the hour");
+    let (s, _) = sys.tick(&region, april(), restored_at + 1, &mut rng);
+    assert_eq!((s.mode, s.shed), (GridMode::Normal, Ratio::ZERO));
     assert!(
-        ticks_above_trip <= 1,
-        "{ticks_above_trip} ticks above trip_above"
+        sys.deviation().value().abs() < params.curtail_above.value(),
+        "{:?}",
+        sys.deviation()
+    );
+}
+
+#[test]
+fn a_tick_orders_at_most_one_outage_with_its_final_target() {
+    // Manual coal at 300 MW alone: 01:00 re-sizes the outage. The peaker,
+    // started at 00:51, comes online on that same tick, so the hour is
+    // re-sized again with it counted (ruling M3): one order, the final one.
+    let region = region_with(noise_free);
+    let mut sys = system_with(&region, &start_fleet(&region));
+    let coal = sys.plant_mut(PlantId(1)).unwrap();
+    coal.set_commitment(CommitmentSchedule::all_day());
+    coal.set_initial_target(Megawatts::new(300.0));
+    let mut rng = SimRng::from_seed(4);
+    sys.begin_day(&region, april(), &mut rng);
+    let hour_0 = sys.outage_target;
+    run_ticks(&mut sys, &region, 0..51, &mut rng);
+    sys.set_auto_follow(PlantId(3), true).unwrap();
+    sys.plant_mut(PlantId(3)).unwrap().start().unwrap();
+    run_ticks(&mut sys, &region, 51..60, &mut rng);
+    // Without the peaker, hour 1 alone would order a new target.
+    let without_peaker = {
+        let mut probe = sys.clone();
+        let p = probe.plant_mut(PlantId(3)).unwrap();
+        p.trip();
+        probe.size_outage(&region, april(), 1)
+    };
+    assert_ne!(without_peaker, hour_0);
+    let (_, events) = sys.tick(&region, april(), 60, &mut rng);
+    assert!(events.contains(&DomainEvent::PlantOnline { plant: PlantId(3) }));
+    let orders: Vec<&DomainEvent> = events.iter().filter(|e| is_outage_order(e)).collect();
+    assert_eq!(
+        orders,
+        [&DomainEvent::RotatingOutageOrdered {
+            hour: 1,
+            share: sys.outage_target
+        }]
+    );
+    // D at 01:00 is 594 MW; coal and the peaker reach 500 MW.
+    let d = sys.connected_demand_forecast(&region, april(), 60).value();
+    assert!(near_share(sys.outage_target, (d - 500.0) / d));
+}
+
+#[test]
+fn going_dark_disarms_over_frequency_protection() {
+    // Armed protection with its trip window full, then a tick with no load
+    // energised: protection sees nominal frequency and disarms (ruling M7),
+    // so it cannot trip on the first lit tick.
+    let region = region_with(noise_free);
+    let params = region.frequency().clone();
+    let mut sys = system_with(&region, &start_fleet(&region));
+    let mut rng = SimRng::from_seed(4);
+    sys.begin_day(&region, april(), &mut rng);
+    place(&mut sys, 3, 40.0, None);
+    sys.outage = Ratio::ONE;
+    sys.outage_target = Ratio::ONE;
+    sys.protection = ProtectionState {
+        over_armed: true,
+        over_ticks: params.trip_after_ticks,
+        ..ProtectionState::default()
+    };
+    sys.deviation = Hertz::new(2.0);
+    let (_, events) = sys.tick(&region, april(), 30, &mut rng);
+    assert_eq!(sys.deviation(), Hertz::ZERO);
+    assert_eq!(
+        (sys.protection().over_armed, sys.protection().over_ticks),
+        (false, 0)
     );
     assert!(
-        max_dev < 2.0 * params.trip_above.value(),
-        "max deviation {max_dev}"
+        !events
+            .iter()
+            .any(|e| matches!(e, DomainEvent::OverFrequencyTrip { .. }))
     );
+    // The hour is re-sized with the peaker counted; the lit ticks that follow
+    // never trip it.
+    sys.outage_target = sys.size_outage(&region, april(), 0);
+    for t in 31..60 {
+        let (_, events) = sys.tick(&region, april(), t, &mut rng);
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, DomainEvent::OverFrequencyTrip { .. })),
+            "tick {t}"
+        );
+        assert!(!sys.protection().over_armed, "tick {t}");
+    }
+}
+
+#[test]
+fn a_grid_with_no_load_connected_holds_nominal_frequency() {
+    // No city connected, a plant running: no load is energised, so there is
+    // no frequency to measure (ruling I3), whatever the outage.
+    let region = region_with(|p| p.start.connected_cities.clear());
+    let mut sys = committed_auto_follow(&region, &start_fleet(&region));
+    let mut rng = SimRng::from_seed(4);
+    sys.begin_day(&region, april(), &mut rng);
+    assert_eq!(sys.outage, Ratio::ZERO);
+    for t in 0..30 {
+        let (s, events) = sys.tick(&region, april(), t, &mut rng);
+        assert!(s.generation > Megawatts::ZERO, "tick {t}");
+        assert_eq!(sys.deviation(), Hertz::ZERO, "tick {t}");
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, DomainEvent::OverFrequencyTrip { .. })),
+            "tick {t}"
+        );
+    }
 }

@@ -5,14 +5,17 @@
 //! the hydro re-plan, the hour starting is sized ([`PowerSystem::size_outage`])
 //! and its exact shortfall share becomes the `outage_target`; the current
 //! hour is sized again on a Normal-mode tick on which a connected dispatchable
-//! plant comes online. The tick's load is then `demand × (1 − outage)`, and
+//! plant comes online, and when a black start completes. The tick's load is then `demand × (1 − outage)`, and
 //! the outage moves toward its target by at most one `shed_step` per tick, no
 //! faster than the AGC fleet can follow ([`PowerSystem::next_outage`]).
 //! Sizing is a pure function of state: it draws no random numbers.
 
+use std::collections::BTreeMap;
+
 use super::PowerSystem;
 use crate::events::DomainEvent;
 use crate::generation::{CommitmentAction, Plant, PlantStatus, commitment_actions};
+use crate::ids::PlantId;
 use crate::region::{PlantKind, RegionDefinition};
 use crate::time::{SimMonth, TICKS_PER_HOUR};
 use crate::units::{Megawatts, Ratio};
@@ -147,57 +150,95 @@ impl PowerSystem {
         }
     }
 
-    /// Re-sizes the outage for `hour`, at its boundary or when a plant comes
-    /// online during it, and returns the order to emit when the target
-    /// changed, including a change to zero.
-    pub(super) fn order_outage(
-        &mut self,
-        region: &RegionDefinition,
-        month: SimMonth,
-        hour: u8,
-    ) -> Option<DomainEvent> {
-        let target = self.size_outage(region, month, hour);
-        let changed = target != self.outage_target;
-        self.outage_target = target;
-        changed.then_some(DomainEvent::RotatingOutageOrdered {
+    /// Re-sizes the outage target for `hour`: at its boundary, when a plant
+    /// comes online during it (ruling R5) and when a black start completes
+    /// (ruling M1). The tick emits at most one order, with its final target
+    /// (see [`PowerSystem::outage_order`]).
+    pub(super) fn resize_outage(&mut self, region: &RegionDefinition, month: SimMonth, hour: u8) {
+        self.outage_target = self.size_outage(region, month, hour);
+    }
+
+    /// The order to emit for a tick of `hour` that started with the target
+    /// `before`: `RotatingOutageOrdered` with the final target when it
+    /// changed, including a change to zero; one per tick at most.
+    pub(super) fn outage_order(&self, hour: u8, before: Ratio) -> Option<DomainEvent> {
+        (self.outage_target != before).then_some(DomainEvent::RotatingOutageOrdered {
             hour,
-            share: target,
+            share: self.outage_target,
         })
     }
 
-    /// The outage one Normal-mode tick on (spec §15.3, controller rulings R1
-    /// and R2): it moves toward its target by `min(|target − outage|,
-    /// shed_step, cover / demand)`, so it never passes the target and never
-    /// moves faster than the AGC fleet can follow.
+    /// The AGC fleet's cover for moving the outage one Normal-mode tick
+    /// toward its target, given `shortfall`, AGC's signed requirement at the
+    /// outage in effect (positive when the fleet is already behind, negative
+    /// in a surplus):
     ///
-    /// - **Cutting** (below the target), `cover` is the fleet's one-tick
-    ///   ramp-down room plus the shortfall it is already behind by (see
-    ///   [`PowerSystem::agc_headroom_down`]): a cut the fleet cannot back down
-    ///   from would open a surplus, and in a deep outage one step of demand is
-    ///   a large share of the load left.
-    /// - **Restoring** (above the target), `cover` is the fleet's one-tick
-    ///   headroom net of that shortfall, a surplus counting as cover (see
-    ///   [`PowerSystem::agc_headroom`]), so restored load never outruns the
-    ///   fleet's ramp.
+    /// - restoring, its one-tick headroom for `effect_tick` net of the
+    ///   shortfall, a surplus counting as cover (see
+    ///   [`PowerSystem::agc_headroom`]);
+    /// - cutting, its one-tick ramp-down room plus the shortfall, a deficit
+    ///   counting as room (see [`PowerSystem::agc_headroom_down`]).
+    ///
+    /// *Builder's call (accepted, ruling R4): both covers are net of the
+    /// shortfall*, as in hydro recovery.
+    pub(super) fn outage_cover(
+        &self,
+        available: &BTreeMap<PlantId, Megawatts>,
+        shortfall: Megawatts,
+        effect_tick: u32,
+    ) -> Megawatts {
+        if self.outage > self.outage_target {
+            let ceilings = self.agc_ceilings(effect_tick);
+            self.agc_headroom(available, &ceilings, None) - shortfall
+        } else {
+            self.agc_headroom_down() + shortfall
+        }
+    }
+
+    /// The outage one Normal-mode tick on (spec §15.3, controller rulings R1,
+    /// R2 and I2). It moves toward its target, never passing it and never
+    /// faster than the AGC fleet can follow, with `cover` from
+    /// [`PowerSystem::outage_cover`]:
+    ///
+    /// - **Cutting** (below the target), by `min(gap, shed_step, cover /
+    ///   demand)`: a cut the fleet cannot back down from would open a surplus,
+    ///   and in a deep outage one step of demand is a large share of the load
+    ///   left.
+    /// - **Restoring** (above the target), by `min(gap, max(shed_step,
+    ///   surplus / demand), cover / demand)`, where `surplus` is supply less
+    ///   the load served this tick, floored at 0. Restoring load that only
+    ///   absorbs an existing surplus is always safe: it can only lower
+    ///   frequency, and `cover` already counts the surplus. So a unit whose
+    ///   minimum output exceeds a step of demand, started into a deep outage,
+    ///   is given its load at once.
     ///
     /// A negative cover counts as none. Any positive cover moves the outage,
     /// so shares in transit need not be multiples of `shed_step`. With no
     /// demand there is nothing to follow and the outage moves a full step.
-    pub(super) fn next_outage(&self, step: Ratio, demand: Megawatts, cover: Megawatts) -> Ratio {
+    pub(super) fn next_outage(
+        &self,
+        step: Ratio,
+        demand: Megawatts,
+        cover: Megawatts,
+        surplus: Megawatts,
+    ) -> Ratio {
         let (now, target) = (self.outage.value(), self.outage_target.value());
         if (now - target).abs() <= SNAP {
             return self.outage_target;
         }
-        let pace = if demand > Megawatts::ZERO {
-            (cover / demand).max(0.0)
-        } else {
-            f64::INFINITY
+        let share = |mw: Megawatts| {
+            if demand > Megawatts::ZERO {
+                (mw / demand).max(0.0)
+            } else {
+                f64::INFINITY
+            }
         };
-        let moved = step.value().min(pace).min((now - target).abs());
+        let gap = (now - target).abs();
         let next = if now < target {
-            now + moved
+            now + gap.min(step.value()).min(share(cover))
         } else {
-            now - moved
+            let pace = step.value().max(share(surplus));
+            now - gap.min(pace).min(share(cover))
         };
         if (next - target).abs() <= SNAP {
             self.outage_target

@@ -161,13 +161,24 @@ fn stages_crossed(dev: Hertz, p: &FrequencyParams) -> u8 {
     count as u8
 }
 
+/// The shed after the next black-start restoration step: one `shed_step`
+/// lower, but never below `restore_to`, the frozen rotating-outage target
+/// (spec §15.3). The last step restores only down to that floor, so its
+/// supply requirement, `demand × (1 − next)`, is no more than the floor
+/// needs (controller ruling I1). `PowerSystem` pre-positions AGC for the
+/// same share.
+pub fn restoration_step(shed: Ratio, step: Ratio, restore_to: Ratio) -> Ratio {
+    let next = snapped(shed.value() - step.value());
+    if next < restore_to { restore_to } else { next }
+}
+
 /// Advance protection by one tick given the current deviation, `supply`
 /// available and the unshed `demand` it protects: the load a rotating outage
 /// leaves (spec §15.3), so `shed` is a share of that load.
 ///
 /// In Blackout the deviation is held at zero by the caller, so it is ignored:
-/// load comes back one step at a time while supply covers the next step, and
-/// the over-frequency counter is left alone. Restoration completes, returning
+/// load comes back one step at a time while supply covers the next step (see
+/// [`restoration_step`]), and the over-frequency counter is left alone. Restoration completes, returning
 /// `BlackoutRestored`, when `shed` reaches `restore_to` (snapped within 1e-9),
 /// the rotating-outage target frozen during the blackout, and leaves `shed`
 /// there: the caller takes that share over as its outage and zeroes `shed`.
@@ -214,11 +225,12 @@ pub fn evaluate(
     let shed = state.shed.value();
 
     if state.mode == GridMode::Blackout {
-        // Tolerance: `1 - shed + step` drifts a few ulps above 1 near the end of restoration.
-        let needed = demand.value() * (1.0 - shed + step);
+        let next = restoration_step(state.shed, p.shed_step, restore_to);
+        // Tolerance: the floor and the fleet can meet within a few ulps.
+        let needed = demand.value() * (1.0 - next.value());
         if supply.value() >= needed - SNAP {
-            state.shed = snapped(shed - step);
-            if state.shed.value() <= restore_to.value() + SNAP {
+            state.shed = next;
+            if next.value() <= restore_to.value() + SNAP {
                 state.shed = restore_to;
                 state.mode = GridMode::Normal;
                 state.shed_ticks = 0;

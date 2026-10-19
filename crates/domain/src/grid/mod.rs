@@ -14,5 +14,5 @@ pub use network::{Line, LineStatus, Network, Node, NodeKind, distance_cells};
 pub use power_system::{
     DayInitialisation, HydroScheduleView, NetworkModel, PlantHydroScheduleView, PowerSystem,
 };
-pub use protection::{GridMode, ProtectionOutcome, ProtectionState, evaluate};
+pub use protection::{GridMode, ProtectionOutcome, ProtectionState, evaluate, restoration_step};
 pub use summary::TickSummary;

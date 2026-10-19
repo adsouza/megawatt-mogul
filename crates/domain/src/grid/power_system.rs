@@ -16,7 +16,7 @@ pub use hydro_plan::{HydroScheduleView, PlantHydroScheduleView};
 use super::dispatch::{agc_retarget, boundary_dispatch};
 use super::frequency::{FrequencyBand, band, next_deviation};
 use super::network::Network;
-use super::protection::{GridMode, ProtectionOutcome, ProtectionState, evaluate};
+use super::protection::{GridMode, ProtectionOutcome, ProtectionState, evaluate, restoration_step};
 use super::summary::TickSummary;
 use crate::demand::{DemandCenter, DemandNoise, forecast_demand, hourly_forecast};
 use crate::error::DomainError;
@@ -352,9 +352,11 @@ impl PowerSystem {
     ///    re-planned over the hours left with the remaining budgets (spec
     ///    §12.3), so the new hour's allocation is in place for this tick's AGC.
     ///    Then, in Normal mode only, the rotating outage is re-sized for the
-    ///    hour starting (spec §15.3, see [`PowerSystem::size_outage`]), which
-    ///    emits `RotatingOutageOrdered` when the target changes. During a
-    ///    blackout the target ordered before it stays frozen.
+    ///    hour starting (spec §15.3, see [`PowerSystem::size_outage`]). During
+    ///    a blackout the target ordered before it stays frozen. A tick whose
+    ///    target ends different from where it began emits one
+    ///    `RotatingOutageOrdered` with the final target, just before any
+    ///    `FrequencyDeviated` (ruling M3).
     /// 1. Demand of connected cities: forecast × (1 + forecast error). The
     ///    error advances by exactly one normal draw every tick, in any state.
     /// 2. Solar and hydro availability for every plant. The standing solar
@@ -383,8 +385,8 @@ impl PowerSystem {
     ///    for a cut; a surplus does the reverse, as in hydro recovery.
     /// 6. AGC re-targets connected auto-follow plants toward the load to serve:
     ///    `demand × (1 − outage) × (1 − shed)` with the moved outage, or in a
-    ///    blackout `demand × min(1, 1 − shed + shed_step)` so supply is
-    ///    pre-positioned for the next restoration step. While solar is
+    ///    blackout `demand × (1 − next)`, with `next` the shed after the next
+    ///    restoration step, so supply is pre-positioned for it. While solar is
     ///    curtailed, AGC also makes room for the withheld solar, so the cheaper
     ///    solar returns as thermal ramps down. Scheduled hydro is held to its
     ///    hourly allocation, except during an emergency lift and the recovery
@@ -393,16 +395,18 @@ impl PowerSystem {
     /// 7. Imbalance between connected supply and the load served,
     ///    `load × (1 − shed)`.
     /// 8. Frequency update, held at nominal in a blackout, and on a
-    ///    Normal-mode tick whose outage in effect is 1.0, which also leaves
-    ///    over-frequency tracking untouched (builder's call, ruling R8: a
-    ///    fully cut grid has no frequency to measure). System size is the
-    ///    load.
+    ///    Normal-mode tick with no load energised, where protection then
+    ///    resets over-frequency tracking (builder's call, rulings R8, I3 and
+    ///    M7: a fully cut grid has no frequency to measure). System size is
+    ///    the load.
     /// 9. Protection on the load: load shedding as a share of the load; a
     ///    blackout that trips every plant, suppresses its commitment for the
     ///    day, resets the deviation and the curtailment and sets the outage to
     ///    zero, keeping its target; black-start restoration down to that
-    ///    frozen target, after which Normal mode resumes with the outage at
-    ///    the target and protection's shed at zero; solar curtailment,
+    ///    frozen target, its last step needing supply for that floor only
+    ///    (see [`restoration_step`]), after which Normal mode resumes with the
+    ///    outage at the target, protection's shed at zero and the hour
+    ///    re-sized; solar curtailment,
     ///    described below; and an over-frequency trip of one plant, after
     ///    which AGC re-runs step 6 on the post-trip outputs (see
     ///    [`PowerSystem::over_frequency_trip`]). Tripped solar reconnects once
@@ -432,11 +436,12 @@ impl PowerSystem {
     ) -> (TickSummary, Vec<DomainEvent>) {
         let params = region.frequency();
         let mut events = Vec::new();
+        let hour = u8::try_from(tick / TICKS_PER_HOUR).unwrap_or(u8::MAX);
+        let ordered = self.outage_target;
         if tick > 0 && tick.is_multiple_of(TICKS_PER_HOUR) {
-            let hour = u8::try_from(tick / TICKS_PER_HOUR).unwrap_or(u8::MAX);
             self.plan_hydro(region, month, hour);
             if self.protection.mode == GridMode::Normal {
-                events.extend(self.order_outage(region, month, hour));
+                self.resize_outage(region, month, hour);
             }
         }
 
@@ -459,8 +464,7 @@ impl PowerSystem {
             // A plant whose start-up just completed can deliver this hour:
             // re-size it now rather than leaving its output with no load to
             // meet until the next boundary.
-            let hour = u8::try_from(tick / TICKS_PER_HOUR).unwrap_or(u8::MAX);
-            events.extend(self.order_outage(region, month, hour));
+            self.resize_outage(region, month, hour);
         }
 
         let supply: Megawatts = self.connected_plants().map(Plant::output).sum();
@@ -470,23 +474,23 @@ impl PowerSystem {
         // The targets AGC sets now first act on the next tick's step.
         let effect_tick = tick + 1;
         let load = demand * (1.0 - self.outage.value());
-        // Fully cut by the outage in effect: nothing is energised this tick.
-        let dark = mode == GridMode::Normal && self.outage == Ratio::ONE;
+        // No load energised this tick: fully cut by the outage in effect.
+        let dark = mode == GridMode::Normal && load <= Megawatts::ZERO;
         if mode == GridMode::Normal && self.outage != self.outage_target {
-            // AGC's signed requirement at the outage in effect: positive when
-            // the fleet is already behind, negative in a surplus.
-            let shortfall = load * (1.0 - shed) - supply - withheld;
-            let cover = if self.outage > self.outage_target {
-                let ceilings = self.agc_ceilings(effect_tick);
-                self.agc_headroom(&available, &ceilings, None) - shortfall
-            } else {
-                self.agc_headroom_down() + shortfall
-            };
-            self.outage = self.next_outage(params.shed_step, demand, cover);
+            let served = load * (1.0 - shed);
+            let cover = self.outage_cover(&available, served - supply - withheld, effect_tick);
+            let surplus = (supply - served).max(Megawatts::ZERO);
+            self.outage = self.next_outage(params.shed_step, demand, cover, surplus);
         }
         let to_serve = match mode {
             GridMode::Normal => (1.0 - self.outage.value()) * (1.0 - shed),
-            GridMode::Blackout => (1.0 - shed + params.shed_step.value()).min(1.0),
+            // Pre-positioned for the next restoration step, which stops at
+            // the frozen target (ruling I1).
+            GridMode::Blackout => {
+                let next =
+                    restoration_step(self.protection.shed, params.shed_step, self.outage_target);
+                1.0 - next.value()
+            }
         };
         let redispatch = Redispatch {
             available: &available,
@@ -498,18 +502,19 @@ impl PowerSystem {
         let leftover = self.redispatch(&redispatch);
 
         let imbalance = supply - load * (1.0 - shed);
-        // Builder's call (controller ruling R8): a fully cut grid has no
-        // frequency to measure; the 1 MW system-size floor is for numerical
-        // safety, not physics. So while the outage in effect is 1.0 the
-        // deviation is held at nominal, as in a blackout, and over-frequency
-        // tracking is left as it was, neither counting nor arming. The mode
-        // stays Normal. Once the outage falls below 1.0 (after a re-size, for
-        // example when a plant comes online) the frequency model resumes.
+        // Builder's call (controller rulings R8, I3 and M7): a fully cut grid
+        // has no frequency to measure; the 1 MW system-size floor is for
+        // numerical safety, not physics. So on a Normal-mode tick with no load
+        // energised the deviation is held at nominal, as in a blackout, and
+        // protection sees nominal frequency: over-frequency tracking resets
+        // and disarms, so it cannot stay armed through the dark and trip on
+        // the first lit tick. The mode stays Normal. Once the outage falls
+        // below 1.0 (after a re-size, for example when a plant comes online)
+        // the frequency model resumes.
         self.deviation = match mode {
             GridMode::Normal if !dark => next_deviation(self.deviation, imbalance, load, params),
             GridMode::Normal | GridMode::Blackout => Hertz::ZERO,
         };
-        let over_frequency = (self.protection.over_ticks, self.protection.over_armed);
         let outcome = evaluate(
             &mut self.protection,
             self.deviation,
@@ -518,17 +523,17 @@ impl PowerSystem {
             load,
             self.outage_target,
         );
-        if dark {
-            (self.protection.over_ticks, self.protection.over_armed) = over_frequency;
-        }
         match outcome {
             // All dark load is protection's; the target stays frozen.
             ProtectionOutcome::Blackout => self.outage = Ratio::ZERO,
             // Restoration stopped at the frozen target: that much stays out
             // as a rotating outage.
+            // Normal mode resumes, so the hour is re-sized: plants started
+            // during the blackout never fired a coming-online re-size.
             ProtectionOutcome::BlackoutRestored => {
                 self.outage = self.protection.shed;
                 self.protection.shed = Ratio::ZERO;
+                self.resize_outage(region, month, hour);
             }
             _ => {}
         }
@@ -550,6 +555,7 @@ impl PowerSystem {
             self.plants.values_mut().for_each(Plant::reconnect);
         }
 
+        events.extend(self.outage_order(hour, ordered));
         let now = band(self.deviation, params);
         if now != self.band {
             self.band = now;
@@ -802,7 +808,8 @@ impl PowerSystem {
 
     /// The one-tick ramp-down room of the connected auto-follow plants: for
     /// each, `min(ramp, output − min_output)` (see [`Plant::headroom_down`]),
-    /// summed; offline and non-dispatchable plants have none. The downward
+    /// summed; offline and non-dispatchable plants have none. Hydro ceilings
+    /// cap only upward moves, so they play no part. The downward
     /// counterpart of [`PowerSystem::agc_headroom`], used to pace a
     /// rotating-outage cut (see [`PowerSystem::next_outage`]).
     fn agc_headroom_down(&self) -> Megawatts {
