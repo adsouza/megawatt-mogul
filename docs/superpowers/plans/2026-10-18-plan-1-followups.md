@@ -78,9 +78,23 @@ during restoration), §14.4 (`frequency_failed`), §14.5 (CCGT minimum stable le
 fleet's coal retirements) and §14.6 (the surplus clears as far as safe trips allow; armed protection
 never sheds more than unarmed).
 
+Final-review rulings (fixed within v2, before Plan 1a shipped):
+- **Hydro recovery after an emergency lift (§12.4):** when the lift ends, scheduled hydro above its
+  ceiling ramps down no faster than the other AGC plants' one-tick headroom, net of the shortfall,
+  until it is at or below every ceiling it meets before the next re-plan. Without it, the cap's
+  return re-shed load repeatedly and blacked out a slow fleet. Cost: water spent beyond the plan
+  after emergencies (allowed by §12.4).
+- **Hydro schedule per phase (§12.6):** the view shows today's plan while Operating, the finished
+  day with every hour frozen during Review, and nothing from `FinishReview` until `BeginOperating`.
+  There is no Planning preview yet; Plan 2 can request one.
+
 Accepted residuals: a trip can still precede a protection-assisted shed when hydro drops at an
 hour-boundary re-plan or falls past the next boundary, when a commitment stop starts after the trip,
 or when the player cuts a manual target after it.
+
+Watch (final review, deferred): no snapshotted fleet exercises A1, so consider a West-like
+scenario in Plan 2; `check_invariants` could also cover "hydro target ≤ ceiling" (outside a lift or
+recovery) and "remaining allocation ≤ remaining budget".
 
 Tuning watch items:
 - **East acceptance margin:** the hands-off year passes, but 6 of 8 seeds draw a frequency notice and

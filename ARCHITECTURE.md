@@ -135,8 +135,10 @@ only eligible remaining book value earns return. Holding and write-off do not ch
 6. AGC re-targets connected auto-follow plants in merit order toward the load to serve,
    `demand × (1 − shed)` (one restoration step higher during a blackout), making room for withheld
    solar. Scheduled hydro is capped at its hourly allocation for the tick the targets take effect
-   (`tick + 1`), with a ramp envelope ahead of a falling hour; the cap is lifted while load is being
-   shed.
+   (`tick + 1`), with a ramp envelope ahead of a falling hour. The cap is lifted while any load is
+   shed or the frequency band is `Shedding`. When the lift ends, a recovery phase lets hydro above
+   its ceiling ramp down only as fast as the other AGC plants' one-tick headroom (net of the
+   shortfall) can follow, until it is at or below every ceiling it meets before the next re-plan.
 7. Imbalance between connected supply and served load.
 8. Frequency update (held at nominal during a blackout).
 9. Protection: load shedding, a blackout that trips every plant, solar curtailment for the next
@@ -152,7 +154,8 @@ only eligible remaining book value earns return. Holding and write-off do not ch
     ticks outside the frequency-performance band). Nothing is priced per tick.
 12. The clock advances. After tick 1,440 the month closes: totals are weighted by `days_in_month`
     and booked, construction advances, policies run (including the frequency-performance notice or
-    strike), `MonthClosed` is emitted and the phase moves to Review.
+    strike), `MonthClosed` is emitted and the phase moves to Review. The hydro schedule view then
+    shows the finished day with every hour frozen; `FinishReview` clears it for the next Planning.
 
 Each `TickSummary` satisfies `generation = Σ by_plant = served + imbalance` (signed), with
 `served = demand × (1 − shed)` and `unserved = demand × shed`. `curtailed` is solar availability

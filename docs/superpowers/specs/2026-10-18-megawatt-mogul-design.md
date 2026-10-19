@@ -502,15 +502,17 @@ The presentation layer never reads aggregate internals.
    `AdvanceTicks { n: 0 }`.
 2. Compute actual demand for connected cities (forecast × (1 + forecast error)).
 3. Compute solar and hydro availability; withhold the standing solar curtailment. At hour
-   boundaries, re-plan the hydro schedule, and cap auto-follow hydro at its allocation for the
-   current hour (§12).
+   boundaries, re-plan the hydro schedule (§12.3). The schedule is not an availability cap: it caps
+   what AGC asks of auto-follow hydro in step 6, by the hour in which the targets take effect
+   (§12.4).
 4. Apply scheduled start/stop actions for the current interval, respecting operating overrides.
 5. Plants progress (start-up; ramp toward target; hydro budget use). Construction completes at
    month close.
-6. AGC re-targets auto-follow plants.
+6. AGC re-targets auto-follow plants, with scheduled hydro capped as in §12.4.
 7. Imbalance = supply − served load.
 8. Frequency update.
-9. Protection (shed, curtail or blackout). The `TickSummary` reports the post-protection state.
+9. Protection (shed, curtail or blackout, and an over-frequency trip of one plant, after which AGC
+   re-targets again in the same tick; §14.2). The `TickSummary` reports the post-protection state.
 10. Accounting: accumulate energy per plant (MWh), recurring daily starts, month-boundary starts
     and *served* energy. Nothing is priced per tick. At month close, apply each total's weight
     (§6.1) and **round to cents once per ledger entry** (round-half-even), so money never accumulates
@@ -770,7 +772,7 @@ Hydro is what grids such as the Pacific Northwest use to ride the evening ramp.
   the allocation falls at an hour boundary, hydro ramps down at its ramp rate rather than dropping
   in one tick. *(Builder's call: a hard cap would recreate the cliff at every falling hour boundary,
   where three 800 MW units could lose 2.4 GW in one tick.)* The day-boundary dispatch (Ruling R21)
-  uses the hour-0 allocation as its upper bound.
+  uses the hour-0 ceiling (the hour-0 allocation within the ramp envelope below) as its upper bound.
   - *(Builder's call, effect hour: the cap uses the allocation of the hour in which the target takes
     effect, `(tick + 1) / 60`, because plants step before AGC retargets. Capping by the current
     tick's hour leaked one tick of the previous hour into each new hour and overdrew a final hour
@@ -783,8 +785,19 @@ Hydro is what grids such as the Pacific Northwest use to ride the evening ramp.
 - **Emergency override.** The allocation cap is lifted, leaving only the budget limit, whenever the
   frequency band is `Shedding` **or** any load is shed (`shed > 0`, in either grid mode). *(Builder's
   call: keying on `shed > 0` as well as the band keeps the cap off for the whole restoration, rather
-  than flapping on and off as the band recovers.)* Avoiding load
-  shedding is worth more than any later hour. The next hourly re-plan spreads whatever water remains.
+  than flapping on and off as the band recovers.)* Avoiding load shedding is worth more than any
+  later hour. The next hourly re-plan spreads whatever water remains.
+  - *(Builder's call: the cap returns at a rate the rest of the fleet can follow. When a lift ends,
+    the power system enters a recovery phase. While it lasts, scheduled hydro above its AGC ceiling
+    ramps down by no more than the other AGC plants' aggregate one-tick headroom (the headroom
+    gate's definition in §14.2) less the shortfall they already face, never below zero; a surplus
+    counts as cover, as at the gate. Several plants share it in plant-id order. Recovery lasts until
+    every scheduled plant is at or below the lowest ceiling it meets before the next re-plan (the
+    falling-output withhold's look-ahead, §14.2), so a foreseen fall soon after is limited too, and
+    it ends at the day boundary. A new emergency lifts the cap again. Without it, hydro fell back at
+    its own ramp on the first tick nothing was shed, slow thermal could not follow, and load was shed
+    again, up to a blackout. Recovery may spend water beyond the plan; the budget limit still
+    binds.)*
 - **Manual hydro.** Hydro with AGC off is neither scheduled nor capped by the schedule. It follows
   the player's target, limited by its budget as before. *(Builder's call: manual hydro output is not
   subtracted from the residual, because the player can change it at any time.)*
@@ -814,7 +827,10 @@ Hydro is what grids such as the Pacific Northwest use to ride the evening ramp.
 - Each elapsed hour shows the allocation as it stood when that hour began, so a past hour is never
   rewritten by later re-plans. Future hours show the latest plan.
 
-*(Builder's call: freezing elapsed hours lets the HUD and lessons compare plan with actual.)* It is for the Plan 2 HUD ("hydro covers
+*(Builder's call: freezing elapsed hours lets the HUD and lessons compare plan with actual.)*
+*(Builder's call: the view is valid per phase. While Operating it shows today's plan; during Review,
+the finished day with every hour frozen; from the next Planning phase (`FinishReview`) it is empty
+until `BeginOperating` plans the new day.)* It is for the Plan 2 HUD ("hydro covers
 everything above 31 GW") and for lessons. *(Builder's call: until the HUD exists, no projection or
 lesson is added.)*
 
