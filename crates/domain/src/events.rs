@@ -42,6 +42,9 @@ pub enum DomainEvent {
     Blackout,
     /// Black-start restoration reconnected the last of the load.
     BlackoutRestored,
+    /// A rotating outage of `share` of demand was ordered for `hour` (spec
+    /// §15.3), including a change to zero ("outage lifted").
+    RotatingOutageOrdered { hour: u8, share: Ratio },
     /// A cash movement was booked to the company ledger.
     LedgerEntryRecorded(LedgerEntry),
     /// A reserve review held `amount` of an asset's book value out of the

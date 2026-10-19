@@ -155,7 +155,10 @@ impl PowerSystem {
     /// Whether the emergency override lifts every hydro cap (spec §12.4):
     /// while any load is shed, in either grid mode, or the frequency band is
     /// `Shedding`. Keying on the shed as well keeps the cap off for the whole
-    /// restoration instead of flapping as the band recovers.
+    /// restoration instead of flapping as the band recovers. A rotating outage
+    /// alone does not lift it (spec §15.3): the plan already spends water on
+    /// the shortage hours and outage sizing counts that allocation, so lifting
+    /// the cap would spend the water early and deepen later hours' outages.
     pub(super) fn hydro_cap_lifted(&self) -> bool {
         self.protection.shed > Ratio::ZERO || self.band == FrequencyBand::Shedding
     }

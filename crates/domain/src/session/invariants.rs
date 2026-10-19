@@ -267,6 +267,7 @@ mod tests {
             frequency: Hertz::new(60.0),
             mode: GridMode::Normal,
             shed: Ratio::ZERO,
+            outage: Ratio::ZERO,
         }
     }
 

@@ -144,14 +144,52 @@ fn building_is_planning_only_and_ticking_is_operating_only() {
 #[test]
 fn begin_operating_emits_phase_change() {
     let mut s = session();
+    // Nothing is committed, so hour 0's forecast is wholly uncovered and the
+    // day starts in a full rotating outage (spec §15.3).
     assert_eq!(
         s.begin_operating().unwrap(),
-        vec![DomainEvent::PhaseChanged {
-            from: DayPhase::Planning,
-            to: DayPhase::Operating
-        }]
+        vec![
+            DomainEvent::PhaseChanged {
+                from: DayPhase::Planning,
+                to: DayPhase::Operating
+            },
+            DomainEvent::RotatingOutageOrdered {
+                hour: 0,
+                share: Ratio::ONE
+            },
+        ]
     );
     assert_eq!(s.phase(), DayPhase::Operating);
+}
+
+#[test]
+fn begin_operating_orders_hour_zeros_rotating_outage() {
+    // City 3 carries 3,000 MW of base load: hour 0's forecast (2,520 MW)
+    // is about twice what the 1,300 MW start fleet can deliver.
+    let mut parts = crate::region::fixtures::tiny_region_parts();
+    parts.start.connected_cities.push(CityId(3));
+    let city = parts.cities.iter_mut().find(|c| c.id == CityId(3)).unwrap();
+    city.base_load = Megawatts::new(3_000.0);
+    let region = crate::region::RegionDefinition::try_from(parts).unwrap();
+    let mut s = GameSession::new(Arc::new(region), 1, GameSettings::default());
+    for kind in [PlantKind::Coal, PlantKind::Ccgt, PlantKind::Peaker] {
+        let plant = plant_of(&s, kind);
+        s.start_plant(plant).unwrap();
+        s.set_auto_follow(plant, true).unwrap();
+    }
+    assert_eq!(
+        s.begin_operating().unwrap(),
+        vec![
+            DomainEvent::PhaseChanged {
+                from: DayPhase::Planning,
+                to: DayPhase::Operating
+            },
+            DomainEvent::RotatingOutageOrdered {
+                hour: 0,
+                share: Ratio::new(0.5).unwrap()
+            },
+        ]
+    );
 }
 
 #[test]
@@ -211,13 +249,17 @@ fn each_tick_advances_the_clock_once() {
     assert_eq!(s.grid_snapshot().last_tick.as_ref(), Some(summary));
 }
 
-/// Coal committed all day at minimum with no AGC cannot carry the load: the
-/// grid sheds, blacks out and trips it.
+/// Coal and a second CCGT committed all day at minimum with no AGC, in a
+/// rotating outage sized for both. The extra CCGT trips as the day begins, a
+/// loss no forecast saw: the grid blacks out and trips the coal.
 fn session_with_tripped_coal() -> (GameSession, PlantId, Vec<DomainEvent>) {
     let mut s = session();
     let coal = plant_of(&s, PlantKind::Coal);
     s.start_plant(coal).unwrap();
+    let extra = s.insert_commissioned_plant(PlantKind::Ccgt, CellCoord { x: 5, y: 5 });
+    s.start_plant(extra).unwrap();
     s.begin_operating().unwrap();
+    s.power.plant_mut(extra).unwrap().trip();
     let events = run_ticks(&mut s, TICKS_PER_DAY);
     assert!(events.contains(&DomainEvent::PlantTripped { plant: coal }));
     assert_eq!(

@@ -103,6 +103,7 @@ pub(crate) mod test_support {
             frequency: Hertz::new(60.0),
             mode: GridMode::Normal,
             shed: Ratio::ZERO,
+            outage: Ratio::ZERO,
         }
     }
 

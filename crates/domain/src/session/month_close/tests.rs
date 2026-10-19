@@ -607,9 +607,13 @@ fn sustained_shortfall_revokes_licence() {
         SessionStatus::GameOver(GameOverReason::LicenseRevoked)
     );
     let report = report_in(&events);
+    // With no fleet the whole forecast is uncovered: every hour is a full
+    // rotating outage (spec §15.3), so nothing is served and nothing blacks
+    // out.
     assert!(report.unserved > MegawattHours::ZERO);
+    assert!((report.unserved.value() - report.demand.value()).abs() < 1e-6);
     assert!(
-        report
+        !report
             .incidents
             .iter()
             .any(|i| i.kind == IncidentKind::Blackout)
@@ -990,10 +994,15 @@ fn report_overgeneration_is_the_weighted_positive_imbalance() {
     let mut events = s.begin_operating().unwrap();
     let mut surplus = MegawattHours::ZERO;
     while s.phase() == DayPhase::Operating {
-        events.extend(s.tick().unwrap());
-        if let Some(last) = s.grid_snapshot().last_tick {
-            surplus += last.imbalance.max(Megawatts::ZERO).energy_over_ticks(1);
+        let tick = s.tick().unwrap();
+        // Each tick's own summary: the snapshot's last tick is cleared when
+        // the final tick closes the month.
+        for event in &tick {
+            if let DomainEvent::TickCompleted(summary) = event {
+                surplus += summary.imbalance.max(Megawatts::ZERO).energy_over_ticks(1);
+            }
         }
+        events.extend(tick);
     }
     let report = report_in(&events);
     assert!(report.overgeneration > MegawattHours::ZERO);

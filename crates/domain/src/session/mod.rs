@@ -39,7 +39,7 @@ use crate::region::{LineParams, RegionDefinition};
 use crate::regulation::Regulator;
 use crate::rng::SimRng;
 use crate::time::SimClock;
-use crate::units::Money;
+use crate::units::{Money, Ratio};
 
 /// FNV-1a 64-bit offset basis and prime.
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -192,7 +192,9 @@ impl GameSession {
     /// Planning → Operating. Initialises the day from each plant's pattern
     /// (no physical state carries over from last month), resets frequency and
     /// protection, and starts the month's accumulator with the month-boundary
-    /// start counts and the plants running at midnight.
+    /// start counts and the plants running at midnight. When the fleet cannot
+    /// cover hour 0's forecast, the day starts in a rotating outage (spec
+    /// §15.3), reported after the phase change as `RotatingOutageOrdered`.
     pub fn begin_operating(&mut self) -> Result<Vec<DomainEvent>, DomainError> {
         self.require_phase(&[DayPhase::Planning])?;
         let init = self
@@ -204,7 +206,14 @@ impl GameSession {
         self.month_to_date
             .observe_plants(self.power.plants().values());
         self.day_ticks.clear();
-        Ok(vec![self.change_phase(DayPhase::Operating)])
+        let mut events = vec![self.change_phase(DayPhase::Operating)];
+        if init.outage > Ratio::ZERO {
+            events.push(DomainEvent::RotatingOutageOrdered {
+                hour: 0,
+                share: init.outage,
+            });
+        }
+        Ok(events)
     }
 
     /// Runs one tick of the day. Returns the power system's events, which

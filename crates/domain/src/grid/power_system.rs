@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 
 mod hydro_plan;
+mod outage;
 
 use hydro_plan::{HydroOverride, PlantHydroPlan};
 pub use hydro_plan::{HydroScheduleView, PlantHydroScheduleView};
@@ -42,11 +43,14 @@ pub enum NetworkModel {
     CopperPlate,
 }
 
-/// What starting a representative day reported to the session accumulator.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+/// What starting a representative day reported to the session.
+#[derive(Debug, Clone, PartialEq)]
 pub struct DayInitialisation {
     /// One-off month-boundary starts per plant (see [`BoundaryStart::Charged`]).
     pub boundary_starts: BTreeMap<PlantId, u32>,
+    /// The rotating-outage share ordered for hour 0 (spec §15.3); zero when
+    /// the fleet covers it.
+    pub outage: Ratio,
 }
 
 /// Step 5's AGC inputs for the tick (see [`PowerSystem::tick`]), kept so AGC
@@ -90,6 +94,13 @@ pub struct PowerSystem {
     /// The emergency override of the hydro cap, as of the last AGC pass:
     /// off, lifted or recovering (see [`PowerSystem::retarget_agc`]).
     hydro_override: HydroOverride,
+    /// The rotating-outage share in effect (spec §15.3): the share of demand
+    /// cut on purpose, ahead of protection. Zero outside a shortage and
+    /// during a blackout.
+    outage: Ratio,
+    /// The rotating-outage share ordered for the current hour, which
+    /// `outage` moves toward; frozen during a blackout.
+    outage_target: Ratio,
 }
 
 fn is_curtailable(plant: &Plant) -> bool {
@@ -132,6 +143,8 @@ impl PowerSystem {
             hydro_plan: BTreeMap::new(),
             hydro_planned_from: 0,
             hydro_override: HydroOverride::Off,
+            outage: Ratio::ZERO,
+            outage_target: Ratio::ZERO,
         }
     }
 
@@ -229,6 +242,16 @@ impl PowerSystem {
     /// auto-follow fleet is dispatched to balance the tick-0 load (the cyclic
     /// day's boundary state), so a day does not open in a deficit that
     /// ramp-limited AGC cannot recover; plants on manual targets keep theirs.
+    ///
+    /// **Hour 0's rotating outage (spec §15.3).** The day starts with the
+    /// outage at hour 0's target, and the boundary dispatch balances against
+    /// the load it leaves (the cyclic-boundary principle: ramping in from 0
+    /// would black out a large shortfall on tick 1). The hour is sized from
+    /// the boundary dispatch for the full forecast, which puts every AGC plant
+    /// as high as that load needs, rather than from the initial outputs the
+    /// pattern gives it; when an outage is ordered the boundary is then
+    /// dispatched again against the reduced load. The share is reported in
+    /// [`DayInitialisation::outage`].
     pub fn begin_day(
         &mut self,
         region: &RegionDefinition,
@@ -258,17 +281,27 @@ impl PowerSystem {
         self.noise = DemandNoise::default();
         self.curtailment = Megawatts::ZERO;
         self.hydro_override = HydroOverride::Off;
+        self.outage = Ratio::ZERO;
+        self.outage_target = Ratio::ZERO;
         self.plan_hydro(region, month, 0);
         self.balance_boundary(region, month);
-        DayInitialisation { boundary_starts }
+        self.outage_target = self.size_outage(region, month, 0);
+        self.outage = self.outage_target;
+        if self.outage > Ratio::ZERO {
+            self.balance_boundary(region, month);
+        }
+        DayInitialisation {
+            boundary_starts,
+            outage: self.outage,
+        }
     }
 
     /// Sets the dispatch state at instant 0 as the end of the previous,
     /// identical day left it: the auto-follow fleet fills the tick-0 forecast
     /// in merit order (see [`boundary_dispatch`]). The load is the connected
-    /// demand forecast less expected solar and less the output of connected
-    /// online plants that are not auto-follow, which keep their initial
-    /// target. Scheduled hydro is capped at its hour-0 ceiling: its hour-0
+    /// demand forecast less the rotating outage, less expected solar and less
+    /// the output of connected online plants that are not auto-follow, which
+    /// keep their initial target. Scheduled hydro is capped at its hour-0 ceiling: its hour-0
     /// allocation, lowered to the ramp envelope (see
     /// [`PowerSystem::hydro_ceilings`]). Draws no random numbers.
     fn balance_boundary(&mut self, region: &RegionDefinition, month: SimMonth) {
@@ -279,7 +312,7 @@ impl PowerSystem {
             .sum();
         let forecast = self.connected_demand_forecast(region, month, 0);
         let solar = self.expected_solar(region, month, 0);
-        let load = forecast - solar - manual;
+        let load = forecast * (1.0 - self.outage.value()) - solar - manual;
         let (mut available, _, _) = self.availability(region, month, 0);
         for (id, ceiling) in self.hydro_ceilings(0) {
             if let Some(mw) = available.get_mut(&id) {
@@ -313,6 +346,10 @@ impl PowerSystem {
     /// 0. At every hour boundary after midnight, the hydro schedule is
     ///    re-planned over the hours left with the remaining budgets (spec
     ///    §12.3), so the new hour's allocation is in place for this tick's AGC.
+    ///    Then, in Normal mode only, the rotating outage is re-sized for the
+    ///    hour starting (spec §15.3, see [`PowerSystem::size_outage`]), which
+    ///    emits `RotatingOutageOrdered` when the target changes. During a
+    ///    blackout the target ordered before it stays frozen.
     /// 1. Demand of connected cities: forecast × (1 + forecast error). The
     ///    error advances by exactly one normal draw every tick, in any state.
     /// 2. Solar and hydro availability for every plant. The standing solar
@@ -320,31 +357,48 @@ impl PowerSystem {
     ///    plant's availability.
     /// 3. The commitment actions due at `tick` (suppressed plants get none).
     /// 4. Every plant steps once.
-    /// 5. AGC re-targets connected auto-follow plants toward the load to serve:
-    ///    `demand × (1 − shed)`, or in a blackout `demand × min(1, 1 − shed +
-    ///    shed_step)` so supply is pre-positioned for the next restoration step.
-    ///    While solar is curtailed, AGC also makes room for the withheld solar,
-    ///    so the cheaper solar returns as thermal ramps down. Scheduled hydro
-    ///    is held to its hourly allocation, except during an emergency lift
-    ///    and the recovery after it (see [`PowerSystem::retarget_agc`]).
-    /// 6. Imbalance between connected supply and served load.
-    /// 7. Frequency update, held at nominal in a blackout. System size is the
-    ///    connected demand.
-    /// 8. Protection: load shedding; a blackout that trips every plant,
-    ///    suppresses its commitment for the day and resets the deviation and
-    ///    the curtailment; solar curtailment, described below; and an
-    ///    over-frequency trip of one plant, after which AGC re-runs step 5 on
-    ///    the post-trip outputs (see [`PowerSystem::over_frequency_trip`]).
-    ///    Tripped solar reconnects once restoration first re-energises the
-    ///    grid.
-    /// 9. The summary of the state after protection (see [`TickSummary`]),
-    ///    also emitted last as `TickCompleted`. Steps 5–8 decide on the supply
-    ///    measured after step 4.
+    /// 5. The tick's **load** is `demand × (1 − outage)`, with the outage in
+    ///    effect now; steps 7–9 read it wherever they read demand before. In
+    ///    Normal mode the outage then moves one tick toward its target for the
+    ///    load from tick t + 1 (see [`PowerSystem::next_outage`]): AGC's targets
+    ///    set in step 6 act on tick t + 1's step, so AGC aims at the load they
+    ///    will meet, and a moved step of load never opens a one-tick
+    ///    imbalance that AGC has not dispatched for. A fall needs the AGC
+    ///    fleet's one-tick headroom for `effect_tick` (as at the trip gate and
+    ///    in hydro recovery), net of the shortfall step 6 is about to face, to
+    ///    cover `shed_step × demand`.
+    /// 6. AGC re-targets connected auto-follow plants toward the load to serve:
+    ///    `demand × (1 − outage) × (1 − shed)` with the moved outage, or in a
+    ///    blackout `demand × min(1, 1 − shed + shed_step)` so supply is
+    ///    pre-positioned for the next restoration step. While solar is
+    ///    curtailed, AGC also makes room for the withheld solar, so the cheaper
+    ///    solar returns as thermal ramps down. Scheduled hydro is held to its
+    ///    hourly allocation, except during an emergency lift and the recovery
+    ///    after it (see [`PowerSystem::retarget_agc`]); a rotating outage alone
+    ///    never lifts the cap (see [`PowerSystem::hydro_cap_lifted`]).
+    /// 7. Imbalance between connected supply and the load served,
+    ///    `load × (1 − shed)`.
+    /// 8. Frequency update, held at nominal in a blackout. System size is the
+    ///    load.
+    /// 9. Protection on the load: load shedding as a share of the load; a
+    ///    blackout that trips every plant, suppresses its commitment for the
+    ///    day, resets the deviation and the curtailment and sets the outage to
+    ///    zero, keeping its target; black-start restoration down to that
+    ///    frozen target, after which Normal mode resumes with the outage at
+    ///    the target and protection's shed at zero; solar curtailment,
+    ///    described below; and an over-frequency trip of one plant, after
+    ///    which AGC re-runs step 6 on the post-trip outputs (see
+    ///    [`PowerSystem::over_frequency_trip`]). Tripped solar reconnects once
+    ///    restoration first re-energises the grid.
+    /// 10. The summary of the state after protection (see [`TickSummary`]),
+    ///     also emitted last as `TickCompleted`: the outage and shed it
+    ///     reports are those from instant t + 1. Steps 6–9 decide on the
+    ///     supply measured after step 4.
     ///
     /// **Solar curtailment** is physical: it lowers solar availability from
     /// the next tick. It engages on an over-frequency `Curtail` outcome and is
     /// then recomputed every tick as the surplus AGC cannot absorb within its
-    /// one-tick ramp (the negated leftover of step 5), clamped to the solar
+    /// one-tick ramp (the negated leftover of step 6), clamped to the solar
     /// available to curtail. It therefore follows the surplus down as demand
     /// rises, solar falls or AGC makes room, and disengages at zero, so solar is
     /// never stranded and nothing oscillates. AGC plants are forced to minimum
@@ -361,9 +415,12 @@ impl PowerSystem {
     ) -> (TickSummary, Vec<DomainEvent>) {
         let params = region.frequency();
         let mut events = Vec::new();
-        let hour = tick / TICKS_PER_HOUR;
         if tick > 0 && tick.is_multiple_of(TICKS_PER_HOUR) {
-            self.plan_hydro(region, month, u8::try_from(hour).unwrap_or(u8::MAX));
+            let hour = u8::try_from(tick / TICKS_PER_HOUR).unwrap_or(u8::MAX);
+            self.plan_hydro(region, month, hour);
+            if self.protection.mode == GridMode::Normal {
+                events.extend(self.order_outage(region, month, hour));
+            }
         }
 
         let error = self.noise.step(region.demand(), rng);
@@ -381,35 +438,66 @@ impl PowerSystem {
 
         let mode = self.protection.mode;
         let shed = self.protection.shed.value();
+        // The targets AGC sets now first act on the next tick's step.
+        let effect_tick = tick + 1;
+        let load = demand * (1.0 - self.outage.value());
+        if mode == GridMode::Normal {
+            let cover = if self.outage > self.outage_target {
+                let ceilings = self.agc_ceilings(effect_tick);
+                let shortfall = load * (1.0 - shed) - supply - withheld;
+                self.agc_headroom(&available, &ceilings, None) - shortfall
+            } else {
+                Megawatts::ZERO
+            };
+            self.outage = self.next_outage(params.shed_step, demand, cover);
+        }
         let to_serve = match mode {
-            GridMode::Normal => 1.0 - shed,
+            GridMode::Normal => (1.0 - self.outage.value()) * (1.0 - shed),
             GridMode::Blackout => (1.0 - shed + params.shed_step.value()).min(1.0),
         };
-        // The targets AGC sets now first act on the next tick's step.
         let redispatch = Redispatch {
             available: &available,
             to_serve: demand * to_serve,
             withheld,
             curtailable,
-            effect_tick: tick + 1,
+            effect_tick,
         };
         let leftover = self.redispatch(&redispatch);
 
-        let imbalance = supply - demand * (1.0 - shed);
+        let imbalance = supply - load * (1.0 - shed);
         self.deviation = match mode {
-            GridMode::Normal => next_deviation(self.deviation, imbalance, demand, params),
+            GridMode::Normal => next_deviation(self.deviation, imbalance, load, params),
             GridMode::Blackout => Hertz::ZERO,
         };
 
-        let outcome = evaluate(&mut self.protection, self.deviation, params, supply, demand);
+        let outcome = evaluate(
+            &mut self.protection,
+            self.deviation,
+            params,
+            supply,
+            load,
+            self.outage_target,
+        );
+        match outcome {
+            // All dark load is protection's; the target stays frozen.
+            ProtectionOutcome::Blackout => self.outage = Ratio::ZERO,
+            // Restoration stopped at the frozen target: that much stays out
+            // as a rotating outage.
+            ProtectionOutcome::BlackoutRestored => {
+                self.outage = self.protection.shed;
+                self.protection.shed = Ratio::ZERO;
+            }
+            _ => {}
+        }
         let shed = self.protection.shed;
+        let after_outage = demand * (1.0 - self.outage.value());
         if outcome.curtails() || self.curtailment > Megawatts::ZERO {
             self.update_curtailment(outcome, -leftover, curtailable, &mut events);
         }
         self.apply_protection(
             outcome,
-            demand * shed.value(),
-            demand * (1.0 - shed.value()),
+            after_outage * shed.value(),
+            after_outage * (1.0 - shed.value()),
             params,
             &redispatch,
             &mut events,
@@ -437,12 +525,15 @@ impl PowerSystem {
                 .or_insert(Megawatts::ZERO) += *output;
         }
         let generation: Megawatts = by_plant.values().copied().sum();
-        let served = demand * (1.0 - shed.value());
+        let served = after_outage * (1.0 - shed.value());
+        let outage = self.outage.value();
         let summary = TickSummary {
             tick,
             demand,
             served,
-            unserved: demand * shed.value(),
+            // `demand − served`, written so a tick without an outage reports
+            // exactly `demand × shed`.
+            unserved: demand * (outage + (1.0 - outage) * shed.value()),
             generation,
             curtailed: withheld,
             imbalance: generation - served,
@@ -451,6 +542,7 @@ impl PowerSystem {
             frequency: params.nominal + self.deviation,
             mode: self.protection.mode,
             shed,
+            outage: self.outage,
         };
         events.push(DomainEvent::TickCompleted(summary.clone()));
         (summary, events)

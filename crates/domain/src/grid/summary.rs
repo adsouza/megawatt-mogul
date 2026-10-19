@@ -22,16 +22,20 @@ use crate::units::{Hertz, Megawatts, Ratio};
 ///
 /// Only connected plants and cities count. Curtailment is physical: curtailed
 /// solar availability is never produced, so it is outside `generation`. The
-/// fields always satisfy `generation = Σ by_plant = served + imbalance` and
-/// `unserved = demand × shed`.
+/// fields always satisfy `generation = Σ by_plant = served + imbalance`,
+/// `served = demand × (1 − outage) × (1 − shed)` and `unserved = demand −
+/// served`: a rotating outage cuts load ahead of protection, whose `shed` is a
+/// share of the load the outage leaves (spec §15.3).
 #[derive(Debug, Clone, PartialEq)]
 pub struct TickSummary {
     pub tick: u32,
-    /// Actual (noisy) demand of connected cities, before shedding.
+    /// Actual (noisy) demand of connected cities, before any outage or
+    /// shedding.
     pub demand: Megawatts,
-    /// Load supplied: `demand × (1 − shed)`.
+    /// Load supplied: `demand × (1 − outage) × (1 − shed)`.
     pub served: Megawatts,
-    /// Load shed by protection: `demand × shed`.
+    /// Demand not supplied, `demand − served`: the rotating outage and the
+    /// load protection shed. Without an outage it is `demand × shed`.
     pub unserved: Megawatts,
     /// Total output of connected plants.
     pub generation: Megawatts,
@@ -47,5 +51,8 @@ pub struct TickSummary {
     /// Absolute frequency: nominal plus deviation.
     pub frequency: Hertz,
     pub mode: GridMode,
+    /// Protection's shed, as a share of the load the outage leaves.
     pub shed: Ratio,
+    /// The rotating-outage share of demand cut on purpose (spec §15.3).
+    pub outage: Ratio,
 }

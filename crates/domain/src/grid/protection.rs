@@ -162,11 +162,16 @@ fn stages_crossed(dev: Hertz, p: &FrequencyParams) -> u8 {
 }
 
 /// Advance protection by one tick given the current deviation, `supply`
-/// available and full (unshed) `demand`.
+/// available and the unshed `demand` it protects: the load a rotating outage
+/// leaves (spec §15.3), so `shed` is a share of that load.
 ///
 /// In Blackout the deviation is held at zero by the caller, so it is ignored:
 /// load comes back one step at a time while supply covers the next step, and
-/// the over-frequency counter is left alone.
+/// the over-frequency counter is left alone. Restoration completes, returning
+/// `BlackoutRestored`, when `shed` reaches `restore_to` (snapped within 1e-9),
+/// the rotating-outage target frozen during the blackout, and leaves `shed`
+/// there: the caller takes that share over as its outage and zeroes `shed`.
+/// With no outage `restore_to` is zero and restoration runs to zero.
 ///
 /// **Staged under-frequency shedding (spec §15.4).** Below `shed_below`,
 /// stage `k` sits at `shed_below − k × shed_stage_spacing` (see
@@ -203,6 +208,7 @@ pub fn evaluate(
     p: &FrequencyParams,
     supply: Megawatts,
     demand: Megawatts,
+    restore_to: Ratio,
 ) -> ProtectionOutcome {
     let step = p.shed_step.value();
     let shed = state.shed.value();
@@ -212,7 +218,8 @@ pub fn evaluate(
         let needed = demand.value() * (1.0 - shed + step);
         if supply.value() >= needed - SNAP {
             state.shed = snapped(shed - step);
-            if state.shed == Ratio::ZERO {
+            if state.shed.value() <= restore_to.value() + SNAP {
+                state.shed = restore_to;
                 state.mode = GridMode::Normal;
                 state.shed_ticks = 0;
                 state.stages_fired = 0;
@@ -276,6 +283,7 @@ mod tests {
             &params(),
             Megawatts::new(supply),
             Megawatts::new(demand),
+            Ratio::ZERO,
         )
     }
 
@@ -339,6 +347,34 @@ mod tests {
         assert_eq!(s.mode, GridMode::Normal);
         assert_eq!(s.shed, Ratio::ZERO);
         assert_eq!(s.shed_ticks, 0);
+    }
+
+    #[test]
+    fn black_start_completes_at_the_restoration_floor() {
+        // Spec §15.3: a blackout on a rotating-outage day restores only down
+        // to the frozen outage target; the caller turns the rest into outage.
+        let floor = Ratio::new(0.30).unwrap();
+        let mut s = ProtectionState {
+            stages_fired: 6,
+            ..blackout_state()
+        };
+        let restore = |s: &mut ProtectionState, supply: f64| {
+            let (dev, p) = (Hertz::ZERO, params());
+            let (supply, demand) = (Megawatts::new(supply), Megawatts::new(100.0));
+            evaluate(s, dev, &p, supply, demand, floor)
+        };
+        // Supply must still cover each next step.
+        assert_eq!(restore(&mut s, 4.0), ProtectionOutcome::None);
+        assert_eq!(s.shed, Ratio::ONE);
+        for _ in 0..13 {
+            assert_eq!(restore(&mut s, 100.0), ProtectionOutcome::None);
+            assert_eq!(s.mode, GridMode::Blackout);
+            assert!(s.shed > floor);
+        }
+        assert_eq!(restore(&mut s, 100.0), ProtectionOutcome::BlackoutRestored);
+        assert_eq!(s.mode, GridMode::Normal);
+        assert_eq!(s.shed, floor);
+        assert_eq!((s.shed_ticks, s.stages_fired), (0, 0));
     }
 
     #[test]
@@ -793,6 +829,7 @@ mod tests {
             &p,
             Megawatts::new(100.0),
             Megawatts::new(100.0),
+            Ratio::ZERO,
         );
         assert_eq!(outcome, ProtectionOutcome::Shed);
         assert_eq!(s.stages_fired, u8::MAX);
@@ -840,6 +877,7 @@ mod tests {
                 p,
                 Megawatts::new(supply),
                 Megawatts::new(demand),
+                Ratio::ZERO,
             );
             if outcome == ProtectionOutcome::Blackout {
                 run.blackout = true;
