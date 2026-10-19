@@ -92,6 +92,11 @@ Accepted residuals: a trip can still precede a protection-assisted shed when hyd
 hour-boundary re-plan or falls past the next boundary, when a commitment stop starts after the trip,
 or when the player cuts a manual target after it.
 
+Parked for Plan 2: a slow fleet that never reaches an emergency can still shed on a foreseen hydro
+fall. The envelope ramps hydro down at hydro's own rate, and thermal may be unable to follow. Not
+seen in shipped data. If it appears, limit the envelope's descent to the fleet's headroom, as
+recovery already does.
+
 Watch (final review, deferred): no snapshotted fleet exercises A1, so consider a West-like
 scenario in Plan 2; `check_invariants` could also cover "hydro target ≤ ceiling" (outside a lift or
 recovery) and "remaining allocation ≤ remaining budget".
