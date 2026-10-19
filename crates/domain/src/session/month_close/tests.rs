@@ -9,9 +9,9 @@ use crate::generation::PlantStatus;
 use crate::ids::CityId;
 use crate::region::fixtures::{tiny_region, tiny_region_parts};
 use crate::region::{PlantKind, RegionDefinitionParts};
-use crate::regulation::{Licence, RateReviewOutcome, YearTally, reserve_excess};
+use crate::regulation::{Licence, RateReviewOutcome, StrikeReason, YearTally, reserve_excess};
 use crate::time::{SimMonth, TICKS_PER_DAY};
-use crate::units::{MegawattHours, Megawatts, Ratio};
+use crate::units::{Hertz, MegawattHours, Megawatts, Ratio};
 
 fn session_from(parts: RegionDefinitionParts, seed: u64) -> GameSession {
     let region = RegionDefinition::try_from(parts).expect("test region is valid");
@@ -591,7 +591,10 @@ fn sustained_shortfall_revokes_licence() {
     let mut events = Vec::new();
     for month in 1..=3 {
         events = play_day(&mut s);
-        assert!(events.contains(&DomainEvent::StrikeIssued { strikes: month }));
+        assert!(events.contains(&DomainEvent::StrikeIssued {
+            strikes: month,
+            reason: StrikeReason::UnservedEnergy
+        }));
         if month < 3 {
             assert_eq!(s.status(), SessionStatus::Active);
             s.finish_review().unwrap();
@@ -611,6 +614,89 @@ fn sustained_shortfall_revokes_licence() {
             .iter()
             .any(|i| i.kind == IncidentKind::Blackout)
     );
+}
+
+/// A session whose frequency band is so tight that demand noise alone puts
+/// almost every Normal-mode tick out of band, on a fleet that serves all load.
+fn noisy_frequency_session() -> GameSession {
+    let mut parts = tiny_region_parts();
+    parts.regulator.frequency_band = Hertz::new(1e-9);
+    let mut s = session_from(parts, 1);
+    robust_fleet(&mut s);
+    s
+}
+
+#[test]
+fn a_healthy_month_reports_no_frequency_failure() {
+    let mut parts = tiny_region_parts();
+    parts.regulator.frequency_band = Hertz::new(100.0);
+    let mut s = session_from(parts, 1);
+    robust_fleet(&mut s);
+    let events = play_day(&mut s);
+    let report = report_in(&events);
+    assert_eq!(report.out_of_band_share, Ratio::ZERO);
+    assert!(!report.frequency_failed);
+    assert!(!report.frequency_notice);
+}
+
+#[test]
+fn first_frequency_only_month_draws_a_notice_then_the_next_strikes() {
+    let mut s = noisy_frequency_session();
+    let month = s.clock().month();
+    let events = play_day(&mut s);
+    let report = report_in(&events);
+    assert_eq!(report.unserved, MegawattHours::ZERO);
+    assert!(report.out_of_band_share > s.region().regulator().frequency_violation_share);
+    assert!(report.frequency_failed);
+    assert!(report.frequency_notice);
+    assert!(events.contains(&DomainEvent::FrequencyNoticeIssued { month }));
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, DomainEvent::StrikeIssued { .. }))
+    );
+    assert_eq!(s.regulator().strikes(), 0);
+    assert_eq!(s.regulator().last_frequency_notice(), Some(month));
+
+    s.finish_review().unwrap();
+    let events = play_day(&mut s);
+    let report = report_in(&events);
+    assert!(report.frequency_failed);
+    assert!(!report.frequency_notice);
+    assert!(events.contains(&DomainEvent::StrikeIssued {
+        strikes: 1,
+        reason: StrikeReason::FrequencyPerformance
+    }));
+    assert_eq!(s.regulator().last_frequency_notice(), Some(month));
+}
+
+#[test]
+fn failing_both_tests_gives_one_unserved_strike_and_spares_the_notice() {
+    let mut parts = tiny_region_parts();
+    parts.regulator.frequency_band = Hertz::new(1e-9);
+    let mut s = session_from(parts, 1);
+    // One plant alone cannot carry the load: load is shed while the grid is
+    // still in Normal mode, and demand noise keeps frequency off nominal.
+    let coal = plant_of(&s, PlantKind::Coal);
+    s.start_plant(coal).unwrap();
+    s.set_auto_follow(coal, true).unwrap();
+    let events = play_day(&mut s);
+    let report = report_in(&events);
+    assert!(report.unserved > MegawattHours::ZERO);
+    assert!(report.frequency_failed);
+    assert!(!report.frequency_notice);
+    let strikes: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, DomainEvent::StrikeIssued { .. }))
+        .collect();
+    assert_eq!(
+        strikes,
+        [&DomainEvent::StrikeIssued {
+            strikes: 1,
+            reason: StrikeReason::UnservedEnergy
+        }]
+    );
+    assert_eq!(s.regulator().last_frequency_notice(), None);
 }
 
 #[test]

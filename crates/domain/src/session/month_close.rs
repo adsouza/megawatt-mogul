@@ -17,7 +17,7 @@ use crate::grid::NodeKind;
 use crate::ids::{CityId, PlantId};
 use crate::region::PlantKind;
 use crate::regulation::{
-    Licence, RateReviewInputs, RateReviewOutcome, compute_rate_review, reserve_excess,
+    Licence, RateReviewInputs, RateReviewOutcome, Regulator, compute_rate_review, reserve_excess,
 };
 use crate::time::SimMonth;
 use crate::units::{MegawattHours, Megawatts, Money, Ratio};
@@ -91,7 +91,8 @@ impl GameSession {
     ///    reported to the regulator. Cities newly energised are reported.
     /// 3. One month of rate-base depreciation, added to the year's total.
     /// 4. The regulator tallies the month and judges its reliability; a
-    ///    revoked licence ends the game.
+    ///    revoked licence ends the game. A month's out-of-band share is judged
+    ///    with its unserved energy (spec §14.4).
     /// 5. The company's reliability window and satisfaction move.
     /// 6. In December, the reserve review and the annual rate review.
     /// 7. Three consecutive negative closes end the game in bankruptcy.
@@ -120,10 +121,14 @@ impl GameSession {
         let params = region.regulator();
         self.regulator
             .record_month(demand, served, totals.operating_cost(), peak);
-        events.extend(
-            self.regulator
-                .assess_month_reliability(demand, unserved, params),
-        );
+        let out_of_band = acc.out_of_band_share();
+        let verdict = self
+            .regulator
+            .assess_month(month, demand, unserved, out_of_band, params);
+        let frequency_notice = verdict
+            .iter()
+            .any(|e| matches!(e, DomainEvent::FrequencyNoticeIssued { .. }));
+        events.extend(verdict);
         if self.regulator.licence() == Licence::Revoked {
             self.end_game(GameOverReason::LicenseRevoked);
         }
@@ -145,7 +150,7 @@ impl GameSession {
         }
 
         self.record_offline_months(&commissioned);
-        let report = self.build_report(month, days, totals, rate_review);
+        let report = self.build_report(month, days, totals, frequency_notice, rate_review);
         events.push(DomainEvent::MonthClosed(Box::new(report)));
         self.month_to_date.reset();
         self.day_ticks.clear();
@@ -336,6 +341,7 @@ impl GameSession {
         month: SimMonth,
         days: u32,
         totals: LedgerTotals,
+        frequency_notice: bool,
         rate_review: Option<RateReviewOutcome>,
     ) -> MonthlyReport {
         let acc = &self.month_to_date;
@@ -367,6 +373,7 @@ impl GameSession {
         }
         let demand = acc.demand() * weight;
         let served = acc.served() * weight;
+        let out_of_band = acc.out_of_band_share();
         MonthlyReport {
             month,
             days,
@@ -386,6 +393,9 @@ impl GameSession {
             peak_demand: acc.peak_demand(),
             reliability: share(served, demand),
             incidents: acc.incidents().to_vec(),
+            out_of_band_share: out_of_band,
+            frequency_failed: Regulator::fails_frequency(out_of_band, self.region.regulator()),
+            frequency_notice,
             rate_review,
         }
     }

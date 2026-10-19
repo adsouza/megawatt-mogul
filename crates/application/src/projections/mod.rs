@@ -126,6 +126,9 @@ pub(crate) mod test_support {
             peak_demand: Megawatts::new(peak_mw),
             reliability: Ratio::ONE,
             incidents: Vec::new(),
+            out_of_band_share: Ratio::ZERO,
+            frequency_failed: false,
+            frequency_notice: false,
             rate_review: None,
         }
     }

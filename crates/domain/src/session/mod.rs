@@ -216,7 +216,12 @@ impl GameSession {
             self.clock.tick(),
             &mut self.rng,
         );
-        self.month_to_date.add_tick(&summary, &events);
+        self.month_to_date.add_tick(
+            &summary,
+            &events,
+            self.power.deviation(),
+            self.region.regulator().frequency_band,
+        );
         self.month_to_date
             .observe_plants(self.power.plants().values());
         self.day_ticks.push(summary);

@@ -6,7 +6,9 @@ use crate::company::{AssetRef, LedgerEntry};
 use crate::grid::{FrequencyBand, TickSummary};
 use crate::ids::{CellCoord, CityId, LineId, PlantId};
 use crate::region::PlantKind;
+use crate::regulation::StrikeReason;
 use crate::session::{DayPhase, MonthlyReport};
+use crate::time::SimMonth;
 use crate::units::{Megawatts, Money, Price, Ratio};
 
 /// Something noteworthy that happened during a simulation step.
@@ -51,8 +53,11 @@ pub enum DomainEvent {
     /// A reserve review permanently wrote off `amount` of held book value
     /// still excess at its second consecutive review (non-cash).
     CapitalDisallowed { asset: AssetRef, amount: Money },
-    /// The company took a reliability strike; `strikes` is the new total.
-    StrikeIssued { strikes: u8 },
+    /// The company took a strike for `reason`; `strikes` is the new total.
+    StrikeIssued { strikes: u8, reason: StrikeReason },
+    /// A month failed only frequency performance and drew a formal notice
+    /// instead of a strike; `month` is the failing month.
+    FrequencyNoticeIssued { month: SimMonth },
     /// A strike lapsed after clean months; `strikes` is the new total.
     StrikeExpired { strikes: u8 },
     /// Too many strikes: the company lost its licence.

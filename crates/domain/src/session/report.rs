@@ -9,12 +9,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::events::DomainEvent;
 use crate::generation::{Plant, PlantStatus};
-use crate::grid::TickSummary;
+use crate::grid::{GridMode, TickSummary};
 use crate::ids::PlantId;
 use crate::region::PlantKind;
 use crate::regulation::RateReviewOutcome;
 use crate::time::SimMonth;
-use crate::units::{MegawattHours, Megawatts, Money, Price, Ratio};
+use crate::units::{Hertz, MegawattHours, Megawatts, Money, Price, Ratio};
 
 /// A protection action worth reporting to the player.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -77,6 +77,16 @@ pub struct MonthlyReport {
     pub peak_demand: Megawatts,
     pub reliability: Ratio,
     pub incidents: Vec<Incident>,
+    /// Share of the month's Normal-mode ticks whose frequency deviation
+    /// exceeded the regulator's band (blackout ticks are excluded).
+    pub out_of_band_share: Ratio,
+    /// Whether `out_of_band_share` exceeded the regulator's allowed share:
+    /// the month failed frequency performance (spec §14.4). Whether that
+    /// drew a notice or a strike is told by `frequency_notice` and the
+    /// `StrikeIssued` event.
+    pub frequency_failed: bool,
+    /// Whether the month drew a formal frequency notice instead of a strike.
+    pub frequency_notice: bool,
     /// The annual rate review, in December only.
     pub rate_review: Option<RateReviewOutcome>,
 }
@@ -104,6 +114,10 @@ pub struct MonthAccumulator {
     imbalance: MegawattHours,
     peak_demand: Megawatts,
     incidents: Vec<Incident>,
+    /// Ticks of the day spent in Normal grid mode.
+    normal_ticks: u32,
+    /// Normal-mode ticks whose deviation exceeded the frequency band.
+    out_of_band_ticks: u32,
 }
 
 impl Default for MonthAccumulator {
@@ -120,6 +134,8 @@ impl Default for MonthAccumulator {
             imbalance: MegawattHours::ZERO,
             peak_demand: Megawatts::ZERO,
             incidents: Vec::new(),
+            normal_ticks: 0,
+            out_of_band_ticks: 0,
         }
     }
 }
@@ -127,7 +143,18 @@ impl Default for MonthAccumulator {
 impl MonthAccumulator {
     /// Adds one tick: its energies (one minute of each power), the peak, the
     /// starts and incidents among `events`, and which plants produced.
-    pub fn add_tick(&mut self, summary: &TickSummary, events: &[DomainEvent]) {
+    ///
+    /// `deviation` is the tick's frequency deviation from nominal. A Normal
+    /// mode tick counts as out of band when `|deviation| > band`; blackout
+    /// ticks are in neither count (frequency is held at nominal in a
+    /// blackout, which unserved energy already penalises).
+    pub fn add_tick(
+        &mut self,
+        summary: &TickSummary,
+        events: &[DomainEvent],
+        deviation: Hertz,
+        band: Hertz,
+    ) {
         let minute = |mw: Megawatts| mw.energy_over_ticks(1);
         for (plant, output) in &summary.by_plant {
             *self.energy.entry(*plant).or_insert(MegawattHours::ZERO) += minute(*output);
@@ -141,6 +168,12 @@ impl MonthAccumulator {
         self.curtailed += minute(summary.curtailed);
         self.imbalance += minute(summary.imbalance);
         self.peak_demand = self.peak_demand.max(summary.demand);
+        if summary.mode == GridMode::Normal {
+            self.normal_ticks += 1;
+            if deviation.value().abs() > band.value() {
+                self.out_of_band_ticks += 1;
+            }
+        }
         self.add_events(summary.tick, events);
     }
 
@@ -239,13 +272,32 @@ impl MonthAccumulator {
     pub fn incidents(&self) -> &[Incident] {
         &self.incidents
     }
+
+    pub fn normal_ticks(&self) -> u32 {
+        self.normal_ticks
+    }
+
+    pub fn out_of_band_ticks(&self) -> u32 {
+        self.out_of_band_ticks
+    }
+
+    /// Out-of-band ticks over Normal-mode ticks; zero when there were none.
+    pub fn out_of_band_share(&self) -> Ratio {
+        if self.normal_ticks == 0 {
+            return Ratio::ZERO;
+        }
+        let share = f64::from(self.out_of_band_ticks) / f64::from(self.normal_ticks);
+        Ratio::new(share).unwrap_or(Ratio::ZERO)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::grid::GridMode;
-    use crate::units::Hertz;
+
+    fn band() -> Hertz {
+        Hertz::new(0.2)
+    }
 
     fn summary(tick: u32, demand: f64, served: f64, by_plant: &[(u32, f64)]) -> TickSummary {
         let by_plant: BTreeMap<PlantId, Megawatts> = by_plant
@@ -272,7 +324,12 @@ mod tests {
     #[test]
     fn add_tick_accumulates_minutes_peak_starts_and_incidents() {
         let mut acc = MonthAccumulator::default();
-        acc.add_tick(&summary(0, 120.0, 120.0, &[(1, 60.0), (2, 0.0)]), &[]);
+        acc.add_tick(
+            &summary(0, 120.0, 120.0, &[(1, 60.0), (2, 0.0)]),
+            &[],
+            Hertz::ZERO,
+            band(),
+        );
         let events = [
             DomainEvent::PlantStarting { plant: PlantId(2) },
             DomainEvent::LoadShed {
@@ -280,7 +337,12 @@ mod tests {
             },
             DomainEvent::Blackout,
         ];
-        acc.add_tick(&summary(1, 180.0, 120.0, &[(1, 60.0), (2, 30.0)]), &events);
+        acc.add_tick(
+            &summary(1, 180.0, 120.0, &[(1, 60.0), (2, 30.0)]),
+            &events,
+            Hertz::ZERO,
+            band(),
+        );
         assert_eq!(acc.demand(), MegawattHours::new(5.0));
         assert_eq!(acc.served(), MegawattHours::new(4.0));
         assert_eq!(acc.unserved(), MegawattHours::new(1.0));
@@ -310,10 +372,48 @@ mod tests {
         assert_eq!(acc, MonthAccumulator::default());
     }
 
+    /// A tick in `mode` whose frequency is `deviation` away from 60 Hz.
+    fn ticks_in(acc: &mut MonthAccumulator, mode: GridMode, deviations: &[f64]) {
+        for (tick, deviation) in deviations.iter().enumerate() {
+            let mut s = summary(tick as u32, 10.0, 10.0, &[]);
+            s.mode = mode;
+            acc.add_tick(&s, &[], Hertz::new(*deviation), band());
+        }
+    }
+
+    #[test]
+    fn out_of_band_counts_normal_mode_ticks_only() {
+        let mut acc = MonthAccumulator::default();
+        assert_eq!(acc.out_of_band_share(), Ratio::ZERO);
+        // Normal: inside, inside, above, below (|dev| > 0.2): 2 of 4.
+        ticks_in(&mut acc, GridMode::Normal, &[0.0, 0.2, 0.21, -0.5]);
+        // Blackout ticks are excluded from both counts, even if deviating.
+        ticks_in(&mut acc, GridMode::Blackout, &[5.0, -5.0, 0.0]);
+        assert_eq!(acc.normal_ticks(), 4);
+        assert_eq!(acc.out_of_band_ticks(), 2);
+        assert_eq!(acc.out_of_band_share(), Ratio::new(0.5).unwrap());
+        acc.reset();
+        assert_eq!(acc.normal_ticks(), 0);
+        assert_eq!(acc.out_of_band_ticks(), 0);
+    }
+
+    #[test]
+    fn out_of_band_share_is_zero_without_normal_ticks() {
+        let mut acc = MonthAccumulator::default();
+        ticks_in(&mut acc, GridMode::Blackout, &[3.0, 3.0]);
+        assert_eq!(acc.normal_ticks(), 0);
+        assert_eq!(acc.out_of_band_share(), Ratio::ZERO);
+    }
+
     #[test]
     fn zero_output_alone_is_not_operation() {
         let mut acc = MonthAccumulator::default();
-        acc.add_tick(&summary(0, 10.0, 10.0, &[(3, 0.0)]), &[]);
+        acc.add_tick(
+            &summary(0, 10.0, 10.0, &[(3, 0.0)]),
+            &[],
+            Hertz::ZERO,
+            band(),
+        );
         assert!(!acc.operated(PlantId(3)));
         assert_eq!(acc.plant_energy()[&PlantId(3)], MegawattHours::ZERO);
     }
@@ -328,6 +428,8 @@ mod tests {
                 DomainEvent::OverFrequencyTrip { plant },
                 DomainEvent::PlantTripped { plant },
             ],
+            Hertz::ZERO,
+            band(),
         );
         assert_eq!(
             acc.incidents(),

@@ -145,6 +145,8 @@ impl Projection for MilestoneProjection {
 mod tests {
     use super::*;
     use crate::projections::test_support::{report, session};
+    use domain::regulation::StrikeReason;
+    use domain::time::SimMonth;
 
     fn close(projection: &mut MilestoneProjection, month: u8, peak_mw: f64) {
         let event = DomainEvent::MonthClosed(Box::new(report(2027, month, peak_mw)));
@@ -152,7 +154,16 @@ mod tests {
     }
 
     fn strike(projection: &mut MilestoneProjection) {
-        projection.apply(&DomainEvent::StrikeIssued { strikes: 1 }, &session());
+        let event = DomainEvent::StrikeIssued {
+            strikes: 1,
+            reason: StrikeReason::FrequencyPerformance,
+        };
+        projection.apply(&event, &session());
+    }
+
+    fn notice(projection: &mut MilestoneProjection, month: u8) {
+        let month = SimMonth::new(2027, month).unwrap();
+        projection.apply(&DomainEvent::FrequencyNoticeIssued { month }, &session());
     }
 
     const FULL_SEASON: MilestoneKind = MilestoneKind::FullSeasonWithoutStrike;
@@ -190,6 +201,34 @@ mod tests {
         close(&mut struck, 4, 100.0);
         close(&mut struck, 5, 100.0);
         assert_eq!(struck.reached(), []);
+    }
+
+    #[test]
+    fn full_season_milestone_ignores_notices() {
+        let mut milestones = MilestoneProjection::new(&session());
+        close(&mut milestones, 3, 100.0);
+        notice(&mut milestones, 4);
+        close(&mut milestones, 4, 100.0);
+        close(&mut milestones, 5, 100.0);
+        assert_eq!(milestones.reached(), [FULL_SEASON]);
+    }
+
+    #[test]
+    fn any_strike_reason_taints_the_month() {
+        for reason in [
+            StrikeReason::UnservedEnergy,
+            StrikeReason::FrequencyPerformance,
+        ] {
+            let mut milestones = MilestoneProjection::new(&session());
+            close(&mut milestones, 3, 100.0);
+            milestones.apply(
+                &DomainEvent::StrikeIssued { strikes: 1, reason },
+                &session(),
+            );
+            close(&mut milestones, 4, 100.0);
+            close(&mut milestones, 5, 100.0);
+            assert_eq!(milestones.reached(), []);
+        }
     }
 
     #[test]
