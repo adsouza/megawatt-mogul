@@ -887,16 +887,24 @@ The teaching goal is to make the trap visible before the player falls into it.
 - **New `FrequencyParams` fields** (region data): `trip_above: Hertz` (default +1.5 Hz) and
   `trip_after_ticks: u32` (default 5). Validation requires `trip_above > curtail_above` and
   `trip_after_ticks ≥ 1`.
-- **`ProtectionState` gains `over_ticks: u32`.** In Normal mode, each tick with
-  `deviation > trip_above` increments it, and any tick at or below `trip_above` resets it to 0.
+- **`ProtectionState` gains `over_ticks: u32` and `over_armed: bool`.** In Normal mode:
+  - when not armed, each tick with `deviation > trip_above` increments `over_ticks`, and a tick at or
+    below `trip_above` resets it to 0;
+  - once `over_ticks` first reaches `trip_after_ticks`, protection becomes **armed**;
+  - while armed, `over_ticks` counts every tick with `deviation > curtail_above`;
+  - protection disarms, resetting both fields, as soon as `deviation ≤ curtail_above`.
+
+  *(Builder's call: with the default k_inertia ÷ k_damping of 25 Hz per unit of surplus, a 2–6%
+  surplus would otherwise settle between +0.5 and +1.5 Hz and never trip, contradicting §14.6.)*
 - **When `over_ticks` reaches `trip_after_ticks`,** protection returns `OverFrequencyTrip`.
   `PowerSystem` then trips **one** plant:
   - the connected, online, dispatchable plant with output > 0 and the **highest marginal cost**
     (ties broken by plant id);
   - solar is never tripped, because curtailment covers it;
   - the trip uses `Plant::trip()` plus `suppress_commitment_for_day()`, exactly as after a blackout;
-  - `over_ticks` resets to 0, so at most one plant trips per `trip_after_ticks` window and the fleet
-    sheds generation gradually.
+  - `over_ticks` resets to 0 after each trip, so at most one plant trips per `trip_after_ticks`
+    window and the fleet sheds generation gradually until frequency is back at or below
+    `curtail_above`.
 - **The existing response comes first.** Curtailment at +0.5 Hz (solar first, then AGC to minimum)
   still runs before any trip, and nothing changes below `trip_above`.
 - **New event `OverFrequencyTrip { plant }`** (alongside the usual `PlantTripped`), and a new
@@ -948,6 +956,10 @@ model.)*
 
 ### 14.5 Data and versioning
 
+- **Delivery.** A1, A2 and A3 are implemented together as Plan 1a, before Plan 2, with a single
+  `SIM_RULES_VERSION` bump to 2. Snapshots are regenerated once, after all three have landed, and
+  the diffs are reviewed together.
+
 - Both shipped regions and the test fixture gain the four new fields with the defaults above.
 - Outcomes change: overgeneration now trips plants and can earn strikes. This lands under the same
   `SIM_RULES_VERSION` bump to 2 as A1 and A2, with all snapshot diffs reviewed together. The
@@ -956,9 +968,12 @@ model.)*
 
 ### 14.6 Properties (tests)
 
-- **Trips are sustained and gradual.** No trip while `deviation ≤ trip_above`. After exactly
-  `trip_after_ticks` consecutive ticks above it, one trip, then the counter resets. At most one plant
-  per window.
+- **Trips are sustained and gradual.**
+  - Protection never arms while `deviation ≤ trip_above`.
+  - It arms after exactly `trip_after_ticks` consecutive ticks above `trip_above`.
+  - While armed, it trips one plant per `trip_after_ticks` window while `deviation > curtail_above`.
+  - It disarms at or below `curtail_above`.
+  - At most one plant trips per window.
 - **Trip order.** Always the highest-marginal-cost connected producing dispatchable plant (ties by
   id). Never solar.
 - **The surplus clears.** In the overbuild fixture with no player action, frequency returns below
