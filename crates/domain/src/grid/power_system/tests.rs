@@ -1443,12 +1443,15 @@ fn evening_ccgt_trip(seed: u64, trip_at: u32) -> EmergencyRun {
 
 #[test]
 fn the_cap_returns_without_re_shedding_after_an_emergency() {
-    // (seed, trip instant, reference shed). The reference is the final
-    // review's counterfactual, which limited every hydro ramp-down to the
-    // others' one-tick headroom net of the shortfall, rounded up to the next
-    // MW·tick. Before the recovery phase these cases shed in 5, 14 and 8
-    // episodes, and seed 7 blacked out.
-    let cases = [(2, 1000, 4_414.0), (11, 990, 5_717.0), (7, 1150, 3_256.0)];
+    // (seed, trip instant, reference shed). The reference is this rule's own
+    // shed under staged under-frequency shedding (spec §15.4), rounded up to
+    // the next MW·tick: each trip's dip crosses two or three stages, which
+    // shed together. Under one step per tick the Plan 1a final review's
+    // counterfactual, which limited every hydro ramp-down to the others'
+    // one-tick headroom net of the shortfall, shed 4,414, 5,717 and 3,256,
+    // and this rule matched or beat it. Before the recovery phase these cases
+    // shed in 5, 14 and 8 episodes, and seed 7 blacked out.
+    let cases = [(2, 1000, 4_539.0), (11, 990, 8_255.0), (7, 1150, 3_787.0)];
     for (seed, trip_at, reference) in cases {
         let run = evening_ccgt_trip(seed, trip_at);
         assert_eq!(run.episodes, 1, "seed {seed}: {run:?}");
@@ -3003,5 +3006,42 @@ fn overbuild_surplus_fully_clears_when_the_fleet_can_cover_each_trip() {
     let bound = n * (surplus_plants + 2);
     for (t, dev) in devs.iter().enumerate().skip(bound as usize) {
         assert!(*dev <= p.curtail_above, "tick {t}: {dev:?}");
+    }
+}
+
+// ---- Staged under-frequency shedding (spec §15.4) ----
+
+/// The start fleet on auto-follow at noon in April loses its CCGT, about a
+/// quarter of the served load, in one instant, as a trip does (the plant
+/// trips and its commitment is suppressed for the day). The peaker can pick
+/// up only 160 MW of the 220 MW lost, so load stays shed for the rest of the
+/// hour, but the staged relays arrest the dip: one 5% step per tick would
+/// black out on the second tick.
+#[test]
+fn a_sudden_quarter_of_supply_lost_does_not_black_out() {
+    const CCGT: PlantId = PlantId(2);
+    let region = tiny_region();
+    let blackout_below = region.frequency().blackout_below;
+    for seed in [1, 2, 7, 11] {
+        let mut sys = auto_follow_fleet(&region);
+        let mut rng = SimRng::from_seed(seed);
+        sys.begin_day(&region, april(), &mut rng);
+        let ticks = run_ticks(&mut sys, &region, 0..720, &mut rng);
+        let (noon, _) = ticks.last().unwrap();
+        assert!(ticks.iter().all(|(s, _)| s.shed == Ratio::ZERO));
+        let lost = noon.by_plant[&CCGT] / noon.served;
+        assert!((0.23..0.29).contains(&lost), "seed {seed}: lost {lost}");
+
+        assert!(!sys.trip_plant(CCGT).is_empty());
+        sys.plant_mut(CCGT).unwrap().suppress_commitment_for_day();
+        let mut shed_ticks = 0;
+        for t in 720..780 {
+            let (s, _) = sys.tick(&region, april(), t, &mut rng);
+            assert_eq!(s.mode, GridMode::Normal, "seed {seed}, tick {t}");
+            assert!(sys.deviation() > blackout_below, "seed {seed}, tick {t}");
+            assert_eq!(s.by_plant[&CCGT], Megawatts::ZERO, "seed {seed}, tick {t}");
+            shed_ticks += u32::from(s.shed > Ratio::ZERO);
+        }
+        assert!(shed_ticks > 0, "seed {seed}");
     }
 }

@@ -29,6 +29,10 @@ pub struct ProtectionState {
     pub over_ticks: u32,
     /// Whether over-frequency protection is armed (see [`evaluate`]).
     pub over_armed: bool,
+    /// Under-frequency stages fired in the current event (spec §15.4): stages
+    /// `0..stages_fired` have dropped their block and stay spent until the
+    /// event ends (see [`evaluate`]).
+    pub stages_fired: u8,
 }
 
 impl Default for ProtectionState {
@@ -39,6 +43,7 @@ impl Default for ProtectionState {
             shed_ticks: 0,
             over_ticks: 0,
             over_armed: false,
+            stages_fired: 0,
         }
     }
 }
@@ -130,12 +135,59 @@ fn track_over_frequency(
     state.over_armed && state.over_ticks >= p.trip_after_ticks
 }
 
+/// How many under-frequency stages `dev` is below (spec §15.4), saturating at
+/// `u8::MAX`. Stage `k` has threshold `shed_below − k × shed_stage_spacing`
+/// and is crossed only strictly below it, so exactly at a threshold that stage
+/// is not crossed. The count starts from `ceil((shed_below − dev) / spacing)`,
+/// which is `1 + floor(...)` off the thresholds, and is then corrected against
+/// the thresholds themselves so that float rounding in the division cannot
+/// move a boundary. Only called with `dev < shed_below`, so it is at least 1.
+fn stages_crossed(dev: Hertz, p: &FrequencyParams) -> u8 {
+    let (below, spacing, dev) = (
+        p.shed_below.value(),
+        p.shed_stage_spacing.value(),
+        dev.value(),
+    );
+    let max = f64::from(u8::MAX);
+    let is_crossed = |k: f64| dev < below - k * spacing;
+    let mut count = ((below - dev) / spacing).ceil().clamp(1.0, max);
+    while count > 1.0 && !is_crossed(count - 1.0) {
+        count -= 1.0;
+    }
+    while count < max && is_crossed(count) {
+        count += 1.0;
+    }
+    // `count` is a whole number in 1..=255, so the cast is exact.
+    count as u8
+}
+
 /// Advance protection by one tick given the current deviation, `supply`
 /// available and full (unshed) `demand`.
 ///
 /// In Blackout the deviation is held at zero by the caller, so it is ignored:
 /// load comes back one step at a time while supply covers the next step, and
 /// the over-frequency counter is left alone.
+///
+/// **Staged under-frequency shedding (spec §15.4).** Below `shed_below`,
+/// stage `k` sits at `shed_below − k × shed_stage_spacing` (see
+/// [`stages_crossed`]). A stage drops one `shed_step` block the first tick
+/// the deviation is below it, and stays spent for the rest of the event, so
+/// several stages crossed in one tick fire together. A shedding tick that
+/// crosses no new stage still sheds one `shed_step` (the slow stage). The
+/// event ends, re-arming every stage, wherever `shed_ticks` resets: at or
+/// above `−normal_band` (restoring, or in band with nothing shed) and when a
+/// black start completes. The blackout conditions and the branch order are
+/// unchanged, so a tick that fires stages can still black out.
+///
+/// *Measured bounds (builder's call, spec §15.4).* On a single bus with the
+/// fixture's frequency data (0.2 Hz stages), step deficits `d` from 0.1% to
+/// 29.9% of demand and AGC ramps from 0 to 2% of demand per tick never black
+/// out, never fall to `blackout_below`, peak at a shed of at most
+/// `d + 3 × shed_step` (at most `d` + 0.131 measured) and rebound to at most
+/// +0.55 Hz (+0.59 Hz on a 0.01% × 0.05% grid), below `trip_above`. The
+/// minimum deviation is −1.49 Hz, the first tick of a 29.9% deficit. The
+/// property test
+/// `staged_shedding_arrests_any_step_deficit` checks these bounds.
 ///
 /// In Normal mode the over-frequency counter advances first (see
 /// [`track_over_frequency`]), with a physical surplus meaning `supply`
@@ -163,6 +215,7 @@ pub fn evaluate(
             if state.shed == Ratio::ZERO {
                 state.mode = GridMode::Normal;
                 state.shed_ticks = 0;
+                state.stages_fired = 0;
                 return ProtectionOutcome::BlackoutRestored;
             }
         }
@@ -173,7 +226,10 @@ pub fn evaluate(
     let trip_due = track_over_frequency(state, dev, surplus, p);
 
     if dev < p.shed_below {
-        state.shed = snapped(shed + step);
+        let crossed = stages_crossed(dev, p);
+        let new = crossed.saturating_sub(state.stages_fired);
+        state.stages_fired = state.stages_fired.max(crossed);
+        state.shed = snapped(shed + step * f64::from(new.max(1)));
         state.shed_ticks += 1;
         if dev < p.blackout_below || state.shed_ticks >= p.blackout_after_shed_ticks {
             state.mode = GridMode::Blackout;
@@ -184,6 +240,7 @@ pub fn evaluate(
     } else if dev >= -p.normal_band && shed > 0.0 {
         state.shed = snapped(shed - step);
         state.shed_ticks = 0;
+        state.stages_fired = 0;
         ProtectionOutcome::Restored
     } else if dev > p.curtail_above {
         if trip_due {
@@ -195,6 +252,7 @@ pub fn evaluate(
     } else {
         if dev >= -p.normal_band {
             state.shed_ticks = 0;
+            state.stages_fired = 0;
         }
         ProtectionOutcome::None
     }
@@ -203,6 +261,7 @@ pub fn evaluate(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::grid::frequency::next_deviation;
     use crate::region::fixtures::tiny_region;
     use proptest::prelude::*;
 
@@ -606,6 +665,244 @@ mod tests {
                 last_trip = Some(i);
             }
             prop_assert!(trips <= ticks.len() / n);
+        }
+    }
+
+    // ---- Staged under-frequency shedding (spec §15.4, §15.8) ----
+
+    #[test]
+    fn stages_crossed_in_one_tick_fire_together() {
+        // Stages 0..=4 sit at -0.5, -0.7, -0.9, -1.1 and -1.3 Hz.
+        let mut s = ProtectionState::default();
+        assert_eq!(eval(&mut s, -1.45, 100.0, 100.0), ProtectionOutcome::Shed);
+        assert!((s.shed.value() - 0.25).abs() < 1e-12, "{s:?}");
+        assert_eq!(s.stages_fired, 5);
+        assert_eq!(s.shed_ticks, 1);
+    }
+
+    #[test]
+    fn a_stage_fires_once_per_event() {
+        let mut s = ProtectionState::default();
+        // -0.75 Hz is below stages 0 and 1: both fire on the first tick.
+        assert_eq!(eval(&mut s, -0.75, 100.0, 100.0), ProtectionOutcome::Shed);
+        assert!((s.shed.value() - 0.10).abs() < 1e-12, "{s:?}");
+        assert_eq!(s.stages_fired, 2);
+        // Spent, they do not fire again: only the slow stage sheds.
+        for expected in [0.15, 0.20] {
+            assert_eq!(eval(&mut s, -0.75, 100.0, 100.0), ProtectionOutcome::Shed);
+            assert!((s.shed.value() - expected).abs() < 1e-12, "{s:?}");
+            assert_eq!(s.stages_fired, 2);
+        }
+        // A deeper dip fires only the stages not yet spent (2 and 3).
+        assert_eq!(eval(&mut s, -1.15, 100.0, 100.0), ProtectionOutcome::Shed);
+        assert!((s.shed.value() - 0.30).abs() < 1e-12, "{s:?}");
+        assert_eq!(s.stages_fired, 4);
+        // Recovering part way neither re-arms nor fires anything.
+        assert_eq!(eval(&mut s, -0.6, 100.0, 100.0), ProtectionOutcome::Shed);
+        assert!((s.shed.value() - 0.35).abs() < 1e-12, "{s:?}");
+        assert_eq!(s.stages_fired, 4);
+    }
+
+    #[test]
+    fn stages_re_arm_at_normal_band() {
+        let band = params().normal_band.value();
+        let mut s = ProtectionState::default();
+        eval(&mut s, -0.75, 100.0, 100.0);
+        assert_eq!(s.stages_fired, 2);
+        // Low but not back in the normal band: the event goes on.
+        assert_eq!(eval(&mut s, -0.3, 100.0, 100.0), ProtectionOutcome::None);
+        assert_eq!(s.stages_fired, 2);
+        assert_eq!(
+            eval(&mut s, -band - 1e-6, 100.0, 100.0),
+            ProtectionOutcome::None
+        );
+        assert_eq!(s.stages_fired, 2);
+        // Back at the bottom of the normal band: restoring re-arms every stage.
+        assert_eq!(
+            eval(&mut s, -band, 100.0, 100.0),
+            ProtectionOutcome::Restored
+        );
+        assert_eq!(s.stages_fired, 0);
+        assert!((s.shed.value() - 0.05).abs() < 1e-12, "{s:?}");
+        // The next dip fires stages 0 and 1 again, not just the slow stage.
+        assert_eq!(eval(&mut s, -0.75, 100.0, 100.0), ProtectionOutcome::Shed);
+        assert!((s.shed.value() - 0.15).abs() < 1e-12, "{s:?}");
+        assert_eq!(s.stages_fired, 2);
+        // The in-band branch with nothing shed re-arms too.
+        let mut s = ProtectionState {
+            stages_fired: 3,
+            shed_ticks: 4,
+            ..ProtectionState::default()
+        };
+        assert_eq!(eval(&mut s, 0.0, 100.0, 100.0), ProtectionOutcome::None);
+        assert_eq!((s.stages_fired, s.shed_ticks), (0, 0));
+    }
+
+    #[test]
+    fn black_start_re_arms_every_stage() {
+        let mut s = ProtectionState::default();
+        assert_eq!(
+            eval(&mut s, -1.6, 100.0, 100.0),
+            ProtectionOutcome::Blackout
+        );
+        assert_eq!(s.stages_fired, 6);
+        while eval(&mut s, 0.0, 100.0, 100.0) != ProtectionOutcome::BlackoutRestored {
+            assert_eq!(s.stages_fired, 6, "spent until the black start completes");
+        }
+        assert_eq!(s.stages_fired, 0);
+    }
+
+    #[test]
+    fn stage_boundary_is_exclusive() {
+        let p = params();
+        let stage_1 = p.shed_below.value() - p.shed_stage_spacing.value();
+        // Exactly at stage 1's threshold: only stage 0 is crossed.
+        let mut s = ProtectionState::default();
+        assert_eq!(eval(&mut s, stage_1, 100.0, 100.0), ProtectionOutcome::Shed);
+        assert_eq!(s.stages_fired, 1);
+        assert!((s.shed.value() - 0.05).abs() < 1e-12, "{s:?}");
+        // Just below it: stage 1 fires too.
+        let mut s = ProtectionState::default();
+        assert_eq!(
+            eval(&mut s, stage_1 - 1e-9, 100.0, 100.0),
+            ProtectionOutcome::Shed
+        );
+        assert_eq!(s.stages_fired, 2);
+        assert!((s.shed.value() - 0.10).abs() < 1e-12, "{s:?}");
+        // Every boundary down to blackout_below, where `(shed_below − dev) /
+        // spacing` rounds to either side of the whole number k.
+        for k in 1..=5u8 {
+            let at = p.shed_below.value() - f64::from(k) * p.shed_stage_spacing.value();
+            let mut s = ProtectionState::default();
+            assert_eq!(eval(&mut s, at, 100.0, 100.0), ProtectionOutcome::Shed);
+            assert_eq!(s.stages_fired, k, "exactly at stage {k}");
+        }
+    }
+
+    #[test]
+    fn stages_beyond_u8_saturate() {
+        let p = FrequencyParams {
+            shed_stage_spacing: Hertz::new(0.001),
+            blackout_below: Hertz::new(-1.0e6),
+            ..params()
+        };
+        let mut s = ProtectionState::default();
+        let outcome = evaluate(
+            &mut s,
+            Hertz::new(-10.0),
+            &p,
+            Megawatts::new(100.0),
+            Megawatts::new(100.0),
+        );
+        assert_eq!(outcome, ProtectionOutcome::Shed);
+        assert_eq!(s.stages_fired, u8::MAX);
+        assert_eq!(s.shed, Ratio::ONE);
+    }
+
+    /// What [`step_deficit_run`] saw.
+    #[derive(Debug, Clone, Copy)]
+    struct StepRun {
+        blackout: bool,
+        min_dev: f64,
+        max_dev: f64,
+        peak_shed: f64,
+    }
+
+    /// A step deficit `d` on a single bus (spec §15.8), as in the reference
+    /// model: demand 1, supply `1 − d`, and supply following the served load
+    /// by at most `ramp` per tick without ever exceeding `1 − d`. Each of 240
+    /// ticks applies [`next_deviation`], then [`evaluate`], then the ramp, and
+    /// the run stops at a blackout. `min_dev` and `max_dev` start at 0.
+    fn step_deficit_run(d: f64, ramp: f64, p: &FrequencyParams) -> StepRun {
+        let (demand, cap) = (1.0, 1.0 - d);
+        let mut supply = cap;
+        let mut dev = Hertz::ZERO;
+        let mut s = ProtectionState::default();
+        let mut run = StepRun {
+            blackout: false,
+            min_dev: 0.0,
+            max_dev: 0.0,
+            peak_shed: 0.0,
+        };
+        for _ in 0..240 {
+            let served = demand * (1.0 - s.shed.value());
+            dev = next_deviation(
+                dev,
+                Megawatts::new(supply - served),
+                Megawatts::new(demand),
+                p,
+            );
+            run.min_dev = run.min_dev.min(dev.value());
+            run.max_dev = run.max_dev.max(dev.value());
+            let outcome = evaluate(
+                &mut s,
+                dev,
+                p,
+                Megawatts::new(supply),
+                Megawatts::new(demand),
+            );
+            if outcome == ProtectionOutcome::Blackout {
+                run.blackout = true;
+                break;
+            }
+            run.peak_shed = run.peak_shed.max(s.shed.value());
+            let served = demand * (1.0 - s.shed.value());
+            supply = (supply + (served - supply).clamp(-ramp, ramp)).min(cap);
+        }
+        run
+    }
+
+    proptest! {
+        /// Spec §15.8 "Staged shedding arrests a step deficit", for every
+        /// deficit below the one-tick blackout line (k_inertia × d < 1.5 Hz)
+        /// and AGC ramps from 0 to 2% of demand per tick.
+        #[test]
+        fn staged_shedding_arrests_any_step_deficit(d in 0.001f64..0.299, ramp in 0.0f64..0.02) {
+            let p = params();
+            let run = step_deficit_run(d, ramp, &p);
+            prop_assert!(!run.blackout, "{run:?}");
+            prop_assert!(run.min_dev > p.blackout_below.value(), "{run:?}");
+            prop_assert!(run.peak_shed <= d + 3.0 * p.shed_step.value() + 1e-9, "{run:?}");
+            prop_assert!(run.max_dev < p.trip_above.value(), "{run:?}");
+        }
+
+        /// Spec §15.8 "Stages fire once": a stage sheds at most once per
+        /// event, and every stage re-arms only at or above `-normal_band`.
+        /// The oracle counts crossed stages by brute force.
+        #[test]
+        fn stages_fire_once_per_event(devs in prop::collection::vec(-1.49f64..0.3, 1..200)) {
+            let p = params();
+            let (below, w, step) = (
+                p.shed_below.value(),
+                p.shed_stage_spacing.value(),
+                p.shed_step.value(),
+            );
+            let crossed = |dev: f64| {
+                (0..=u8::MAX).filter(|&k| dev < below - f64::from(k) * w).count() as u8
+            };
+            let mut s = ProtectionState::default();
+            let mut deepest = 0u8;
+            for dev in devs {
+                let before = s;
+                let outcome = eval(&mut s, dev, 100.0, 100.0);
+                if s.mode == GridMode::Blackout {
+                    break;
+                }
+                if dev >= -p.normal_band.value() {
+                    deepest = 0;
+                    prop_assert_eq!(s.stages_fired, 0);
+                    continue;
+                }
+                prop_assert!(s.stages_fired >= before.stages_fired, "re-armed below the band");
+                if dev < below {
+                    deepest = deepest.max(crossed(dev));
+                    let new = deepest - before.stages_fired;
+                    let expected = (before.shed.value() + step * f64::from(new.max(1))).min(1.0);
+                    prop_assert_eq!(outcome, ProtectionOutcome::Shed);
+                    prop_assert!((s.shed.value() - expected).abs() < 1e-9, "{before:?} -> {s:?}");
+                }
+                prop_assert_eq!(s.stages_fired, deepest);
+            }
         }
     }
 
