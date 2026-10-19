@@ -138,27 +138,18 @@ fn track_over_frequency(
 /// How many under-frequency stages `dev` is below (spec §15.4), saturating at
 /// `u8::MAX`. Stage `k` has threshold `shed_below − k × shed_stage_spacing`
 /// and is crossed only strictly below it, so exactly at a threshold that stage
-/// is not crossed. The count starts from `ceil((shed_below − dev) / spacing)`,
-/// which is `1 + floor(...)` off the thresholds, and is then corrected against
-/// the thresholds themselves so that float rounding in the division cannot
-/// move a boundary. Only called with `dev < shed_below`, so it is at least 1.
+/// is not crossed. The thresholds fall as `k` rises, so the count is the first
+/// stage not crossed. Each stage is compared with its own threshold, so no
+/// division can round a boundary to the wrong side. Only called with
+/// `dev < shed_below`, so stage 0 is always crossed and the count is at least 1.
 fn stages_crossed(dev: Hertz, p: &FrequencyParams) -> u8 {
     let (below, spacing, dev) = (
         p.shed_below.value(),
         p.shed_stage_spacing.value(),
         dev.value(),
     );
-    let max = f64::from(u8::MAX);
-    let is_crossed = |k: f64| dev < below - k * spacing;
-    let mut count = ((below - dev) / spacing).ceil().clamp(1.0, max);
-    while count > 1.0 && !is_crossed(count - 1.0) {
-        count -= 1.0;
-    }
-    while count < max && is_crossed(count) {
-        count += 1.0;
-    }
-    // `count` is a whole number in 1..=255, so the cast is exact.
-    count as u8
+    let is_crossed = |k: u8| dev < below - f64::from(k) * spacing;
+    (1..u8::MAX).find(|&k| !is_crossed(k)).unwrap_or(u8::MAX)
 }
 
 /// The shed after the next black-start restoration step: one `shed_step`

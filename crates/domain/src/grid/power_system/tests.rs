@@ -3314,6 +3314,33 @@ fn the_day_starts_at_hour_zeros_outage() {
 }
 
 #[test]
+fn the_boundary_is_dispatched_against_the_load_hour_zeros_outage_leaves() {
+    // April with hour 1's shape raised to 0.90: hour 0 rises toward it, so
+    // its worse end is minute 59, not minute 0. With 3,000 MW of base load,
+    // D0 = 2,700 × 0.70 = 1,890 MW and D59 = 2,700 × (0.70 + 0.20 × 59/60)
+    // = 2,421 MW, against the 1,300 MW fleet: hour 0 orders 1 − 1,300 / D59
+    // = 0.463, which leaves D0 × 0.537 ≈ 1,015 MW at minute 0. The first
+    // boundary dispatch, for the full forecast, puts the whole fleet at
+    // capacity; the second must bring it down to the reduced load.
+    let region = region_with(|p| {
+        connect_city_3(p, 2_000.0);
+        p.demand.shoulder[1] = 0.90;
+    });
+    let mut sys = auto_follow_fleet(&region);
+    sys.begin_day(&region, april(), &mut SimRng::from_seed(3));
+    let forecast = |t| sys.connected_demand_forecast(&region, april(), t);
+    let target = 1.0 - 1300.0 / forecast(59).value();
+    assert!(
+        target > 1.0 - 1300.0 / forecast(0).value(),
+        "minute 59 binds"
+    );
+    assert!(near_share(sys.outage, target));
+    let load = forecast(0) * (1.0 - sys.outage.value());
+    assert!(load < Megawatts::new(1_100.0), "{load:?}");
+    assert!(close(supply(&sys), load), "{:?} vs {load:?}", supply(&sys));
+}
+
+#[test]
 fn a_noise_free_shortage_day_sheds_nothing_unplanned() {
     // January with cities 1–3 (1,300 MW of base load) against the 1,300 MW
     // start fleet: short from the steep morning ramp of hour 6 to the evening
@@ -3451,6 +3478,83 @@ fn cutting_outage_load_waits_for_ramp_down_room() {
     // A 40 MW deficit: 71 MW of room is more than a step, so the outage
     // rises the full step, to its target.
     assert_eq!(cut(560.0, served - 600.0), share(0.10));
+}
+
+/// `next_outage` from `outage` toward `target`, on an empty system.
+fn next_outage_from(outage: f64, target: f64, demand: f64, cover: f64, step: f64) -> Ratio {
+    let region = tiny_region();
+    let mut sys = system_with(&region, &[]);
+    sys.outage = share(outage);
+    sys.outage_target = share(target);
+    sys.next_outage(
+        share(step),
+        Megawatts::new(demand),
+        Megawatts::new(cover),
+        Megawatts::ZERO,
+    )
+}
+
+#[test]
+fn with_no_demand_the_outage_needs_no_cover() {
+    // Nothing to follow, so no cover is needed, even a negative one: a cut
+    // moves a full step, and a restore closes the gap at once.
+    for cover in [0.0, -10.0] {
+        assert!(near_share(
+            next_outage_from(0.5, 1.0, 0.0, cover, 0.05),
+            0.55
+        ));
+        assert_eq!(next_outage_from(0.5, 0.0, 0.0, cover, 0.05), Ratio::ZERO);
+    }
+}
+
+#[test]
+fn an_outage_that_closes_its_gap_lands_exactly_on_the_target() {
+    // 0.7 − (0.7 − 0.1) is 0.09999999999999998 in floats: the move snaps to
+    // the target itself, so the next tick sees no gap.
+    assert_ne!(0.7 - (0.7 - 0.1), 0.1);
+    let cover = 1_000.0;
+    assert_eq!(next_outage_from(0.7, 0.1, 1_000.0, cover, 1.0), share(0.1));
+    assert_eq!(next_outage_from(0.1, 0.7, 1_000.0, cover, 1.0), share(0.7));
+}
+
+#[test]
+fn restoring_outage_load_counts_curtailed_solar_as_cover() {
+    // 12:30 in April with coal alone on AGC, at its 600 MW capacity, so the
+    // fleet has no headroom, and 40 MW of solar withheld by curtailment. The
+    // outage is set so that the load it leaves equals the supply after the
+    // step. AGC's requirement is net of the withheld solar, which comes back
+    // as load returns, so the cover is 0 − (0 − 40) = 40 MW and the outage
+    // falls by 40 MW of demand.
+    let region = region_with(|p| {
+        noise_free(p);
+        connect_city_3(p, 300.0);
+    });
+    let mut defs = start_fleet(&region);
+    defs.push(connected(PlantKind::Solar, cell(5, 5)));
+    let mut sys = system_with(&region, &defs);
+    sys.begin_day(&region, april(), &mut SimRng::from_seed(1));
+    place(&mut sys, 1, 600.0, None);
+    for id in [2, 3] {
+        let p = sys.plant_mut(PlantId(id)).unwrap();
+        p.trip();
+        p.suppress_commitment_for_day();
+    }
+    sys.protection = ProtectionState::default();
+    sys.deviation = Hertz::ZERO;
+    sys.curtailment = Megawatts::new(40.0);
+    let (available, _, withheld) = sys.availability(&region, april(), 750);
+    assert_eq!(withheld, Megawatts::new(40.0));
+    let demand = sys.connected_demand_forecast(&region, april(), 750).value();
+    let outage = 1.0 - (600.0 + available[&PlantId(4)].value()) / demand;
+    sys.outage = share(outage);
+    sys.outage_target = share(outage - 0.05);
+    let (s, _) = sys.tick(&region, april(), 750, &mut SimRng::from_seed(1));
+    assert_eq!(s.shed, Ratio::ZERO);
+    assert!(
+        near_share(sys.outage, outage - 40.0 / demand),
+        "{:?} from {outage}",
+        sys.outage
+    );
 }
 
 #[test]

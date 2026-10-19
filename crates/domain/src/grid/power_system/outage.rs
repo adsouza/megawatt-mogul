@@ -5,9 +5,11 @@
 //! the hydro re-plan, the hour starting is sized ([`PowerSystem::size_outage`])
 //! and its exact shortfall share becomes the `outage_target`; the current
 //! hour is sized again on a Normal-mode tick on which a connected dispatchable
-//! plant comes online, and when a black start completes. The tick's load is then `demand × (1 − outage)`, and
-//! the outage moves toward its target by at most one `shed_step` per tick, no
-//! faster than the AGC fleet can follow ([`PowerSystem::next_outage`]).
+//! plant comes online, and when a black start completes. The tick's load is
+//! then `demand × (1 − outage)`, and the outage moves toward its target no
+//! faster than the AGC fleet can follow: a cut by at most one `shed_step` per
+//! tick, a restore by at most one `shed_step` or the persisting surplus
+//! ([`PowerSystem::next_outage`]).
 //! Sizing is a pure function of state: it draws no random numbers.
 
 use std::collections::BTreeMap;
@@ -218,7 +220,8 @@ impl PowerSystem {
     ///
     /// A negative cover counts as none. Any positive cover moves the outage,
     /// so shares in transit need not be multiples of `shed_step`. With no
-    /// demand there is nothing to follow and the outage moves a full step.
+    /// demand there is nothing to follow and no cover is needed: a cut moves
+    /// a full step, and a restore closes the gap at once.
     pub(super) fn next_outage(
         &self,
         step: Ratio,

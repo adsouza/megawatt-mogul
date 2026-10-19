@@ -163,6 +163,26 @@ fn begin_operating_emits_phase_change() {
 }
 
 #[test]
+fn begin_operating_orders_no_outage_on_a_covered_day() {
+    // The start fleet on AGC covers hour 0, so the target is 0 and no
+    // "outage lifted" order is reported: there was nothing to lift.
+    let mut s = session();
+    for kind in [PlantKind::Coal, PlantKind::Ccgt, PlantKind::Peaker] {
+        let plant = plant_of(&s, kind);
+        s.start_plant(plant).unwrap();
+        s.set_auto_follow(plant, true).unwrap();
+    }
+    assert_eq!(
+        s.begin_operating().unwrap(),
+        vec![DomainEvent::PhaseChanged {
+            from: DayPhase::Planning,
+            to: DayPhase::Operating
+        }]
+    );
+    assert_eq!(s.power().outage(), Ratio::ZERO);
+}
+
+#[test]
 fn begin_operating_orders_hour_zeros_rotating_outage() {
     // City 3 carries 3,000 MW of base load: hour 0's forecast (2,520 MW)
     // is about twice what the 1,300 MW start fleet can deliver.
