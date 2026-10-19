@@ -57,7 +57,8 @@ Each ruling ends with what it costs if it turns out to be wrong.
 - **Q2 (over-commitment):** with no solar to curtail, surplus generation leaves frequency stuck
   high. There is no over-frequency trip. The only cost is fuel burned on unpaid energy. Consider
   over-frequency protection or automatic decommitment.
-- **Q3 (hydro under AGC):** hydro is dispatched as $0/MWh, so AGC empties its daily water budget
+- **Q3 (hydro under AGC), decided:** resolved by spec Amendment A1 (§12, hydro peak-shaving
+  schedule), to be implemented as Plan 1a before Plan 2. The original problem: hydro is dispatched as $0/MWh, so AGC empties its daily water budget
   early and then drops it to zero in one tick, often before the evening peak. The West's data was
   tuned to cope. Consider water-value pacing, plus a HUD warning.
 - **Held capital:** `HeldSlice::consecutive_excess_reviews` never exceeds 1 in practice. Either drop

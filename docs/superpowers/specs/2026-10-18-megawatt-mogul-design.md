@@ -2,6 +2,7 @@
 
 - **Date:** 2026-10-18
 - **Status:** Draft for review
+- **Amendments:** A1, a hydro peak-shaving schedule (§12, 2026-10-18)
 - **Engine:** Rust 1.98, Bevy 0.20, bevy_egui 0.43, bevy-inspector-egui 0.38
 
 ## 1. Vision and goals
@@ -195,7 +196,9 @@ is shown.
 | Hydro | 800 MW | 0% | 100 MW/min | 5 min | $1k | $0/MWh | $3.0B | 72 | Energy-limited dispatch |
 
 - **Hydro** has a **daily water budget** (MWh per day, varying by month and site). Output stops when
-  the budget runs out, and unused water does not carry over to the next month in milestone 1. Hydro can
+  the budget runs out, and unused water does not carry over to the next month in milestone 1. Under
+  AGC, hydro follows a **peak-shaving schedule** that spends its water on the day's highest net
+  load (Amendment A1, §12). Hydro can
   only be built on cells with a hydro resource.
 - **Solar** output is irradiance × sun angle × cloud noise. Protection can curtail it but nobody can
   dispatch it up.
@@ -491,7 +494,9 @@ The presentation layer never reads aggregate internals.
 1. Require an active game in `Operating` (`GameOver`, then `WrongPhase`), even for
    `AdvanceTicks { n: 0 }`.
 2. Compute actual demand for connected cities (forecast × (1 + forecast error)).
-3. Compute solar and hydro availability; withhold the standing solar curtailment.
+3. Compute solar and hydro availability; withhold the standing solar curtailment. At hour
+   boundaries, re-plan the hydro schedule, and cap auto-follow hydro at its allocation for the
+   current hour (§12).
 4. Apply scheduled start/stop actions for the current interval, respecting operating overrides.
 5. Plants progress (start-up; ramp toward target; hydro budget use). Construction completes at
    month close.
@@ -632,7 +637,8 @@ is shed). Lines show only an "energised" pulse. It shows no per-line loading unt
   exact-fit gaps. Nuclear is all-day or all-off, never carried in `Starting` across months.
 - **Weighting:** daily energy and restarts use `days_in_month`; month-boundary starts are charged
   once, without double-counting a recurring restart. Exactly one rounding step applies per entry.
-- **Hydro:** the energy a hydro plant produces in a played day never exceeds that day's budget.
+- **Hydro:** the energy a hydro plant produces in a played day never exceeds that day's budget. The
+  peak-shaving schedule's properties are in §12.7.
 - **Rules-version guard:** a fixed scripted month's outcome digest (report and ledger figures, not
   `Debug` output) is snapshotted together with `SIM_RULES_VERSION`, so an outcome change without a
   version bump fails review.
@@ -684,3 +690,125 @@ Test-driven development throughout: failing test → minimal code → refactor.
 | More regions | A new `.ron` file; the picker already appears for two or more regions |
 | More plant types (wind, storage) | `PlantSpec` is data-driven; new behaviour goes in the `generation` module |
 | More languages | New `assets/locales/<lang>/` folder |
+
+## 12. Amendment A1: Hydro peak-shaving schedule (2026-10-18)
+
+### 12.1 Why
+
+Hydro has a daily water budget but costs $0/MWh to run, so cheapest-first AGC raises it first and
+runs it flat out from midnight. Whenever site potential × monthly flow is below 1, the budget runs
+out partway through the day. The plant then drops to almost nothing within a tick, usually during
+the evening peak. In the Western region in January this happened at 20:24, and the region's data had
+to be inflated to keep the smoke test passing.
+
+This teaches the opposite of reality. Real operators treat stored water as having a **water value**:
+the cost of the expensive generation it can displace. So they spend it on the highest-load hours.
+Hydro is what grids such as the Pacific Northwest use to ride the evening ramp.
+
+### 12.2 Goals, non-goals, anti-goals
+
+- **Goals:**
+  - Under normal operation, auto-follow hydro spends its daily water on the day's highest forecast
+    net load ("peak shaving").
+  - Hydro never runs dry abruptly while the grid is healthy.
+  - The schedule's water level is visible, so the player can learn from it (§12.6).
+- **Non-goals (still out of scope):**
+  - water carried over between days or months (reservoirs);
+  - river cascades between plants;
+  - water value expressed in $/MWh;
+  - a player-facing allocation editor. The schedule is designed so that one can be added later.
+- **Anti-goals:**
+  - hydro sitting idle while the grid sheds load;
+  - invented tuning knobs, such as a fixed "peak window" parameter. The schedule must follow from the
+    forecast alone.
+
+### 12.3 The schedule (water filling)
+
+1. **Inputs.** For each hour `h` of the remaining day, compute the forecast **net load**: the
+   connected cities' forecast demand at minute 30 of `h` (the same mean as the hourly forecast)
+   minus expected solar at minute 30 of `h` (mean clearness, as in `forecast_net_load`). It is
+   deterministic and draws no RNG.
+2. **Plants.** Schedule every connected, commissioned hydro plant with AGC on, but only over the hours
+   its commitment pattern commits it. Uncommitted hours get an allocation of 0.
+   Fill them **in plant-id order against the residual**. The residual starts as net load, and each
+   plant's allocation is subtracted before the next plant is filled.
+3. **Fill.** A plant has remaining budget `E` (MWh), capacity `C` (MW) and remaining hours `H`. Find
+   a water level `λ` such that Σ_{h∈H} clamp(residual_h − λ, 0, C) × 1 h = E. The plant's allocation
+   for hour `h` is `clamp(residual_h − λ, 0, C)`. If even λ = min_h(residual_h) − C cannot use all
+   of `E` (the plant can't usefully run harder), allocate `min(C, max(0, residual_h))` and let the
+   rest of the water spill. Find `λ` by bisection with a fixed iteration count, so the result is
+   deterministic.
+4. **Unplanned plants.** A hydro plant with no allocation for the current hour is budget-limited
+   only (uncapped) until the next hourly re-plan. This covers a plant switched to AGC mid-hour, a
+   newly connected plant, and a plant restarted after a trip. Commands never trigger a re-plan
+   directly. Connectivity is read at plan time, with no look-ahead for lines still under
+   construction. *(Builder's call: being uncapped avoids idling water while the grid may be short;
+   re-planning on commands would complicate command-sourced replay for little gain.)*
+5. **Re-planning (receding horizon).** Plan at `BeginOperating` over hours 0–23 with the full budget.
+   Re-plan at every hour boundary (`tick % 60 == 0`) over the remaining hours, using the remaining
+   budget. Water saved because AGC ran hydro below its allocation, or spent in an emergency (§12.4),
+   is redistributed over the rest of the day.
+
+### 12.4 How the schedule is used
+
+- **Normal operation.** For auto-follow hydro, the allocation for the current hour caps **AGC's
+  headroom and target**: AGC never sets a scheduled hydro plant's target above its allocation. It
+  is **not** a hard physical availability cap. The plant step keeps only the budget limit, so when
+  the allocation falls at an hour boundary, hydro ramps down at its ramp rate rather than dropping
+  in one tick. *(Builder's call: a hard cap would recreate the cliff at every falling hour boundary,
+  where three 800 MW units could lose 2.4 GW in one tick.)* The day-boundary dispatch (Ruling R21)
+  uses the hour-0 allocation as its upper bound.
+- **Emergency override.** The allocation cap is lifted, leaving only the budget limit, whenever the
+  frequency band is `Shedding` **or** any load is shed (`shed > 0`, in either grid mode). *(Builder's
+  call: keying on `shed > 0` as well as the band keeps the cap off for the whole restoration, rather
+  than flapping on and off as the band recovers.)* Avoiding load
+  shedding is worth more than any later hour. The next hourly re-plan spreads whatever water remains.
+- **Manual hydro.** Hydro with AGC off is neither scheduled nor capped by the schedule. It follows
+  the player's target, limited by its budget as before. *(Builder's call: manual hydro output is not
+  subtracted from the residual, because the player can change it at any time.)*
+- Hydro still sorts at $0/MWh in the merit order, so AGC raises it first, but only up to the cap.
+- `HydroBudgetExhausted` is still emitted when a budget reaches zero, which can now happen only
+  through emergency use or manual operation.
+
+### 12.5 Data and versioning
+
+- Remove the Western region's winter-flow boost, which was added only to work around the cliff.
+  Re-author all twelve monthly flows to a realistic Pacific Northwest hydrograph: a spring freshet
+  peaking in May and June, lows from late summer to autumn, and moderate winter flows of about 0.85
+  in January and 0.8 in December. *(Builder's call: the earlier boost's exact per-month values were
+  never recorded, so all twelve are re-derived.)*
+- If a smoke run then misses its reliability target, retune region **data** (fleet mix and size,
+  flows) and never the schedule rule. This is the same rule as Task 22.
+- Add a late-year Western smoke run (October): reliability ≥ 0.99, and no evening hydro cliff.
+- Outcomes change, so bump `SIM_RULES_VERSION` to 2. Regenerate the rules-version guard and the
+  scenario snapshots deliberately, reviewing each diff.
+
+### 12.6 Visibility (read side)
+
+`GameSession::hydro_schedule() -> HydroScheduleView` reports, per scheduled plant, the water level
+`λ: Option<Megawatts>`, the 24 hourly allocations and the remaining budget.
+- `λ` is `None` when nothing is allocated (no water, no committed hours) or when water spills (§12.3,
+  step 3). There is no water level in either case.
+- Each elapsed hour shows the allocation as it stood when that hour began, so a past hour is never
+  rewritten by later re-plans. Future hours show the latest plan.
+
+*(Builder's call: freezing elapsed hours lets the HUD and lessons compare plan with actual.)* It is for the Plan 2 HUD ("hydro covers
+everything above 31 GW") and for lessons. *(Builder's call: until the HUD exists, no projection or
+lesson is added.)*
+
+### 12.7 Properties (tests)
+
+- **Water conservation.** Σ allocation × 1 h ≤ remaining budget, and it equals
+  `min(E, Σ_h min(C, max(0, residual_h)))` within tolerance.
+- **Bounds.** 0 ≤ allocation_h ≤ C for every hour.
+- **Water-filling optimality.** For any hours `i` and `j`, if allocation_i < C and allocation_j > 0,
+  then residual_i − allocation_i ≤ residual_j − allocation_j + ε. In other words, water is never
+  spent on a lower hour while a higher hour is left uncovered.
+- **Monotonicity.** If residual_i ≥ residual_j, then allocation_i ≥ allocation_j.
+- **The cap is not a cliff.** When an hour's allocation falls, scheduled hydro output falls no faster
+  than the ramp rate. Because of these ramp tails, an hour's actual energy may exceed its allocation;
+  the daily budget is never exceeded.
+- **Determinism.** The same inputs give the same schedule, with no RNG draws. Re-planning never
+  schedules more than the remaining budget.
+- **End to end.** With realistic Western January flows, hydro output stays above 0 through 20:00–21:00
+  whenever it started the day with water. The reliability of the existing smoke runs does not fall.
