@@ -274,6 +274,8 @@ fn map_frequency(f: &FrequencyDto) -> Result<FrequencyParams> {
         blackout_below: hz(f.blackout_below_hz, "frequency.blackout_below_hz")?,
         blackout_after_shed_ticks: f.blackout_after_shed_ticks,
         curtail_above: hz(f.curtail_above_hz, "frequency.curtail_above_hz")?,
+        trip_above: hz(f.trip_above_hz, "frequency.trip_above_hz")?,
+        trip_after_ticks: f.trip_after_ticks,
         shed_step: ratio(f.shed_step, "frequency.shed_step")?,
     })
 }
@@ -305,6 +307,12 @@ fn map_regulator(r: &RegulatorDto) -> Result<RegulatorParams> {
         strike_threshold: ratio(r.strike_threshold, "regulator.strike_threshold")?,
         strikes_to_revoke: r.strikes_to_revoke,
         clean_months_to_expire: r.clean_months_to_expire,
+        frequency_band: finite(r.frequency_band_hz, "regulator.frequency_band_hz")
+            .map(Hertz::new)?,
+        frequency_violation_share: ratio(
+            r.frequency_violation_share,
+            "regulator.frequency_violation_share",
+        )?,
     })
 }
 

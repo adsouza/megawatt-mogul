@@ -50,6 +50,10 @@ pub struct FrequencyParams {
     pub blackout_below: Hertz,
     pub blackout_after_shed_ticks: u32,
     pub curtail_above: Hertz,
+    /// Deviation above which generation can trip on over-frequency protection.
+    pub trip_above: Hertz,
+    /// Consecutive ticks above `trip_above` before the trip fires.
+    pub trip_after_ticks: u32,
     pub shed_step: Ratio,
 }
 
@@ -68,6 +72,10 @@ pub struct RegulatorParams {
     pub strike_threshold: Ratio,
     pub strikes_to_revoke: u8,
     pub clean_months_to_expire: u8,
+    /// Deviation from nominal beyond which a tick counts as a frequency violation.
+    pub frequency_band: Hertz,
+    /// Share of a month's ticks in violation that earns a frequency strike.
+    pub frequency_violation_share: Ratio,
 }
 
 /// Customer satisfaction model parameters.

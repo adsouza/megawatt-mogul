@@ -332,6 +332,10 @@ fn validate_bands(regulator: &RegulatorParams) -> Result<(), RegionError> {
     check_band(
         regulator.clean_months_to_expire >= 1,
         "regulator.clean_months_to_expire",
+    )?;
+    check_band(
+        finite_positive(regulator.frequency_band.value()),
+        "regulator.frequency_band",
     )
 }
 
@@ -356,7 +360,7 @@ fn validate_catalog_values(catalog: &[PlantSpec]) -> Result<(), RegionError> {
 }
 
 /// Thresholds are deviations from nominal: `blackout_below < shed_below < 0 <
-/// normal_band < curtail_above`.
+/// normal_band < curtail_above < trip_above`.
 fn validate_frequency(f: &FrequencyParams) -> Result<(), RegionError> {
     let (normal, curtail) = (f.normal_band.value(), f.curtail_above.value());
     let (shed, blackout) = (f.shed_below.value(), f.blackout_below.value());
@@ -365,6 +369,11 @@ fn validate_frequency(f: &FrequencyParams) -> Result<(), RegionError> {
         curtail.is_finite() && curtail > normal,
         "frequency.curtail_above",
     )?;
+    check_band(
+        f.trip_above.value().is_finite() && f.trip_above.value() > curtail,
+        "frequency.trip_above",
+    )?;
+    check_band(f.trip_after_ticks >= 1, "frequency.trip_after_ticks")?;
     check_band(shed < 0.0, "frequency.shed_below")?;
     check_band(
         blackout.is_finite() && blackout < shed,
@@ -426,6 +435,18 @@ mod tests {
     use super::*;
     use crate::ids::{CellCoord, CityId};
     use crate::units::{Hertz, Megawatts, Money, RampRate, Ratio};
+
+    #[test]
+    fn tiny_region_carries_the_frequency_protection_and_performance_defaults() {
+        let region = fixtures::tiny_region();
+        assert_eq!(region.frequency().trip_above, Hertz::new(1.5));
+        assert_eq!(region.frequency().trip_after_ticks, 5);
+        assert_eq!(region.regulator().frequency_band, Hertz::new(0.2));
+        assert_eq!(
+            region.regulator().frequency_violation_share,
+            Ratio::new(0.05).unwrap()
+        );
+    }
 
     #[test]
     fn tiny_region_is_valid() {
@@ -937,6 +958,43 @@ mod tests {
                 |p| p.frequency.blackout_after_shed_ticks = 0,
                 bad_band("frequency.blackout_after_shed_ticks"),
             ),
+            (
+                |p| p.frequency.trip_above = hz(0.5),
+                bad_band("frequency.trip_above"),
+            ),
+            (
+                |p| p.frequency.trip_above = hz(0.4),
+                bad_band("frequency.trip_above"),
+            ),
+            (
+                |p| p.frequency.trip_above = hz(f64::NAN),
+                bad_band("frequency.trip_above"),
+            ),
+            (
+                |p| p.frequency.trip_above = hz(f64::INFINITY),
+                bad_band("frequency.trip_above"),
+            ),
+            (
+                |p| p.frequency.trip_after_ticks = 0,
+                bad_band("frequency.trip_after_ticks"),
+            ),
+            // regulator frequency performance
+            (
+                |p| p.regulator.frequency_band = hz(0.0),
+                bad_band("regulator.frequency_band"),
+            ),
+            (
+                |p| p.regulator.frequency_band = hz(-0.2),
+                bad_band("regulator.frequency_band"),
+            ),
+            (
+                |p| p.regulator.frequency_band = hz(f64::NAN),
+                bad_band("regulator.frequency_band"),
+            ),
+            (
+                |p| p.regulator.frequency_band = hz(f64::INFINITY),
+                bad_band("regulator.frequency_band"),
+            ),
             // lines
             (
                 |p| p.lines.cells_per_month = 0,
@@ -982,6 +1040,11 @@ mod tests {
             |p| p.frequency.k_damping = 0.001,
             |p| p.frequency.shed_step = Ratio::ONE,
             |p| p.frequency.blackout_after_shed_ticks = 1,
+            |p| p.frequency.trip_above = hz(0.501),
+            |p| p.frequency.trip_after_ticks = 1,
+            |p| p.regulator.frequency_band = hz(0.001),
+            |p| p.regulator.frequency_violation_share = Ratio::ZERO,
+            |p| p.regulator.frequency_violation_share = Ratio::ONE,
             |p| p.lines.cells_per_month = 1,
             |p| p.lines.book_life_months = 1,
             |p| p.lines.cost_per_cell = Money::ZERO,

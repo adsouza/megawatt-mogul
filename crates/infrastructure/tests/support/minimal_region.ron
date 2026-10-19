@@ -142,6 +142,8 @@
         blackout_below_hz: -1.5,
         blackout_after_shed_ticks: 30,
         curtail_above_hz: 0.5,
+        trip_above_hz: 1.5,
+        trip_after_ticks: 5,
         shed_step: 0.05,
     ),
     regulator: (
@@ -157,6 +159,8 @@
         strike_threshold: 0.005,
         strikes_to_revoke: 3,
         clean_months_to_expire: 3,
+        frequency_band_hz: 0.2,
+        frequency_violation_share: 0.05,
     ),
     satisfaction: (
         starting: 70.0,

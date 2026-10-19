@@ -234,6 +234,8 @@ fn frequency() -> FrequencyParams {
         blackout_below: Hertz::new(-1.5),
         blackout_after_shed_ticks: 30,
         curtail_above: Hertz::new(0.5),
+        trip_above: Hertz::new(1.5),
+        trip_after_ticks: 5,
         shed_step: r(0.05),
     }
 }
@@ -252,6 +254,8 @@ fn regulator() -> RegulatorParams {
         strike_threshold: r(0.005),
         strikes_to_revoke: 3,
         clean_months_to_expire: 3,
+        frequency_band: Hertz::new(0.2),
+        frequency_violation_share: r(0.05),
     }
 }
 

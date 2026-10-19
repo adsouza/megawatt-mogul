@@ -12,6 +12,7 @@ use domain::ids::{PlantId, RegionId};
 use domain::region::RegionDefinition;
 use domain::session::{GameSettings, MonthlyReport, SessionStatus};
 use domain::time::{SimMonth, TICKS_PER_DAY, TICKS_PER_HOUR};
+use domain::units::{Hertz, Ratio};
 use infrastructure::region::{RegionFile, RonRegionCatalog, to_cell};
 
 const REGIONS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/regions");
@@ -61,6 +62,22 @@ fn max_shape_factor(region: &RegionDefinition) -> f64 {
             (0..24).map(move |hour| shape_factor(region.demand(), month, hour * TICKS_PER_HOUR))
         })
         .fold(f64::MIN, f64::max)
+}
+
+#[test]
+fn both_regions_carry_the_frequency_protection_and_performance_defaults() {
+    for id in [EAST, WEST] {
+        let region = region(id);
+        let (f, r) = (region.frequency(), region.regulator());
+        assert_eq!(f.trip_above, Hertz::new(1.5), "{id} trip_above");
+        assert_eq!(f.trip_after_ticks, 5, "{id} trip_after_ticks");
+        assert_eq!(r.frequency_band, Hertz::new(0.2), "{id} frequency_band");
+        assert_eq!(
+            r.frequency_violation_share,
+            Ratio::new(0.05).unwrap(),
+            "{id} frequency_violation_share"
+        );
+    }
 }
 
 #[test]

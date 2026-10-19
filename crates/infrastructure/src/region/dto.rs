@@ -150,6 +150,8 @@ pub struct FrequencyDto {
     pub blackout_below_hz: f64,
     pub blackout_after_shed_ticks: u32,
     pub curtail_above_hz: f64,
+    pub trip_above_hz: f64,
+    pub trip_after_ticks: u32,
     pub shed_step: f64,
 }
 
@@ -168,6 +170,8 @@ pub struct RegulatorDto {
     pub strike_threshold: f64,
     pub strikes_to_revoke: u8,
     pub clean_months_to_expire: u8,
+    pub frequency_band_hz: f64,
+    pub frequency_violation_share: f64,
 }
 
 #[derive(Debug, Clone, Deserialize)]

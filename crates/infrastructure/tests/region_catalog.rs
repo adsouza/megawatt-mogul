@@ -17,7 +17,7 @@ const MINIMAL: &str = include_str!("support/minimal_region.ron");
 
 /// SHA-256 of `support/minimal_region.ron`, computed independently with
 /// `shasum -a 256`.
-const MINIMAL_SHA256: &str = "e48a4e80348b3abdc1e26c8bea1bdf9d4a8b0bcd3a52df7371201922b9c0581a";
+const MINIMAL_SHA256: &str = "7255cde8689af9bbcee02541e941e1cb26266738709f5a1685db9a4fa941dc3b";
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
@@ -209,6 +209,54 @@ fn city_in_water_is_invalid() {
             region: RegionId::new("minimal"),
             error: RegionError::CityNotOnLand(CityId(1)),
         }
+    );
+}
+
+#[test]
+fn new_frequency_parameters_are_validated_when_loaded() {
+    let bad_band = |from: &str, to: &str, field: &'static str| {
+        let edited = MINIMAL.replace(from, to);
+        assert_ne!(edited, MINIMAL);
+        let dir = dir_with(&[("minimal.ron", &edited)]);
+        let err = catalog(dir.path())
+            .load(&RegionId::new("minimal"))
+            .unwrap_err();
+        assert_eq!(
+            err,
+            RegionLoadError::Invalid {
+                region: RegionId::new("minimal"),
+                error: RegionError::InvalidBand { field },
+            }
+        );
+    };
+    bad_band(
+        "trip_above_hz: 1.5",
+        "trip_above_hz: 0.5",
+        "frequency.trip_above",
+    );
+    bad_band(
+        "trip_after_ticks: 5",
+        "trip_after_ticks: 0",
+        "frequency.trip_after_ticks",
+    );
+    bad_band(
+        "frequency_band_hz: 0.2",
+        "frequency_band_hz: 0.0",
+        "regulator.frequency_band",
+    );
+}
+
+#[test]
+fn an_out_of_range_violation_share_is_rejected_when_loaded() {
+    let edited = MINIMAL.replace(
+        "frequency_violation_share: 0.05",
+        "frequency_violation_share: 1.5",
+    );
+    assert_ne!(edited, MINIMAL);
+    let err = load_region_bytes(edited.into_bytes(), &RegionId::new("minimal")).unwrap_err();
+    assert!(
+        format!("{err:?}").contains("regulator.frequency_violation_share"),
+        "{err:?}"
     );
 }
 
