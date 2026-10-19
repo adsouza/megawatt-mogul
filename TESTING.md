@@ -35,8 +35,9 @@ cargo mutants -p domain -p application         # mutation testing
 Property tests use `proptest`; set `PROPTEST_CASES` to run more cases locally. Note that nextest does
 not run doctests; run `cargo test --doc --workspace` for those.
 
-The whole workspace runs in about 19 s in a debug build. Most of that is
-`infrastructure::shipped_regions::hands_off_plan_survives_year_one` (about 16 s: two regions × eight
+The whole workspace runs in about 20 s in a debug build. Most of that is the two year-long
+acceptance runs in `infrastructure::shipped_regions`, `hands_off_plan_survives_year_one` and
+`shipped_regions_never_order_outages_hands_off` (about 17 s each, side by side: two regions × eight
 seeds × twelve months); every other test finishes in under 3 s.
 
 ## Property catalogue
@@ -48,8 +49,9 @@ The invariants the property tests must cover:
 - **Merit order:** AGC never leaves a cheaper auto-follow plant with headroom while raising a more
   expensive one, and the reverse holds when lowering.
 - **Conservation:** each `TickSummary` describes the post-protection state and satisfies
-  generation = Σ by_plant = Σ by_kind = served + imbalance (signed), served = demand × (1 − shed),
-  unserved = demand × shed, and 0 ≤ served ≤ demand. `curtailed` is solar availability withheld,
+  generation = Σ by_plant = Σ by_kind = served + imbalance (signed),
+  served = demand × (1 − outage) × (1 − shed), unserved = demand − served, the planned
+  `demand × outage` within unserved, and 0 ≤ served ≤ demand. `curtailed` is solar availability withheld,
   never generated, so it is not part of generation. Unserved energy is shed load only; a residual
   mismatch is absorbed by system inertia and shows up as frequency deviation.
 - **Money:** the change in cash always equals the sum of the ledger entries, exactly.
@@ -102,6 +104,24 @@ The invariants the property tests must cover:
 - **Minimum-generation warning:** on crafted fleets it reports the hand-computed worst hour and
   excess (earliest hour on ties), returns `None` when the committed minimums fit (exactly fitting
   included), counts only committed hours, and leaves `state_hash` unchanged.
+- **Staged shedding (step deficit):** `staged_shedding_arrests_any_step_deficit` takes any step
+  deficit below the one-tick blackout line (0.1–29.9% of demand) and any AGC ramp from 0 to 2% of
+  demand per tick on a single bus: no blackout, minimum deviation above `blackout_below`, peak shed
+  at most `d + 3 × shed_step`, and a rebound below `trip_above`. Its harness, `step_deficit_run`, is
+  a port of the single-bus reference model the spec §15.4 bounds were measured with; the two differ
+  only exactly on a stage threshold, where the domain's rule is strict. `stages_fire_once_per_event`
+  checks each stage sheds at most once per event and re-arms only at or above `−normal_band`,
+  against a brute-force count of the stages crossed.
+- **Rotating outages:** the target is exactly the worse-end forecast share, 0 on a covered day; the
+  day starts at hour 0's target; the outage moves at the paced cut and restore rates, never past the
+  target, and never restores a surplus from an unrecoverable fall; a blackout holds it at 0 with
+  the target frozen and restores exactly to that target; black start needs generation; a dark grid
+  never arms over-frequency protection, including when a large unit comes online into a full
+  outage; a tick orders at most one outage; a rotating outage alone keeps the hydro cap; and the
+  planned energy is never more than the unserved energy (`check_invariants`).
+- **Capacity-shortfall warning:** on crafted fleets it reports the hand-computed worst hour and
+  shortfall, returns `None` when the committed fleet covers every hour, and leaves `state_hash`
+  unchanged.
 
 ## Acceptance checks
 
@@ -114,6 +134,20 @@ The invariants the property tests must cover:
   outstanding.
 - **Hydro smoke runs:** a Western January keeps every hydro unit producing through the evening peak
   on seeds 0–7, and a Western October start stays reliable with no evening cliff.
+- **No outages hands-off:** the same hands-off plan orders no rotating outage in any of the 192
+  region-seed-months (spec §15.8).
+
+`application/tests/scenarios.rs` checks the overreach acceptance pair (spec §15.8) on its July
+2027 month, a city connected without the capacity to serve it:
+
+- **`overreach_rotates_outages_instead_of_collapsing`** (seeds 13, 1, 2 and 3, with demand
+  noise): no blackout, every committed plant online at the close, reliability above 0, deviation
+  above `blackout_below`, the rotating-outage lesson taught, and
+  `0.95 ≤ rotating_outage / minute-by-minute forecast shortfall ≤ 1.10`.
+  Protection shed from demand noise is allowed. Seed 1 is the closest at 0.978.
+- **`overreach_without_demand_noise_rotates_exactly_the_shortfall`**: with noise off,
+  `shortfall − ε ≤ rotating_outage ≤ shortfall + shed_step × peak demand × hours with an outage`,
+  and protection sheds nothing.
 
 ## Snapshots
 
@@ -228,6 +262,35 @@ the report counters), sharded so each run takes about 2 minutes at `-j 4`:
 
 The first pass missed 12 in `domain` (none in `application`). Eleven were killed with tests; the
 twelfth, `cap > 0.0` in `water_fill`, is the zero-capacity exclusion above.
+
+**Plan 1b targeted pass** (after `SIM_RULES_VERSION` 3). `-F` selected all of
+`grid/power_system/outage.rs` and the functions Plan 1b added or changed: sizing and deliverable
+supply, the paced move and its covers, the tick, the boundary dispatch, `begin_day` and
+`begin_operating`, the hydro plan and its preview, staged shedding and restoration, the report
+accumulator, the invariants, the capacity-shortfall warning, frequency-parameter validation and
+the lessons. It ran as four shards of about 3 minutes each at `-j 3`:
+
+| Run | Mutants | Caught | Missed | Timeout | Unviable |
+|---|---|---|---|---|---|
+| shard 0/4 | 135 | 112 | 0 | 0 | 23 |
+| shard 1/4 | 135 | 107 | 0 | 0 | 28 |
+| shard 2/4 | 135 | 105 | 0 | 0 | 30 |
+| shard 3/4 | 135 | 95 | 0 | 0 | 40 |
+
+That is 499 `domain` mutants (383 caught) and 41 `application` mutants (36 caught). The first pass
+had 567 mutants and missed 29, all in `domain`:
+
+- Eight were killed with tests: the second boundary dispatch at `BeginOperating` (three), the
+  curtailed solar counted as restore cover, no "outage lifted" order on a covered day, and
+  `next_outage` with no demand and on landing exactly on its target (three).
+- Thirteen (and two timeouts) were in `stages_crossed`, whose division-based first guess was
+  corrected by two loops. Any start gave the same count, so the function is now a plain scan of
+  the stage thresholds.
+- Eight are equivalent and excluded in `.cargo/mutants.toml`: a re-run of an idempotent boundary
+  dispatch, the zero solar at midnight, a served load read only when shed is zero, three
+  comparisons whose caller or shortcut rules out a difference, and two assignments of an equal
+  value. The midnight-solar entry already existed but no longer matched: Plan 1b moved its
+  operator to another column, so a column-pinned exclusion can silently stop applying.
 
 ## Isolation rules (all I/O tests)
 

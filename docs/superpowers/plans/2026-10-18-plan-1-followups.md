@@ -51,9 +51,11 @@ Each ruling ends with what it costs if it turns out to be wrong.
   judges ramp warnings by the end state. If wrong: warnings stale by one batch.
 
 ## Open design questions (need your decision)
-- **Q1 (overreach):** connecting a city far larger than capacity causes an instant blackout at
-  tick 0. Every plant trips and has to be restarted by hand. There is no graded rolling shedding.
-  Consider pre-emptive rotating outages at the day boundary, sized to the forecast deficit.
+- **Q1 (overreach), implemented (Plan 1b, A4):** resolved by spec Amendment A4 (§15: rotating
+  outages sized to the forecast shortfall, staged under-frequency shedding and a capacity-shortfall
+  warning). The original problem: connecting a city far larger than capacity caused an instant
+  blackout at tick 0, every plant tripped and had to be restarted by hand, and there was no graded
+  rolling shedding.
 - **Q2 (over-commitment), implemented (Plan 1a):** resolved by spec Amendment A3 (§14:
   over-frequency trips, a minimum-generation warning and frequency-performance strikes). The
   original problem: with no solar to curtail, surplus generation left frequency stuck high, with no
@@ -113,6 +115,32 @@ Tuning watch items:
   - The used-and-useful review is now covered by `overbuild_idle_capacity_disallowance`, which
     builds the same CCGTs but leaves them uncommitted. It holds capital in December 2029 and
     disallows it in December 2030 (ruling: split the scenario).
+
+## Plan 1b rulings
+
+Plan 1b (amendment A4) landed under `SIM_RULES_VERSION` 3. The controller's rulings made while
+implementing it are recorded in the spec as *(Builder's call: …)* notes and corrected text: §15.2
+(no rounding margin), §15.3 (exact sizing, AGC reach by minute 59, the hydro ceiling credit, sizing
+after a first boundary dispatch, re-sizing on plant-online and `BlackoutRestored`, ramp-paced cuts
+and restores, the surplus-restore gate, the exact black-start floor, black start needing generation,
+the dark grid), §15.4 (strict stage thresholds, re-arming on `BlackoutRestored`, the +0.59 Hz
+rebound), §15.5 (manual hydro counts its target), §15.6 (the relative tolerance) and §15.8 (the
+paced-move properties and the overreach energy bounds).
+
+Watch items:
+- **Overreach margin:** seed 1's `rotating_outage` is 0.978 × the forecast shortfall, close to the
+  acceptance test's 0.95 floor.
+- **Staged UFLS sheds more on moderate dips:** shed rose 3–44% in the emergency-recovery cases.
+  That is the trade for no blackouts.
+- **Slow-fleet hydro residual:** the residual parked under Plan 1a now sheds 0.05 at 21:00 on the
+  slow West-like fixture.
+- **Step-paced restores on hydro fleets:** during the evening descent the surplus-restore path is
+  often off (a plant is in an unrecoverable ramp-down), so a deep non-full outage restores at step
+  pace.
+- **Marginal summer peaks:** in the fixture's July and August, a 0.7–1.7% forecast shortfall at
+  16:00–18:00 now orders an outage of about 1.6–1.9 GWh a month. In two idle-overbuild Julys that
+  had no unserved energy before A4, the outage cuts 1.6 GWh: the forecast saw a shortfall that the
+  day's actual demand did not reach. Expected under exact forecast sizing, but it lowers reliability.
 
 ## Carry into Plan 2 (Bevy client)
 - **Batching:** advance in small batches (`speed` ticks per `FixedUpdate`) so projections stay

@@ -124,42 +124,69 @@ only eligible remaining book value earns return. Holding and write-off do not ch
 
 1. At each hour boundary after midnight (tick 60, 120, ...), the hydro schedule is re-planned for the
    rest of the day from the remaining budgets (`plan_hydro`; `BeginOperating` plans from hour 0).
-   Planning draws no randomness.
+   Then, in Normal mode, the rotating outage is re-sized for the hour starting (`size_outage`): its
+   target is the exact forecast shortfall share at the hour's worse end (minute 0 or 59) against
+   what the fleet can deliver by then, 0 when the fleet covers both ends. During a blackout the
+   target ordered before it stays frozen. `BeginOperating` sizes hour 0 after a first boundary
+   dispatch for the full forecast and starts the day with the outage at that target. Planning and
+   sizing draw no randomness.
 2. Demand of connected cities: forecast × (1 + forecast error). The AR(1) error advances by exactly
    one normal draw every tick, in any state.
 3. Solar and hydro availability for every plant (hydro from the day's remaining energy budget, reset
    at `BeginOperating`). The standing solar curtailment is withheld from connected online solar, pro
    rata to availability.
 4. The commitment actions due at this tick; plants suppressed for the day get none.
-5. Every plant steps once: start-up progress, ramp toward target, hydro budget use.
-6. AGC re-targets connected auto-follow plants in merit order toward the load to serve,
-   `demand × (1 − shed)` (one restoration step higher during a blackout), making room for withheld
-   solar. Scheduled hydro is capped at its hourly allocation for the tick the targets take effect
-   (`tick + 1`), with a ramp envelope ahead of a falling hour. The cap is lifted while any load is
-   shed or the frequency band is `Shedding`. When the lift ends, a recovery phase lets hydro above
-   its ceiling ramp down only as fast as the other AGC plants' one-tick headroom (net of the
-   shortfall) can follow, until it is at or below every ceiling it meets before the next re-plan.
-7. Imbalance between connected supply and served load.
-8. Frequency update (held at nominal during a blackout).
-9. Protection: load shedding, a blackout that trips every plant, solar curtailment for the next
-   tick, and an over-frequency trip of the most expensive online producer once frequency has stayed
-   high for `trip_after_ticks`. A trip waits while there is no physical surplus, while the rest of
-   the fleet could not cover the lost output within one tick, or while another plant is already
-   losing output AGC cannot reverse, so protection does not trip the grid into a deficit. After a
-   trip AGC re-targets again in the same tick, so the rest of the fleet responds on the next step.
-   Tripped solar reconnects once restoration re-energises the grid.
-10. The `TickSummary` of the post-protection state, also emitted last as `TickCompleted`.
-11. Accounting: the session adds the summary to the month-to-date totals (energy per plant,
-    recurring and boundary starts, served, unserved and overgenerated energy, and the Normal-mode
-    ticks outside the frequency-performance band). Nothing is priced per tick.
-12. The clock advances. After tick 1,440 the month closes: totals are weighted by `days_in_month`
+5. Every plant steps once: start-up progress, ramp toward target, hydro budget use. If a connected
+   dispatchable plant came online in Normal mode, the current hour's outage is re-sized: a tick
+   event, not a command.
+6. The tick's **load** is `demand × (1 − outage)`; AGC, the imbalance, the frequency model's system
+   size and protection all read it where they read demand before. In Normal mode the outage then
+   moves toward its target, before AGC runs, no faster than the AGC fleet can follow: a cut by at
+   most one `shed_step` and the fleet's net one-tick ramp-down room, a restore by at most
+   `max(shed_step, surplus / demand)` and its net one-tick headroom. The surplus term applies only
+   while no plant is in a ramp-down AGC cannot reverse (the trip gate's test). A tick emits at most
+   one `RotatingOutageOrdered`, with the final target.
+7. AGC re-targets connected auto-follow plants in merit order toward the load to serve,
+   `load × (1 − shed)` with the moved outage (in a blackout, pre-positioned for the next restoration
+   step), making room for withheld solar. Scheduled hydro is capped at its hourly allocation for the
+   tick the targets take effect (`tick + 1`), with a ramp envelope ahead of a falling hour. The cap
+   is lifted while any load is shed or the frequency band is `Shedding`; a rotating outage alone
+   never lifts it. When the lift ends, a recovery phase lets hydro above its ceiling ramp down only
+   as fast as the other AGC plants' one-tick headroom (net of the shortfall) can follow, until it is
+   at or below every ceiling it meets before the next re-plan.
+8. Imbalance between connected supply and served load, `load × (1 − shed)`.
+9. Frequency update, with the load as the system size. It is held at nominal during a blackout and
+   on a dark grid (a Normal-mode tick with no load energised, the outage at 1), where over-frequency
+   tracking also resets, so protection never arms on a grid with nothing to measure.
+10. Protection on the load. Under-frequency shedding is staged: stage `k` sits at
+    `shed_below − k × shed_stage_spacing` and drops one `shed_step` the first tick deviation is
+    strictly below it, several stages crossed in one tick fire together, and a tick below
+    `shed_below` that crosses no new stage sheds one step. Stages re-arm when deviation is back at
+    or above `−normal_band` and at `BlackoutRestored`. A blackout trips every plant and holds the
+    outage at 0 with its target frozen; black-start restoration steps to
+    `max(snapped(shed − step), target)`, each step needing supply, so it ends exactly at the frozen
+    target, where Normal mode resumes with the outage at the target and the hour is re-sized.
+    Protection also curtails solar for the next tick and trips the most expensive online producer
+    once frequency has stayed high for `trip_after_ticks`. A trip waits while there is no physical
+    surplus, while the rest of the fleet could not cover the lost output within one tick, or while
+    another plant is already losing output AGC cannot reverse, so protection does not trip the grid
+    into a deficit. After a trip AGC re-targets again in the same tick, so the rest of the fleet
+    responds on the next step. Tripped solar reconnects once restoration re-energises the grid.
+11. The `TickSummary` of the post-protection state, also emitted last as `TickCompleted`.
+12. Accounting: the session adds the summary to the month-to-date totals (energy per plant,
+    recurring and boundary starts, served, unserved, overgenerated and rotating-outage energy, the
+    largest outage share ordered, and the Normal-mode ticks outside the frequency-performance band).
+    Hour 0's order at `BeginOperating` is recorded as tick 0's. Nothing is priced per tick.
+13. The clock advances. After tick 1,440 the month closes: totals are weighted by `days_in_month`
     and booked, construction advances, policies run (including the frequency-performance notice or
     strike), `MonthClosed` is emitted and the phase moves to Review. The hydro schedule view then
     shows the finished day with every hour frozen; `FinishReview` clears it for the next Planning.
 
 Each `TickSummary` satisfies `generation = Σ by_plant = served + imbalance` (signed), with
-`served = demand × (1 − shed)` and `unserved = demand × shed`. `curtailed` is solar availability
-withheld, which is never generated, so it is not part of `generation`.
+`served = demand × (1 − outage) × (1 − shed)` and `unserved = demand − served`; without an outage,
+`unserved = demand × shed`. The planned part, `demand × outage`, is part of `unserved`, never added
+to it, and the month's `rotating_outage` is its energy. `curtailed` is solar availability withheld,
+which is never generated, so it is not part of `generation`.
 
 ## Settings seams
 
