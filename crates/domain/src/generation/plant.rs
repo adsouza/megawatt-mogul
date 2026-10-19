@@ -208,8 +208,8 @@ impl Plant {
     }
 
     /// The target the plant assumes when a day begins already running. Stored
-    /// as given; the caller is responsible for choosing a value in range.
-    pub fn set_initial_target(&mut self, target: Megawatts) {
+    /// as given; callers validate it first with [`Plant::check_target`].
+    pub(crate) fn set_initial_target(&mut self, target: Megawatts) {
         self.initial_target = target;
     }
 
@@ -313,6 +313,18 @@ impl Plant {
         let PlantStatus::Online { output, .. } = self.status else {
             return Err(DomainError::PlantNotOnline { plant: self.id });
         };
+        self.check_target(mw)?;
+        self.status = PlantStatus::Online { output, target: mw };
+        Ok(())
+    }
+
+    /// Whether `mw` is an acceptable dispatch target: finite first (NaN fails
+    /// every comparison and infinities would misreport as out of range), then
+    /// at least the minimum stable output, then at most capacity.
+    pub fn check_target(&self, mw: Megawatts) -> Result<(), DomainError> {
+        if !mw.value().is_finite() {
+            return Err(DomainError::NonFiniteMegawatts { plant: self.id });
+        }
         let min = self.spec.min_output();
         if mw < min {
             return Err(DomainError::BelowMinimumStableOutput {
@@ -326,7 +338,6 @@ impl Plant {
                 max: self.spec.capacity,
             });
         }
-        self.status = PlantStatus::Online { output, target: mw };
         Ok(())
     }
 

@@ -111,25 +111,16 @@ impl GameSession {
 
     /// Planning: sets the target the plant assumes when the day begins with it
     /// running. Operating: sets an online plant's dispatch target. Either way
-    /// the target must lie within `[min_output, capacity]`.
+    /// the target must be finite and lie within `[min_output, capacity]`.
     pub fn set_dispatch_target(
         &mut self,
         plant: PlantId,
         mw: Megawatts,
     ) -> Result<Vec<DomainEvent>, DomainError> {
         self.require_phase(&PLANNING_OR_OPERATING)?;
-        let spec = self.operable(plant)?.spec();
+        let target = self.operable(plant)?;
         if self.phase == DayPhase::Planning {
-            let min = spec.min_output();
-            if mw < min {
-                return Err(DomainError::BelowMinimumStableOutput { plant, min });
-            }
-            if mw > spec.capacity {
-                return Err(DomainError::AboveCapacity {
-                    plant,
-                    max: spec.capacity,
-                });
-            }
+            target.check_target(mw)?;
             self.operable_mut(plant).set_initial_target(mw);
         } else {
             self.operable_mut(plant).set_target(mw)?;

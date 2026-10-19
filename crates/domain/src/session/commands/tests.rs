@@ -537,3 +537,26 @@ fn planning_target_accepts_exactly_minimum_and_capacity() {
         |s| s.set_dispatch_target(coal, Megawatts::new(600.1)),
     );
 }
+
+#[test]
+fn non_finite_targets_are_rejected_in_planning_and_operating() {
+    let mut s = session();
+    let coal = plant_of(&s, PlantKind::Coal);
+    let non_finite = DomainError::NonFiniteMegawatts { plant: coal };
+    // Infinities would otherwise read as above capacity or below minimum:
+    // finiteness is checked first.
+    let bad = [f64::NAN, f64::INFINITY, f64::NEG_INFINITY];
+    for mw in bad {
+        rejected(&mut s, non_finite.clone(), |s| {
+            s.set_dispatch_target(coal, Megawatts::unchecked(mw))
+        });
+    }
+    s.start_plant(coal).unwrap();
+    s.begin_operating().unwrap();
+    assert!(s.power().plant(coal).unwrap().is_online());
+    for mw in bad {
+        rejected(&mut s, non_finite.clone(), |s| {
+            s.set_dispatch_target(coal, Megawatts::unchecked(mw))
+        });
+    }
+}

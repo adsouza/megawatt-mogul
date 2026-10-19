@@ -33,6 +33,9 @@ pub enum DomainError {
     /// The plant must be starting or online for this operation.
     #[error("plant {plant:?} is not running")]
     PlantNotRunning { plant: PlantId },
+    /// A requested target was NaN or infinite.
+    #[error("non-finite target for plant {plant:?}")]
+    NonFiniteMegawatts { plant: PlantId },
     /// A requested target is below the plant's minimum stable output.
     #[error("target below minimum stable output {min:?} for plant {plant:?}")]
     BelowMinimumStableOutput { plant: PlantId, min: Megawatts },
