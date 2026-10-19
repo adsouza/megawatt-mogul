@@ -54,7 +54,8 @@ Each ruling ends with what it costs if it turns out to be wrong.
 - **Q1 (overreach):** connecting a city far larger than capacity causes an instant blackout at
   tick 0. Every plant trips and has to be restarted by hand. There is no graded rolling shedding.
   Consider pre-emptive rotating outages at the day boundary, sized to the forecast deficit.
-- **Q2 (over-commitment):** with no solar to curtail, surplus generation leaves frequency stuck
+- **Q2 (over-commitment), decided:** resolved by spec Amendment A3 (§14: over-frequency trips, a
+  minimum-generation warning and frequency-performance strikes), part of Plan 1a. The original problem: with no solar to curtail, surplus generation leaves frequency stuck
   high. There is no over-frequency trip. The only cost is fuel burned on unpaid energy. Consider
   over-frequency protection or automatic decommitment.
 - **Q3 (hydro under AGC), decided:** resolved by spec Amendment A1 (§12, hydro peak-shaving

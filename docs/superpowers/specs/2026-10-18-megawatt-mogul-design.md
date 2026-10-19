@@ -3,7 +3,8 @@
 - **Date:** 2026-10-18
 - **Status:** Draft for review
 - **Amendments:** A1, a hydro peak-shaving schedule (§12, 2026-10-18); A2, proration of the
-  partial-year rate review (§13, 2026-10-18)
+  partial-year rate review (§13, 2026-10-18); A3, over-frequency protection, a minimum-generation
+  warning and frequency-performance strikes (§14, 2026-10-18)
 - **Engine:** Rust 1.98, Bevy 0.20, bevy_egui 0.43, bevy-inspector-egui 0.38
 
 ## 1. Vision and goals
@@ -94,8 +95,10 @@ There are two ways to fail:
 
 - **Bankruptcy:** cash below zero at the close of 3 consecutive months.
 - **Licence revocation:** the regulator issues a **strike** for each month in which unserved energy
-  exceeds a threshold share of that month's demand (default 0.5%, region data). One strike expires
-  after each 3 consecutive clean months.
+  exceeds a threshold share of that month's demand (default 0.5%, region data), **or** frequency
+  spends too long outside its performance band (Amendment A3, §14.4). A month earns at most one
+  strike. One strike expires after each 3 consecutive clean months, and a clean month must pass
+  both tests.
   Three active strikes revoke the licence.
 
 **Milestones** give direction without ending the game (e.g. "Serve a 50 GW peak", "A full season
@@ -371,6 +374,7 @@ built. No placeholder exists today; `Plant::commissioned_on` is the only seam.
   | Below −0.5 Hz | Under-frequency load shedding in 5% steps, spread proportionally across connected cities |
   | Below −1.5 Hz, or shedding for N consecutive ticks | **Blackout**: all plants trip to `Offline`, and the player must restart them |
   | Above +0.5 Hz | Solar curtailed first, then AGC plants pushed to minimum stable output |
+  | Above +1.5 Hz for N consecutive ticks | **Over-frequency trip:** the most expensive producing plant trips (Amendment A3, §14.2) |
 - **Unserved energy is shed load only:** `served = demand × (1 − shed)` and `unserved = demand × shed`.
   A residual mismatch between supply and served load is a signed `imbalance` absorbed by system
   inertia and visible as frequency deviation; it is neither unserved nor paid for. Unserved energy
@@ -853,3 +857,119 @@ bug back.
   January.
 - **Versioning:** outcomes change for non-January starts, so this lands under the same
   `SIM_RULES_VERSION` bump to 2 as Amendment A1, with the snapshot diffs reviewed together.
+
+## 14. Amendment A3: Over-frequency protection, minimum-generation warning and frequency-performance strikes (2026-10-18)
+
+### 14.1 Why
+
+Under-supply has real consequences (shedding, strikes, blackout); over-supply has almost none.
+When the committed fleet's minimum stable output exceeds demand, typically overnight:
+
+- AGC lowers everything to minimum and can go no further;
+- `Curtail` finds no solar to withhold;
+- frequency settles at roughly k_inertia × surplus ÷ (size × k_damping) above nominal (about
+  +2.5 Hz for a 10% surplus) and stays there.
+
+The only cost is fuel burned for unpaid energy. The Task 20 "overbuild" scenario shows +230 GWh of
+surplus in one month with perfect reliability.
+
+On real grids this is the **minimum-generation problem**: committing too much inflexible capacity.
+Real systems respond to it, and the game should model two of those responses:
+
+- generators protect themselves by tripping on sustained over-frequency;
+- control-performance standards (NERC's BAL family) penalise balancing authorities that let
+  frequency wander.
+
+The teaching goal is to make the trap visible before the player falls into it.
+
+### 14.2 Over-frequency generator protection
+
+- **New `FrequencyParams` fields** (region data): `trip_above: Hertz` (default +1.5 Hz) and
+  `trip_after_ticks: u32` (default 5). Validation requires `trip_above > curtail_above` and
+  `trip_after_ticks ≥ 1`.
+- **`ProtectionState` gains `over_ticks: u32`.** In Normal mode, each tick with
+  `deviation > trip_above` increments it, and any tick at or below `trip_above` resets it to 0.
+- **When `over_ticks` reaches `trip_after_ticks`,** protection returns `OverFrequencyTrip`.
+  `PowerSystem` then trips **one** plant:
+  - the connected, online, dispatchable plant with output > 0 and the **highest marginal cost**
+    (ties broken by plant id);
+  - solar is never tripped, because curtailment covers it;
+  - the trip uses `Plant::trip()` plus `suppress_commitment_for_day()`, exactly as after a blackout;
+  - `over_ticks` resets to 0, so at most one plant trips per `trip_after_ticks` window and the fleet
+    sheds generation gradually.
+- **The existing response comes first.** Curtailment at +0.5 Hz (solar first, then AGC to minimum)
+  still runs before any trip, and nothing changes below `trip_above`.
+- **New event `OverFrequencyTrip { plant }`** (alongside the usual `PlantTripped`), and a new
+  `IncidentKind::OverFrequencyTrip { plant }` in the monthly report.
+
+*(Builder's call: tripping the most expensive producer first is the economically least harmful
+choice, and it is deterministic. Real trip order follows relay settings, which the game doesn't
+model.)*
+
+### 14.3 Minimum-generation warning (read side)
+
+- **A direct query (CQRS read side), not a projection:**
+  `GameSession::minimum_generation_check() -> Option<MinimumGenerationWarning>`. It returns
+  `MinimumGenerationWarning { hour: u8, committed_minimum: Megawatts, net_load: Megawatts, excess: Megawatts }`.
+  Commitment edits during Planning emit no events, so a projection would go stale; the Plan 2 HUD
+  reads this query directly while in Planning.
+- **For each hour `h` of the coming day,** compute two quantities:
+  - `committed_minimum_h` is a sum over connected, commissioned, dispatchable plants committed in
+    hour `h` by their pattern. Each contributes its minimum output if it is under AGC, or its
+    initial target if it is manual.
+  - `net_load_h` is the forecast net load at minute 30 of `h`, the same input as A1's schedule.
+- **The excess** is `committed_minimum_h − net_load_h`. The warning reports the hour with the largest
+  positive excess (ties go to the earliest hour), or `None` if no hour has a positive excess.
+- **Pure:** no RNG and no state change.
+- **A new lesson:** `Lesson::Overgeneration { energy: MegawattHours, trips: u32 }`. It fires when the
+  month's positive imbalance exceeds 2% of served energy, or when at least one over-frequency trip
+  happened.
+  - Its priority sits directly after `UnservedEnergy`.
+  - `MonthlyReport` gains `overgeneration: MegawattHours` (the weighted Σ of positive imbalance) and
+    `over_frequency_trips: u32`.
+
+### 14.4 Frequency-performance strikes
+
+- **New `RegulatorParams` fields** (region data): `frequency_band: Hertz` (default 0.2 Hz) and
+  `frequency_violation_share: Ratio` (default 0.05, about 72 minutes per day). Validation requires
+  `frequency_band > 0`.
+- **Counting.** `MonthAccumulator` counts Normal-mode ticks with `|deviation| > frequency_band`,
+  out of all Normal-mode ticks. Blackout ticks are excluded: frequency is held at nominal during a
+  blackout, and blackouts are already penalised through unserved energy.
+- **Month close.** If the out-of-band share exceeds `frequency_violation_share`, the month fails
+  frequency performance.
+- **One strike per month.** A month that fails either test (unserved energy or frequency performance)
+  earns **one** strike. A month counts as clean for strike expiry only if it passes **both**.
+- **The event gains a reason:** `StrikeIssued { strikes, reason: StrikeReason }`, where
+  `StrikeReason` is `UnservedEnergy` or `FrequencyPerformance`. When both fail, the reason is
+  `UnservedEnergy`.
+- **Projections that read strike events adapt to the new event shape.** `FullSeasonWithoutStrike`
+  still counts any strike.
+
+### 14.5 Data and versioning
+
+- Both shipped regions and the test fixture gain the four new fields with the defaults above.
+- Outcomes change: overgeneration now trips plants and can earn strikes. This lands under the same
+  `SIM_RULES_VERSION` bump to 2 as A1 and A2, with all snapshot diffs reviewed together. The
+  "overbuild" scenario is expected to change materially, to trips and frequency strikes instead of a
+  silent surplus.
+
+### 14.6 Properties (tests)
+
+- **Trips are sustained and gradual.** No trip while `deviation ≤ trip_above`. After exactly
+  `trip_after_ticks` consecutive ticks above it, one trip, then the counter resets. At most one plant
+  per window.
+- **Trip order.** Always the highest-marginal-cost connected producing dispatchable plant (ties by
+  id). Never solar.
+- **The surplus clears.** In the overbuild fixture with no player action, frequency returns below
+  `curtail_above` within a bounded number of ticks, and stays there for the rest of the day.
+- **The warning is exact.** On a crafted fleet, `minimum_generation_check` reports the
+  hand-computed hour and excess, returns `None` when committed minimums fit under net load, counts
+  only committed hours, and leaves `state_hash` unchanged.
+- **Strikes.**
+  - the out-of-band share counts Normal-mode ticks only;
+  - frequency performance alone fails a month with reason `FrequencyPerformance`;
+  - both tests failing still gives one strike, with reason `UnservedEnergy`;
+  - clean-month expiry requires passing both;
+  - three strikes from any mix revoke the licence.
+- **Validation.** Each new field has a negative validation test.
