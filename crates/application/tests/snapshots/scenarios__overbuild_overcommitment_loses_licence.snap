@@ -197,15 +197,15 @@ OverbuildOutcome {
     ],
     minimum_generation: Some(
         MinimumGenerationWarning {
-            hour: 2,
+            hour: 3,
             committed_minimum: Megawatts(
                 1280.0,
             ),
             net_load: Megawatts(
-                584.2,
+                579.6,
             ),
             excess: Megawatts(
-                695.8,
+                700.4,
             ),
         },
     ),

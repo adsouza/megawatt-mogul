@@ -4,7 +4,9 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use application::{LoadedRegion, RegionCatalog, RegionFingerprint, RegionLoadError, RegionSummary};
+use application::{
+    LoadedRegion, RegionCatalog, RegionFingerprint, RegionListing, RegionLoadError, RegionSummary,
+};
 use domain::ids::RegionId;
 use sha2::{Digest, Sha256};
 
@@ -34,19 +36,19 @@ impl RonRegionCatalog {
     }
 }
 
-/// Parses, maps and fingerprints one region from its exact source bytes. This
-/// is the single path from bytes to `LoadedRegion`, used for shipped files and
-/// for archived copies alike. `region` is the id the caller asked for: it gives
-/// errors their context and must match the id the file declares.
-pub fn load_region_bytes(
-    source_bytes: Vec<u8>,
+/// Decodes a region file's DTO from its exact source bytes and checks that it
+/// declares the id the caller asked for. No mapping and no rasterisation: the
+/// cheap first half of loading, which listing also uses. `region` gives errors
+/// their context.
+fn parse_region_file(
+    source_bytes: &[u8],
     region: &RegionId,
-) -> Result<LoadedRegion, RegionLoadError> {
+) -> Result<RegionFile, RegionLoadError> {
     let parse_error = |message: String| RegionLoadError::Parse {
         region: region.clone(),
         message,
     };
-    let text = std::str::from_utf8(&source_bytes)
+    let text = std::str::from_utf8(source_bytes)
         .map_err(|e| parse_error(format!("invalid UTF-8 at byte {}", e.valid_up_to())))?;
     // RON's error display leads with the `line:col` span.
     let file: RegionFile = ron::de::from_str(text).map_err(|e| parse_error(e.to_string()))?;
@@ -58,6 +60,18 @@ pub fn load_region_bytes(
             found,
         });
     }
+    Ok(file)
+}
+
+/// Parses, maps and fingerprints one region from its exact source bytes. This
+/// is the single path from bytes to `LoadedRegion`, used for shipped files and
+/// for archived copies alike. `region` is the id the caller asked for: it gives
+/// errors their context and must match the id the file declares.
+pub fn load_region_bytes(
+    source_bytes: Vec<u8>,
+    region: &RegionId,
+) -> Result<LoadedRegion, RegionLoadError> {
+    let file = parse_region_file(&source_bytes, region)?;
     let definition = map_region(file).map_err(|error| RegionLoadError::Invalid {
         region: region.clone(),
         error,
@@ -87,7 +101,13 @@ fn read_once(path: &Path, region: &RegionId) -> Result<Vec<u8>, RegionLoadError>
 }
 
 impl RegionCatalog for RonRegionCatalog {
-    fn list(&self) -> Result<Vec<RegionSummary>, RegionLoadError> {
+    /// One listing per `.ron` file, by file name. A file that cannot be read,
+    /// decoded or that declares another id is listed with its error; only an
+    /// unreadable directory fails the whole listing. Listing decodes each
+    /// file's DTO for its id and name only: it neither maps nor rasterises, so
+    /// a region that is valid as text but invalid as a map is listed, and
+    /// `load` is what refuses it.
+    fn list(&self) -> Result<Vec<RegionListing>, RegionLoadError> {
         // Directory-level failures have no region; the directory stands in.
         let dir_error = |e: io::Error| RegionLoadError::Io {
             region: RegionId::new(&self.dir.to_string_lossy()),
@@ -102,18 +122,20 @@ impl RegionCatalog for RonRegionCatalog {
         }
         files.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
 
-        files
+        Ok(files
             .iter()
             .map(|path| {
                 let stem = path.file_stem().unwrap_or_default().to_string_lossy();
-                let region = RegionId::new(&stem);
-                let loaded = load_region_bytes(read_once(path, &region)?, &region)?;
-                Ok(RegionSummary {
-                    id: loaded.definition.id().clone(),
-                    name_key: loaded.definition.name_key().to_owned(),
-                })
+                let id = RegionId::new(&stem);
+                let entry = read_once(path, &id)
+                    .and_then(|bytes| parse_region_file(&bytes, &id))
+                    .map(|file| RegionSummary {
+                        id: RegionId::new(&file.id),
+                        name_key: file.name_key,
+                    });
+                RegionListing { id, entry }
             })
-            .collect()
+            .collect())
     }
 
     fn load(&self, id: &RegionId) -> Result<LoadedRegion, RegionLoadError> {

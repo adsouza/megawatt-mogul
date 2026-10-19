@@ -82,6 +82,29 @@ impl Network {
         Ok(())
     }
 
+    /// Whether a line could be added between `from` and `to`: two distinct,
+    /// existing nodes that are not already joined (in either direction, in any
+    /// status). The checks [`Network::add_line`] makes about the endpoints, so
+    /// a quote and the order itself cannot disagree. Pure.
+    pub fn check_line(&self, from: NodeId, to: NodeId) -> Result<(), DomainError> {
+        if from == to {
+            return Err(DomainError::LineToSelf { node: from });
+        }
+        for node in [from, to] {
+            if !self.nodes.contains_key(&node) {
+                return Err(DomainError::UnknownNode { node });
+            }
+        }
+        if self
+            .lines
+            .values()
+            .any(|l| (l.from, l.to) == (from, to) || (l.from, l.to) == (to, from))
+        {
+            return Err(DomainError::DuplicateLine { from, to });
+        }
+        Ok(())
+    }
+
     /// Adds a line between two existing, distinct nodes that are not already
     /// joined (in either direction, in any status). Length is derived from the
     /// endpoints' cells.
@@ -92,29 +115,12 @@ impl Network {
         to: NodeId,
         status: LineStatus,
     ) -> Result<(), DomainError> {
-        if from == to {
-            return Err(DomainError::LineToSelf { node: from });
-        }
-        let from_cell = self
-            .nodes
-            .get(&from)
-            .ok_or(DomainError::UnknownNode { node: from })?
-            .cell;
-        let to_cell = self
-            .nodes
-            .get(&to)
-            .ok_or(DomainError::UnknownNode { node: to })?
-            .cell;
+        self.check_line(from, to)?;
         if self.lines.contains_key(&id) {
             return Err(DomainError::DuplicateLineId { line: id });
         }
-        if self
-            .lines
-            .values()
-            .any(|l| (l.from, l.to) == (from, to) || (l.from, l.to) == (to, from))
-        {
-            return Err(DomainError::DuplicateLine { from, to });
-        }
+        let from_cell = self.nodes[&from].cell;
+        let to_cell = self.nodes[&to].cell;
         let line = Line {
             id,
             from,

@@ -35,6 +35,18 @@ pub struct RegionSummary {
     pub name_key: String,
 }
 
+/// One region file as the picker sees it: the file is always listed, and a
+/// broken one carries its error instead of hiding the rest.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RegionListing {
+    /// The id the region is requested by (for a file, its name), known even
+    /// when the file is unreadable.
+    pub id: RegionId,
+    /// The summary, or why the region could not be listed and so cannot be
+    /// loaded either.
+    pub entry: Result<RegionSummary, RegionLoadError>,
+}
+
 /// Why a region could not be listed or loaded.
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum RegionLoadError {
@@ -69,7 +81,12 @@ pub struct LoadedRegion {
 
 /// Where regions come from.
 pub trait RegionCatalog {
-    fn list(&self) -> Result<Vec<RegionSummary>, RegionLoadError>;
+    /// Every region the catalog holds, one listing each, in a stable order.
+    /// Only a failure of the catalog itself (an unreadable directory) is an
+    /// `Err`; a single bad region is an `Err` entry in its own listing. Listing
+    /// reads each region's name only: it does not validate the region, which
+    /// [`RegionCatalog::load`] still does in full.
+    fn list(&self) -> Result<Vec<RegionListing>, RegionLoadError>;
     fn load(&self, id: &RegionId) -> Result<LoadedRegion, RegionLoadError>;
 }
 

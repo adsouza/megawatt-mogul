@@ -3,9 +3,10 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use domain::events::DomainEvent;
+use domain::grid::TickSummary;
 use domain::region::PlantKind;
 use domain::session::GameSession;
-use domain::units::{Hertz, Megawatts};
+use domain::units::{Hertz, Megawatts, Price};
 
 use super::Projection;
 
@@ -20,6 +21,11 @@ pub struct TimelinePoint {
     pub served: Megawatts,
     pub frequency: Hertz,
     pub by_kind: BTreeMap<PlantKind, Megawatts>,
+    /// The system marginal cost: the highest marginal cost among connected
+    /// plants producing more than zero this tick, or `None` when nothing
+    /// produces. Under a regulated tariff nobody is paid this per tick (§6.1);
+    /// it is the "price" the merit order teaches.
+    pub marginal_cost: Option<Price>,
 }
 
 /// The last [`TIMELINE_CAPACITY`] ticks, oldest first.
@@ -34,8 +40,20 @@ impl TimelineProjection {
     }
 }
 
+/// The highest marginal cost among the plants producing in `summary`. A plant
+/// the session does not know contributes nothing.
+fn system_marginal_cost(summary: &TickSummary, session: &GameSession) -> Option<Price> {
+    summary
+        .by_plant
+        .iter()
+        .filter(|(_, output)| **output > Megawatts::ZERO)
+        .filter_map(|(id, _)| session.power().plant(*id))
+        .map(|plant| plant.spec().marginal_cost)
+        .max_by(|a, b| a.value().total_cmp(&b.value()))
+}
+
 impl Projection for TimelineProjection {
-    fn apply(&mut self, event: &DomainEvent, _session: &GameSession) {
+    fn apply(&mut self, event: &DomainEvent, session: &GameSession) {
         if let DomainEvent::TickCompleted(summary) = event {
             if self.points.len() == TIMELINE_CAPACITY {
                 self.points.pop_front();
@@ -46,6 +64,7 @@ impl Projection for TimelineProjection {
                 served: summary.served,
                 frequency: summary.frequency,
                 by_kind: summary.by_kind.clone(),
+                marginal_cost: system_marginal_cost(summary, session),
             });
         }
     }
@@ -55,6 +74,7 @@ impl Projection for TimelineProjection {
 mod tests {
     use super::*;
     use crate::projections::test_support::{session, tick_summary};
+    use domain::ids::PlantId;
 
     #[test]
     fn timeline_keeps_last_1440_points() {
@@ -89,8 +109,59 @@ mod tests {
                 served: summary.served,
                 frequency: summary.frequency,
                 by_kind: summary.by_kind,
+                marginal_cost: None,
             })
         );
+    }
+
+    fn plant_of(session: &GameSession, kind: PlantKind) -> PlantId {
+        session
+            .plant_views()
+            .iter()
+            .find(|p| p.kind == kind)
+            .expect("plant of kind")
+            .id
+    }
+
+    fn marginal_cost_of(session: &GameSession, kind: PlantKind) -> Price {
+        session.region().spec(kind).marginal_cost
+    }
+
+    fn point_with(session: &GameSession, output: &[(PlantId, f64)]) -> TimelinePoint {
+        let mut summary = tick_summary(0);
+        summary.by_plant = output
+            .iter()
+            .map(|&(plant, mw)| (plant, Megawatts::new(mw)))
+            .collect();
+        let mut timeline = TimelineProjection::default();
+        timeline.apply(&DomainEvent::TickCompleted(summary), session);
+        timeline.points().next().cloned().unwrap()
+    }
+
+    #[test]
+    fn timeline_marginal_cost_is_the_most_expensive_producer() {
+        let session = session();
+        let coal = plant_of(&session, PlantKind::Coal);
+        let ccgt = plant_of(&session, PlantKind::Ccgt);
+        let peaker = plant_of(&session, PlantKind::Peaker);
+        let cost = |kind| marginal_cost_of(&session, kind);
+        assert!(cost(PlantKind::Coal) < cost(PlantKind::Ccgt));
+        assert!(cost(PlantKind::Ccgt) < cost(PlantKind::Peaker));
+
+        // The peaker is connected but idle, so it does not set the price.
+        let point = point_with(&session, &[(coal, 300.0), (ccgt, 80.0), (peaker, 0.0)]);
+        assert_eq!(point.marginal_cost, Some(cost(PlantKind::Ccgt)));
+
+        // Once it produces, it is the marginal plant, whatever the others do.
+        let point = point_with(&session, &[(coal, 300.0), (ccgt, 80.0), (peaker, 0.5)]);
+        assert_eq!(point.marginal_cost, Some(cost(PlantKind::Peaker)));
+        let point = point_with(&session, &[(peaker, 5.0)]);
+        assert_eq!(point.marginal_cost, Some(cost(PlantKind::Peaker)));
+
+        // Nothing producing means no price.
+        assert_eq!(point_with(&session, &[]).marginal_cost, None);
+        let idle = point_with(&session, &[(coal, 0.0), (peaker, 0.0)]);
+        assert_eq!(idle.marginal_cost, None);
     }
 
     #[test]

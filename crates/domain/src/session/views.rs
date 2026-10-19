@@ -96,13 +96,15 @@ pub struct RateReviewEstimate {
 
 /// The hour in which committed minimum generation exceeds the net load by
 /// the most (spec §14.3): the plan would have to dump or curtail the surplus.
+/// Its figures are those of the hour's worse end, minute 0 or minute 59.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MinimumGenerationWarning {
     /// The hour of day, 0 to 23.
     pub hour: u8,
     /// What the plants committed in that hour must generate at least.
     pub committed_minimum: Megawatts,
-    /// The forecast net load at minute 30 of that hour.
+    /// The forecast net load at the hour's worse end: the lower of minute 0
+    /// and minute 59.
     pub net_load: Megawatts,
     /// `committed_minimum − net_load`, always positive.
     pub excess: Megawatts,
@@ -223,18 +225,25 @@ impl GameSession {
     }
 
     /// The Planning-time check of the commitment plan against the load
-    /// forecast: the hour whose committed minimum generation exceeds that
-    /// hour's forecast net load by the most, earliest on ties; `None` when
-    /// every hour's minimums fit under its net load.
+    /// forecast (spec §14.3): the hour whose committed minimum generation
+    /// exceeds its forecast net load by the most, earliest on ties; `None`
+    /// when every hour's minimums fit under its net load.
     ///
-    /// Reads the plants' commitment patterns (not the per-day suppression
-    /// override), so it is meaningful while planning. Pure: no randomness, no
-    /// state change.
+    /// Each hour is judged at both ends, minute 0 and minute 59, where its
+    /// interpolated load has its extremes, by the evaluator the capacity
+    /// check and operating-time sizing use ([`HourEnd`]); the hour's excess
+    /// is that of its worse end, the one with the lower net load, minute 0 on
+    /// a tie, and the warning's `net_load` is that end's. Reads the plants'
+    /// commitment patterns (not the per-day suppression override), so it is
+    /// meaningful while planning. Pure: no randomness, no state change.
     pub fn minimum_generation_check(&self) -> Option<MinimumGenerationWarning> {
-        let net_load = self.power.hourly_net_load(&self.region, self.clock.month());
-        let committed = self.power.hourly_committed_minimum();
+        let hours = self
+            .power
+            .committed_minimum_hour_ends(&self.region, self.clock.month());
         let mut worst: Option<MinimumGenerationWarning> = None;
-        for (hour, (&committed_minimum, &net_load)) in committed.iter().zip(&net_load).enumerate() {
+        for (hour, (committed_minimum, ends)) in hours.into_iter().enumerate() {
+            let end = HourEnd::worse_by(ends, |end| committed_minimum - end.net_load());
+            let net_load = end.net_load();
             let excess = committed_minimum - net_load;
             let beats_worst = worst.map_or(excess > Megawatts::ZERO, |w| excess > w.excess);
             if beats_worst {

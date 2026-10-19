@@ -486,8 +486,13 @@ The presentation layer never reads aggregate internals.
   `CompanyView`.
 - **Projections** (updated from events and per-tick summaries):
   - `TimelineProjection`: a rolling 24 h of supply by plant type, demand, frequency and price.
+    *(Builder's call: under a regulated tariff the per-tick "price" the merit order teaches is the
+    system marginal cost: `TimelinePoint.marginal_cost` is the highest marginal cost among the
+    connected plants producing in that tick, `None` when none does.)*
   - `MonthlyReportProjection`: P&L, the merit order used, incidents and unserved energy.
-  - `PlantHistoryProjection`: starts, trips, energy and revenue per plant.
+  - `PlantHistoryProjection`: starts, trips, energy and revenue per plant. A plant's revenue is
+    its weighted merit-order energy times the tariff in force that month, rounded once per plant
+    per month; a read-side figure, not a ledger entry.
   - `MilestoneProjection`: progress toward milestones.
   - `RateReviewProjection`: a running estimate of the next review (projected allowed return,
     current reserve margin, held capital, capital released, and capital at risk of a second-review
@@ -978,9 +983,15 @@ The builder's calls below keep protection from tripping the grid into a deficit:
   - `committed_minimum_h` is a sum over connected, commissioned, dispatchable plants committed in
     hour `h` by their pattern. Each contributes its minimum output if it is under AGC, or its
     initial target if it is manual.
-  - `net_load_h` is the forecast net load at minute 30 of `h`, the same input as A1's schedule.
-- **The excess** is `committed_minimum_h − net_load_h`. The warning reports the hour with the largest
-  positive excess (ties go to the earliest hour), or `None` if no hour has a positive excess.
+  - `net_load_h` is the forecast net load at the hour's two ends, minute 0 and minute 59. Demand
+    within an hour is interpolated linearly, so its extremes sit at the hour's ends, and a trough
+    on an hour knot is invisible to a mid-hour sample (as with §15.5). Each end is evaluated
+    through the same per-hour evaluator as §15.5 and the operating-time sizing (§15.3), with the
+    committed minimum as the fleet.
+- **The excess** of an hour is `committed_minimum_h − net_load_h` at its worse end, the one with
+  the lower net load (minute 0 on a tie); the warning's `committed_minimum`, `net_load` and
+  `excess` are that end's. The warning reports the hour with the largest positive excess (ties go
+  to the earliest hour), or `None` if no hour has a positive excess.
 - **Pure:** no RNG and no state change.
 - **A new lesson:** `Lesson::Overgeneration { energy: MegawattHours, trips: u32 }`. It fires when the
   month's positive imbalance exceeds 2% of served energy, or when at least one over-frequency trip

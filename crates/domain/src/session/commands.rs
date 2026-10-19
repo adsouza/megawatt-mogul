@@ -10,9 +10,21 @@ use crate::grid::{LineStatus, Node, NodeKind, distance_cells};
 use crate::ids::{CellCoord, LineId, NodeId, PlantId};
 use crate::region::PlantKind;
 use crate::time::{SimDuration, TICKS_PER_DAY};
-use crate::units::Megawatts;
+use crate::units::{Megawatts, Money};
 
 const PLANNING_OR_OPERATING: [DayPhase; 2] = [DayPhase::Planning, DayPhase::Operating];
+
+/// What a line would cost and how long it would take to build (see
+/// [`GameSession::line_quote`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LineQuote {
+    /// Whole cells the line spans: `ceil(length)`.
+    pub cells: u32,
+    /// The capital cost, paid in `months` equal instalments.
+    pub capital: Money,
+    /// Months the line takes to build: at least one.
+    pub months: u32,
+}
 
 impl GameSession {
     /// Orders a plant of `kind` at `cell` (Planning only). The plant sits
@@ -53,17 +65,17 @@ impl GameSession {
 
     /// Orders a line between two existing nodes (Planning only). It takes
     /// `max(1, ceil(cells / cells_per_month))` months and costs
-    /// `cost_per_cell` per whole cell, queued as equal monthly instalments.
+    /// `cost_per_cell` per whole cell, queued as equal monthly instalments:
+    /// exactly what [`GameSession::line_quote`] reports.
     pub fn build_line(
         &mut self,
         from: NodeId,
         to: NodeId,
     ) -> Result<(LineId, Vec<DomainEvent>), DomainError> {
         self.require_phase(&[DayPhase::Planning])?;
-        let cells = whole_cells(self.line_length(from, to)?);
-        let params = self.region.lines();
-        let months = cells.div_ceil(params.cells_per_month).max(1);
-        let cost = line_cost(params, cells);
+        let LineQuote {
+            capital, months, ..
+        } = self.line_quote(from, to)?;
         // Allocate on a copy so a rejected line leaves the counter untouched.
         let mut ids = self.ids.clone();
         let line: LineId = ids.next();
@@ -77,8 +89,25 @@ impl GameSession {
         )?;
         self.ids = ids;
         self.instalments
-            .insert(AssetRef::Line(line), cost.split_even(months).into());
+            .insert(AssetRef::Line(line), capital.split_even(months).into());
         Ok((line, vec![DomainEvent::LineConstructionStarted { line }]))
+    }
+
+    /// What a line between two nodes would cost and how long it would take,
+    /// by the rule [`GameSession::build_line`] charges (the one place the
+    /// length and cost are worked out), with the errors it would return for
+    /// an unknown node, a line to the node itself, or two nodes already
+    /// joined. Pure: no phase check and no state change, so the player can
+    /// price a line at any time; only ordering one needs Planning.
+    pub fn line_quote(&self, from: NodeId, to: NodeId) -> Result<LineQuote, DomainError> {
+        let cells = whole_cells(self.line_length(from, to)?);
+        self.power.network().check_line(from, to)?;
+        let params = self.region.lines();
+        Ok(LineQuote {
+            cells,
+            capital: line_cost(params, cells),
+            months: cells.div_ceil(params.cells_per_month).max(1),
+        })
     }
 
     /// Distance between two distinct existing nodes, in cells.

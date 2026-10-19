@@ -33,9 +33,9 @@ const LAST_MINUTE: u32 = TICKS_PER_HOUR - 1;
 /// within an hour, so its extremes are at the two ends.
 const HOUR_ENDS: [u32; 2] = [0, LAST_MINUTE];
 
-/// One end of an hour (minute 0 or 59), judged against a deliverable rule:
-/// the evaluation shared by operating-time sizing (spec §15.3) and the
-/// Planning-time warning (spec §15.5).
+/// One end of an hour (minute 0 or 59), judged against a fleet rule: the
+/// evaluation shared by operating-time sizing (spec §15.3) and the two
+/// Planning-time warnings (spec §14.3 and §15.5).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct HourEnd {
     /// The connected demand forecast at that minute.
@@ -43,6 +43,8 @@ pub(crate) struct HourEnd {
     /// What the dispatchable fleet delivers at that minute by the rule, plus
     /// expected solar then.
     pub(crate) deliverable: Megawatts,
+    /// The expected solar output at that minute, already in `deliverable`.
+    pub(crate) solar: Megawatts,
 }
 
 impl HourEnd {
@@ -51,10 +53,24 @@ impl HourEnd {
         self.demand - self.deliverable
     }
 
+    /// `demand − solar`: the load left to the dispatchable fleet.
+    pub(crate) fn net_load(self) -> Megawatts {
+        self.demand - self.solar
+    }
+
     /// The worse of an hour's two ends: the one with the larger shortfall,
     /// minute 0 on a tie.
-    pub(crate) fn worse([first, last]: [HourEnd; 2]) -> HourEnd {
-        if last.shortfall() > first.shortfall() {
+    pub(crate) fn worse(ends: [HourEnd; 2]) -> HourEnd {
+        Self::worse_by(ends, HourEnd::shortfall)
+    }
+
+    /// The end of an hour that scores higher on `badness`, minute 0 on a tie:
+    /// one tie rule for every warning that judges an hour by its worse end.
+    pub(crate) fn worse_by(
+        [first, last]: [HourEnd; 2],
+        badness: impl Fn(HourEnd) -> Megawatts,
+    ) -> HourEnd {
+        if badness(last) > badness(first) {
             last
         } else {
             first
@@ -136,9 +152,11 @@ impl PowerSystem {
         let start = u32::from(hour) * TICKS_PER_HOUR;
         HOUR_ENDS.map(|minute| {
             let tick = start + minute;
+            let solar = self.expected_solar(region, month, tick);
             HourEnd {
                 demand: self.connected_demand_forecast(region, month, tick),
-                deliverable: fleet(minute) + self.expected_solar(region, month, tick),
+                deliverable: fleet(minute) + solar,
+                solar,
             }
         })
     }
@@ -356,5 +374,22 @@ impl PowerSystem {
         } else {
             ratio(next)
         }
+    }
+
+    /// Both ends of every hour of the coming day in `month`, judged by the
+    /// minimum-generation rule (spec §14.3), each with the hour's committed
+    /// minimum: the fleet is [`PowerSystem::hourly_committed_minimum`] at both
+    /// ends, so an end's [`HourEnd::net_load`] is the load the committed
+    /// minimums must fit under. Pure.
+    pub(crate) fn committed_minimum_hour_ends(
+        &self,
+        region: &RegionDefinition,
+        month: SimMonth,
+    ) -> [(Megawatts, [HourEnd; 2]); 24] {
+        let committed = self.hourly_committed_minimum();
+        std::array::from_fn(|h| {
+            let fleet = committed[h];
+            (fleet, self.hour_ends(region, month, h as u8, |_| fleet))
+        })
     }
 }

@@ -50,7 +50,7 @@ impl Projections {
         Self {
             timeline: TimelineProjection::default(),
             monthly_reports: MonthlyReportProjection::default(),
-            plant_history: PlantHistoryProjection::default(),
+            plant_history: PlantHistoryProjection::new(session),
             milestones: MilestoneProjection::new(session),
             ramp_warnings: RampWarningProjection::default(),
             rate_review: RateReviewProjection::new(session),

@@ -9,7 +9,8 @@
 use std::sync::Arc;
 
 use application::{
-    Command, Game, InMemoryCommandLog, LoadedRegion, RegionCatalog, RegionLoadError, RegionSummary,
+    Command, Game, InMemoryCommandLog, LoadedRegion, RegionCatalog, RegionListing, RegionLoadError,
+    RegionSummary,
 };
 use domain::demand::shape_factor;
 use domain::events::DomainEvent;
@@ -95,8 +96,11 @@ fn both_regions_carry_the_frequency_protection_and_performance_defaults() {
 #[test]
 fn ships_exactly_two_regions() {
     let listed = catalog().list().expect("shipped regions list");
-    let ids: Vec<_> = listed.iter().map(|s| s.id.as_str()).collect();
+    let ids: Vec<_> = listed.iter().map(|l| l.id.as_str()).collect();
     assert_eq!(ids, [EAST, WEST]);
+    for listing in &listed {
+        assert!(listing.entry.is_ok(), "{listing:?}");
+    }
 }
 
 #[test]
@@ -244,10 +248,13 @@ impl StartMonthOverride {
 }
 
 impl RegionCatalog for StartMonthOverride {
-    fn list(&self) -> Result<Vec<RegionSummary>, RegionLoadError> {
-        Ok(vec![RegionSummary {
+    fn list(&self) -> Result<Vec<RegionListing>, RegionLoadError> {
+        Ok(vec![RegionListing {
             id: self.0.definition.id().clone(),
-            name_key: self.0.definition.name_key().to_owned(),
+            entry: Ok(RegionSummary {
+                id: self.0.definition.id().clone(),
+                name_key: self.0.definition.name_key().to_owned(),
+            }),
         }])
     }
 

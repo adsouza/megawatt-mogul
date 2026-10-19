@@ -4327,6 +4327,7 @@ fn the_worse_end_of_an_hour_has_the_larger_shortfall_and_ties_to_minute_zero() {
     let end = |demand: f64, deliverable: f64| HourEnd {
         demand: Megawatts::new(demand),
         deliverable: Megawatts::new(deliverable),
+        solar: Megawatts::ZERO,
     };
     let (rising, falling) = (end(100.0, 90.0), end(120.0, 100.0));
     assert_eq!(HourEnd::worse([rising, falling]), falling);

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::super::GameSettings;
 use super::*;
-use crate::company::AssetRef;
+use crate::company::{AssetRef, LedgerCategory};
 use crate::region::SiteError;
 use crate::region::fixtures::tiny_region;
 use crate::units::Money;
@@ -194,6 +194,126 @@ fn build_line_prices_whole_cells_and_schedules_months() {
         .copied()
         .collect();
     assert_eq!(instalments, vec![Money::from_dollars(60_000_000); 2]);
+}
+
+#[test]
+fn line_quote_matches_what_build_line_charges() {
+    let mut s = session();
+    let (plant, _) = s.build_plant(PlantKind::Peaker, cell(5, 5)).unwrap();
+    let node = s.power().plant(plant).unwrap().node();
+    let root = s.substation;
+
+    // (7, 4) to (5, 5) is sqrt(5) cells: 3 whole cells, 2 months.
+    let before = s.state_hash();
+    let quote = s.line_quote(root, node).unwrap();
+    assert_eq!(
+        s.state_hash(),
+        before,
+        "a quote must not change the session"
+    );
+    assert_eq!(
+        s.line_quote(node, root).unwrap(),
+        quote,
+        "direction is free"
+    );
+    assert_eq!(
+        quote,
+        LineQuote {
+            cells: 3,
+            capital: Money::from_dollars(120_000_000),
+            months: 2,
+        }
+    );
+
+    let (line, events) = s.build_line(root, node).unwrap();
+    assert_eq!(events, vec![DomainEvent::LineConstructionStarted { line }]);
+    let built = s.power().network().lines().find(|l| l.id == line).unwrap();
+    assert_eq!(
+        built.status,
+        LineStatus::UnderConstruction {
+            months_left: quote.months
+        }
+    );
+    let queued = s
+        .pending_instalments(AssetRef::Line(line))
+        .unwrap()
+        .iter()
+        .fold(Money::ZERO, |total, instalment| total + *instalment);
+    assert_eq!(queued, quote.capital);
+
+    // The ledger books exactly the quoted capital, one instalment a month.
+    for month in 0..quote.months {
+        if month > 0 {
+            s.finish_review().unwrap();
+        }
+        s.begin_operating().unwrap();
+        run_ticks(&mut s, TICKS_PER_DAY);
+    }
+    let booked = s
+        .company()
+        .ledger()
+        .iter()
+        .filter(|e| e.category == LedgerCategory::Construction)
+        .filter(|e| e.subject == Some(AssetRef::Line(line)))
+        .fold(Money::ZERO, |total, e| total - e.amount);
+    assert_eq!(booked, quote.capital);
+}
+
+#[test]
+fn line_quote_floors_a_short_line_at_one_month() {
+    let mut s = session();
+    let (plant, _) = s.build_plant(PlantKind::Peaker, cell(7, 5)).unwrap();
+    let node = s.power().plant(plant).unwrap().node();
+    // One cell: one month at 40 M.
+    assert_eq!(
+        s.line_quote(s.substation, node).unwrap(),
+        LineQuote {
+            cells: 1,
+            capital: Money::from_dollars(40_000_000),
+            months: 1,
+        }
+    );
+}
+
+#[test]
+fn line_quote_returns_the_errors_build_line_would() {
+    let mut s = session();
+    let root = s.substation;
+    let city1 = s.city_views()[0].node;
+    for (from, to, expected) in [
+        (
+            root,
+            NodeId(999),
+            DomainError::UnknownNode { node: NodeId(999) },
+        ),
+        (
+            NodeId(999),
+            root,
+            DomainError::UnknownNode { node: NodeId(999) },
+        ),
+        (root, root, DomainError::LineToSelf { node: root }),
+        (
+            city1,
+            root,
+            DomainError::DuplicateLine {
+                from: city1,
+                to: root,
+            },
+        ),
+        (
+            root,
+            city1,
+            DomainError::DuplicateLine {
+                from: root,
+                to: city1,
+            },
+        ),
+    ] {
+        let before = s.state_hash();
+        assert_eq!(s.line_quote(from, to), Err(expected.clone()));
+        assert_eq!(s.build_line(from, to).unwrap_err(), expected);
+        assert_eq!(s.state_hash(), before);
+    }
 }
 
 #[test]

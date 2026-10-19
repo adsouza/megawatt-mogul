@@ -152,7 +152,9 @@ Watch items:
   never cut. It errs on the safe side, but the preview is not a strict upper bound for hydro.
 - **Minimum-generation warning samples minute 30 (§14.3):** it has the blind spot the shortfall
   warning had: a trough on an hour knot is invisible to it. Moving it onto the both-ends evaluator
-  is a Plan 2 candidate.
+  is a Plan 2 candidate. **Done (Plan 2, Task 2):** it now judges both ends of each hour through
+  the shared `HourEnd` evaluator (§14.3 reworded). The `overbuild_overcommitment_loses_licence`
+  snapshot records its warning, which moved from hour 2 to hour 3 (net load 584.2 to 579.6 MW).
 - **M4, stacked restores:** protection's restoration and the outage's restore can stack in one tick
   beyond the fleet's headroom.
 - **M5, hydro lift on outage days:** noise-driven UFLS on an outage day lifts the hydro cap, which
@@ -171,15 +173,25 @@ Watch items:
   projections by feeding the replayed events through `Projections::apply_all`.
 - **Command-log failures:** these are only traced. `FileCommandLog` then silently drops later
   commands. Surface log health to the player.
+  **Done (Plan 2, Task 2):** `build_pipeline` returns a `LogHealth` that keeps the first append
+  error, and `Game::log_failure()` exposes it for the HUD.
 - **Region picker:** `RonRegionCatalog::list` fails as a whole if any one file is bad, and it fully
   rasterises every region just to list it. Return per-entry results for the picker.
+  **Done (Plan 2, Task 2):** `RegionCatalog::list` returns one `RegionListing` per file, a bad
+  file as an `Err` entry, and decodes the file's DTO only (no mapping or rasterisation).
+  `auto_select_region` picks only a lone, available entry.
 - **Spec §6.3:** asks for price in the timeline and revenue per plant. Both were dropped by the plan,
   so implement them or amend the spec.
+  **Done (Plan 2, Task 2):** `TimelinePoint.marginal_cost` (the system marginal cost, recorded as
+  a builder's call in §6.3) and `PlantHistory.revenue` (weighted energy times the tariff in force,
+  rounded once per plant per month).
 - **Blackouts:** a blackout also trips disconnected plants, which contradicts the module doc. Low
   impact.
 - **`Megawatts::new`:** it only `debug_assert`s finiteness, so the command-log DTO path can build a
   NaN in release. The domain now rejects non-finite dispatch targets anyway; validating at the DTO
   boundary would close the gap entirely.
+  **Done (Plan 2, Task 2):** the DTO-to-`Command` mapping returns
+  `LogDtoError::NonFiniteMegawatts` for a non-finite target, now pinned by a test.
 - **Cross-platform determinism:** not guaranteed. libm is used in Box–Muller, solar `sin`, line
   `hypot` and the raster's `cos`/`exp`. The documented guarantee is the same build on the same
   platform.

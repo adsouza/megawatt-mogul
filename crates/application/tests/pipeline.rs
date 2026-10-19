@@ -2,9 +2,9 @@
 mod support;
 
 use application::{
-    Command, CommandError, CommandLogError, CommandLogSink, Game, InMemoryCommandLog,
-    LOG_FORMAT_VERSION, LogHeader, LogRecord, RegionFingerprint, RegionLoadError, RegionSummary,
-    ReplayError, auto_select_region, replay,
+    Command, CommandError, CommandHandler, CommandLogError, CommandLogSink, Game,
+    InMemoryCommandLog, LOG_FORMAT_VERSION, LogHeader, LogRecord, RegionFingerprint, RegionListing,
+    RegionLoadError, RegionSummary, ReplayError, auto_select_region, build_pipeline, replay,
 };
 use domain::SIM_RULES_VERSION;
 use domain::error::DomainError;
@@ -321,18 +321,122 @@ fn domain_errors_pass_through_unchanged() {
 }
 
 #[test]
-fn auto_select_only_with_exactly_one_region() {
-    let summary = |id: &str| RegionSummary {
+fn auto_select_requires_exactly_one_available_entry() {
+    let available = |id: &str| RegionListing {
         id: RegionId::new(id),
-        name_key: format!("region-{id}"),
+        entry: Ok(RegionSummary {
+            id: RegionId::new(id),
+            name_key: format!("region-{id}"),
+        }),
+    };
+    let broken = |id: &str| RegionListing {
+        id: RegionId::new(id),
+        entry: Err(RegionLoadError::Parse {
+            region: RegionId::new(id),
+            message: "1:1: unexpected token".to_owned(),
+        }),
     };
     assert_eq!(auto_select_region(&[]), None);
-    let one = [summary("eastern")];
+    // One ok: the only choice.
+    let one = [available("eastern")];
     assert_eq!(auto_select_region(&one), Some(&RegionId::new("eastern")));
+    // One ok plus one broken: the player should hear about the broken one
+    // rather than be silently sent into the survivor.
     assert_eq!(
-        auto_select_region(&[summary("eastern"), summary("western")]),
+        auto_select_region(&[available("eastern"), broken("western")]),
         None
     );
+    assert_eq!(
+        auto_select_region(&[broken("western"), available("eastern")]),
+        None
+    );
+    // Only a broken one: nothing to enter.
+    assert_eq!(auto_select_region(&[broken("western")]), None);
+    // Two ok: a real choice.
+    assert_eq!(
+        auto_select_region(&[available("eastern"), available("western")]),
+        None
+    );
+}
+
+/// A sink that accepts its header and then fails every `fail_every`-th
+/// `append` (the 2nd, 4th, ... for 2), with a message naming the call.
+struct FlakySink {
+    appends: u32,
+    fail_every: u32,
+}
+
+impl CommandLogSink for FlakySink {
+    fn initialize(
+        &mut self,
+        _header: &LogHeader,
+        _region_source: &[u8],
+    ) -> Result<(), CommandLogError> {
+        Ok(())
+    }
+
+    fn append(&mut self, _record: &LogRecord) -> Result<(), CommandLogError> {
+        self.appends += 1;
+        if self.appends.is_multiple_of(self.fail_every) {
+            Err(CommandLogError {
+                message: format!("append {} failed", self.appends),
+            })
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[test]
+fn a_failing_sink_is_reported_and_the_game_continues() {
+    let mut g = Game::start_new(
+        &tiny_catalog(),
+        &RegionId::new("tiny"),
+        1,
+        GameSettings::default(),
+        Box::new(FlakySink {
+            appends: 0,
+            fail_every: 2,
+        }),
+    )
+    .unwrap();
+    assert_eq!(g.log_failure(), None, "a fresh log is healthy");
+
+    g.execute(Command::BeginOperating).unwrap();
+    assert_eq!(g.log_failure(), None, "the first append succeeded");
+
+    // The 2nd append fails: the command still succeeds and is applied.
+    g.execute(Command::AdvanceTicks { n: 3 }).unwrap();
+    assert_eq!(g.projections().timeline.points().count(), 3);
+    let failure = g.log_failure().expect("the 2nd append failed");
+    assert_eq!(failure.message, "append 2 failed");
+
+    // Play goes on; the 3rd append works, the 4th fails again, and the first
+    // failure stays the one reported.
+    g.execute(Command::AdvanceTicks { n: 3 }).unwrap();
+    g.execute(Command::AdvanceTicks { n: 3 }).unwrap();
+    assert_eq!(g.projections().timeline.points().count(), 9);
+    assert_eq!(g.log_failure(), Some(failure));
+}
+
+#[test]
+fn log_health_is_shared_by_the_pipeline_that_reports_into_it() {
+    let (mut handler, health) = build_pipeline(Box::new(FlakySink {
+        appends: 0,
+        fail_every: 1,
+    }));
+    let observer = health.clone();
+    assert_eq!(observer.failure(), None);
+    let mut session = domain::session::GameSession::new(
+        std::sync::Arc::new(domain::region::fixtures::tiny_region()),
+        1,
+        GameSettings::default(),
+    );
+    handler
+        .handle(&mut session, &Command::BeginOperating)
+        .unwrap();
+    assert_eq!(observer.failure(), health.failure());
+    assert_eq!(observer.failure().unwrap().message, "append 1 failed");
 }
 
 #[test]

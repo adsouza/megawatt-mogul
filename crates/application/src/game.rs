@@ -7,9 +7,10 @@ use domain::session::{GameSession, GameSettings};
 
 use crate::command::{Command, CommandHandler};
 use crate::error::{CommandError, ReplayError};
-use crate::pipeline::{CoreHandler, build_pipeline};
+use crate::pipeline::{CoreHandler, LogHealth, build_pipeline};
 use crate::ports::{
-    CommandLogSink, LOG_FORMAT_VERSION, LoadedRegion, LogHeader, RegionCatalog, RegionSummary,
+    CommandLogError, CommandLogSink, LOG_FORMAT_VERSION, LoadedRegion, LogHeader, RegionCatalog,
+    RegionListing,
 };
 use crate::projections::Projections;
 
@@ -17,6 +18,7 @@ use crate::projections::Projections;
 pub struct Game {
     session: GameSession,
     handler: Box<dyn CommandHandler>,
+    log_health: LogHealth,
     projections: Projections,
 }
 
@@ -43,9 +45,11 @@ impl Game {
         sink.initialize(&header, &loaded.source_bytes)?;
         let session = GameSession::new(loaded.definition, seed, settings);
         let projections = Projections::new(&session);
+        let (handler, log_health) = build_pipeline(sink);
         Ok(Game {
             session,
-            handler: build_pipeline(sink),
+            handler,
+            log_health,
             projections,
         })
     }
@@ -63,6 +67,14 @@ impl Game {
     /// The read models, updated after every successful command.
     pub fn projections(&self) -> &Projections {
         &self.projections
+    }
+
+    /// The first time the command log failed to record a command, if ever.
+    /// The game carries on regardless, but from that command on the log no
+    /// longer reproduces it, so the player should be told their save is
+    /// incomplete.
+    pub fn log_failure(&self) -> Option<CommandLogError> {
+        self.log_health.failure()
     }
 }
 
@@ -100,10 +112,12 @@ pub fn replay(
     Ok(session)
 }
 
-/// The region to enter without asking, when there is exactly one to choose.
-pub fn auto_select_region(regions: &[RegionSummary]) -> Option<&RegionId> {
-    match regions {
-        [only] => Some(&only.id),
+/// The region to enter without asking: only when there is exactly one
+/// listing and it is available. A broken region next to a good one is left to
+/// the picker, which can say what is wrong with it.
+pub fn auto_select_region(listing: &[RegionListing]) -> Option<&RegionId> {
+    match listing {
+        [only] => only.entry.as_ref().ok().map(|summary| &summary.id),
         _ => None,
     }
 }
@@ -120,5 +134,6 @@ mod tests {
         assert_send_sync::<Game>();
         assert_send_sync::<GameSession>();
         assert_send_sync::<Projections>();
+        assert_send_sync::<crate::pipeline::LogHealth>();
     }
 }

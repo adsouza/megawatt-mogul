@@ -5,7 +5,7 @@
 use std::fs;
 use std::path::Path;
 
-use application::{RegionCatalog, RegionLoadError};
+use application::{RegionCatalog, RegionLoadError, RegionSummary};
 use domain::ids::{CellCoord, CityId, RegionId};
 use domain::region::RegionError;
 use domain::region::fixtures::tiny_region;
@@ -104,20 +104,72 @@ fn lists_regions_sorted_by_file_name() {
         .replace("region-minimal", "region-a");
     let dir = dir_with(&[("b.ron", &b), ("a.ron", &a), ("notes.txt", "ignored")]);
     let listed = catalog(dir.path()).list().unwrap();
-    let ids: Vec<_> = listed.iter().map(|s| s.id.as_str()).collect();
+    let ids: Vec<_> = listed.iter().map(|l| l.id.as_str()).collect();
     assert_eq!(ids, ["a", "b"]);
-    assert_eq!(listed[0].name_key, "region-a");
+    assert_eq!(
+        listed[0].entry,
+        Ok(RegionSummary {
+            id: RegionId::new("a"),
+            name_key: "region-a".to_owned(),
+        })
+    );
 }
 
 #[test]
-fn list_fails_on_a_malformed_file() {
+fn a_broken_region_file_is_listed_as_unavailable() {
     let dir = dir_with(&[
         ("a.ron", &MINIMAL.replace("\"minimal\"", "\"a\"")),
         ("b.ron", "("),
     ]);
+    let listed = catalog(dir.path()).list().unwrap();
+    assert_eq!(listed.len(), 2, "the good file is still listed");
+    assert_eq!(listed[0].id, RegionId::new("a"));
+    assert!(listed[0].entry.is_ok());
+    assert_eq!(listed[1].id, RegionId::new("b"));
     assert!(matches!(
-        catalog(dir.path()).list(),
-        Err(RegionLoadError::Parse { region, .. }) if region == RegionId::new("b")
+        &listed[1].entry,
+        Err(RegionLoadError::Parse { region, .. }) if *region == RegionId::new("b")
+    ));
+}
+
+#[test]
+fn a_file_declaring_another_id_is_listed_as_a_mismatch() {
+    // `load` would refuse this file by its name; so does the listing.
+    let dir = dir_with(&[("b.ron", MINIMAL)]);
+    let listed = catalog(dir.path()).list().unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, RegionId::new("b"));
+    assert_eq!(
+        listed[0].entry,
+        Err(RegionLoadError::IdMismatch {
+            requested: RegionId::new("b"),
+            found: RegionId::new("minimal"),
+        })
+    );
+}
+
+#[test]
+fn listing_does_not_rasterise() {
+    // A city in water parses as a DTO but fails mapping and rasterisation.
+    let wet = MINIMAL.replace(
+        "(id: 1, name_key: \"city-tiny-1\", lon: 6.5,",
+        "(id: 1, name_key: \"city-tiny-1\", lon: 0.5,",
+    );
+    assert_ne!(wet, MINIMAL);
+    let dir = dir_with(&[("minimal.ron", &wet)]);
+    let listed = catalog(dir.path()).list().unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(
+        listed[0].entry,
+        Ok(RegionSummary {
+            id: RegionId::new("minimal"),
+            name_key: "region-minimal".to_owned(),
+        })
+    );
+    // Only loading, which validates in full, finds the problem.
+    assert!(matches!(
+        catalog(dir.path()).load(&RegionId::new("minimal")),
+        Err(RegionLoadError::Invalid { .. })
     ));
 }
 

@@ -730,10 +730,15 @@ fn hydro_schedule_shows_the_plan_the_finished_day_then_nothing() {
     assert!(s.hydro_schedule().plants.contains_key(&hydro));
 }
 
-/// The forecast net load of each hour at minute 30, through the public
-/// per-tick forecast (an independent route from `hourly_net_load`).
-fn net_load_at_half_hours(s: &GameSession) -> [Megawatts; 24] {
-    std::array::from_fn(|h| s.forecast_net_load(h as u32 * 60 + 30))
+/// The lower forecast net load at each hour's two ends, minute 0 and minute
+/// 59, through the public per-tick forecast (an independent route from the
+/// evaluator the minimum-generation check uses): the end that check reports.
+fn net_load_at_hour_troughs(s: &GameSession) -> [Megawatts; 24] {
+    std::array::from_fn(|h| {
+        let start = h as u32 * 60;
+        s.forecast_net_load(start)
+            .min(s.forecast_net_load(start + 59))
+    })
 }
 
 /// Commits `plant` for `hours` (inclusive range) on a manual target.
@@ -763,14 +768,15 @@ fn minimum_generation_check_reports_the_worst_hour() {
     // A peaker at 200 MW at 08:00-09:00 sits far under the morning load.
     commit_manual(&mut s, peaker, 8..=9, 200.0);
 
-    // Hand-computed 03:30 net load: cities 1 and 2 (1,000 MW) at the April
-    // shoulder shape, halfway from 0.63 to 0.64, times the 0.90 monthly factor.
-    let expected_net = 1_000.0 * (0.63 + 0.5 * 0.01) * 0.90;
+    // Hand-computed 03:00 net load, the lower end of the hour: cities 1 and 2
+    // (1,000 MW) at the April shoulder shape's 0.63, times the 0.90 monthly
+    // factor.
+    let expected_net = 1_000.0 * 0.63 * 0.90;
     let warning = s.minimum_generation_check().expect("minimums exceed load");
     assert_eq!(warning.hour, 3);
     assert_eq!(warning.committed_minimum, Megawatts::new(1_100.0));
     assert!((warning.net_load.value() - expected_net).abs() < 1e-6);
-    assert_eq!(warning.net_load, s.forecast_net_load(3 * 60 + 30));
+    assert_eq!(warning.net_load, s.forecast_net_load(3 * 60));
     assert_eq!(warning.excess, Megawatts::new(1_100.0) - warning.net_load);
 }
 
@@ -784,7 +790,7 @@ fn minimum_generation_check_picks_the_largest_excess() {
     // beats hour 4 even though hour 4's load is lower.
     commit_manual(&mut s, coal, 4..=5, 600.0);
     commit_manual(&mut s, ccgt, 5..=5, 500.0);
-    let net = net_load_at_half_hours(&s);
+    let net = net_load_at_hour_troughs(&s);
     assert!(net[4] < net[5]);
     let warning = s.minimum_generation_check().unwrap();
     assert_eq!(warning.hour, 5);
@@ -828,7 +834,7 @@ fn minimum_generation_check_counts_only_committed_hours_and_is_pure() {
     // Committed only 04:00-05:59: hour 3 has the lower net load, but coal
     // is not committed then, so it cannot be the worst hour.
     commit_manual(&mut s, coal, 4..=5, 600.0);
-    let net = net_load_at_half_hours(&s);
+    let net = net_load_at_hour_troughs(&s);
     assert!(net[3] < net[4]);
 
     let before = s.state_hash();
@@ -851,7 +857,7 @@ fn minimum_generation_exactly_at_net_load_is_no_warning() {
     let coal = plant_of(&s, PlantKind::Coal);
     // Coal held at exactly the 03:30 net load through 03:00 only: the
     // minimum fits, with no excess to warn about.
-    let net = net_load_at_half_hours(&s);
+    let net = net_load_at_hour_troughs(&s);
     commit_manual(&mut s, coal, 3..=3, net[3].value());
     assert_eq!(s.minimum_generation_check(), None);
 }
@@ -866,7 +872,7 @@ fn minimum_generation_ties_go_to_the_earliest_hour() {
     });
     let coal = plant_of(&s, PlantKind::Coal);
     commit_manual(&mut s, coal, 0..=23, 600.0);
-    let net = net_load_at_half_hours(&s);
+    let net = net_load_at_hour_troughs(&s);
     assert!(net.iter().all(|n| *n == net[0]), "demand should be flat");
     // A flat 500 MW net load under a 600 MW minimum: every hour has the same
     // 100 MW excess, so the earliest hour wins.
@@ -874,6 +880,62 @@ fn minimum_generation_ties_go_to_the_earliest_hour() {
         panic!("flat load {:?} should be under 600 MW", net[0]);
     });
     assert_eq!(warning.hour, 0);
+}
+
+/// A flat 0.5 demand shape with one knot, hour `knot`, dropped to 0.2: with
+/// 1,000 MW of city load, a 200 MW trough on that hour's start, which the
+/// linear interpolation lifts toward 500 MW within the hour.
+fn session_with_trough_knot(knot: usize) -> GameSession {
+    session_with(|parts| {
+        let mut shape = [0.5; 24];
+        shape[knot] = 0.2;
+        parts.demand.winter = shape;
+        parts.demand.summer = shape;
+        parts.demand.shoulder = shape;
+        parts.demand.monthly = [1.0; 12];
+    })
+}
+
+#[test]
+fn minimum_generation_check_sees_a_trough_at_an_hour_boundary() {
+    // The trough sits on hour 3's first minute. A mid-hour sample reads
+    // about 350 MW there, so a 300 MW minimum looked safe; the hour's start
+    // is 200 MW, and the check must say so.
+    let mut s = session_with_trough_knot(3);
+    let coal = plant_of(&s, PlantKind::Coal);
+    commit_manual(&mut s, coal, 3..=3, 300.0);
+    assert!(s.forecast_net_load(3 * 60 + 30) > Megawatts::new(300.0));
+
+    let warning = s.minimum_generation_check().expect("300 MW over a trough");
+    assert_eq!(warning.hour, 3);
+    assert_eq!(warning.committed_minimum, Megawatts::new(300.0));
+    assert_eq!(warning.net_load, s.forecast_net_load(3 * 60));
+    assert!((warning.net_load.value() - 200.0).abs() < 1e-9);
+    assert_eq!(warning.excess, Megawatts::new(300.0) - warning.net_load);
+
+    // The same trough approached from the hour before: hour 2's last minute
+    // is within a minute of the knot, so its worse end is minute 59.
+    let mut s = session_with_trough_knot(3);
+    let coal = plant_of(&s, PlantKind::Coal);
+    commit_manual(&mut s, coal, 2..=2, 300.0);
+    let warning = s.minimum_generation_check().expect("300 MW over a trough");
+    assert_eq!(warning.hour, 2);
+    assert_eq!(warning.net_load, s.forecast_net_load(2 * 60 + 59));
+    assert!(warning.net_load < Megawatts::new(300.0));
+}
+
+#[test]
+fn minimum_generation_worse_end_ties_to_minute_zero() {
+    // A flat load has the same net load at both ends of every hour; the
+    // warning's figures are then minute 0's, which are the same as minute 59's.
+    let mut s = flat_500_session();
+    let coal = plant_of(&s, PlantKind::Coal);
+    commit_manual(&mut s, coal, 7..=7, 600.0);
+    let warning = s.minimum_generation_check().unwrap();
+    assert_eq!(warning.hour, 7);
+    assert_eq!(warning.net_load, s.forecast_net_load(7 * 60));
+    assert_eq!(warning.net_load, s.forecast_net_load(7 * 60 + 59));
+    assert_eq!(warning.excess, Megawatts::new(100.0));
 }
 
 /// A session whose cities demand a flat 500 MW all day (cities 1 and 2 total

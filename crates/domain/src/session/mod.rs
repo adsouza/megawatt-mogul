@@ -18,6 +18,7 @@ mod views;
 #[cfg(test)]
 mod tests;
 
+pub use commands::LineQuote;
 pub use invariants::InvariantViolation;
 pub use report::{Incident, IncidentKind, MeritOrderEntry, MonthAccumulator, MonthlyReport};
 pub use settings::{GameSettings, SimulationFidelity};

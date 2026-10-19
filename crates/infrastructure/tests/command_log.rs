@@ -14,7 +14,7 @@ use domain::region::PlantKind;
 use domain::session::GameSettings;
 use domain::time::TICKS_PER_DAY;
 use domain::units::Megawatts;
-use infrastructure::command_log::dto::LogRecordDto;
+use infrastructure::command_log::dto::{CommandDto, LogDtoError, LogRecordDto};
 use infrastructure::command_log::{
     FileCommandLog, ReplayLoadError, load_replay, read_command_log, region_archive_path,
 };
@@ -131,6 +131,46 @@ fn write_log(path: &Path, lines: &[&str]) {
     let mut text = lines.join("\n");
     text.push('\n');
     fs::write(path, text).unwrap();
+}
+
+#[test]
+fn non_finite_dispatch_target_is_rejected_in_the_log() {
+    // The DTO boundary refuses a NaN or infinite target before it can become
+    // a `Megawatts`, which only debug-asserts finiteness.
+    for mw in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        let dto = CommandDto::SetDispatchTarget { plant: 1, mw };
+        assert!(
+            matches!(
+                Command::try_from(dto),
+                Err(LogDtoError::NonFiniteMegawatts(bad)) if bad.is_nan() == mw.is_nan()
+            ),
+            "{mw}"
+        );
+    }
+    let finite = CommandDto::SetDispatchTarget { plant: 1, mw: -3.5 };
+    assert_eq!(
+        Command::try_from(finite).unwrap(),
+        Command::SetDispatchTarget {
+            plant: PlantId(1),
+            mw: Megawatts::new(-3.5)
+        }
+    );
+
+    // And a log on disk carrying one is refused at its line, as a parse error.
+    let fixture = Fixture::new();
+    let source = minimal_region_bytes();
+    let header = header_record_line(&header_for(&source, 1));
+    let bad = ron::ser::to_string(&LogRecordDto::Command(CommandDto::SetDispatchTarget {
+        plant: 1,
+        mw: f64::NAN,
+    }))
+    .unwrap();
+    write_log(&fixture.log(), &[&header, &bad]);
+    let err = read_command_log(&fixture.log()).unwrap_err();
+    assert!(
+        err.message.contains("line 2") && err.message.contains("finite"),
+        "{err}"
+    );
 }
 
 proptest! {

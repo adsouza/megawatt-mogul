@@ -15,9 +15,10 @@ pub use command::{Command, CommandHandler};
 pub use error::{CommandError, ReplayError};
 pub use game::{Game, auto_select_region, replay};
 pub use pipeline::{
-    CommandLogLayer, CoreHandler, InvariantCheckLayer, TracingLayer, build_pipeline,
+    CommandLogLayer, CoreHandler, InvariantCheckLayer, LogHealth, TracingLayer, build_pipeline,
 };
 pub use ports::{
     CommandLogError, CommandLogSink, InMemoryCommandLog, LOG_FORMAT_VERSION, LoadedRegion,
-    LogHeader, LogRecord, RegionCatalog, RegionFingerprint, RegionLoadError, RegionSummary,
+    LogHeader, LogRecord, RegionCatalog, RegionFingerprint, RegionListing, RegionLoadError,
+    RegionSummary,
 };

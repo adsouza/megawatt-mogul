@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use application::{
     Command, Game, InMemoryCommandLog, LoadedRegion, LogRecord, RegionCatalog, RegionFingerprint,
-    RegionLoadError, RegionSummary,
+    RegionListing, RegionLoadError, RegionSummary,
 };
 use domain::events::DomainEvent;
 use domain::generation::PlantStatus;
@@ -25,13 +25,16 @@ use domain::time::{SimMonth, TICKS_PER_DAY};
 pub struct StaticCatalog(pub Vec<LoadedRegion>);
 
 impl RegionCatalog for StaticCatalog {
-    fn list(&self) -> Result<Vec<RegionSummary>, RegionLoadError> {
+    fn list(&self) -> Result<Vec<RegionListing>, RegionLoadError> {
         Ok(self
             .0
             .iter()
-            .map(|loaded| RegionSummary {
+            .map(|loaded| RegionListing {
                 id: loaded.definition.id().clone(),
-                name_key: loaded.definition.name_key().to_owned(),
+                entry: Ok(RegionSummary {
+                    id: loaded.definition.id().clone(),
+                    name_key: loaded.definition.name_key().to_owned(),
+                }),
             })
             .collect())
     }
