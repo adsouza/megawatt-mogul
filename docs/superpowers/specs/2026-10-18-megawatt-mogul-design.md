@@ -1218,10 +1218,11 @@ whole grid.
     day can come back from a blackout.
   - **After restoration,** the hour is re-sized on the `BlackoutRestored` tick and at every
     boundary after it, counting any plants the player has restarted that are online by then.
-- **Dark grid.** On a Normal-mode tick whose load is 0 (the outage at 1), deviation is held at 0
-  and over-frequency tracking resets, so protection disarms. One first-lit tick may exceed
-  `trip_above`, but protection never arms. *(Builder's call: a fully cut grid has no frequency to
-  measure, and the 1 MW system-size floor is there for numerical safety, not physics.)*
+- **Dark grid.** On a Normal-mode tick whose load is `≤ 0` (the outage at 1, zero demand, or no
+  connected city), deviation is held at 0 and over-frequency tracking resets, so protection
+  disarms. One first-lit tick may exceed `trip_above`, but protection never arms. *(Builder's
+  call: a fully cut grid has no frequency to measure, and the 1 MW system-size floor is there for
+  numerical safety, not physics.)*
 - **Hydro.** The emergency lift (§12.4) keys on protection's `shed > 0` and the `Shedding` band
   only, not on `outage`. *(Builder's call: the hydro plan already spends water on the shortage
   hours, and outage sizing counts that allocation. Lifting the cap for a planned outage would
@@ -1265,6 +1266,13 @@ whole grid.
   returning `CapacityShortfallWarning { hour: u8, demand: Megawatts, deliverable: Megawatts, shortfall: Megawatts }`.
   It reports the coming day's worst hour (ties to the earliest), or `None` when every hour is
   covered. It is pure: no RNG and no state change.
+- **Both ends of each hour, like §15.3.** Demand within an hour is interpolated linearly, so its
+  extremes sit at the hour's ends, and a peak on an hour knot is invisible to a mid-hour sample.
+  The check evaluates minute 0 and minute 59 of every hour `h`, taking demand, expected solar and
+  each plant's availability at the same minute, through the same per-hour evaluator as the
+  operating-time sizing; only the deliverable rule differs. An hour's shortfall is that of its
+  worse end (minute 0 on a tie), and the warning's `demand`, `deliverable` and `shortfall` are
+  that end's.
 - **For the coming day,** `deliverable_h` counts each plant committed in hour `h` by its pattern
   as follows:
   - dispatchable non-hydro under AGC: its availability;
@@ -1276,7 +1284,11 @@ whole grid.
 
   It is an upper bound: it ignores start-up and ramp limits that the operating-time sizing
   (§15.3) applies. *(Builder's call: the Planning question is "can the committed fleet cover the
-  peak at all?". Ramp-limited shortfalls show up as outages during the day.)*
+  peak at all?". Ramp-limited shortfalls show up as outages during the day.)* So on a noise-free
+  day whose committed fleet runs on AGC and ramps without limit, no warning means no outage is
+  ordered. Scheduled hydro is the one exception to "upper bound", and a safe one: each boundary
+  re-plan pours water left unused earlier in the day, so the live allocation can exceed the
+  preview and an hour the check warns of may not be cut.
 - The pure hydro preview is `pub(crate)`. Exposing it as a Planning view of `hydro_schedule()` is
   left to Plan 2 (§12.6).
 
@@ -1295,8 +1307,13 @@ whole grid.
 ### 15.7 Data and versioning
 
 - **Defaults.** Both shipped regions and the test fixture gain `shed_stage_spacing = 0.2 Hz`.
-- **Strikes are unchanged.** Rotating outages are unserved energy, so they still count toward the
-  reliability strike (§2.5).
+- **The strike rules are unchanged,** but a marginal-shortfall month can trade a frequency notice
+  for an unserved-energy strike, because load the fleet couldn't serve is now cut and counted
+  rather than carried as frequency sag. Rotating outages are unserved energy, so they count toward
+  the reliability strike (§2.5). *(Controller ruling: this is intended. The v2 model counted a
+  standing sub-2% deficit as frequency sag, with energy "served" that was never generated. In the
+  rules-guard script, August 2027 moves from a frequency notice at 0.436% unserved to an
+  unserved-energy strike at 0.625%.)*
 - **Versioning.** Outcomes change, so bump `SIM_RULES_VERSION` to 3 and regenerate the snapshots
   once, reviewing every diff. The overreach scenario is expected to change materially: from a
   month-long blackout to a rotating outage with the fleet running and reliability above 0.
@@ -1346,4 +1363,8 @@ whole grid.
 - **The warning is exact.** On a crafted fleet, `capacity_shortfall_check` reports the
   hand-computed hour and shortfall, returns `None` when the committed fleet covers every hour, and
   leaves `state_hash` unchanged.
+- **No warning, no outage.** Over a table of shaped days (seasons, fleets with and without solar
+  and scheduled hydro, loads scaled across the point of cover), a noise-free day whose committed
+  fleet runs on AGC with unlimited ramps orders no outage when the warning is `None`. Without
+  hydro, the warned hour is cut.
 - **Validation.** `shed_stage_spacing` has a negative validation test.

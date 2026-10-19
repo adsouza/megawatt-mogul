@@ -193,7 +193,7 @@ pub fn restoration_step(shed: Ratio, step: Ratio, restore_to: Ratio) -> Ratio {
 /// out, never fall to `blackout_below`, peak at a shed of at most
 /// `d + 3 × shed_step` (at most `d` + 0.131 measured) and rebound to at most
 /// +0.59 Hz (measured on a grid of 0.01% deficits and 0.05% ramps), below
-/// `trip_above`. The minimum deviation is −1.49 Hz, the first tick of a 29.9%
+/// `trip_above`. The minimum deviation is −1.495 Hz, the first tick of a 29.9%
 /// deficit. The property test `staged_shedding_arrests_any_step_deficit`
 /// checks these bounds.
 ///

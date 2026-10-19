@@ -141,6 +141,28 @@ Watch items:
   16:00–18:00 now orders an outage of about 1.6–1.9 GWh a month. In two idle-overbuild Julys that
   had no unserved energy before A4, the outage cuts 1.6 GWh: the forecast saw a shortfall that the
   day's actual demand did not reach. Expected under exact forecast sizing, but it lowers reliability.
+- **Marginal months can turn a notice into a strike:** in the rules-guard script, August 2027 went
+  from a frequency notice (0.436% unserved) to an `UnservedEnergy` strike (0.625%, over the 0.5%
+  threshold), which expires by the November close. Ruled intended (§15.7): load the fleet could
+  not serve is now cut and counted instead of carried as frequency sag. Marginal months are harsher
+  for players than under rules version 2. The rules-guard digest now pins every month's regulatory
+  events.
+- **Shortfall warning and hydro (§15.5):** each boundary re-plan pours water left unused earlier in
+  the day, so live hydro can exceed the Planning preview. The warning can name an hour that is
+  never cut. It errs on the safe side, but the preview is not a strict upper bound for hydro.
+- **Minimum-generation warning samples minute 30 (§14.3):** it has the blind spot the shortfall
+  warning had: a trough on an hour knot is invisible to it. Moving it onto the both-ends evaluator
+  is a Plan 2 candidate.
+- **M4, stacked restores:** protection's restoration and the outage's restore can stack in one tick
+  beyond the fleet's headroom.
+- **M5, hydro lift on outage days:** noise-driven UFLS on an outage day lifts the hydro cap, which
+  spends water the plan reserved for later outage hours.
+- **M6, R5 reach:** a mid-hour re-size after a plant comes online credits AGC plants with 59
+  minutes of ramp from their current output, which reaches past the hour's end.
+- **M7, persistence-adjusted sizing:** sizing does not adjust for the persisting forecast error, so
+  load can stay dark while about 2% spare capacity runs.
+- **M8, over-frequency before restoring:** over-frequency responses (curtailment, trips) act before
+  outage load is restored to absorb the surplus.
 
 ## Carry into Plan 2 (Bevy client)
 - **Batching:** advance in small batches (`speed` ticks per `FixedUpdate`) so projections stay

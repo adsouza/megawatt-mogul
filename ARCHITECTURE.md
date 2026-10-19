@@ -156,8 +156,9 @@ only eligible remaining book value earns return. Holding and write-off do not ch
    at or below every ceiling it meets before the next re-plan.
 8. Imbalance between connected supply and served load, `load × (1 − shed)`.
 9. Frequency update, with the load as the system size. It is held at nominal during a blackout and
-   on a dark grid (a Normal-mode tick with no load energised, the outage at 1), where over-frequency
-   tracking also resets, so protection never arms on a grid with nothing to measure.
+   on a dark grid (a Normal-mode tick whose load is `≤ 0`: the outage at 1, zero demand, or no
+   connected city), where over-frequency tracking also resets, so protection never arms on a grid
+   with nothing to measure.
 10. Protection on the load. Under-frequency shedding is staged: stage `k` sits at
     `shed_below − k × shed_stage_spacing` and drops one `shed_step` the first tick deviation is
     strictly below it, several stages crossed in one tick fire together, and a tick below
