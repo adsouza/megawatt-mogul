@@ -156,6 +156,12 @@ MonthlyReport {
     overgeneration: MegawattHours(
         1005.2148275469772,
     ),
+    rotating_outage: MegawattHours(
+        0.0,
+    ),
+    peak_outage_share: Ratio(
+        0.0,
+    ),
     peak_demand: Megawatts(
         1188.7168137236386,
     ),

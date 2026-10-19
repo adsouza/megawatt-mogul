@@ -45,10 +45,10 @@ OverbuildOutcome {
             },
             RateReviewCompleted {
                 tariff: Price(
-                    96.04433166747101,
+                    95.97049760617624,
                 ),
                 allowed_return: Ratio(
-                    0.09005265709550173,
+                    0.08987483044305425,
                 ),
             },
         ),
@@ -90,10 +90,10 @@ OverbuildOutcome {
             },
             RateReviewCompleted {
                 tariff: Price(
-                    95.39745494639574,
+                    95.41475124405535,
                 ),
                 allowed_return: Ratio(
-                    0.09017305703677496,
+                    0.09021092583666727,
                 ),
             },
         ),
@@ -216,7 +216,7 @@ OverbuildOutcome {
         },
         days: 31,
         revenue: Money(
-            5430267381,
+            5431251931,
         ),
         fuel: Money(
             -2186168245,
@@ -231,7 +231,7 @@ OverbuildOutcome {
             0,
         ),
         net: Money(
-            2727099136,
+            2728083686,
         ),
         energy_by_kind: {
             Coal: MegawattHours(
@@ -347,6 +347,12 @@ OverbuildOutcome {
         ),
         overgeneration: MegawattHours(
             8791.672498540762,
+        ),
+        rotating_outage: MegawattHours(
+            0.0,
+        ),
+        peak_outage_share: Ratio(
+            0.0,
         ),
         peak_demand: Megawatts(
             932.5589796394694,
