@@ -841,7 +841,7 @@ bug back.
   disallowance and the tariff formula.
 - `months` is between 1 and 12 whenever a review runs (a review is triggered by December's close).
   Treat 0 as "no return" rather than as a panic.
-- The rate-review estimate (Task 19) shares the same input assembly (Task 10's fix wave), so it
+- The rate-review estimate (Task 19) shares the same input assembly as the December review (`GameSession::review_inputs`, added in the final fix wave), so it
   prorates automatically. A mid-year estimate reflects the months tallied so far.
 
 ### 13.3 Properties (tests)
