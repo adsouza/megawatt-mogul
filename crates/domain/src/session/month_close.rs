@@ -20,9 +20,65 @@ use crate::regulation::{
     Licence, RateReviewInputs, RateReviewOutcome, compute_rate_review, reserve_excess,
 };
 use crate::time::SimMonth;
-use crate::units::{MegawattHours, Money, Ratio};
+use crate::units::{MegawattHours, Megawatts, Money, Ratio};
+
+/// What December's reserve review and rate review read from the session.
+/// The real review and [`GameSession::rate_review_estimate`] both assemble it
+/// with [`GameSession::review_inputs`], so the preview cannot drift from it.
+pub(super) struct ReviewInputs {
+    pub(super) reserve: ReserveReviewInputs,
+    /// The rate review's inputs except the eligible rate base, which only the
+    /// reserve review decides: read them through [`ReviewInputs::rate_review`].
+    rate: RateReviewInputs,
+}
+
+impl ReviewInputs {
+    /// The rate review's inputs on `eligible_rate_base`.
+    pub(super) fn rate_review(self, eligible_rate_base: Money) -> RateReviewInputs {
+        RateReviewInputs {
+            eligible_rate_base,
+            ..self.rate
+        }
+    }
+
+    pub(super) fn firm_capacity(&self) -> Megawatts {
+        self.rate.firm_capacity
+    }
+
+    /// The higher of the year's actual peak and the projected peak.
+    pub(super) fn review_peak(&self) -> Megawatts {
+        self.rate.tally.peak_demand.max(self.rate.projected_peak)
+    }
+}
 
 impl GameSession {
+    /// The review inputs on today's state, for a review held at the close of
+    /// `month`: the projection of connected peak demand starts the month after.
+    pub(super) fn review_inputs(&self, month: SimMonth) -> ReviewInputs {
+        let params = self.region.regulator();
+        let firm = self.power.firm_capacity();
+        let projected = self
+            .power
+            .projected_connected_peak(&self.region, month.next());
+        let tally = self.regulator.tally().clone();
+        let excess = reserve_excess(firm, tally.peak_demand, projected, params.reserve_margin);
+        ReviewInputs {
+            reserve: ReserveReviewInputs {
+                year: month.year(),
+                excess,
+            },
+            rate: RateReviewInputs {
+                tally,
+                depreciation: self.year_depreciation,
+                eligible_rate_base: Money::ZERO,
+                firm_capacity: firm,
+                projected_peak: projected,
+                previous_tariff: self.regulator.tariff(),
+                previous_cost_per_mwh: self.regulator.last_cost_per_mwh(),
+            },
+        }
+    }
+
     /// Closes the played month and moves to `Review`, in order:
     ///
     /// 1. Ledger: revenue `tariff × served × days`; per plant, fuel
@@ -243,32 +299,16 @@ impl GameSession {
         month: SimMonth,
         events: &mut Vec<DomainEvent>,
     ) -> RateReviewOutcome {
-        let region = Arc::clone(&self.region);
-        let params = region.regulator();
-        let firm = self.power.firm_capacity();
         // Connectivity is already this close's: December's new cities count.
-        let projected = self.power.projected_connected_peak(&region, month.next());
-        let tally = self.regulator.tally().clone();
-        let excess = reserve_excess(firm, tally.peak_demand, projected, params.reserve_margin);
+        let inputs = self.review_inputs(month);
         let capital = self
             .company
             .rate_base_mut()
-            .apply_reserve_review(&ReserveReviewInputs {
-                year: month.year(),
-                excess,
-            });
+            .apply_reserve_review(&inputs.reserve);
         events.extend(capital.into_iter().filter(|event| !is_zero_capital(event)));
 
-        let inputs = RateReviewInputs {
-            tally,
-            depreciation: self.year_depreciation,
-            eligible_rate_base: self.company.rate_base().eligible_total(),
-            firm_capacity: firm,
-            projected_peak: projected,
-            previous_tariff: self.regulator.tariff(),
-            previous_cost_per_mwh: self.regulator.last_cost_per_mwh(),
-        };
-        let outcome = compute_rate_review(&inputs, params);
+        let rate_inputs = inputs.rate_review(self.company.rate_base().eligible_total());
+        let outcome = compute_rate_review(&rate_inputs, self.region.regulator());
         events.extend(self.regulator.apply_rate_review(&outcome));
         self.year_depreciation = Money::ZERO;
         outcome

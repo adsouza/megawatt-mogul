@@ -4,7 +4,7 @@ use proptest::prelude::*;
 
 use super::super::*;
 use super::{LedgerTotals, is_zero_capital, share};
-use crate::company::LedgerCategory;
+use crate::company::{LedgerCategory, ReserveReviewInputs};
 use crate::generation::PlantStatus;
 use crate::ids::CityId;
 use crate::region::fixtures::{tiny_region, tiny_region_parts};
@@ -752,4 +752,80 @@ fn ledger_totals_split_operating_cost_from_the_net() {
     };
     assert_eq!(totals.operating_cost(), Money::from_cents(123));
     assert_eq!(totals.net(), Money::from_cents(827));
+}
+
+/// Runs December's real review on a copy of `s` and checks that
+/// `rate_review_estimate` on `s` predicted it exactly.
+fn assert_estimate_matches_annual_review(s: &GameSession) -> RateReviewEstimate {
+    let estimate = s.rate_review_estimate();
+    let mut real = s.clone();
+    let month = real.clock.month();
+    let mut events = Vec::new();
+    let outcome = real.annual_review(month, &mut events);
+    assert_eq!(estimate.projected_return, outcome.allowed_return);
+    let total = |pick: fn(&DomainEvent) -> Option<Money>| events.iter().filter_map(pick).sum();
+    let held: Money = total(|e| match e {
+        DomainEvent::CapitalHeld { amount, .. } => Some(*amount),
+        _ => None,
+    });
+    let released: Money = total(|e| match e {
+        DomainEvent::CapitalReleased { amount, .. } => Some(*amount),
+        _ => None,
+    });
+    let disallowed: Money = total(|e| match e {
+        DomainEvent::CapitalDisallowed { amount, .. } => Some(*amount),
+        _ => None,
+    });
+    assert_eq!(
+        (
+            estimate.capital_to_hold,
+            estimate.capital_to_release,
+            estimate.capital_at_risk
+        ),
+        (held, released, disallowed)
+    );
+    estimate
+}
+
+/// A December session whose rate base holds two 800 MW slices from last
+/// year's review.
+fn december_with_held_capital(edit: impl FnOnce(&mut RegionDefinitionParts)) -> GameSession {
+    let mut parts = starting_in(2027, 12);
+    edit(&mut parts);
+    let mut s = session_from(parts, 1);
+    let firm = |mw: f64, node: u32| AssetProfile::Plant {
+        firm: Megawatts::new(mw),
+        node: NodeId(node),
+    };
+    let cost = Money::from_cents(1_000_000);
+    let last_year = SimMonth::new(2026, 4).unwrap();
+    for id in [900, 901] {
+        s.company.rate_base_mut().add(
+            AssetRef::Plant(PlantId(id)),
+            cost,
+            100,
+            last_year,
+            firm(800.0, id),
+        );
+    }
+    s.company
+        .rate_base_mut()
+        .apply_reserve_review(&ReserveReviewInputs {
+            year: 2026,
+            excess: Megawatts::new(1_600.0),
+        });
+    s
+}
+
+#[test]
+fn the_rate_review_estimate_previews_exactly_what_december_does() {
+    // No demand: held capital is partly released and partly written off.
+    let e = assert_estimate_matches_annual_review(&december_with_held_capital(|p| {
+        p.start.connected_cities.clear()
+    }));
+    assert!(e.capital_to_release > Money::ZERO && e.capital_at_risk > Money::ZERO);
+    // Real demand: the projection of next month's peak decides the excess,
+    // and there is none, so everything held is released.
+    let e = assert_estimate_matches_annual_review(&december_with_held_capital(|_| {}));
+    assert!(e.capital_to_release > Money::ZERO && e.capital_at_risk == Money::ZERO);
 }

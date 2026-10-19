@@ -1,13 +1,13 @@
 //! Read-only views of the session for projections and display.
 
 use super::{DayPhase, GameSession};
-use crate::company::{CapitalChange, ReserveReviewInputs};
+use crate::company::CapitalChange;
 use crate::demand::{ForecastPoint, hourly_forecast};
 use crate::generation::{Plant, PlantStatus};
 use crate::grid::{GridMode, TickSummary};
 use crate::ids::{CellCoord, CityId, NodeId, PlantId};
 use crate::region::PlantKind;
-use crate::regulation::{Licence, RateReviewInputs, compute_rate_review, reserve_excess};
+use crate::regulation::{Licence, compute_rate_review};
 use crate::time::SimMonth;
 use crate::units::{Hertz, MegawattHours, Megawatts, Money, Price, Ratio};
 
@@ -177,33 +177,15 @@ impl GameSession {
     /// The review peak is `max(year's peak so far, projected peak)`, as in
     /// December's real review, with the projection starting next month.
     pub fn rate_review_estimate(&self) -> RateReviewEstimate {
-        let params = self.region.regulator();
-        let month = self.clock.month();
-        let firm = self.power.firm_capacity();
-        let projected = self
-            .power
-            .projected_connected_peak(&self.region, month.next());
-        let tally = self.regulator.tally().clone();
-        let review_peak = tally.peak_demand.max(projected);
-        let excess = reserve_excess(firm, tally.peak_demand, projected, params.reserve_margin);
+        let inputs = self.review_inputs(self.clock.month());
         let capital = self
             .company
             .rate_base()
-            .preview_reserve_review(&ReserveReviewInputs {
-                year: month.year(),
-                excess,
-            });
+            .preview_reserve_review(&inputs.reserve);
+        let (firm, review_peak) = (inputs.firm_capacity(), inputs.review_peak());
         let outcome = compute_rate_review(
-            &RateReviewInputs {
-                tally,
-                depreciation: self.year_depreciation,
-                eligible_rate_base: capital.eligible_total,
-                firm_capacity: firm,
-                projected_peak: projected,
-                previous_tariff: self.regulator.tariff(),
-                previous_cost_per_mwh: self.regulator.last_cost_per_mwh(),
-            },
-            params,
+            &inputs.rate_review(capital.eligible_total),
+            self.region.regulator(),
         );
 
         let (mut hold, mut release, mut at_risk) = (Money::ZERO, Money::ZERO, Money::ZERO);
