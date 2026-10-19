@@ -659,6 +659,16 @@ impl PowerSystem {
     /// over-frequency, which the frequency-performance rules penalise (spec
     /// §14.4).
     ///
+    /// **Falling-output gate (builder's call): protection never trips while
+    /// the fleet is already losing output it can't recover; the trip waits
+    /// until that motion ends.** The headroom gate credits one tick of ramp,
+    /// but a hydro plant following its schedule's ramp envelope, a plant
+    /// stopping under its commitment or a manual plant ramping to a lower
+    /// target keeps falling for several ticks whatever AGC does, so a trip
+    /// during that fall can outrun the gate (see
+    /// [`PowerSystem::has_unrecoverable_ramp_down`]). Such a trip is withheld
+    /// like an unsafe one.
+    ///
     /// **Redispatch.** AGC already set next tick's targets (step 5) before
     /// the trip, so after a trip it runs again on the post-trip outputs with
     /// the same availability and hydro ceilings. The rest of the fleet then
@@ -690,7 +700,9 @@ impl PowerSystem {
             .filter(|p| p.id() != id && p.auto_follow())
             .map(|p| p.headroom_up(agc_cap(redispatch.available, &ceilings, p.id())))
             .sum();
-        if self.plants[&id].output() - surplus > headroom {
+        if self.plants[&id].output() - surplus > headroom
+            || self.has_unrecoverable_ramp_down(id, &ceilings)
+        {
             self.protection.withhold_trip(params);
             return;
         }
@@ -706,6 +718,44 @@ impl PowerSystem {
             redispatch.curtailable,
             events,
         );
+        // The tick reports the curtailment it finally set.
+        events.retain(|e| !matches!(e, DomainEvent::SolarCurtailed { .. }));
+        if self.curtailment > Megawatts::ZERO {
+            events.push(DomainEvent::SolarCurtailed {
+                mw: self.curtailment,
+            });
+        }
+    }
+
+    /// Whether a connected plant other than `except` is losing output that
+    /// the post-trip AGC redispatch cannot reverse (see
+    /// [`PowerSystem::over_frequency_trip`]):
+    ///
+    /// - a scheduled hydro plant on AGC above its hydro ceiling `ceilings`
+    ///   (empty while the cap is lifted), which AGC ramps down rather than
+    ///   retargets (see [`PowerSystem::retarget_agc`]);
+    /// - a plant stopping under its commitment, still producing;
+    /// - a manual dispatchable plant above its target.
+    ///
+    /// An AGC plant ramping down toward its AGC target does not count: the
+    /// redispatch retargets it.
+    fn has_unrecoverable_ramp_down(
+        &self,
+        except: PlantId,
+        ceilings: &BTreeMap<PlantId, Megawatts>,
+    ) -> bool {
+        self.connected_plants()
+            .filter(|p| p.id() != except)
+            .any(|p| match p.status() {
+                PlantStatus::Stopping { output } => output > Megawatts::ZERO,
+                PlantStatus::Online { output, .. } if p.auto_follow() => {
+                    ceilings.get(&p.id()).is_some_and(|c| output > *c)
+                }
+                PlantStatus::Online { output, target } => {
+                    p.kind().is_dispatchable() && output > target
+                }
+                _ => false,
+            })
     }
 
     /// The plant an over-frequency trip takes (spec §14.2): the connected,
