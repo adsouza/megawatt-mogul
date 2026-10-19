@@ -1332,7 +1332,7 @@ whole grid.
   - deviation stays above `blackout_below` throughout;
   - with demand noise, `0.95 ≤ rotating_outage / minute-by-minute forecast shortfall ≤ 1.10`;
   - noise-free, `shortfall − ε ≤ rotating_outage ≤ shortfall + shed_step × peak demand × hours
-    with an outage`;
+    with an outage × days in the month`;
   - protection shed from demand noise is allowed.
 - **No change without a shortage.** On a day whose forecast is covered and that has no sudden
   loss, `outage` is 0 throughout, so outcomes depend on the staged-shedding change only through

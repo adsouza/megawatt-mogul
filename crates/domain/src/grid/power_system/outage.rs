@@ -120,8 +120,9 @@ impl PowerSystem {
     /// output is held down by the outage itself, so counting only its output
     /// at minute 0 would size every hour at least at the outage in effect and
     /// the outage could never fall. The outage does not drop at minute 0
-    /// anyway: it falls one step per tick, and only while the fleet's one-tick
-    /// headroom covers the step (see [`PowerSystem::next_outage`]), so the
+    /// anyway: it is restored at a paced rate, by at most one `shed_step` (or
+    /// a persisting surplus) per tick and never faster than the fleet's net
+    /// one-tick headroom covers (see [`PowerSystem::next_outage`]), so the
     /// target is where the outage goes, not what minute 0 needs.
     fn deliverable(&self, plant: &Plant, start: u32, minute: u32) -> Megawatts {
         let PlantStatus::Online { output, target } = plant.status() else {
@@ -230,7 +231,8 @@ impl PowerSystem {
         surplus: Megawatts,
     ) -> Ratio {
         let (now, target) = (self.outage.value(), self.outage_target.value());
-        if (now - target).abs() <= SNAP {
+        let gap = (now - target).abs();
+        if gap <= SNAP {
             return self.outage_target;
         }
         let share = |mw: Megawatts| {
@@ -240,7 +242,6 @@ impl PowerSystem {
                 f64::INFINITY
             }
         };
-        let gap = (now - target).abs();
         let next = if now < target {
             now + gap.min(step.value()).min(share(cover))
         } else {

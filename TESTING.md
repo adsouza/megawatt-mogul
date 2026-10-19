@@ -146,8 +146,8 @@ The invariants the property tests must cover:
   `0.95 ≤ rotating_outage / minute-by-minute forecast shortfall ≤ 1.10`.
   Protection shed from demand noise is allowed. Seed 1 is the closest at 0.978.
 - **`overreach_without_demand_noise_rotates_exactly_the_shortfall`**: with noise off,
-  `shortfall − ε ≤ rotating_outage ≤ shortfall + shed_step × peak demand × hours with an outage`,
-  and protection sheds nothing.
+  `shortfall − ε ≤ rotating_outage ≤ shortfall + shed_step × peak demand × hours with an outage ×
+  days in the month`, and protection sheds nothing.
 
 ## Snapshots
 
@@ -286,10 +286,11 @@ had 567 mutants and missed 29, all in `domain`:
 - Thirteen (and two timeouts) were in `stages_crossed`, whose division-based first guess was
   corrected by two loops. Any start gave the same count, so the function is now a plain scan of
   the stage thresholds.
-- Eight are equivalent and excluded in `.cargo/mutants.toml`: a re-run of an idempotent boundary
-  dispatch, the zero solar at midnight, a served load read only when shed is zero, three
+- Seven are equivalent and excluded in `.cargo/mutants.toml`: a re-run of an idempotent boundary
+  dispatch, the zero solar at midnight, a served load read only when shed is zero, two
   comparisons whose caller or shortcut rules out a difference, and two assignments of an equal
-  value. The midnight-solar entry already existed but no longer matched: Plan 1b moved its
+  value. The eighth, the `now - target` of `next_outage`'s early return, is gone: the early return
+  now tests the same `gap` the move uses, so that operator is covered by the paced-move tests. The midnight-solar entry already existed but no longer matched: Plan 1b moved its
   operator to another column, so a column-pinned exclusion can silently stop applying.
 
 ## Isolation rules (all I/O tests)

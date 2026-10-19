@@ -48,12 +48,9 @@ exclude_re = [
     # `outage > target` and `outage >= target` agree on every call.
     'replace > with >= in PowerSystem::outage_cover',
 
-    # next_outage returns early when the outage is within SNAP of its target. The shortcut
-    # changes no result: past it the move is at most the gap, so `next` is within SNAP of the
-    # target and the final snap returns the target as well. Column 17 is `now - target` in
-    # that test. Past it the outage never equals its target, so `now < target` (column 27)
-    # and `now <= target` agree.
-    'outage\.rs:\d+:17: replace - with \+ in PowerSystem::next_outage',
+    # next_outage returns early when the outage is within SNAP of its target, so past that
+    # test the outage never equals its target and `now < target` (column 27) and
+    # `now <= target` agree.
     'outage\.rs:\d+:27: replace < with <= in PowerSystem::next_outage',
 
     # restoration_step: when the stepped shed equals the floor exactly, returning the floor
