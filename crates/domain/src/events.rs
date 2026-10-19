@@ -33,6 +33,9 @@ pub enum DomainEvent {
     /// Over-frequency protection set solar curtailment to `mw`, withheld from
     /// solar availability from the next tick.
     SolarCurtailed { mw: Megawatts },
+    /// Over-frequency protection tripped `plant` (emitted alongside its
+    /// `PlantTripped`).
+    OverFrequencyTrip { plant: PlantId },
     /// Protection blacked out the grid: every plant tripped.
     Blackout,
     /// Black-start restoration reconnected the last of the load.

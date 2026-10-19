@@ -333,7 +333,7 @@ impl PowerSystem {
 
         let outcome = evaluate(&mut self.protection, self.deviation, params, supply, demand);
         let shed = self.protection.shed;
-        if outcome == ProtectionOutcome::Curtail || self.curtailment > Megawatts::ZERO {
+        if outcome.curtails() || self.curtailment > Megawatts::ZERO {
             self.update_curtailment(outcome, -leftover, curtailable, &mut events);
         }
         self.apply_protection(outcome, demand * shed.value(), &mut events);
@@ -423,7 +423,7 @@ impl PowerSystem {
         events: &mut Vec<DomainEvent>,
     ) {
         let mut needed = surplus.max(Megawatts::ZERO);
-        if outcome == ProtectionOutcome::Curtail {
+        if outcome.curtails() {
             if needed > curtailable {
                 needed -= self.force_agc_to_minimum();
             }
@@ -570,9 +570,35 @@ impl PowerSystem {
                 self.curtailment = Megawatts::ZERO;
             }
             ProtectionOutcome::BlackoutRestored => events.push(DomainEvent::BlackoutRestored),
+            ProtectionOutcome::OverFrequencyTrip => {
+                if let Some(id) = self.over_frequency_trip_candidate() {
+                    events.push(DomainEvent::OverFrequencyTrip { plant: id });
+                    events.extend(self.trip_plant(id));
+                    if let Some(plant) = self.plants.get_mut(&id) {
+                        plant.suppress_commitment_for_day();
+                    }
+                }
+            }
             // Curtailment is handled by `update_curtailment`.
             ProtectionOutcome::None | ProtectionOutcome::Restored | ProtectionOutcome::Curtail => {}
         }
+    }
+
+    /// The plant an over-frequency trip takes (spec §14.2): the connected,
+    /// online, dispatchable plant producing more than 0 MW with the highest
+    /// marginal cost, ties going to the lowest plant id. Solar is never a
+    /// candidate, since curtailment covers it. `None` when no plant qualifies.
+    fn over_frequency_trip_candidate(&self) -> Option<PlantId> {
+        self.connected_plants()
+            .filter(|p| p.is_online() && p.kind().is_dispatchable() && p.output() > Megawatts::ZERO)
+            .max_by(|a, b| {
+                a.spec()
+                    .marginal_cost
+                    .value()
+                    .total_cmp(&b.spec().marginal_cost.value())
+                    .then_with(|| b.id().cmp(&a.id()))
+            })
+            .map(Plant::id)
     }
 
     /// Turns AGC on or off for plant `id` (see [`Plant::set_auto_follow`]).

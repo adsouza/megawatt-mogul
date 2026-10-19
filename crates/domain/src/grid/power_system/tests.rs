@@ -873,6 +873,7 @@ fn blackout_pre_positions_supply_for_the_next_restoration_step() {
         mode: GridMode::Blackout,
         shed: Ratio::new(shed).unwrap(),
         shed_ticks: 3,
+        ..ProtectionState::default()
     };
     let before = supply(&sys);
     let coal_output = sys.plant(PlantId(1)).unwrap().output();
@@ -1456,6 +1457,7 @@ fn cap_is_lifted_while_shedding_or_any_load_is_shed() {
         mode: GridMode::Blackout,
         shed: Ratio::ONE,
         shed_ticks: 0,
+        ..ProtectionState::default()
     };
     assert!(sys.hydro_cap_lifted());
 }
@@ -1803,4 +1805,219 @@ fn planning_draws_no_rng() {
         reference.standard_normal();
     }
     assert_eq!(rng, reference);
+}
+
+// ---- Over-frequency trips (spec §14.2, §14.6 "Trip order", "The surplus clears") ----
+
+/// `defs` committed all day on auto-follow (solar stays as it is).
+fn committed_auto_follow(region: &RegionDefinition, defs: &[PlantDef]) -> PowerSystem {
+    let mut sys = system_with(region, defs);
+    let ids: Vec<PlantId> = sys.plants().keys().copied().collect();
+    for id in ids {
+        let p = sys.plant_mut(id).unwrap();
+        p.set_commitment(CommitmentSchedule::all_day());
+        if p.kind().is_dispatchable() {
+            p.set_auto_follow(true).unwrap();
+        }
+    }
+    sys
+}
+
+/// Applies one `OverFrequencyTrip` outcome and returns its events.
+fn over_frequency_trip(sys: &mut PowerSystem) -> Vec<DomainEvent> {
+    let mut events = Vec::new();
+    sys.apply_protection(
+        ProtectionOutcome::OverFrequencyTrip,
+        Megawatts::ZERO,
+        &mut events,
+    );
+    events
+}
+
+fn tripped(plant: PlantId) -> Vec<DomainEvent> {
+    vec![
+        DomainEvent::OverFrequencyTrip { plant },
+        DomainEvent::PlantTripped { plant },
+    ]
+}
+
+#[test]
+fn trips_most_expensive_producer_and_never_solar() {
+    let region = tiny_region();
+    // Plant 1 is a disconnected peaker: as expensive as plant 4 and lower in
+    // id, so only the connectivity filter keeps it from tripping first.
+    let defs = [
+        PlantDef {
+            kind: PlantKind::Peaker,
+            cell: cell(6, 6),
+            connected: false,
+        },
+        connected(PlantKind::Coal, cell(7, 3)),
+        connected(PlantKind::Ccgt, cell(8, 4)),
+        connected(PlantKind::Peaker, cell(6, 5)),
+        connected(PlantKind::Solar, cell(5, 5)),
+    ];
+    let (disconnected, coal, ccgt, peaker, solar) =
+        (PlantId(1), PlantId(2), PlantId(3), PlantId(4), PlantId(5));
+    let mut sys = committed_auto_follow(&region, &defs);
+    sys.begin_day(&region, april(), &mut SimRng::from_seed(1));
+    for id in [disconnected, coal, ccgt, peaker, solar] {
+        assert!(sys.plant(id).unwrap().is_online(), "{id:?}");
+    }
+
+    assert_eq!(over_frequency_trip(&mut sys), tripped(peaker));
+    assert_eq!(over_frequency_trip(&mut sys), tripped(ccgt));
+    assert_eq!(over_frequency_trip(&mut sys), tripped(coal));
+    // Only solar (never tripped) and the disconnected peaker are left: nothing happens.
+    assert!(over_frequency_trip(&mut sys).is_empty());
+
+    for id in [coal, ccgt, peaker] {
+        let p = sys.plant(id).unwrap();
+        assert_eq!(p.status(), PlantStatus::Offline, "{id:?}");
+        assert!(p.is_commitment_suppressed(), "{id:?}");
+    }
+    for id in [disconnected, solar] {
+        let p = sys.plant(id).unwrap();
+        assert!(p.is_online(), "{id:?}");
+        assert!(!p.is_commitment_suppressed(), "{id:?}");
+    }
+}
+
+#[test]
+fn equal_cost_trips_lowest_id_first() {
+    let region = tiny_region();
+    let defs = [
+        connected(PlantKind::Ccgt, cell(8, 4)),
+        connected(PlantKind::Ccgt, cell(6, 5)),
+    ];
+    let mut sys = committed_auto_follow(&region, &defs);
+    sys.begin_day(&region, april(), &mut SimRng::from_seed(1));
+    assert_eq!(over_frequency_trip(&mut sys), tripped(PlantId(1)));
+    assert_eq!(over_frequency_trip(&mut sys), tripped(PlantId(2)));
+}
+
+#[test]
+fn only_online_producers_trip() {
+    let region = tiny_region();
+    let defs = [
+        connected(PlantKind::Peaker, cell(6, 5)),
+        connected(PlantKind::Hydro, cell(10, 1)),
+        connected(PlantKind::Coal, cell(7, 3)),
+    ];
+    let (peaker, hydro, coal) = (PlantId(1), PlantId(2), PlantId(3));
+    let mut sys = committed_auto_follow(&region, &defs);
+    // Manual hydro opens the day online at its 0 MW initial target.
+    sys.set_auto_follow(hydro, false).unwrap();
+    sys.begin_day(&region, april(), &mut SimRng::from_seed(1));
+    // A starting peaker produces nothing yet; stopping coal still produces
+    // but is no longer online.
+    sys.plant_mut(peaker).unwrap().trip();
+    sys.plant_mut(peaker).unwrap().start().unwrap();
+    sys.plant_mut(coal).unwrap().stop().unwrap();
+    assert!(matches!(
+        sys.plant(peaker).unwrap().status(),
+        PlantStatus::Starting { .. }
+    ));
+    assert!(sys.plant(hydro).unwrap().is_online());
+    assert_eq!(sys.plant(hydro).unwrap().output(), Megawatts::ZERO);
+    assert!(sys.plant(coal).unwrap().output() > Megawatts::ZERO);
+
+    assert!(over_frequency_trip(&mut sys).is_empty());
+}
+
+#[test]
+fn an_over_frequency_trip_unplans_tripped_hydro() {
+    let region = tiny_region();
+    let mut sys = west_like_fleet(&region);
+    sys.begin_day(&region, january(), &mut SimRng::from_seed(1));
+    for id in 1..=3 {
+        sys.plant_mut(PlantId(id)).unwrap().trip();
+    }
+    assert!(hydro_output(&sys) > Megawatts::ZERO);
+    assert!(sys.hydro_ceilings(1).contains_key(&HYDRO));
+    assert_eq!(over_frequency_trip(&mut sys), tripped(HYDRO));
+    assert!(!sys.hydro_ceilings(1).contains_key(&HYDRO));
+    assert_eq!(sys.hydro_schedule().plants[&HYDRO].level, None);
+}
+
+#[test]
+fn an_over_frequency_trip_tick_still_curtails_first() {
+    // As `curtailment_is_what_forcing_agc_down_cannot_cover`, on a trip tick.
+    let region = tiny_region();
+    let mut sys = auto_follow_fleet(&region);
+    sys.begin_day(&region, april(), &mut SimRng::from_seed(1));
+    for (id, mw) in [(1, 310.0), (2, 200.0), (3, 40.0)] {
+        sys.plant_mut(PlantId(id))
+            .unwrap()
+            .set_target(Megawatts::new(mw))
+            .unwrap();
+    }
+    let mut events = Vec::new();
+    sys.update_curtailment(
+        ProtectionOutcome::OverFrequencyTrip,
+        Megawatts::new(100.0),
+        Megawatts::new(60.0),
+        &mut events,
+    );
+    assert_eq!(
+        events,
+        vec![DomainEvent::SolarCurtailed {
+            mw: Megawatts::new(30.0)
+        }]
+    );
+    assert_eq!(target_of(&sys, 1), Megawatts::new(240.0));
+}
+
+/// The overbuild fixture: the start fleet (coal 1, CCGT 2, peaker 3) plus
+/// CCGTs 4 and 5, all committed all day on auto-follow. Their minimum stable
+/// output (880 MW) is far above April's night load (about 570–630 MW), so
+/// with no player action the fleet sits at minimum in a night surplus.
+fn overbuild_fleet(region: &RegionDefinition) -> PowerSystem {
+    let mut defs = start_fleet(region);
+    defs.push(connected(PlantKind::Ccgt, cell(4, 6)));
+    defs.push(connected(PlantKind::Ccgt, cell(5, 6)));
+    committed_auto_follow(region, &defs)
+}
+
+#[test]
+fn overbuild_surplus_clears_and_stays_cleared() {
+    let region = tiny_region();
+    let p = region.frequency();
+    let mut sys = overbuild_fleet(&region);
+    let mut rng = SimRng::from_seed(1);
+    sys.begin_day(&region, april(), &mut rng);
+    let minimum: Megawatts = sys.plants().values().map(|p| p.spec().min_output()).sum();
+    assert_eq!(minimum, Megawatts::new(880.0));
+
+    let ticks = run_ticks(&mut sys, &region, 0..TICKS_PER_DAY, &mut rng);
+    let trips: Vec<(u32, PlantId)> = ticks
+        .iter()
+        .flat_map(|(s, events)| {
+            events.iter().filter_map(move |e| match e {
+                DomainEvent::OverFrequencyTrip { plant } => Some((s.tick, *plant)),
+                _ => None,
+            })
+        })
+        .collect();
+    // Clearing the surplus takes the peaker (most expensive) and two CCGTs
+    // (lowest ids first): coal and CCGT 5 then have 440 MW of minimum, below
+    // the night load. One trip per window, the first after the arming window.
+    let n = p.trip_after_ticks;
+    let surplus_plants = 3;
+    assert_eq!(
+        trips,
+        vec![
+            (n - 1, PlantId(3)),
+            (2 * n - 1, PlantId(2)),
+            (3 * n - 1, PlantId(4))
+        ]
+    );
+    // Bound: one window per surplus plant, plus one window for frequency to
+    // settle after the last trip.
+    let bound = n * (surplus_plants + 1);
+    for (s, _) in &ticks[bound as usize..] {
+        let dev = s.frequency - p.nominal;
+        assert!(dev <= p.curtail_above, "tick {}: {dev:?}", s.tick);
+    }
+    assert!(ticks.iter().all(|(s, _)| s.mode == GridMode::Normal));
 }

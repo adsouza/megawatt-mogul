@@ -25,6 +25,10 @@ pub enum IncidentKind {
     },
     Blackout,
     BlackoutRestored,
+    /// Over-frequency protection tripped `plant`.
+    OverFrequencyTrip {
+        plant: PlantId,
+    },
 }
 
 /// An incident and the tick of the played day it happened in.
@@ -157,6 +161,9 @@ impl MonthAccumulator {
                 DomainEvent::LoadShed { mw } => IncidentKind::LoadShed { mw: *mw },
                 DomainEvent::Blackout => IncidentKind::Blackout,
                 DomainEvent::BlackoutRestored => IncidentKind::BlackoutRestored,
+                DomainEvent::OverFrequencyTrip { plant } => {
+                    IncidentKind::OverFrequencyTrip { plant: *plant }
+                }
                 _ => continue,
             };
             self.incidents.push(Incident { tick, kind });
@@ -309,6 +316,26 @@ mod tests {
         acc.add_tick(&summary(0, 10.0, 10.0, &[(3, 0.0)]), &[]);
         assert!(!acc.operated(PlantId(3)));
         assert_eq!(acc.plant_energy()[&PlantId(3)], MegawattHours::ZERO);
+    }
+
+    #[test]
+    fn over_frequency_trip_is_an_incident() {
+        let mut acc = MonthAccumulator::default();
+        let plant = PlantId(3);
+        acc.add_tick(
+            &summary(4, 10.0, 10.0, &[(3, 0.0)]),
+            &[
+                DomainEvent::OverFrequencyTrip { plant },
+                DomainEvent::PlantTripped { plant },
+            ],
+        );
+        assert_eq!(
+            acc.incidents(),
+            &[Incident {
+                tick: 4,
+                kind: IncidentKind::OverFrequencyTrip { plant }
+            }]
+        );
     }
 
     #[test]
