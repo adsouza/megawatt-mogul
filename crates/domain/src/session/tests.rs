@@ -576,4 +576,9 @@ fn hydro_schedule_is_the_power_systems_schedule() {
         s.power().plant(hydro).unwrap().hydro_budget()
     );
     assert!(plan.hourly[1..].iter().any(|mw| *mw > Megawatts::ZERO));
+    // The command path unplans hydro taken off AGC; elapsed hours stay frozen.
+    s.set_auto_follow(hydro, false).unwrap();
+    let off = s.hydro_schedule().plants[&hydro];
+    assert_eq!(off.hourly[0], plan.hourly[0]);
+    assert!(off.hourly[1..].iter().all(|mw| *mw == Megawatts::ZERO));
 }

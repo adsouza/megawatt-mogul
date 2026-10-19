@@ -18,6 +18,7 @@ use super::network::Network;
 use super::protection::{GridMode, ProtectionOutcome, ProtectionState, evaluate};
 use super::summary::TickSummary;
 use crate::demand::{DemandCenter, DemandNoise, forecast_demand, hourly_forecast};
+use crate::error::DomainError;
 use crate::events::DomainEvent;
 use crate::generation::{
     BoundaryStart, CommitmentAction, Plant, PlantStatus, commitment_actions, draw_clearness,
@@ -26,7 +27,7 @@ use crate::generation::{
 use crate::ids::{CellCoord, CityId, NodeId, PlantId};
 use crate::region::{Cell, PlantKind, RegionDefinition};
 use crate::rng::SimRng;
-use crate::time::{SimDuration, SimMonth, TICKS_PER_DAY, TICKS_PER_HOUR};
+use crate::time::{SimDuration, SimMonth, TICKS_PER_HOUR};
 use crate::units::{Hertz, MegawattHours, Megawatts, Ratio};
 
 const HOURS_PER_DAY: f64 = 24.0;
@@ -320,14 +321,9 @@ impl PowerSystem {
             GridMode::Normal => 1.0 - shed,
             GridMode::Blackout => (1.0 - shed + params.shed_step.value()).min(1.0),
         };
-        // The targets AGC sets now act on the next tick's step, so they are
-        // capped by the allocation of the hour that tick falls in.
-        let effective_hour = (tick + 1).min(TICKS_PER_DAY - 1) / TICKS_PER_HOUR;
-        let leftover = self.retarget_agc(
-            &available,
-            demand * to_serve - supply - withheld,
-            effective_hour as usize,
-        );
+        // The targets AGC sets now first act on the next tick's step.
+        let leftover =
+            self.retarget_agc(&available, demand * to_serve - supply - withheld, tick + 1);
 
         let imbalance = supply - demand * (1.0 - shed);
         self.deviation = match mode {
@@ -475,21 +471,34 @@ impl PowerSystem {
     /// Runs AGC over connected plants; returns the signed unallocated shortfall.
     ///
     /// **The hydro schedule caps AGC, not physics** (spec §12.4). A scheduled
-    /// hydro plant on AGC is limited, in what AGC may ask of it, to its
-    /// allocation for `hour`, the hour in which the new targets take effect.
-    /// That is the next tick's hour, not this tick's: plants step before AGC
-    /// runs, so targets set on tick t first act on tick t + 1's step, and
-    /// capping them by tick t's hour would leak one tick of the previous
-    /// hour's dispatch into every new hour (and overdraw a final hour that was
-    /// planned to spend exactly the remaining budget). AGC's view of its availability becomes
-    /// `min(availability, allocation)`, so AGC never raises its target above
-    /// the allocation. The physical availability passed to `Plant::step` is
-    /// untouched and keeps only the budget limit. So when the allocation
-    /// falls below the plant's output, its target is set to
-    /// `max(allocation, output − ramp)` before AGC runs: the plant ramps down
-    /// at its ramp rate instead of dropping in one tick, and the output it
-    /// gives up next tick is added to the shortfall for the rest of the fleet.
-    /// AGC leaves such a plant out for this tick.
+    /// hydro plant on AGC is limited, in what AGC may ask of it, to a ceiling
+    /// at or below its allocation for the tick `effect_tick` in which the new
+    /// targets take effect (see [`PowerSystem::hydro_ceilings`]):
+    ///
+    /// - **Effect tick.** Plants step before AGC runs, so targets set on tick
+    ///   t first act on tick t + 1's step; `effect_tick` is t + 1. Capping by
+    ///   tick t's hour would leak one tick of the previous hour's dispatch
+    ///   into every new hour, and overdraw a final hour that was planned to
+    ///   spend exactly the remaining budget.
+    /// - **Ramp envelope.** The ceiling is `min(hourly[h], hourly[h + 1] +
+    ///   ramp × k)`, where `h` is the effect tick's hour and `k` the ticks
+    ///   from the effect tick to the next hour boundary. So a foreseen fall
+    ///   starts early and the output reaches the next hour's allocation
+    ///   exactly at the boundary: a foreseen fall never spills a ramp tail
+    ///   into the next hour, so a plan that ends with the water never ramps
+    ///   down with nothing behind it (which the budget limit would cut off in
+    ///   one tick). Hour 23
+    ///   has no next-hour term; the next day re-initialises.
+    ///
+    /// AGC's view of the plant's availability becomes `min(availability,
+    /// ceiling)`, so AGC never raises its target above the ceiling. The
+    /// physical availability passed to `Plant::step` is untouched and keeps
+    /// only the budget limit. When the ceiling is below the plant's output
+    /// (the envelope's own fall, or an unforeseen drop after a re-plan), its
+    /// target is set to `max(ceiling, output − ramp)` before AGC runs: the
+    /// plant ramps down at its ramp rate instead of dropping in one tick, and
+    /// the output it gives up next tick is added to the shortfall for the rest
+    /// of the fleet. AGC leaves such a plant out for this tick.
     ///
     /// The cap is lifted, leaving only the budget limit, while load is shed or
     /// the band is `Shedding` (see [`PowerSystem::hydro_cap_lifted`]). Hydro
@@ -498,12 +507,12 @@ impl PowerSystem {
         &mut self,
         available: &BTreeMap<PlantId, Megawatts>,
         shortfall: Megawatts,
-        hour: usize,
+        effect_tick: u32,
     ) -> Megawatts {
         let ceilings = if self.hydro_cap_lifted() {
             BTreeMap::new()
         } else {
-            self.hydro_ceilings(hour)
+            self.hydro_ceilings(effect_tick)
         };
         let mut shortfall = shortfall;
         let network = &self.network;
@@ -564,6 +573,23 @@ impl PowerSystem {
             // Curtailment is handled by `update_curtailment`.
             ProtectionOutcome::None | ProtectionOutcome::Restored | ProtectionOutcome::Curtail => {}
         }
+    }
+
+    /// Turns AGC on or off for plant `id` (see [`Plant::set_auto_follow`]).
+    /// Turning it off unplans the plant's hydro schedule, so manual hydro is
+    /// never capped and is still unplanned if AGC comes back on before the
+    /// next hourly re-plan (spec §12.3 step 4, §12.4). Never re-plans. An
+    /// `Err` leaves the system unchanged.
+    pub fn set_auto_follow(&mut self, id: PlantId, on: bool) -> Result<(), DomainError> {
+        let plant = self
+            .plants
+            .get_mut(&id)
+            .ok_or(DomainError::UnknownPlant { plant: id })?;
+        plant.set_auto_follow(on)?;
+        if !on {
+            self.unplan_hydro(id);
+        }
+        Ok(())
     }
 
     /// Trips plant `id` (see [`Plant::trip`]). Every trip goes through here: a

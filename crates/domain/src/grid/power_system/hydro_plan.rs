@@ -14,7 +14,7 @@ use crate::generation::{Plant, water_fill};
 use crate::grid::frequency::FrequencyBand;
 use crate::ids::PlantId;
 use crate::region::{PlantKind, RegionDefinition};
-use crate::time::{SimMonth, TICKS_PER_HOUR};
+use crate::time::{SimMonth, TICKS_PER_DAY, TICKS_PER_HOUR};
 use crate::units::{MegawattHours, Megawatts, Ratio};
 
 const HOURS: usize = 24;
@@ -152,15 +152,29 @@ impl PowerSystem {
         }
     }
 
-    /// The allocation for `hour` of every planned plant on AGC: the AGC
-    /// ceilings. A hydro plant with no plan (switched to AGC, connected or
-    /// tripped since the last re-plan) gets none, so it is uncapped.
-    pub(super) fn hydro_ceilings(&self, hour: usize) -> BTreeMap<PlantId, Megawatts> {
+    /// The AGC ceiling of every planned plant on AGC for targets that first
+    /// act on tick `effect_tick` (clamped into the day): its allocation for
+    /// that tick's hour `h`, lowered to the ramp envelope `hourly[h + 1] +
+    /// ramp × k`, where `k` counts the ticks from `effect_tick` to the next
+    /// hour boundary, so it can reach the next hour's allocation by then (see
+    /// [`PowerSystem::retarget_agc`]). Hour 23 has no envelope. A hydro plant
+    /// with no plan (switched to AGC, connected or tripped since the last
+    /// re-plan) gets no ceiling, so it is uncapped.
+    pub(super) fn hydro_ceilings(&self, effect_tick: u32) -> BTreeMap<PlantId, Megawatts> {
+        let tick = effect_tick.min(TICKS_PER_DAY - 1);
+        let hour = (tick / TICKS_PER_HOUR) as usize;
+        let to_boundary = (tick / TICKS_PER_HOUR + 1) * TICKS_PER_HOUR - tick;
         self.hydro_plan
             .iter()
             .filter(|(_, plan)| plan.planned)
-            .filter(|(id, _)| self.plants.get(id).is_some_and(Plant::auto_follow))
-            .filter_map(|(id, plan)| plan.hourly.get(hour).map(|mw| (*id, *mw)))
+            .filter_map(|(id, plan)| {
+                let plant = self.plants.get(id).filter(|p| p.auto_follow())?;
+                let mut ceiling = plan.hourly[hour];
+                if let Some(next) = plan.hourly.get(hour + 1) {
+                    ceiling = ceiling.min(*next + plant.spec().ramp.over_ticks(to_boundary));
+                }
+                Some((*id, ceiling))
+            })
             .collect()
     }
 

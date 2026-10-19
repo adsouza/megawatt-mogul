@@ -136,7 +136,7 @@ impl GameSession {
     ) -> Result<Vec<DomainEvent>, DomainError> {
         self.require_phase(&PLANNING_OR_OPERATING)?;
         self.operable(plant)?;
-        self.operable_mut(plant).set_auto_follow(on)?;
+        self.power.set_auto_follow(plant, on)?;
         Ok(Vec::new())
     }
 
