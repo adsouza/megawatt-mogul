@@ -208,10 +208,15 @@ impl GameSession {
         self.day_ticks.clear();
         let mut events = vec![self.change_phase(DayPhase::Operating)];
         if init.outage > Ratio::ZERO {
-            events.push(DomainEvent::RotatingOutageOrdered {
+            let order = DomainEvent::RotatingOutageOrdered {
                 hour: 0,
                 share: init.outage,
-            });
+            };
+            // The accumulator was reset above, so hour 0's order reaches it
+            // here, at tick 0, for the report's incident and peak share.
+            self.month_to_date
+                .add_command_events(0, std::slice::from_ref(&order));
+            events.push(order);
         }
         Ok(events)
     }

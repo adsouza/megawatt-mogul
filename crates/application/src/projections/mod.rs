@@ -125,6 +125,8 @@ pub(crate) mod test_support {
             curtailed: MegawattHours::new(0.0),
             imbalance: MegawattHours::new(0.0),
             overgeneration: MegawattHours::new(0.0),
+            rotating_outage: MegawattHours::new(0.0),
+            peak_outage_share: Ratio::ZERO,
             peak_demand: Megawatts::new(peak_mw),
             reliability: Ratio::ONE,
             incidents: Vec::new(),

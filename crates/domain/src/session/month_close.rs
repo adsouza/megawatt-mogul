@@ -392,6 +392,8 @@ impl GameSession {
             curtailed: acc.curtailed() * weight,
             imbalance: acc.imbalance() * weight,
             overgeneration: acc.overgeneration() * weight,
+            rotating_outage: acc.rotating_outage() * weight,
+            peak_outage_share: acc.peak_outage_share(),
             peak_demand: acc.peak_demand(),
             reliability: share(served, demand),
             incidents: acc.incidents().to_vec(),

@@ -36,7 +36,8 @@ impl GameSession {
     /// `[min_output, capacity]` (hydro may fall to zero, since its reservoir
     /// caps output below minimum); that the last tick summary satisfies
     /// `generation = Σ by_plant = Σ by_kind = served + imbalance`,
-    /// `served + unserved = demand`, `0 ≤ served ≤ demand` and
+    /// `served + unserved = demand`, `0 ≤ served ≤ demand`,
+    /// `demand × outage ≤ unserved` (within `1e-6 × demand`) and
     /// `curtailed ≥ 0`; and that its `by_plant` is exactly the connected,
     /// commissioned plants at their live outputs, so `generation` is what the
     /// plants actually produce.
@@ -104,6 +105,15 @@ impl GameSession {
     }
 }
 
+/// The planned outage, `demand × outage`, is part of unserved energy, never
+/// added to it: it may exceed `unserved` only by float noise, `1e-6 × demand`.
+/// (A slightly negative `unserved` with no outage is `served ≤ demand`'s
+/// tolerance, not this check's.)
+fn planned_is_within_unserved(s: &TickSummary) -> bool {
+    let planned = s.demand.value() * s.outage.value();
+    planned - s.unserved.value().max(0.0) <= TOLERANCE * s.demand.value()
+}
+
 fn conserves(s: &TickSummary) -> bool {
     let near = |a: Megawatts, b: Megawatts| (a - b).value().abs() <= TOLERANCE;
     // `a ≥ b`, within the tolerance.
@@ -114,6 +124,7 @@ fn conserves(s: &TickSummary) -> bool {
         && near(s.generation, by_kind)
         && near(s.generation, s.served + s.imbalance)
         && near(s.served + s.unserved, s.demand)
+        && planned_is_within_unserved(s)
         && at_least(s.served, Megawatts::ZERO)
         && at_least(s.demand, s.served)
         && at_least(s.curtailed, Megawatts::ZERO)
@@ -318,6 +329,31 @@ mod tests {
         assert!(conserves(&s));
         s.curtailed = Megawatts::new(-2.0 * t);
         assert!(!conserves(&s));
+    }
+
+    #[test]
+    fn planned_outage_energy_cannot_exceed_unserved() {
+        // Demand 100 MW, a 20% outage and 5% protection shed of the 80 MW
+        // load: served 76, unserved 24, of which 20 is planned.
+        let mut ok = summary(100.0, 76.0, 76.0, 0.0, &[76.0]);
+        ok.outage = Ratio::new(0.2).unwrap();
+        assert!(conserves(&ok));
+        // The planned cut is part of unserved: a summary whose unserved is
+        // below demand × outage (beyond float noise) is inconsistent.
+        let mut broken = ok.clone();
+        broken.served = Megawatts::new(81.0);
+        broken.unserved = Megawatts::new(19.0);
+        broken.generation = Megawatts::new(81.0);
+        broken.by_plant = BTreeMap::from([(PlantId(0), Megawatts::new(81.0))]);
+        broken.by_kind = BTreeMap::from([(PlantKind::Coal, Megawatts::new(81.0))]);
+        assert!(!conserves(&broken));
+        // Float noise below the 1e-6 × demand tolerance is fine.
+        broken.unserved = Megawatts::new(20.0 - 5e-5);
+        broken.served = Megawatts::new(80.0 + 5e-5);
+        broken.generation = broken.served;
+        broken.by_plant = BTreeMap::from([(PlantId(0), broken.served)]);
+        broken.by_kind = BTreeMap::from([(PlantKind::Coal, broken.served)]);
+        assert!(conserves(&broken));
     }
 
     #[test]

@@ -29,6 +29,11 @@ pub enum IncidentKind {
     OverFrequencyTrip {
         plant: PlantId,
     },
+    /// A rotating outage of `share` of the load was ordered (never zero:
+    /// lifting an outage is not an incident).
+    RotatingOutage {
+        share: Ratio,
+    },
 }
 
 /// An incident and the tick of the played day it happened in.
@@ -77,6 +82,11 @@ pub struct MonthlyReport {
     /// Surplus generation: the sum of each tick's positive imbalance (the
     /// deficits that `imbalance` nets off are left out), weighted by `days`.
     pub overgeneration: MegawattHours,
+    /// Energy cut by planned rotating outages: the weighted sum of
+    /// `demand × outage`. Part of `unserved`, never added to it.
+    pub rotating_outage: MegawattHours,
+    /// The month's largest outage share ordered (`RotatingOutageOrdered`).
+    pub peak_outage_share: Ratio,
     pub peak_demand: Megawatts,
     pub reliability: Ratio,
     pub incidents: Vec<Incident>,
@@ -120,6 +130,10 @@ pub struct MonthAccumulator {
     imbalance: MegawattHours,
     /// Σ max(0, imbalance) over the day's ticks.
     overgeneration: MegawattHours,
+    /// Σ demand × outage over the day's ticks.
+    rotating_outage: MegawattHours,
+    /// The largest share of a `RotatingOutageOrdered` event so far.
+    peak_outage_share: Ratio,
     peak_demand: Megawatts,
     incidents: Vec<Incident>,
     /// Ticks of the day spent in Normal grid mode.
@@ -141,6 +155,8 @@ impl Default for MonthAccumulator {
             curtailed: MegawattHours::ZERO,
             imbalance: MegawattHours::ZERO,
             overgeneration: MegawattHours::ZERO,
+            rotating_outage: MegawattHours::ZERO,
+            peak_outage_share: Ratio::ZERO,
             peak_demand: Megawatts::ZERO,
             incidents: Vec::new(),
             normal_ticks: 0,
@@ -177,6 +193,7 @@ impl MonthAccumulator {
         self.curtailed += minute(summary.curtailed);
         self.imbalance += minute(summary.imbalance);
         self.overgeneration += minute(summary.imbalance.max(Megawatts::ZERO));
+        self.rotating_outage += minute(summary.demand * summary.outage.value());
         self.peak_demand = self.peak_demand.max(summary.demand);
         if summary.mode == GridMode::Normal {
             self.normal_ticks += 1;
@@ -187,8 +204,9 @@ impl MonthAccumulator {
         self.add_events(summary.tick, events);
     }
 
-    /// Adds the events of a player command issued during tick `tick`: a
-    /// manual start is a recurring daily start like a scheduled one.
+    /// Adds events that happen outside a tick: a player command issued during
+    /// tick `tick` (a manual start is a recurring daily start like a scheduled
+    /// one), or hour 0's rotating-outage order when the day begins (tick 0).
     pub fn add_command_events(&mut self, tick: u32, events: &[DomainEvent]) {
         self.add_events(tick, events);
     }
@@ -206,6 +224,16 @@ impl MonthAccumulator {
                 DomainEvent::BlackoutRestored => IncidentKind::BlackoutRestored,
                 DomainEvent::OverFrequencyTrip { plant } => {
                     IncidentKind::OverFrequencyTrip { plant: *plant }
+                }
+                DomainEvent::RotatingOutageOrdered { share, .. } => {
+                    if *share > self.peak_outage_share {
+                        self.peak_outage_share = *share;
+                    }
+                    if *share == Ratio::ZERO {
+                        // "Outage lifted" is not an incident.
+                        continue;
+                    }
+                    IncidentKind::RotatingOutage { share: *share }
                 }
                 _ => continue,
             };
@@ -278,6 +306,16 @@ impl MonthAccumulator {
     /// Σ max(0, imbalance) over the day's ticks, unweighted.
     pub fn overgeneration(&self) -> MegawattHours {
         self.overgeneration
+    }
+
+    /// Σ demand × outage over the day's ticks, unweighted.
+    pub fn rotating_outage(&self) -> MegawattHours {
+        self.rotating_outage
+    }
+
+    /// The largest rotating-outage share ordered during the day.
+    pub fn peak_outage_share(&self) -> Ratio {
+        self.peak_outage_share
     }
 
     pub fn peak_demand(&self) -> Megawatts {
@@ -450,6 +488,77 @@ mod tests {
         assert_eq!(acc.imbalance(), MegawattHours::new(1.5));
         acc.reset();
         assert_eq!(acc.overgeneration(), MegawattHours::ZERO);
+    }
+
+    #[test]
+    fn rotating_outage_is_part_of_unserved() {
+        let mut acc = MonthAccumulator::default();
+        assert_eq!(acc.rotating_outage(), MegawattHours::ZERO);
+        // Demand 120 MW with a 25% outage: load 90 MW, of which protection
+        // sheds 10% (served 81 MW). Unserved is 39 MW, 30 MW of it planned.
+        let mut tick = summary(0, 120.0, 81.0, &[(1, 81.0)]);
+        tick.outage = Ratio::new(0.25).unwrap();
+        tick.shed = Ratio::new(0.1).unwrap();
+        acc.add_tick(&tick, &[], Hertz::ZERO, band());
+        // A tick with no outage adds nothing planned, only its own unserved.
+        acc.add_tick(
+            &summary(1, 120.0, 114.0, &[(1, 114.0)]),
+            &[],
+            Hertz::ZERO,
+            band(),
+        );
+        let close = |a: MegawattHours, b: f64| (a.value() - b).abs() < 1e-9;
+        assert!(
+            close(acc.rotating_outage(), 0.5),
+            "{:?}",
+            acc.rotating_outage()
+        );
+        assert!(close(acc.unserved(), 39.0 / 60.0 + 6.0 / 60.0));
+        // Part of unserved: the planned energy never exceeds it.
+        assert!(acc.rotating_outage() <= acc.unserved());
+        acc.reset();
+        assert_eq!(acc.rotating_outage(), MegawattHours::ZERO);
+    }
+
+    fn ordered(hour: u8, share: f64) -> DomainEvent {
+        DomainEvent::RotatingOutageOrdered {
+            hour,
+            share: Ratio::new(share).unwrap(),
+        }
+    }
+
+    #[test]
+    fn peak_outage_share_is_the_largest_ordered() {
+        let mut acc = MonthAccumulator::default();
+        assert_eq!(acc.peak_outage_share(), Ratio::ZERO);
+        // Hour 0's order arrives as a command-path event, the rest in ticks.
+        acc.add_command_events(0, &[ordered(0, 0.3)]);
+        assert_eq!(acc.peak_outage_share(), Ratio::new(0.3).unwrap());
+        let quiet = summary(1, 10.0, 10.0, &[]);
+        acc.add_tick(&quiet, &[ordered(1, 0.6)], Hertz::ZERO, band());
+        acc.add_tick(&quiet, &[ordered(2, 0.2)], Hertz::ZERO, band());
+        acc.add_tick(&quiet, &[ordered(3, 0.0)], Hertz::ZERO, band());
+        assert_eq!(acc.peak_outage_share(), Ratio::new(0.6).unwrap());
+        acc.reset();
+        assert_eq!(acc.peak_outage_share(), Ratio::ZERO);
+    }
+
+    #[test]
+    fn an_ordered_outage_is_an_incident() {
+        let mut acc = MonthAccumulator::default();
+        let quiet = summary(7, 10.0, 10.0, &[]);
+        acc.add_tick(&quiet, &[ordered(0, 0.25)], Hertz::ZERO, band());
+        // Lifting the outage (a share of 0) is good news, not an incident.
+        acc.add_tick(&quiet, &[ordered(1, 0.0)], Hertz::ZERO, band());
+        assert_eq!(
+            acc.incidents(),
+            &[Incident {
+                tick: 7,
+                kind: IncidentKind::RotatingOutage {
+                    share: Ratio::new(0.25).unwrap()
+                }
+            }]
+        );
     }
 
     #[test]

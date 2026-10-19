@@ -6,6 +6,7 @@ use super::super::*;
 use super::{LedgerTotals, is_zero_capital, share};
 use crate::company::{LedgerCategory, ReserveReviewInputs};
 use crate::generation::PlantStatus;
+use crate::grid::GridMode;
 use crate::ids::CityId;
 use crate::region::fixtures::{tiny_region, tiny_region_parts};
 use crate::region::{PlantKind, RegionDefinitionParts};
@@ -1036,4 +1037,157 @@ fn a_balanced_month_reports_no_trips() {
     robust_fleet(&mut s);
     let events = play_day(&mut s);
     assert_eq!(report_in(&events).over_frequency_trips, 0);
+}
+
+/// Cities 1–3 connected with 3,000 MW of base load on city 3 and no demand
+/// noise, against the 1,300 MW start fleet on automatic generation control:
+/// the day opens in a rotating outage that deepens with the load.
+fn shortage_session() -> GameSession {
+    let mut parts = tiny_region_parts();
+    parts.demand.forecast_error = Ratio::ZERO;
+    parts.start.connected_cities.push(CityId(3));
+    let city = parts.cities.iter_mut().find(|c| c.id == CityId(3)).unwrap();
+    city.base_load = Megawatts::new(3_000.0);
+    let mut s = session_from(parts, 1);
+    auto_fleet(&mut s);
+    s
+}
+
+fn summaries_in(events: &[DomainEvent]) -> Vec<&TickSummary> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            DomainEvent::TickCompleted(summary) => Some(summary),
+            _ => None,
+        })
+        .collect()
+}
+
+/// One minute of `power`, as the month accumulator books it.
+fn minute(power: Megawatts) -> MegawattHours {
+    power.energy_over_ticks(1)
+}
+
+#[test]
+fn rotating_outage_is_part_of_unserved() {
+    let mut s = shortage_session();
+    let weight = f64::from(s.clock().month().days_in_month());
+    let events = play_day(&mut s);
+    let report = report_in(&events);
+    let planned: MegawattHours = summaries_in(&events)
+        .iter()
+        .map(|t| minute(t.demand * t.outage.value()))
+        .sum();
+    assert!(report.rotating_outage > MegawattHours::ZERO);
+    assert!((report.rotating_outage.value() - (planned * weight).value()).abs() < 1e-6);
+    // Part of unserved, never added to it: the invariant, and the sum itself.
+    let unserved: MegawattHours = summaries_in(&events)
+        .iter()
+        .map(|t| minute(t.unserved))
+        .sum();
+    assert!((report.unserved.value() - (unserved * weight).value()).abs() < 1e-6);
+    assert!(
+        report.rotating_outage.value() <= report.unserved.value() + 1e-6 * report.demand.value()
+    );
+}
+
+#[test]
+fn peak_outage_share_is_the_largest_ordered() {
+    let mut s = shortage_session();
+    let events = play_day(&mut s);
+    let report = report_in(&events);
+    let orders: Vec<Ratio> = events
+        .iter()
+        .filter_map(|e| match e {
+            DomainEvent::RotatingOutageOrdered { share, .. } => Some(*share),
+            _ => None,
+        })
+        .collect();
+    assert!(orders.len() > 1, "the day re-sizes its outage");
+    let largest = orders
+        .into_iter()
+        .fold(Ratio::ZERO, |a, b| if b > a { b } else { a });
+    assert!(largest > Ratio::ZERO);
+    assert_eq!(report.peak_outage_share, largest);
+}
+
+#[test]
+fn an_ordered_outage_is_an_incident() {
+    let mut s = shortage_session();
+    let events = play_day(&mut s);
+    let report = report_in(&events);
+    let ordered: Vec<(u8, Ratio)> = events
+        .iter()
+        .filter_map(|e| match e {
+            DomainEvent::RotatingOutageOrdered { hour, share } => Some((*hour, *share)),
+            _ => None,
+        })
+        .collect();
+    let incidents: Vec<Ratio> = report
+        .incidents
+        .iter()
+        .filter_map(|i| match i.kind {
+            IncidentKind::RotatingOutage { share } => Some(share),
+            _ => None,
+        })
+        .collect();
+    let non_zero: Vec<Ratio> = ordered
+        .iter()
+        .map(|(_, share)| *share)
+        .filter(|share| *share > Ratio::ZERO)
+        .collect();
+    // Every non-zero order is an incident, in order; lifting is not one.
+    assert_eq!(incidents, non_zero);
+    // Hour 0's order is emitted by `begin_operating`, after the accumulator
+    // reset, and still counts: it is the day's first incident, at tick 0.
+    assert_eq!(ordered[0].0, 0);
+    let first = report.incidents.first().expect("an incident");
+    assert_eq!(first.tick, 0);
+    assert_eq!(
+        first.kind,
+        IncidentKind::RotatingOutage {
+            share: ordered[0].1
+        }
+    );
+}
+
+#[test]
+fn blackout_dark_load_is_not_counted_as_planned() {
+    let mut s = shortage_session();
+    let weight = f64::from(s.clock().month().days_in_month());
+    let mut events = s.begin_operating().unwrap();
+    for _ in 0..50 {
+        events.extend(s.tick().unwrap());
+    }
+    // The whole fleet is lost mid-shortage and stays down: a blackout.
+    let fleet: Vec<PlantId> = s.power().plants().keys().copied().collect();
+    for plant in fleet {
+        let p = s.power.plant_mut(plant).unwrap();
+        p.trip();
+        p.suppress_commitment_for_day();
+    }
+    events.extend(finish_day(&mut s));
+    let report = report_in(&events);
+
+    let ticks = summaries_in(&events);
+    let dark: Vec<&&TickSummary> = ticks
+        .iter()
+        .filter(|t| t.mode == GridMode::Blackout)
+        .collect();
+    assert!(dark.len() > 100, "the day ends dark: {} ticks", dark.len());
+    // Dark load is protection's, never planned: the outage is 0 in a
+    // blackout, so those ticks add to unserved but not to rotating_outage.
+    assert!(dark.iter().all(|t| t.outage == Ratio::ZERO));
+    let dark_unserved: MegawattHours = dark.iter().map(|t| minute(t.unserved)).sum();
+    let planned: MegawattHours = ticks
+        .iter()
+        .map(|t| minute(t.demand * t.outage.value()))
+        .sum();
+    assert!(planned > MegawattHours::ZERO, "the day began in an outage");
+    assert!((report.rotating_outage.value() - (planned * weight).value()).abs() < 1e-6);
+    assert!(
+        report.unserved.value() - report.rotating_outage.value()
+            >= (dark_unserved * weight).value() - 1e-6
+    );
+    assert!(report.rotating_outage < report.unserved);
 }

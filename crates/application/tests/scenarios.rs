@@ -39,6 +39,7 @@ fn assert_plausible(report: &MonthlyReport) {
         report.unserved,
         report.curtailed,
         report.imbalance,
+        report.rotating_outage,
     ];
     assert!(
         energies.iter().all(|e| e.value().is_finite()),
@@ -48,6 +49,10 @@ fn assert_plausible(report: &MonthlyReport) {
     assert!((0.0..=1.0).contains(&report.reliability.value()));
     let balance = report.served.value() + report.unserved.value() - report.demand.value();
     assert!(balance.abs() < 1e-6 * report.demand.value().max(1.0));
+    // The planned outage is part of unserved energy, never added to it.
+    assert!(
+        report.rotating_outage.value() <= report.unserved.value() + 1e-6 * report.demand.value()
+    );
     assert_eq!(
         report.net,
         report.revenue + report.fuel + report.start_up + report.fixed_om + report.construction
