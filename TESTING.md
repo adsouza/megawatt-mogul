@@ -43,9 +43,11 @@ The invariants the property tests must cover:
   and online output stays between minimum stable output and capacity.
 - **Merit order:** AGC never leaves a cheaper auto-follow plant with headroom while raising a more
   expensive one, and the reverse holds when lowering.
-- **Conservation:** each tick, generation = served + curtailed + imbalance (signed), unserved =
-  demand × shed, and 0 ≤ served ≤ demand. Unserved energy is shed load only; a residual mismatch is
-  absorbed by system inertia and shows up as frequency deviation.
+- **Conservation:** each `TickSummary` describes the post-protection state and satisfies
+  generation = Σ by_plant = Σ by_kind = served + imbalance (signed), served = demand × (1 − shed),
+  unserved = demand × shed, and 0 ≤ served ≤ demand. `curtailed` is solar availability withheld,
+  never generated, so it is not part of generation. Unserved energy is shed load only; a residual
+  mismatch is absorbed by system inertia and shows up as frequency deviation.
 - **Money:** the change in cash always equals the sum of the ledger entries, exactly.
 - **Commitment:** validate cyclic off-gaps against shutdown plus start-up, including midnight and
   exact-fit boundaries. Nuclear accepts all-day/all-off only. Initial state follows the pattern;
@@ -56,7 +58,8 @@ The invariants the property tests must cover:
   rounding step per ledger entry.
 - **Hydro:** the energy a hydro plant produces in a played day never exceeds that day's budget.
 - **Determinism:** the same verified versions, settings, region content, seed and commands produce
-  an identical state hash. Test version/fingerprint mismatches before command execution, exact-byte
+  an identical state hash on the same build and platform (libm transcendentals may differ in the
+  last bit between targets; see `ARCHITECTURE.md`). Test version/fingerprint mismatches before command execution, exact-byte
   region archival, and recovery after shipped data is retuned or removed. Missing/corrupt archives
   never silently fall back to installed data; failed archive/header initialisation prevents new games.
 - **Robustness:** any random sequence of commands (state-machine test) never panics, and all

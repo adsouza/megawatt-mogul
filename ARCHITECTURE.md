@@ -5,10 +5,8 @@ is a pure Rust core. Bevy is an outer adapter. The full design is in the
 [spec](docs/superpowers/specs/2026-10-18-megawatt-mogul-design.md); this page is the short version
 for people changing code.
 
-**Status:** only the workspace scaffold exists (three empty crates and the dependency-rule test). The
-sections below describe the design Plan 1 implements; the types and modules named here (`GameSession`,
-`CommandHandler`, `SimRng`, `Megawatts`, `NetworkModel`, ...) do not exist yet. The `game` crate is
-additionally planned for Plans 2-3.
+**Status:** Plan 1 (the headless simulation core: `domain`, `application` and `infrastructure`) is
+complete. The `game` crate, the Bevy client, is planned for Plans 2-3.
 
 ## Layers and the dependency rule
 
@@ -28,11 +26,11 @@ The rule is enforced by the compiler: `domain/Cargo.toml` does not list Bevy, so
 impossible, and `crates/domain/tests/dependency_rule.rs` fails if a framework or I/O crate appears
 there. `cargo test -p domain` and `-p application` never compile Bevy, so feedback takes seconds.
 
-## Where things go (planned layout)
+## Where things go
 
 | What | Where |
 |---|---|
-| Value objects (`Megawatts`, `Money`, `SimTime`, IDs, ...) | `domain::units` |
+| Value objects (`Megawatts`, `Money`, `Ratio`, ...), IDs, and time (`SimMonth`, `SimDuration`, the clock) | `domain::units`, `domain::ids`, `domain::time` |
 | Game rules (plants, demand, grid balancing, company, regulation, session) | A `domain` module per bounded context |
 | Use cases (commands and their handlers), pipeline layers, queries and projections, ports | `application` |
 | File formats (RON DTOs, the command-log format) and their mapping to domain types | `infrastructure` |
@@ -41,11 +39,13 @@ there. `cargo test -p domain` and `-p application` never compile Bevy, so feedba
 Region data (plant tuning numbers, cities, regulator parameters) lives in `assets/regions/*.ron`,
 never as code constants.
 
-## Write side: commands (Plan 1 — not yet built)
+## Write side: commands
 
-Every command is a plain struct handled as `handle(&mut GameSession, cmd) -> Result<Vec<DomainEvent>,
-CommandError>`. Layers wrap the handler through one `CommandHandler` trait and are assembled in a
-single `build_pipeline()`:
+`Command` is one enum with a variant per player action (`BuildPlant`, `SetDispatchTarget`,
+`AdvanceTicks`, ...). Every command is handled as `handle(&mut GameSession, &Command) ->
+Result<Vec<DomainEvent>, CommandError>`. Layers wrap the core handler through one `CommandHandler`
+trait (`Send + Sync`, so a `Game` can be a Bevy `Resource`) and are assembled in a single
+`build_pipeline()`:
 
 ```
 PlayerCommand ─▶ TracingLayer ─▶ InvariantCheckLayer* ─▶ CommandLogLayer ─▶ handler ─▶ events ─▶ projections
@@ -56,7 +56,7 @@ PlayerCommand ─▶ TracingLayer ─▶ InvariantCheckLayer* ─▶ CommandLogL
 The domain never panics on player input. It returns `DomainError`, and a command that returns `Err`
 leaves the session unchanged. Panics are reserved for bugs (invariant violations).
 
-## Read side: queries and projections (CQRS) (Plan 1 — not yet built)
+## Read side: queries and projections (CQRS)
 
 The presentation layer never reads aggregate internals. It uses cheap snapshot queries
 (`GridSnapshot`, `PlantView`, `CompanyView`, ...) and projections that are updated from domain events
@@ -67,7 +67,7 @@ domain events.
 Ticks and commands return `Vec<DomainEvent>`. Nothing is pushed through an event framework, and
 policies (event to reaction, such as strikes or bankruptcy) run inside the domain.
 
-## Command sourcing (Plan 1 — not yet built)
+## Command sourcing
 
 Persistence is command sourcing, not event sourcing: `CommandLogLayer` records commands through
 the `CommandLogSink` port, and the aggregates know nothing about persistence. The header preserves
@@ -82,7 +82,11 @@ Save/load and replays build on the log in a later milestone.
 ## Determinism rules
 
 The same verified versions, settings, region content, seed and command log must produce an identical
-state hash.
+state hash. Bit-identical replay is guaranteed **for the same build on the same platform**. A few
+places call the platform's libm, whose last-bit results may differ between targets: the Box-Muller
+transform in `SimRng::standard_normal` (`ln`, `cos`), the solar day curve (`sin`), line lengths
+(`hypot`) and the terrain rasteriser in `infrastructure` (`cos`, `exp`). The region fingerprint
+hashes the source bytes, not the rasterised grid, so it cannot detect a rasterisation difference.
 
 - Use `BTreeMap` / `BTreeSet`. Never iterate a `HashMap`.
 - No wall-clock time.
@@ -113,26 +117,37 @@ the same portion remains excess at two consecutive reviews. Per-asset held porti
 history survive annual tally resets; preview queries never age them. Held capital still depreciates;
 only eligible remaining book value earns return. Holding and write-off do not change cash.
 
-## The tick (Plan 1 — not yet built)
+## The tick
 
-`GameSession::tick` runs these steps in a fixed order:
+`GameSession::tick` first requires an active game in `Operating` (`require_operating`), then runs
+`PowerSystem::tick` over the connected grid and its own bookkeeping, in this fixed order:
 
-1. Advance the clock.
-2. Compute actual demand for connected cities.
-3. Compute solar availability.
-4. Update hydro budgets.
-5. Apply scheduled start/stop actions for the current interval, respecting operating overrides.
-6. Plants progress (start-up; ramp toward target). Construction completes at month close.
-7. AGC re-targets auto-follow plants.
-8. Imbalance = supply - demand.
-9. Frequency update.
-10. Protection (shed, curtail or blackout).
-11. Accounting: accumulate energy per plant (MWh), recurring and boundary starts separately, and
-    served energy. Nothing is priced per tick; apply the appropriate weights at month close.
-12. Collect events. At tick 1,440 the month's totals are weighted, `MonthClosed` is emitted,
-    policies run, and the phase moves to Review.
+1. Demand of connected cities: forecast × (1 + forecast error). The AR(1) error advances by exactly
+   one normal draw every tick, in any state.
+2. Solar and hydro availability for every plant (hydro from the day's remaining energy budget, reset
+   at `BeginOperating`). The standing solar curtailment is withheld from connected online solar, pro
+   rata to availability.
+3. The commitment actions due at this tick; plants suppressed for the day get none.
+4. Every plant steps once: start-up progress, ramp toward target, hydro budget use.
+5. AGC re-targets connected auto-follow plants in merit order toward the load to serve,
+   `demand × (1 − shed)` (one restoration step higher during a blackout), making room for withheld
+   solar.
+6. Imbalance between connected supply and served load.
+7. Frequency update (held at nominal during a blackout).
+8. Protection: load shedding, a blackout that trips every plant, and solar curtailment for the next
+   tick. Tripped solar reconnects once restoration re-energises the grid.
+9. The `TickSummary` of the post-protection state, also emitted last as `TickCompleted`.
+10. Accounting: the session adds the summary to the month-to-date totals (energy per plant,
+    recurring and boundary starts, served and unserved energy). Nothing is priced per tick.
+11. The clock advances. After tick 1,440 the month closes: totals are weighted by `days_in_month`
+    and booked, construction advances, policies run, `MonthClosed` is emitted and the phase moves to
+    Review.
 
-## Settings seams (Plan 1 — not yet built)
+Each `TickSummary` satisfies `generation = Σ by_plant = served + imbalance` (signed), with
+`served = demand × (1 − shed)` and `unserved = demand × shed`. `curtailed` is solar availability
+withheld, which is never generated, so it is not part of `generation`.
+
+## Settings seams
 
 ```rust
 pub struct GameSettings { pub fidelity: SimulationFidelity }

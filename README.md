@@ -28,9 +28,8 @@ balancing area:
 
 ## Status
 
-Plan 1: headless simulation core (the `domain`, `application` and `infrastructure` crates). The
-Bevy client is coming in Plans 2-3, so there is nothing to play yet. Today the repository holds the
-workspace scaffold, CI and tooling, and the design documents.
+Plan 1 (headless simulation core: the `domain`, `application` and `infrastructure` crates)
+complete; the Bevy client follows in Plans 2–3, so there is nothing to play yet.
 
 ## Build and test
 

@@ -400,7 +400,9 @@ Ticks and commands return `Vec<DomainEvent>`. Nothing is pushed through a framew
 - No iteration order that depends on a `HashMap`; use `BTreeMap`, or `Vec` indexed by ID.
 - Single-threaded tick.
 - The same seed, settings, region content, simulation rules version and command log must produce
-  an identical state hash. Replay verifies these inputs before executing any commands (§7).
+  an identical state hash on the same build and platform (libm transcendentals such as `ln`, `cos`,
+  `sin`, `exp` and `hypot` may differ in the last bit between targets). Replay verifies these inputs
+  before executing any commands (§7).
 
 ## 6. Application layer (`crates/application`)
 
@@ -486,21 +488,23 @@ The presentation layer never reads aggregate internals.
 
 ### 6.4 The tick (owned by `GameSession::tick`, in a fixed order)
 
-1. Advance the clock.
-2. Compute actual demand for connected cities.
-3. Compute solar availability.
-4. Update hydro budgets.
-5. Apply scheduled start/stop actions for the current interval, respecting operating overrides.
-6. Plants progress (start-up; ramp toward target). Construction completes at month close.
-7. AGC re-targets auto-follow plants.
-8. Imbalance = supply − demand.
-9. Frequency update.
-10. Protection (shed, curtail or blackout).
-11. Accounting: accumulate energy per plant (MWh), recurring daily starts, month-boundary starts
+1. Require an active game in `Operating` (`GameOver`, then `WrongPhase`), even for
+   `AdvanceTicks { n: 0 }`.
+2. Compute actual demand for connected cities (forecast × (1 + forecast error)).
+3. Compute solar and hydro availability; withhold the standing solar curtailment.
+4. Apply scheduled start/stop actions for the current interval, respecting operating overrides.
+5. Plants progress (start-up; ramp toward target; hydro budget use). Construction completes at
+   month close.
+6. AGC re-targets auto-follow plants.
+7. Imbalance = supply − served load.
+8. Frequency update.
+9. Protection (shed, curtail or blackout). The `TickSummary` reports the post-protection state.
+10. Accounting: accumulate energy per plant (MWh), recurring daily starts, month-boundary starts
     and *served* energy. Nothing is priced per tick. At month close, apply each total's weight
     (§6.1) and **round to cents once per ledger entry** (round-half-even), so money never accumulates
     fractional cents. Retain only the whole-month offline summary for next month's start charging.
-12. Collect events. At tick 1,440: the month's totals are weighted, `MonthClosed`, policies run, and the phase moves to Review.
+11. Advance the clock and collect events. After tick 1,440: the month's totals are weighted,
+    `MonthClosed`, policies run, and the phase moves to Review.
 
 ### 6.5 Ports
 
@@ -596,7 +600,7 @@ is shed). Lines show only an "energised" pulse. It shows no per-line loading unt
 | Observability | A `TracingLayer` span per command (command, outcome, emitted events); `#[tracing::instrument]` on handlers; Bevy's Tracy feature for frame profiling. The domain stays free of logging. |
 | Persistence | Command sourcing with a versioned header, settings, seed, region fingerprint and adjacent source archive (§7.1). `CommandLogLayer` records commands through `CommandLogSink`; aggregates are persistence-ignorant. Snapshots and player-facing save/load come later. |
 | Error handling | Typed `Result`s at every layer (`DomainError` → `CommandError` with `thiserror`). The domain never panics on player input; `panic!` and `debug_assert!` are only for bugs. Errors are mapped for display once, at the Bevy boundary. |
-| Data integrity | Types first: newtypes, validating constructors and state enums. Debug and test builds run `InvariantCheckLayer` after each command or tick (generation = served + curtailed + imbalance; cash change = ledger sum; plant bounds). |
+| Data integrity | Types first: newtypes, validating constructors and state enums. Debug and test builds run `InvariantCheckLayer` after each command or tick (on the post-protection `TickSummary`: generation = Σ by_plant = Σ by_kind = served + imbalance, 0 ≤ served ≤ demand, curtailed ≥ 0, and generation matches the connected plants' outputs; cash change = ledger sum; plant bounds). |
 | Localisation | The domain never produces user-facing text, only typed events, errors and lessons with parameters. Fluent `.ftl` files live under `assets/locales/en-US/`, and region data refers to translation keys. Milestone 1 ships en-US only. |
 
 ## 10. Testing strategy
@@ -618,8 +622,10 @@ is shed). Lines show only an "energised" pulse. It shows no per-line loading unt
   rate, and online output stays between minimum stable output and capacity.
 - **Merit order:** AGC never leaves a cheaper auto-follow plant with headroom while raising a more
   expensive one, and the reverse holds when lowering.
-- **Conservation:** each tick, generation = served + curtailed + imbalance (signed), unserved =
-  demand × shed, and 0 ≤ served ≤ demand.
+- **Conservation:** each `TickSummary` is the post-protection state, with generation = served +
+  imbalance (signed), served = demand × (1 − shed), unserved = demand × shed, and
+  0 ≤ served ≤ demand. `curtailed` is solar availability withheld (never generated), so it is not
+  part of generation.
 - **Money:** the change in cash always equals the sum of the ledger entries, exactly.
 - **Commitment:** every cyclic off-gap fits worst-case shutdown plus start-up; all-day/all-off are
   valid; invalid patterns leave the session unchanged. Test cross-midnight starts/shutdowns and
