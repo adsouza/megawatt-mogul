@@ -256,6 +256,10 @@ fn overreach_month_four(parts: RegionDefinitionParts, seed: u64) -> OverreachMon
     auto_follow_all(&mut g);
     let days = g.session().clock().month().days_in_month();
     let shortfall = forecast_shortfall(&g, days);
+    assert!(
+        shortfall.value() > 0.0,
+        "the overreach month is forecast short: {shortfall:?}"
+    );
     g.execute(Command::BeginOperating).expect("begin operating");
     let events = g
         .execute(Command::AdvanceTicks { n: TICKS_PER_DAY })
@@ -321,6 +325,12 @@ fn assert_overreach_rotates(label: &str, month: &OverreachMonth) {
     );
     let frequency = overreach().frequency;
     let (nominal, blackout_below) = (frequency.nominal.value(), frequency.blackout_below.value());
+    // The fold below starts at +∞, so an empty day would pass vacuously.
+    assert_eq!(
+        month.ticks.len(),
+        TICKS_PER_DAY as usize,
+        "{label}: the month's ticks"
+    );
     let min_dev = month
         .ticks
         .iter()

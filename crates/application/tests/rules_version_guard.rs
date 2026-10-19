@@ -6,6 +6,9 @@
 //! renames. If this snapshot changes, outcomes changed: either the change is
 //! a bug, or `SIM_RULES_VERSION` must be bumped in the same commit. The
 //! snapshot's first line makes a missing bump visible in review.
+//!
+//! Each month also pins its rotating outages and every regulatory event, so
+//! a strike that expires before the final position is still visible.
 
 #[allow(dead_code)]
 mod support;
@@ -14,6 +17,7 @@ use std::fmt::Write as _;
 
 use application::{Command, Game};
 use domain::company::AssetRef;
+use domain::events::DomainEvent;
 use domain::ids::CellCoord;
 use domain::region::PlantKind;
 use domain::region::fixtures::tiny_region_parts;
@@ -27,21 +31,59 @@ const SEED: u64 = 2027;
 const MONTHS: usize = 9;
 
 /// Plays the fixed script: AGC for the start fleet and one CCGT in month 1,
-/// AGC alone afterwards.
-fn scripted_game() -> Game {
+/// AGC alone afterwards. Returns the game and each month's operated-day
+/// events, ending with its close.
+fn scripted_game() -> (Game, Vec<Vec<DomainEvent>>) {
     let (mut game, _) = game_on(tiny_region_parts(), SEED);
-    play_month(&mut game, |g| {
+    let mut months = vec![play_month(&mut game, |g| {
         auto_follow_all(g);
         g.execute(Command::BuildPlant {
             kind: PlantKind::Ccgt,
             cell: CellCoord { x: 4, y: 4 },
         })
         .expect("build plant");
-    });
+    })];
     for _ in 1..MONTHS {
-        play_month(&mut game, auto_follow_all);
+        months.push(play_month(&mut game, auto_follow_all));
     }
-    game
+    (game, months)
+}
+
+/// The month's rotating outages and every regulatory event of its close
+/// (notice, strike with its reason, strike expiry, licence revocation), so a
+/// strike that later expires is still pinned in the month that drew it.
+fn write_outages_and_regulation(out: &mut String, report: &MonthlyReport, events: &[DomainEvent]) {
+    writeln!(
+        out,
+        "  outage rotating_outage={:.3} peak_outage_share={:.6}",
+        report.rotating_outage.value(),
+        report.peak_outage_share.value(),
+    )
+    .unwrap();
+    let regulatory: Vec<String> = events
+        .iter()
+        .filter_map(|event| match event {
+            DomainEvent::FrequencyNoticeIssued { month } => Some(format!(
+                "FrequencyNoticeIssued month={}-{:02}",
+                month.year(),
+                month.month()
+            )),
+            DomainEvent::StrikeIssued { strikes, reason } => {
+                Some(format!("StrikeIssued strikes={strikes} reason={reason:?}"))
+            }
+            DomainEvent::StrikeExpired { strikes } => {
+                Some(format!("StrikeExpired strikes={strikes}"))
+            }
+            DomainEvent::LicenseRevoked => Some("LicenseRevoked".to_owned()),
+            _ => None,
+        })
+        .collect();
+    if regulatory.is_empty() {
+        out.push_str("  regulatory none\n");
+    }
+    for line in regulatory {
+        writeln!(out, "  regulatory {line}").unwrap();
+    }
 }
 
 fn write_report(out: &mut String, report: &MonthlyReport) {
@@ -93,10 +135,13 @@ fn write_report(out: &mut String, report: &MonthlyReport) {
 /// The scripted game's outcomes: each month's report, every ledger amount and
 /// the company's closing position.
 fn outcome_digest() -> String {
-    let game = scripted_game();
+    let (game, months) = scripted_game();
     let mut out = String::new();
-    for report in game.projections().monthly_reports.history() {
+    let reports = game.projections().monthly_reports.history();
+    assert_eq!(reports.len(), months.len(), "one report per month played");
+    for (report, events) in reports.iter().zip(&months) {
         write_report(&mut out, report);
+        write_outages_and_regulation(&mut out, report, events);
     }
     out.push_str("ledger\n");
     for entry in game.session().company().ledger() {

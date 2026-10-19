@@ -5,10 +5,10 @@ use thiserror::Error;
 
 use super::GameSession;
 use crate::generation::{Plant, PlantStatus};
-use crate::grid::TickSummary;
+use crate::grid::{GridMode, TickSummary};
 use crate::ids::PlantId;
 use crate::region::PlantKind;
-use crate::units::{Megawatts, Money};
+use crate::units::{Megawatts, Money, Ratio};
 
 /// Tolerance for float comparisons, in MW. Tick quantities are sums of a few
 /// dozen terms of order 1e3 MW, so honest rounding stays far below this.
@@ -28,6 +28,8 @@ pub enum InvariantViolation {
     ConservationBroken { tick: u32 },
     #[error("tick {tick} does not match the live plant outputs")]
     GenerationMismatch { tick: u32 },
+    #[error("a rotating outage of {outage:?} is in effect during a blackout")]
+    OutageDuringBlackout { outage: Ratio },
 }
 
 impl GameSession {
@@ -40,7 +42,8 @@ impl GameSession {
     /// `demand × outage ≤ unserved` (within `1e-6 × demand`) and
     /// `curtailed ≥ 0`; and that its `by_plant` is exactly the connected,
     /// commissioned plants at their live outputs, so `generation` is what the
-    /// plants actually produce.
+    /// plants actually produce. Also that no rotating outage is in effect
+    /// during a blackout, where all dark load is protection's (spec §15.3).
     pub fn check_invariants(&self) -> Result<(), InvariantViolation> {
         let cash_delta = self.company.cash() - self.company.starting_cash();
         let ledger_sum = self.company.ledger_sum();
@@ -68,6 +71,10 @@ impl GameSession {
             if below || above {
                 return Err(InvariantViolation::PlantOutOfBounds { plant: plant.id() });
             }
+        }
+        let outage = self.power.outage();
+        if self.power.protection().mode == GridMode::Blackout && outage != Ratio::ZERO {
+            return Err(InvariantViolation::OutageDuringBlackout { outage });
         }
         match self.day_ticks.last() {
             Some(summary) if !conserves(summary) => {
@@ -136,13 +143,13 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::grid::{GridMode, LineStatus};
+    use crate::grid::LineStatus;
     use crate::ids::{CellCoord, LineId};
     use crate::region::RegionDefinition;
     use crate::region::fixtures::tiny_region_parts;
     use crate::session::GameSettings;
     use crate::time::SimDuration;
-    use crate::units::{Hertz, Ratio};
+    use crate::units::Hertz;
 
     fn session_with(edit: impl FnOnce(&mut crate::region::RegionDefinitionParts)) -> GameSession {
         let mut parts = tiny_region_parts();
@@ -170,6 +177,23 @@ mod tests {
     #[test]
     fn a_fresh_session_satisfies_every_invariant() {
         assert_eq!(session_with(|_| {}).check_invariants(), Ok(()));
+    }
+
+    #[test]
+    fn no_rotating_outage_is_in_effect_during_a_blackout() {
+        let mut s = session_with(|_| {});
+        let share = Ratio::new(0.3).unwrap();
+        // An outage in Normal mode, and a blackout with none, are both fine.
+        s.power.set_outage_unchecked(GridMode::Normal, share);
+        assert_eq!(s.check_invariants(), Ok(()));
+        s.power
+            .set_outage_unchecked(GridMode::Blackout, Ratio::ZERO);
+        assert_eq!(s.check_invariants(), Ok(()));
+        s.power.set_outage_unchecked(GridMode::Blackout, share);
+        assert_eq!(
+            s.check_invariants(),
+            Err(InvariantViolation::OutageDuringBlackout { outage: share })
+        );
     }
 
     #[test]

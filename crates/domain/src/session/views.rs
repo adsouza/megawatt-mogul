@@ -4,6 +4,7 @@ use super::{DayPhase, GameSession};
 use crate::company::CapitalChange;
 use crate::demand::{ForecastPoint, hourly_forecast};
 use crate::generation::{Plant, PlantStatus};
+use crate::grid::power_system::HourEnd;
 use crate::grid::{GridMode, HydroScheduleView, TickSummary};
 use crate::ids::{CellCoord, CityId, NodeId, PlantId};
 use crate::region::PlantKind;
@@ -47,7 +48,17 @@ pub struct GridSnapshot {
     /// Absolute frequency: nominal plus deviation.
     pub frequency: Hertz,
     pub mode: GridMode,
+    /// Protection's shed: a share of the load the rotating outage leaves, not
+    /// of demand (spec §15.3), so the share of demand served is
+    /// `(1 − outage) × (1 − shed)`.
     pub shed: Ratio,
+    /// The rotating-outage share of demand cut on purpose now. Set at
+    /// `BeginOperating` to hour 0's target, so it is meaningful before the
+    /// first tick; zero during a blackout.
+    pub outage: Ratio,
+    /// The rotating-outage share ordered for the current hour, which
+    /// `outage` moves toward; frozen during a blackout.
+    pub outage_target: Ratio,
     /// The most recent tick of the current day, if any has run.
     pub last_tick: Option<TickSummary>,
 }
@@ -99,15 +110,16 @@ pub struct MinimumGenerationWarning {
 
 /// The hour in which the committed fleet's deliverable capacity falls short
 /// of the forecast demand by the most (spec §15.5): the plan would have to
-/// leave that load to a rotating outage.
+/// leave that load to a rotating outage. Its figures are those of the hour's
+/// worse end, minute 0 or minute 59.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CapacityShortfallWarning {
     /// The hour of day, 0 to 23.
     pub hour: u8,
-    /// The connected forecast demand at minute 30 of that hour.
+    /// The connected forecast demand at the hour's worse end.
     pub demand: Megawatts,
-    /// What the plants committed in that hour could deliver, an upper bound
-    /// that ignores start-up and ramp limits.
+    /// What the plants committed in that hour could deliver then, with
+    /// expected solar: an upper bound that ignores start-up and ramp limits.
     pub deliverable: Megawatts,
     /// `demand − deliverable`, always positive.
     pub shortfall: Megawatts,
@@ -182,6 +194,8 @@ impl GameSession {
             frequency: self.region.frequency().nominal + self.power.deviation(),
             mode: protection.mode,
             shed: protection.shed,
+            outage: self.power.outage(),
+            outage_target: self.power.outage_target(),
             last_tick: self.day_ticks.last().cloned(),
         }
     }
@@ -240,25 +254,31 @@ impl GameSession {
     /// committed fleet could deliver by the most, earliest on ties; `None`
     /// when every hour is covered.
     ///
-    /// An upper bound: it reads the plants' commitment patterns (not the
-    /// per-day suppression override), ignores start-up and ramp limits, and
-    /// counts scheduled hydro from a pure preview of the coming day's plan,
-    /// since the live plan is empty during Planning. Pure: no randomness, no
-    /// state change.
+    /// Each hour is judged at both ends, minute 0 and minute 59, where its
+    /// interpolated demand has its extremes, by the evaluator operating-time
+    /// sizing uses (spec §15.3); the hour's shortfall is that of its worse
+    /// end, minute 0 on a tie. An upper bound: it reads the plants'
+    /// commitment patterns (not the per-day suppression override), ignores
+    /// start-up and ramp limits, and counts scheduled hydro from a pure
+    /// preview of the coming day's plan, since the live plan is empty during
+    /// Planning. Hydro is the one, safe, exception to the bound: each
+    /// boundary re-plan pours water left unused earlier in the day, so the
+    /// live allocation can exceed the preview. Pure: no randomness, no state
+    /// change.
     pub fn capacity_shortfall_check(&self) -> Option<CapacityShortfallWarning> {
-        let month = self.clock.month();
-        let demand = self.power.hourly_demand(&self.region, month);
-        let deliverable = self.power.hourly_deliverable(&self.region, month);
+        let ends = self
+            .power
+            .planned_hour_ends(&self.region, self.clock.month());
         let mut worst: Option<CapacityShortfallWarning> = None;
-        for (hour, (&demand, &deliverable)) in demand.iter().zip(&deliverable).enumerate() {
-            let shortfall = demand - deliverable;
+        for (hour, end) in ends.into_iter().map(HourEnd::worse).enumerate() {
+            let shortfall = end.shortfall();
             let beats_worst =
                 worst.map_or(shortfall > Megawatts::ZERO, |w| shortfall > w.shortfall);
             if beats_worst {
                 worst = Some(CapacityShortfallWarning {
                     hour: hour as u8,
-                    demand,
-                    deliverable,
+                    demand: end.demand,
+                    deliverable: end.deliverable,
                     shortfall,
                 });
             }

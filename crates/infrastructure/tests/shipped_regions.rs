@@ -413,8 +413,10 @@ fn shipped_regions_never_order_outages_hands_off() {
     for id in [EAST, WEST] {
         for seed in 0..8 {
             let mut game = hands_off_game(&catalog(), id, seed);
+            let mut months_played = 0;
             for _ in 1..=12 {
                 let played = play_month(&mut game);
+                months_played += 1;
                 let report = &played.report;
                 if report.rotating_outage.value() != 0.0 {
                     let hours: std::collections::BTreeSet<u32> = played
@@ -433,6 +435,8 @@ fn shipped_regions_never_order_outages_hands_off() {
                 }
                 game.execute(Command::FinishReview).expect("finish review");
             }
+            // An early game over would end the year with fewer months checked.
+            assert_eq!(months_played, 12, "{id} seed {seed}: months played");
         }
     }
     assert!(

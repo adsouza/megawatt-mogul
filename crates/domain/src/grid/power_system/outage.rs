@@ -14,9 +14,9 @@
 
 use std::collections::BTreeMap;
 
-use super::PowerSystem;
+use super::{PowerSystem, day_hydro_budget};
 use crate::events::DomainEvent;
-use crate::generation::{CommitmentAction, Plant, PlantStatus, commitment_actions};
+use crate::generation::{CommitmentAction, HydroFill, Plant, PlantStatus, commitment_actions};
 use crate::ids::PlantId;
 use crate::region::{PlantKind, RegionDefinition};
 use crate::time::{SimMonth, TICKS_PER_HOUR};
@@ -28,6 +28,70 @@ const SNAP: f64 = 1e-9;
 
 /// The last minute of an hour, relative to its start.
 const LAST_MINUTE: u32 = TICKS_PER_HOUR - 1;
+
+/// The minutes at which an hour is judged: demand is interpolated linearly
+/// within an hour, so its extremes are at the two ends.
+const HOUR_ENDS: [u32; 2] = [0, LAST_MINUTE];
+
+/// One end of an hour (minute 0 or 59), judged against a deliverable rule:
+/// the evaluation shared by operating-time sizing (spec §15.3) and the
+/// Planning-time warning (spec §15.5).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct HourEnd {
+    /// The connected demand forecast at that minute.
+    pub(crate) demand: Megawatts,
+    /// What the dispatchable fleet delivers at that minute by the rule, plus
+    /// expected solar then.
+    pub(crate) deliverable: Megawatts,
+}
+
+impl HourEnd {
+    /// `demand − deliverable`: positive when the fleet falls short.
+    pub(crate) fn shortfall(self) -> Megawatts {
+        self.demand - self.deliverable
+    }
+
+    /// The worse of an hour's two ends: the one with the larger shortfall,
+    /// minute 0 on a tie.
+    pub(crate) fn worse([first, last]: [HourEnd; 2]) -> HourEnd {
+        if last.shortfall() > first.shortfall() {
+            last
+        } else {
+            first
+        }
+    }
+
+    /// The shortfall as a share of demand, floored at 0; 0 with no demand.
+    fn share(self) -> f64 {
+        if self.demand <= Megawatts::ZERO {
+            return 0.0;
+        }
+        (self.shortfall() / self.demand).max(0.0)
+    }
+}
+
+/// What committed dispatchable `plant` could deliver in `hour` by the
+/// Planning check's rules (spec §15.5), the same at both ends of the hour: on
+/// AGC its availability, which for a dispatchable non-hydro plant is its
+/// capacity at every minute, and for scheduled hydro its allocation for
+/// `hour` in `preview` (the pure hour-0 plan with the coming day's budgets),
+/// nothing if it has no water; on a manual target its initial target, manual
+/// hydro included, unlimited by the day's water.
+fn planned_deliverable(
+    plant: &Plant,
+    hour: u8,
+    preview: &BTreeMap<PlantId, HydroFill>,
+) -> Megawatts {
+    if !plant.auto_follow() {
+        plant.initial_target()
+    } else if plant.kind() == PlantKind::Hydro {
+        preview
+            .get(&plant.id())
+            .map_or(Megawatts::ZERO, |fill| fill.hourly[usize::from(hour)])
+    } else {
+        plant.spec().capacity
+    }
+}
 
 /// A share in `0..=1`, clamped; NaN reads as zero.
 fn ratio(value: f64) -> Ratio {
@@ -48,13 +112,45 @@ impl PowerSystem {
         self.outage_target
     }
 
+    /// Test support: sets the grid mode and the outage in effect directly,
+    /// bypassing the rules that keep them consistent, so tests can corrupt
+    /// state to exercise invariant checks.
+    #[cfg(test)]
+    pub(crate) fn set_outage_unchecked(&mut self, mode: crate::grid::GridMode, outage: Ratio) {
+        self.protection.mode = mode;
+        self.outage = outage;
+    }
+
+    /// Both ends of `hour` in `month` (see [`HourEnd`]): at minute 0 and
+    /// minute 59, the connected demand forecast and `fleet(minute)` plus
+    /// expected solar, all taken at that minute. Operating sizing and the
+    /// Planning check differ only in `fleet`, the rule for what the
+    /// dispatchable plants deliver.
+    pub(crate) fn hour_ends(
+        &self,
+        region: &RegionDefinition,
+        month: SimMonth,
+        hour: u8,
+        fleet: impl Fn(u32) -> Megawatts,
+    ) -> [HourEnd; 2] {
+        let start = u32::from(hour) * TICKS_PER_HOUR;
+        HOUR_ENDS.map(|minute| {
+            let tick = start + minute;
+            HourEnd {
+                demand: self.connected_demand_forecast(region, month, tick),
+                deliverable: fleet(minute) + self.expected_solar(region, month, tick),
+            }
+        })
+    }
+
     /// Sizes the rotating outage for `hour`, from the state at its first
     /// instant (spec §15.3). Demand within an hour is interpolated linearly,
     /// so its worst minute is one of its ends: at minute 0 and minute 59 the
     /// shortfall share is `(demand − deliverable) / demand`, floored at 0,
     /// with demand the connected forecast at that minute and deliverable as
-    /// in [`PowerSystem::deliverable`]. The result is the larger share,
-    /// exactly, clamped to `0..=1`: 0 when the fleet covers both ends.
+    /// in [`PowerSystem::deliverable`] (see [`PowerSystem::hour_ends`]). The
+    /// result is the larger share, exactly, clamped to `0..=1`: 0 when the
+    /// fleet covers both ends.
     ///
     /// *Builder's call (controller ruling R3): no rounding up to `shed_step`.*
     /// A shortage costs the load the fleet could not serve, not a whole
@@ -67,33 +163,39 @@ impl PowerSystem {
         hour: u8,
     ) -> Ratio {
         let start = u32::from(hour) * TICKS_PER_HOUR;
-        let worst = [0, LAST_MINUTE]
-            .into_iter()
-            .map(|minute| self.shortfall_share(region, month, start, minute))
-            .fold(0.0, f64::max);
-        ratio(worst)
+        let ends = self.hour_ends(region, month, hour, |minute| {
+            self.connected_plants()
+                .map(|p| self.deliverable(p, start, minute))
+                .sum()
+        });
+        ratio(ends.into_iter().map(HourEnd::share).fold(0.0, f64::max))
     }
 
-    /// The forecast shortfall at `minute` of the hour starting at tick
-    /// `start`, as a share of the demand forecast then, floored at 0.
-    fn shortfall_share(
+    /// Both ends of every hour of the coming day in `month`, judged by the
+    /// Planning check's upper bound (spec §15.5): each connected,
+    /// commissioned, dispatchable plant committed in the hour by its pattern
+    /// (not today's suppression override) counts as in
+    /// [`planned_deliverable`], plus expected solar, with demand
+    /// and solar taken at the same minute.
+    ///
+    /// An upper bound by design: it ignores the start-up and ramp limits the
+    /// operating-time sizing applies. Pure.
+    pub(crate) fn planned_hour_ends(
         &self,
         region: &RegionDefinition,
         month: SimMonth,
-        start: u32,
-        minute: u32,
-    ) -> f64 {
-        let tick = start + minute;
-        let demand = self.connected_demand_forecast(region, month, tick);
-        if demand <= Megawatts::ZERO {
-            return 0.0;
-        }
-        let plants: Megawatts = self
-            .connected_plants()
-            .map(|p| self.deliverable(p, start, minute))
-            .sum();
-        let deliverable = plants + self.expected_solar(region, month, tick);
-        ((demand - deliverable) / demand).max(0.0)
+    ) -> [[HourEnd; 2]; 24] {
+        let preview =
+            self.compute_hydro_plan(region, month, 0, |p| day_hydro_budget(region, month, p));
+        std::array::from_fn(|h| {
+            let hour = h as u8;
+            let fleet: Megawatts = self
+                .connected_plants()
+                .filter(|p| p.kind().is_dispatchable() && p.commitment().is_committed(hour))
+                .map(|p| planned_deliverable(p, hour, &preview))
+                .sum();
+            self.hour_ends(region, month, hour, |_| fleet)
+        })
     }
 
     /// What `plant` can deliver at `minute` of the hour starting at tick
@@ -208,8 +310,9 @@ impl PowerSystem {
     ///   and in a deep outage one step of demand is a large share of the load
     ///   left.
     /// - **Restoring** (above the target), by `min(gap, max(shed_step,
-    ///   surplus / demand), cover / demand)`, where `surplus` is supply less
-    ///   the outage's load this tick, floored at 0. Restoring load that only
+    ///   surplus / demand), cover / demand)`, where `surplus()` is supply less
+    ///   the outage's load this tick, floored at 0, asked for only on a
+    ///   restoring tick. Restoring load that only
     ///   absorbs a persisting surplus is safe: it can only lower frequency,
     ///   and `cover` already counts the surplus. So a unit whose minimum
     ///   output exceeds a step of demand, started into a deep outage, is given
@@ -228,7 +331,7 @@ impl PowerSystem {
         step: Ratio,
         demand: Megawatts,
         cover: Megawatts,
-        surplus: Megawatts,
+        surplus: impl FnOnce() -> Megawatts,
     ) -> Ratio {
         let (now, target) = (self.outage.value(), self.outage_target.value());
         let gap = (now - target).abs();
@@ -245,7 +348,7 @@ impl PowerSystem {
         let next = if now < target {
             now + gap.min(step.value()).min(share(cover))
         } else {
-            let pace = step.value().max(share(surplus));
+            let pace = step.value().max(share(surplus()));
             now - gap.min(pace).min(share(cover))
         };
         if (next - target).abs() <= SNAP {

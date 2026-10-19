@@ -98,18 +98,6 @@ impl PowerSystem {
         })
     }
 
-    /// Expected demand of connected cities at minute 30 of each hour of a day
-    /// in `month`.
-    pub(crate) fn hourly_demand(
-        &self,
-        region: &RegionDefinition,
-        month: SimMonth,
-    ) -> [Megawatts; HOURS] {
-        std::array::from_fn(|h| {
-            self.connected_demand_forecast(region, month, mid_hour_tick(h as u8))
-        })
-    }
-
     /// Re-plans every scheduled hydro plant over hours `from_hour..24` with
     /// its remaining budget (spec §12.3), and freezes each plan's allocation
     /// for `from_hour`, the hour now beginning.

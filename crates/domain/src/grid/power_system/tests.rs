@@ -3490,8 +3490,69 @@ fn next_outage_from(outage: f64, target: f64, demand: f64, cover: f64, step: f64
         share(step),
         Megawatts::new(demand),
         Megawatts::new(cover),
-        Megawatts::ZERO,
+        || Megawatts::ZERO,
     )
+}
+
+/// An outage share for the pacing property: anywhere in `0..=1`, with the
+/// bounds themselves drawn often.
+fn outage_share() -> impl Strategy<Value = f64> {
+    prop_oneof![1 => Just(0.0), 1 => Just(1.0), 6 => 0.0f64..=1.0]
+}
+
+proptest! {
+    /// Spec §15.8, "During the day `outage` moves at the paced rates of
+    /// §15.3": for any outage, target, step, demand > 0, cover and surplus,
+    /// one tick lands between the outage and its target, a cut moves at most
+    /// `min(step, cover / demand)`, a restore at most `min(max(step, surplus /
+    /// demand), cover / demand)`, and no cover means no move. `next_outage`
+    /// takes no `falling` flag: on a falling tick the caller's surplus is zero
+    /// (ruling N1), so a falling restore is drawn as one with zero surplus and
+    /// must move at most `min(step, cover / demand)`. The surplus is asked
+    /// for only when restoring. Moves may exceed a bound by the 1e-9 snap
+    /// that lands a move exactly on its target.
+    #[test]
+    fn next_outage_moves_toward_the_target_at_the_paced_rates(
+        now in outage_share(),
+        target in outage_share(),
+        at_target in prop::bool::weighted(0.1),
+        step in 0.001f64..=0.25,
+        demand in 1e-3f64..1e5,
+        cover in prop_oneof![1 => Just(0.0), 1 => -1e4f64..0.0, 6 => 0.0f64..1e5],
+        surplus in prop_oneof![1 => Just(0.0), 3 => 0.0f64..1e5],
+        falling in any::<bool>(),
+    ) {
+        const SNAP: f64 = 1e-9;
+        let target = if at_target { now } else { target };
+        let region = tiny_region();
+        let mut sys = system_with(&region, &[]);
+        sys.outage = share(now);
+        sys.outage_target = share(target);
+        let surplus = if falling { 0.0 } else { surplus };
+        let asked = std::cell::Cell::new(false);
+        let next = sys
+            .next_outage(share(step), Megawatts::new(demand), Megawatts::new(cover), || {
+                asked.set(true);
+                Megawatts::new(surplus)
+            })
+            .value();
+        prop_assert!(!asked.get() || now > target, "surplus asked for off a restore");
+
+        let (low, high) = (now.min(target), now.max(target));
+        prop_assert!(low <= next && next <= high, "{next} outside {now}..{target}");
+        let moved = (next - now).abs();
+        let reach = cover.max(0.0) / demand;
+        // A cut, and a restore on a falling tick, pace at one step.
+        let bound = if now < target || falling {
+            step.min(reach)
+        } else {
+            step.max(surplus / demand).min(reach)
+        };
+        prop_assert!(moved <= bound + SNAP, "moved {moved} past {bound}");
+        if cover <= 0.0 && (now - target).abs() > SNAP {
+            prop_assert_eq!(next, now);
+        }
+    }
 }
 
 #[test]
@@ -4262,12 +4323,32 @@ fn begin_day_budgets_are_unchanged_by_the_refactor() {
 }
 
 #[test]
-fn hourly_deliverable_counts_hydro_from_the_preview_of_the_coming_day() {
+fn the_worse_end_of_an_hour_has_the_larger_shortfall_and_ties_to_minute_zero() {
+    let end = |demand: f64, deliverable: f64| HourEnd {
+        demand: Megawatts::new(demand),
+        deliverable: Megawatts::new(deliverable),
+    };
+    let (rising, falling) = (end(100.0, 90.0), end(120.0, 100.0));
+    assert_eq!(HourEnd::worse([rising, falling]), falling);
+    assert_eq!(HourEnd::worse([falling, rising]), falling);
+    // Both 10 MW short: minute 0 is reported.
+    let (first, last) = (end(100.0, 90.0), end(110.0, 100.0));
+    assert_eq!(first.shortfall(), last.shortfall());
+    assert_eq!(HourEnd::worse([first, last]), first);
+}
+
+#[test]
+fn planned_hour_ends_count_hydro_from_the_preview_of_the_coming_day() {
     let region = tiny_region();
     let mut sys = committed_auto_follow(&region, &[connected(PlantKind::Hydro, cell(10, 1))]);
     // Before the day begins the plant holds no plan and no day's water yet.
-    let preview = sys.hourly_deliverable(&region, april());
+    let ends = sys.planned_hour_ends(&region, april());
     assert!(sys.hydro_schedule().plants.is_empty());
+    // Hydro counts its hour's allocation at both ends.
+    let preview: [Megawatts; 24] = std::array::from_fn(|h| {
+        assert_eq!(ends[h][0].deliverable, ends[h][1].deliverable, "hour {h}");
+        ends[h][0].deliverable
+    });
     assert!(preview.iter().any(|mw| *mw > Megawatts::ZERO));
 
     sys.begin_day(&region, april(), &mut SimRng::from_seed(1));
@@ -4276,7 +4357,7 @@ fn hourly_deliverable_counts_hydro_from_the_preview_of_the_coming_day() {
 }
 
 #[test]
-fn hourly_deliverable_counts_each_kind_by_its_own_rule() {
+fn planned_hour_ends_count_each_kind_by_its_own_rule_at_both_ends() {
     let region = tiny_region();
     let mut sys = committed_auto_follow(
         &region,
@@ -4300,11 +4381,20 @@ fn hourly_deliverable_counts_each_kind_by_its_own_rule() {
     sys.plant_mut(PlantId(1)).unwrap().set_commitment(
         CommitmentSchedule::try_new(pattern, region.spec(PlantKind::Coal)).unwrap(),
     );
-    let deliverable = sys.hourly_deliverable(&region, april());
-    for (h, mw) in deliverable.iter().enumerate() {
-        let tick = h as u32 * 60 + 30;
-        let coal = if (6..=9).contains(&h) { 600.0 } else { 0.0 };
-        let solar = sys.expected_solar(&region, april(), tick).value();
-        assert_eq!(mw.value(), coal + 123.0 + solar, "hour {h}");
+    let ends = sys.planned_hour_ends(&region, april());
+    for (h, hour) in ends.iter().enumerate() {
+        // Demand and solar are taken at minute 0 and minute 59 of the hour.
+        for (end, minute) in hour.iter().zip([0, 59]) {
+            let tick = h as u32 * 60 + minute;
+            let coal = if (6..=9).contains(&h) { 600.0 } else { 0.0 };
+            let solar = sys.expected_solar(&region, april(), tick).value();
+            assert_eq!(
+                end.deliverable.value(),
+                coal + 123.0 + solar,
+                "{h}:{minute}"
+            );
+            let demand = sys.connected_demand_forecast(&region, april(), tick);
+            assert_eq!(end.demand, demand, "{h}:{minute}");
+        }
     }
 }

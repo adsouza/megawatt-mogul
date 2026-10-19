@@ -214,6 +214,31 @@ fn begin_operating_orders_hour_zeros_rotating_outage() {
 }
 
 #[test]
+fn the_grid_snapshot_shows_hour_zeros_outage_before_the_first_tick() {
+    // City 3 carries 3,000 MW: hour 0 starts in a rotating outage, which a
+    // HUD must be able to show before any tick has run.
+    let mut parts = crate::region::fixtures::tiny_region_parts();
+    parts.start.connected_cities.push(CityId(3));
+    let city = parts.cities.iter_mut().find(|c| c.id == CityId(3)).unwrap();
+    city.base_load = Megawatts::new(3_000.0);
+    let region = crate::region::RegionDefinition::try_from(parts).unwrap();
+    let mut s = GameSession::new(Arc::new(region), 1, GameSettings::default());
+    let planning = s.grid_snapshot();
+    assert_eq!(
+        (planning.outage, planning.outage_target),
+        (Ratio::ZERO, Ratio::ZERO)
+    );
+
+    s.begin_operating().unwrap();
+    let snapshot = s.grid_snapshot();
+    assert_eq!(snapshot.last_tick, None);
+    assert!(snapshot.outage > Ratio::ZERO);
+    assert_eq!(snapshot.outage, s.power().outage());
+    assert_eq!(snapshot.outage_target, s.power().outage_target());
+    assert_eq!(snapshot.outage, snapshot.outage_target);
+}
+
+#[test]
 fn full_day_moves_to_review() {
     let mut s = session();
     s.begin_operating().unwrap();
@@ -935,6 +960,16 @@ fn capacity_shortfall_check_is_none_when_covered() {
     assert_eq!(s.capacity_shortfall_check(), None);
 }
 
+/// What the Planning check counts in each hour for a fleet of scheduled hydro
+/// alone: its allocation from the preview, the same at both ends.
+fn planned_hydro(s: &GameSession) -> [Megawatts; 24] {
+    let ends = s.power().planned_hour_ends(s.region(), s.clock().month());
+    std::array::from_fn(|h| {
+        assert_eq!(ends[h][0].deliverable, ends[h][1].deliverable, "hour {h}");
+        ends[h][0].deliverable
+    })
+}
+
 #[test]
 fn capacity_shortfall_check_counts_hydro_from_the_preview() {
     let mut s = session();
@@ -946,8 +981,7 @@ fn capacity_shortfall_check_counts_hydro_from_the_preview() {
         "Planning plans nothing"
     );
 
-    let month = s.clock().month();
-    let preview = s.power().hourly_deliverable(s.region(), month);
+    let preview = planned_hydro(&s);
     let warning = s.capacity_shortfall_check().expect("hydro alone is short");
     let h = usize::from(warning.hour);
     assert_eq!(warning.deliverable, preview[h]);
@@ -967,9 +1001,158 @@ fn capacity_shortfall_check_previews_a_fresh_days_water_after_a_spent_day() {
     s.set_auto_follow(hydro, true).unwrap();
     // The plant still holds yesterday's leftover water, but the preview
     // plans with the new day's budget, as BeginOperating will.
-    let preview = s.power().hourly_deliverable(s.region(), s.clock().month());
+    let preview = planned_hydro(&s);
     s.begin_operating().unwrap();
     assert_eq!(preview, s.hydro_schedule().plants[&hydro].hourly);
+}
+
+/// The fixture in `month` with its city loads scaled by `scale` and no demand
+/// noise; with `instant` every plant ramps its whole capacity in a minute.
+/// The start fleet (coal, CCGT and peaker, 1,300 MW) is committed all day on
+/// AGC.
+fn shaped_day(month: SimMonth, scale: f64, instant: bool) -> GameSession {
+    let mut parts = crate::region::fixtures::tiny_region_parts();
+    parts.start.month = month;
+    parts.demand.forecast_error = Ratio::ZERO;
+    for city in &mut parts.cities {
+        city.base_load = city.base_load * scale;
+    }
+    if instant {
+        for spec in &mut parts.catalog {
+            spec.ramp = crate::units::RampRate::mw_per_minute(spec.capacity.value());
+        }
+    }
+    let region = crate::region::RegionDefinition::try_from(parts).unwrap();
+    let mut s = GameSession::new(Arc::new(region), 1, GameSettings::default());
+    for kind in [PlantKind::Coal, PlantKind::Ccgt, PlantKind::Peaker] {
+        let plant = plant_of(&s, kind);
+        commit_blocks(&mut s, plant, &[(0, 23)], None);
+    }
+    s
+}
+
+/// Plays the whole day and returns the hours that ordered a non-zero outage.
+fn hours_with_outages(s: &mut GameSession) -> Vec<u8> {
+    let mut events = s.begin_operating().unwrap();
+    events.extend(run_ticks(s, TICKS_PER_DAY));
+    let mut hours: Vec<u8> = events
+        .iter()
+        .filter_map(|e| match e {
+            DomainEvent::RotatingOutageOrdered { hour, share } if *share > Ratio::ZERO => {
+                Some(*hour)
+            }
+            _ => None,
+        })
+        .collect();
+    hours.dedup();
+    hours
+}
+
+#[test]
+fn capacity_shortfall_check_sees_a_peak_at_an_hour_boundary() {
+    // The reviewer's probe: July, loads × 0.985, noise-free, the start fleet
+    // on AGC. Demand peaks on the 17:00 knot at 985 × 1.15 × 1.15 =
+    // 1,302.66 MW against 1,300 MW, but minute 30 of either neighbouring
+    // hour sees under 1,300 MW, so a mid-hour check reported nothing.
+    let july = SimMonth::new(2027, 7).unwrap();
+    let mut s = shaped_day(july, 0.985, false);
+    let warning = s
+        .capacity_shortfall_check()
+        .expect("the 17:00 peak is short");
+    // Hour 17's minute 0 is the worst end of any hour: hour 16's minute 59
+    // sits a minute below the knot.
+    assert_eq!(warning.hour, 17);
+    let peak = 985.0 * 1.15 * 1.15;
+    assert!((warning.demand.value() - peak).abs() < 1e-9);
+    assert_eq!(warning.deliverable, Megawatts::new(1_300.0));
+    assert!((warning.shortfall.value() - (peak - 1_300.0)).abs() < 1e-9);
+    // Operating sizing orders outages in the two hours either side of the
+    // knot, the warned hour among them.
+    assert_eq!(hours_with_outages(&mut s), vec![16, 17]);
+}
+
+#[test]
+fn capacity_shortfall_check_reports_the_worse_end_of_the_hour() {
+    // Hour 16 rises toward the 17:00 knot: minute 59 binds, not minute 0.
+    let july = SimMonth::new(2027, 7).unwrap();
+    let mut s = shaped_day(july, 0.985, false);
+    let peaker = plant_of(&s, PlantKind::Peaker);
+    commit_blocks(&mut s, peaker, &[(0, 15), (17, 23)], None);
+    let warning = s.capacity_shortfall_check().unwrap();
+    assert_eq!(warning.hour, 16);
+    let factor = (0.98 + (1.00 - 0.98) * 59.0 / 60.0) * 1.15 * 1.15;
+    assert!((warning.demand.value() - 985.0 * factor).abs() < 1e-9);
+    assert_eq!(warning.deliverable, Megawatts::new(1_100.0));
+}
+
+#[test]
+fn no_shortfall_warning_means_no_outage_on_a_noise_free_instant_ramp_day() {
+    // A table of shaped days: four seasons' shapes, three fleets (the start
+    // fleet alone, with solar, with scheduled hydro) and loads scaled around
+    // the point where each fleet stops covering the month's peak. With an
+    // instant-ramp fleet on AGC the operating sizing delivers at least what
+    // the Planning check counts, so a day the check passes must order no
+    // outage. Without hydro it delivers exactly that, so a warned hour must
+    // be cut too; scheduled hydro can deliver more than the preview, because
+    // each boundary re-plan pours water left unused earlier in the day.
+    // Each fleet with the capacity its scales are centred on: solar is gone
+    // by the evening peak, scheduled hydro's water runs out below its 800 MW.
+    let fleets: [(Option<PlantKind>, f64); 3] = [
+        (None, 1_300.0),
+        (Some(PlantKind::Solar), 1_300.0),
+        (Some(PlantKind::Hydro), 1_800.0),
+    ];
+    for month in [1, 4, 7, 10] {
+        let month = SimMonth::new(2027, month).unwrap();
+        let unscaled = shaped_day(month, 1.0, true);
+        let peak = (0..TICKS_PER_DAY)
+            .map(|t| unscaled.forecast_net_load(t).value())
+            .fold(0.0, f64::max);
+        for (extra, capacity) in fleets {
+            let (mut quiet, mut warned) = (0, 0);
+            // Dense just above the point of cover, where a peak on an hour
+            // knot is short by less than any mid-hour sample shows.
+            for fraction in [
+                0.9, 0.95, 0.98, 0.99, 0.996, 1.0, 1.001, 1.002, 1.003, 1.004, 1.006, 1.01, 1.02,
+                1.05, 1.1, 1.2, 1.3,
+            ] {
+                let scale = capacity / peak * fraction;
+                let mut s = shaped_day(month, scale, true);
+                match extra {
+                    Some(PlantKind::Hydro) => {
+                        let hydro = CellCoord { x: 10, y: 1 };
+                        let plant = s.insert_commissioned_plant(PlantKind::Hydro, hydro);
+                        commit_blocks(&mut s, plant, &[(0, 23)], None);
+                    }
+                    Some(kind) => {
+                        s.insert_commissioned_plant(kind, CellCoord { x: 5, y: 5 });
+                    }
+                    None => {}
+                }
+                let case = format!("{month:?} {extra:?} × {scale:.4}");
+                let warning = s.capacity_shortfall_check();
+                let outages = hours_with_outages(&mut s);
+                match warning {
+                    None => {
+                        quiet += 1;
+                        assert_eq!(outages, vec![], "{case}: no warning");
+                    }
+                    Some(w) => {
+                        warned += 1;
+                        let exact = extra != Some(PlantKind::Hydro);
+                        assert!(
+                            !exact || outages.contains(&w.hour),
+                            "{case}: {w:?}, {outages:?}"
+                        );
+                    }
+                }
+            }
+            assert!(
+                quiet > 0 && warned > 0,
+                "{month:?} {extra:?}: {quiet} quiet, {warned} warned"
+            );
+        }
+    }
 }
 
 #[test]

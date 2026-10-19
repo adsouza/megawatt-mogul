@@ -10,8 +10,9 @@ use std::collections::BTreeMap;
 mod hydro_plan;
 mod outage;
 
-use hydro_plan::{HydroOverride, PlantHydroPlan, mid_hour_tick};
+use hydro_plan::{HydroOverride, PlantHydroPlan};
 pub use hydro_plan::{HydroScheduleView, PlantHydroScheduleView};
+pub(crate) use outage::HourEnd;
 
 use super::dispatch::{agc_retarget, boundary_dispatch};
 use super::frequency::{FrequencyBand, band, next_deviation};
@@ -242,50 +243,6 @@ impl PowerSystem {
             }
         }
         minimum
-    }
-
-    /// For each hour of the coming day in `month`, the most the connected,
-    /// commissioned plants committed in that hour (by their commitment
-    /// pattern, not today's suppression override) could deliver at minute 30
-    /// (spec §15.5): a plant on AGC its availability, a manual plant its
-    /// initial target, scheduled hydro its allocation from a pure preview of
-    /// the hour-0 plan with the coming day's budgets, plus expected solar.
-    ///
-    /// An upper bound by design: it ignores the start-up and ramp limits the
-    /// operating-time outage sizing applies. Manual hydro counts its initial
-    /// target like any manual plant, unlimited by the day's water. A hydro
-    /// plant on AGC with no water counts nothing. Pure.
-    pub(crate) fn hourly_deliverable(
-        &self,
-        region: &RegionDefinition,
-        month: SimMonth,
-    ) -> [Megawatts; 24] {
-        let preview =
-            self.compute_hydro_plan(region, month, 0, |p| day_hydro_budget(region, month, p));
-        let mut deliverable: [Megawatts; 24] =
-            std::array::from_fn(|h| self.expected_solar(region, month, mid_hour_tick(h as u8)));
-        for plant in self
-            .connected_plants()
-            .filter(|p| p.kind().is_dispatchable())
-        {
-            let commitment = plant.commitment();
-            for (hour, total) in deliverable.iter_mut().enumerate() {
-                if !commitment.is_committed(hour as u8) {
-                    continue;
-                }
-                *total += if !plant.auto_follow() {
-                    plant.initial_target()
-                } else if plant.kind() == PlantKind::Hydro {
-                    preview
-                        .get(&plant.id())
-                        .map_or(Megawatts::ZERO, |f| f.hourly[hour])
-                } else {
-                    let sun = sun_factor(region.solar(), month, mid_hour_tick(hour as u8));
-                    self.available(region, plant, sun)
-                };
-            }
-        }
-        deliverable
     }
 
     /// Starts a representative day of `month`. Nothing physical carries over
@@ -537,13 +494,13 @@ impl PowerSystem {
             // (ruling N1): none while any plant is losing output AGC cannot
             // hold, judged as at the trip gate. The surplus is over the
             // outage's load, so protection's own restoration does not stack
-            // on it.
-            let falling =
-                self.has_unrecoverable_ramp_down(None, &self.foreseen_ceilings(effect_tick));
-            let surplus = if falling {
-                Megawatts::ZERO
-            } else {
-                (supply - load).max(Megawatts::ZERO)
+            // on it. `next_outage` asks for it only on a restoring tick.
+            let surplus = || {
+                if self.has_unrecoverable_ramp_down(None, &self.foreseen_ceilings(effect_tick)) {
+                    Megawatts::ZERO
+                } else {
+                    (supply - load).max(Megawatts::ZERO)
+                }
             };
             self.outage = self.next_outage(params.shed_step, demand, cover, surplus);
         }
