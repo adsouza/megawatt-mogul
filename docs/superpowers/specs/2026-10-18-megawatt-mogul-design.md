@@ -4,7 +4,8 @@
 - **Status:** Draft for review
 - **Amendments:** A1, a hydro peak-shaving schedule (§12, 2026-10-18); A2, proration of the
   partial-year rate review (§13, 2026-10-18); A3, over-frequency protection, a minimum-generation
-  warning and frequency-performance strikes (§14, 2026-10-18)
+  warning and frequency-performance strikes (§14, 2026-10-18); A4, rotating outages and staged
+  under-frequency shedding (§15, 2026-10-19)
 - **Engine:** Rust 1.98, Bevy 0.20, bevy_egui 0.43, bevy-inspector-egui 0.38
 
 ## 1. Vision and goals
@@ -372,7 +373,8 @@ built. No placeholder exists today; `Plant::commissioned_on` is the only seam.
   | Band | Effect |
   |---|---|
   | ±0.05 Hz | Normal |
-  | Below −0.5 Hz | Under-frequency load shedding in 5% steps, spread proportionally across connected cities |
+  | Below −0.5 Hz | Under-frequency load shedding in 5% steps, spread proportionally across connected cities; staged relays drop one more step per 0.2 Hz of depth (Amendment A4, §15.4) |
+  | Forecast shortfall | **Rotating outage:** a planned share of load is cut, sized hourly to the shortfall (Amendment A4, §15.3) |
   | Below −1.5 Hz, or shedding for N consecutive ticks | **Blackout**: all plants trip to `Offline`, and the player must restart them |
   | Above +0.5 Hz | Solar curtailed first, then AGC plants pushed to minimum stable output |
   | Above +1.5 Hz for N consecutive ticks | **Over-frequency trip:** the most expensive producing plant trips (Amendment A3, §14.2) |
@@ -1082,3 +1084,224 @@ The builder's calls below keep protection from tripping the grid into a deficit:
   - clean-month expiry requires passing both;
   - three strikes from any mix revoke the licence.
 - **Validation.** Each new field has a negative validation test.
+
+## 15. Amendment A4: Rotating outages and staged under-frequency shedding (2026-10-19)
+
+### 15.1 Why
+
+Connecting load far beyond the fleet collapses the grid in the first minute (open question Q1 in
+the Plan 1 follow-ups):
+
+- frequency moves by about k_inertia × the deficit share each tick, so a 30% shortfall drops it
+  1.5 Hz in one minute, which is the blackout threshold;
+- shedding removes only one 5% step per tick, so any shortfall above about 10% outruns it (a 20%
+  step deficit blacks out within two ticks);
+- a blackout trips every plant and suppresses its commitment for the day, and the played day
+  stands for the whole month. The overreach scenario serves nothing for a month (reliability 0).
+
+Real grids do not work this way, for two reasons the game should model:
+
+- **A forecast shortfall is shed on purpose.** When operators can see that supply won't cover
+  demand, they declare an energy emergency and order **rotating outages**: a controlled share of
+  load is cut in turns while frequency stays near normal (California, August 2020; Texas,
+  February 2021).
+- **A sudden loss is arrested by staged relays.** Under-frequency load-shedding (UFLS) relays sit
+  at stepped thresholds (for example 0.2 Hz apart in the Western interconnection). Each stage
+  drops a block of load once, so a deeper dip sheds more, at once.
+
+The teaching goal: a shortage costs you the load you could not serve and its strikes, not the
+whole grid.
+
+### 15.2 Goals, non-goals, anti-goals
+
+- **Goals:**
+  - A shortfall the forecast can see is shed as a rotating outage, with frequency kept near
+    normal and the fleet left running.
+  - A sudden step deficit of up to about 29% of demand (just under the one-tick blackout line) is
+    arrested by staged shedding without a blackout, even with no help from AGC.
+  - The shortfall is visible during Planning, before the day starts.
+- **Non-goals:**
+  - automatic black-start of tripped plants after a blackout (the player still restarts them);
+  - demand response, imports, or prices that ration load;
+  - an operating-reserve requirement or a "reserve margin" knob for outages;
+  - choosing which city goes dark: the domain sheds proportionally across connected cities, as
+    UFLS does, and showing the rotation is a presentation concern (Plan 3).
+- **Anti-goals:**
+  - outages that cut more than the hour's worst forecast minute requires, beyond one shed step
+    of rounding;
+  - staged shedding that over-sheds a step deficit by more than three shed steps;
+  - invented tuning knobs: outage sizing follows from the forecast and the existing `shed_step`,
+    and stage spacing is a real relay setting.
+
+### 15.3 Rotating outages (forecast-based, planned shedding)
+
+- **State.** `PowerSystem` gains `outage: Ratio`, the current rotating-outage share, and
+  `outage_target: Ratio`, the share ordered for the current hour. Both are 0 outside a shortage.
+- **Protection acts on what the outage leaves.** The tick's **load** is
+  `demand × (1 − outage)`. Everything that today reads demand reads the load instead:
+  - the system size in the frequency model;
+  - AGC's requirement;
+  - the imbalance;
+  - `protection::evaluate`, including its surplus gate.
+
+  Protection's `shed` is a share of that load, so
+  `served = demand × (1 − outage) × (1 − shed)` and `unserved = demand − served`. Unserved energy
+  is still shed load only (Ruling R16). *(Builder's call: composing the two shares this way leaves
+  protection's internals and thresholds unchanged.)*
+- **Sizing.** At `BeginOperating` and at every hour boundary, immediately after the hydro re-plan
+  (§12.3), size the hour `h` that is starting. Demand within an hour is interpolated linearly, so
+  its worst minute is one of the two ends. Evaluate both minute 0 and minute 59 of `h`, and at each
+  instant `m`:
+  - `demand_m`: connected demand forecast at `m` (the same forecast as `hourly_net_load`, at
+    that minute).
+  - `deliverable_m`: what the fleet can actually supply at `m`, as the sum of:
+    - expected solar at `m`;
+    - each connected dispatchable non-hydro plant that is `Online` now:
+      `min(availability, output + ramp × minutes until m)`. Under AGC its availability is the
+      cap; a manual plant counts its target instead;
+    - each scheduled hydro plant: its allocation for `h` (§12.3);
+    - each manual hydro plant: its target, limited by its remaining budget.
+
+    Plants that are `Offline`, `Starting`, `Stopping` or tripped count 0.
+  - `share_m = (demand_m − deliverable_m) / demand_m`, floored at 0.
+
+  `outage_target = round_up_to(shed_step, max(share_0, share_59))`, clamped to 0–1.
+
+  *(Builder's call: sizing for the hour's worse end keeps protection from shedding inside a rising
+  or falling hour. At minute 0 a ramping plant counts only its current output, so a falling target
+  never over-counts it. Rounding up to the shed step is the only margin, so there is no new
+  reserve parameter.)*
+- **Applying it.**
+  - **At `BeginOperating`,** the day starts with `outage = outage_target` for hour 0, and the
+    day-boundary dispatch (Ruling R21) balances against the reduced load. *(Builder's call: this
+    is the cyclic-boundary principle. Ramping in from 0 would black out a large shortfall on
+    tick 1.)*
+  - **Cutting load.** During the day, when `outage` is below its target it rises by one
+    `shed_step` per tick.
+  - **Restoring load.** When `outage` is above its target it falls by one `shed_step` per tick,
+    but only while the other AGC plants' one-tick headroom covers it: the same headroom as the
+    trip gate (§14.2) and hydro recovery (§12.4), at least `shed_step × demand`. Otherwise it
+    holds. *(Builder's call: restored load must not outrun the fleet's ramp, or protection would
+    shed it again.)*
+- **Blackouts.**
+  - **During a blackout,** sizing is frozen: hour boundaries keep the target ordered before the
+    blackout, and `outage` is held at 0. All dark load is protection's `shed`, so it counts as
+    unplanned.
+  - **Restoration** is unchanged, except that it completes when protection's `shed` reaches that
+    frozen target rather than 0. Normal mode then resumes with `outage` equal to the frozen
+    target, so a shortage day can come back from a blackout.
+  - **After restoration,** the next hour boundary re-sizes normally, counting any plants the
+    player has restarted that are online by then.
+- **Hydro.** The emergency lift (§12.4) keys on protection's `shed > 0` and the `Shedding` band
+  only, not on `outage`. *(Builder's call: the hydro plan already spends water on the shortage
+  hours, and outage sizing counts that allocation. Lifting the cap for a planned outage would
+  spend the water early and deepen later hours' outages.)*
+- **Commands** never re-size the outage directly; the next hour boundary does. This matches the
+  hydro schedule (§12.3, step 4) and keeps command-sourced replay simple.
+- **Events and report.**
+  - `DomainEvent::RotatingOutageOrdered { hour: u8, share: Ratio }` is emitted whenever
+    `outage_target` changes, including a change to 0 ("outage lifted"), and at `BeginOperating`
+    when hour 0's target is not 0.
+  - `IncidentKind::RotatingOutage { share: Ratio }` is recorded when a non-zero target is ordered.
+  - `MonthlyReport.rotating_outage: MegawattHours` is the weighted energy cut by `outage`. It is
+    part of `unserved`, never added to it.
+
+### 15.4 Staged under-frequency shedding
+
+- **New `FrequencyParams` field** (region data): `shed_stage_spacing: Hertz`, default 0.2 Hz.
+  Validation requires a finite value > 0.
+- **Stages.** Stage `k` (k = 0, 1, 2, …) has threshold `shed_below − k × shed_stage_spacing`. A
+  stage fires at most once per under-frequency event, dropping one `shed_step` block the first tick
+  `deviation` is below its threshold. Several stages crossed in one tick fire together.
+- **Slow stage.** On a tick below `shed_below` that crosses no new stage, one `shed_step` is shed,
+  as today. This keeps the existing time-delayed behaviour for a deficit that persists.
+- **Re-arming.** The event ends, and every stage re-arms, when deviation is back at or above
+  `−normal_band`, at the same moment shed starts to be restored and `shed_ticks` resets.
+  `ProtectionState` gains `stages_fired: u8`.
+- **Blackout rules are unchanged:** below `blackout_below`, or `blackout_after_shed_ticks`
+  consecutive shedding ticks. *(Builder's call, measured on the game's frequency model with
+  0.2 Hz stages, step deficits from 0.1% to 29.9% in 0.1% steps, and AGC ramps from 0 to 2% of
+  demand per tick: there was no blackout, peak shed stayed within 3 shed steps of the deficit, and
+  the rebound peaked at +0.55 Hz. A rebound that high can briefly curtail but never reaches the
+  over-frequency trip line. A rule that scaled every tick's shed by depth arrested the same
+  deficits but rebounded to +1.6 Hz.)*
+
+### 15.5 Capacity-shortfall warning (read side)
+
+- **A direct query, like §14.3:** `GameSession::capacity_shortfall_check() -> Option<CapacityShortfallWarning>`,
+  returning `CapacityShortfallWarning { hour: u8, demand: Megawatts, deliverable: Megawatts, shortfall: Megawatts }`.
+  It reports the coming day's worst hour (ties to the earliest), or `None` when every hour is
+  covered. It is pure: no RNG and no state change.
+- **For the coming day,** `deliverable_h` counts each plant committed in hour `h` by its pattern
+  as follows:
+  - dispatchable non-hydro under AGC: its availability;
+  - manual: its initial target;
+  - scheduled hydro: its allocation from a **pure preview** of the hour-0 hydro plan, computed by
+    the same water-filling code path as `plan_hydro` with the coming day's budgets;
+  - expected solar.
+
+  It is an upper bound: it ignores start-up and ramp limits that the operating-time sizing
+  (§15.3) applies. *(Builder's call: the Planning question is "can the committed fleet cover the
+  peak at all?". Ramp-limited shortfalls show up as outages during the day.)*
+- The pure hydro preview is `pub(crate)`. Exposing it as a Planning view of `hydro_schedule()` is
+  left to Plan 2 (§12.6).
+
+### 15.6 Lessons
+
+- `Lesson::RotatingOutages { energy: MegawattHours, peak_share: Ratio }` fires when
+  `rotating_outage > 0`. `peak_share` is the month's largest ordered share, from a new
+  `MonthlyReport.peak_outage_share: Ratio`. Its priority sits directly before `UnservedEnergy`.
+- `Lesson::UnservedEnergy` now fires only for **unplanned** unserved energy,
+  `unserved − rotating_outage > 0`, and reports that amount. *(Builder's call: a planned outage
+  and a protection-driven shed teach different things: build or commit capacity, versus keep
+  reserves and ramp.)*
+- The cap of three lessons and the `[AllClear]` fallback are unchanged.
+
+### 15.7 Data and versioning
+
+- **Defaults.** Both shipped regions and the test fixture gain `shed_stage_spacing = 0.2 Hz`.
+- **Strikes are unchanged.** Rotating outages are unserved energy, so they still count toward the
+  reliability strike (§2.5).
+- **Versioning.** Outcomes change, so bump `SIM_RULES_VERSION` to 3 and regenerate the snapshots
+  once, reviewing every diff. The overreach scenario is expected to change materially: from a
+  month-long blackout to a rotating outage with the fleet running and reliability above 0.
+- **The beginner acceptance check (§14.5) must still pass.** Retune region data, never the rules,
+  as before.
+
+### 15.8 Properties (tests)
+
+- **Staged shedding arrests a step deficit.** In the protection model, take every step deficit
+  `d` with `k_inertia × d < −blackout_below` (up to 29.9% with shipped data) and every AGC ramp
+  from 0 to 2% of demand per tick. Each case:
+  - ends with no blackout;
+  - keeps its minimum deviation above `blackout_below`;
+  - peaks at a shed of `≤ d + 3 × shed_step`;
+  - rebounds by less than `trip_above`, so no over-frequency trip can follow.
+- **Stages fire once.** Each stage sheds at most once per event and re-arms only at or above
+  `−normal_band`.
+- **Outage sizing is exact.**
+  - `outage_target` is a multiple of `shed_step`, at least `max(share_0, share_59)` and less than
+    that plus `shed_step`. It is 0 when the fleet covers both ends of the hour.
+  - During the day `outage` moves at most one `shed_step` per tick, and it falls only when the
+    headroom covers the step.
+  - Sizing draws no RNG.
+- **Outages start at the target.** At `BeginOperating`, `outage` equals hour 0's target.
+- **Blackouts freeze sizing.** During a blackout `outage` is 0 and the target is frozen.
+  Restoration completes at the frozen target.
+- **Overreach no longer collapses.** In the overreach fixture:
+  - there is no blackout;
+  - plants stay online;
+  - reliability is above 0;
+  - deviation stays above `blackout_below` throughout;
+  - planned energy (`rotating_outage`) is at least the minute-by-minute forecast shortfall and at
+    most that shortfall plus one `shed_step` of demand per hour, with demand noise as the only
+    source of unplanned shedding.
+- **No change without a shortage.** On a day whose forecast is covered and that has no sudden
+  loss, `outage` is 0 throughout, so outcomes depend on the staged-shedding change only through
+  events that actually shed.
+- **Hydro is not lifted by an outage.** A rotating outage alone (`shed == 0`) leaves the hydro cap
+  in force.
+- **The warning is exact.** On a crafted fleet, `capacity_shortfall_check` reports the
+  hand-computed hour and shortfall, returns `None` when the committed fleet covers every hour, and
+  leaves `state_hash` unchanged.
+- **Validation.** `shed_stage_spacing` has a negative validation test.
