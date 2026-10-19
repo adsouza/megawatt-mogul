@@ -13,6 +13,8 @@ equal to demand. Clean Architecture + DDD; see ARCHITECTURE.md, and the spec in 
 - Format: `cargo fmt --all` (CI runs `cargo fmt --all --check`)
 - Mutation testing: `cargo mutants -p domain -p application` (slow; on demand)
 - Snapshots: `cargo insta review`
+- Hooks: `git config core.hooksPath .githooks`. pre-commit checks formatting; pre-push runs clippy
+  and the tests. Don't bypass them with `--no-verify`: fix the failure instead.
 
 ## Architecture rules
 

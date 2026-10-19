@@ -42,6 +42,16 @@ cargo fmt --all --check
 cargo mutants -p domain -p application -j 4  # mutation testing (slow; weekly in CI, see TESTING.md)
 ```
 
+Enable the git hooks once per clone:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+- **pre-commit** runs `cargo fmt --all --check` (instant).
+- **pre-push** runs clippy and the full test suite (about 25 s on a warm build).
+- Both match CI. `--no-verify` skips them in an emergency.
+
 See [TESTING.md](TESTING.md) for the test layers and [ARCHITECTURE.md](ARCHITECTURE.md) for how the
 code is organised. Contributors and coding agents should read [AGENTS.md](AGENTS.md).
 

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Runs the checks CI runs before anything leaves this machine: clippy (warnings denied)
+# and the full nextest suite (about 25 s on a warm build).
+# Enable once per clone: git config core.hooksPath .githooks
+# Bypass in an emergency: git push --no-verify
+set -euo pipefail
+
+echo "pre-push: clippy" >&2
+cargo clippy --workspace --all-targets --quiet -- -D warnings
+
+echo "pre-push: tests" >&2
+cargo nextest run --workspace --profile ci --status-level fail --final-status-level fail
