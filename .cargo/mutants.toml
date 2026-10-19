@@ -58,4 +58,11 @@ exclude_re = [
     # review: a new plant with zero live firm capacity contributes weight 0 to the
     # proportional allocation and holds nothing, so filtering it out or not is unobservable.
     'replace > with >= in RateBase::review',
+
+    # water_fill: with a capacity of exactly 0 (callers always pass a validated positive
+    # one), every eligible hour's spill allocation is min(0, ·) = 0 and any positive budget
+    # covers that zero spill, so the spill branch returns level None and all zeros, the same
+    # as the early return. Column 33 is `cap > 0.0` in the guard; `budget > 0.0` (column 71)
+    # is not excluded and is covered by a test.
+    'hydro_schedule\.rs:\d+:33: replace > with >= in water_fill',
 ]

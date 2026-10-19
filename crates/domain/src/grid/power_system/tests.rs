@@ -2178,6 +2178,152 @@ fn a_trip_waits_while_a_manual_plant_ramps_down() {
     assert_eq!(trip_with_ample_surplus(&mut sys), tripped(PlantId(3)));
 }
 
+/// Brings an online plant to 0 MW on a manual target.
+fn run_down_to_zero(sys: &mut PowerSystem, id: PlantId) {
+    sys.set_auto_follow(id, false).unwrap();
+    let plant = sys.plant_mut(id).unwrap();
+    plant.set_target(Megawatts::ZERO).unwrap();
+    while plant.output() > Megawatts::ZERO {
+        plant.step(plant.spec().capacity);
+    }
+    assert!(plant.is_online());
+}
+
+#[test]
+fn a_plant_stopping_from_zero_output_does_not_hold_a_trip() {
+    let region = tiny_region();
+    let mut sys = falling_output_fleet(&region);
+    // Hydro at 0 MW, then stopped: stopping, but with no output left to lose.
+    run_down_to_zero(&mut sys, HYDRO);
+    sys.plant_mut(HYDRO).unwrap().stop().unwrap();
+    assert_eq!(
+        sys.plant(HYDRO).unwrap().status(),
+        PlantStatus::Stopping {
+            output: Megawatts::ZERO
+        }
+    );
+    assert_eq!(trip_with_ample_surplus(&mut sys), tripped(PlantId(3)));
+}
+
+#[test]
+fn an_online_plant_at_zero_output_is_never_tripped() {
+    let region = tiny_region();
+    let hydro = PlantId(1);
+    let mut sys = committed_auto_follow(&region, &[connected(PlantKind::Hydro, cell(10, 1))]);
+    sys.begin_day(&region, april(), &mut SimRng::from_seed(1));
+    run_down_to_zero(&mut sys, hydro);
+    assert!(over_frequency_trip(&mut sys).is_empty());
+    assert!(sys.plant(hydro).unwrap().is_online());
+}
+
+#[test]
+fn a_hydro_fall_after_the_next_re_plan_does_not_hold_a_trip() {
+    let region = tiny_region();
+    let mut sys = falling_output_fleet(&region);
+    let output = hydro_output(&sys);
+    // The schedule holds the hydro's output through 01:59 and falls 100 MW
+    // at 02:00. The trip acts on tick 1, and the plan is known only up to
+    // the 01:00 re-plan, before the fall, so nothing holds the trip.
+    let plan = sys.hydro_plan.get_mut(&HYDRO).unwrap();
+    plan.planned = true;
+    plan.hourly = [output - Megawatts::new(100.0); 24];
+    plan.hourly[0] = output;
+    plan.hourly[1] = output;
+    assert_eq!(trip_with_ample_surplus(&mut sys), tripped(PlantId(3)));
+}
+
+#[test]
+fn agc_lowers_scheduled_hydro_sitting_exactly_at_its_ceiling() {
+    let region = tiny_region();
+    let mut sys = falling_output_fleet(&region);
+    let output = hydro_output(&sys);
+    let plan = sys.hydro_plan.get_mut(&HYDRO).unwrap();
+    plan.planned = true;
+    plan.hourly = [output; 24];
+    assert_eq!(sys.hydro_ceilings(1)[&HYDRO], output);
+    // A surplus 50 MW beyond what the thermal plants free by falling to
+    // their minimums: only the $0 hydro is left to lower, and it is at its
+    // ceiling, not above it, so AGC dispatches it rather than ramping it.
+    let thermal_room: Megawatts = [1, 2, 3]
+        .map(|id| {
+            let plant = sys.plant(PlantId(id)).unwrap();
+            plant.output() - plant.spec().min_output()
+        })
+        .into_iter()
+        .sum();
+    let (available, _, _) = sys.availability(&region, april(), 0);
+    sys.retarget_agc(&available, -(thermal_room + Megawatts::new(50.0)), 1);
+    assert!(target_of(&sys, HYDRO.0) < output);
+}
+
+#[test]
+fn hydro_without_water_is_not_scheduled() {
+    let region = tiny_region();
+    let mut sys = falling_output_fleet(&region);
+    assert!(sys.hydro_schedule().plants.contains_key(&HYDRO));
+    sys.plant_mut(HYDRO)
+        .unwrap()
+        .reset_hydro_budget(MegawattHours::ZERO);
+    sys.plan_hydro(&region, april(), 0);
+    assert!(!sys.hydro_schedule().plants.contains_key(&HYDRO));
+    assert!(sys.hydro_ceilings(1).is_empty());
+}
+
+#[test]
+fn hourly_net_load_is_demand_less_expected_solar() {
+    let region = tiny_region();
+    let mut defs = start_fleet(&region);
+    defs.push(connected(PlantKind::Solar, cell(7, 1)));
+    let sys = committed_auto_follow(&region, &defs);
+    let net = sys.hourly_net_load(&region, april());
+    let tick = 12 * TICKS_PER_HOUR + 30;
+    let solar = sys.expected_solar(&region, april(), tick);
+    assert!(solar > Megawatts::ZERO);
+    assert_eq!(
+        net[12],
+        sys.connected_demand_forecast(&region, april(), tick) - solar
+    );
+}
+
+#[test]
+fn a_trip_leaves_solar_curtailed_by_what_the_redispatch_cannot_absorb() {
+    let region = tiny_region();
+    let mut defs = start_fleet(&region);
+    defs.push(connected(PlantKind::Solar, cell(7, 1)));
+    let mut sys = committed_auto_follow(&region, &defs);
+    let mut rng = SimRng::from_seed(1);
+    sys.begin_day(&region, april(), &mut rng);
+    let noon = 12 * TICKS_PER_HOUR;
+    run_ticks(&mut sys, &region, 0..noon, &mut rng);
+    // Serving only 100 MW at noon: even with coal and CCGT at their
+    // minimums after the peaker trips, solar must be held back.
+    let (available, curtailable, withheld) = sys.availability(&region, april(), noon);
+    assert!(curtailable > Megawatts::ZERO);
+    let redispatch = Redispatch {
+        available: &available,
+        to_serve: Megawatts::new(100.0),
+        withheld,
+        curtailable,
+        effect_tick: noon + 1,
+    };
+    let mut events = Vec::new();
+    sys.apply_protection(
+        ProtectionOutcome::OverFrequencyTrip,
+        Megawatts::ZERO,
+        Megawatts::new(100.0),
+        region.frequency(),
+        &redispatch,
+        &mut events,
+    );
+    assert_eq!(events[..2], tripped(PlantId(3))[..]);
+    let curtailment = sys.curtailment;
+    assert!(curtailment > Megawatts::ZERO && curtailment <= curtailable);
+    assert_eq!(
+        events.last(),
+        Some(&DomainEvent::SolarCurtailed { mw: curtailment })
+    );
+}
+
 /// What one hydro-cut probe run did.
 struct CutRun {
     trips: Vec<(u32, PlantId)>,
@@ -2432,6 +2578,86 @@ fn run_day_checking_over_frequency(
         }
     }
     (trips, devs)
+}
+
+/// What one whole-day run did, for comparing protection armed and unarmed.
+struct DayRun {
+    trips: usize,
+    /// Σ unserved MW over the day's ticks.
+    shed: f64,
+    blackout: bool,
+}
+
+/// The tiny region with over-frequency trips out of reach (`trip_above` far
+/// above any deviation), otherwise identical.
+fn unarmed_region() -> RegionDefinition {
+    let mut parts = crate::region::fixtures::tiny_region_parts();
+    parts.frequency.trip_above = Hertz::new(1.0e6);
+    RegionDefinition::try_from(parts).unwrap()
+}
+
+/// Runs one whole day of the start fleet plus `extra` CCGTs (and the hydro
+/// site when `hydro`), all committed all day on auto-follow.
+fn protection_day(
+    region: &RegionDefinition,
+    extra: usize,
+    hydro: bool,
+    month: u8,
+    seed: u64,
+) -> DayRun {
+    let mut defs = start_fleet(region);
+    for &(x, y) in [(4, 6), (5, 6), (6, 6)].iter().take(extra) {
+        defs.push(connected(PlantKind::Ccgt, cell(x, y)));
+    }
+    if hydro {
+        defs.push(connected(PlantKind::Hydro, cell(10, 1)));
+    }
+    let mut sys = committed_auto_follow(region, &defs);
+    let month = SimMonth::new(2027, month).unwrap();
+    let mut rng = SimRng::from_seed(seed);
+    sys.begin_day(region, month, &mut rng);
+    let mut run = DayRun {
+        trips: 0,
+        shed: 0.0,
+        blackout: false,
+    };
+    for t in 0..TICKS_PER_DAY {
+        let (s, events) = sys.tick(region, month, t, &mut rng);
+        run.trips += events
+            .iter()
+            .filter(|e| matches!(e, DomainEvent::OverFrequencyTrip { .. }))
+            .count();
+        run.shed += s.unserved.value();
+        run.blackout |= s.mode == GridMode::Blackout;
+    }
+    run
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(16))]
+
+    /// Armed over-frequency protection never adds shed energy or a blackout
+    /// to the same day run with it out of reach (spec §14.6), over fleets
+    /// from the start fleet (which sheds on summer peaks) to three surplus
+    /// CCGTs (which trip at night), with or without hydro, in any month.
+    #[test]
+    fn armed_protection_never_sheds_more_than_unarmed(
+        extra in 0usize..=3,
+        hydro in any::<bool>(),
+        month in 1u8..=12,
+        seed in any::<u64>(),
+    ) {
+        let armed = protection_day(&tiny_region(), extra, hydro, month, seed);
+        let unarmed = protection_day(&unarmed_region(), extra, hydro, month, seed);
+        prop_assert_eq!(unarmed.trips, 0);
+        prop_assert!(
+            armed.shed <= unarmed.shed + 1e-6,
+            "armed sheds {} MW·ticks, unarmed {}",
+            armed.shed,
+            unarmed.shed
+        );
+        prop_assert!(!armed.blackout || unarmed.blackout);
+    }
 }
 
 #[test]

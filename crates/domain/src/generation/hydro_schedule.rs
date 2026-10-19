@@ -155,6 +155,33 @@ mod tests {
     }
 
     #[test]
+    fn a_budget_just_short_of_spilling_sets_a_level_near_zero() {
+        // 1,199 of the 1,200 MWh that would fill every hour: the level is
+        // 1/24 MW, far below the lowest residual (50 MW), so the bisection's
+        // lower bracket has to reach down to the lowest residual less the
+        // capacity.
+        let fill = run(&[50.0; 24], &[true; 24], 100.0, 1199.0);
+        let level = fill.level.expect("water level").value();
+        assert!((level - 1.0 / 24.0).abs() < 1e-6, "level {level}");
+        assert!((total(&fill) - 1199.0).abs() < TOL * 1199.0);
+    }
+
+    #[test]
+    fn a_level_met_exactly_spends_the_budget_exactly() {
+        // One eligible hour with a 100 MW residual and capacity: 50 MWh puts
+        // the level at exactly 50 MW, the bisection's first midpoint. That
+        // midpoint pours exactly the budget, so it is kept as the upper end
+        // and the allocation is exact, not one ulp short.
+        let mut res = [0.0; 24];
+        res[0] = 100.0;
+        let mut mask = [false; 24];
+        mask[0] = true;
+        let fill = run(&res, &mask, 100.0, 50.0);
+        assert_eq!(fill.level, Some(Megawatts::new(50.0)));
+        assert_eq!(fill.hourly[0], Megawatts::new(50.0));
+    }
+
+    #[test]
     fn spill_allocates_nothing_to_negative_residual_hours() {
         let mut res = [500.0; 24];
         res[3] = -50.0;

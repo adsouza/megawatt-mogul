@@ -699,6 +699,17 @@ fn minimum_generation_check_counts_only_committed_hours_and_is_pure() {
 }
 
 #[test]
+fn minimum_generation_exactly_at_net_load_is_no_warning() {
+    let mut s = session();
+    let coal = plant_of(&s, PlantKind::Coal);
+    // Coal held at exactly the 03:30 net load through 03:00 only: the
+    // minimum fits, with no excess to warn about.
+    let net = net_load_at_half_hours(&s);
+    commit_manual(&mut s, coal, 3..=3, net[3].value());
+    assert_eq!(s.minimum_generation_check(), None);
+}
+
+#[test]
 fn minimum_generation_ties_go_to_the_earliest_hour() {
     let mut s = session_with(|parts| {
         parts.demand.winter = [0.5; 24];
