@@ -3731,19 +3731,28 @@ fn a_plant_coming_online_mid_hour_lowers_the_outage() {
     // completes, the hour is re-sized with the peaker counted (ruling R5)
     // and the outage falls toward the new target at the restore pace.
     let region = region_with(noise_free);
-    let step = region.frequency().shed_step.value();
+    let params = region.frequency().clone();
+    let step = params.shed_step.value();
     let peaker = PlantId(3);
     let mut sys = system_with(&region, &start_fleet(&region));
     let mut rng = SimRng::from_seed(4);
     sys.begin_day(&region, april(), &mut rng);
     assert_eq!(sys.outage, Ratio::ONE);
-    run_ticks(&mut sys, &region, 0..30, &mut rng);
-    sys.set_auto_follow(peaker, true).unwrap();
-    sys.plant_mut(peaker).unwrap().start().unwrap();
 
     let (mut online_at, mut previous) = (None, sys.outage);
-    for t in 30..60 {
+    let (mut max_dev, mut ticks_above_trip) = (f64::MIN, 0);
+    for t in 0..TICKS_PER_DAY {
+        if t == 30 {
+            sys.set_auto_follow(peaker, true).unwrap();
+            sys.plant_mut(peaker).unwrap().start().unwrap();
+        }
+        let dark = sys.outage == Ratio::ONE;
         let (s, events) = sys.tick(&region, april(), t, &mut rng);
+        let dev = (s.frequency - params.nominal).value();
+        max_dev = max_dev.max(dev);
+        ticks_above_trip += u32::from(dev > params.trip_above.value());
+        // Over-frequency protection never arms, dark or not.
+        assert!(!sys.protection().over_armed, "tick {t}");
         assert_eq!(s.mode, GridMode::Normal, "tick {t}");
         assert!(
             !events.iter().any(|e| matches!(
@@ -3752,6 +3761,12 @@ fn a_plant_coming_online_mid_hour_lowers_the_outage() {
             )),
             "tick {t}: {events:?}"
         );
+        if dark {
+            // A fully cut grid holds nominal frequency (ruling R8).
+            assert_eq!(sys.deviation(), Hertz::ZERO, "tick {t}");
+            assert!(!sys.protection().over_armed, "tick {t}");
+            assert_eq!(sys.protection().over_ticks, 0, "tick {t}");
+        }
         if events.contains(&DomainEvent::PlantOnline { plant: peaker }) {
             online_at = Some(t);
             // The peaker reaches its 200 MW by minute 59: (630 − 200) / 630.
@@ -3760,27 +3775,41 @@ fn a_plant_coming_online_mid_hour_lowers_the_outage() {
                 DomainEvent::RotatingOutageOrdered { hour: 0, share } => Some(*share),
                 _ => None,
             });
-            assert!(near_share(
-                ordered.expect("re-sized on coming online"),
-                (d0 - 200.0) / d0
-            ));
+            let ordered = ordered.expect("re-sized on coming online");
+            assert!(near_share(ordered, (d0 - 200.0) / d0));
         }
-        if online_at.is_none() {
-            assert_eq!(s.outage, Ratio::ONE, "tick {t}");
+        if t < 60 {
+            if online_at.is_none() {
+                assert_eq!(s.outage, Ratio::ONE, "tick {t}");
+            }
+            // It falls, never faster than a step a tick, and never below
+            // the target.
+            assert!(s.outage <= previous, "tick {t}");
+            assert!(
+                previous.value() - s.outage.value() <= step + 1e-9,
+                "tick {t}"
+            );
+            assert!(s.outage >= sys.outage_target, "tick {t}");
+            if t == 59 {
+                assert_eq!(
+                    sys.outage, sys.outage_target,
+                    "restored to the target by 00:59"
+                );
+            }
         }
-        // It falls, never faster than a step a tick, and never below the target.
-        assert!(s.outage <= previous, "tick {t}");
-        assert!(
-            previous.value() - s.outage.value() <= step + 1e-9,
-            "tick {t}"
-        );
-        assert!(s.outage >= sys.outage_target, "tick {t}");
         previous = s.outage;
     }
-    assert!(online_at.is_some());
-    assert_eq!(
-        sys.outage, sys.outage_target,
-        "restored to the target by 00:59"
-    );
+    assert_eq!(online_at, Some(39));
     assert!(sys.plant(peaker).unwrap().is_online());
+    // The first lit tick (00:40) serves one restored step, 30.3 MW, against
+    // the peaker's 40 MW minimum output: +1.60 Hz for that tick alone, above
+    // `trip_above` but far short of a trip window.
+    assert!(
+        ticks_above_trip <= 1,
+        "{ticks_above_trip} ticks above trip_above"
+    );
+    assert!(
+        max_dev < 2.0 * params.trip_above.value(),
+        "max deviation {max_dev}"
+    );
 }

@@ -392,7 +392,10 @@ impl PowerSystem {
     ///    never lifts the cap (see [`PowerSystem::hydro_cap_lifted`]).
     /// 7. Imbalance between connected supply and the load served,
     ///    `load × (1 − shed)`.
-    /// 8. Frequency update, held at nominal in a blackout. System size is the
+    /// 8. Frequency update, held at nominal in a blackout, and on a
+    ///    Normal-mode tick whose outage in effect is 1.0, which also leaves
+    ///    over-frequency tracking untouched (builder's call, ruling R8: a
+    ///    fully cut grid has no frequency to measure). System size is the
     ///    load.
     /// 9. Protection on the load: load shedding as a share of the load; a
     ///    blackout that trips every plant, suppresses its commitment for the
@@ -467,6 +470,8 @@ impl PowerSystem {
         // The targets AGC sets now first act on the next tick's step.
         let effect_tick = tick + 1;
         let load = demand * (1.0 - self.outage.value());
+        // Fully cut by the outage in effect: nothing is energised this tick.
+        let dark = mode == GridMode::Normal && self.outage == Ratio::ONE;
         if mode == GridMode::Normal && self.outage != self.outage_target {
             // AGC's signed requirement at the outage in effect: positive when
             // the fleet is already behind, negative in a surplus.
@@ -493,11 +498,18 @@ impl PowerSystem {
         let leftover = self.redispatch(&redispatch);
 
         let imbalance = supply - load * (1.0 - shed);
+        // Builder's call (controller ruling R8): a fully cut grid has no
+        // frequency to measure; the 1 MW system-size floor is for numerical
+        // safety, not physics. So while the outage in effect is 1.0 the
+        // deviation is held at nominal, as in a blackout, and over-frequency
+        // tracking is left as it was, neither counting nor arming. The mode
+        // stays Normal. Once the outage falls below 1.0 (after a re-size, for
+        // example when a plant comes online) the frequency model resumes.
         self.deviation = match mode {
-            GridMode::Normal => next_deviation(self.deviation, imbalance, load, params),
-            GridMode::Blackout => Hertz::ZERO,
+            GridMode::Normal if !dark => next_deviation(self.deviation, imbalance, load, params),
+            GridMode::Normal | GridMode::Blackout => Hertz::ZERO,
         };
-
+        let over_frequency = (self.protection.over_ticks, self.protection.over_armed);
         let outcome = evaluate(
             &mut self.protection,
             self.deviation,
@@ -506,6 +518,9 @@ impl PowerSystem {
             load,
             self.outage_target,
         );
+        if dark {
+            (self.protection.over_ticks, self.protection.over_armed) = over_frequency;
+        }
         match outcome {
             // All dark load is protection's; the target stays frozen.
             ProtectionOutcome::Blackout => self.outage = Ratio::ZERO,
