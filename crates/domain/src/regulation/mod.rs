@@ -27,6 +27,8 @@ pub struct YearTally {
     pub peak_demand: Megawatts,
     /// Firm capacity commissioned since the last review.
     pub firm_added: Megawatts,
+    /// Months recorded since the last review, 0 to 12.
+    pub months: u8,
 }
 
 impl Default for YearTally {
@@ -37,6 +39,7 @@ impl Default for YearTally {
             operating_cost: Money::ZERO,
             peak_demand: Megawatts::ZERO,
             firm_added: Megawatts::ZERO,
+            months: 0,
         }
     }
 }
@@ -91,7 +94,8 @@ impl Regulator {
         self.last_cost_per_mwh
     }
 
-    /// Adds one month to the year's tally; the peak is the maximum seen.
+    /// Adds one month to the year's tally; the peak is the maximum seen and
+    /// the month count saturates at twelve.
     pub fn record_month(
         &mut self,
         demand: MegawattHours,
@@ -103,6 +107,7 @@ impl Regulator {
         self.tally.served += served;
         self.tally.operating_cost += operating_cost;
         self.tally.peak_demand = self.tally.peak_demand.max(peak);
+        self.tally.months = self.tally.months.saturating_add(1).min(12);
     }
 
     /// Notes firm capacity commissioned this year.
@@ -300,6 +305,22 @@ mod tests {
         assert_eq!(t.operating_cost, Money::from_dollars(30));
         assert_eq!(t.peak_demand, Megawatts::new(50.0));
         assert_eq!(t.firm_added, Megawatts::new(35.0));
+        assert_eq!(t.months, 2);
+    }
+
+    #[test]
+    fn the_months_tally_saturates_at_twelve() {
+        let region = tiny_region();
+        let mut r = Regulator::new(region.regulator());
+        for _ in 0..15 {
+            r.record_month(
+                MegawattHours::new(1.0),
+                MegawattHours::new(1.0),
+                Money::ZERO,
+                Megawatts::new(1.0),
+            );
+        }
+        assert_eq!(r.tally().months, 12);
     }
 
     #[test]
@@ -330,6 +351,7 @@ mod tests {
             revenue_requirement: Money::from_dollars(1),
             cost_per_mwh: Some(42.0),
         };
+        assert_eq!(r.tally().months, 1);
         let events = r.apply_rate_review(&outcome);
         assert_eq!(
             events,

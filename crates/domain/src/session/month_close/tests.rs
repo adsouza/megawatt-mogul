@@ -9,7 +9,7 @@ use crate::generation::PlantStatus;
 use crate::ids::CityId;
 use crate::region::fixtures::{tiny_region, tiny_region_parts};
 use crate::region::{PlantKind, RegionDefinitionParts};
-use crate::regulation::{Licence, YearTally, reserve_excess};
+use crate::regulation::{Licence, RateReviewOutcome, YearTally, reserve_excess};
 use crate::time::{SimMonth, TICKS_PER_DAY};
 use crate::units::{MegawattHours, Megawatts, Ratio};
 
@@ -343,9 +343,10 @@ fn held_capital_earns_no_return_in_the_review() {
     let depreciation: Money = rate_base.assets().map(|a| a.depreciated()).sum();
     let operating = -(report.fuel + report.start_up + report.fixed_om);
     let earned = outcome.revenue_requirement - operating - depreciation;
+    // One month is tallied, so a twelfth of the year's return is earned.
     let return_on = |base: Money| {
         Money::from_cents(
-            (outcome.allowed_return.value() * base.cents() as f64).round_ties_even() as i64,
+            (outcome.allowed_return.value() * base.cents() as f64 / 12.0).round_ties_even() as i64,
         )
     };
     assert_eq!(earned, return_on(rate_base.eligible_total()));
@@ -828,4 +829,57 @@ fn the_rate_review_estimate_previews_exactly_what_december_does() {
     // and there is none, so everything held is released.
     let e = assert_estimate_matches_annual_review(&december_with_held_capital(|_| {}));
     assert!(e.capital_to_release > Money::ZERO && e.capital_at_risk == Money::ZERO);
+}
+
+/// The first December review of a game that started in `start_month` of 2027
+/// and tallied `months` identical months: the same code path `close_month`
+/// takes in December (`annual_review`), fed the same steady monthly figures
+/// through the regulator's tally and the year's depreciation total.
+///
+/// Depreciation is booked as a flat amount per month rather than by running
+/// the rate base down, because the real straight-line decay would leave the
+/// 12-month game a smaller closing rate base than the 9-month one: a genuine
+/// difference unrelated to proration, which would hide the one under test.
+fn first_december_review(start_month: u8, months: u8) -> RateReviewOutcome {
+    let mut s = session_from(starting_in(2027, start_month), 1);
+    for _ in 0..months {
+        s.regulator.record_month(
+            MegawattHours::new(30_000.0),
+            MegawattHours::new(30_000.0),
+            Money::from_dollars(1_500_000),
+            Megawatts::new(70.0),
+        );
+        s.year_depreciation += Money::from_dollars(400_000);
+    }
+    assert_eq!(s.regulator().tally().months, months);
+    let mut events = Vec::new();
+    s.annual_review(SimMonth::new(2027, 12).unwrap(), &mut events)
+}
+
+#[test]
+fn april_start_does_not_over_recover() {
+    let april = first_december_review(4, 9);
+    let january = first_december_review(1, 12);
+    assert_eq!(april.allowed_return, january.allowed_return);
+    assert!(
+        (april.tariff.value() - january.tariff.value()).abs() < 0.01,
+        "April {} vs January {}",
+        april.tariff.value(),
+        january.tariff.value()
+    );
+}
+
+#[test]
+fn the_estimate_and_the_review_read_the_same_months() {
+    let mut s = session_from(starting_in(2027, 4), 1);
+    for _ in 0..5 {
+        s.regulator.record_month(
+            MegawattHours::new(1.0),
+            MegawattHours::new(1.0),
+            Money::ZERO,
+            Megawatts::new(1.0),
+        );
+    }
+    let inputs = s.review_inputs(s.clock.month());
+    assert_eq!(inputs.rate_review(Money::ZERO).tally.months, 5);
 }

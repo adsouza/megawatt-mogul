@@ -51,7 +51,10 @@ pub fn reserve_excess(
 /// - `return = base + per_reliability × (reliability − target)
 ///   + per_cost_improvement × (prev − cur) / prev`, the last term only when
 ///   both costs exist, clamped to `[min, max]`;
-/// - `revenue requirement = operating cost + depreciation + return × eligible rate base`;
+/// - `revenue requirement = operating cost + depreciation + return × eligible
+///   rate base × months ÷ 12`, where `months` (0 to 12) is how much of the
+///   year the tally covers: a short first period earns a proportionate return
+///   and zero months earn none;
 /// - `tariff = revenue requirement / served` (the previous tariff when nothing was served).
 pub fn compute_rate_review(i: &RateReviewInputs, p: &RegulatorParams) -> RateReviewOutcome {
     let served = i.tally.served.value();
@@ -74,8 +77,12 @@ pub fn compute_rate_review(i: &RateReviewInputs, p: &RegulatorParams) -> RateRev
     }
     let allowed_return = clamp_return(raw, p);
 
+    // Only the tallied part of the year earns return: the other terms already
+    // cover just those months. `months / 12` is exactly 1 for a full year.
+    let year_fraction = f64::from(i.tally.months) / 12.0;
     let return_cents =
-        (allowed_return.value() * i.eligible_rate_base.cents() as f64).round_ties_even() as i64;
+        (allowed_return.value() * i.eligible_rate_base.cents() as f64 * year_fraction)
+            .round_ties_even() as i64;
     let revenue_requirement = Money::from_cents(
         i.tally
             .operating_cost
@@ -123,6 +130,7 @@ mod tests {
             operating_cost: Money::from_cents(cost_cents),
             peak_demand: Megawatts::new(100.0),
             firm_added: Megawatts::ZERO,
+            months: 12,
         }
     }
 
@@ -170,6 +178,64 @@ mod tests {
             prop_assert!(e.value() >= 0.0);
             prop_assert!((e.value() - expected).abs() < 1e-9);
         }
+    }
+
+    /// The revenue requirement of `i` over `months` tallied months.
+    fn requirement_over(i: &RateReviewInputs, months: u8) -> (RateReviewOutcome, Money) {
+        let mut i = i.clone();
+        i.tally.months = months;
+        let outcome = compute_rate_review(&i, tiny_region().regulator());
+        let non_return = i.tally.operating_cost + i.depreciation;
+        (outcome.clone(), outcome.revenue_requirement - non_return)
+    }
+
+    proptest! {
+        #[test]
+        fn return_term_is_linear_in_months(months in 1u8..=12, rb in 0i64..1e12 as i64) {
+            let mut i = inputs(1000.0, 7_000_000, rb);
+            i.depreciation = Money::from_cents(123_456);
+            let (outcome, term) = requirement_over(&i, months);
+            let (_, full_year) = requirement_over(&i, 12);
+            let exact = outcome.allowed_return.value() * rb as f64 * f64::from(months) / 12.0;
+            prop_assert!((term.cents() as f64 - exact).abs() <= 1.0);
+            prop_assert!((term.cents() as f64 - full_year.cents() as f64 * f64::from(months) / 12.0).abs() <= 1.0);
+        }
+    }
+
+    #[test]
+    fn full_year_return_is_unchanged() {
+        let region = tiny_region();
+        let mut i = inputs(1000.0, 7_000_000, 123_456_789);
+        i.depreciation = Money::from_cents(555_555);
+        i.tally.months = 12;
+        let o = compute_rate_review(&i, region.regulator());
+        // The pre-proration formula: the whole year's return, rounded once.
+        let whole_year = (o.allowed_return.value() * i.eligible_rate_base.cents() as f64)
+            .round_ties_even() as i64;
+        assert_eq!(
+            o.revenue_requirement,
+            Money::from_cents(7_000_000 + 555_555 + whole_year)
+        );
+    }
+
+    #[test]
+    fn a_partial_year_earns_a_proportionate_return() {
+        let region = tiny_region();
+        let mut i = inputs(1000.0, 0, 120_000_000);
+        i.tally.months = 9;
+        let o = compute_rate_review(&i, region.regulator());
+        let expected = (o.allowed_return.value() * 120_000_000.0 * 0.75).round_ties_even() as i64;
+        assert_eq!(o.revenue_requirement, Money::from_cents(expected));
+    }
+
+    #[test]
+    fn zero_months_earns_no_return() {
+        let region = tiny_region();
+        let mut i = inputs(1000.0, 7_000_000, 123_456_789);
+        i.depreciation = Money::from_cents(555_555);
+        i.tally.months = 0;
+        let o = compute_rate_review(&i, region.regulator());
+        assert_eq!(o.revenue_requirement, Money::from_cents(7_555_555));
     }
 
     #[test]
