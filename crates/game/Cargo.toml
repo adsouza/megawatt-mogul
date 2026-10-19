@@ -5,11 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
-# Every game test lives in the one integration binary, tests/game.rs: each Bevy-linked test binary
-# costs 100-300 MB and its own link step. So the lib and bin unit-test harnesses are off, and
-# tests/game/layout.rs fails if `#[cfg(test)]` code appears under src/, where it would never run.
+# Each Bevy-linked test binary costs disk and its own link step, so the game has exactly two: the
+# lib's unit tests (inline `#[cfg(test)]` presenter tests) and the one integration binary,
+# tests/game.rs, whose modules live under tests/game/ (tests/game/layout.rs enforces that).
+# Doctests would each be a further binary, and main.rs has nothing to unit-test, so both are off.
 [lib]
-test = false
 doctest = false
 
 [[bin]]

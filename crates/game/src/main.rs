@@ -1,7 +1,4 @@
 #![forbid(unsafe_code)]
-// macOS ld notes that the debug binary's unwind table is too large for compact unwind encoding.
-// It only affects panic-unwinding speed in debug builds, and it would print on every link.
-#![allow(linker_messages)]
 
 use bevy::prelude::*;
 use game::GamePlugins;
