@@ -187,6 +187,31 @@ impl PowerSystem {
             .filter(|p| is_commissioned(p) && self.on_grid(p.node()))
     }
 
+    /// For each hour, the least that the connected, commissioned,
+    /// dispatchable plants committed in that hour (by their commitment
+    /// pattern, not today's suppression override) must generate: a plant on
+    /// AGC can back down to its minimum output, a manual plant holds its
+    /// initial target. Pure.
+    pub(crate) fn hourly_committed_minimum(&self) -> [Megawatts; 24] {
+        let mut minimum = [Megawatts::ZERO; 24];
+        for plant in self
+            .connected_plants()
+            .filter(|p| p.kind().is_dispatchable())
+        {
+            let floor = if plant.auto_follow() {
+                plant.spec().min_output()
+            } else {
+                plant.initial_target()
+            };
+            for (hour, total) in minimum.iter_mut().enumerate() {
+                if plant.commitment().is_committed(hour as u8) {
+                    *total += floor;
+                }
+            }
+        }
+        minimum
+    }
+
     /// Starts a representative day of `month`. Nothing physical carries over
     /// from the previous day: each commissioned hydro plant's budget is reset
     /// to `capacity × 24 h × hydro_potential(cell) × monthly_flow[month]`, the

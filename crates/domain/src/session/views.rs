@@ -83,6 +83,20 @@ pub struct RateReviewEstimate {
     pub capital_at_risk: Money,
 }
 
+/// The hour in which committed minimum generation exceeds the net load by
+/// the most (spec §14.3): the plan would have to dump or curtail the surplus.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MinimumGenerationWarning {
+    /// The hour of day, 0 to 23.
+    pub hour: u8,
+    /// What the plants committed in that hour must generate at least.
+    pub committed_minimum: Megawatts,
+    /// The forecast net load at minute 30 of that hour.
+    pub net_load: Megawatts,
+    /// `committed_minimum − net_load`, always positive.
+    pub excess: Megawatts,
+}
+
 impl GameSession {
     /// Every plant, in id order.
     pub fn plant_views(&self) -> Vec<PlantView> {
@@ -173,6 +187,33 @@ impl GameSession {
         self.power
             .connected_demand_forecast(&self.region, month, tick)
             - self.power.expected_solar(&self.region, month, tick)
+    }
+
+    /// The Planning-time check of the commitment plan against the load
+    /// forecast: the hour whose committed minimum generation exceeds that
+    /// hour's forecast net load by the most, earliest on ties; `None` when
+    /// every hour's minimums fit under its net load.
+    ///
+    /// Reads the plants' commitment patterns (not the per-day suppression
+    /// override), so it is meaningful while planning. Pure: no randomness, no
+    /// state change.
+    pub fn minimum_generation_check(&self) -> Option<MinimumGenerationWarning> {
+        let net_load = self.power.hourly_net_load(&self.region, self.clock.month());
+        let committed = self.power.hourly_committed_minimum();
+        let mut worst: Option<MinimumGenerationWarning> = None;
+        for (hour, (&committed_minimum, &net_load)) in committed.iter().zip(&net_load).enumerate() {
+            let excess = committed_minimum - net_load;
+            let beats_worst = worst.map_or(excess > Megawatts::ZERO, |w| excess > w.excess);
+            if beats_worst {
+                worst = Some(MinimumGenerationWarning {
+                    hour: hour as u8,
+                    committed_minimum,
+                    net_load,
+                    excess,
+                });
+            }
+        }
+        worst
     }
 
     /// What the next reserve review and rate review would do on today's

@@ -582,3 +582,138 @@ fn hydro_schedule_is_the_power_systems_schedule() {
     assert_eq!(off.hourly[0], plan.hourly[0]);
     assert!(off.hourly[1..].iter().all(|mw| *mw == Megawatts::ZERO));
 }
+
+/// The forecast net load of each hour at minute 30, through the public
+/// per-tick forecast (an independent route from `hourly_net_load`).
+fn net_load_at_half_hours(s: &GameSession) -> [Megawatts; 24] {
+    std::array::from_fn(|h| s.forecast_net_load(h as u32 * 60 + 30))
+}
+
+/// Commits `plant` for `hours` (inclusive range) on a manual target.
+fn commit_manual(
+    s: &mut GameSession,
+    plant: PlantId,
+    hours: std::ops::RangeInclusive<usize>,
+    mw: f64,
+) {
+    let mut pattern = [false; 24];
+    for h in hours {
+        pattern[h] = true;
+    }
+    s.commit_plant(plant, pattern).unwrap();
+    s.set_dispatch_target(plant, Megawatts::new(mw)).unwrap();
+}
+
+#[test]
+fn minimum_generation_check_reports_the_worst_hour() {
+    let mut s = session();
+    let coal = plant_of(&s, PlantKind::Coal);
+    let ccgt = plant_of(&s, PlantKind::Ccgt);
+    let peaker = plant_of(&s, PlantKind::Peaker);
+    // Coal and CCGT held at 600 + 500 MW through 03:00 only: 1,100 MW.
+    commit_manual(&mut s, coal, 3..=3, 600.0);
+    commit_manual(&mut s, ccgt, 3..=3, 500.0);
+    // A peaker at 200 MW at 08:00-09:00 sits far under the morning load.
+    commit_manual(&mut s, peaker, 8..=9, 200.0);
+
+    // Hand-computed 03:30 net load: cities 1 and 2 (1,000 MW) at the April
+    // shoulder shape, halfway from 0.63 to 0.64, times the 0.90 monthly factor.
+    let expected_net = 1_000.0 * (0.63 + 0.5 * 0.01) * 0.90;
+    let warning = s.minimum_generation_check().expect("minimums exceed load");
+    assert_eq!(warning.hour, 3);
+    assert_eq!(warning.committed_minimum, Megawatts::new(1_100.0));
+    assert!((warning.net_load.value() - expected_net).abs() < 1e-6);
+    assert_eq!(warning.net_load, s.forecast_net_load(3 * 60 + 30));
+    assert_eq!(warning.excess, Megawatts::new(1_100.0) - warning.net_load);
+}
+
+#[test]
+fn minimum_generation_check_picks_the_largest_excess() {
+    let mut s = session();
+    let coal = plant_of(&s, PlantKind::Coal);
+    let ccgt = plant_of(&s, PlantKind::Ccgt);
+    // Coal at 600 MW over 04:00-05:59; CCGT at 500 MW over 05:00-05:59 only.
+    // Hour 5 carries 1,100 MW against a load barely above hour 4's, so it
+    // beats hour 4 even though hour 4's load is lower.
+    commit_manual(&mut s, coal, 4..=5, 600.0);
+    commit_manual(&mut s, ccgt, 5..=5, 500.0);
+    let net = net_load_at_half_hours(&s);
+    assert!(net[4] < net[5]);
+    let warning = s.minimum_generation_check().unwrap();
+    assert_eq!(warning.hour, 5);
+    assert_eq!(warning.committed_minimum, Megawatts::new(1_100.0));
+    assert_eq!(warning.excess, Megawatts::new(1_100.0) - net[5]);
+}
+
+#[test]
+fn minimum_generation_check_is_none_when_minimums_fit() {
+    let mut s = session();
+    // Nothing committed: no minimum at all.
+    assert_eq!(s.minimum_generation_check(), None);
+
+    // The whole start fleet committed all day at its minimum (240 + 200 + 40
+    // MW) sits under the 03:00 net load.
+    for plant in s.power().plants().keys().copied().collect::<Vec<_>>() {
+        s.start_plant(plant).unwrap();
+    }
+    assert_eq!(s.minimum_generation_check(), None);
+}
+
+#[test]
+fn agc_plants_contribute_their_minimum_and_manual_plants_their_target() {
+    let mut s = session();
+    let coal = plant_of(&s, PlantKind::Coal);
+    commit_manual(&mut s, coal, 0..=23, 600.0);
+    let manual = s
+        .minimum_generation_check()
+        .expect("600 MW over the trough");
+    assert_eq!(manual.committed_minimum, Megawatts::new(600.0));
+
+    // On AGC the same plant can back down to its 240 MW minimum.
+    s.set_auto_follow(coal, true).unwrap();
+    assert_eq!(s.minimum_generation_check(), None);
+}
+
+#[test]
+fn minimum_generation_check_counts_only_committed_hours_and_is_pure() {
+    let mut s = session();
+    let coal = plant_of(&s, PlantKind::Coal);
+    // Committed only 04:00-05:59: hour 3 has the lower net load, but coal
+    // is not committed then, so it cannot be the worst hour.
+    commit_manual(&mut s, coal, 4..=5, 600.0);
+    let net = net_load_at_half_hours(&s);
+    assert!(net[3] < net[4]);
+
+    let before = s.state_hash();
+    let warning = s.minimum_generation_check().expect("600 MW over hour 4");
+    assert_eq!(s.state_hash(), before, "the check changed the session");
+    assert_eq!(warning.hour, 4);
+    assert_eq!(warning.committed_minimum, Megawatts::new(600.0));
+    assert_eq!(warning.excess, Megawatts::new(600.0) - net[4]);
+    assert_eq!(s.minimum_generation_check(), Some(warning));
+    assert_eq!(s.state_hash(), before);
+
+    // A commitment outside every low-load hour has no excess at all.
+    commit_manual(&mut s, coal, 12..=14, 600.0);
+    assert_eq!(s.minimum_generation_check(), None);
+}
+
+#[test]
+fn minimum_generation_ties_go_to_the_earliest_hour() {
+    let mut s = session_with(|parts| {
+        parts.demand.winter = [0.5; 24];
+        parts.demand.summer = [0.5; 24];
+        parts.demand.shoulder = [0.5; 24];
+        parts.demand.monthly = [1.0; 12];
+    });
+    let coal = plant_of(&s, PlantKind::Coal);
+    commit_manual(&mut s, coal, 0..=23, 600.0);
+    let net = net_load_at_half_hours(&s);
+    assert!(net.iter().all(|n| *n == net[0]), "demand should be flat");
+    // A flat 500 MW net load under a 600 MW minimum: every hour has the same
+    // 100 MW excess, so the earliest hour wins.
+    let warning = s.minimum_generation_check().unwrap_or_else(|| {
+        panic!("flat load {:?} should be under 600 MW", net[0]);
+    });
+    assert_eq!(warning.hour, 0);
+}

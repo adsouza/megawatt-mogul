@@ -74,9 +74,15 @@ pub struct MonthlyReport {
     pub curtailed: MegawattHours,
     /// Signed `generation − served`, summed over the month.
     pub imbalance: MegawattHours,
+    /// Surplus generation: the sum of each tick's positive imbalance (the
+    /// deficits that `imbalance` nets off are left out), weighted by `days`.
+    pub overgeneration: MegawattHours,
     pub peak_demand: Megawatts,
     pub reliability: Ratio,
     pub incidents: Vec<Incident>,
+    /// Plants tripped by over-frequency protection (unweighted: the count of
+    /// `OverFrequencyTrip` incidents of the played day).
+    pub over_frequency_trips: u32,
     /// Share of the month's Normal-mode ticks whose frequency deviation
     /// exceeded the regulator's band (blackout ticks are excluded).
     pub out_of_band_share: Ratio,
@@ -112,6 +118,8 @@ pub struct MonthAccumulator {
     unserved: MegawattHours,
     curtailed: MegawattHours,
     imbalance: MegawattHours,
+    /// Σ max(0, imbalance) over the day's ticks.
+    overgeneration: MegawattHours,
     peak_demand: Megawatts,
     incidents: Vec<Incident>,
     /// Ticks of the day spent in Normal grid mode.
@@ -132,6 +140,7 @@ impl Default for MonthAccumulator {
             unserved: MegawattHours::ZERO,
             curtailed: MegawattHours::ZERO,
             imbalance: MegawattHours::ZERO,
+            overgeneration: MegawattHours::ZERO,
             peak_demand: Megawatts::ZERO,
             incidents: Vec::new(),
             normal_ticks: 0,
@@ -167,6 +176,7 @@ impl MonthAccumulator {
         self.unserved += minute(summary.unserved);
         self.curtailed += minute(summary.curtailed);
         self.imbalance += minute(summary.imbalance);
+        self.overgeneration += minute(summary.imbalance.max(Megawatts::ZERO));
         self.peak_demand = self.peak_demand.max(summary.demand);
         if summary.mode == GridMode::Normal {
             self.normal_ticks += 1;
@@ -265,12 +275,27 @@ impl MonthAccumulator {
         self.imbalance
     }
 
+    /// Σ max(0, imbalance) over the day's ticks, unweighted.
+    pub fn overgeneration(&self) -> MegawattHours {
+        self.overgeneration
+    }
+
     pub fn peak_demand(&self) -> Megawatts {
         self.peak_demand
     }
 
     pub fn incidents(&self) -> &[Incident] {
         &self.incidents
+    }
+
+    /// How many plants over-frequency protection tripped during the day.
+    pub fn over_frequency_trips(&self) -> u32 {
+        let trips = self
+            .incidents
+            .iter()
+            .filter(|i| matches!(i.kind, IncidentKind::OverFrequencyTrip { .. }))
+            .count();
+        u32::try_from(trips).unwrap_or(u32::MAX)
     }
 
     pub fn normal_ticks(&self) -> u32 {
@@ -403,6 +428,27 @@ mod tests {
         ticks_in(&mut acc, GridMode::Blackout, &[3.0, 3.0]);
         assert_eq!(acc.normal_ticks(), 0);
         assert_eq!(acc.out_of_band_share(), Ratio::ZERO);
+    }
+
+    #[test]
+    fn overgeneration_sums_positive_imbalance_only() {
+        let mut acc = MonthAccumulator::default();
+        assert_eq!(acc.overgeneration(), MegawattHours::ZERO);
+        // Surplus of 60 MW for two ticks, a deficit of 30 MW for one: only
+        // the surplus counts, so 120 MW-minutes = 2 MWh.
+        for (tick, generation) in [(0, 180.0), (1, 180.0), (2, 90.0)] {
+            acc.add_tick(
+                &summary(tick, 120.0, 120.0, &[(1, generation)]),
+                &[],
+                Hertz::ZERO,
+                band(),
+            );
+        }
+        assert_eq!(acc.overgeneration(), MegawattHours::new(2.0));
+        // The signed total still nets the deficit off.
+        assert_eq!(acc.imbalance(), MegawattHours::new(1.5));
+        acc.reset();
+        assert_eq!(acc.overgeneration(), MegawattHours::ZERO);
     }
 
     #[test]

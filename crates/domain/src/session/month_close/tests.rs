@@ -969,3 +969,62 @@ fn the_estimate_and_the_review_read_the_same_months() {
     let inputs = s.review_inputs(s.clock.month());
     assert_eq!(inputs.rate_review(Money::ZERO).tally.months, 5);
 }
+
+/// Commits the two big plants all day on manual targets far above the load
+/// trough, so the overnight hours run a surplus with no player action.
+fn overbuilt_session() -> GameSession {
+    let mut s = session();
+    for kind in [PlantKind::Coal, PlantKind::Ccgt] {
+        let plant = plant_of(&s, kind);
+        s.start_plant(plant).unwrap();
+        let capacity = s.region().spec(kind).capacity;
+        s.set_dispatch_target(plant, capacity).unwrap();
+    }
+    s
+}
+
+#[test]
+fn report_overgeneration_is_the_weighted_positive_imbalance() {
+    let mut s = overbuilt_session();
+    let weight = f64::from(s.clock().month().days_in_month());
+    let mut events = s.begin_operating().unwrap();
+    let mut surplus = MegawattHours::ZERO;
+    while s.phase() == DayPhase::Operating {
+        events.extend(s.tick().unwrap());
+        if let Some(last) = s.grid_snapshot().last_tick {
+            surplus += last.imbalance.max(Megawatts::ZERO).energy_over_ticks(1);
+        }
+    }
+    let report = report_in(&events);
+    assert!(report.overgeneration > MegawattHours::ZERO);
+    assert!((report.overgeneration.value() - (surplus * weight).value()).abs() < 1e-6);
+    // The signed month total nets deficits off, so it cannot exceed the surplus.
+    assert!(report.imbalance <= report.overgeneration);
+}
+
+#[test]
+fn report_counts_over_frequency_trips_from_incidents() {
+    let mut s = overbuilt_session();
+    let events = play_day(&mut s);
+    let report = report_in(&events);
+    let tripped = events
+        .iter()
+        .filter(|e| matches!(e, DomainEvent::OverFrequencyTrip { .. }))
+        .count();
+    let incidents = report
+        .incidents
+        .iter()
+        .filter(|i| matches!(i.kind, IncidentKind::OverFrequencyTrip { .. }))
+        .count();
+    assert_eq!(incidents, tripped);
+    assert_eq!(report.over_frequency_trips as usize, tripped);
+    assert!(tripped > 0, "overbuilt day should trip a plant");
+}
+
+#[test]
+fn a_balanced_month_reports_no_trips() {
+    let mut s = session();
+    robust_fleet(&mut s);
+    let events = play_day(&mut s);
+    assert_eq!(report_in(&events).over_frequency_trips, 0);
+}

@@ -16,6 +16,9 @@ const PEAKER_SHARE_LIMIT: f64 = 0.05;
 /// Curtailed solar above this share of served energy is worth a lesson.
 const CURTAILED_SHARE_LIMIT: f64 = 0.01;
 
+/// Overgeneration above this share of served energy is worth a lesson.
+const OVERGENERATION_SHARE_LIMIT: f64 = 0.02;
+
 /// Start-up costs above this share of operating cost are worth a lesson.
 const START_UP_SHARE_LIMIT: f64 = 0.10;
 
@@ -36,6 +39,12 @@ pub enum Lesson {
         energy: MegawattHours,
         first_incident_tick: u32,
     },
+    /// Generation outran demand: surplus energy (positive imbalance) and/or
+    /// plants tripped by over-frequency protection.
+    Overgeneration { energy: MegawattHours, trips: u32 },
+    /// The month failed frequency performance; `notice` is true when it drew
+    /// a formal notice rather than a strike.
+    FrequencyPerformance { out_of_band: Ratio, notice: bool },
     /// Solar was curtailed because there was nowhere for it to go.
     SolarCurtailed { energy: MegawattHours },
     /// Starting plants cost a large share of operating cost.
@@ -52,8 +61,8 @@ pub enum Lesson {
 /// The lessons of `report`, most important first, at most three. A month
 /// with nothing to learn yields `[AllClear]`.
 ///
-/// Priority: expensive peaking, unserved energy, curtailed solar, start-up
-/// costs, then the rate review.
+/// Priority: expensive peaking, unserved energy, overgeneration, frequency
+/// performance, curtailed solar, start-up costs, then the rate review.
 pub fn lessons_for(report: &MonthlyReport, region: &RegionDefinition) -> Vec<Lesson> {
     let served = report.served.value();
     let mut lessons = Vec::new();
@@ -78,6 +87,22 @@ pub fn lessons_for(report: &MonthlyReport, region: &RegionDefinition) -> Vec<Les
         lessons.push(Lesson::UnservedEnergy {
             energy: report.unserved,
             first_incident_tick: report.incidents.first().map_or(0, |incident| incident.tick),
+        });
+    }
+
+    if report.overgeneration.value() > served * OVERGENERATION_SHARE_LIMIT
+        || report.over_frequency_trips >= 1
+    {
+        lessons.push(Lesson::Overgeneration {
+            energy: report.overgeneration,
+            trips: report.over_frequency_trips,
+        });
+    }
+
+    if report.frequency_failed {
+        lessons.push(Lesson::FrequencyPerformance {
+            out_of_band: report.out_of_band_share,
+            notice: report.frequency_notice,
         });
     }
 
@@ -306,6 +331,94 @@ mod tests {
         r.fuel = Money::ZERO;
         r.fixed_om = Money::ZERO;
         assert_eq!(lessons_for(&r, &region), vec![Lesson::AllClear]);
+    }
+
+    #[test]
+    fn overgeneration_lesson_fires_on_surplus_or_trips() {
+        let region = tiny_region();
+
+        // Surplus above 2% of the 100,000 MWh served.
+        let mut r = clean_report();
+        r.overgeneration = mwh(2_500.0);
+        assert_eq!(
+            lessons_for(&r, &region),
+            vec![Lesson::Overgeneration {
+                energy: mwh(2_500.0),
+                trips: 0,
+            }]
+        );
+
+        // A single over-frequency trip is enough, whatever the surplus.
+        let mut r = clean_report();
+        r.over_frequency_trips = 1;
+        assert_eq!(
+            lessons_for(&r, &region),
+            vec![Lesson::Overgeneration {
+                energy: mwh(0.0),
+                trips: 1,
+            }]
+        );
+
+        // Exactly 2% and no trips: the threshold is strict.
+        let mut r = clean_report();
+        r.overgeneration = mwh(2_000.0);
+        assert_eq!(lessons_for(&r, &region), vec![Lesson::AllClear]);
+    }
+
+    #[test]
+    fn frequency_lesson_reports_notice_flag() {
+        let region = tiny_region();
+        let out_of_band = Ratio::new(0.08).unwrap();
+
+        let mut r = clean_report();
+        r.out_of_band_share = out_of_band;
+        // A band excursion that did not fail the month teaches nothing.
+        assert_eq!(lessons_for(&r, &region), vec![Lesson::AllClear]);
+
+        r.frequency_failed = true;
+        r.frequency_notice = true;
+        assert_eq!(
+            lessons_for(&r, &region),
+            vec![Lesson::FrequencyPerformance {
+                out_of_band,
+                notice: true,
+            }]
+        );
+
+        r.frequency_notice = false;
+        assert_eq!(
+            lessons_for(&r, &region),
+            vec![Lesson::FrequencyPerformance {
+                out_of_band,
+                notice: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn lesson_priority_places_new_lessons_after_unserved() {
+        let region = tiny_region();
+        let mut r = everything_report();
+        r.overgeneration = mwh(5_000.0);
+        r.over_frequency_trips = 2;
+        r.out_of_band_share = Ratio::new(0.1).unwrap();
+        r.frequency_failed = true;
+
+        // Peaking, unserved, then overgeneration: the cap of three cuts the rest.
+        let lessons = lessons_for(&r, &region);
+        assert_eq!(lessons.len(), 3);
+        assert!(matches!(lessons[0], Lesson::ExpensivePeaking { .. }));
+        assert!(matches!(lessons[1], Lesson::UnservedEnergy { .. }));
+        assert!(matches!(lessons[2], Lesson::Overgeneration { .. }));
+
+        // Without peaking or unserved energy, the new lessons lead, in order,
+        // ahead of curtailment, start-up costs and the rate review.
+        r.energy_by_kind.clear();
+        r.unserved = MegawattHours::ZERO;
+        let lessons = lessons_for(&r, &region);
+        assert!(matches!(lessons[0], Lesson::Overgeneration { .. }));
+        assert!(matches!(lessons[1], Lesson::FrequencyPerformance { .. }));
+        assert!(matches!(lessons[2], Lesson::SolarCurtailed { .. }));
     }
 
     #[test]
