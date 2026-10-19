@@ -326,7 +326,10 @@
             (lon: -95.6, lat: 50.3, radius_deg: 0.4, value: 0.6),
         ],
     ),
-    // Spec section 3.2 values. Fixed O&M is per month; book life in months.
+    // Spec section 3.2 values, except the combined cycle's minimum stable
+    // level: 30%, the emissions-compliant turndown of a modern F- or H-class
+    // plant (a 2x1 block can run on one gas turbine), rather than 40%. Fixed
+    // O&M is per month; book life in months.
     catalog: [
         (
             kind: Nuclear,
@@ -361,7 +364,7 @@
         (
             kind: Ccgt,
             capacity_mw: 500.0,
-            min_stable: 0.4,
+            min_stable: 0.3,
             ramp_mw_per_min: 25.0,
             startup_hours: 2.0,
             startup_cost_usd: 40000,
@@ -529,24 +532,26 @@
             // Nuclear: Beaver Valley (Ohio River) and Perry (Lake Erie).
             (Nuclear, -80.43, 40.62),
             (Nuclear, -81.14, 41.80),
-            // Coal on the Ohio and Allegheny rivers and Lake Erie: Cheswick,
-            // Mitchell, Pleasants, Mountaineer, Gavin, Stuart, Zimmer and
-            // Avon Lake.
-            (Coal, -79.79, 40.54),
+            // Coal still running on the Ohio River in 2027: Mitchell,
+            // Pleasants, Mountaineer and Gavin. Cheswick, Avon Lake, Zimmer
+            // (all 2022) and Stuart (2018) have retired.
             (Coal, -80.82, 39.83),
             (Coal, -81.29, 39.37),
             (Coal, -81.93, 38.98),
             (Coal, -82.12, 38.94),
-            (Coal, -83.67, 38.65),
-            (Coal, -84.23, 38.87),
-            (Coal, -82.05, 41.50),
             // Combined cycle: Lordstown, Carroll County, Washington (Ohio),
-            // Hanging Rock and Middletown.
+            // Hanging Rock and Middletown, and the shale-gas plants that
+            // replaced the retired coal: Hickory Run (2020), South Field and
+            // Long Ridge (2021) and Guernsey (2022).
             (Ccgt, -80.86, 41.15),
             (Ccgt, -81.03, 40.55),
             (Ccgt, -81.68, 39.53),
             (Ccgt, -82.66, 38.57),
             (Ccgt, -84.40, 39.50),
+            (Ccgt, -80.37, 40.90),
+            (Ccgt, -80.62, 40.60),
+            (Ccgt, -80.87, 39.66),
+            (Ccgt, -81.54, 39.97),
             // Peakers around the three cities.
             (Peaker, -82.80, 40.20),
             (Peaker, -83.30, 39.70),

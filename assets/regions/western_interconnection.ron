@@ -196,7 +196,10 @@
             (lon: -119.3, lat: 37.2, radius_deg: 0.4, value: 0.6),
         ],
     ),
-    // Spec section 3.2 values. Fixed O&M is per month; book life in months.
+    // Spec section 3.2 values, except the combined cycle's minimum stable
+    // level: 30%, the emissions-compliant turndown of a modern F- or H-class
+    // plant (a 2x1 block can run on one gas turbine), rather than 40%. Fixed
+    // O&M is per month; book life in months.
     catalog: [
         (
             kind: Nuclear,
@@ -231,7 +234,7 @@
         (
             kind: Ccgt,
             capacity_mw: 500.0,
-            min_stable: 0.4,
+            min_stable: 0.3,
             ramp_mw_per_min: 25.0,
             startup_hours: 2.0,
             startup_cost_usd: 40000,
@@ -349,11 +352,14 @@
         clearness_mean: [0.58, 0.62, 0.68, 0.73, 0.77, 0.81, 0.80, 0.79, 0.78, 0.72, 0.62, 0.56],
         clearness_sd: 0.13,
     ),
-    // Usable river flow: the strong Columbia spring freshet in May and June
-    // and a low from late summer into autumn. Winter flow is held up by
-    // drafting the storage reservoirs for the winter peak, enough for a
-    // full day at capacity on the best sites.
-    hydro: (monthly_flow: [1.05, 1.0, 0.95, 1.05, 1.4, 1.55, 1.2, 0.85, 0.65, 0.65, 0.8, 1.0]),
+    // Usable river flow, the Pacific Northwest hydrograph: the Columbia is a
+    // snowmelt river, so flow climbs through April to the spring freshet in
+    // May and June, recedes through July and bottoms out from late summer
+    // into autumn (September and October), before autumn rain and the
+    // drafting of the storage reservoirs give moderate winter flows. Winter
+    // water does not cover a full day at capacity, so the hydro schedule
+    // (spec section 12) spends it on the evening peak.
+    hydro: (monthly_flow: [0.85, 0.85, 0.95, 1.15, 1.45, 1.55, 1.2, 0.85, 0.65, 0.65, 0.75, 0.8]),
     frequency: (
         nominal_hz: 60.0,
         k_inertia: 5.0,
