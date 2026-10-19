@@ -29,7 +29,22 @@ balancing area:
 ## Status
 
 Plan 1 (headless simulation core: the `domain`, `application` and `infrastructure` crates)
-complete; the Bevy client follows in Plans 2–3, so there is nothing to play yet.
+complete. Plan 2 (the Bevy client, `crates/game`) is in progress: the game opens a window but has
+no menus yet.
+
+## Run
+
+```sh
+cargo run -p game                                  # assets from ./assets or the workspace
+cargo run -p game -- --assets <dir> --log-dir <dir>
+```
+
+- `--assets` is the directory holding `regions/` and `locales/`. Without it the game uses the
+  first of `./assets`, `assets/` next to the executable, and the workspace's `assets/`.
+- `--log-dir` is where command logs are written (default `./logs`, which git ignores).
+- On Linux, install Bevy's build dependencies first; see
+  [Bevy's Linux dependencies](https://github.com/bevyengine/bevy/blob/v0.20.0/docs/linux_dependencies.md)
+  or the list in `.github/workflows/ci.yml`. The first build compiles Bevy and takes a few minutes.
 
 ## Build and test
 

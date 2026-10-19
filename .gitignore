@@ -1,6 +1,9 @@
 # Cargo build output
 /target/
 
+# Command logs written by `cargo run -p game` (default --log-dir)
+logs/
+
 # cargo-mutants output (see TESTING.md)
 mutants.out*/
 

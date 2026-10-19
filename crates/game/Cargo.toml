@@ -1,0 +1,49 @@
+[package]
+name = "game"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Every game test lives in the one integration binary, tests/game.rs: each Bevy-linked test binary
+# costs 100-300 MB and its own link step. So the lib and bin unit-test harnesses are off, and
+# tests/game/layout.rs fails if `#[cfg(test)]` code appears under src/, where it would never run.
+[lib]
+test = false
+doctest = false
+
+[[bin]]
+name = "game"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+bevy_egui = { workspace = true }
+
+# default-features = false (set in the workspace): Bevy 0.20's defaults are the 2d/3d/ui stacks plus
+# audio. These are the Bevy 0.20 feature names (checked in bevy-0.20.0/Cargo.toml):
+[dependencies.bevy]
+workspace = true
+features = [
+    "std",                # the standard library (Bevy 0.20 also builds no_std)
+    "multi_threaded",     # parallel system executor and task pools
+    "bevy_state",         # States / SubStates and StatesPlugin (in DefaultPlugins)
+    "bevy_window",        # Window, WindowPlugin
+    "bevy_winit",         # the winit event loop and windowing backend
+    "bevy_render",        # the wgpu renderer (also enables bevy_camera, so Camera2d)
+    "bevy_core_pipeline", # the 2D/3D main passes bevy_egui draws after
+    "bevy_log",           # LogPlugin: tracing subscriber, RUST_LOG filtering
+    "keyboard",           # keyboard input (each bevy_input device is an opt-in feature in 0.20)
+    "mouse",              # mouse input
+    "x11",                # Linux X11 backend for winit
+    "wayland",            # Linux Wayland backend for winit
+    "bevy_picking",       # PickingPlugin, which bevy_egui's default `picking` feature expects
+]
+# No audio (out of scope, spec §3.3), no bevy_pbr/sprite/ui/text/gltf/scene/gilrs yet: Plan 3 adds
+# what the 3D diorama needs.
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true
