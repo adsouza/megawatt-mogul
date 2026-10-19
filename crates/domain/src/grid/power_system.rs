@@ -25,7 +25,7 @@ use crate::generation::{
     solar_available, sun_factor,
 };
 use crate::ids::{CellCoord, CityId, NodeId, PlantId};
-use crate::region::{Cell, PlantKind, RegionDefinition};
+use crate::region::{Cell, FrequencyParams, PlantKind, RegionDefinition};
 use crate::rng::SimRng;
 use crate::time::{SimDuration, SimMonth, TICKS_PER_HOUR};
 use crate::units::{Hertz, MegawattHours, Megawatts, Ratio};
@@ -336,7 +336,13 @@ impl PowerSystem {
         if outcome.curtails() || self.curtailment > Megawatts::ZERO {
             self.update_curtailment(outcome, -leftover, curtailable, &mut events);
         }
-        self.apply_protection(outcome, demand * shed.value(), &mut events);
+        self.apply_protection(
+            outcome,
+            demand * shed.value(),
+            demand * (1.0 - shed.value()),
+            params,
+            &mut events,
+        );
         if mode == GridMode::Blackout && shed < Ratio::ONE {
             // Restoration has re-energised the grid: grid-following solar resynchronises.
             self.plants.values_mut().for_each(Plant::reconnect);
@@ -549,10 +555,14 @@ impl PowerSystem {
         agc_retarget(&mut connected, &caps, shortfall)
     }
 
+    /// Acts on the protection `outcome`. `shed_mw` is the load now shed and
+    /// `served` the load now served.
     fn apply_protection(
         &mut self,
         outcome: ProtectionOutcome,
         shed_mw: Megawatts,
+        served: Megawatts,
+        params: &FrequencyParams,
         events: &mut Vec<DomainEvent>,
     ) {
         match outcome {
@@ -571,16 +581,58 @@ impl PowerSystem {
             }
             ProtectionOutcome::BlackoutRestored => events.push(DomainEvent::BlackoutRestored),
             ProtectionOutcome::OverFrequencyTrip => {
-                if let Some(id) = self.over_frequency_trip_candidate() {
-                    events.push(DomainEvent::OverFrequencyTrip { plant: id });
-                    events.extend(self.trip_plant(id));
-                    if let Some(plant) = self.plants.get_mut(&id) {
-                        plant.suppress_commitment_for_day();
-                    }
-                }
+                self.over_frequency_trip(served, params, events);
             }
             // Curtailment is handled by `update_curtailment`.
             ProtectionOutcome::None | ProtectionOutcome::Restored | ProtectionOutcome::Curtail => {}
+        }
+    }
+
+    /// Trips the [`PowerSystem::over_frequency_trip_candidate`] (spec §14.2)
+    /// exactly as after a blackout: [`PowerSystem::trip_plant`] plus
+    /// `suppress_commitment_for_day`, emitting `OverFrequencyTrip` before its
+    /// `PlantTripped`. Nothing happens when no plant qualifies.
+    ///
+    /// **Headroom gate (builder's call): protection never trips into a deficit
+    /// the fleet can't cover in one tick.** The trip is withheld when the
+    /// deficit it would open, the candidate's output less the current surplus
+    /// over `served`, exceeds the one-tick ramp-up headroom of the *other*
+    /// connected online auto-follow plants (`min(ramp, capacity − output)`
+    /// each). Frequency lags the imbalance by the 5-tick damping time
+    /// constant, so a trip sized only by frequency can overshoot a nearly
+    /// cleared surplus into load shedding or blackout. A withheld trip stays
+    /// due (see [`ProtectionState::withhold_trip`]) and is re-checked on the
+    /// next counting tick; the cost-first order is unchanged, so a cheaper
+    /// unit is never tripped in the candidate's place. A residual surplus no
+    /// unit can safely clear therefore stays as over-frequency, which the
+    /// frequency-performance rules penalise (spec §14.4).
+    fn over_frequency_trip(
+        &mut self,
+        served: Megawatts,
+        params: &FrequencyParams,
+        events: &mut Vec<DomainEvent>,
+    ) {
+        let Some(id) = self.over_frequency_trip_candidate() else {
+            return;
+        };
+        let surplus = self
+            .connected_plants()
+            .map(Plant::output)
+            .sum::<Megawatts>()
+            - served;
+        let headroom: Megawatts = self
+            .connected_plants()
+            .filter(|p| p.id() != id && p.auto_follow())
+            .map(|p| p.headroom_up(p.spec().capacity))
+            .sum();
+        if self.plants[&id].output() - surplus > headroom {
+            self.protection.withhold_trip(params);
+            return;
+        }
+        events.push(DomainEvent::OverFrequencyTrip { plant: id });
+        events.extend(self.trip_plant(id));
+        if let Some(plant) = self.plants.get_mut(&id) {
+            plant.suppress_commitment_for_day();
         }
     }
 

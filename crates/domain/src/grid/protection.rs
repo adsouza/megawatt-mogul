@@ -42,6 +42,17 @@ impl Default for ProtectionState {
     }
 }
 
+impl ProtectionState {
+    /// Keeps an over-frequency trip that fell due, but was not carried out,
+    /// due: the window stays full, so the trip is due again on the next tick
+    /// that counts (see [`evaluate`]). Protection stays armed. The caller
+    /// withholds a trip that would open a deficit the rest of the fleet cannot
+    /// ramp to cover (see `PowerSystem`).
+    pub fn withhold_trip(&mut self, p: &FrequencyParams) {
+        self.over_ticks = p.trip_after_ticks;
+    }
+}
+
 /// What the protection scheme did this tick.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProtectionOutcome {
@@ -77,21 +88,35 @@ fn snapped(value: f64) -> Ratio {
 }
 
 /// Advances the over-frequency trip counter by one Normal-mode tick (spec
-/// §14.2) and returns whether a trip is due.
+/// §14.2) and returns whether a trip is due. `surplus` is whether supply
+/// exceeds the load being served this tick.
 ///
 /// - At or below `curtail_above`, protection disarms and both fields reset.
 /// - Not armed, a tick above `trip_above` counts and any other tick resets
 ///   the count.
 /// - Armed, every tick above `curtail_above` counts.
+/// - **Surplus gate (builder's call).** A tick counts only while there is a
+///   physical surplus; a tick without one resets the count, armed or not, but
+///   does not disarm. Deviation relaxes with a time constant of 1 / k_damping
+///   (5 ticks by default, the same as `trip_after_ticks`), so after a large
+///   surplus it stays above `curtail_above` for windows after supply already
+///   matches load. Counting those ticks would keep tripping plants into a
+///   deficit, and so into load shedding or blackout, contradicting §14.2's
+///   gradual shedding and §14.6's "the surplus clears".
 /// - Protection arms once the count reaches `trip_after_ticks`, and a trip is
 ///   due whenever it has. The caller resets the count when it trips.
-fn track_over_frequency(state: &mut ProtectionState, dev: Hertz, p: &FrequencyParams) -> bool {
+fn track_over_frequency(
+    state: &mut ProtectionState,
+    dev: Hertz,
+    surplus: bool,
+    p: &FrequencyParams,
+) -> bool {
     if dev <= p.curtail_above {
         state.over_armed = false;
         state.over_ticks = 0;
         return false;
     }
-    if state.over_armed || dev > p.trip_above {
+    if surplus && (state.over_armed || dev > p.trip_above) {
         state.over_ticks = state.over_ticks.saturating_add(1);
     } else {
         state.over_ticks = 0;
@@ -110,11 +135,13 @@ fn track_over_frequency(state: &mut ProtectionState, dev: Hertz, p: &FrequencyPa
 /// the over-frequency counter is left alone.
 ///
 /// In Normal mode the over-frequency counter advances first (see
-/// [`track_over_frequency`]). A due trip replaces `Curtail` with
-/// `OverFrequencyTrip` and resets the count, so at most one trip happens per
-/// `trip_after_ticks` window. Restoring shed load still takes priority over
-/// both: a trip that falls due on a restoring tick waits for the next
-/// over-frequency tick that does not restore.
+/// [`track_over_frequency`]), with a physical surplus meaning `supply`
+/// above the served load `demand × (1 − shed)`. A due trip replaces `Curtail`
+/// with `OverFrequencyTrip` and resets the count, so at most one trip happens
+/// per `trip_after_ticks` window. Restoring shed load still takes priority
+/// over both (builder's call): a trip that falls due on a restoring tick
+/// waits, still armed and with its count held, for the next over-frequency
+/// tick that does not restore.
 pub fn evaluate(
     state: &mut ProtectionState,
     dev: Hertz,
@@ -139,7 +166,8 @@ pub fn evaluate(
         return ProtectionOutcome::None;
     }
 
-    let trip_due = track_over_frequency(state, dev, p);
+    let surplus = supply.value() > demand.value() * (1.0 - shed);
+    let trip_due = track_over_frequency(state, dev, surplus, p);
 
     if dev < p.shed_below {
         state.shed = snapped(shed + step);
@@ -374,12 +402,15 @@ mod tests {
 
     // ---- Over-frequency trips (spec §14.2, §14.6 "Trips are sustained and gradual") ----
 
+    /// Supply 10% above the 100 MW demand: a physical surplus.
+    const SURPLUS: f64 = 110.0;
+
     /// The 1-based ticks on which `devs` (applied in order from `s`) trip.
     fn trip_ticks(s: &mut ProtectionState, devs: impl IntoIterator<Item = f64>) -> Vec<usize> {
         devs.into_iter()
             .enumerate()
             .filter_map(|(i, dev)| {
-                (eval(s, dev, 100.0, 100.0) == ProtectionOutcome::OverFrequencyTrip)
+                (eval(s, dev, SURPLUS, 100.0) == ProtectionOutcome::OverFrequencyTrip)
                     .then_some(i + 1)
             })
             .collect()
@@ -391,7 +422,7 @@ mod tests {
         let mut s = ProtectionState::default();
         for _ in 0..1_000 {
             assert_eq!(
-                eval(&mut s, trip_above, 100.0, 100.0),
+                eval(&mut s, trip_above, SURPLUS, 100.0),
                 ProtectionOutcome::Curtail
             );
             assert!(!s.over_armed);
@@ -405,12 +436,15 @@ mod tests {
         assert_eq!(n, 5, "the fixture's default");
         let mut s = ProtectionState::default();
         for tick in 1..n {
-            assert_eq!(eval(&mut s, 2.0, 100.0, 100.0), ProtectionOutcome::Curtail);
+            assert_eq!(
+                eval(&mut s, 2.0, SURPLUS, 100.0),
+                ProtectionOutcome::Curtail
+            );
             assert!(!s.over_armed, "tick {tick}");
             assert_eq!(s.over_ticks, tick);
         }
         assert_eq!(
-            eval(&mut s, 2.0, 100.0, 100.0),
+            eval(&mut s, 2.0, SURPLUS, 100.0),
             ProtectionOutcome::OverFrequencyTrip
         );
         assert!(s.over_armed);
@@ -433,7 +467,7 @@ mod tests {
         assert!(!s.over_armed);
         assert_eq!(s.over_ticks, 4);
         assert_eq!(
-            eval(&mut s, 2.0, 100.0, 100.0),
+            eval(&mut s, 2.0, SURPLUS, 100.0),
             ProtectionOutcome::OverFrequencyTrip
         );
     }
@@ -446,7 +480,7 @@ mod tests {
         assert!(s.over_armed);
         assert_eq!(s.over_ticks, 2);
         assert_eq!(
-            eval(&mut s, curtail_above, 100.0, 100.0),
+            eval(&mut s, curtail_above, SURPLUS, 100.0),
             ProtectionOutcome::None
         );
         assert!(!s.over_armed);
@@ -455,6 +489,36 @@ mod tests {
         assert!(trip_ticks(&mut s, [1.0; 100]).is_empty());
         assert!(!s.over_armed);
         assert_eq!(s.over_ticks, 0);
+    }
+
+    #[test]
+    fn no_trip_counts_while_supply_is_at_or_below_demand() {
+        let mut s = ProtectionState::default();
+        // Far above trip_above, but supply only matches (then falls short of) load.
+        for supply in [100.0, 90.0] {
+            for _ in 0..100 {
+                assert_eq!(eval(&mut s, 3.0, supply, 100.0), ProtectionOutcome::Curtail);
+                assert_eq!((s.over_ticks, s.over_armed), (0, false));
+            }
+        }
+        // Shed load counts: 100 MW of supply against 95 MW served is a surplus.
+        let mut shedding = ProtectionState {
+            shed: Ratio::new(0.05).unwrap(),
+            ..ProtectionState::default()
+        };
+        assert_eq!(
+            eval(&mut shedding, 3.0, 100.0, 100.0),
+            ProtectionOutcome::Restored
+        );
+        assert_eq!(shedding.over_ticks, 1);
+        // A tick without surplus resets the window, armed or not, without disarming.
+        assert_eq!(trip_ticks(&mut s, [3.0; 4]), Vec::<usize>::new());
+        assert_eq!(eval(&mut s, 3.0, 100.0, 100.0), ProtectionOutcome::Curtail);
+        assert_eq!((s.over_ticks, s.over_armed), (0, false));
+        assert_eq!(trip_ticks(&mut s, [3.0; 7]), vec![5]);
+        assert_eq!(eval(&mut s, 3.0, 100.0, 100.0), ProtectionOutcome::Curtail);
+        assert_eq!((s.over_ticks, s.over_armed), (0, true));
+        assert_eq!(trip_ticks(&mut s, [3.0; 5]), vec![5]);
     }
 
     #[test]
@@ -474,12 +538,15 @@ mod tests {
             ..ProtectionState::default()
         };
         for _ in 0..5 {
-            assert_eq!(eval(&mut s, 2.0, 100.0, 100.0), ProtectionOutcome::Restored);
+            assert_eq!(
+                eval(&mut s, 2.0, SURPLUS, 100.0),
+                ProtectionOutcome::Restored
+            );
         }
         assert_eq!(s.shed, Ratio::ZERO);
         assert_eq!((s.over_ticks, s.over_armed), (5, true));
         assert_eq!(
-            eval(&mut s, 2.0, 100.0, 100.0),
+            eval(&mut s, 2.0, SURPLUS, 100.0),
             ProtectionOutcome::OverFrequencyTrip
         );
         assert_eq!(s.over_ticks, 0);
@@ -497,13 +564,13 @@ mod tests {
 
     proptest! {
         /// Trips are sustained and gradual: each trip is preceded by a full
-        /// window of over-frequency ticks (the first by `trip_after_ticks`
-        /// ticks above `trip_above`), and no trip happens at or below
-        /// `curtail_above` or while every deviation so far is at or below
-        /// `trip_above`.
+        /// window of over-frequency ticks with a physical surplus (the first
+        /// by `trip_after_ticks` such ticks above `trip_above`), so no trip
+        /// happens at or below `curtail_above`, without a surplus, or while
+        /// every deviation so far is at or below `trip_above`.
         #[test]
         fn trips_need_a_full_window_of_over_frequency(
-            devs in prop::collection::vec(-0.2f64..3.0, 1..400),
+            ticks in prop::collection::vec((-0.2f64..3.0, 96.0f64..116.0), 1..400),
         ) {
             let p = params();
             let n = p.trip_after_ticks as usize;
@@ -511,27 +578,31 @@ mod tests {
             let mut s = ProtectionState::default();
             let mut armed = false;
             let mut last_trip: Option<usize> = None;
-            for (i, &dev) in devs.iter().enumerate() {
-                let outcome = eval(&mut s, dev, 100.0, 100.0);
+            let mut trips = 0;
+            for (i, &(dev, supply)) in ticks.iter().enumerate() {
+                let outcome = eval(&mut s, dev, supply, 100.0);
                 if outcome != ProtectionOutcome::OverFrequencyTrip {
                     if dev <= curtail {
                         armed = false;
                     }
                     continue;
                 }
+                trips += 1;
                 prop_assert!(i + 1 >= n);
-                let window = &devs[i + 1 - n..=i];
+                let window = &ticks[i + 1 - n..=i];
+                prop_assert!(window.iter().all(|&(_, supply)| supply > 100.0));
                 if armed {
-                    prop_assert!(window.iter().all(|&d| d > curtail));
+                    prop_assert!(window.iter().all(|&(d, _)| d > curtail));
                     if let Some(last) = last_trip {
                         prop_assert!(i - last >= n, "two trips in one window");
                     }
                 } else {
-                    prop_assert!(window.iter().all(|&d| d > trip));
+                    prop_assert!(window.iter().all(|&(d, _)| d > trip));
                 }
                 armed = true;
                 last_trip = Some(i);
             }
+            prop_assert!(trips <= ticks.len() / n);
         }
     }
 
