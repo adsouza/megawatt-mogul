@@ -7,6 +7,7 @@ mod support;
 use application::{Command, CommandError, Game};
 use domain::error::DomainError;
 use domain::events::DomainEvent;
+use domain::generation::PlantStatus;
 use domain::ids::{CellCoord, NodeId, PlantId};
 use domain::region::PlantKind;
 use domain::regulation::StrikeReason;
@@ -156,8 +157,8 @@ fn overreach_city_without_capacity() {
     insta::assert_debug_snapshot!(report);
 }
 
-/// What the overbuild scenario snapshots: how the game ended, the
-/// regulatory and reserve-review events in the order they happened (each
+/// What the overbuild scenarios snapshot: how the game stands at the end,
+/// the regulatory and reserve-review events in the order they happened (each
 /// tagged with the month whose close or day produced it), the final month's
 /// minimum-generation warning and its report.
 #[derive(Debug)]
@@ -186,22 +187,14 @@ fn regulatory(event: &DomainEvent) -> bool {
     )
 }
 
-/// Four CCGTs ordered in month 1 commission after 30 months into a fleet
-/// that already covers the tiny region's peak. Before amendment A3 the script
-/// played 48 months and the December 2029 and 2030 reserve reviews held, then
-/// disallowed, the excess capital. Under A3 the overbuilt fleet's committed
-/// minimum exceeds the overnight load, so frequency runs above the
-/// performance band: a notice in July 2029, then a FrequencyPerformance
-/// strike at each of the next three closes revokes the licence at the October
-/// 2029 close, before any December review sees the new plants (spec §14.5:
-/// failure-path scripts may end in game over). The disallowance itself is
-/// covered by the domain's month-close tests.
-#[test]
-fn overbuild_loses_its_licence_before_the_rate_review() {
+/// Starts the overbuild game and plays month 1, which orders four CCGTs near
+/// the substation, each wired to it, while AGC runs the start fleet. The
+/// CCGTs commission at the June 2029 close into a fleet that already covers
+/// the tiny region's peak. Returns the game and the new plants.
+fn overbuild_game() -> (Game, Vec<PlantId>) {
     let (mut g, _) = game_on(overbuild(), 14);
     let substation = g.session().substation();
-
-    // Month 1: order four CCGTs near the substation, each wired to it.
+    let mut ccgts = Vec::new();
     play_month(&mut g, |g| {
         auto_follow_all(g);
         for cell in [(9, 4), (9, 5), (8, 5), (7, 5)] {
@@ -219,15 +212,23 @@ fn overbuild_loses_its_licence_before_the_rate_review() {
                 to: node,
             })
             .expect("build line");
+            ccgts.push(plant);
         }
     });
+    (g, ccgts)
+}
 
-    // Months 2..=48, until a month close ends the game.
+/// Plays months 2..=48 with `plan`, stopping at a month close that ends the
+/// game. Returns the regulatory timeline and the status at the end.
+fn play_overbuild(
+    g: &mut Game,
+    mut plan: impl FnMut(&mut Game),
+) -> (Vec<(SimMonth, DomainEvent)>, SessionStatus) {
     let mut timeline = Vec::new();
     let mut status = SessionStatus::Active;
     for _ in 2..=48 {
-        let (events, after) = play_month_to_close(&mut g, auto_follow_all);
-        let closed = latest_report(&g).month;
+        let (events, after) = play_month_to_close(g, &mut plan);
+        let closed = latest_report(g).month;
         timeline.extend(
             events
                 .into_iter()
@@ -239,14 +240,53 @@ fn overbuild_loses_its_licence_before_the_rate_review() {
             break;
         }
     }
-    let month = |year, month| SimMonth::new(year, month).unwrap();
-    let at = |when: SimMonth| -> Vec<&DomainEvent> {
-        timeline
-            .iter()
-            .filter(|(closed, _)| *closed == when)
-            .map(|(_, event)| event)
-            .collect()
-    };
+    (timeline, status)
+}
+
+/// The timeline's events at the close (or day) of `when`.
+fn events_at(timeline: &[(SimMonth, DomainEvent)], when: SimMonth) -> Vec<&DomainEvent> {
+    timeline
+        .iter()
+        .filter(|(closed, _)| *closed == when)
+        .map(|(_, event)| event)
+        .collect()
+}
+
+fn month(year: i32, month: u8) -> SimMonth {
+    SimMonth::new(year, month).unwrap()
+}
+
+/// The December reviews before commissioning complete with nothing held or
+/// disallowed: until the CCGTs commission, the fleet is not in excess.
+fn assert_no_excess_before_commissioning(timeline: &[(SimMonth, DomainEvent)]) {
+    for december in [month(2027, 12), month(2028, 12)] {
+        let events = events_at(timeline, december);
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, DomainEvent::RateReviewCompleted { .. })),
+            "{december:?} completes a rate review"
+        );
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            DomainEvent::CapitalHeld { .. } | DomainEvent::CapitalDisallowed { .. }
+        )));
+    }
+}
+
+/// Over-commitment (amendment A3 end to end): the four CCGTs are committed
+/// all day on AGC as soon as they commission. Their minimum stable output
+/// pushes the committed minimum far above the overnight load, so frequency
+/// runs above the performance band despite the over-frequency trips: a
+/// notice in July 2029, then a FrequencyPerformance strike at each of the
+/// next three closes revokes the licence at the October 2029 close (spec
+/// §14.5: failure-path scripts may end in game over). The reserve review
+/// never sees the new plants; `overbuild_idle_capacity_disallowance` covers it.
+#[test]
+fn overbuild_overcommitment_loses_licence() {
+    let (mut g, _) = overbuild_game();
+    let (timeline, status) = play_overbuild(&mut g, auto_follow_all);
+    let at = |when| events_at(&timeline, when);
 
     // The game ends cleanly at the October 2029 close and rejects commands.
     assert_eq!(
@@ -298,6 +338,7 @@ fn overbuild_loses_its_licence_before_the_rate_review() {
     }
     assert!(at(month(2029, 10)).contains(&&DomainEvent::LicenseRevoked));
     assert!(last_report.frequency_failed);
+    assert!(last_report.over_frequency_trips > 0);
     assert_eq!(last_report.unserved, MegawattHours::ZERO);
     // The planning-time check would have warned: the committed minimum
     // exceeds the overnight net load.
@@ -306,24 +347,100 @@ fn overbuild_loses_its_licence_before_the_rate_review() {
         minimum_generation.is_some(),
         "the overbuilt fleet over-generates"
     );
-
-    // Both Decembers played came before commissioning: no capital was held
-    // or disallowed, and no December after commissioning was reached.
-    for december in [month(2027, 12), month(2028, 12)] {
-        let events = at(december);
-        assert!(
-            events
-                .iter()
-                .any(|event| matches!(event, DomainEvent::RateReviewCompleted { .. })),
-            "{december:?} completes a rate review"
-        );
-        assert!(!events.iter().any(|event| matches!(
-            event,
-            DomainEvent::CapitalHeld { .. } | DomainEvent::CapitalDisallowed { .. }
-        )));
-    }
+    assert_no_excess_before_commissioning(&timeline);
 
     assert_plausible(&last_report);
+    insta::assert_debug_snapshot!(OverbuildOutcome {
+        status,
+        timeline,
+        minimum_generation,
+        last_report,
+    });
+}
+
+/// Idle capacity (the used-and-useful reserve review end to end): the same
+/// four CCGTs are built but never committed, so they sit offline as excess
+/// capacity in the rate base. Leaving them uncommitted is what keeps this
+/// case about the review: committed, their minimums over-generate and the
+/// licence is lost first (`overbuild_overcommitment_loses_licence`). The first
+/// December after commissioning (2029) holds the excess capital without a
+/// write-off; the next (2030) finds the same capacity still in excess and
+/// disallows it. All 48 months are played.
+#[test]
+fn overbuild_idle_capacity_disallowance() {
+    let (mut g, ccgts) = overbuild_game();
+    // The start fleet runs on AGC all day as before; each new CCGT, once
+    // commissioned, is committed for no hours at all.
+    let (timeline, status) = play_overbuild(&mut g, |g| {
+        let commissioned: Vec<PlantId> = g
+            .session()
+            .plant_views()
+            .iter()
+            .filter(|plant| {
+                plant.kind.is_dispatchable()
+                    && !matches!(plant.status, PlantStatus::UnderConstruction { .. })
+            })
+            .map(|plant| plant.id)
+            .collect();
+        for plant in commissioned {
+            let idle = ccgts.contains(&plant);
+            g.execute(Command::CommitPlant {
+                plant,
+                hours: [!idle; 24],
+            })
+            .expect("commit plant");
+            if !idle {
+                g.execute(Command::SetAutoFollow { plant, on: true })
+                    .expect("turn AGC on");
+            }
+        }
+    });
+    let at = |when| events_at(&timeline, when);
+    let capital = |when| {
+        let events = at(when);
+        let sum = |pick: fn(&DomainEvent) -> Option<Money>| {
+            events.iter().copied().filter_map(pick).sum::<Money>()
+        };
+        (
+            sum(|e| match e {
+                DomainEvent::CapitalHeld { amount, .. } => Some(*amount),
+                _ => None,
+            }),
+            sum(|e| match e {
+                DomainEvent::CapitalDisallowed { amount, .. } => Some(*amount),
+                _ => None,
+            }),
+        )
+    };
+
+    assert_eq!(status, SessionStatus::Active);
+    let last_report = latest_report(&g).clone();
+    assert_eq!(last_report.month, month(2030, 12));
+    assert_no_excess_before_commissioning(&timeline);
+    // The new CCGTs never run.
+    for plant in &ccgts {
+        let energy = last_report
+            .merit_order
+            .iter()
+            .find(|entry| entry.plant == *plant)
+            .map_or(MegawattHours::ZERO, |entry| entry.energy);
+        assert_eq!(energy, MegawattHours::ZERO, "{plant:?} stays offline");
+    }
+    // The first December after commissioning holds capital without a
+    // write-off; the next is still in excess and disallows it.
+    let zero = Money::ZERO;
+    let (held, disallowed) = capital(month(2029, 12));
+    assert!(held > zero, "first excess review holds capital");
+    assert_eq!(
+        disallowed, zero,
+        "nothing is written off at the first review"
+    );
+    let (_, disallowed) = capital(month(2030, 12));
+    assert!(disallowed > zero, "second consecutive review disallows");
+    assert!(last_report.rate_review.is_some());
+
+    assert_plausible(&last_report);
+    let minimum_generation = g.session().minimum_generation_check();
     insta::assert_debug_snapshot!(OverbuildOutcome {
         status,
         timeline,

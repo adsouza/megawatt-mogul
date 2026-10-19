@@ -118,10 +118,17 @@ The invariants the property tests must cover:
 ## Snapshots
 
 Canonical scenarios ("East winter peak", "West duck-curve day", "Overreach: city connected without
-capacity", "Overbuild: frequency strikes revoke the licence before the reserve review") snapshot their
-`MonthlyReport`s with `insta`, so tuning changes show up as reviewable diffs. The overbuild scenario
-deliberately ends in game over and snapshots its regulatory timeline as well. `rules_version_guard`
-pins a nine-month digest to `SIM_RULES_VERSION`.
+capacity", and two overbuild cases) snapshot their `MonthlyReport`s with `insta`, so tuning changes
+show up as reviewable diffs. The overbuild cases build four surplus CCGTs and snapshot their
+regulatory timeline as well:
+
+- `overbuild_overcommitment_loses_licence` commits them all day. Over-frequency draws a notice, then
+  three frequency-performance strikes, and the licence is revoked at the October 2029 close. This
+  is deliberately a game-over script.
+- `overbuild_idle_capacity_disallowance` leaves them uncommitted. The December 2029 reserve review
+  holds the excess capital, and the December 2030 review disallows it.
+
+`rules_version_guard` pins a nine-month digest to `SIM_RULES_VERSION`.
 
 1. Run the tests; a changed snapshot fails and writes a `.snap.new` file.
 2. Run `cargo insta review` and accept or reject each diff. Without a terminal, run

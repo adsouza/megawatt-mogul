@@ -665,8 +665,9 @@ is shed). Lines show only an "energised" pulse. It shows no per-line loading unt
 
 The canonical scenarios ("East winter peak", "West duck-curve day", "Overreach: city connected
 without capacity", "Overbuild: rate review with disallowance") snapshot their `MonthlyReport`s with `insta`. Tuning changes then appear as
-reviewable diffs. *(Builder's call: under A3 the overbuild scenario ends in licence revocation
-before its first post-commissioning review; see §14.5.)*
+reviewable diffs. *(Builder's call: under A3 the overbuild scenario is split in two. Committing
+the new plants ends in licence revocation before the first post-commissioning review. Leaving them
+uncommitted keeps the hold-then-disallowance case; see §14.5.)*
 
 ### 10.4 Mutation testing
 
@@ -1016,10 +1017,12 @@ The builder's calls below keep protection from tripping the grid into a deficit:
     a modern plant, which supersedes §3.2's 40%. The test fixture keeps 40%.)*
   - *(Builder's call: the Eastern start fleet retires four coal plants that closed by 2022 and adds
     four CCGTs built since 2020 in the same footprint, leaving four coal and nine CCGT units.)*
-  - *(Builder's call: in the overbuild scenario the licence is revoked at the October 2029 close,
-    after a notice and three FrequencyPerformance strikes, before any December review sees the new
-    plants. The scenario now snapshots that outcome; the reserve-review disallowance is covered by
-    the domain's month-close tests.)*
+  - *(Builder's call: the overbuild scenario is split in two.*
+    - *`overbuild_overcommitment_loses_licence` commits the four new CCGTs. The licence is revoked
+      at the October 2029 close, after a notice and three FrequencyPerformance strikes, before any
+      December review sees the new plants.*
+    - *`overbuild_idle_capacity_disallowance` builds the same CCGTs but leaves them uncommitted. The
+      December 2029 review holds the excess capital, and the December 2030 review disallows it.)*
 - **Delivery.** A1, A2 and A3 are implemented together as Plan 1a, before Plan 2, with a single
   `SIM_RULES_VERSION` bump to 2. Snapshots are regenerated once, after all three have landed, and
   the diffs are reviewed together.

@@ -1,0 +1,568 @@
+---
+source: crates/application/tests/scenarios.rs
+expression: "OverbuildOutcome { status, timeline, minimum_generation, last_report, }"
+---
+OverbuildOutcome {
+    status: Active,
+    timeline: [
+        (
+            SimMonth {
+                year: 2027,
+                month: 7,
+            },
+            FrequencyNoticeIssued {
+                month: SimMonth {
+                    year: 2027,
+                    month: 7,
+                },
+            },
+        ),
+        (
+            SimMonth {
+                year: 2027,
+                month: 8,
+            },
+            StrikeIssued {
+                strikes: 1,
+                reason: UnservedEnergy,
+            },
+        ),
+        (
+            SimMonth {
+                year: 2027,
+                month: 11,
+            },
+            StrikeExpired {
+                strikes: 0,
+            },
+        ),
+        (
+            SimMonth {
+                year: 2027,
+                month: 12,
+            },
+            RateReviewCompleted {
+                tariff: Price(
+                    96.04433166747101,
+                ),
+                allowed_return: Ratio(
+                    0.09005265709550173,
+                ),
+            },
+        ),
+        (
+            SimMonth {
+                year: 2028,
+                month: 7,
+            },
+            FrequencyNoticeIssued {
+                month: SimMonth {
+                    year: 2028,
+                    month: 7,
+                },
+            },
+        ),
+        (
+            SimMonth {
+                year: 2028,
+                month: 8,
+            },
+            StrikeIssued {
+                strikes: 1,
+                reason: FrequencyPerformance,
+            },
+        ),
+        (
+            SimMonth {
+                year: 2028,
+                month: 11,
+            },
+            StrikeExpired {
+                strikes: 0,
+            },
+        ),
+        (
+            SimMonth {
+                year: 2028,
+                month: 12,
+            },
+            RateReviewCompleted {
+                tariff: Price(
+                    95.39745494639574,
+                ),
+                allowed_return: Ratio(
+                    0.09017305703677496,
+                ),
+            },
+        ),
+        (
+            SimMonth {
+                year: 2029,
+                month: 6,
+            },
+            PlantCommissioned {
+                plant: PlantId(
+                    15,
+                ),
+                kind: Ccgt,
+            },
+        ),
+        (
+            SimMonth {
+                year: 2029,
+                month: 6,
+            },
+            PlantCommissioned {
+                plant: PlantId(
+                    18,
+                ),
+                kind: Ccgt,
+            },
+        ),
+        (
+            SimMonth {
+                year: 2029,
+                month: 6,
+            },
+            PlantCommissioned {
+                plant: PlantId(
+                    21,
+                ),
+                kind: Ccgt,
+            },
+        ),
+        (
+            SimMonth {
+                year: 2029,
+                month: 6,
+            },
+            PlantCommissioned {
+                plant: PlantId(
+                    24,
+                ),
+                kind: Ccgt,
+            },
+        ),
+        (
+            SimMonth {
+                year: 2029,
+                month: 8,
+            },
+            StrikeIssued {
+                strikes: 1,
+                reason: UnservedEnergy,
+            },
+        ),
+        (
+            SimMonth {
+                year: 2029,
+                month: 11,
+            },
+            StrikeExpired {
+                strikes: 0,
+            },
+        ),
+        (
+            SimMonth {
+                year: 2029,
+                month: 12,
+            },
+            CapitalHeld {
+                asset: Plant(
+                    PlantId(
+                        15,
+                    ),
+                ),
+                amount: Money(
+                    45622051826,
+                ),
+            },
+        ),
+        (
+            SimMonth {
+                year: 2029,
+                month: 12,
+            },
+            CapitalHeld {
+                asset: Plant(
+                    PlantId(
+                        18,
+                    ),
+                ),
+                amount: Money(
+                    45622051826,
+                ),
+            },
+        ),
+        (
+            SimMonth {
+                year: 2029,
+                month: 12,
+            },
+            CapitalHeld {
+                asset: Plant(
+                    PlantId(
+                        21,
+                    ),
+                ),
+                amount: Money(
+                    45622051826,
+                ),
+            },
+        ),
+        (
+            SimMonth {
+                year: 2029,
+                month: 12,
+            },
+            CapitalHeld {
+                asset: Plant(
+                    PlantId(
+                        24,
+                    ),
+                ),
+                amount: Money(
+                    45622051826,
+                ),
+            },
+        ),
+        (
+            SimMonth {
+                year: 2029,
+                month: 12,
+            },
+            RateReviewCompleted {
+                tariff: Price(
+                    107.33048982746563,
+                ),
+                allowed_return: Ratio(
+                    0.08884637032083124,
+                ),
+            },
+        ),
+        (
+            SimMonth {
+                year: 2030,
+                month: 8,
+            },
+            FrequencyNoticeIssued {
+                month: SimMonth {
+                    year: 2030,
+                    month: 8,
+                },
+            },
+        ),
+        (
+            SimMonth {
+                year: 2030,
+                month: 12,
+            },
+            CapitalReleased {
+                asset: Plant(
+                    PlantId(
+                        15,
+                    ),
+                ),
+                amount: Money(
+                    2053961,
+                ),
+            },
+        ),
+        (
+            SimMonth {
+                year: 2030,
+                month: 12,
+            },
+            CapitalDisallowed {
+                asset: Plant(
+                    PlantId(
+                        15,
+                    ),
+                ),
+                amount: Money(
+                    44069106591,
+                ),
+            },
+        ),
+        (
+            SimMonth {
+                year: 2030,
+                month: 12,
+            },
+            CapitalReleased {
+                asset: Plant(
+                    PlantId(
+                        18,
+                    ),
+                ),
+                amount: Money(
+                    2053961,
+                ),
+            },
+        ),
+        (
+            SimMonth {
+                year: 2030,
+                month: 12,
+            },
+            CapitalDisallowed {
+                asset: Plant(
+                    PlantId(
+                        18,
+                    ),
+                ),
+                amount: Money(
+                    44069106591,
+                ),
+            },
+        ),
+        (
+            SimMonth {
+                year: 2030,
+                month: 12,
+            },
+            CapitalReleased {
+                asset: Plant(
+                    PlantId(
+                        21,
+                    ),
+                ),
+                amount: Money(
+                    2053961,
+                ),
+            },
+        ),
+        (
+            SimMonth {
+                year: 2030,
+                month: 12,
+            },
+            CapitalDisallowed {
+                asset: Plant(
+                    PlantId(
+                        21,
+                    ),
+                ),
+                amount: Money(
+                    44069106591,
+                ),
+            },
+        ),
+        (
+            SimMonth {
+                year: 2030,
+                month: 12,
+            },
+            CapitalReleased {
+                asset: Plant(
+                    PlantId(
+                        24,
+                    ),
+                ),
+                amount: Money(
+                    2053961,
+                ),
+            },
+        ),
+        (
+            SimMonth {
+                year: 2030,
+                month: 12,
+            },
+            CapitalDisallowed {
+                asset: Plant(
+                    PlantId(
+                        24,
+                    ),
+                ),
+                amount: Money(
+                    44069106591,
+                ),
+            },
+        ),
+        (
+            SimMonth {
+                year: 2030,
+                month: 12,
+            },
+            RateReviewCompleted {
+                tariff: Price(
+                    112.89916799299928,
+                ),
+                allowed_return: Ratio(
+                    0.08962103067110126,
+                ),
+            },
+        ),
+    ],
+    minimum_generation: None,
+    last_report: MonthlyReport {
+        month: SimMonth {
+            year: 2030,
+            month: 12,
+        },
+        days: 31,
+        revenue: Money(
+            7747062605,
+        ),
+        fuel: Money(
+            -2983369030,
+        ),
+        start_up: Money(
+            0,
+        ),
+        fixed_om: Money(
+            -517000000,
+        ),
+        construction: Money(
+            0,
+        ),
+        net: Money(
+            4246693575,
+        ),
+        energy_by_kind: {
+            Coal: MegawattHours(
+                421542.1205610209,
+            ),
+            Ccgt: MegawattHours(
+                265229.95419284306,
+            ),
+            Peaker: MegawattHours(
+                35013.85828507165,
+            ),
+        },
+        merit_order: [
+            MeritOrderEntry {
+                plant: PlantId(
+                    6,
+                ),
+                kind: Coal,
+                marginal_cost: Price(
+                    30.0,
+                ),
+                energy: MegawattHours(
+                    421542.1205610209,
+                ),
+            },
+            MeritOrderEntry {
+                plant: PlantId(
+                    9,
+                ),
+                kind: Ccgt,
+                marginal_cost: Price(
+                    45.0,
+                ),
+                energy: MegawattHours(
+                    265229.95419284306,
+                ),
+            },
+            MeritOrderEntry {
+                plant: PlantId(
+                    15,
+                ),
+                kind: Ccgt,
+                marginal_cost: Price(
+                    45.0,
+                ),
+                energy: MegawattHours(
+                    0.0,
+                ),
+            },
+            MeritOrderEntry {
+                plant: PlantId(
+                    18,
+                ),
+                kind: Ccgt,
+                marginal_cost: Price(
+                    45.0,
+                ),
+                energy: MegawattHours(
+                    0.0,
+                ),
+            },
+            MeritOrderEntry {
+                plant: PlantId(
+                    21,
+                ),
+                kind: Ccgt,
+                marginal_cost: Price(
+                    45.0,
+                ),
+                energy: MegawattHours(
+                    0.0,
+                ),
+            },
+            MeritOrderEntry {
+                plant: PlantId(
+                    24,
+                ),
+                kind: Ccgt,
+                marginal_cost: Price(
+                    45.0,
+                ),
+                energy: MegawattHours(
+                    0.0,
+                ),
+            },
+            MeritOrderEntry {
+                plant: PlantId(
+                    12,
+                ),
+                kind: Peaker,
+                marginal_cost: Price(
+                    150.0,
+                ),
+                energy: MegawattHours(
+                    35013.85828507165,
+                ),
+            },
+        ],
+        demand: MegawattHours(
+            721795.1411207254,
+        ),
+        served: MegawattHours(
+            721795.1411207254,
+        ),
+        unserved: MegawattHours(
+            0.0,
+        ),
+        curtailed: MegawattHours(
+            0.0,
+        ),
+        imbalance: MegawattHours(
+            -9.208081789346192,
+        ),
+        overgeneration: MegawattHours(
+            912.4061251690006,
+        ),
+        peak_demand: Megawatts(
+            1240.8354940808579,
+        ),
+        reliability: Ratio(
+            1.0,
+        ),
+        incidents: [],
+        over_frequency_trips: 0,
+        out_of_band_share: Ratio(
+            0.0,
+        ),
+        frequency_failed: false,
+        frequency_notice: false,
+        rate_review: Some(
+            RateReviewOutcome {
+                tariff: Price(
+                    112.89916799299928,
+                ),
+                allowed_return: Ratio(
+                    0.08962103067110126,
+                ),
+                revenue_requirement: Money(
+                    87698981235,
+                ),
+                cost_per_mwh: Some(
+                    49.63032085194913,
+                ),
+            },
+        ),
+    },
+}

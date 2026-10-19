@@ -87,11 +87,13 @@ Tuning watch items:
   the April/October committed minimum sits about 50 MW above the 02:30 net load. One more peaker
   would push seed 3 to two strikes; firm capacity is 1.105 × the connected peak against the 1.10
   test floor.
-- **Overbuild scenario:** before the frequency strikes landed, 7 of the post-commissioning months
-  ended the day over-frequency (+0.63 to +2.86 Hz), a surplus no unit could safely trip. With the
-  strikes, the scripted 48 months end in licence revocation at the October 2029 close, so the
-  scenario no longer reaches the December reserve reviews. Leaving the new CCGTs uncommitted
-  restores the hold and the disallowance (measured, not adopted; needs a ruling).
+- **Overbuild scenarios:** before the frequency strikes landed, 7 of the post-commissioning months
+  ended the day over-frequency (+0.63 to +2.86 Hz), a surplus no unit could safely trip.
+  - With the strikes, the committed script (`overbuild_overcommitment_loses_licence`) ends in
+    licence revocation at the October 2029 close.
+  - The used-and-useful review is now covered by `overbuild_idle_capacity_disallowance`, which
+    builds the same CCGTs but leaves them uncommitted. It holds capital in December 2029 and
+    disallows it in December 2030 (ruling: split the scenario).
 
 ## Carry into Plan 2 (Bevy client)
 - **Batching:** advance in small batches (`speed` ticks per `FixedUpdate`) so projections stay
