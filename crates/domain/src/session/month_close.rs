@@ -97,8 +97,8 @@ impl GameSession {
     /// 6. In December, the reserve review and the annual rate review.
     /// 7. Three consecutive negative closes end the game in bankruptcy.
     /// 8. Each plant that was commissioned all month records whether it sat
-    ///    offline, the report is published, the finished day is cleared, and
-    ///    the phase moves to `Review`.
+    ///    offline, the report is published, the finished day is cleared, the
+    ///    hydro schedule is frozen for review, and the phase moves to `Review`.
     pub(super) fn close_month(&mut self) -> Vec<DomainEvent> {
         let region = Arc::clone(&self.region);
         let month = self.clock.month();
@@ -154,6 +154,7 @@ impl GameSession {
         events.push(DomainEvent::MonthClosed(Box::new(report)));
         self.month_to_date.reset();
         self.day_ticks.clear();
+        self.power.finish_hydro_day();
         events.push(self.change_phase(DayPhase::Review));
         events
     }

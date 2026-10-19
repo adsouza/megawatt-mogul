@@ -43,7 +43,11 @@ pub enum Lesson {
     /// plants tripped by over-frequency protection.
     Overgeneration { energy: MegawattHours, trips: u32 },
     /// The month failed frequency performance; `notice` is true when it drew
-    /// a formal notice rather than a strike.
+    /// a formal notice rather than a strike. In a month that also failed the
+    /// unserved-energy test, `notice: false` means the month's one strike was
+    /// for unserved energy and frequency was not judged separately, not that
+    /// frequency drew a strike of its own: the Plan 2 UI should read the
+    /// strike's reason from the `StrikeIssued` event.
     FrequencyPerformance { out_of_band: Ratio, notice: bool },
     /// Solar was curtailed because there was nowhere for it to go.
     SolarCurtailed { energy: MegawattHours },

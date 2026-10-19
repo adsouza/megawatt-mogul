@@ -583,6 +583,65 @@ fn hydro_schedule_is_the_power_systems_schedule() {
     assert!(off.hourly[1..].iter().all(|mw| *mw == Megawatts::ZERO));
 }
 
+/// A session with scheduled hydro, operated for the whole first day. Hydro
+/// is taken off AGC in hour 23, so the latest plan no longer allocates that
+/// hour. Returns the session, the hydro plant and each hour's allocation as
+/// it stood when the hour began.
+fn day_with_hydro(seed: u64) -> (GameSession, PlantId, [Megawatts; 24]) {
+    let mut s = GameSession::new(Arc::new(tiny_region()), seed, GameSettings::default());
+    let hydro = s.insert_commissioned_plant(PlantKind::Hydro, CellCoord { x: 10, y: 1 });
+    s.start_plant(hydro).unwrap();
+    s.set_auto_follow(hydro, true).unwrap();
+    s.begin_operating().unwrap();
+    let mut at_start = [Megawatts::ZERO; 24];
+    for (h, slot) in at_start.iter_mut().enumerate() {
+        // The re-plan opening hour h runs in tick h × 60.
+        run_ticks(&mut s, 1);
+        *slot = s.hydro_schedule().plants[&hydro].hourly[h];
+        if h == 23 {
+            s.set_auto_follow(hydro, false).unwrap();
+        }
+        run_ticks(&mut s, 59);
+    }
+    assert_eq!(s.phase(), DayPhase::Review);
+    (s, hydro, at_start)
+}
+
+#[test]
+fn hydro_schedule_shows_the_plan_the_finished_day_then_nothing() {
+    // Operating: the current plan.
+    let mut s = session();
+    let hydro = s.insert_commissioned_plant(PlantKind::Hydro, CellCoord { x: 10, y: 1 });
+    s.start_plant(hydro).unwrap();
+    s.set_auto_follow(hydro, true).unwrap();
+    s.begin_operating().unwrap();
+    run_ticks(&mut s, 61);
+    let operating = s.hydro_schedule().plants[&hydro];
+    assert!(operating.hourly[1..].iter().any(|mw| *mw > Megawatts::ZERO));
+
+    // Review: the finished day, every hour as it stood when it began, even
+    // hour 23, which the latest plan no longer allocates.
+    let (mut s, hydro, at_start) = day_with_hydro(1);
+    assert!(at_start[23] > Megawatts::ZERO);
+    let review = s.hydro_schedule();
+    assert_eq!(review.plants[&hydro].hourly, at_start);
+    assert_eq!(review, s.power().hydro_schedule());
+
+    // Planning: nothing until the next BeginOperating plans the new day.
+    s.finish_review().unwrap();
+    assert_eq!(s.phase(), DayPhase::Planning);
+    assert!(s.hydro_schedule().plants.is_empty());
+    // Clearing is part of the command, so replay reaches the same state.
+    let (mut again, _, _) = day_with_hydro(1);
+    again.finish_review().unwrap();
+    assert_eq!(s.state_hash(), again.state_hash());
+    // Commands in Planning never plan; BeginOperating does.
+    s.set_auto_follow(hydro, true).unwrap();
+    assert!(s.hydro_schedule().plants.is_empty());
+    s.begin_operating().unwrap();
+    assert!(s.hydro_schedule().plants.contains_key(&hydro));
+}
+
 /// The forecast net load of each hour at minute 30, through the public
 /// per-tick forecast (an independent route from `hourly_net_load`).
 fn net_load_at_half_hours(s: &GameSession) -> [Megawatts; 24] {

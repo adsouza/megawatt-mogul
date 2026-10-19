@@ -233,10 +233,12 @@ impl GameSession {
         Ok(events)
     }
 
-    /// Review → the next month's Planning.
+    /// Review → the next month's Planning. The finished day's hydro schedule
+    /// is cleared: nothing is planned until `BeginOperating`.
     pub fn finish_review(&mut self) -> Result<Vec<DomainEvent>, DomainError> {
         self.require_phase(&[DayPhase::Review])?;
         self.clock.next_month();
+        self.power.clear_hydro_plan();
         Ok(vec![self.change_phase(DayPhase::Planning)])
     }
 

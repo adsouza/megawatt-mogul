@@ -1354,11 +1354,18 @@ fn emergency_lifts_the_cap_for_the_whole_restoration() {
     sys.plant_mut(PlantId(2)).unwrap().trip();
 
     let (mut above_while_shedding, mut held_in_restoration, mut capped_again) = (0, 0, 0);
+    let mut restored = false;
     for t in 1030..1080 {
         let shed_before = sys.protection().shed;
         let lifted = shed_before > Ratio::ZERO || sys.band == FrequencyBand::Shedding;
         let (s, _) = sys.tick(&region, january(), t, &mut rng);
         assert_eq!(s.mode, GridMode::Normal, "tick {t}");
+        // Once the first restoration completes, the returning cap never
+        // sheds load again.
+        restored |= shed_before > Ratio::ZERO && s.shed == Ratio::ZERO;
+        if restored {
+            assert_eq!(s.shed, Ratio::ZERO, "tick {t}: shed again");
+        }
         let alloc = ceiling(&sys, t + 1);
         let output = hydro_output(&sys);
         let target = target_of(&sys, HYDRO.0);
@@ -1374,53 +1381,334 @@ fn emergency_lifts_the_cap_for_the_whole_restoration() {
             }
         }
         if !lifted && output > alloc + Megawatts::new(1e-9) {
-            // The cap is back: hydro ramps down toward its allocation.
+            // The cap is back, in the recovery phase: hydro ramps down toward
+            // its ceiling, no faster than its own ramp.
             capped_again += 1;
-            let expected = (output - hydro_ramp(&sys)).max(alloc);
-            assert!(
-                close(target, expected),
-                "tick {t}: {target:?} vs {expected:?}"
-            );
+            assert_eq!(sys.hydro_override, HydroOverride::Recovering, "tick {t}");
+            assert!(target <= output, "tick {t}");
+            let fastest = (output - hydro_ramp(&sys)).max(alloc);
+            assert!(target >= fastest - Megawatts::new(1e-9), "tick {t}");
         }
     }
     assert!(above_while_shedding > 0);
     assert!(held_in_restoration > 0);
     assert!(capped_again > 0);
+    assert!(restored);
     assert_eq!(sys.protection().shed, Ratio::ZERO);
     assert!(hydro_output(&sys) <= ceiling(&sys, 1079) + Megawatts::new(1e-9));
+}
+
+/// What the rest of a day did after CCGT 2 tripped at `trip_at`.
+#[derive(Debug)]
+struct EmergencyRun {
+    /// Separate runs of ticks with load shed.
+    episodes: u32,
+    blackout: bool,
+    /// Unserved energy over the rest of the day, in MW·ticks.
+    shed: f64,
+    /// Unserved energy after the first shed episode ended, in MW·ticks.
+    shed_after_restoration: f64,
+}
+
+/// The West-like fleet on January seed `seed`, with CCGT 2 tripped at
+/// instant `trip_at` and the day run to midnight.
+fn evening_ccgt_trip(seed: u64, trip_at: u32) -> EmergencyRun {
+    let region = tiny_region();
+    let mut sys = west_like_fleet(&region);
+    let mut rng = SimRng::from_seed(seed);
+    sys.begin_day(&region, january(), &mut rng);
+    run_month(&mut sys, &region, january(), 0..trip_at, &mut rng);
+    sys.plant_mut(PlantId(2)).unwrap().trip();
+    let mut run = EmergencyRun {
+        episodes: 0,
+        blackout: false,
+        shed: 0.0,
+        shed_after_restoration: 0.0,
+    };
+    let (mut shedding, mut restored) = (false, false);
+    for t in trip_at..TICKS_PER_DAY {
+        let (s, _) = sys.tick(&region, january(), t, &mut rng);
+        let now = s.shed > Ratio::ZERO;
+        run.episodes += u32::from(now && !shedding);
+        restored |= shedding && !now;
+        if restored {
+            run.shed_after_restoration += s.unserved.value();
+        }
+        run.shed += s.unserved.value();
+        run.blackout |= s.mode == GridMode::Blackout;
+        shedding = now;
+    }
+    run
+}
+
+#[test]
+fn the_cap_returns_without_re_shedding_after_an_emergency() {
+    // (seed, trip instant, reference shed). The reference is the final
+    // review's counterfactual, which limited every hydro ramp-down to the
+    // others' one-tick headroom net of the shortfall, rounded up to the next
+    // MW·tick. Before the recovery phase these cases shed in 5, 14 and 8
+    // episodes, and seed 7 blacked out.
+    let cases = [(2, 1000, 4_414.0), (11, 990, 5_717.0), (7, 1150, 3_256.0)];
+    for (seed, trip_at, reference) in cases {
+        let run = evening_ccgt_trip(seed, trip_at);
+        assert_eq!(run.episodes, 1, "seed {seed}: {run:?}");
+        assert!(!run.blackout, "seed {seed}: {run:?}");
+        assert_eq!(run.shed_after_restoration, 0.0, "seed {seed}: {run:?}");
+        assert!(run.shed > 0.0, "seed {seed}: {run:?}");
+        assert!(run.shed <= reference, "seed {seed}: {run:?}");
+    }
+}
+
+/// Scheduled hydro `above` its AGC ceiling for targets acting on tick 1031,
+/// after CCGT 2 tripped and the emergency lift has just ended. Returns the
+/// availability at tick 1030 and plant 4's ceiling.
+fn hydro_above_ceiling_after_a_lift(
+    sys: &mut PowerSystem,
+    region: &RegionDefinition,
+    above: Megawatts,
+) -> (BTreeMap<PlantId, Megawatts>, Megawatts) {
+    let mut rng = SimRng::from_seed(2);
+    sys.begin_day(region, january(), &mut rng);
+    run_month(sys, region, january(), 0..1030, &mut rng);
+    sys.trip_plant(PlantId(2));
+    // As if a re-plan had cut the current hour: each scheduled plant's
+    // ceiling is now `above` below its output.
+    let outputs: BTreeMap<PlantId, Megawatts> = sys
+        .plants()
+        .iter()
+        .map(|(id, p)| (*id, p.output()))
+        .collect();
+    for (id, plan) in &mut sys.hydro_plan {
+        plan.hourly[17] = outputs[id] - above;
+        plan.hourly[18] = outputs[id] - above;
+    }
+    let output = hydro_output(sys);
+    sys.hydro_override = HydroOverride::Lifted;
+    assert!(!sys.hydro_cap_lifted());
+    let (available, _, _) = sys.availability(region, january(), 1030);
+    (available, output - above)
+}
+
+/// The one-tick ramp-up headroom of plants 1 (coal) and 3 (peaker).
+fn thermal_headroom(sys: &PowerSystem, available: &BTreeMap<PlantId, Megawatts>) -> Megawatts {
+    [PlantId(1), PlantId(3)]
+        .iter()
+        .map(|id| sys.plant(*id).unwrap().headroom_up(available[id]))
+        .sum()
+}
+
+#[test]
+fn recovery_ramps_hydro_down_no_faster_than_the_fleet_can_follow() {
+    let region = tiny_region();
+    let ramp = region.spec(PlantKind::Hydro).ramp.per_tick();
+    // (shortfall as a share of the thermal headroom, expected fall as one).
+    // A deficit uses up headroom first; a surplus needs no cover, so it adds
+    // to what hydro may give back, up to its own ramp.
+    for (share, fall) in [(0.0, 1.0), (0.5, 0.5), (1.0, 0.0), (2.0, 0.0)] {
+        let mut sys = west_like_fleet(&region);
+        let (available, ceiling) = hydro_above_ceiling_after_a_lift(&mut sys, &region, ramp * 3.0);
+        let headroom = thermal_headroom(&sys, &available);
+        assert!(
+            headroom > Megawatts::ZERO && headroom < ramp,
+            "{headroom:?}"
+        );
+        let output = hydro_output(&sys);
+
+        let left = sys.retarget_agc(&available, headroom * share, 1031);
+        assert_eq!(sys.hydro_override, HydroOverride::Recovering);
+        let expected = output - headroom * fall;
+        let target = target_of(&sys, HYDRO.0);
+        assert!(
+            close(target, expected),
+            "share {share}: {target:?} vs {expected:?}"
+        );
+        assert!(target > ceiling);
+        // The thermal fleet picks up what hydro gives back; only a deficit
+        // beyond its headroom is left over.
+        let over = headroom * (share - 1.0).max(0.0);
+        assert!(close(left, over), "share {share}: {left:?} vs {over:?}");
+    }
+
+    // A surplus of two hydro ramps covers the full ramp.
+    let mut sys = west_like_fleet(&region);
+    let (available, _) = hydro_above_ceiling_after_a_lift(&mut sys, &region, ramp * 3.0);
+    let output = hydro_output(&sys);
+    sys.retarget_agc(&available, -(ramp * 2.0), 1031);
+    assert!(close(target_of(&sys, HYDRO.0), output - ramp));
+}
+
+#[test]
+fn recovery_shares_the_cover_between_hydro_plants_in_id_order() {
+    let region = tiny_region();
+    let ramp = region.spec(PlantKind::Hydro).ramp.per_tick();
+    let mut sys = west_like_fleet(&region);
+    add_hydro(&mut sys, &region, PlantId(5), true);
+    let (available, _) = hydro_above_ceiling_after_a_lift(&mut sys, &region, ramp);
+    let outputs = [HYDRO, PlantId(5)].map(|id| sys.plant(id).unwrap().output());
+    assert!(outputs.iter().all(|mw| *mw > ramp), "{outputs:?}");
+    let headroom = thermal_headroom(&sys, &available);
+    // A surplus brings the cover to one and a half hydro ramps: plant 4
+    // takes a full ramp, plant 5 what is left.
+    let cover = ramp * 1.5;
+    sys.retarget_agc(&available, headroom - cover, 1031);
+    assert!(close(target_of(&sys, 4), outputs[0] - ramp));
+    assert!(close(target_of(&sys, 5), outputs[1] - ramp * 0.5));
+}
+
+/// Where scheduled hydro sits against its AGC ceilings, for
+/// [`the_override_lifts_recovers_and_ends`].
+#[derive(Debug, Clone, Copy)]
+enum Against {
+    /// At its ceiling now and through the next hour.
+    AtCeiling,
+    /// Above its ceiling now.
+    AboveNow,
+    /// At its ceiling now, above the next hour's.
+    AboveNext,
+}
+
+#[test]
+fn the_override_lifts_recovers_and_ends() {
+    use Against::{AboveNext, AboveNow, AtCeiling};
+    use HydroOverride::{Lifted, Off, Recovering};
+    let region = tiny_region();
+    let ramp = region.spec(PlantKind::Hydro).ramp.per_tick();
+    let mut sys = west_like_fleet(&region);
+    let (_, ceiling) = hydro_above_ceiling_after_a_lift(&mut sys, &region, ramp * 3.0);
+    let output = hydro_output(&sys);
+    let set = |sys: &mut PowerSystem, shed: bool, against: Against| {
+        sys.protection.shed = if shed {
+            Ratio::new(0.05).unwrap()
+        } else {
+            Ratio::ZERO
+        };
+        let (now, next) = match against {
+            AtCeiling => (output, output),
+            AboveNow => (ceiling, ceiling),
+            AboveNext => (output, ceiling),
+        };
+        let plan = sys.hydro_plan.get_mut(&HYDRO).unwrap();
+        plan.hourly[17] = now;
+        plan.hourly[18] = next;
+    };
+    // (state before, shed, where hydro sits, state after).
+    let cases = [
+        (Off, false, AtCeiling, Off),
+        // Outside recovery the normal cap ramps hydro down.
+        (Off, false, AboveNow, Off),
+        (Off, true, AtCeiling, Lifted),
+        (Lifted, true, AboveNow, Lifted),
+        (Lifted, false, AboveNow, Recovering),
+        (Lifted, false, AboveNext, Recovering),
+        (Lifted, false, AtCeiling, Off),
+        (Recovering, false, AboveNow, Recovering),
+        (Recovering, false, AboveNext, Recovering),
+        (Recovering, false, AtCeiling, Off),
+        // A new emergency during recovery simply lifts the cap again.
+        (Recovering, true, AboveNow, Lifted),
+    ];
+    for (before, shed, against, after) in cases {
+        sys.hydro_override = before;
+        set(&mut sys, shed, against);
+        assert_eq!(
+            sys.next_hydro_override(1031),
+            after,
+            "{before:?}, shed {shed}, {against:?}"
+        );
+    }
+
+    // A plant stopping under its commitment is not ramped by AGC, so it does
+    // not hold the recovery open.
+    set(&mut sys, false, AboveNow);
+    sys.plant_mut(HYDRO).unwrap().stop().unwrap();
+    assert!(sys.plant(HYDRO).unwrap().output() > ceiling);
+    sys.hydro_override = Recovering;
+    assert_eq!(sys.next_hydro_override(1031), Off);
+
+    // The day boundary ends any recovery.
+    sys.hydro_override = Recovering;
+    sys.begin_day(&region, january(), &mut SimRng::from_seed(2));
+    assert_eq!(sys.hydro_override, Off);
+}
+
+#[test]
+fn after_recovery_the_normal_cap_applies() {
+    let region = tiny_region();
+    let mut sys = west_like_fleet(&region);
+    let mut rng = SimRng::from_seed(2);
+    sys.begin_day(&region, january(), &mut rng);
+    run_month(&mut sys, &region, january(), 0..1030, &mut rng);
+    sys.plant_mut(PlantId(2)).unwrap().trip();
+
+    // Run until the recovery that follows the emergency has ended.
+    let mut phases = vec![sys.hydro_override];
+    let mut t = 1030;
+    while t < TICKS_PER_DAY - 2
+        && !(phases.contains(&HydroOverride::Recovering)
+            && sys.hydro_override == HydroOverride::Off)
+    {
+        sys.tick(&region, january(), t, &mut rng);
+        if phases.last() != Some(&sys.hydro_override) {
+            phases.push(sys.hydro_override);
+        }
+        t += 1;
+    }
+    use HydroOverride::{Lifted, Off, Recovering};
+    assert_eq!(phases, [Off, Lifted, Recovering, Off], "by tick {t}");
+    assert!(hydro_output(&sys) <= ceiling(&sys, t) + Megawatts::new(1e-9));
+
+    // An unforeseen drop now ramps at hydro's own rate, faster than the
+    // thermal fleet's headroom: the recovery limit no longer applies.
+    let ramp = hydro_ramp(&sys);
+    let output = hydro_output(&sys);
+    let (available, _, _) = sys.availability(&region, january(), t);
+    assert!(thermal_headroom(&sys, &available) < ramp);
+    let hour = (t + 1) as usize / 60;
+    sys.hydro_plan.get_mut(&HYDRO).unwrap().hourly[hour] = output - ramp * 3.0;
+    sys.tick(&region, january(), t, &mut rng);
+    assert_eq!(sys.hydro_override, Off);
+    let now = hydro_output(&sys);
+    let expected = (now - ramp).max(ceiling(&sys, t + 1));
+    assert!(expected < now);
+    assert!(close(target_of(&sys, HYDRO.0), expected));
+}
+
+/// Adds hydro plant `id` on the hydro site, connected and committed all day,
+/// on AGC when `auto`.
+fn add_hydro(sys: &mut PowerSystem, region: &RegionDefinition, id: PlantId, auto: bool) {
+    let site = cell(10, 1);
+    let spec = region.spec(PlantKind::Hydro).clone();
+    let mut plant = Plant::new_commissioned(id, NodeId(100 + id.0), site, spec, april());
+    plant.set_commitment(CommitmentSchedule::all_day());
+    plant.set_auto_follow(auto).unwrap();
+    sys.network_mut()
+        .add_node(
+            plant.node(),
+            Node {
+                kind: NodeKind::Plant(id),
+                cell: site,
+            },
+        )
+        .unwrap();
+    sys.network_mut()
+        .add_line(
+            LineId(plant.node().0),
+            ROOT,
+            plant.node(),
+            LineStatus::InService,
+        )
+        .unwrap();
+    sys.insert_plant(plant);
 }
 
 #[test]
 fn hydro_plants_fill_in_id_order_against_the_residual() {
     let region = tiny_region();
     let mut sys = west_like_fleet(&region);
-    let site = cell(10, 1);
     let spec = region.spec(PlantKind::Hydro).clone();
     // A second scheduled hydro plant, and a manual one that is never planned.
-    for (id, auto) in [(PlantId(5), true), (PlantId(6), false)] {
-        let mut plant =
-            Plant::new_commissioned(id, NodeId(100 + id.0), site, spec.clone(), april());
-        plant.set_commitment(CommitmentSchedule::all_day());
-        plant.set_auto_follow(auto).unwrap();
-        sys.network_mut()
-            .add_node(
-                plant.node(),
-                Node {
-                    kind: NodeKind::Plant(id),
-                    cell: site,
-                },
-            )
-            .unwrap();
-        sys.network_mut()
-            .add_line(
-                LineId(plant.node().0),
-                ROOT,
-                plant.node(),
-                LineStatus::InService,
-            )
-            .unwrap();
-        sys.insert_plant(plant);
-    }
+    add_hydro(&mut sys, &region, PlantId(5), true);
+    add_hydro(&mut sys, &region, PlantId(6), false);
     sys.begin_day(&region, january(), &mut SimRng::from_seed(3));
     assert!(!sys.hydro_plan.contains_key(&PlantId(6)));
 
@@ -1679,12 +1967,6 @@ fn the_last_hour_is_not_ramped_to_zero_before_midnight() {
     let ticks = run_month(&mut sys, &region, january(), 0..TICKS_PER_DAY, &mut rng);
     let last_hour = sys.hydro_schedule().plants[&HYDRO].hourly[23];
     assert!(last_hour > Megawatts::new(100.0));
-    for (s, _) in &ticks[23 * 60 - 2..] {
-        eprintln!(
-            "t={} out={:?} last={last_hour:?}",
-            s.tick, s.by_plant[&HYDRO]
-        );
-    }
     // Hydro holds its last allocation to midnight (the first ticks of the hour
     // may still follow the previous plan's figure for it, a few kW apart).
     for (s, _) in &ticks[23 * 60..] {
@@ -2657,6 +2939,8 @@ proptest! {
             unarmed.shed
         );
         prop_assert!(!armed.blackout || unarmed.blackout);
+        // Not vacuous: two or more surplus CCGTs always draw night trips.
+        prop_assert!(extra < 2 || armed.trips > 0, "no trips with {} extra CCGTs", extra);
     }
 }
 

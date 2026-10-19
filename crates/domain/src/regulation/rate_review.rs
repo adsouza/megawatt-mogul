@@ -52,7 +52,7 @@ pub fn reserve_excess(
 ///   + per_cost_improvement × (prev − cur) / prev`, the last term only when
 ///   both costs exist, clamped to `[min, max]`;
 /// - `revenue requirement = operating cost + depreciation + return × eligible
-///   rate base × months ÷ 12`, where `months` (0 to 12) is how much of the
+///   rate base × min(months, 12) ÷ 12`, where `months` (0 to 12) is how much of the
 ///   year the tally covers: a short first period earns a proportionate return
 ///   and zero months earn none;
 /// - `tariff = revenue requirement / served` (the previous tariff when nothing was served).
@@ -78,8 +78,9 @@ pub fn compute_rate_review(i: &RateReviewInputs, p: &RegulatorParams) -> RateRev
     let allowed_return = clamp_return(raw, p);
 
     // Only the tallied part of the year earns return: the other terms already
-    // cover just those months. `months / 12` is exactly 1 for a full year.
-    let year_fraction = f64::from(i.tally.months) / 12.0;
+    // cover just those months. `months / 12` is exactly 1 for a full year,
+    // and a tally can never cover more than one.
+    let year_fraction = f64::from(i.tally.months.min(12)) / 12.0;
     let return_cents =
         (allowed_return.value() * i.eligible_rate_base.cents() as f64 * year_fraction)
             .round_ties_even() as i64;
@@ -226,6 +227,12 @@ mod tests {
         let o = compute_rate_review(&i, region.regulator());
         let expected = (o.allowed_return.value() * 120_000_000.0 * 0.75).round_ties_even() as i64;
         assert_eq!(o.revenue_requirement, Money::from_cents(expected));
+    }
+
+    #[test]
+    fn more_than_twelve_months_earn_one_year_of_return() {
+        let i = inputs(1000.0, 7_000_000, 123_456_789);
+        assert_eq!(requirement_over(&i, 13), requirement_over(&i, 12));
     }
 
     #[test]

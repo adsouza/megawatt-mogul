@@ -149,7 +149,10 @@ impl GameSession {
         hourly_forecast(connected, self.region.demand(), self.clock.month())
     }
 
-    /// Today's hydro peak-shaving schedule (spec §12.6).
+    /// Today's hydro peak-shaving schedule (spec §12.6), valid per phase:
+    /// the current plan while Operating, the finished day with every hour
+    /// frozen during Review, and empty during Planning (see
+    /// [`crate::grid::PowerSystem::hydro_schedule`]).
     pub fn hydro_schedule(&self) -> HydroScheduleView {
         self.power.hydro_schedule()
     }

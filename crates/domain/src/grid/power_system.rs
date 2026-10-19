@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 mod hydro_plan;
 
-use hydro_plan::PlantHydroPlan;
+use hydro_plan::{HydroOverride, PlantHydroPlan};
 pub use hydro_plan::{HydroScheduleView, PlantHydroScheduleView};
 
 use super::dispatch::{agc_retarget, boundary_dispatch};
@@ -84,8 +84,12 @@ pub struct PowerSystem {
     curtailment: Megawatts,
     /// Each scheduled hydro plant's water plan (spec §12.3).
     hydro_plan: BTreeMap<PlantId, PlantHydroPlan>,
-    /// The hour the hydro plan was last made from.
+    /// The hour the hydro plan was last made from, or 24 once the day is
+    /// finished.
     hydro_planned_from: u8,
+    /// The emergency override of the hydro cap, as of the last AGC pass:
+    /// off, lifted or recovering (see [`PowerSystem::retarget_agc`]).
+    hydro_override: HydroOverride,
 }
 
 fn is_curtailable(plant: &Plant) -> bool {
@@ -127,6 +131,7 @@ impl PowerSystem {
             curtailment: Megawatts::ZERO,
             hydro_plan: BTreeMap::new(),
             hydro_planned_from: 0,
+            hydro_override: HydroOverride::Off,
         }
     }
 
@@ -217,8 +222,9 @@ impl PowerSystem {
     /// to `capacity × 24 h × hydro_potential(cell) × monthly_flow[month]`, the
     /// day's clearness is drawn (exactly one normal), every plant is
     /// initialised from its cyclic pattern (clearing operating overrides),
-    /// frequency and protection return to nominal and `Normal`, and the demand
-    /// forecast error and solar curtailment return to zero. The hydro
+    /// frequency and protection return to nominal and `Normal`, the demand
+    /// forecast error and solar curtailment return to zero, and any hydro
+    /// recovery ends (see `retarget_agc`). The hydro
     /// schedule is then planned over the whole day (spec §12.3). Last, the
     /// auto-follow fleet is dispatched to balance the tick-0 load (the cyclic
     /// day's boundary state), so a day does not open in a deficit that
@@ -251,6 +257,7 @@ impl PowerSystem {
         self.protection = ProtectionState::default();
         self.noise = DemandNoise::default();
         self.curtailment = Megawatts::ZERO;
+        self.hydro_override = HydroOverride::Off;
         self.plan_hydro(region, month, 0);
         self.balance_boundary(region, month);
         DayInitialisation { boundary_starts }
@@ -261,8 +268,9 @@ impl PowerSystem {
     /// in merit order (see [`boundary_dispatch`]). The load is the connected
     /// demand forecast less expected solar and less the output of connected
     /// online plants that are not auto-follow, which keep their initial
-    /// target. Scheduled hydro is capped at its hour-0 allocation. Draws no
-    /// random numbers.
+    /// target. Scheduled hydro is capped at its hour-0 ceiling: its hour-0
+    /// allocation, lowered to the ramp envelope (see
+    /// [`PowerSystem::hydro_ceilings`]). Draws no random numbers.
     fn balance_boundary(&mut self, region: &RegionDefinition, month: SimMonth) {
         let manual: Megawatts = self
             .connected_plants()
@@ -317,7 +325,8 @@ impl PowerSystem {
     ///    shed_step)` so supply is pre-positioned for the next restoration step.
     ///    While solar is curtailed, AGC also makes room for the withheld solar,
     ///    so the cheaper solar returns as thermal ramps down. Scheduled hydro
-    ///    is held to its hourly allocation (see [`PowerSystem::retarget_agc`]).
+    ///    is held to its hourly allocation, except during an emergency lift
+    ///    and the recovery after it (see [`PowerSystem::retarget_agc`]).
     /// 6. Imbalance between connected supply and served load.
     /// 7. Frequency update, held at nominal in a blackout. System size is the
     ///    connected demand.
@@ -555,22 +564,43 @@ impl PowerSystem {
     ///   exactly at the boundary: a foreseen fall never spills a ramp tail
     ///   into the next hour, so a plan that ends with the water never ramps
     ///   down with nothing behind it (which the budget limit would cut off in
-    ///   one tick). Hour 23
-    ///   has no next-hour term; the next day re-initialises.
+    ///   one tick). Hour 23 has no next-hour term; the next day
+    ///   re-initialises.
     ///
     /// AGC's view of the plant's availability becomes `min(availability,
     /// ceiling)`, so AGC never raises its target above the ceiling. The
     /// physical availability passed to `Plant::step` is untouched and keeps
     /// only the budget limit. When the ceiling is below the plant's output
     /// (the envelope's own fall, or an unforeseen drop after a re-plan), its
-    /// target is set to `max(ceiling, output − ramp)` before AGC runs: the
-    /// plant ramps down at its ramp rate instead of dropping in one tick, and
-    /// the output it gives up next tick is added to the shortfall for the rest
-    /// of the fleet. AGC leaves such a plant out for this tick.
+    /// target is set to `max(ceiling, output − step)` before AGC runs, where
+    /// `step` is its ramp: the plant ramps down at its ramp rate instead of
+    /// dropping in one tick, and the output it gives up next tick is added to
+    /// the shortfall for the rest of the fleet. AGC leaves such a plant out for
+    /// this tick.
     ///
     /// The cap is lifted, leaving only the budget limit, while load is shed or
     /// the band is `Shedding` (see [`PowerSystem::hydro_cap_lifted`]). Hydro
     /// with no plan for the hour, and manual hydro, are never capped.
+    ///
+    /// **Recovery (builder's call): the cap returns at a rate the rest of the
+    /// fleet can follow.** Hydro that ran above its allocation during a lift
+    /// would otherwise fall back at its own ramp on the first tick nothing is
+    /// shed, faster than slow thermal can pick up, and shed load again. So when
+    /// a lift ends, the system enters recovery (see [`HydroOverride`] and
+    /// [`PowerSystem::next_hydro_override`]). While recovering, the plants
+    /// above their ceiling may give back in total no more than the cover:
+    /// the other AGC plants' one-tick headroom (see
+    /// [`PowerSystem::agc_headroom`], the over-frequency trip gate's
+    /// definition) less the shortfall they already face, never below zero, so
+    /// a surplus counts as cover as it does at the gate. Each plant's `step` is
+    /// `min(ramp, cover left)`, shared in plant-id order: the lowest id takes
+    /// its full ramp first. Recovery lasts while any scheduled plant is above
+    /// the lowest ceiling it meets before the next re-plan (the trip gate's
+    /// [`PowerSystem::foreseen_ceilings`]), so a foreseen fall that follows
+    /// is limited too, and it ends at the day boundary. A new emergency
+    /// simply lifts the cap again. Recovery may spend water beyond the plan;
+    /// the budget limit still binds (spec §12.4). Outside recovery the rules
+    /// above are unchanged.
     fn retarget_agc(
         &mut self,
         available: &BTreeMap<PlantId, Megawatts>,
@@ -578,6 +608,12 @@ impl PowerSystem {
         effect_tick: u32,
     ) -> Megawatts {
         let ceilings = self.agc_ceilings(effect_tick);
+        self.hydro_override = self.next_hydro_override(effect_tick);
+        // In recovery, what the others can pick up next tick, net of the
+        // shortfall they already face; a surplus needs no cover.
+        let mut cover = (self.hydro_override == HydroOverride::Recovering).then(|| {
+            (self.agc_headroom(available, &ceilings, None) - shortfall).max(Megawatts::ZERO)
+        });
         let mut shortfall = shortfall;
         let network = &self.network;
         let mut connected: Vec<&mut Plant> = Vec::new();
@@ -588,13 +624,17 @@ impl PowerSystem {
         {
             let output = plant.output();
             match ceilings.get(&plant.id()) {
-                Some(&allocation) if plant.is_online() && output > allocation => {
+                Some(&ceiling) if plant.is_online() && output > ceiling => {
                     let spec = plant.spec();
-                    let target = (output - spec.ramp.per_tick())
-                        .max(allocation)
+                    let step = cover.map_or(spec.ramp.per_tick(), |c| spec.ramp.per_tick().min(c));
+                    let target = (output - step)
+                        .max(ceiling)
                         .clamp(spec.min_output(), spec.capacity);
                     let result = plant.set_target(target);
                     debug_assert!(result.is_ok(), "ramp-down {target:?} rejected: {result:?}");
+                    if let Some(c) = cover.as_mut() {
+                        *c -= output - target;
+                    }
                     shortfall += output - target;
                 }
                 _ => connected.push(plant),
@@ -605,6 +645,24 @@ impl PowerSystem {
             .map(|p| (p.id(), agc_cap(available, &ceilings, p.id())))
             .collect();
         agc_retarget(&mut connected, &caps, shortfall)
+    }
+
+    /// The one-tick ramp-up headroom of the connected auto-follow plants
+    /// other than `except`: for each, exactly what AGC could give it next
+    /// tick, `min(ramp, min(available, hydro ceiling) − output)` (see
+    /// [`Plant::headroom_up`]), summed. Offline and non-dispatchable plants,
+    /// and scheduled hydro above its ceiling, have none. Used by both the
+    /// over-frequency trip gate and the hydro recovery phase.
+    fn agc_headroom(
+        &self,
+        available: &BTreeMap<PlantId, Megawatts>,
+        ceilings: &BTreeMap<PlantId, Megawatts>,
+        except: Option<PlantId>,
+    ) -> Megawatts {
+        self.connected_plants()
+            .filter(|p| Some(p.id()) != except && p.auto_follow())
+            .map(|p| p.headroom_up(agc_cap(available, ceilings, p.id())))
+            .sum()
     }
 
     /// Runs step 5's AGC on the current outputs: the requirement is
@@ -694,8 +752,10 @@ impl PowerSystem {
     /// just before a foreseen one, can outrun the gate (see
     /// [`PowerSystem::has_unrecoverable_ramp_down`]). Such a trip is withheld
     /// like an unsafe one. The hydro lookahead runs to the next hour boundary,
-    /// as far as the plan is known, so it is deliberately conservative: a
-    /// trip may wait up to about an hour while hydro is scheduled to fall.
+    /// as far as the plan is known, so it is deliberately conservative: on the
+    /// tick before each boundary it spans the whole next hour, so holds can
+    /// chain across consecutive falling hours and a trip may wait for as long
+    /// as hydro keeps being scheduled to fall.
     ///
     /// **Redispatch.** AGC already set next tick's targets (step 5) before
     /// the trip, so after a trip it runs again on the post-trip outputs with
@@ -723,11 +783,7 @@ impl PowerSystem {
             .sum::<Megawatts>()
             - served;
         let ceilings = self.agc_ceilings(redispatch.effect_tick);
-        let headroom: Megawatts = self
-            .connected_plants()
-            .filter(|p| p.id() != id && p.auto_follow())
-            .map(|p| p.headroom_up(agc_cap(redispatch.available, &ceilings, p.id())))
-            .sum();
+        let headroom = self.agc_headroom(redispatch.available, &ceilings, Some(id));
         if self.plants[&id].output() - surplus > headroom
             || self.has_unrecoverable_ramp_down(id, &self.foreseen_ceilings(redispatch.effect_tick))
         {

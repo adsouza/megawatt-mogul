@@ -32,16 +32,36 @@ pub(crate) struct PlantHydroPlan {
     pub(crate) hourly: [Megawatts; HOURS],
     /// `frozen[h]` is hour `h`'s allocation as it stood when hour `h` began.
     pub(crate) frozen: [Option<Megawatts>; HOURS],
-    /// False once the plant has tripped: it is then unplanned (uncapped)
-    /// until the next re-plan, with no current or future allocation, while
-    /// `frozen` keeps the elapsed hours' record.
+    /// False once the plant has tripped or had AGC turned off: it is then
+    /// unplanned (uncapped) until the next re-plan, with no current or future
+    /// allocation, while `frozen` keeps the elapsed hours' record.
     pub(crate) planned: bool,
 }
 
-/// The hydro schedule as the player sees it (spec §12.6).
+/// Where the emergency override of the hydro cap stands (spec §12.4), as of
+/// the last AGC pass (see [`PowerSystem::retarget_agc`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum HydroOverride {
+    /// The cap applies as planned.
+    #[default]
+    Off,
+    /// The cap is lifted (see [`PowerSystem::hydro_cap_lifted`]): only the
+    /// budget limits scheduled hydro.
+    Lifted,
+    /// The lift has ended and scheduled hydro is still above the lowest
+    /// ceiling it meets before the next re-plan: it ramps back down no faster
+    /// than the rest of the fleet can follow.
+    Recovering,
+}
+
+/// The hydro schedule as the player sees it (spec §12.6), valid per phase:
+/// the day's plan while Operating, the finished day (every hour frozen) during
+/// Review, and empty during Planning, until `BeginOperating` plans the day.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct HydroScheduleView {
-    /// Every scheduled plant, in id order.
+    /// Every plant planned today, in id order. A plant that has since tripped
+    /// or been taken off AGC keeps its entry, with zero allocations from that
+    /// hour on (and no level), until a re-plan no longer schedules it.
     pub plants: BTreeMap<PlantId, PlantHydroScheduleView>,
 }
 
@@ -140,10 +160,35 @@ impl PowerSystem {
         self.protection.shed > Ratio::ZERO || self.band == FrequencyBand::Shedding
     }
 
-    /// Makes a tripped plant unplanned until the next re-plan (spec §12.3 step
-    /// 4): its current and future allocations and its level are cleared, so it
-    /// is budget-limited only, while the frozen record of elapsed hours stays
-    /// visible. The next hourly re-plan treats it by the normal criteria.
+    /// The override state for the AGC pass setting targets that act on
+    /// `effect_tick`, given the last pass's state: `Lifted` whenever the cap
+    /// is lifted, including during a recovery. Otherwise a lift or recovery
+    /// continues as `Recovering` while any connected online plant is above
+    /// the lowest ceiling it meets before the next re-plan (see
+    /// [`PowerSystem::foreseen_ceilings`]), and ends as `Off`.
+    pub(super) fn next_hydro_override(&self, effect_tick: u32) -> HydroOverride {
+        if self.hydro_cap_lifted() {
+            return HydroOverride::Lifted;
+        }
+        if self.hydro_override == HydroOverride::Off {
+            return HydroOverride::Off;
+        }
+        let foreseen = self.foreseen_ceilings(effect_tick);
+        let above = self
+            .connected_plants()
+            .any(|p| p.is_online() && foreseen.get(&p.id()).is_some_and(|c| p.output() > *c));
+        if above {
+            HydroOverride::Recovering
+        } else {
+            HydroOverride::Off
+        }
+    }
+
+    /// Makes a plant that tripped or had AGC turned off unplanned until the
+    /// next re-plan (spec §12.3 step 4): its current and future allocations
+    /// and its level are cleared, so it is budget-limited only, while the
+    /// frozen record of elapsed hours stays visible. The next hourly re-plan
+    /// treats it by the normal criteria.
     pub(super) fn unplan_hydro(&mut self, id: PlantId) {
         if let Some(plan) = self.hydro_plan.get_mut(&id) {
             plan.level = None;
@@ -158,8 +203,8 @@ impl PowerSystem {
     /// ramp × k`, where `k` counts the ticks from `effect_tick` to the next
     /// hour boundary, so it can reach the next hour's allocation by then (see
     /// [`PowerSystem::retarget_agc`]). Hour 23 has no envelope. A hydro plant
-    /// with no plan (switched to AGC, connected or tripped since the last
-    /// re-plan) gets no ceiling, so it is uncapped.
+    /// with no plan (switched to AGC, connected, tripped or with AGC turned
+    /// off since the last re-plan) gets no ceiling, so it is uncapped.
     pub(super) fn hydro_ceilings(&self, effect_tick: u32) -> BTreeMap<PlantId, Megawatts> {
         let tick = effect_tick.min(TICKS_PER_DAY - 1);
         let hour = (tick / TICKS_PER_HOUR) as usize;
@@ -178,7 +223,25 @@ impl PowerSystem {
             .collect()
     }
 
-    /// The current hydro schedule of every scheduled plant.
+    /// Ends the day's schedule at month close: every hour has now elapsed, so
+    /// [`PowerSystem::hydro_schedule`] shows each hour's allocation as it
+    /// stood when the hour began, for plan-versus-actual review.
+    pub(crate) fn finish_hydro_day(&mut self) {
+        self.hydro_planned_from = HOURS as u8;
+    }
+
+    /// Clears the schedule when the next Planning phase begins: nothing is
+    /// planned until `begin_day` plans the new day.
+    pub(crate) fn clear_hydro_plan(&mut self) {
+        self.hydro_plan.clear();
+        self.hydro_planned_from = 0;
+    }
+
+    /// The hydro schedule of every plant planned today, valid per phase:
+    /// while Operating, elapsed hours show their frozen allocation and the
+    /// current and later hours the latest plan; during Review, the finished
+    /// day with every hour frozen (see `finish_hydro_day`); during Planning,
+    /// nothing (see `clear_hydro_plan`).
     pub fn hydro_schedule(&self) -> HydroScheduleView {
         let current = usize::from(self.hydro_planned_from);
         let plants = self
