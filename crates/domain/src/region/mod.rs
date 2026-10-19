@@ -374,6 +374,10 @@ fn validate_frequency(f: &FrequencyParams) -> Result<(), RegionError> {
         "frequency.trip_above",
     )?;
     check_band(f.trip_after_ticks >= 1, "frequency.trip_after_ticks")?;
+    check_band(
+        finite_positive(f.shed_stage_spacing.value()),
+        "frequency.shed_stage_spacing",
+    )?;
     check_band(shed < 0.0, "frequency.shed_below")?;
     check_band(
         blackout.is_finite() && blackout < shed,
@@ -441,6 +445,7 @@ mod tests {
         let region = fixtures::tiny_region();
         assert_eq!(region.frequency().trip_above, Hertz::new(1.5));
         assert_eq!(region.frequency().trip_after_ticks, 5);
+        assert_eq!(region.frequency().shed_stage_spacing, Hertz::new(0.2));
         assert_eq!(region.regulator().frequency_band, Hertz::new(0.2));
         assert_eq!(
             region.regulator().frequency_violation_share,
@@ -978,6 +983,22 @@ mod tests {
                 |p| p.frequency.trip_after_ticks = 0,
                 bad_band("frequency.trip_after_ticks"),
             ),
+            (
+                |p| p.frequency.shed_stage_spacing = hz(0.0),
+                bad_band("frequency.shed_stage_spacing"),
+            ),
+            (
+                |p| p.frequency.shed_stage_spacing = hz(-0.2),
+                bad_band("frequency.shed_stage_spacing"),
+            ),
+            (
+                |p| p.frequency.shed_stage_spacing = hz(f64::NAN),
+                bad_band("frequency.shed_stage_spacing"),
+            ),
+            (
+                |p| p.frequency.shed_stage_spacing = hz(f64::INFINITY),
+                bad_band("frequency.shed_stage_spacing"),
+            ),
             // regulator frequency performance
             (
                 |p| p.regulator.frequency_band = hz(0.0),
@@ -1042,6 +1063,7 @@ mod tests {
             |p| p.frequency.blackout_after_shed_ticks = 1,
             |p| p.frequency.trip_above = hz(0.501),
             |p| p.frequency.trip_after_ticks = 1,
+            |p| p.frequency.shed_stage_spacing = hz(0.001),
             |p| p.regulator.frequency_band = hz(0.001),
             |p| p.regulator.frequency_violation_share = Ratio::ZERO,
             |p| p.regulator.frequency_violation_share = Ratio::ONE,

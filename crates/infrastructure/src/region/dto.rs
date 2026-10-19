@@ -152,6 +152,7 @@ pub struct FrequencyDto {
     pub curtail_above_hz: f64,
     pub trip_above_hz: f64,
     pub trip_after_ticks: u32,
+    pub shed_stage_spacing_hz: f64,
     pub shed_step: f64,
 }
 

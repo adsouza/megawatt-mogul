@@ -236,6 +236,7 @@ fn frequency() -> FrequencyParams {
         curtail_above: Hertz::new(0.5),
         trip_above: Hertz::new(1.5),
         trip_after_ticks: 5,
+        shed_stage_spacing: Hertz::new(0.2),
         shed_step: r(0.05),
     }
 }

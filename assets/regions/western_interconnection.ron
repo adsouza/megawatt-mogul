@@ -371,6 +371,7 @@
         curtail_above_hz: 0.5,
         trip_above_hz: 1.5,
         trip_after_ticks: 5,
+        shed_stage_spacing_hz: 0.2,
         shed_step: 0.05,
     ),
     regulator: (

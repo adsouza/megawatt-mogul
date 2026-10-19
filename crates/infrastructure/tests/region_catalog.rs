@@ -17,7 +17,7 @@ const MINIMAL: &str = include_str!("support/minimal_region.ron");
 
 /// SHA-256 of `support/minimal_region.ron`, computed independently with
 /// `shasum -a 256`.
-const MINIMAL_SHA256: &str = "7255cde8689af9bbcee02541e941e1cb26266738709f5a1685db9a4fa941dc3b";
+const MINIMAL_SHA256: &str = "d029ca289414351f01cd224a212860757c82ead661e40ba0623c032819973cc1";
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
@@ -238,6 +238,11 @@ fn new_frequency_parameters_are_validated_when_loaded() {
         "trip_after_ticks: 5",
         "trip_after_ticks: 0",
         "frequency.trip_after_ticks",
+    );
+    bad_band(
+        "shed_stage_spacing_hz: 0.2",
+        "shed_stage_spacing_hz: 0.0",
+        "frequency.shed_stage_spacing",
     );
     bad_band(
         "frequency_band_hz: 0.2",

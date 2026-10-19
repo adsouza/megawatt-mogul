@@ -54,6 +54,8 @@ pub struct FrequencyParams {
     pub trip_above: Hertz,
     /// Consecutive ticks above `trip_above` before the trip fires.
     pub trip_after_ticks: u32,
+    /// Frequency step between successive under-frequency load-shed stages.
+    pub shed_stage_spacing: Hertz,
     pub shed_step: Ratio,
 }
 

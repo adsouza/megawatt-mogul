@@ -276,6 +276,7 @@ fn map_frequency(f: &FrequencyDto) -> Result<FrequencyParams> {
         curtail_above: hz(f.curtail_above_hz, "frequency.curtail_above_hz")?,
         trip_above: hz(f.trip_above_hz, "frequency.trip_above_hz")?,
         trip_after_ticks: f.trip_after_ticks,
+        shed_stage_spacing: hz(f.shed_stage_spacing_hz, "frequency.shed_stage_spacing_hz")?,
         shed_step: ratio(f.shed_step, "frequency.shed_step")?,
     })
 }

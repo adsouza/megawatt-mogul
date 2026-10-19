@@ -78,6 +78,11 @@ fn both_regions_carry_the_frequency_protection_and_performance_defaults() {
         let (f, r) = (region.frequency(), region.regulator());
         assert_eq!(f.trip_above, Hertz::new(1.5), "{id} trip_above");
         assert_eq!(f.trip_after_ticks, 5, "{id} trip_after_ticks");
+        assert_eq!(
+            f.shed_stage_spacing,
+            Hertz::new(0.2),
+            "{id} shed_stage_spacing"
+        );
         assert_eq!(r.frequency_band, Hertz::new(0.2), "{id} frequency_band");
         assert_eq!(
             r.frequency_violation_share,
