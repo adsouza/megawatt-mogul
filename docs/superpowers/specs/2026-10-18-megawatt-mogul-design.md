@@ -96,8 +96,9 @@ There are two ways to fail:
 - **Bankruptcy:** cash below zero at the close of 3 consecutive months.
 - **Licence revocation:** the regulator issues a **strike** for each month in which unserved energy
   exceeds a threshold share of that month's demand (default 0.5%, region data), **or** frequency
-  spends too long outside its performance band (Amendment A3, §14.4). A month earns at most one
-  strike. One strike expires after each 3 consecutive clean months, and a clean month must pass
+  spends too long outside its performance band (Amendment A3, §14.4). A frequency-only failure
+  first draws a **notice** (at most one per rolling 12 months) before it can strike. A month earns
+  at most one strike. One strike expires after each 3 consecutive clean months, and a clean month must pass
   both tests.
   Three active strikes revoke the licence.
 
@@ -946,16 +947,34 @@ model.)*
   blackout, and blackouts are already penalised through unserved energy.
 - **Month close.** If the out-of-band share exceeds `frequency_violation_share`, the month fails
   frequency performance.
-- **One strike per month.** A month that fails either test (unserved energy or frequency performance)
-  earns **one** strike. A month counts as clean for strike expiry only if it passes **both**.
+- **Notice before strike.** A month that fails **only** frequency performance draws a formal
+  **notice** instead of a strike, unless a notice was already issued in the previous 12 months.
+  - The regulator stores `last_frequency_notice: Option<SimMonth>`.
+  - A notice is due when that is `None`, or when `month.months_since(last) ≥ 12`.
+  - The notice emits `FrequencyNoticeIssued { month }`.
+  - A month with a notice is not clean (it resets the clean streak) but adds no strike.
+  - A further frequency-only failure while a notice is still recent earns a strike.
+- **One strike per month.** A month that fails both tests earns **one** strike (reason
+  `UnservedEnergy`) and does not use up the notice. A month counts as clean for strike expiry only if
+  it passes **both**.
 - **The event gains a reason:** `StrikeIssued { strikes, reason: StrikeReason }`, where
   `StrikeReason` is `UnservedEnergy` or `FrequencyPerformance`. When both fail, the reason is
   `UnservedEnergy`.
 - **Projections that read strike events adapt to the new event shape.** `FullSeasonWithoutStrike`
-  still counts any strike.
+  still counts any strike; notices don't break it.
+- **New lesson:** `Lesson::FrequencyPerformance { out_of_band: Ratio, notice: bool }`. It fires for
+  any month that failed frequency performance (`notice` is true when the month drew a notice rather
+  than a strike), with priority directly after `Overgeneration`.
 
 ### 14.5 Data and versioning
 
+- **Beginner acceptance check.** A **hands-off plan** commits every dispatchable plant all day with
+  AGC on and issues no other commands. Run it for 12 months from each shipped region's start, on
+  seeds 0–7, after A1–A3 have landed. The game must still be `Active` at the end of month 12.
+  - If the check fails, retune region **data** (fleet mix, flows, the new defaults) and never the
+    rules, as in A1 §12.5.
+  - Test scripts that deliberately exercise failure paths, such as the overbuild scenario, may still
+    end in game over.
 - **Delivery.** A1, A2 and A3 are implemented together as Plan 1a, before Plan 2, with a single
   `SIM_RULES_VERSION` bump to 2. Snapshots are regenerated once, after all three have landed, and
   the diffs are reviewed together.
@@ -983,7 +1002,10 @@ model.)*
   only committed hours, and leaves `state_hash` unchanged.
 - **Strikes.**
   - the out-of-band share counts Normal-mode ticks only;
-  - frequency performance alone fails a month with reason `FrequencyPerformance`;
+  - the first frequency-only failure in any rolling 12 months draws a notice, not a strike;
+  - a second frequency-only failure within 12 months of that notice strikes with reason
+    `FrequencyPerformance`;
+  - a notice month resets the clean streak;
   - both tests failing still gives one strike, with reason `UnservedEnergy`;
   - clean-month expiry requires passing both;
   - three strikes from any mix revoke the licence.
