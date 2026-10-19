@@ -660,14 +660,17 @@ impl PowerSystem {
     /// §14.4).
     ///
     /// **Falling-output gate (builder's call): protection never trips while
-    /// the fleet is already losing output it can't recover; the trip waits
-    /// until that motion ends.** The headroom gate credits one tick of ramp,
-    /// but a hydro plant following its schedule's ramp envelope, a plant
-    /// stopping under its commitment or a manual plant ramping to a lower
-    /// target keeps falling for several ticks whatever AGC does, so a trip
-    /// during that fall can outrun the gate (see
+    /// the fleet is already losing output it can't recover, or is scheduled
+    /// to before the next hydro re-plan; the trip waits until that motion
+    /// ends.** The headroom gate credits one tick of ramp, but a hydro plant
+    /// following its schedule's ramp envelope, a plant stopping under its
+    /// commitment or a manual plant ramping to a lower target keeps falling
+    /// for several ticks whatever AGC does, so a trip during that fall, or
+    /// just before a foreseen one, can outrun the gate (see
     /// [`PowerSystem::has_unrecoverable_ramp_down`]). Such a trip is withheld
-    /// like an unsafe one.
+    /// like an unsafe one. The hydro lookahead runs to the next hour boundary,
+    /// as far as the plan is known, so it is deliberately conservative: a
+    /// trip may wait up to about an hour while hydro is scheduled to fall.
     ///
     /// **Redispatch.** AGC already set next tick's targets (step 5) before
     /// the trip, so after a trip it runs again on the post-trip outputs with
@@ -701,7 +704,7 @@ impl PowerSystem {
             .map(|p| p.headroom_up(agc_cap(redispatch.available, &ceilings, p.id())))
             .sum();
         if self.plants[&id].output() - surplus > headroom
-            || self.has_unrecoverable_ramp_down(id, &ceilings)
+            || self.has_unrecoverable_ramp_down(id, &self.foreseen_ceilings(redispatch.effect_tick))
         {
             self.protection.withhold_trip(params);
             return;
@@ -727,13 +730,34 @@ impl PowerSystem {
         }
     }
 
-    /// Whether a connected plant other than `except` is losing output that
-    /// the post-trip AGC redispatch cannot reverse (see
+    /// The lowest AGC hydro ceiling of each scheduled plant over the effect
+    /// ticks from `effect_tick` through the first effect tick of the next
+    /// hour (see [`PowerSystem::agc_ceilings`]; empty while the cap is
+    /// lifted). The plan is known only that far: it is re-planned at the
+    /// next hour boundary. Hour 23 has no next-hour term, as in
+    /// [`PowerSystem::hydro_ceilings`].
+    fn foreseen_ceilings(&self, effect_tick: u32) -> BTreeMap<PlantId, Megawatts> {
+        let next_hour = (effect_tick / TICKS_PER_HOUR + 1) * TICKS_PER_HOUR;
+        let mut lowest: BTreeMap<PlantId, Megawatts> = BTreeMap::new();
+        for e in effect_tick..=next_hour {
+            for (id, ceiling) in self.agc_ceilings(e) {
+                lowest
+                    .entry(id)
+                    .and_modify(|mw| *mw = mw.min(ceiling))
+                    .or_insert(ceiling);
+            }
+        }
+        lowest
+    }
+
+    /// Whether a connected plant other than `except` is losing output, or is
+    /// scheduled to, that the post-trip AGC redispatch cannot reverse (see
     /// [`PowerSystem::over_frequency_trip`]):
     ///
-    /// - a scheduled hydro plant on AGC above its hydro ceiling `ceilings`
-    ///   (empty while the cap is lifted), which AGC ramps down rather than
-    ///   retargets (see [`PowerSystem::retarget_agc`]);
+    /// - a scheduled hydro plant on AGC above the lowest hydro ceiling it
+    ///   meets before the next re-plan, `ceilings` (see
+    ///   [`PowerSystem::foreseen_ceilings`]), which AGC ramps down rather
+    ///   than retargets (see [`PowerSystem::retarget_agc`]);
     /// - a plant stopping under its commitment, still producing;
     /// - a manual dispatchable plant above its target.
     ///

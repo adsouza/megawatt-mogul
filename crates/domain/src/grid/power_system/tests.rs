@@ -2178,27 +2178,37 @@ fn a_trip_waits_while_a_manual_plant_ramps_down() {
     assert_eq!(trip_with_ample_surplus(&mut sys), tripped(PlantId(3)));
 }
 
-/// The re-reviewer's probe: at 12:57 the hydro's schedule is cut by
-/// `cut`, from hour `from_hour` on, and CCGT 2 is nudged `bump` MW into a
-/// small surplus with a trip one tick from due at +0.6 Hz. Runs ticks 777..817
-/// and returns their summaries and trips.
+/// What one hydro-cut probe run did.
+struct CutRun {
+    trips: Vec<(u32, PlantId)>,
+    /// Σ unserved MW over the run's ticks.
+    shed: f64,
+    blackout: bool,
+}
+
+/// The re-reviewers' probe: after warming up to tick `start`, the hydro's
+/// schedule holds its output for the current hour and is cut by `cut` from
+/// hour `from_hour` on, and CCGT 2 is nudged `bump` MW into a small surplus
+/// at +0.6 Hz, with protection one tick from a due trip when `armed`. Runs 40
+/// ticks.
 fn hydro_cut_with_trip_due(
+    start: u32,
     from_hour: usize,
     cut: f64,
     bump: f64,
     armed: bool,
-) -> (Vec<TickSummary>, Vec<(u32, PlantId)>) {
+) -> CutRun {
     let region = tiny_region();
     let n = region.frequency().trip_after_ticks;
     let mut sys = falling_output_fleet(&region);
     sys.protection.over_armed = false;
     let mut rng = SimRng::from_seed(1);
     sys.begin_day(&region, april(), &mut rng);
-    run_ticks(&mut sys, &region, 0..777, &mut rng);
+    run_ticks(&mut sys, &region, 0..start, &mut rng);
     let output = hydro_output(&sys);
     let plan = sys.hydro_plan.get_mut(&HYDRO).unwrap();
     plan.planned = true;
-    plan.hourly[12] = output;
+    plan.hourly[(start / TICKS_PER_HOUR) as usize] = output;
     for h in from_hour..24 {
         plan.hourly[h] = (output - Megawatts::new(cut)).max(Megawatts::ZERO);
     }
@@ -2208,36 +2218,56 @@ fn hydro_cut_with_trip_due(
     let ccgt = sys.plant_mut(PlantId(2)).unwrap();
     let target = ccgt.output() + Megawatts::new(bump);
     ccgt.set_target(target).unwrap();
-    let mut summaries = Vec::new();
-    let mut trips = Vec::new();
-    for t in 777..817 {
+    let mut run = CutRun {
+        trips: Vec::new(),
+        shed: 0.0,
+        blackout: false,
+    };
+    for t in start..start + 40 {
         let (s, events) = sys.tick(&region, april(), t, &mut rng);
         for e in &events {
             if let DomainEvent::OverFrequencyTrip { plant } = e {
-                trips.push((t, *plant));
+                run.trips.push((t, *plant));
             }
         }
-        summaries.push(s);
+        run.shed += s.unserved.value();
+        run.blackout |= s.mode == GridMode::Blackout;
     }
-    (summaries, trips)
+    run
 }
 
 #[test]
 fn trips_wait_out_a_scheduled_hydro_fall() {
-    // Envelope fall: hour 13 is cut by 300 MW, so the hydro falls 100 MW a
-    // tick over 12:58-13:00. Mid-hour drop: the current hour is cut by
-    // 100 MW, so it falls 100 MW at once.
-    for (from_hour, cut) in [(13, 300.0), (12, 100.0)] {
-        for (bump, armed) in [(10.0, true), (20.0, true), (30.0, true), (20.0, false)] {
-            let (ticks, trips) = hydro_cut_with_trip_due(from_hour, cut, bump, armed);
-            let case = format!("cut {cut} from hour {from_hour}, bump {bump}, armed {armed}");
-            assert!(trips.is_empty(), "{case}: {trips:?}");
-            assert!(ticks.iter().all(|s| s.mode == GridMode::Normal), "{case}");
-            assert!(
-                ticks.iter().all(|s| s.unserved == Megawatts::ZERO),
-                "{case}"
-            );
-        }
+    // (start, from_hour, cut, bump): a mid-hour cut of the current hour at
+    // 12:10, where the hydro falls 100 MW at once (an ungated trip there
+    // sheds 447 and 357 MW·ticks); and cuts of hour 13 that make a foreseen
+    // envelope fall of 100 MW a tick ending at 13:00, with the trip due a few
+    // ticks before the fall starts (without the lookahead, 150 MW sheds 532
+    // MW·ticks and 300 MW blacks out). The 300 MW fall sheds by itself;
+    // protection must not add to it.
+    let cases = [
+        (730, 12, 100.0, 10.0),
+        (730, 12, 100.0, 15.0),
+        (772, 13, 150.0, 20.0),
+        (776, 13, 200.0, 20.0),
+        (776, 13, 250.0, 20.0),
+        (770, 13, 300.0, 20.0),
+        (776, 13, 300.0, 20.0),
+    ];
+    for (start, from_hour, cut, bump) in cases {
+        let case = format!("start {start}, cut {cut} from hour {from_hour}, bump {bump}");
+        let armed = hydro_cut_with_trip_due(start, from_hour, cut, bump, true);
+        let unarmed = hydro_cut_with_trip_due(start, from_hour, cut, bump, false);
+        // No trip before the fall ends at the next hour boundary.
+        let fall_ends = (start / TICKS_PER_HOUR + 1) * TICKS_PER_HOUR;
+        assert!(
+            armed.trips.iter().all(|(t, _)| *t >= fall_ends),
+            "{case}: {:?}",
+            armed.trips
+        );
+        // Protection adds no shedding and no blackout to what the fall causes.
+        assert_eq!(armed.shed, unarmed.shed, "{case}");
+        assert!(!armed.blackout && !unarmed.blackout, "{case}");
     }
 }
 
