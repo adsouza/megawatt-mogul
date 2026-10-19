@@ -558,3 +558,22 @@ fn require_operating_checks_status_then_phase() {
         })
     );
 }
+
+#[test]
+fn hydro_schedule_is_the_power_systems_schedule() {
+    let mut s = session();
+    let hydro = s.insert_commissioned_plant(PlantKind::Hydro, CellCoord { x: 10, y: 1 });
+    s.start_plant(hydro).unwrap();
+    s.set_auto_follow(hydro, true).unwrap();
+    assert!(s.hydro_schedule().plants.is_empty());
+    s.begin_operating().unwrap();
+    run_ticks(&mut s, 61);
+    let schedule = s.hydro_schedule();
+    assert_eq!(schedule, s.power().hydro_schedule());
+    let plan = schedule.plants[&hydro];
+    assert_eq!(
+        Some(plan.budget_remaining),
+        s.power().plant(hydro).unwrap().hydro_budget()
+    );
+    assert!(plan.hourly[1..].iter().any(|mw| *mw > Megawatts::ZERO));
+}

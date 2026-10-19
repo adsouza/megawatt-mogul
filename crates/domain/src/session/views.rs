@@ -4,7 +4,7 @@ use super::{DayPhase, GameSession};
 use crate::company::CapitalChange;
 use crate::demand::{ForecastPoint, hourly_forecast};
 use crate::generation::{Plant, PlantStatus};
-use crate::grid::{GridMode, TickSummary};
+use crate::grid::{GridMode, HydroScheduleView, TickSummary};
 use crate::ids::{CellCoord, CityId, NodeId, PlantId};
 use crate::region::PlantKind;
 use crate::regulation::{Licence, compute_rate_review};
@@ -133,6 +133,11 @@ impl GameSession {
             .values()
             .filter(|city| network.is_connected(city.node()));
         hourly_forecast(connected, self.region.demand(), self.clock.month())
+    }
+
+    /// Today's hydro peak-shaving schedule (spec §12.6).
+    pub fn hydro_schedule(&self) -> HydroScheduleView {
+        self.power.hydro_schedule()
     }
 
     pub fn grid_snapshot(&self) -> GridSnapshot {

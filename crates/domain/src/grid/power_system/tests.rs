@@ -1,6 +1,6 @@
 use super::*;
 use crate::demand::shape_factor;
-use crate::generation::{CommitmentSchedule, PlantStatus};
+use crate::generation::{CommitmentSchedule, PlantStatus, water_fill};
 use crate::grid::network::{LineStatus, Node, NodeKind};
 use crate::ids::{CellCoord, LineId};
 use crate::region::fixtures::tiny_region;
@@ -706,6 +706,21 @@ fn begin_day_carries_nothing_over_from_the_previous_day() {
 }
 
 #[test]
+fn begin_day_starts_a_fresh_hydro_plan() {
+    let region = tiny_region();
+    let mut used = west_like_fleet(&region);
+    let mut rng = SimRng::from_seed(29);
+    used.begin_day(&region, january(), &mut rng);
+    run_month(&mut used, &region, january(), 0..TICKS_PER_DAY, &mut rng);
+    let mut fresh = west_like_fleet(&region);
+    let mut fresh_rng = rng.clone();
+    used.begin_day(&region, january(), &mut rng);
+    fresh.begin_day(&region, january(), &mut fresh_rng);
+    assert_eq!(used.hydro_plan, fresh.hydro_plan);
+    assert_eq!(used.hydro_schedule(), fresh.hydro_schedule());
+}
+
+#[test]
 fn auto_follow_fleet_starts_the_day_balanced() {
     let region = tiny_region();
     let params = region.frequency();
@@ -1103,4 +1118,425 @@ fn begin_day_dispatches_only_connected_plants() {
     let load = sys.connected_demand_forecast(&region, april(), 0);
     let connected_total: Megawatts = supply(&sys);
     assert!(close(connected_total, load));
+}
+
+// ---- Hydro peak-shaving schedule (spec §12.3–§12.6) ----
+
+const HYDRO: PlantId = PlantId(4);
+
+fn january() -> SimMonth {
+    SimMonth::new(2028, 1).unwrap()
+}
+
+/// The tiny region with every non-hydro plant able to ramp 1,000 MW per
+/// tick, so thermal can always pick up what hydro gives back within a tick.
+fn fast_thermal_region() -> RegionDefinition {
+    let mut parts = crate::region::fixtures::tiny_region_parts();
+    for spec in &mut parts.catalog {
+        if spec.kind != PlantKind::Hydro {
+            spec.ramp = crate::units::RampRate::mw_per_minute(1_000.0);
+        }
+    }
+    RegionDefinition::try_from(parts).unwrap()
+}
+
+/// A West-like fleet: the start fleet (coal 1, CCGT 2, peaker 3) plus hydro
+/// 4 on the hydro site, all committed all day on auto-follow. In January the
+/// hydro budget (9,216 MWh) is well below `capacity × 24 h` and the day's net
+/// load, so the water must be rationed.
+fn west_like_fleet(region: &RegionDefinition) -> PowerSystem {
+    let mut defs = start_fleet(region);
+    defs.push(connected(PlantKind::Hydro, cell(10, 1)));
+    let mut sys = system_with(region, &defs);
+    let ids: Vec<PlantId> = sys.plants().keys().copied().collect();
+    for id in ids {
+        let p = sys.plant_mut(id).unwrap();
+        p.set_commitment(CommitmentSchedule::all_day());
+        p.set_auto_follow(true).unwrap();
+    }
+    sys
+}
+
+fn run_month(
+    sys: &mut PowerSystem,
+    region: &RegionDefinition,
+    month: SimMonth,
+    ticks: std::ops::Range<u32>,
+    rng: &mut SimRng,
+) -> Vec<(TickSummary, Vec<DomainEvent>)> {
+    ticks.map(|t| sys.tick(region, month, t, rng)).collect()
+}
+
+/// The hydro plant's one-tick ramp.
+fn hydro_ramp(sys: &PowerSystem) -> Megawatts {
+    sys.plant(HYDRO).unwrap().spec().ramp.per_tick()
+}
+
+fn hydro_output(sys: &PowerSystem) -> Megawatts {
+    sys.plant(HYDRO).unwrap().output()
+}
+
+/// The latest plan's allocation for `hour`.
+fn allocation(sys: &PowerSystem, hour: usize) -> Megawatts {
+    sys.hydro_plan
+        .get(&HYDRO)
+        .expect("hydro is scheduled")
+        .hourly[hour]
+}
+
+#[test]
+fn hydro_is_spent_on_the_evening_peak() {
+    let region = tiny_region();
+    let mut sys = west_like_fleet(&region);
+    let mut rng = SimRng::from_seed(21);
+    sys.begin_day(&region, january(), &mut rng);
+    let hydro = sys.plant(HYDRO).unwrap();
+    let budget = hydro.hydro_budget().unwrap();
+    assert!(budget < hydro.spec().capacity.energy_over_ticks(TICKS_PER_DAY));
+    // The day opens with hydro at no more than its hour-0 allocation.
+    assert!(hydro_output(&sys) <= allocation(&sys, 0) + Megawatts::new(1e-9));
+    assert!(hydro_output(&sys) > Megawatts::ZERO);
+
+    let net = sys.hourly_net_load(&region, january());
+    let peak_hour = (0..24u32)
+        .max_by(|&a, &b| net[a as usize].value().total_cmp(&net[b as usize].value()))
+        .unwrap();
+    let ticks = run_month(&mut sys, &region, january(), 0..TICKS_PER_DAY, &mut rng);
+    let output = |t: u32| ticks[t as usize].0.by_plant[&HYDRO];
+    let energy = |hours: std::ops::Range<u32>| -> f64 {
+        (hours.start * 60..hours.end * 60)
+            .map(|t| output(t).value() / 60.0)
+            .sum()
+    };
+
+    assert!((peak_hour * 60..(peak_hour + 1) * 60).all(|t| output(t) > Megawatts::ZERO));
+    // Water lasts through the evening: no cliff at 20:00–21:00.
+    assert!((17 * 60..22 * 60).all(|t| output(t) > Megawatts::ZERO));
+    assert!(energy(0..6) < energy(17..22));
+    assert!(ticks.iter().all(|(s, _)| s.unserved == Megawatts::ZERO));
+    assert!(ticks.iter().all(|(_, events)| {
+        !events
+            .iter()
+            .any(|e| matches!(e, DomainEvent::HydroBudgetExhausted { .. }))
+    }));
+}
+
+#[test]
+fn falling_allocation_ramps_down_not_cliffs() {
+    let region = fast_thermal_region();
+    let mut sys = west_like_fleet(&region);
+    // Hydro is eligible 06:00–18:00 only, so its allocation falls from the
+    // full 800 MW in hour 17 to 0 in hour 18.
+    let mut hours = [false; 24];
+    hours[6..18].fill(true);
+    let p = sys.plant_mut(HYDRO).unwrap();
+    let schedule = CommitmentSchedule::try_new(hours, p.spec()).unwrap();
+    p.set_commitment(schedule);
+    let mut rng = SimRng::from_seed(4);
+    sys.begin_day(&region, january(), &mut rng);
+    run_month(&mut sys, &region, january(), 0..1000, &mut rng);
+    // Keep it running past 18:00 so only the schedule, not a Stop, lowers it.
+    sys.plant_mut(HYDRO).unwrap().suppress_commitment_for_day();
+    run_month(&mut sys, &region, january(), 1000..1080, &mut rng);
+    assert!(close(allocation(&sys, 17), Megawatts::new(800.0)));
+
+    let mut previous = hydro_output(&sys);
+    assert!(previous > Megawatts::new(500.0), "{previous:?}");
+    let ramp = hydro_ramp(&sys).value();
+    let ticks_to_empty = (previous.value() / ramp).ceil() as u32;
+    for t in 1080..1080 + ticks_to_empty + 1 {
+        let (s, _) = sys.tick(&region, january(), t, &mut rng);
+        assert_eq!(allocation(&sys, 18), Megawatts::ZERO);
+        // The rest of the fleet picks up exactly what hydro gives back, so
+        // only the demand noise is left unbalanced.
+        assert!(
+            s.imbalance.abs() < Megawatts::new(30.0),
+            "tick {t}: {:?}",
+            s.imbalance
+        );
+        assert_eq!(sys.protection().shed, Ratio::ZERO, "tick {t}");
+        let now = hydro_output(&sys);
+        let fall = (previous - now).value();
+        assert!(fall <= ramp + 1e-9, "tick {t}: fell {fall}");
+        assert!(
+            now < previous || now == Megawatts::ZERO,
+            "tick {t}: held at {now:?}"
+        );
+        previous = now;
+    }
+    assert!(previous.value() <= 1e-9, "{previous:?}");
+}
+
+#[test]
+fn unused_water_is_replanned_at_the_next_hour() {
+    let region = fast_thermal_region();
+    let mut sys = west_like_fleet(&region);
+    let mut rng = SimRng::from_seed(17);
+    sys.begin_day(&region, january(), &mut rng);
+    let first = sys.hydro_plan[&HYDRO];
+    assert!(first.hourly[0] > Megawatts::ZERO);
+
+    // Hydro is held at 0 MW for hour 0, below its allocation. Commands never
+    // re-plan.
+    let p = sys.plant_mut(HYDRO).unwrap();
+    p.set_auto_follow(false).unwrap();
+    p.set_target(Megawatts::ZERO).unwrap();
+    run_month(&mut sys, &region, january(), 0..60, &mut rng);
+    sys.plant_mut(HYDRO).unwrap().set_auto_follow(true).unwrap();
+    assert_eq!(sys.hydro_plan[&HYDRO], first);
+
+    sys.tick(&region, january(), 60, &mut rng);
+    let replanned = sys.hydro_plan[&HYDRO];
+    let remaining = sys.plant(HYDRO).unwrap().hydro_budget().unwrap().value()
+        + hydro_output(&sys).value() / 60.0; // the budget when tick 60 began
+    let planned: f64 = replanned.hourly.iter().map(|mw| mw.value()).sum();
+    assert!(
+        (planned - remaining).abs() <= 1e-6 * remaining,
+        "{planned} vs {remaining}"
+    );
+    assert_eq!(replanned.hourly[0], Megawatts::ZERO);
+    let before: f64 = first.hourly[1..].iter().map(|mw| mw.value()).sum();
+    // Hour 0's unused water is spread over the rest of the day.
+    assert!(planned > before + 0.9 * first.hourly[0].value());
+}
+
+#[test]
+fn emergency_lifts_the_cap_for_the_whole_restoration() {
+    let region = tiny_region();
+    let mut sys = west_like_fleet(&region);
+    let mut rng = SimRng::from_seed(2);
+    sys.begin_day(&region, january(), &mut rng);
+    run_month(&mut sys, &region, january(), 0..1030, &mut rng);
+    assert!(hydro_output(&sys) <= allocation(&sys, 17) + Megawatts::new(1e-9));
+    // Losing the CCGT sheds load without blacking out.
+    sys.plant_mut(PlantId(2)).unwrap().trip();
+
+    let (mut above_while_shedding, mut held_in_restoration, mut capped_again) = (0, 0, 0);
+    for t in 1030..1080 {
+        let shed_before = sys.protection().shed;
+        let lifted = shed_before > Ratio::ZERO || sys.band == FrequencyBand::Shedding;
+        let (s, _) = sys.tick(&region, january(), t, &mut rng);
+        assert_eq!(s.mode, GridMode::Normal, "tick {t}");
+        let alloc = allocation(&sys, 17);
+        let output = hydro_output(&sys);
+        let target = target_of(&sys, HYDRO.0);
+        let raising = s.demand * (1.0 - shed_before.value()) > s.generation;
+        if lifted && output > alloc + Megawatts::new(1.0) {
+            above_while_shedding += 1;
+            // No cap while lifted: a short grid never pulls hydro back.
+            if raising {
+                assert!(target >= output - Megawatts::new(1e-9), "tick {t}");
+                if sys.band != FrequencyBand::Shedding {
+                    held_in_restoration += 1;
+                }
+            }
+        }
+        if !lifted && output > alloc + Megawatts::new(1e-9) {
+            // The cap is back: hydro ramps down toward its allocation.
+            capped_again += 1;
+            let expected = (output - hydro_ramp(&sys)).max(alloc);
+            assert!(
+                close(target, expected),
+                "tick {t}: {target:?} vs {expected:?}"
+            );
+        }
+    }
+    assert!(above_while_shedding > 0);
+    assert!(held_in_restoration > 0);
+    assert!(capped_again > 0);
+    assert_eq!(sys.protection().shed, Ratio::ZERO);
+    assert!(hydro_output(&sys) <= allocation(&sys, 17) + Megawatts::new(1e-9));
+}
+
+#[test]
+fn hydro_plants_fill_in_id_order_against_the_residual() {
+    let region = tiny_region();
+    let mut sys = west_like_fleet(&region);
+    let site = cell(10, 1);
+    let spec = region.spec(PlantKind::Hydro).clone();
+    // A second scheduled hydro plant, and a manual one that is never planned.
+    for (id, auto) in [(PlantId(5), true), (PlantId(6), false)] {
+        let mut plant =
+            Plant::new_commissioned(id, NodeId(100 + id.0), site, spec.clone(), april());
+        plant.set_commitment(CommitmentSchedule::all_day());
+        plant.set_auto_follow(auto).unwrap();
+        sys.network_mut()
+            .add_node(
+                plant.node(),
+                Node {
+                    kind: NodeKind::Plant(id),
+                    cell: site,
+                },
+            )
+            .unwrap();
+        sys.network_mut()
+            .add_line(
+                LineId(plant.node().0),
+                ROOT,
+                plant.node(),
+                LineStatus::InService,
+            )
+            .unwrap();
+        sys.insert_plant(plant);
+    }
+    sys.begin_day(&region, january(), &mut SimRng::from_seed(3));
+    assert!(!sys.hydro_plan.contains_key(&PlantId(6)));
+
+    let budget = |id: u32| sys.plant(PlantId(id)).unwrap().hydro_budget().unwrap();
+    let mut residual = sys.hourly_net_load(&region, january());
+    for id in [4, 5] {
+        let fill = water_fill(&residual, &[true; 24], spec.capacity, budget(id));
+        let plan = sys.hydro_plan[&PlantId(id)];
+        assert_eq!(
+            (plan.level, plan.hourly),
+            (fill.level, fill.hourly),
+            "plant {id}"
+        );
+        for (left, used) in residual.iter_mut().zip(fill.hourly) {
+            *left -= used;
+        }
+    }
+}
+
+#[test]
+fn cap_is_lifted_while_shedding_or_any_load_is_shed() {
+    let region = tiny_region();
+    let mut sys = west_like_fleet(&region);
+    sys.begin_day(&region, january(), &mut SimRng::from_seed(1));
+    assert!(!sys.hydro_cap_lifted());
+    sys.band = FrequencyBand::Low;
+    assert!(!sys.hydro_cap_lifted());
+    sys.band = FrequencyBand::Shedding;
+    assert!(sys.hydro_cap_lifted());
+    sys.band = FrequencyBand::Normal;
+    sys.protection.shed = Ratio::new(0.05).unwrap();
+    assert!(sys.hydro_cap_lifted());
+    sys.protection = ProtectionState {
+        mode: GridMode::Blackout,
+        shed: Ratio::ONE,
+        shed_ticks: 0,
+    };
+    assert!(sys.hydro_cap_lifted());
+}
+
+#[test]
+fn manual_and_unplanned_hydro_are_uncapped() {
+    let region = fast_thermal_region();
+    let mut sys = west_like_fleet(&region);
+    let mut rng = SimRng::from_seed(9);
+    sys.begin_day(&region, january(), &mut rng);
+    run_month(&mut sys, &region, january(), 0..1020, &mut rng);
+
+    // Manual from 17:00: unscheduled, so it follows the player's target.
+    let manual = Megawatts::new(620.0);
+    let p = sys.plant_mut(HYDRO).unwrap();
+    p.set_auto_follow(false).unwrap();
+    p.set_target(manual).unwrap();
+    run_month(&mut sys, &region, january(), 1020..1030, &mut rng);
+    assert!(!sys.hydro_plan.contains_key(&HYDRO));
+    assert!(!sys.hydro_schedule().plants.contains_key(&HYDRO));
+    assert_eq!(hydro_output(&sys), manual);
+
+    // Back on AGC mid-hour: unplanned, so uncapped until the next re-plan.
+    sys.plant_mut(HYDRO).unwrap().set_auto_follow(true).unwrap();
+    for t in 1030..1080 {
+        sys.tick(&region, january(), t, &mut rng);
+        assert!(!sys.hydro_plan.contains_key(&HYDRO));
+        assert!(
+            hydro_output(&sys) >= manual - Megawatts::new(1e-9),
+            "tick {t}"
+        );
+    }
+
+    // The 18:00 re-plan schedules it again, and the cap pulls it down.
+    let uncapped = hydro_output(&sys);
+    run_month(&mut sys, &region, january(), 1080..1090, &mut rng);
+    let alloc = allocation(&sys, 18);
+    assert!(
+        uncapped > alloc + Megawatts::new(50.0),
+        "{uncapped:?} vs {alloc:?}"
+    );
+    assert!(hydro_output(&sys) <= alloc + Megawatts::new(1e-9));
+}
+
+#[test]
+fn uncommitted_hours_get_zero_allocation() {
+    let region = tiny_region();
+    let mut sys = west_like_fleet(&region);
+    let mut hours = [false; 24];
+    hours[6..=21].fill(true);
+    let p = sys.plant_mut(HYDRO).unwrap();
+    let schedule = CommitmentSchedule::try_new(hours, p.spec()).unwrap();
+    p.set_commitment(schedule);
+    let mut rng = SimRng::from_seed(5);
+    sys.begin_day(&region, january(), &mut rng);
+    let budget = sys.plant(HYDRO).unwrap().hydro_budget().unwrap().value();
+    let plan = sys.hydro_schedule().plants[&HYDRO];
+    for (h, mw) in plan.hourly.iter().enumerate() {
+        if hours[h] {
+            assert!(*mw > Megawatts::ZERO, "hour {h}");
+        } else {
+            assert_eq!(*mw, Megawatts::ZERO, "hour {h}");
+        }
+    }
+    let planned: f64 = plan.hourly.iter().map(|mw| mw.value()).sum();
+    assert!((planned - budget).abs() <= 1e-6 * budget);
+    assert!(plan.level.is_some());
+
+    run_month(&mut sys, &region, january(), 0..TICKS_PER_DAY, &mut rng);
+    let plan = sys.hydro_schedule().plants[&HYDRO];
+    assert!(
+        (0..24)
+            .filter(|&h| !hours[h])
+            .all(|h| plan.hourly[h] == Megawatts::ZERO)
+    );
+}
+
+#[test]
+fn hydro_schedule_view_freezes_elapsed_hours() {
+    let region = tiny_region();
+    let mut sys = west_like_fleet(&region);
+    let mut rng = SimRng::from_seed(12);
+    sys.begin_day(&region, january(), &mut rng);
+    // Each hour's allocation just after the re-plan that opens it.
+    let mut at_start = vec![allocation(&sys, 0)];
+    let mut next = 0;
+    for h in 1..=3u32 {
+        run_month(&mut sys, &region, january(), next..h * 60 + 1, &mut rng);
+        next = h * 60 + 1;
+        at_start.push(allocation(&sys, h as usize));
+    }
+    run_month(&mut sys, &region, january(), next..200, &mut rng);
+
+    let view = sys.hydro_schedule().plants[&HYDRO];
+    let plan = sys.hydro_plan[&HYDRO];
+    for (h, planned) in at_start.iter().enumerate() {
+        assert_eq!(view.hourly[h], *planned, "hour {h}");
+        assert!(view.hourly[h] > Megawatts::ZERO);
+        if h < 3 {
+            // The latest plan no longer allocates the elapsed hour.
+            assert_eq!(plan.hourly[h], Megawatts::ZERO);
+        }
+    }
+    assert_eq!(view.hourly[3..], plan.hourly[3..]);
+    assert_eq!(view.level, plan.level);
+    assert_eq!(
+        view.budget_remaining,
+        sys.plant(HYDRO).unwrap().hydro_budget().unwrap()
+    );
+}
+
+#[test]
+fn planning_draws_no_rng() {
+    let region = tiny_region();
+    let mut sys = west_like_fleet(&region);
+    let mut rng = SimRng::from_seed(31);
+    sys.begin_day(&region, january(), &mut rng);
+    run_month(&mut sys, &region, january(), 0..120, &mut rng);
+    assert!(sys.hydro_schedule().plants.contains_key(&HYDRO));
+    let mut reference = SimRng::from_seed(31);
+    for _ in 0..1 + 120 {
+        reference.standard_normal();
+    }
+    assert_eq!(rng, reference);
 }

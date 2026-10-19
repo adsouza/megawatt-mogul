@@ -7,6 +7,11 @@
 
 use std::collections::BTreeMap;
 
+mod hydro_plan;
+
+use hydro_plan::PlantHydroPlan;
+pub use hydro_plan::{HydroScheduleView, PlantHydroScheduleView};
+
 use super::dispatch::{agc_retarget, boundary_dispatch};
 use super::frequency::{FrequencyBand, band, next_deviation};
 use super::network::Network;
@@ -21,7 +26,7 @@ use crate::generation::{
 use crate::ids::{CellCoord, CityId, NodeId, PlantId};
 use crate::region::{Cell, PlantKind, RegionDefinition};
 use crate::rng::SimRng;
-use crate::time::{SimDuration, SimMonth};
+use crate::time::{SimDuration, SimMonth, TICKS_PER_DAY, TICKS_PER_HOUR};
 use crate::units::{Hertz, MegawattHours, Megawatts, Ratio};
 
 const HOURS_PER_DAY: f64 = 24.0;
@@ -61,6 +66,10 @@ pub struct PowerSystem {
     /// Solar availability withheld by over-frequency protection, applied from
     /// the next tick (see [`PowerSystem::tick`], step 8).
     curtailment: Megawatts,
+    /// Each scheduled hydro plant's water plan (spec §12.3).
+    hydro_plan: BTreeMap<PlantId, PlantHydroPlan>,
+    /// The hour the hydro plan was last made from.
+    hydro_planned_from: u8,
 }
 
 fn is_curtailable(plant: &Plant) -> bool {
@@ -89,6 +98,8 @@ impl PowerSystem {
             band: FrequencyBand::Normal,
             protection: ProtectionState::default(),
             curtailment: Megawatts::ZERO,
+            hydro_plan: BTreeMap::new(),
+            hydro_planned_from: 0,
         }
     }
 
@@ -155,7 +166,8 @@ impl PowerSystem {
     /// day's clearness is drawn (exactly one normal), every plant is
     /// initialised from its cyclic pattern (clearing operating overrides),
     /// frequency and protection return to nominal and `Normal`, and the demand
-    /// forecast error and solar curtailment return to zero. Last, the
+    /// forecast error and solar curtailment return to zero. The hydro
+    /// schedule is then planned over the whole day (spec §12.3). Last, the
     /// auto-follow fleet is dispatched to balance the tick-0 load (the cyclic
     /// day's boundary state), so a day does not open in a deficit that
     /// ramp-limited AGC cannot recover; plants on manual targets keep theirs.
@@ -187,6 +199,7 @@ impl PowerSystem {
         self.protection = ProtectionState::default();
         self.noise = DemandNoise::default();
         self.curtailment = Megawatts::ZERO;
+        self.plan_hydro(region, month, 0);
         self.balance_boundary(region, month);
         DayInitialisation { boundary_starts }
     }
@@ -196,7 +209,8 @@ impl PowerSystem {
     /// in merit order (see [`boundary_dispatch`]). The load is the connected
     /// demand forecast less expected solar and less the output of connected
     /// online plants that are not auto-follow, which keep their initial
-    /// target. Draws no random numbers.
+    /// target. Scheduled hydro is capped at its hour-0 allocation. Draws no
+    /// random numbers.
     fn balance_boundary(&mut self, region: &RegionDefinition, month: SimMonth) {
         let manual: Megawatts = self
             .connected_plants()
@@ -206,7 +220,12 @@ impl PowerSystem {
         let forecast = self.connected_demand_forecast(region, month, 0);
         let solar = self.expected_solar(region, month, 0);
         let load = forecast - solar - manual;
-        let (available, _, _) = self.availability(region, month, 0);
+        let (mut available, _, _) = self.availability(region, month, 0);
+        for (id, ceiling) in self.hydro_ceilings(0) {
+            if let Some(mw) = available.get_mut(&id) {
+                *mw = mw.min(ceiling);
+            }
+        }
         let network = &self.network;
         let mut connected: Vec<&mut Plant> = self
             .plants
@@ -231,6 +250,9 @@ impl PowerSystem {
     /// Advances the grid by tick `tick` (`0..1440`) of a day in `month`.
     ///
     /// In order (spec §6.4 steps 2–10):
+    /// 0. At every hour boundary after midnight, the hydro schedule is
+    ///    re-planned over the hours left with the remaining budgets (spec
+    ///    §12.3), so the new hour's allocation is in place for this tick's AGC.
     /// 1. Demand of connected cities: forecast × (1 + forecast error). The
     ///    error advances by exactly one normal draw every tick, in any state.
     /// 2. Solar and hydro availability for every plant. The standing solar
@@ -242,7 +264,8 @@ impl PowerSystem {
     ///    `demand × (1 − shed)`, or in a blackout `demand × min(1, 1 − shed +
     ///    shed_step)` so supply is pre-positioned for the next restoration step.
     ///    While solar is curtailed, AGC also makes room for the withheld solar,
-    ///    so the cheaper solar returns as thermal ramps down.
+    ///    so the cheaper solar returns as thermal ramps down. Scheduled hydro
+    ///    is held to its hourly allocation (see [`PowerSystem::retarget_agc`]).
     /// 6. Imbalance between connected supply and served load.
     /// 7. Frequency update, held at nominal in a blackout. System size is the
     ///    connected demand.
@@ -273,6 +296,10 @@ impl PowerSystem {
     ) -> (TickSummary, Vec<DomainEvent>) {
         let params = region.frequency();
         let mut events = Vec::new();
+        let hour = tick / TICKS_PER_HOUR;
+        if tick > 0 && tick.is_multiple_of(TICKS_PER_HOUR) {
+            self.plan_hydro(region, month, u8::try_from(hour).unwrap_or(u8::MAX));
+        }
 
         let error = self.noise.step(region.demand(), rng);
         let demand = (self.connected_demand_forecast(region, month, tick) * (1.0 + error))
@@ -293,7 +320,14 @@ impl PowerSystem {
             GridMode::Normal => 1.0 - shed,
             GridMode::Blackout => (1.0 - shed + params.shed_step.value()).min(1.0),
         };
-        let leftover = self.retarget_agc(&available, demand * to_serve - supply - withheld);
+        // The targets AGC sets now act on the next tick's step, so they are
+        // capped by the allocation of the hour that tick falls in.
+        let effective_hour = (tick + 1).min(TICKS_PER_DAY - 1) / TICKS_PER_HOUR;
+        let leftover = self.retarget_agc(
+            &available,
+            demand * to_serve - supply - withheld,
+            effective_hour as usize,
+        );
 
         let imbalance = supply - demand * (1.0 - shed);
         self.deviation = match mode {
@@ -439,20 +473,65 @@ impl PowerSystem {
     }
 
     /// Runs AGC over connected plants; returns the signed unallocated shortfall.
+    ///
+    /// **The hydro schedule caps AGC, not physics** (spec §12.4). A scheduled
+    /// hydro plant on AGC is limited, in what AGC may ask of it, to its
+    /// allocation for `hour`, the hour in which the new targets take effect
+    /// (the next tick's): AGC's view of its availability becomes
+    /// `min(availability, allocation)`, so AGC never raises its target above
+    /// the allocation. The physical availability passed to `Plant::step` is
+    /// untouched and keeps only the budget limit. So when the allocation
+    /// falls below the plant's output, its target is set to
+    /// `max(allocation, output − ramp)` before AGC runs: the plant ramps down
+    /// at its ramp rate instead of dropping in one tick, and the output it
+    /// gives up next tick is added to the shortfall for the rest of the fleet.
+    /// AGC leaves such a plant out for this tick.
+    ///
+    /// The cap is lifted, leaving only the budget limit, while load is shed or
+    /// the band is `Shedding` (see [`PowerSystem::hydro_cap_lifted`]). Hydro
+    /// with no plan for the hour, and manual hydro, are never capped.
     fn retarget_agc(
         &mut self,
         available: &BTreeMap<PlantId, Megawatts>,
         shortfall: Megawatts,
+        hour: usize,
     ) -> Megawatts {
+        let ceilings = if self.hydro_cap_lifted() {
+            BTreeMap::new()
+        } else {
+            self.hydro_ceilings(hour)
+        };
+        let mut shortfall = shortfall;
         let network = &self.network;
-        let mut connected: Vec<&mut Plant> = self
+        let mut connected: Vec<&mut Plant> = Vec::new();
+        for plant in self
             .plants
             .values_mut()
             .filter(|p| network.is_connected(p.node()))
-            .collect();
+        {
+            let output = plant.output();
+            match ceilings.get(&plant.id()) {
+                Some(&allocation) if plant.is_online() && output > allocation => {
+                    let spec = plant.spec();
+                    let target = (output - spec.ramp.per_tick())
+                        .max(allocation)
+                        .clamp(spec.min_output(), spec.capacity);
+                    let result = plant.set_target(target);
+                    debug_assert!(result.is_ok(), "ramp-down {target:?} rejected: {result:?}");
+                    shortfall += output - target;
+                }
+                _ => connected.push(plant),
+            }
+        }
         let caps: BTreeMap<PlantId, Megawatts> = connected
             .iter()
-            .map(|p| (p.id(), available[&p.id()]))
+            .map(|p| {
+                let mut cap = available[&p.id()];
+                if let Some(&allocation) = ceilings.get(&p.id()) {
+                    cap = cap.min(allocation);
+                }
+                (p.id(), cap)
+            })
             .collect();
         agc_retarget(&mut connected, &caps, shortfall)
     }
