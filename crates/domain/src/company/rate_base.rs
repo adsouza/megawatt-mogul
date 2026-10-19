@@ -119,17 +119,15 @@ impl RateBaseAsset {
         profile: AssetProfile,
         legacy: bool,
     ) -> Self {
-        // A zero book life recovers the whole cost in the next month.
-        let months = book_life_months.max(1);
         Self {
             asset,
             original: cost,
             remaining: cost,
-            monthly_depreciation: Money::from_cents(cost.cents() / i64::from(months)),
+            monthly_depreciation: Money::from_cents(cost.cents() / i64::from(book_life_months)),
             added_on: month,
             profile,
             legacy,
-            months_left: months,
+            months_left: book_life_months,
             depreciated: Money::ZERO,
             written_off: Money::ZERO,
             live_share: SHARE_UNITS,
@@ -333,8 +331,10 @@ impl RateBase {
         profile: AssetProfile,
         legacy: bool,
     ) {
-        debug_assert!(!cost.is_negative(), "negative capital cost {cost:?}");
-        debug_assert!(
+        // Region validation rules these out, so reaching one is a bug.
+        assert!(!cost.is_negative(), "negative capital cost {cost:?}");
+        assert!(book_life_months >= 1, "zero book life for {asset:?}");
+        assert!(
             !self.assets.contains_key(&asset),
             "{asset:?} already in the rate base"
         );

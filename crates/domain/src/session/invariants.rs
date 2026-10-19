@@ -148,7 +148,8 @@ mod tests {
     #[test]
     fn the_tolerance_is_inclusive_at_exactly_one_micro_megawatt() {
         // A minimum of exactly TOLERANCE with zero output sits exactly TOLERANCE below it;
-        // zero capacity with TOLERANCE output sits exactly TOLERANCE above it. Both pass.
+        // a capacity of TOLERANCE with 2 * TOLERANCE output sits exactly TOLERANCE above
+        // it (doubling and the subtraction are both exact). Both pass.
         let mut s = session_with(|parts| {
             for spec in &mut parts.catalog {
                 if spec.kind == PlantKind::Coal {
@@ -164,13 +165,13 @@ mod tests {
         let mut s = session_with(|parts| {
             for spec in &mut parts.catalog {
                 if spec.kind == PlantKind::Coal {
-                    spec.capacity = Megawatts::ZERO;
+                    spec.capacity = Megawatts::new(TOLERANCE);
                     spec.min_stable = Ratio::ZERO;
                 }
             }
         });
         let coal = plant_id(&s, PlantKind::Coal);
-        set_output(&mut s, coal, TOLERANCE);
+        set_output(&mut s, coal, 2.0 * TOLERANCE);
         assert_eq!(s.check_invariants(), Ok(()));
     }
 

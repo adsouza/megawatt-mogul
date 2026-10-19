@@ -298,7 +298,24 @@ fn validate_shapes(parts: &RegionDefinitionParts) -> Result<(), RegionError> {
     check_shape(
         all_positive(&parts.hydro.monthly_flow),
         "hydro.monthly_flow",
+    )?;
+    // |phi| >= 1 would make the AR(1) innovation scale sqrt(1 - phi^2) NaN or zero.
+    check_shape(
+        (0.0..1.0).contains(&d.error_persistence),
+        "demand.error_persistence",
     )
+}
+
+fn check_band(ok: bool, field: &'static str) -> Result<(), RegionError> {
+    if ok {
+        Ok(())
+    } else {
+        Err(RegionError::InvalidBand { field })
+    }
+}
+
+fn finite_positive(value: f64) -> bool {
+    value.is_finite() && value > 0.0
 }
 
 fn validate_bands(regulator: &RegulatorParams) -> Result<(), RegionError> {
@@ -307,25 +324,85 @@ fn validate_bands(regulator: &RegulatorParams) -> Result<(), RegionError> {
         regulator.base_return,
         regulator.max_return,
     );
-    if min > max || base < min || base > max {
-        return Err(RegionError::InvalidBand {
-            field: "regulator.return",
-        });
+    check_band(min <= max && min <= base && base <= max, "regulator.return")?;
+    check_band(
+        regulator.strikes_to_revoke >= 1,
+        "regulator.strikes_to_revoke",
+    )?;
+    check_band(
+        regulator.clean_months_to_expire >= 1,
+        "regulator.clean_months_to_expire",
+    )
+}
+
+fn validate_catalog_values(catalog: &[PlantSpec]) -> Result<(), RegionError> {
+    for spec in catalog {
+        check_band(finite_positive(spec.capacity.value()), "catalog.capacity")?;
+        // Solar output follows the sun, so only dispatchable kinds need a ramp.
+        check_band(
+            !spec.kind.is_dispatchable() || finite_positive(spec.ramp.value()),
+            "catalog.ramp",
+        )?;
+        check_band(spec.build_months >= 1, "catalog.build_months")?;
+        check_band(spec.book_life_months >= 1, "catalog.book_life_months")?;
+        check_band(!spec.capital_cost.is_negative(), "catalog.capital_cost")?;
+        check_band(!spec.startup_cost.is_negative(), "catalog.startup_cost")?;
+        check_band(
+            !spec.fixed_om_per_month.is_negative(),
+            "catalog.fixed_om_per_month",
+        )?;
     }
     Ok(())
+}
+
+/// Thresholds are deviations from nominal: `blackout_below < shed_below < 0 <
+/// normal_band < curtail_above`.
+fn validate_frequency(f: &FrequencyParams) -> Result<(), RegionError> {
+    let (normal, curtail) = (f.normal_band.value(), f.curtail_above.value());
+    let (shed, blackout) = (f.shed_below.value(), f.blackout_below.value());
+    check_band(finite_positive(normal), "frequency.normal_band")?;
+    check_band(
+        curtail.is_finite() && curtail > normal,
+        "frequency.curtail_above",
+    )?;
+    check_band(shed < 0.0, "frequency.shed_below")?;
+    check_band(
+        blackout.is_finite() && blackout < shed,
+        "frequency.blackout_below",
+    )?;
+    check_band(finite_positive(f.k_inertia), "frequency.k_inertia")?;
+    check_band(
+        f.k_damping > 0.0 && f.k_damping <= 1.0,
+        "frequency.k_damping",
+    )?;
+    check_band(f.shed_step > Ratio::ZERO, "frequency.shed_step")?;
+    check_band(
+        f.blackout_after_shed_ticks >= 1,
+        "frequency.blackout_after_shed_ticks",
+    )
+}
+
+fn validate_lines(lines: &LineParams) -> Result<(), RegionError> {
+    check_band(lines.cells_per_month >= 1, "lines.cells_per_month")?;
+    check_band(lines.book_life_months >= 1, "lines.book_life_months")?;
+    check_band(!lines.cost_per_cell.is_negative(), "lines.cost_per_cell")
 }
 
 impl TryFrom<RegionDefinitionParts> for RegionDefinition {
     type Error = RegionError;
 
     /// Validates in order: grid (checked when the terrain was built), catalog,
-    /// cities, start, shapes, bands. Reports the first error found.
+    /// cities, start, shapes, regulator bands, catalog values, frequency,
+    /// lines. Reports the first error found.
     fn try_from(mut parts: RegionDefinitionParts) -> Result<Self, RegionError> {
         let catalog = order_catalog(std::mem::take(&mut parts.catalog))?;
         validate_cities(&parts.terrain, &parts.cities)?;
         validate_start(&parts.terrain, &catalog, &parts.cities, &parts.start)?;
         validate_shapes(&parts)?;
         validate_bands(&parts.regulator)?;
+        validate_catalog_values(&catalog)?;
+        validate_frequency(&parts.frequency)?;
+        validate_lines(&parts.lines)?;
         Ok(Self {
             id: parts.id,
             name_key: parts.name_key,
@@ -348,7 +425,7 @@ impl TryFrom<RegionDefinitionParts> for RegionDefinition {
 mod tests {
     use super::*;
     use crate::ids::{CellCoord, CityId};
-    use crate::units::Ratio;
+    use crate::units::{Hertz, Megawatts, Money, RampRate, Ratio};
 
     #[test]
     fn tiny_region_is_valid() {
@@ -657,6 +734,262 @@ mod tests {
                 reason: SiteError::NotLand,
             }
         );
+    }
+
+    type Edit = fn(&mut RegionDefinitionParts);
+
+    fn shape(field: &'static str) -> RegionError {
+        RegionError::InvalidShape { field }
+    }
+
+    fn bad_band(field: &'static str) -> RegionError {
+        RegionError::InvalidBand { field }
+    }
+
+    fn mw(value: f64) -> Megawatts {
+        Megawatts::unchecked(value)
+    }
+
+    fn hz(value: f64) -> Hertz {
+        Hertz::new(value)
+    }
+
+    /// Index of the peaker (dispatchable) and solar specs in the fixture catalog.
+    const PEAKER: usize = 3;
+    const SOLAR: usize = 4;
+
+    #[test]
+    fn out_of_range_numbers_are_rejected() {
+        let cases: Vec<(Edit, RegionError)> = vec![
+            // demand.error_persistence in [0, 1)
+            (
+                |p| p.demand.error_persistence = 1.0,
+                shape("demand.error_persistence"),
+            ),
+            (
+                |p| p.demand.error_persistence = 1.5,
+                shape("demand.error_persistence"),
+            ),
+            (
+                |p| p.demand.error_persistence = -0.01,
+                shape("demand.error_persistence"),
+            ),
+            (
+                |p| p.demand.error_persistence = f64::NAN,
+                shape("demand.error_persistence"),
+            ),
+            // regulator counts
+            (
+                |p| p.regulator.strikes_to_revoke = 0,
+                bad_band("regulator.strikes_to_revoke"),
+            ),
+            (
+                |p| p.regulator.clean_months_to_expire = 0,
+                bad_band("regulator.clean_months_to_expire"),
+            ),
+            // catalog
+            (
+                |p| p.catalog[PEAKER].capacity = mw(0.0),
+                bad_band("catalog.capacity"),
+            ),
+            (
+                |p| p.catalog[PEAKER].capacity = mw(-5.0),
+                bad_band("catalog.capacity"),
+            ),
+            (
+                |p| p.catalog[SOLAR].capacity = mw(f64::NAN),
+                bad_band("catalog.capacity"),
+            ),
+            (
+                |p| p.catalog[PEAKER].capacity = mw(f64::INFINITY),
+                bad_band("catalog.capacity"),
+            ),
+            (
+                |p| p.catalog[PEAKER].ramp = RampRate::mw_per_minute(0.0),
+                bad_band("catalog.ramp"),
+            ),
+            (
+                |p| p.catalog[PEAKER].ramp = RampRate::mw_per_minute(-1.0),
+                bad_band("catalog.ramp"),
+            ),
+            (
+                |p| p.catalog[PEAKER].ramp = RampRate::mw_per_minute(f64::NAN),
+                bad_band("catalog.ramp"),
+            ),
+            (
+                |p| p.catalog[PEAKER].ramp = RampRate::mw_per_minute(f64::INFINITY),
+                bad_band("catalog.ramp"),
+            ),
+            (
+                |p| p.catalog[PEAKER].build_months = 0,
+                bad_band("catalog.build_months"),
+            ),
+            (
+                |p| p.catalog[PEAKER].book_life_months = 0,
+                bad_band("catalog.book_life_months"),
+            ),
+            (
+                |p| p.catalog[PEAKER].capital_cost = Money::from_cents(-1),
+                bad_band("catalog.capital_cost"),
+            ),
+            (
+                |p| p.catalog[PEAKER].startup_cost = Money::from_cents(-1),
+                bad_band("catalog.startup_cost"),
+            ),
+            (
+                |p| p.catalog[PEAKER].fixed_om_per_month = Money::from_cents(-1),
+                bad_band("catalog.fixed_om_per_month"),
+            ),
+            // frequency
+            (
+                |p| p.frequency.normal_band = hz(0.0),
+                bad_band("frequency.normal_band"),
+            ),
+            (
+                |p| p.frequency.normal_band = hz(-0.05),
+                bad_band("frequency.normal_band"),
+            ),
+            (
+                |p| p.frequency.normal_band = hz(f64::NAN),
+                bad_band("frequency.normal_band"),
+            ),
+            (
+                |p| p.frequency.normal_band = hz(f64::INFINITY),
+                bad_band("frequency.normal_band"),
+            ),
+            (
+                |p| p.frequency.curtail_above = hz(0.05),
+                bad_band("frequency.curtail_above"),
+            ),
+            (
+                |p| p.frequency.curtail_above = hz(0.04),
+                bad_band("frequency.curtail_above"),
+            ),
+            (
+                |p| p.frequency.curtail_above = hz(f64::NAN),
+                bad_band("frequency.curtail_above"),
+            ),
+            (
+                |p| p.frequency.curtail_above = hz(f64::INFINITY),
+                bad_band("frequency.curtail_above"),
+            ),
+            (
+                |p| p.frequency.shed_below = hz(0.0),
+                bad_band("frequency.shed_below"),
+            ),
+            (
+                |p| p.frequency.shed_below = hz(0.1),
+                bad_band("frequency.shed_below"),
+            ),
+            (
+                |p| p.frequency.shed_below = hz(f64::NAN),
+                bad_band("frequency.shed_below"),
+            ),
+            (
+                |p| p.frequency.blackout_below = hz(-0.5),
+                bad_band("frequency.blackout_below"),
+            ),
+            (
+                |p| p.frequency.blackout_below = hz(-0.4),
+                bad_band("frequency.blackout_below"),
+            ),
+            (
+                |p| p.frequency.blackout_below = hz(f64::NEG_INFINITY),
+                bad_band("frequency.blackout_below"),
+            ),
+            (
+                |p| p.frequency.blackout_below = hz(f64::NAN),
+                bad_band("frequency.blackout_below"),
+            ),
+            (
+                |p| p.frequency.k_inertia = 0.0,
+                bad_band("frequency.k_inertia"),
+            ),
+            (
+                |p| p.frequency.k_inertia = -1.0,
+                bad_band("frequency.k_inertia"),
+            ),
+            (
+                |p| p.frequency.k_inertia = f64::NAN,
+                bad_band("frequency.k_inertia"),
+            ),
+            (
+                |p| p.frequency.k_inertia = f64::INFINITY,
+                bad_band("frequency.k_inertia"),
+            ),
+            (
+                |p| p.frequency.k_damping = 0.0,
+                bad_band("frequency.k_damping"),
+            ),
+            (
+                |p| p.frequency.k_damping = 1.01,
+                bad_band("frequency.k_damping"),
+            ),
+            (
+                |p| p.frequency.k_damping = f64::NAN,
+                bad_band("frequency.k_damping"),
+            ),
+            (
+                |p| p.frequency.shed_step = Ratio::ZERO,
+                bad_band("frequency.shed_step"),
+            ),
+            (
+                |p| p.frequency.blackout_after_shed_ticks = 0,
+                bad_band("frequency.blackout_after_shed_ticks"),
+            ),
+            // lines
+            (
+                |p| p.lines.cells_per_month = 0,
+                bad_band("lines.cells_per_month"),
+            ),
+            (
+                |p| p.lines.book_life_months = 0,
+                bad_band("lines.book_life_months"),
+            ),
+            (
+                |p| p.lines.cost_per_cell = Money::from_cents(-1),
+                bad_band("lines.cost_per_cell"),
+            ),
+        ];
+        for (i, (edit, expected)) in cases.into_iter().enumerate() {
+            let r = RegionDefinition::try_from(parts_with(edit));
+            assert_eq!(r.err(), Some(expected), "case {i}");
+        }
+    }
+
+    #[test]
+    fn range_boundaries_are_accepted() {
+        let cases: Vec<Edit> = vec![
+            |p| p.demand.error_persistence = 0.0,
+            |p| p.demand.error_persistence = 0.999_999,
+            |p| p.regulator.strikes_to_revoke = 1,
+            |p| p.regulator.clean_months_to_expire = 1,
+            |p| p.catalog[PEAKER].capacity = mw(0.001),
+            |p| p.catalog[PEAKER].ramp = RampRate::mw_per_minute(0.001),
+            // Solar output follows the sun, so its ramp is not checked.
+            |p| p.catalog[SOLAR].ramp = RampRate::mw_per_minute(0.0),
+            |p| p.catalog[PEAKER].build_months = 1,
+            |p| p.catalog[PEAKER].book_life_months = 1,
+            |p| p.catalog[PEAKER].capital_cost = Money::ZERO,
+            |p| p.catalog[PEAKER].startup_cost = Money::ZERO,
+            |p| p.catalog[PEAKER].fixed_om_per_month = Money::ZERO,
+            |p| p.frequency.normal_band = hz(0.001),
+            |p| p.frequency.curtail_above = hz(0.051),
+            |p| p.frequency.shed_below = hz(-0.001),
+            |p| p.frequency.blackout_below = hz(-0.501),
+            |p| p.frequency.k_inertia = 0.001,
+            |p| p.frequency.k_damping = 1.0,
+            |p| p.frequency.k_damping = 0.001,
+            |p| p.frequency.shed_step = Ratio::ONE,
+            |p| p.frequency.blackout_after_shed_ticks = 1,
+            |p| p.lines.cells_per_month = 1,
+            |p| p.lines.book_life_months = 1,
+            |p| p.lines.cost_per_cell = Money::ZERO,
+        ];
+        for (i, edit) in cases.into_iter().enumerate() {
+            let r = RegionDefinition::try_from(parts_with(edit));
+            assert_eq!(r.err(), None, "case {i}");
+        }
     }
 
     #[test]

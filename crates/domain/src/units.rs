@@ -21,6 +21,13 @@ impl Megawatts {
         Self(value)
     }
 
+    /// Skips the finiteness check, so tests can build the non-finite values a
+    /// release build would let through.
+    #[cfg(test)]
+    pub(crate) fn unchecked(value: f64) -> Self {
+        Self(value)
+    }
+
     pub fn value(self) -> f64 {
         self.0
     }
@@ -302,6 +309,11 @@ pub struct RampRate(f64);
 impl RampRate {
     pub fn mw_per_minute(mw: f64) -> Self {
         Self(mw)
+    }
+
+    /// Megawatts per game minute.
+    pub fn value(self) -> f64 {
+        self.0
     }
 
     /// Change achievable in one tick (one game minute).

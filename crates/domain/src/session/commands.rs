@@ -40,7 +40,7 @@ impl GameSession {
                 },
             )
             .expect("freshly allocated node id is unique");
-        let instalments = spec.capital_cost.split_even(spec.build_months.max(1));
+        let instalments = spec.capital_cost.split_even(spec.build_months);
         self.instalments
             .insert(AssetRef::Plant(plant), instalments.into());
         self.power
@@ -62,7 +62,7 @@ impl GameSession {
         self.require_phase(&[DayPhase::Planning])?;
         let cells = whole_cells(self.line_length(from, to)?);
         let params = self.region.lines();
-        let months = cells.div_ceil(params.cells_per_month.max(1)).max(1);
+        let months = cells.div_ceil(params.cells_per_month).max(1);
         let cost = line_cost(params, cells);
         // Allocate on a copy so a rejected line leaves the counter untouched.
         let mut ids = self.ids.clone();

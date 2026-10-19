@@ -531,10 +531,35 @@ fn negative_or_zero_excess_holds_nothing() {
     assert_eq!(rb.apply_reserve_review(&review(2027, 400.0)), vec![]);
 }
 
+// Region validation keeps book lives, costs and asset refs valid, so these
+// guards are invariants that panic in every build profile.
+
 #[test]
-fn zero_book_life_depreciates_fully_next_month() {
+#[should_panic(expected = "book life")]
+fn zero_book_life_is_an_invariant_violation() {
     let mut rb = RateBase::default();
     rb.add(plant(1), cents(999), 0, month(2028, 1), plant_at(100.0, 1));
+}
+
+#[test]
+#[should_panic(expected = "negative capital cost")]
+fn negative_cost_is_an_invariant_violation() {
+    let mut rb = RateBase::default();
+    rb.add(plant(1), cents(-1), 12, month(2028, 1), plant_at(100.0, 1));
+}
+
+#[test]
+#[should_panic(expected = "already in the rate base")]
+fn duplicate_asset_is_an_invariant_violation() {
+    let mut rb = RateBase::default();
+    rb.add(plant(1), cents(100), 12, month(2028, 1), plant_at(100.0, 1));
+    rb.add_legacy(plant(1), cents(200), 12, month(2028, 1), plant_at(100.0, 1));
+}
+
+#[test]
+fn one_month_book_life_depreciates_fully_next_month() {
+    let mut rb = RateBase::default();
+    rb.add(plant(1), cents(999), 1, month(2028, 1), plant_at(100.0, 1));
     assert_eq!(rb.depreciate_month(), cents(999));
     assert_eq!(rb.depreciate_month(), Money::ZERO);
 }
@@ -565,10 +590,10 @@ enum CapitalOp {
 
 fn arb_capital_op() -> impl Strategy<Value = CapitalOp> {
     prop_oneof![
-        3 => (any::<bool>(), 0i64..1_000_000_000_000, 0u32..480, 0.0f64..500.0, 0u32..4).prop_map(
+        3 => (any::<bool>(), 0i64..1_000_000_000_000, 1u32..480, 0.0f64..500.0, 0u32..4).prop_map(
             |(legacy, cost, life, firm, node)| CapitalOp::AddPlant { legacy, cost, life, firm, node }
         ),
-        2 => (any::<bool>(), 0i64..100_000_000_000, 0u32..600, 0u32..4, 0u32..6).prop_map(
+        2 => (any::<bool>(), 0i64..100_000_000_000, 1u32..600, 0u32..4, 0u32..6).prop_map(
             |(legacy, cost, life, from, to)| CapitalOp::AddLine { legacy, cost, life, from, to }
         ),
         2 => (1u32..30).prop_map(CapitalOp::Depreciate),
