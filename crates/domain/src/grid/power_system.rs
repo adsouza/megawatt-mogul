@@ -476,8 +476,12 @@ impl PowerSystem {
     ///
     /// **The hydro schedule caps AGC, not physics** (spec §12.4). A scheduled
     /// hydro plant on AGC is limited, in what AGC may ask of it, to its
-    /// allocation for `hour`, the hour in which the new targets take effect
-    /// (the next tick's): AGC's view of its availability becomes
+    /// allocation for `hour`, the hour in which the new targets take effect.
+    /// That is the next tick's hour, not this tick's: plants step before AGC
+    /// runs, so targets set on tick t first act on tick t + 1's step, and
+    /// capping them by tick t's hour would leak one tick of the previous
+    /// hour's dispatch into every new hour (and overdraw a final hour that was
+    /// planned to spend exactly the remaining budget). AGC's view of its availability becomes
     /// `min(availability, allocation)`, so AGC never raises its target above
     /// the allocation. The physical availability passed to `Plant::step` is
     /// untouched and keeps only the budget limit. So when the allocation
@@ -546,9 +550,12 @@ impl PowerSystem {
             ProtectionOutcome::Shed => events.push(DomainEvent::LoadShed { mw: shed_mw }),
             ProtectionOutcome::Blackout => {
                 events.push(DomainEvent::Blackout);
-                for plant in self.plants.values_mut() {
-                    events.extend(plant.trip());
-                    plant.suppress_commitment_for_day();
+                let ids: Vec<PlantId> = self.plants.keys().copied().collect();
+                for id in ids {
+                    events.extend(self.trip_plant(id));
+                    if let Some(plant) = self.plants.get_mut(&id) {
+                        plant.suppress_commitment_for_day();
+                    }
                 }
                 self.deviation = Hertz::ZERO;
                 self.curtailment = Megawatts::ZERO;
@@ -557,6 +564,22 @@ impl PowerSystem {
             // Curtailment is handled by `update_curtailment`.
             ProtectionOutcome::None | ProtectionOutcome::Restored | ProtectionOutcome::Curtail => {}
         }
+    }
+
+    /// Trips plant `id` (see [`Plant::trip`]). Every trip goes through here: a
+    /// plant that actually tripped loses its hydro plan, so once restarted it
+    /// is unplanned (uncapped) until the next hourly re-plan (spec §12.3 step
+    /// 4). An unknown id or a plant that was not running is a no-op.
+    pub(super) fn trip_plant(&mut self, id: PlantId) -> Vec<DomainEvent> {
+        let events = self
+            .plants
+            .get_mut(&id)
+            .map(Plant::trip)
+            .unwrap_or_default();
+        if !events.is_empty() {
+            self.unplan_hydro(id);
+        }
+        events
     }
 
     /// Expected (noise-free) demand of connected cities at `tick`.

@@ -1460,6 +1460,59 @@ fn manual_and_unplanned_hydro_are_uncapped() {
 }
 
 #[test]
+fn tripped_hydro_is_unplanned_until_the_next_re_plan() {
+    let region = tiny_region();
+    let mut sys = west_like_fleet(&region);
+    let mut rng = SimRng::from_seed(14);
+    sys.begin_day(&region, january(), &mut rng);
+    run_month(&mut sys, &region, january(), 0..61, &mut rng);
+    let elapsed = sys.hydro_schedule().plants[&HYDRO].hourly[0];
+    let hour_1 = allocation(&sys, 1);
+    assert!(sys.hydro_ceilings(1).contains_key(&HYDRO));
+
+    // A deep frequency dip blacks the grid out and trips every plant.
+    sys.deviation = Hertz::new(-2.0);
+    let (_, events) = sys.tick(&region, january(), 61, &mut rng);
+    assert!(events.contains(&DomainEvent::PlantTripped { plant: HYDRO }));
+    assert!(!sys.hydro_ceilings(1).contains_key(&HYDRO));
+    // Elapsed hours keep their record; the current and later hours are cleared.
+    let view = sys.hydro_schedule().plants[&HYDRO];
+    assert_eq!(view.hourly[0], elapsed);
+    assert_eq!(view.level, None);
+    assert!(view.hourly[1..].iter().all(|mw| *mw == Megawatts::ZERO));
+
+    // Restarted, hydro alone restores the night load: far above its hour-1
+    // allocation and never pulled back to it before the 02:00 re-plan.
+    sys.plant_mut(HYDRO).unwrap().start().unwrap();
+    let mut uncapped_after_restoration = 0;
+    for t in 62..120 {
+        let restored = sys.protection().mode == GridMode::Normal;
+        sys.tick(&region, january(), t, &mut rng);
+        assert!(!sys.hydro_ceilings(2).contains_key(&HYDRO), "tick {t}");
+        if restored {
+            assert!(
+                hydro_output(&sys) > hour_1 + Megawatts::new(300.0),
+                "tick {t}"
+            );
+            uncapped_after_restoration += 1;
+        }
+    }
+    assert!(
+        uncapped_after_restoration >= 5,
+        "{uncapped_after_restoration}"
+    );
+    assert_eq!(sys.protection().shed, Ratio::ZERO);
+
+    // The 02:00 re-plan schedules it again by the normal criteria.
+    sys.tick(&region, january(), 120, &mut rng);
+    assert!(sys.hydro_ceilings(2).contains_key(&HYDRO));
+    let view = sys.hydro_schedule().plants[&HYDRO];
+    assert_eq!(view.hourly[0], elapsed);
+    assert_eq!(view.hourly[1], hour_1);
+    assert!(view.hourly[2] > Megawatts::ZERO);
+}
+
+#[test]
 fn uncommitted_hours_get_zero_allocation() {
     let region = tiny_region();
     let mut sys = west_like_fleet(&region);

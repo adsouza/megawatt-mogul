@@ -32,6 +32,10 @@ pub(crate) struct PlantHydroPlan {
     pub(crate) hourly: [Megawatts; HOURS],
     /// `frozen[h]` is hour `h`'s allocation as it stood when hour `h` began.
     pub(crate) frozen: [Option<Megawatts>; HOURS],
+    /// False once the plant has tripped: it is then unplanned (uncapped)
+    /// until the next re-plan, with no current or future allocation, while
+    /// `frozen` keeps the elapsed hours' record.
+    pub(crate) planned: bool,
 }
 
 /// The hydro schedule as the player sees it (spec §12.6).
@@ -120,6 +124,7 @@ impl PowerSystem {
                     level: fill.level,
                     hourly: fill.hourly,
                     frozen,
+                    planned: true,
                 },
             );
         }
@@ -135,12 +140,25 @@ impl PowerSystem {
         self.protection.shed > Ratio::ZERO || self.band == FrequencyBand::Shedding
     }
 
+    /// Makes a tripped plant unplanned until the next re-plan (spec §12.3 step
+    /// 4): its current and future allocations and its level are cleared, so it
+    /// is budget-limited only, while the frozen record of elapsed hours stays
+    /// visible. The next hourly re-plan treats it by the normal criteria.
+    pub(super) fn unplan_hydro(&mut self, id: PlantId) {
+        if let Some(plan) = self.hydro_plan.get_mut(&id) {
+            plan.level = None;
+            plan.hourly = [Megawatts::ZERO; HOURS];
+            plan.planned = false;
+        }
+    }
+
     /// The allocation for `hour` of every planned plant on AGC: the AGC
-    /// ceilings. A hydro plant with no plan (switched to AGC or connected since
-    /// the last re-plan) gets none, so it is uncapped.
+    /// ceilings. A hydro plant with no plan (switched to AGC, connected or
+    /// tripped since the last re-plan) gets none, so it is uncapped.
     pub(super) fn hydro_ceilings(&self, hour: usize) -> BTreeMap<PlantId, Megawatts> {
         self.hydro_plan
             .iter()
+            .filter(|(_, plan)| plan.planned)
             .filter(|(id, _)| self.plants.get(id).is_some_and(Plant::auto_follow))
             .filter_map(|(id, plan)| plan.hourly.get(hour).map(|mw| (*id, *mw)))
             .collect()
