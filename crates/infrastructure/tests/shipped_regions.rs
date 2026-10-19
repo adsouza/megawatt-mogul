@@ -401,3 +401,43 @@ fn hands_off_plan_survives_year_one() {
         }
     }
 }
+
+/// Spec §15.7: the shipped start fleets cover their forecasts, so the
+/// hands-off plan never orders a rotating outage. Over the hands-off year
+/// on seeds 0-7, every month of both regions closes with no planned outage;
+/// a failure lists each month that had one, with the hours it ran and its
+/// size.
+#[test]
+fn shipped_regions_never_order_outages_hands_off() {
+    let mut outages = Vec::new();
+    for id in [EAST, WEST] {
+        for seed in 0..8 {
+            let mut game = hands_off_game(&catalog(), id, seed);
+            for _ in 1..=12 {
+                let played = play_month(&mut game);
+                let report = &played.report;
+                if report.rotating_outage.value() != 0.0 {
+                    let hours: std::collections::BTreeSet<u32> = played
+                        .ticks
+                        .iter()
+                        .filter(|summary| summary.outage > Ratio::ZERO)
+                        .map(|summary| summary.tick / TICKS_PER_HOUR)
+                        .collect();
+                    outages.push(format!(
+                        "{id} seed {seed} {:?}: {:?} planned (peak share {:?}) in hours {hours:?}",
+                        report.month, report.rotating_outage, report.peak_outage_share,
+                    ));
+                }
+                if game.session().status() != SessionStatus::Active {
+                    break;
+                }
+                game.execute(Command::FinishReview).expect("finish review");
+            }
+        }
+    }
+    assert!(
+        outages.is_empty(),
+        "rotating outages:\n{}",
+        outages.join("\n")
+    );
+}

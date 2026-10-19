@@ -4,18 +4,20 @@
 #[allow(dead_code)]
 mod support;
 
+use application::projections::Lesson;
 use application::{Command, CommandError, Game};
 use domain::error::DomainError;
 use domain::events::DomainEvent;
 use domain::generation::PlantStatus;
+use domain::grid::TickSummary;
 use domain::ids::{CellCoord, NodeId, PlantId};
-use domain::region::PlantKind;
+use domain::region::{PlantKind, RegionDefinitionParts};
 use domain::regulation::StrikeReason;
 use domain::session::{
-    DayPhase, GameOverReason, MinimumGenerationWarning, MonthlyReport, SessionStatus,
+    DayPhase, GameOverReason, IncidentKind, MinimumGenerationWarning, MonthlyReport, SessionStatus,
 };
-use domain::time::SimMonth;
-use domain::units::{MegawattHours, Money};
+use domain::time::{SimMonth, TICKS_PER_DAY, TICKS_PER_HOUR};
+use domain::units::{MegawattHours, Megawatts, Money, Ratio};
 use support::{
     auto_follow_all, duck_curve, game_on, overbuild, overreach, play_month, play_month_to_close,
     winter_peak,
@@ -160,6 +162,242 @@ fn overreach_city_without_capacity() {
     );
     assert_plausible(report);
     insta::assert_debug_snapshot!(report);
+}
+
+/// The forecast shortfall of the current month's representative day, in
+/// report units (weighted by the month's days): the sum over the day's
+/// minutes of `max(0, forecast demand − fleet deliverable)` held for one
+/// minute, times `days`.
+///
+/// "Fleet deliverable" is what the committed fleet can serve once ramped:
+/// every connected, commissioned dispatchable plant committed in the minute's
+/// hour, on AGC, at its availability, plus connected solar at its expected
+/// output. For the non-hydro kinds the overreach fleet holds, availability is
+/// nameplate capacity; hydro availability depends on the day's water, which
+/// this test-side model does not reproduce, so a hydro plant is refused.
+/// Read during Planning, after the commitment plan is set: it uses the public
+/// forecast APIs (`connected_demand_forecast`, `expected_solar`) and the
+/// plant views, not the outage sizing under test.
+fn forecast_shortfall(game: &Game, days: u32) -> MegawattHours {
+    let session = game.session();
+    assert_eq!(session.phase(), DayPhase::Planning, "read the plan");
+    let (region, month, power) = (session.region(), session.clock().month(), session.power());
+    let fleet: Vec<_> = session
+        .plant_views()
+        .into_iter()
+        .filter(|plant| {
+            plant.connected
+                && plant.auto_follow
+                && plant.kind.is_dispatchable()
+                && !matches!(plant.status, PlantStatus::UnderConstruction { .. })
+        })
+        .collect();
+    assert!(
+        fleet.iter().all(|plant| plant.kind != PlantKind::Hydro),
+        "the test-side deliverable does not model hydro"
+    );
+    let per_day: MegawattHours = (0..TICKS_PER_DAY)
+        .map(|tick| {
+            let hour = (tick / TICKS_PER_HOUR) as usize;
+            let plants: Megawatts = fleet
+                .iter()
+                .filter(|plant| plant.commitment[hour])
+                .map(|plant| region.spec(plant.kind).capacity)
+                .sum();
+            let deliverable = plants + power.expected_solar(region, month, tick);
+            let demand = power.connected_demand_forecast(region, month, tick);
+            (demand - deliverable)
+                .max(Megawatts::ZERO)
+                .energy_over_ticks(1)
+        })
+        .sum();
+    per_day * f64::from(days)
+}
+
+/// The overreach game's fourth month (July 2027): the shortfall the plan
+/// leaves, every tick of the day, the report, the month's lessons and the
+/// committed plants that were not online after the last tick.
+struct OverreachMonth {
+    shortfall: MegawattHours,
+    ticks: Vec<TickSummary>,
+    report: MonthlyReport,
+    lessons: Vec<Lesson>,
+    offline_committed: Vec<PlantId>,
+}
+
+/// Plays the overreach script on `parts` (see
+/// `overreach_city_without_capacity`) to the close of month 4, the first
+/// month the new city is connected, and returns that month.
+fn overreach_month_four(parts: RegionDefinitionParts, seed: u64) -> OverreachMonth {
+    let (mut g, _) = game_on(parts, seed);
+    let city_node = g
+        .session()
+        .city_views()
+        .iter()
+        .find(|city| !city.connected)
+        .expect("the start leaves one city unconnected")
+        .node;
+    let substation = g.session().substation();
+    play_month(&mut g, |g| {
+        auto_follow_all(g);
+        g.execute(Command::BuildLine {
+            from: substation,
+            to: city_node,
+        })
+        .expect("build line");
+    });
+    play_month(&mut g, auto_follow_all);
+    play_month(&mut g, auto_follow_all);
+    assert!(
+        g.session().city_views().iter().all(|city| city.connected),
+        "the line commissions at the third month close"
+    );
+
+    auto_follow_all(&mut g);
+    let days = g.session().clock().month().days_in_month();
+    let shortfall = forecast_shortfall(&g, days);
+    g.execute(Command::BeginOperating).expect("begin operating");
+    let events = g
+        .execute(Command::AdvanceTicks { n: TICKS_PER_DAY })
+        .expect("advance the day");
+    let ticks = events
+        .iter()
+        .filter_map(|event| match event {
+            DomainEvent::TickCompleted(summary) => Some(summary.clone()),
+            _ => None,
+        })
+        .collect();
+    let report = latest_report(&g).clone();
+    assert_eq!(report.days, days);
+    // In Review the plants hold the state the day's last tick left. Every
+    // plant is committed all day, so each must be online after hour 23.
+    let committed: Vec<_> = g
+        .session()
+        .plant_views()
+        .into_iter()
+        .filter(|plant| plant.commitment.iter().all(|&hour| hour))
+        .collect();
+    assert!(
+        !committed.is_empty(),
+        "the hands-off plan commits the fleet"
+    );
+    let offline_committed = committed
+        .iter()
+        .filter(|plant| !matches!(plant.status, PlantStatus::Online { .. }))
+        .map(|plant| plant.id)
+        .collect();
+    OverreachMonth {
+        shortfall,
+        ticks,
+        report,
+        lessons: g.projections().lessons.latest().to_vec(),
+        offline_committed,
+    }
+}
+
+/// Spec §15.7/§15.8 "overreach no longer collapses", the checks shared by the
+/// noisy and noise-free runs: no blackout, the committed fleet still online
+/// at the close, some load served, frequency never at the blackout threshold
+/// and the rotating-outage lesson taught.
+fn assert_overreach_rotates(label: &str, month: &OverreachMonth) {
+    let report = &month.report;
+    assert_plausible(report);
+    assert!(
+        !report
+            .incidents
+            .iter()
+            .any(|incident| incident.kind == IncidentKind::Blackout),
+        "{label}: a blackout"
+    );
+    assert!(
+        month.offline_committed.is_empty(),
+        "{label}: committed plants offline at the close: {:?}",
+        month.offline_committed
+    );
+    assert!(
+        report.reliability > Ratio::ZERO,
+        "{label}: reliability {:?}",
+        report.reliability
+    );
+    let frequency = overreach().frequency;
+    let (nominal, blackout_below) = (frequency.nominal.value(), frequency.blackout_below.value());
+    let min_dev = month
+        .ticks
+        .iter()
+        .map(|summary| summary.frequency.value() - nominal)
+        .fold(f64::INFINITY, f64::min);
+    assert!(
+        min_dev > blackout_below,
+        "{label}: min deviation {min_dev} Hz"
+    );
+    assert!(
+        month
+            .lessons
+            .iter()
+            .any(|lesson| matches!(lesson, Lesson::RotatingOutages { .. })),
+        "{label}: lessons {:?}",
+        month.lessons
+    );
+}
+
+/// The overreach month with demand noise (the scenario as scripted): the
+/// planned outage covers the forecast shortfall to within a few percent.
+/// Noise above the forecast still falls to protection, which this does not
+/// bound (controller ruling for Task 7).
+#[test]
+fn overreach_rotates_outages_instead_of_collapsing() {
+    for seed in [13, 1, 2, 3] {
+        let label = format!("seed {seed}");
+        let month = overreach_month_four(overreach(), seed);
+        assert_overreach_rotates(&label, &month);
+        let ratio = month.report.rotating_outage.value() / month.shortfall.value();
+        assert!(
+            (0.95..=1.10).contains(&ratio),
+            "{label}: rotating outage {:?} is {ratio:.4} x the forecast shortfall {:?}",
+            month.report.rotating_outage,
+            month.shortfall
+        );
+    }
+}
+
+/// The overreach month without demand noise: the planned outage is at least
+/// the forecast shortfall and exceeds it by no more than one `shed_step` of
+/// the peak for each hour with an outage (the worse-end sizing and pacing
+/// slack), and protection never sheds. One seed is enough: with no demand
+/// noise and no solar on the fleet, nothing in the day is random.
+#[test]
+fn overreach_without_demand_noise_rotates_exactly_the_shortfall() {
+    let mut parts = overreach();
+    parts.demand.forecast_error = Ratio::ZERO;
+    let shed_step = parts.frequency.shed_step.value();
+    let label = "noise-free";
+    let month = overreach_month_four(parts, 13);
+    assert_overreach_rotates(label, &month);
+    let report = &month.report;
+    let hours_with_outage = (0..24)
+        .filter(|&hour| {
+            month.ticks.iter().any(|summary| {
+                summary.tick / TICKS_PER_HOUR == hour && summary.outage > Ratio::ZERO
+            })
+        })
+        .count();
+    let days = f64::from(report.days);
+    let slack = shed_step * report.peak_demand.value() * hours_with_outage as f64 * days;
+    let (planned, shortfall) = (report.rotating_outage.value(), month.shortfall.value());
+    assert!(
+        planned >= shortfall - 1e-6 * report.demand.value(),
+        "{label}: rotating outage {planned} below the shortfall {shortfall}"
+    );
+    assert!(
+        planned <= shortfall + slack,
+        "{label}: rotating outage {planned} above the shortfall {shortfall} + {slack}"
+    );
+    let shed_ticks = month
+        .ticks
+        .iter()
+        .filter(|summary| summary.shed > Ratio::ZERO)
+        .count();
+    assert_eq!(shed_ticks, 0, "{label}: protection shed");
 }
 
 /// What the overbuild scenarios snapshot: how the game stands at the end,
