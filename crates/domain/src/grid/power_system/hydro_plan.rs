@@ -10,7 +10,7 @@
 use std::collections::BTreeMap;
 
 use super::PowerSystem;
-use crate::generation::{Plant, water_fill};
+use crate::generation::{HydroFill, Plant, water_fill};
 use crate::grid::frequency::FrequencyBand;
 use crate::ids::PlantId;
 use crate::region::{PlantKind, RegionDefinition};
@@ -21,6 +21,11 @@ const HOURS: usize = 24;
 
 /// The forecast for hour `h` is taken at minute 30, the hour's mean.
 const MID_HOUR: u32 = TICKS_PER_HOUR / 2;
+
+/// The tick at minute 30 of hour `hour`, where each hour's forecast is taken.
+pub(super) fn mid_hour_tick(hour: u8) -> u32 {
+    u32::from(hour) * TICKS_PER_HOUR + MID_HOUR
+}
 
 /// One scheduled plant's current plan.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -77,16 +82,6 @@ pub struct PlantHydroScheduleView {
     pub budget_remaining: MegawattHours,
 }
 
-/// Whether the schedule plans `plant`'s water: hydro on AGC with water left.
-/// The caller checks that it is connected and commissioned.
-fn is_scheduled(plant: &Plant) -> bool {
-    plant.kind() == PlantKind::Hydro
-        && plant.auto_follow()
-        && plant
-            .hydro_budget()
-            .is_some_and(|budget| budget > MegawattHours::ZERO)
-}
-
 impl PowerSystem {
     /// Expected (noise-free) demand of connected cities less expected solar at
     /// minute 30 of each hour of a day in `month`: the forecast net load the
@@ -97,9 +92,21 @@ impl PowerSystem {
         month: SimMonth,
     ) -> [Megawatts; HOURS] {
         std::array::from_fn(|h| {
-            let tick = h as u32 * TICKS_PER_HOUR + MID_HOUR;
+            let tick = mid_hour_tick(h as u8);
             self.connected_demand_forecast(region, month, tick)
                 - self.expected_solar(region, month, tick)
+        })
+    }
+
+    /// Expected demand of connected cities at minute 30 of each hour of a day
+    /// in `month`.
+    pub(crate) fn hourly_demand(
+        &self,
+        region: &RegionDefinition,
+        month: SimMonth,
+    ) -> [Megawatts; HOURS] {
+        std::array::from_fn(|h| {
+            self.connected_demand_forecast(region, month, mid_hour_tick(h as u8))
         })
     }
 
@@ -115,41 +122,73 @@ impl PowerSystem {
     /// record. Draws no random numbers.
     pub(super) fn plan_hydro(&mut self, region: &RegionDefinition, month: SimMonth, from_hour: u8) {
         let from = usize::from(from_hour);
+        let fills = self.compute_hydro_plan(region, month, from_hour, |p| {
+            p.hydro_budget().unwrap_or(MegawattHours::ZERO)
+        });
+        let plans = fills
+            .into_iter()
+            .map(|(id, fill)| {
+                let mut frozen = match self.hydro_plan.get(&id) {
+                    Some(previous) if from > 0 => previous.frozen,
+                    _ => [None; HOURS],
+                };
+                if let Some(slot) = frozen.get_mut(from) {
+                    *slot = Some(fill.hourly[from]);
+                }
+                let plan = PlantHydroPlan {
+                    level: fill.level,
+                    hourly: fill.hourly,
+                    frozen,
+                    planned: true,
+                };
+                (id, plan)
+            })
+            .collect();
+        self.hydro_plan = plans;
+        self.hydro_planned_from = from_hour;
+    }
+
+    /// The pure water-filling behind [`PowerSystem::plan_hydro`] (spec §12.3,
+    /// §15.5): each scheduled hydro plant's fill over hours `from_hour..24`,
+    /// in id order against the residual (the forecast net load, zero before
+    /// `from_hour`, less each earlier plant's allocation). `budget` gives the
+    /// water a plant has to place; a plant is scheduled when it is connected
+    /// and commissioned hydro on AGC with a positive budget. Reads no plan
+    /// state and draws no random numbers, so a Planning-time preview can call
+    /// it with the coming day's budgets (see [`super::day_hydro_budget`]).
+    pub(crate) fn compute_hydro_plan(
+        &self,
+        region: &RegionDefinition,
+        month: SimMonth,
+        from_hour: u8,
+        budget: impl Fn(&Plant) -> MegawattHours,
+    ) -> BTreeMap<PlantId, HydroFill> {
+        let from = usize::from(from_hour);
         let mut residual = self.hourly_net_load(region, month);
         residual
             .iter_mut()
             .take(from)
             .for_each(|mw| *mw = Megawatts::ZERO);
 
-        let mut plans = BTreeMap::new();
-        for plant in self.connected_plants().filter(|p| is_scheduled(p)) {
+        let mut fills = BTreeMap::new();
+        for plant in self.connected_plants() {
+            let water = budget(plant);
+            if plant.kind() != PlantKind::Hydro
+                || !plant.auto_follow()
+                || water <= MegawattHours::ZERO
+            {
+                continue;
+            }
             let commitment = plant.commitment();
             let eligible: [bool; HOURS] =
                 std::array::from_fn(|h| h >= from && commitment.is_committed(h as u8));
-            let budget = plant.hydro_budget().unwrap_or(MegawattHours::ZERO);
-            let fill = water_fill(&residual, &eligible, plant.spec().capacity, budget);
+            let fill = water_fill(&residual, &eligible, plant.spec().capacity, water);
             for (left, used) in residual.iter_mut().zip(fill.hourly) {
                 *left -= used;
             }
-            let mut frozen = match self.hydro_plan.get(&plant.id()) {
-                Some(previous) if from > 0 => previous.frozen,
-                _ => [None; HOURS],
-            };
-            if let Some(slot) = frozen.get_mut(from) {
-                *slot = Some(fill.hourly[from]);
-            }
-            plans.insert(
-                plant.id(),
-                PlantHydroPlan {
-                    level: fill.level,
-                    hourly: fill.hourly,
-                    frozen,
-                    planned: true,
-                },
-            );
+            fills.insert(plant.id(), fill);
         }
-        self.hydro_plan = plans;
-        self.hydro_planned_from = from_hour;
+        fills
     }
 
     /// Whether the emergency override lifts every hydro cap (spec §12.4):

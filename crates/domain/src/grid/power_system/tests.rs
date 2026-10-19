@@ -4126,3 +4126,81 @@ fn protections_own_restoration_does_not_count_as_outage_surplus() {
     assert!(near_share(s.outage, 0.25), "{:?}", s.outage);
     assert!(!events.contains(&DomainEvent::Blackout));
 }
+
+/// The old inline formula of `begin_day`, kept as an equality oracle:
+/// `capacity × 24 h × cell potential × monthly flow`, with the tiny region's
+/// only hydro site at (10, 1) of potential 0.8 and every other cell 0.
+fn oracle_day_budget(region: &RegionDefinition, month: SimMonth, at: CellCoord) -> f64 {
+    let potential = if at == cell(10, 1) { 0.8 } else { 0.0 };
+    800.0 * 24.0 * potential * region.hydro().monthly_flow[month.index0()]
+}
+
+#[test]
+fn begin_day_budgets_are_unchanged_by_the_refactor() {
+    let region = tiny_region();
+    for month in 1..=12 {
+        let month = SimMonth::new(2027, month).unwrap();
+        let mut sys = system_with(
+            &region,
+            &[
+                connected(PlantKind::Hydro, cell(10, 1)),
+                connected(PlantKind::Hydro, cell(5, 5)),
+            ],
+        );
+        sys.begin_day(&region, month, &mut SimRng::from_seed(1));
+        for (id, site) in [(PlantId(1), cell(10, 1)), (PlantId(2), cell(5, 5))] {
+            let plant = sys.plant(id).unwrap();
+            let expected = oracle_day_budget(&region, month, site);
+            assert_eq!(plant.hydro_budget().unwrap().value(), expected);
+            assert_eq!(day_hydro_budget(&region, month, plant).value(), expected);
+        }
+    }
+}
+
+#[test]
+fn hourly_deliverable_counts_hydro_from_the_preview_of_the_coming_day() {
+    let region = tiny_region();
+    let mut sys = committed_auto_follow(&region, &[connected(PlantKind::Hydro, cell(10, 1))]);
+    // Before the day begins the plant holds no plan and no day's water yet.
+    let preview = sys.hourly_deliverable(&region, april());
+    assert!(sys.hydro_schedule().plants.is_empty());
+    assert!(preview.iter().any(|mw| *mw > Megawatts::ZERO));
+
+    sys.begin_day(&region, april(), &mut SimRng::from_seed(1));
+    let planned = sys.hydro_schedule().plants[&PlantId(1)].hourly;
+    assert_eq!(preview, planned);
+}
+
+#[test]
+fn hourly_deliverable_counts_each_kind_by_its_own_rule() {
+    let region = tiny_region();
+    let mut sys = committed_auto_follow(
+        &region,
+        &[
+            connected(PlantKind::Coal, cell(5, 5)),
+            connected(PlantKind::Ccgt, cell(5, 5)),
+            connected(PlantKind::Solar, cell(5, 5)),
+        ],
+    );
+    // Coal on AGC counts its availability; CCGT on manual counts its target;
+    // solar counts its expected output whatever its pattern.
+    sys.plant_mut(PlantId(2))
+        .unwrap()
+        .set_auto_follow(false)
+        .unwrap();
+    sys.plant_mut(PlantId(2))
+        .unwrap()
+        .set_initial_target(Megawatts::new(123.0));
+    let mut pattern = [false; 24];
+    pattern[6..=9].fill(true);
+    sys.plant_mut(PlantId(1)).unwrap().set_commitment(
+        CommitmentSchedule::try_new(pattern, region.spec(PlantKind::Coal)).unwrap(),
+    );
+    let deliverable = sys.hourly_deliverable(&region, april());
+    for (h, mw) in deliverable.iter().enumerate() {
+        let tick = h as u32 * 60 + 30;
+        let coal = if (6..=9).contains(&h) { 600.0 } else { 0.0 };
+        let solar = sys.expected_solar(&region, april(), tick).value();
+        assert_eq!(mw.value(), coal + 123.0 + solar, "hour {h}");
+    }
+}

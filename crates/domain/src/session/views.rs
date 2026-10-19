@@ -97,6 +97,22 @@ pub struct MinimumGenerationWarning {
     pub excess: Megawatts,
 }
 
+/// The hour in which the committed fleet's deliverable capacity falls short
+/// of the forecast demand by the most (spec §15.5): the plan would have to
+/// leave that load to a rotating outage.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CapacityShortfallWarning {
+    /// The hour of day, 0 to 23.
+    pub hour: u8,
+    /// The connected forecast demand at minute 30 of that hour.
+    pub demand: Megawatts,
+    /// What the plants committed in that hour could deliver, an upper bound
+    /// that ignores start-up and ramp limits.
+    pub deliverable: Megawatts,
+    /// `demand − deliverable`, always positive.
+    pub shortfall: Megawatts,
+}
+
 impl GameSession {
     /// Every plant, in id order.
     pub fn plant_views(&self) -> Vec<PlantView> {
@@ -213,6 +229,37 @@ impl GameSession {
                     committed_minimum,
                     net_load,
                     excess,
+                });
+            }
+        }
+        worst
+    }
+
+    /// The Planning-time check of the commitment plan against the demand
+    /// forecast (spec §15.5): the hour whose forecast demand exceeds what the
+    /// committed fleet could deliver by the most, earliest on ties; `None`
+    /// when every hour is covered.
+    ///
+    /// An upper bound: it reads the plants' commitment patterns (not the
+    /// per-day suppression override), ignores start-up and ramp limits, and
+    /// counts scheduled hydro from a pure preview of the coming day's plan,
+    /// since the live plan is empty during Planning. Pure: no randomness, no
+    /// state change.
+    pub fn capacity_shortfall_check(&self) -> Option<CapacityShortfallWarning> {
+        let month = self.clock.month();
+        let demand = self.power.hourly_demand(&self.region, month);
+        let deliverable = self.power.hourly_deliverable(&self.region, month);
+        let mut worst: Option<CapacityShortfallWarning> = None;
+        for (hour, (&demand, &deliverable)) in demand.iter().zip(&deliverable).enumerate() {
+            let shortfall = demand - deliverable;
+            let beats_worst =
+                worst.map_or(shortfall > Megawatts::ZERO, |w| shortfall > w.shortfall);
+            if beats_worst {
+                worst = Some(CapacityShortfallWarning {
+                    hour: hour as u8,
+                    demand,
+                    deliverable,
+                    shortfall,
                 });
             }
         }

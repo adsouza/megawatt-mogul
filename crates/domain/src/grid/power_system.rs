@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 mod hydro_plan;
 mod outage;
 
-use hydro_plan::{HydroOverride, PlantHydroPlan};
+use hydro_plan::{HydroOverride, PlantHydroPlan, mid_hour_tick};
 pub use hydro_plan::{HydroScheduleView, PlantHydroScheduleView};
 
 use super::dispatch::{agc_retarget, boundary_dispatch};
@@ -109,6 +109,20 @@ fn is_curtailable(plant: &Plant) -> bool {
 
 fn is_commissioned(plant: &Plant) -> bool {
     !matches!(plant.status(), PlantStatus::UnderConstruction { .. })
+}
+
+/// The water a hydro plant starts a day of `month` with: `capacity × 24 h ×
+/// hydro_potential(cell) × monthly_flow[month]` (spec §12.2). `begin_day`
+/// resets each commissioned hydro plant to it, and the Planning-time hydro
+/// preview plans with it before the day begins (spec §15.5).
+pub(crate) fn day_hydro_budget(
+    region: &RegionDefinition,
+    month: SimMonth,
+    plant: &Plant,
+) -> MegawattHours {
+    let flow = region.hydro().monthly_flow[month.index0()];
+    let potential = cell_ratio(region, plant.cell(), |c| c.hydro_potential);
+    MegawattHours::new(plant.spec().capacity.value() * HOURS_PER_DAY * potential.value() * flow)
 }
 
 /// The most AGC may ask of plant `id`: its availability, lowered to its hydro
@@ -230,6 +244,50 @@ impl PowerSystem {
         minimum
     }
 
+    /// For each hour of the coming day in `month`, the most the connected,
+    /// commissioned plants committed in that hour (by their commitment
+    /// pattern, not today's suppression override) could deliver at minute 30
+    /// (spec §15.5): a plant on AGC its availability, a manual plant its
+    /// initial target, scheduled hydro its allocation from a pure preview of
+    /// the hour-0 plan with the coming day's budgets, plus expected solar.
+    ///
+    /// An upper bound by design: it ignores the start-up and ramp limits the
+    /// operating-time outage sizing applies. Manual hydro counts its initial
+    /// target like any manual plant, unlimited by the day's water. A hydro
+    /// plant on AGC with no water counts nothing. Pure.
+    pub(crate) fn hourly_deliverable(
+        &self,
+        region: &RegionDefinition,
+        month: SimMonth,
+    ) -> [Megawatts; 24] {
+        let preview =
+            self.compute_hydro_plan(region, month, 0, |p| day_hydro_budget(region, month, p));
+        let mut deliverable: [Megawatts; 24] =
+            std::array::from_fn(|h| self.expected_solar(region, month, mid_hour_tick(h as u8)));
+        for plant in self
+            .connected_plants()
+            .filter(|p| p.kind().is_dispatchable())
+        {
+            let commitment = plant.commitment();
+            for (hour, total) in deliverable.iter_mut().enumerate() {
+                if !commitment.is_committed(hour as u8) {
+                    continue;
+                }
+                *total += if !plant.auto_follow() {
+                    plant.initial_target()
+                } else if plant.kind() == PlantKind::Hydro {
+                    preview
+                        .get(&plant.id())
+                        .map_or(Megawatts::ZERO, |f| f.hourly[hour])
+                } else {
+                    let sun = sun_factor(region.solar(), month, mid_hour_tick(hour as u8));
+                    self.available(region, plant, sun)
+                };
+            }
+        }
+        deliverable
+    }
+
     /// Starts a representative day of `month`. Nothing physical carries over
     /// from the previous day: each commissioned hydro plant's budget is reset
     /// to `capacity × 24 h × hydro_potential(cell) × monthly_flow[month]`, the
@@ -263,13 +321,9 @@ impl PowerSystem {
         month: SimMonth,
         rng: &mut SimRng,
     ) -> DayInitialisation {
-        let flow = region.hydro().monthly_flow[month.index0()];
         for plant in self.plants.values_mut() {
             if plant.kind() == PlantKind::Hydro && is_commissioned(plant) {
-                let potential = cell_ratio(region, plant.cell(), |c| c.hydro_potential);
-                let daily =
-                    plant.spec().capacity.value() * HOURS_PER_DAY * potential.value() * flow;
-                plant.reset_hydro_budget(MegawattHours::new(daily));
+                plant.reset_hydro_budget(day_hydro_budget(region, month, plant));
             }
         }
         self.clearness = draw_clearness(region.solar(), month, rng);

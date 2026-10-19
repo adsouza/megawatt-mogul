@@ -830,3 +830,138 @@ fn minimum_generation_ties_go_to_the_earliest_hour() {
     });
     assert_eq!(warning.hour, 0);
 }
+
+/// A session whose cities demand a flat 500 MW all day (cities 1 and 2 total
+/// 1,000 MW at a 0.5 shape and a 1.0 monthly factor).
+fn flat_500_session() -> GameSession {
+    session_with(|parts| {
+        parts.demand.winter = [0.5; 24];
+        parts.demand.summer = [0.5; 24];
+        parts.demand.shoulder = [0.5; 24];
+        parts.demand.monthly = [1.0; 12];
+    })
+}
+
+/// Commits `plant` on exactly the inclusive `(first, last)` hour blocks, on AGC or at `target`.
+fn commit_blocks(
+    s: &mut GameSession,
+    plant: PlantId,
+    blocks: &[(usize, usize)],
+    target: Option<f64>,
+) {
+    let mut pattern = [false; 24];
+    for &(first, last) in blocks {
+        pattern[first..=last].fill(true);
+    }
+    s.commit_plant(plant, pattern).unwrap();
+    match target {
+        Some(mw) => s.set_dispatch_target(plant, Megawatts::new(mw)).unwrap(),
+        None => s.set_auto_follow(plant, true).unwrap(),
+    };
+}
+
+/// Coal (600 MW, AGC) covers 00:00-11:59, a CCGT held at 450 MW 12:00-15:59
+/// and 19:00-23:59, and a peaker (200 MW, AGC) 16:00-18:59, against 500 MW.
+fn shortfall_fleet() -> GameSession {
+    let mut s = flat_500_session();
+    let coal = plant_of(&s, PlantKind::Coal);
+    let ccgt = plant_of(&s, PlantKind::Ccgt);
+    let peaker = plant_of(&s, PlantKind::Peaker);
+    commit_blocks(&mut s, coal, &[(0, 11)], None);
+    commit_blocks(&mut s, ccgt, &[(12, 15), (19, 23)], Some(450.0));
+    commit_blocks(&mut s, peaker, &[(16, 18)], None);
+    s
+}
+
+#[test]
+fn capacity_shortfall_check_reports_the_worst_hour() {
+    let s = shortfall_fleet();
+    // Hours 12-15 and 19-23 fall 50 MW short; hours 16-18 fall 300 MW short
+    // and tie, so the earliest, 16:00, is reported.
+    let warning = s
+        .capacity_shortfall_check()
+        .expect("the peaker hours fall short");
+    assert_eq!(warning.hour, 16);
+    assert_eq!(warning.demand, Megawatts::new(500.0));
+    assert_eq!(warning.deliverable, Megawatts::new(200.0));
+    assert_eq!(warning.shortfall, Megawatts::new(300.0));
+}
+
+#[test]
+fn capacity_shortfall_check_counts_only_committed_hours() {
+    let mut s = shortfall_fleet();
+    let coal = plant_of(&s, PlantKind::Coal);
+    // Dropping coal from hour 11 leaves that hour uncovered: 500 MW short is
+    // now the worst, ahead of the peaker hours.
+    commit_blocks(&mut s, coal, &[(0, 10)], None);
+    let warning = s.capacity_shortfall_check().unwrap();
+    assert_eq!(warning.hour, 11);
+    assert_eq!(warning.deliverable, Megawatts::ZERO);
+    assert_eq!(warning.shortfall, Megawatts::new(500.0));
+}
+
+#[test]
+fn capacity_shortfall_check_is_none_when_covered() {
+    let mut s = flat_500_session();
+    // Nothing committed: the whole day is short, hour 0 first.
+    assert_eq!(s.capacity_shortfall_check().unwrap().hour, 0);
+
+    let coal = plant_of(&s, PlantKind::Coal);
+    let ccgt = plant_of(&s, PlantKind::Ccgt);
+    // Coal's 600 MW covers the first half; the CCGT's 500 MW exactly meets
+    // the 500 MW demand in the second, which is covered, not a shortfall.
+    commit_blocks(&mut s, coal, &[(0, 11)], None);
+    commit_blocks(&mut s, ccgt, &[(12, 23)], None);
+    assert_eq!(s.capacity_shortfall_check(), None);
+}
+
+#[test]
+fn capacity_shortfall_check_counts_hydro_from_the_preview() {
+    let mut s = session();
+    let hydro = s.insert_commissioned_plant(PlantKind::Hydro, CellCoord { x: 10, y: 1 });
+    s.start_plant(hydro).unwrap();
+    s.set_auto_follow(hydro, true).unwrap();
+    assert!(
+        s.hydro_schedule().plants.is_empty(),
+        "Planning plans nothing"
+    );
+
+    let month = s.clock().month();
+    let preview = s.power().hourly_deliverable(s.region(), month);
+    let warning = s.capacity_shortfall_check().expect("hydro alone is short");
+    let h = usize::from(warning.hour);
+    assert_eq!(warning.deliverable, preview[h]);
+    assert!(preview.iter().any(|mw| *mw > Megawatts::ZERO));
+
+    // What BeginOperating then plans is the preview, hour by hour.
+    s.begin_operating().unwrap();
+    let planned = s.hydro_schedule().plants[&hydro].hourly;
+    assert_eq!(preview, planned);
+    assert_eq!(warning.deliverable, planned[h]);
+}
+
+#[test]
+fn capacity_shortfall_check_previews_a_fresh_days_water_after_a_spent_day() {
+    let (mut s, hydro, _) = day_with_hydro(1);
+    s.finish_review().unwrap();
+    s.set_auto_follow(hydro, true).unwrap();
+    // The plant still holds yesterday's leftover water, but the preview
+    // plans with the new day's budget, as BeginOperating will.
+    let preview = s.power().hourly_deliverable(s.region(), s.clock().month());
+    s.begin_operating().unwrap();
+    assert_eq!(preview, s.hydro_schedule().plants[&hydro].hourly);
+}
+
+#[test]
+fn capacity_shortfall_check_is_pure() {
+    let mut s = shortfall_fleet();
+    let hydro = s.insert_commissioned_plant(PlantKind::Hydro, CellCoord { x: 10, y: 1 });
+    s.start_plant(hydro).unwrap();
+    s.set_auto_follow(hydro, true).unwrap();
+    let before = s.state_hash();
+    let first = s.capacity_shortfall_check();
+    assert_eq!(s.state_hash(), before, "the check changed the session");
+    assert_eq!(s.capacity_shortfall_check(), first);
+    assert!(s.hydro_schedule().plants.is_empty());
+    assert_eq!(s.state_hash(), before);
+}
