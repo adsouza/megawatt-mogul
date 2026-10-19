@@ -1827,12 +1827,21 @@ fn committed_auto_follow(region: &RegionDefinition, defs: &[PlantDef]) -> PowerS
 /// its events.
 fn over_frequency_trip_serving(sys: &mut PowerSystem, served: Megawatts) -> Vec<DomainEvent> {
     let region = tiny_region();
+    let (available, curtailable, withheld) = sys.availability(&region, april(), 0);
+    let redispatch = Redispatch {
+        available: &available,
+        to_serve: served,
+        withheld,
+        curtailable,
+        effect_tick: 1,
+    };
     let mut events = Vec::new();
     sys.apply_protection(
         ProtectionOutcome::OverFrequencyTrip,
         Megawatts::ZERO,
         served,
         region.frequency(),
+        &redispatch,
         &mut events,
     );
     events
@@ -1971,6 +1980,122 @@ fn a_trip_beyond_the_fleets_ramp_headroom_is_withheld_until_it_fits() {
 }
 
 #[test]
+fn headroom_counts_only_what_agc_may_dispatch() {
+    // A dry hydro plant has 800 MW of nameplate room but no water: AGC can't
+    // raise it, so it must not make the peaker's trip look safe.
+    let region = tiny_region();
+    let n = region.frequency().trip_after_ticks;
+    let defs = [
+        connected(PlantKind::Peaker, cell(6, 5)),
+        connected(PlantKind::Hydro, cell(10, 1)),
+    ];
+    let (peaker, hydro) = (PlantId(1), PlantId(2));
+    let setup = |budget: f64| {
+        let mut sys = committed_auto_follow(&region, &defs);
+        sys.begin_day(&region, april(), &mut SimRng::from_seed(1));
+        for id in [peaker, hydro] {
+            sys.plant_mut(id).unwrap().force_to_minimum();
+        }
+        sys.plant_mut(hydro)
+            .unwrap()
+            .reset_hydro_budget(MegawattHours::new(budget));
+        sys.protection.over_armed = true;
+        sys
+    };
+    // 40 MW of peaker against a 10 MW surplus: a 30 MW deficit.
+    let served = Megawatts::new(30.0);
+
+    let mut dry = setup(0.0);
+    assert_eq!(dry.plant(hydro).unwrap().output(), Megawatts::ZERO);
+    assert!(dry.plant(hydro).unwrap().headroom_up(Megawatts::new(800.0)) >= Megawatts::new(30.0));
+    assert!(over_frequency_trip_serving(&mut dry, served).is_empty());
+    assert!(dry.plant(peaker).unwrap().is_online());
+    assert_eq!(dry.protection.over_ticks, n);
+
+    // With water, the same trip fits the hydro's one-tick ramp.
+    let mut wet = setup(10_000.0);
+    assert_eq!(
+        over_frequency_trip_serving(&mut wet, served),
+        tripped(peaker)
+    );
+}
+
+#[test]
+fn an_all_solar_grid_has_nothing_to_trip() {
+    let region = tiny_region();
+    let mut sys = committed_auto_follow(&region, &[connected(PlantKind::Solar, cell(5, 5))]);
+    sys.begin_day(&region, april(), &mut SimRng::from_seed(1));
+    assert!(over_frequency_trip(&mut sys).is_empty());
+}
+
+/// The reviewer's probe: after running ticks `warm_up` (no trips), plant
+/// 2 is nudged into a small surplus at noon with protection one tick from a
+/// trip at a modest deviation. Returns the summaries of ticks 720..740.
+fn modest_deviation_trip(
+    region: &RegionDefinition,
+    defs: &[PlantDef],
+    warm_up: std::ops::Range<u32>,
+) -> Vec<TickSummary> {
+    let n = region.frequency().trip_after_ticks;
+    let mut sys = committed_auto_follow(region, defs);
+    let mut rng = SimRng::from_seed(1);
+    sys.begin_day(region, april(), &mut rng);
+    for (_, events) in run_ticks(&mut sys, region, warm_up, &mut rng) {
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, DomainEvent::PlantTripped { .. }))
+        );
+    }
+    sys.deviation = Hertz::new(0.6);
+    sys.protection.over_armed = true;
+    sys.protection.over_ticks = n - 1;
+    let ccgt = sys.plant_mut(PlantId(2)).unwrap();
+    let target = ccgt.output() + Megawatts::new(20.0);
+    ccgt.set_target(target).unwrap();
+    let mut out = Vec::new();
+    for t in 720..740 {
+        let (s, events) = sys.tick(region, april(), t, &mut rng);
+        let trip = events
+            .iter()
+            .any(|e| matches!(e, DomainEvent::OverFrequencyTrip { .. }));
+        assert_eq!(trip, t == 720, "tick {t}");
+        out.push(s);
+    }
+    out
+}
+
+#[test]
+fn a_trip_from_a_modest_deviation_does_not_shed() {
+    // Fast ramps: the trip opens a ~200 MW deficit that the other CCGT and
+    // coal can cover in one tick, but only if AGC re-runs after the trip.
+    let fast = fast_ramp_region();
+    let ticks = modest_deviation_trip(
+        &fast,
+        &[
+            connected(PlantKind::Coal, cell(7, 3)),
+            connected(PlantKind::Ccgt, cell(8, 4)),
+            connected(PlantKind::Ccgt, cell(6, 5)),
+        ],
+        600..720,
+    );
+    assert!(ticks[0].served - ticks[0].generation > Megawatts::new(150.0));
+    // The next tick's generation is AGC's post-trip dispatch: tick 720's load.
+    assert!(close(ticks[1].generation, ticks[0].served));
+    assert!(ticks.iter().all(|s| s.unserved == Megawatts::ZERO));
+
+    // Real ramps: the peaker trips and the CCGT (coal is at capacity) ramps
+    // up within its 25 MW tick to replace it on the very next tick.
+    let tiny = tiny_region();
+    let ticks = modest_deviation_trip(&tiny, &start_fleet(&tiny), 0..720);
+    let rise = ticks[1].generation - ticks[0].generation;
+    assert!(rise > Megawatts::ZERO);
+    assert!(rise <= tiny.spec(PlantKind::Ccgt).ramp.per_tick());
+    assert!(close(ticks[1].generation, ticks[0].served));
+    assert!(ticks.iter().all(|s| s.unserved == Megawatts::ZERO));
+}
+
+#[test]
 fn a_withheld_trip_fires_on_the_next_tick_with_surplus_once_it_fits() {
     let region = tiny_region();
     let p = region.frequency();
@@ -2054,9 +2179,9 @@ fn overbuild_fleet(region: &RegionDefinition) -> PowerSystem {
 /// 2. trips are at least one window apart, and each takes the highest-cost
 ///    (then lowest-id) connected online dispatchable producer;
 /// 3. on every armed tick above `curtail_above` without a trip, either the
-///    window is still filling, or no producer could be tripped safely: each
-///    one's output less the surplus exceeds the one-tick ramp-up headroom of
-///    the other auto-follow plants.
+///    window is still filling, or the cost-first candidate could not be
+///    tripped safely: its output less the surplus exceeds the one-tick ramp-up
+///    headroom of the other auto-follow plants.
 ///
 /// Returns the trips and each tick's deviation.
 fn run_day_checking_over_frequency(
@@ -2105,22 +2230,29 @@ fn run_day_checking_over_frequency(
             trips.push((t, id));
             continue;
         }
-        // (3)
+        // (3) The fleet has neither solar nor hydro, so every plant's
+        // dispatchable ceiling is its capacity.
         let protection = sys.protection();
         if protection.over_armed && dev > p.curtail_above && protection.over_ticks >= n {
-            let surplus = producers.iter().map(|q| q.output()).sum::<Megawatts>() - s.served;
-            for q in &producers {
-                let headroom: Megawatts = sys
-                    .connected_plants()
-                    .filter(|o| o.id() != q.id() && o.auto_follow())
-                    .map(|o| o.headroom_up(o.spec().capacity))
-                    .sum();
-                assert!(
-                    q.output() - surplus > headroom,
-                    "tick {t}: {:?} could trip safely but did not",
-                    q.id()
-                );
-            }
+            let surplus = sys.connected_plants().map(Plant::output).sum::<Megawatts>() - s.served;
+            let candidate = producers
+                .iter()
+                .max_by(|a, b| {
+                    cost(a)
+                        .total_cmp(&cost(b))
+                        .then_with(|| b.id().cmp(&a.id()))
+                })
+                .expect("a producer while over-frequency");
+            let headroom: Megawatts = sys
+                .connected_plants()
+                .filter(|o| o.id() != candidate.id() && o.auto_follow())
+                .map(|o| o.headroom_up(o.spec().capacity))
+                .sum();
+            assert!(
+                candidate.output() - surplus > headroom,
+                "tick {t}: {:?} could trip safely but did not",
+                candidate.id()
+            );
         }
     }
     (trips, devs)
@@ -2173,10 +2305,16 @@ fn overbuild_surplus_fully_clears_when_the_fleet_can_cover_each_trip() {
             (3 * n - 1, PlantId(4))
         ]
     );
+    // Bound: one window per tripped plant, then two windows for frequency to
+    // settle. The redispatch after each trip leaves no deficit to pull the
+    // deviation down, so it decays by the damping factor alone: from at most
+    // +3 Hz at the last trip, 3 × (1 − k_damping)^(2n) = 3 × 0.8^10 ≈ 0.32 Hz,
+    // below `curtail_above`.
+    let last = devs[(3 * n - 1) as usize];
+    assert!(last <= Hertz::new(3.0), "{last:?}");
+    assert_eq!(p.k_damping, 0.2);
     let surplus_plants = 3;
-    // Bound: one window per tripped plant, plus one window for frequency to
-    // settle after the last trip.
-    let bound = n * (surplus_plants + 1);
+    let bound = n * (surplus_plants + 2);
     for (t, dev) in devs.iter().enumerate().skip(bound as usize) {
         assert!(*dev <= p.curtail_above, "tick {t}: {dev:?}");
     }

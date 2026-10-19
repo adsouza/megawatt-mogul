@@ -22,9 +22,10 @@ pub struct ProtectionState {
     pub shed: Ratio,
     /// Consecutive ticks spent shedding.
     pub shed_ticks: u32,
-    /// Over-frequency trip counter (spec §14.2): ticks above `trip_above`
-    /// while not armed, ticks above `curtail_above` since arming or the last
-    /// trip while armed.
+    /// Over-frequency trip counter (spec §14.2): consecutive ticks with a
+    /// physical surplus and a deviation above `trip_above` while not armed,
+    /// or above `curtail_above` while armed, since the last reset or trip
+    /// (see [`evaluate`]).
     pub over_ticks: u32,
     /// Whether over-frequency protection is armed (see [`evaluate`]).
     pub over_armed: bool,
@@ -104,7 +105,9 @@ fn snapped(value: f64) -> Ratio {
 ///   deficit, and so into load shedding or blackout, contradicting §14.2's
 ///   gradual shedding and §14.6's "the surplus clears".
 /// - Protection arms once the count reaches `trip_after_ticks`, and a trip is
-///   due whenever it has. The caller resets the count when it trips.
+///   due whenever it has. [`evaluate`] resets the count when it returns
+///   `OverFrequencyTrip`; `PowerSystem` puts it back with
+///   [`ProtectionState::withhold_trip`] if it then withholds the trip.
 fn track_over_frequency(
     state: &mut ProtectionState,
     dev: Hertz,

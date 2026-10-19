@@ -49,6 +49,21 @@ pub struct DayInitialisation {
     pub boundary_starts: BTreeMap<PlantId, u32>,
 }
 
+/// Step 5's AGC inputs for the tick (see [`PowerSystem::tick`]), kept so AGC
+/// can be re-run on the post-trip state after an over-frequency trip.
+struct Redispatch<'a> {
+    /// Every plant's availability this tick (after curtailment).
+    available: &'a BTreeMap<PlantId, Megawatts>,
+    /// The load AGC aims to serve, `demand × to_serve`.
+    to_serve: Megawatts,
+    /// Solar availability withheld this tick.
+    withheld: Megawatts,
+    /// Connected solar availability before curtailment.
+    curtailable: Megawatts,
+    /// The tick the new targets first act on.
+    effect_tick: u32,
+}
+
 /// The physical grid: every plant and city, the network joining them, and the
 /// frequency and protection state between ticks.
 #[derive(Debug, Clone, PartialEq)]
@@ -79,6 +94,17 @@ fn is_curtailable(plant: &Plant) -> bool {
 
 fn is_commissioned(plant: &Plant) -> bool {
     !matches!(plant.status(), PlantStatus::UnderConstruction { .. })
+}
+
+/// The most AGC may ask of plant `id`: its availability, lowered to its hydro
+/// ceiling where one applies.
+fn agc_cap(
+    available: &BTreeMap<PlantId, Megawatts>,
+    ceilings: &BTreeMap<PlantId, Megawatts>,
+    id: PlantId,
+) -> Megawatts {
+    let cap = available[&id];
+    ceilings.get(&id).map_or(cap, |ceiling| cap.min(*ceiling))
 }
 
 impl PowerSystem {
@@ -272,8 +298,11 @@ impl PowerSystem {
     ///    connected demand.
     /// 8. Protection: load shedding; a blackout that trips every plant,
     ///    suppresses its commitment for the day and resets the deviation and
-    ///    the curtailment; and solar curtailment, described below. Tripped
-    ///    solar reconnects once restoration first re-energises the grid.
+    ///    the curtailment; solar curtailment, described below; and an
+    ///    over-frequency trip of one plant, after which AGC re-runs step 5 on
+    ///    the post-trip outputs (see [`PowerSystem::over_frequency_trip`]).
+    ///    Tripped solar reconnects once restoration first re-energises the
+    ///    grid.
     /// 9. The summary of the state after protection (see [`TickSummary`]),
     ///    also emitted last as `TickCompleted`. Steps 5–8 decide on the supply
     ///    measured after step 4.
@@ -287,7 +316,8 @@ impl PowerSystem {
     /// never stranded and nothing oscillates. AGC plants are forced to minimum
     /// only on a `Curtail` tick where curtailing every connected solar plant
     /// still could not cover that surplus; the curtailment is then reduced by
-    /// what forcing removes.
+    /// what forcing removes. After an over-frequency trip the curtailment is
+    /// recomputed from the post-trip AGC pass, without forcing.
     pub fn tick(
         &mut self,
         region: &RegionDefinition,
@@ -322,8 +352,14 @@ impl PowerSystem {
             GridMode::Blackout => (1.0 - shed + params.shed_step.value()).min(1.0),
         };
         // The targets AGC sets now first act on the next tick's step.
-        let leftover =
-            self.retarget_agc(&available, demand * to_serve - supply - withheld, tick + 1);
+        let redispatch = Redispatch {
+            available: &available,
+            to_serve: demand * to_serve,
+            withheld,
+            curtailable,
+            effect_tick: tick + 1,
+        };
+        let leftover = self.redispatch(&redispatch);
 
         let imbalance = supply - demand * (1.0 - shed);
         self.deviation = match mode {
@@ -341,6 +377,7 @@ impl PowerSystem {
             demand * shed.value(),
             demand * (1.0 - shed.value()),
             params,
+            &redispatch,
             &mut events,
         );
         if mode == GridMode::Blackout && shed < Ratio::ONE {
@@ -515,11 +552,7 @@ impl PowerSystem {
         shortfall: Megawatts,
         effect_tick: u32,
     ) -> Megawatts {
-        let ceilings = if self.hydro_cap_lifted() {
-            BTreeMap::new()
-        } else {
-            self.hydro_ceilings(effect_tick)
-        };
+        let ceilings = self.agc_ceilings(effect_tick);
         let mut shortfall = shortfall;
         let network = &self.network;
         let mut connected: Vec<&mut Plant> = Vec::new();
@@ -544,25 +577,41 @@ impl PowerSystem {
         }
         let caps: BTreeMap<PlantId, Megawatts> = connected
             .iter()
-            .map(|p| {
-                let mut cap = available[&p.id()];
-                if let Some(&allocation) = ceilings.get(&p.id()) {
-                    cap = cap.min(allocation);
-                }
-                (p.id(), cap)
-            })
+            .map(|p| (p.id(), agc_cap(available, &ceilings, p.id())))
             .collect();
         agc_retarget(&mut connected, &caps, shortfall)
     }
 
-    /// Acts on the protection `outcome`. `shed_mw` is the load now shed and
-    /// `served` the load now served.
+    /// Runs step 5's AGC on the current outputs: the requirement is
+    /// `to_serve − supply − withheld`, with `supply` the connected output now.
+    /// Returns the signed unallocated shortfall (see
+    /// [`PowerSystem::retarget_agc`]). Every pass computes from the current
+    /// outputs alone, so a second pass replaces the first's targets rather
+    /// than adding to them.
+    fn redispatch(&mut self, r: &Redispatch<'_>) -> Megawatts {
+        let supply: Megawatts = self.connected_plants().map(Plant::output).sum();
+        self.retarget_agc(r.available, r.to_serve - supply - r.withheld, r.effect_tick)
+    }
+
+    /// The hydro ceilings AGC respects for targets acting on `effect_tick`:
+    /// none while the cap is lifted (see [`PowerSystem::hydro_cap_lifted`]).
+    fn agc_ceilings(&self, effect_tick: u32) -> BTreeMap<PlantId, Megawatts> {
+        if self.hydro_cap_lifted() {
+            BTreeMap::new()
+        } else {
+            self.hydro_ceilings(effect_tick)
+        }
+    }
+
+    /// Acts on the protection `outcome`. `shed_mw` is the load now shed,
+    /// `served` the load now served and `redispatch` this tick's AGC inputs.
     fn apply_protection(
         &mut self,
         outcome: ProtectionOutcome,
         shed_mw: Megawatts,
         served: Megawatts,
         params: &FrequencyParams,
+        redispatch: &Redispatch<'_>,
         events: &mut Vec<DomainEvent>,
     ) {
         match outcome {
@@ -581,7 +630,7 @@ impl PowerSystem {
             }
             ProtectionOutcome::BlackoutRestored => events.push(DomainEvent::BlackoutRestored),
             ProtectionOutcome::OverFrequencyTrip => {
-                self.over_frequency_trip(served, params, events);
+                self.over_frequency_trip(served, params, redispatch, events);
             }
             // Curtailment is handled by `update_curtailment`.
             ProtectionOutcome::None | ProtectionOutcome::Restored | ProtectionOutcome::Curtail => {}
@@ -597,19 +646,34 @@ impl PowerSystem {
     /// the fleet can't cover in one tick.** The trip is withheld when the
     /// deficit it would open, the candidate's output less the current surplus
     /// over `served`, exceeds the one-tick ramp-up headroom of the *other*
-    /// connected online auto-follow plants (`min(ramp, capacity − output)`
-    /// each). Frequency lags the imbalance by the 5-tick damping time
-    /// constant, so a trip sized only by frequency can overshoot a nearly
-    /// cleared surplus into load shedding or blackout. A withheld trip stays
-    /// due (see [`ProtectionState::withhold_trip`]) and is re-checked on the
-    /// next counting tick; the cost-first order is unchanged, so a cheaper
-    /// unit is never tripped in the candidate's place. A residual surplus no
-    /// unit can safely clear therefore stays as over-frequency, which the
-    /// frequency-performance rules penalise (spec §14.4).
+    /// connected online auto-follow plants. Each plant's headroom is exactly
+    /// what AGC could give it next tick: `min(ramp, ceiling − output)`, where
+    /// the ceiling is its availability lowered to its hydro ceiling (see
+    /// [`PowerSystem::retarget_agc`]). Frequency lags the imbalance by the
+    /// 5-tick damping time constant, so a trip sized only by frequency can
+    /// overshoot a nearly cleared surplus into load shedding or blackout. A
+    /// withheld trip stays due (see [`ProtectionState::withhold_trip`]) and is
+    /// re-checked on the next counting tick; the cost-first order is
+    /// unchanged, so a cheaper unit is never tripped in the candidate's place.
+    /// A residual surplus no unit can safely clear therefore stays as
+    /// over-frequency, which the frequency-performance rules penalise (spec
+    /// §14.4).
+    ///
+    /// **Redispatch.** AGC already set next tick's targets (step 5) before
+    /// the trip, so after a trip it runs again on the post-trip outputs with
+    /// the same availability and hydro ceilings. The rest of the fleet then
+    /// ramps on the next tick's step, which is the one tick of ramp the gate
+    /// credits. The curtailment is recomputed from what that pass cannot
+    /// absorb, without forcing AGC to minimum again. Forcing that already
+    /// happened this tick (the curtail response comes before any trip) stays:
+    /// it acted on outputs before the trip was sized, so the gate measured the
+    /// post-forcing surplus, and the redispatch raises the forced plants from
+    /// their minimum within their ramp.
     fn over_frequency_trip(
         &mut self,
         served: Megawatts,
         params: &FrequencyParams,
+        redispatch: &Redispatch<'_>,
         events: &mut Vec<DomainEvent>,
     ) {
         let Some(id) = self.over_frequency_trip_candidate() else {
@@ -620,10 +684,11 @@ impl PowerSystem {
             .map(Plant::output)
             .sum::<Megawatts>()
             - served;
+        let ceilings = self.agc_ceilings(redispatch.effect_tick);
         let headroom: Megawatts = self
             .connected_plants()
             .filter(|p| p.id() != id && p.auto_follow())
-            .map(|p| p.headroom_up(p.spec().capacity))
+            .map(|p| p.headroom_up(agc_cap(redispatch.available, &ceilings, p.id())))
             .sum();
         if self.plants[&id].output() - surplus > headroom {
             self.protection.withhold_trip(params);
@@ -634,6 +699,13 @@ impl PowerSystem {
         if let Some(plant) = self.plants.get_mut(&id) {
             plant.suppress_commitment_for_day();
         }
+        let leftover = self.redispatch(redispatch);
+        self.update_curtailment(
+            ProtectionOutcome::None,
+            -leftover,
+            redispatch.curtailable,
+            events,
+        );
     }
 
     /// The plant an over-frequency trip takes (spec §14.2): the connected,
