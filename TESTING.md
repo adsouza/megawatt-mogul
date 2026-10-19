@@ -35,6 +35,10 @@ cargo mutants -p domain -p application         # mutation testing
 Property tests use `proptest`; set `PROPTEST_CASES` to run more cases locally. Note that nextest does
 not run doctests; run `cargo test --doc --workspace` for those.
 
+The whole workspace runs in about 19 s in a debug build. Most of that is
+`infrastructure::shipped_regions::hands_off_plan_survives_year_one` (about 16 s: two regions × eight
+seeds × twelve months); every other test finishes in under 3 s.
+
 ## Property catalogue
 
 The invariants the property tests must cover:
@@ -57,6 +61,13 @@ The invariants the property tests must cover:
   weight of one. No recurring/boundary duplicate or synthetic-initialisation charge; exactly one
   rounding step per ledger entry.
 - **Hydro:** the energy a hydro plant produces in a played day never exceeds that day's budget.
+- **Hydro schedule:** water filling conserves water (the allocation sums to the lesser of the budget
+  and the usable water, and never exceeds the budget), stays within `[0, capacity]` and gives
+  ineligible hours nothing, shaves the highest residuals first, is monotone in the budget and is
+  deterministic. In the power system, planning draws no randomness, plants fill in id order against
+  the residual, a foreseen fall ramps down at most one ramp per tick, no hour spends more than its
+  allocation plus one tick of ramp, the emergency lift holds for the whole restoration, and the
+  view's elapsed hours stay frozen.
 - **Determinism:** the same verified versions, settings, region content, seed and commands produce
   an identical state hash on the same build and platform (libm transcendentals may differ in the
   last bit between targets; see `ARCHITECTURE.md`). Test version/fingerprint mismatches before command execution, exact-byte
@@ -71,17 +82,53 @@ The invariants the property tests must cover:
   holds capital without return; useful portions are released; only portions still excess at a second
   consecutive review are written off, bounded by remaining book value. Held history survives annual
   resets, partial releases preserve the right history, previews never mutate it, and capital
-  adjustments never change cash. Held portions continue book depreciation.
+  adjustments never change cash. Held portions continue book depreciation. The return term is linear
+  in the months tallied (a partial first year earns `months / 12` of a year's return, within one
+  cent), and a full year matches the unprorated formula exactly.
+- **Over-frequency protection:** protection never arms at or below `trip_above`, arms after exactly
+  `trip_after_ticks` consecutive ticks above it, and disarms at or below `curtail_above`. Every trip
+  is preceded by a full window of ticks with a physical surplus, and trips are at least one window
+  apart. A trip takes the highest-cost connected online producing dispatchable plant (ties by id),
+  never solar or a plant at 0 MW, and waits while the rest of the fleet could not cover it within one
+  tick or another plant is losing output AGC cannot reverse.
+- **Armed versus unarmed:** over whole days of fleets from the start fleet to three surplus CCGTs,
+  with or without hydro, in any month, armed protection never adds shed energy or a blackout to the
+  same day with trips out of reach. Hand-picked scheduled hydro falls with a trip due check the same.
+- **Frequency performance:** the out-of-band share counts Normal-mode ticks only. The first
+  frequency-only failure in 12 months draws a notice, and a second one strikes with reason
+  `FrequencyPerformance`. A notice month resets the clean streak, a month failing both tests earns
+  one `UnservedEnergy` strike, clean-month expiry needs both tests passed, and three strikes from any
+  mix revoke the licence.
+- **Minimum-generation warning:** on crafted fleets it reports the hand-computed worst hour and
+  excess (earliest hour on ties), returns `None` when the committed minimums fit (exactly fitting
+  included), counts only committed hours, and leaves `state_hash` unchanged.
+
+## Acceptance checks
+
+`infrastructure/tests/shipped_regions.rs` plays the shipped regions themselves (spec §12.5, §14.5):
+
+- **Hands-off year:** a plan that commits every dispatchable plant all day with AGC on, and issues
+  no other command, plays 12 months from each region's start on seeds 0–7. The game must still be
+  `Active`. If it fails, retune region data, never the rules. The East passes with a thin margin:
+  6 of 8 seeds draw a frequency notice in a shoulder month, and none has more than one strike
+  outstanding.
+- **Hydro smoke runs:** a Western January keeps every hydro unit producing through the evening peak
+  on seeds 0–7, and a Western October start stays reliable with no evening cliff.
 
 ## Snapshots
 
 Canonical scenarios ("East winter peak", "West duck-curve day", "Overreach: city connected without
-capacity", "Overbuild: hold followed by second-review disallowance") snapshot their `MonthlyReport`s with `insta`,
-so tuning changes show up as reviewable diffs.
+capacity", "Overbuild: frequency strikes revoke the licence before the reserve review") snapshot their
+`MonthlyReport`s with `insta`, so tuning changes show up as reviewable diffs. The overbuild scenario
+deliberately ends in game over and snapshots its regulatory timeline as well. `rules_version_guard`
+pins a nine-month digest to `SIM_RULES_VERSION`.
 
 1. Run the tests; a changed snapshot fails and writes a `.snap.new` file.
-2. Run `cargo insta review` and accept or reject each diff.
-3. Commit the accepted `.snap` files with the change that caused them.
+2. Run `cargo insta review` and accept or reject each diff. Without a terminal, run
+   `cargo insta test --workspace --unreferenced=reject`, read each pending diff (`cargo insta
+   pending-snapshots`, or diff `.snap` against `.snap.new`), then `cargo insta accept`.
+3. Commit the accepted `.snap` files with the change that caused them, listing each diff and its
+   cause in the commit message.
 
 ## Mutation testing
 
@@ -138,7 +185,7 @@ Monday at 06:00 UTC and on demand (`workflow_dispatch`), then uploads `mutants.o
 
 ### Mutation testing status
 
-Last full run (this branch, 8 shards of `domain`, 2 of `application`):
+Last full run (Plan 1, before the Plan 1a amendments; 8 shards of `domain`, 2 of `application`):
 
 | Crate | Mutants | Caught | Missed | Timeout | Unviable |
 |---|---|---|---|---|---|
@@ -157,7 +204,23 @@ exceptions to keep an eye on:
   vestigial state the write-off rule never reads past 1.
 - The remaining entries are arithmetic that cannot change a result: expected solar at tick 0 is zero,
   a zero shortfall allocates zero, `% 24` on an hour already reduced modulo 24, a float distance that
-  can never equal `1e-9`, and a zero-weight allocation.
+  can never equal `1e-9`, a zero-weight allocation, and a zero hydro capacity, which allocates
+  nothing whichever branch of `water_fill` runs.
+
+**Plan 1a targeted pass** (after `SIM_RULES_VERSION` 2). `-F` selected the functions Plan 1a added or
+changed (water filling, the hydro plan and ceilings, AGC retargeting and redispatch, protection and
+the trip gates, the frequency-performance verdict, the rate review, the minimum-generation check and
+the report counters), sharded so each run takes about 2 minutes at `-j 4`:
+
+| Run | Mutants | Caught | Missed | Timeout | Unviable |
+|---|---|---|---|---|---|
+| `domain` shard 0/3 | 130 | 105 | 0 | 0 | 25 |
+| `domain` shard 1/3 | 130 | 124 | 0 | 0 | 6 |
+| `domain` shard 2/3 | 129 | 81 | 0 | 0 | 48 |
+| `application` | 44 | 40 | 0 | 0 | 4 |
+
+The first pass missed 12 in `domain` (none in `application`). Eleven were killed with tests; the
+twelfth, `cap > 0.0` in `water_fill`, is the zero-capacity exclusion above.
 
 ## Isolation rules (all I/O tests)
 

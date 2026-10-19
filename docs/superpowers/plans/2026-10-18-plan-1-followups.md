@@ -54,20 +54,44 @@ Each ruling ends with what it costs if it turns out to be wrong.
 - **Q1 (overreach):** connecting a city far larger than capacity causes an instant blackout at
   tick 0. Every plant trips and has to be restarted by hand. There is no graded rolling shedding.
   Consider pre-emptive rotating outages at the day boundary, sized to the forecast deficit.
-- **Q2 (over-commitment), decided:** resolved by spec Amendment A3 (§14: over-frequency trips, a
-  minimum-generation warning and frequency-performance strikes), part of Plan 1a. The original problem: with no solar to curtail, surplus generation leaves frequency stuck
-  high. There is no over-frequency trip. The only cost is fuel burned on unpaid energy. Consider
-  over-frequency protection or automatic decommitment.
-- **Q3 (hydro under AGC), decided:** resolved by spec Amendment A1 (§12, hydro peak-shaving
-  schedule), to be implemented as Plan 1a before Plan 2. The original problem: hydro is dispatched as $0/MWh, so AGC empties its daily water budget
-  early and then drops it to zero in one tick, often before the evening peak. The West's data was
-  tuned to cope. Consider water-value pacing, plus a HUD warning.
+- **Q2 (over-commitment), implemented (Plan 1a):** resolved by spec Amendment A3 (§14:
+  over-frequency trips, a minimum-generation warning and frequency-performance strikes). The
+  original problem: with no solar to curtail, surplus generation left frequency stuck high, with no
+  over-frequency trip and no cost but fuel burned on unpaid energy.
+- **Q3 (hydro under AGC), implemented (Plan 1a):** resolved by spec Amendment A1 (§12, hydro
+  peak-shaving schedule). The original problem: hydro dispatched at $0/MWh let AGC empty its daily
+  water budget early and then drop it to zero in one tick, often before the evening peak. The West's
+  flows are now a realistic hydrograph rather than tuned to cope.
 - **Held capital:** `HeldSlice::consecutive_excess_reviews` never exceeds 1 in practice. Either drop
   the field or make the write-off threshold configurable.
-- **First-year rate review, decided:** resolved by spec Amendment A2 (§13, prorating the return by
-  the months in the review period), part of Plan 1a. The original problem: if a game starts in any month other than January, the first review
-  applies an annual return to a partial year of energy. The shipped regions start in January, so
-  this is latent. Prorate the return, or require a January start.
+- **First-year rate review, implemented (Plan 1a):** resolved by spec Amendment A2 (§13, prorating
+  the return by the months in the review period). The original problem: a game starting in any month
+  other than January applied an annual return to a partial year of energy.
+
+## Plan 1a rulings
+
+Plan 1a (amendments A1–A3) landed under `SIM_RULES_VERSION` 2. The builder's calls made while
+implementing it are recorded in the spec as *(Builder's call: …)* notes: §12.3–§12.4 and §12.7 (the
+spill test, the effect-hour ceiling, the look-ahead ramp envelope, unplanning on AGC off or a trip),
+§14.2 (the surplus, headroom and falling-output trip gates, the redispatch after a trip, trips
+during restoration), §14.4 (`frequency_failed`), §14.5 (CCGT minimum stable level 30%, the Eastern
+fleet's coal retirements) and §14.6 (the surplus clears as far as safe trips allow; armed protection
+never sheds more than unarmed).
+
+Accepted residuals: a trip can still precede a protection-assisted shed when hydro drops at an
+hour-boundary re-plan or falls past the next boundary, when a commitment stop starts after the trip,
+or when the player cuts a manual target after it.
+
+Tuning watch items:
+- **East acceptance margin:** the hands-off year passes, but 6 of 8 seeds draw a frequency notice and
+  the April/October committed minimum sits about 50 MW above the 02:30 net load. One more peaker
+  would push seed 3 to two strikes; firm capacity is 1.105 × the connected peak against the 1.10
+  test floor.
+- **Overbuild scenario:** before the frequency strikes landed, 7 of the post-commissioning months
+  ended the day over-frequency (+0.63 to +2.86 Hz), a surplus no unit could safely trip. With the
+  strikes, the scripted 48 months end in licence revocation at the October 2029 close, so the
+  scenario no longer reaches the December reserve reviews. Leaving the new CCGTs uncommitted
+  restores the hold and the disallowance (measured, not adopted; needs a ruling).
 
 ## Carry into Plan 2 (Bevy client)
 - **Batching:** advance in small batches (`speed` ticks per `FixedUpdate`) so projections stay

@@ -196,7 +196,7 @@ is shown.
 |---|---|---|---|---|---|---|---|---|---|
 | Nuclear | 1,100 MW | 70% | 5 MW/min | 48 h | $1.0M | $10/MWh | $6.0B | 84 | Commitment is a promise |
 | Coal | 600 MW | 40% | 6 MW/min | 8 h | $150k | $30/MWh | $2.0B | 48 | Cheap baseload, start-up costs |
-| Combined-cycle gas (CCGT) | 500 MW | 40% | 25 MW/min | 2 h | $40k | $45/MWh | $0.6B | 30 | The flexible middle |
+| Combined-cycle gas (CCGT) | 500 MW | 40% (30% in the shipped regions, §14.5) | 25 MW/min | 2 h | $40k | $45/MWh | $0.6B | 30 | The flexible middle |
 | Gas peaker | 200 MW | 20% | 40 MW/min | 10 min | $5k | $150/MWh | $0.2B | 12 | Pay dearly for agility |
 | Solar | 300 MW | 0% | n/a (weather) | n/a | n/a | $0/MWh | $0.4B | 12 | The duck curve |
 | Hydro | 800 MW | 0% | 100 MW/min | 5 min | $1k | $0/MWh | $3.0B | 72 | Energy-limited dispatch |
@@ -665,7 +665,8 @@ is shed). Lines show only an "energised" pulse. It shows no per-line loading unt
 
 The canonical scenarios ("East winter peak", "West duck-curve day", "Overreach: city connected
 without capacity", "Overbuild: rate review with disallowance") snapshot their `MonthlyReport`s with `insta`. Tuning changes then appear as
-reviewable diffs.
+reviewable diffs. *(Builder's call: under A3 the overbuild scenario ends in licence revocation
+before its first post-commissioning review; see §14.5.)*
 
 ### 10.4 Mutation testing
 
@@ -744,13 +745,17 @@ Hydro is what grids such as the Pacific Northwest use to ride the evening ramp.
    for hour `h` is `clamp(residual_h − λ, 0, C)`. If even λ = min_h(residual_h) − C cannot use all
    of `E` (the plant can't usefully run harder), allocate `min(C, max(0, residual_h))` and let the
    rest of the water spill. Find `λ` by bisection with a fixed iteration count, so the result is
-   deterministic.
+   deterministic. *(Builder's call: the spill test is `E ≥ Σ_h min(C, max(0, residual_h))`, the
+   usable water in §12.7's conservation formula, so hours with a negative residual stay dry.)*
 4. **Unplanned plants.** A hydro plant with no allocation for the current hour is budget-limited
    only (uncapped) until the next hourly re-plan. This covers a plant switched to AGC mid-hour, a
    newly connected plant, and a plant restarted after a trip. Commands never trigger a re-plan
    directly. Connectivity is read at plan time, with no look-ahead for lines still under
    construction. *(Builder's call: being uncapped avoids idling water while the grid may be short;
-   re-planning on commands would complicate command-sourced replay for little gain.)*
+   re-planning on commands would complicate command-sourced replay for little gain.)* *(Builder's
+   call: a plant becomes unplanned the moment it trips, and when its AGC is turned off; elapsed
+   hours keep their frozen allocations, so turning AGC back on mid-hour leaves it unplanned until
+   the next re-plan.)*
 5. **Re-planning (receding horizon).** Plan at `BeginOperating` over hours 0–23 with the full budget.
    Re-plan at every hour boundary (`tick % 60 == 0`) over the remaining hours, using the remaining
    budget. Water saved because AGC ran hydro below its allocation, or spent in an emergency (§12.4),
@@ -765,6 +770,15 @@ Hydro is what grids such as the Pacific Northwest use to ride the evening ramp.
   in one tick. *(Builder's call: a hard cap would recreate the cliff at every falling hour boundary,
   where three 800 MW units could lose 2.4 GW in one tick.)* The day-boundary dispatch (Ruling R21)
   uses the hour-0 allocation as its upper bound.
+  - *(Builder's call, effect hour: the cap uses the allocation of the hour in which the target takes
+    effect, `(tick + 1) / 60`, because plants step before AGC retargets. Capping by the current
+    tick's hour leaked one tick of the previous hour into each new hour and overdrew a final hour
+    planned to spend exactly the remaining budget.)*
+  - *(Builder's call, look-ahead ramp envelope: the cap is
+    `min(hourly[h], hourly[h+1] + ramp × ticks to the next boundary)`, with no next-hour term for
+    hour 23. A foreseen fall therefore ramps down early and an hour's energy stays within its
+    allocation, which prevents a budget-limit cliff after the last allocated hour on budget-tight
+    days.)*
 - **Emergency override.** The allocation cap is lifted, leaving only the budget limit, whenever the
   frequency band is `Shedding` **or** any load is shed (`shed > 0`, in either grid mode). *(Builder's
   call: keying on `shed > 0` as well as the band keeps the cap off for the whole restoration, rather
@@ -814,7 +828,9 @@ lesson is added.)*
 - **Monotonicity.** If residual_i ≥ residual_j, then allocation_i ≥ allocation_j.
 - **The cap is not a cliff.** When an hour's allocation falls, scheduled hydro output falls no faster
   than the ramp rate. Because of these ramp tails, an hour's actual energy may exceed its allocation;
-  the daily budget is never exceeded.
+  the daily budget is never exceeded. *(Builder's call: with the look-ahead envelope of §12.4, a
+  foreseen fall ramps before the boundary, so this overrun now happens only for an unforeseen drop
+  at a re-plan.)*
 - **Determinism.** The same inputs give the same schedule, with no RNG draws. Re-planning never
   schedules more than the remaining budget.
 - **End to end.** With realistic Western January flows, hydro output stays above 0 through 20:00–21:00
@@ -915,6 +931,23 @@ The teaching goal is to make the trap visible before the player falls into it.
 choice, and it is deterministic. Real trip order follows relay settings, which the game doesn't
 model.)*
 
+The builder's calls below keep protection from tripping the grid into a deficit:
+
+- **Surplus gate.** *(Builder's call: a tick counts toward a trip window only while a physical
+  surplus exists, `supply − demand × (1 − shed) > 0`. A tick without one resets the count but does
+  not disarm. The 5-tick damping lag equals `trip_after_ticks`, and without the gate the literal
+  rule over-tripped into blackouts.)*
+- **Headroom gate.** *(Builder's call: the candidate trips only if its `output − surplus` is at most
+  the sum, over the other auto-follow plants, of `min(min(available, hydro ceiling) − output, one
+  tick of ramp)`. Otherwise the trip is withheld and the count held.)*
+- **Redispatch.** *(Builder's call: AGC retargets again in the same tick after a trip, so the rest
+  of the fleet responds on the next tick.)*
+- **Falling-output withhold.** *(Builder's call: no trip while any other plant is losing output that
+  AGC cannot reverse: scheduled hydro above the lowest AGC ceiling it meets up to the first tick of
+  the next hour, a commitment-driven shutdown, or a manual plant above its target.)*
+- **Restoration.** *(Builder's call: a trip that falls due while shed load is being restored waits
+  for the first tick that does not restore.)*
+
 ### 14.3 Minimum-generation warning (read side)
 
 - **A direct query (CQRS read side), not a projection:**
@@ -946,7 +979,8 @@ model.)*
   out of all Normal-mode ticks. Blackout ticks are excluded: frequency is held at nominal during a
   blackout, and blackouts are already penalised through unserved energy.
 - **Month close.** If the out-of-band share exceeds `frequency_violation_share`, the month fails
-  frequency performance.
+  frequency performance. *(Builder's call: `MonthlyReport` also carries `frequency_failed: bool`,
+  computed by the same test as the verdict, which the `FrequencyPerformance` lesson reads.)*
 - **Notice before strike.** A month that fails **only** frequency performance draws a formal
   **notice** instead of a strike, unless a notice was already issued in the previous 12 months.
   - The regulator stores `last_frequency_notice: Option<SimMonth>`.
@@ -975,6 +1009,17 @@ model.)*
     rules, as in A1 §12.5.
   - Test scripts that deliberately exercise failure paths, such as the overbuild scenario, may still
     end in game over.
+  - *(Builder's call: the check passes on both regions, but the East's margin is thin. 6 of 8 seeds
+    draw a frequency notice in a shoulder month, and none has more than one strike outstanding,
+    because the April and October committed minimum sits about 50 MW above the 02:30 net load.)*
+  - *(Builder's call: the CCGT minimum stable level is 30% in both shipped catalogs, the turndown of
+    a modern plant, which supersedes §3.2's 40%. The test fixture keeps 40%.)*
+  - *(Builder's call: the Eastern start fleet retires four coal plants that closed by 2022 and adds
+    four CCGTs built since 2020 in the same footprint, leaving four coal and nine CCGT units.)*
+  - *(Builder's call: in the overbuild scenario the licence is revoked at the October 2029 close,
+    after a notice and three FrequencyPerformance strikes, before any December review sees the new
+    plants. The scenario now snapshots that outcome; the reserve-review disallowance is covered by
+    the domain's month-close tests.)*
 - **Delivery.** A1, A2 and A3 are implemented together as Plan 1a, before Plan 2, with a single
   `SIM_RULES_VERSION` bump to 2. Snapshots are regenerated once, after all three have landed, and
   the diffs are reviewed together.
@@ -997,6 +1042,14 @@ model.)*
   id). Never solar.
 - **The surplus clears.** In the overbuild fixture with no player action, frequency returns below
   `curtail_above` within a bounded number of ticks, and stays there for the rest of the day.
+  *(Builder's call: the surplus clears as far as safe trips allow. Frequency returns to
+  `curtail_above` or below unless no qualifying candidate can trip safely (§14.2). A residual
+  surplus that no unit can safely trip stays as over-frequency: §14.4 penalises it, and §14.3 warns
+  of it in advance.)*
+- **Armed protection never sheds more.** Armed protection never increases shed energy or causes a
+  blackout relative to the same run unarmed. *(Builder's call: added with the §14.2 gates. The
+  accepted residuals are a hydro drop at an hour-boundary re-plan or past the next boundary, a
+  commitment stop that starts after the trip, and a player cutting a manual target after it.)*
 - **The warning is exact.** On a crafted fleet, `minimum_generation_check` reports the
   hand-computed hour and excess, returns `None` when committed minimums fit under net load, counts
   only committed hours, and leaves `state_hash` unchanged.

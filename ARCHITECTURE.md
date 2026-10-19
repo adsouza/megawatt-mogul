@@ -122,26 +122,37 @@ only eligible remaining book value earns return. Holding and write-off do not ch
 `GameSession::tick` first requires an active game in `Operating` (`require_operating`), then runs
 `PowerSystem::tick` over the connected grid and its own bookkeeping, in this fixed order:
 
-1. Demand of connected cities: forecast × (1 + forecast error). The AR(1) error advances by exactly
+1. At each hour boundary after midnight (tick 60, 120, ...), the hydro schedule is re-planned for the
+   rest of the day from the remaining budgets (`plan_hydro`; `BeginOperating` plans from hour 0).
+   Planning draws no randomness.
+2. Demand of connected cities: forecast × (1 + forecast error). The AR(1) error advances by exactly
    one normal draw every tick, in any state.
-2. Solar and hydro availability for every plant (hydro from the day's remaining energy budget, reset
+3. Solar and hydro availability for every plant (hydro from the day's remaining energy budget, reset
    at `BeginOperating`). The standing solar curtailment is withheld from connected online solar, pro
    rata to availability.
-3. The commitment actions due at this tick; plants suppressed for the day get none.
-4. Every plant steps once: start-up progress, ramp toward target, hydro budget use.
-5. AGC re-targets connected auto-follow plants in merit order toward the load to serve,
+4. The commitment actions due at this tick; plants suppressed for the day get none.
+5. Every plant steps once: start-up progress, ramp toward target, hydro budget use.
+6. AGC re-targets connected auto-follow plants in merit order toward the load to serve,
    `demand × (1 − shed)` (one restoration step higher during a blackout), making room for withheld
-   solar.
-6. Imbalance between connected supply and served load.
-7. Frequency update (held at nominal during a blackout).
-8. Protection: load shedding, a blackout that trips every plant, and solar curtailment for the next
-   tick. Tripped solar reconnects once restoration re-energises the grid.
-9. The `TickSummary` of the post-protection state, also emitted last as `TickCompleted`.
-10. Accounting: the session adds the summary to the month-to-date totals (energy per plant,
-    recurring and boundary starts, served and unserved energy). Nothing is priced per tick.
-11. The clock advances. After tick 1,440 the month closes: totals are weighted by `days_in_month`
-    and booked, construction advances, policies run, `MonthClosed` is emitted and the phase moves to
-    Review.
+   solar. Scheduled hydro is capped at its hourly allocation for the tick the targets take effect
+   (`tick + 1`), with a ramp envelope ahead of a falling hour; the cap is lifted while load is being
+   shed.
+7. Imbalance between connected supply and served load.
+8. Frequency update (held at nominal during a blackout).
+9. Protection: load shedding, a blackout that trips every plant, solar curtailment for the next
+   tick, and an over-frequency trip of the most expensive online producer once frequency has stayed
+   high for `trip_after_ticks`. A trip waits while there is no physical surplus, while the rest of
+   the fleet could not cover the lost output within one tick, or while another plant is already
+   losing output AGC cannot reverse, so protection does not trip the grid into a deficit. After a
+   trip AGC re-targets again in the same tick, so the rest of the fleet responds on the next step.
+   Tripped solar reconnects once restoration re-energises the grid.
+10. The `TickSummary` of the post-protection state, also emitted last as `TickCompleted`.
+11. Accounting: the session adds the summary to the month-to-date totals (energy per plant,
+    recurring and boundary starts, served, unserved and overgenerated energy, and the Normal-mode
+    ticks outside the frequency-performance band). Nothing is priced per tick.
+12. The clock advances. After tick 1,440 the month closes: totals are weighted by `days_in_month`
+    and booked, construction advances, policies run (including the frequency-performance notice or
+    strike), `MonthClosed` is emitted and the phase moves to Review.
 
 Each `TickSummary` satisfies `generation = Σ by_plant = served + imbalance` (signed), with
 `served = demand × (1 − shed)` and `unserved = demand × shed`. `curtailed` is solar availability
