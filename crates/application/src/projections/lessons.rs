@@ -2,7 +2,7 @@
 
 use domain::events::DomainEvent;
 use domain::region::{PlantKind, RegionDefinition};
-use domain::session::{GameSession, MonthlyReport};
+use domain::session::{GameSession, IncidentKind, MonthlyReport};
 use domain::units::{MegawattHours, Money, Price, Ratio};
 
 use super::Projection;
@@ -22,6 +22,13 @@ const OVERGENERATION_SHARE_LIMIT: f64 = 0.02;
 /// Start-up costs above this share of operating cost are worth a lesson.
 const START_UP_SHARE_LIMIT: f64 = 0.10;
 
+/// `unserved` and `rotating_outage` are summed separately over the month, so
+/// their difference carries float noise. Unplanned energy within this share
+/// of `unserved` is noise, not protection shedding. Relative, like the
+/// report's own `rotating_outage <= unserved` check, and far above the
+/// ~1e-13 summation error of a month's ticks.
+const UNPLANNED_RELATIVE_TOLERANCE: f64 = 1e-9;
+
 /// One thing the player can learn from a closed month.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Lesson {
@@ -33,8 +40,21 @@ pub enum Lesson {
         /// The region's CCGT marginal cost, the cheaper mid-merit option.
         alternative: Price,
     },
-    /// Some demand went unserved; `first_incident_tick` is when protection
-    /// first acted (zero when no incident was recorded).
+    /// The fleet could not cover the load, so the grid cut demand on purpose:
+    /// `energy` is the planned rotating-outage share of unserved energy and
+    /// `peak_share` the largest share ordered. This is the lesson for planned
+    /// shortages (build or commit capacity); protection-driven shedding is
+    /// [`UnservedEnergy`](Self::UnservedEnergy).
+    RotatingOutages {
+        energy: MegawattHours,
+        peak_share: Ratio,
+    },
+    /// Protection shed demand beyond any planned outage: `energy` is the
+    /// unserved energy that was not a rotating outage. This is the lesson for
+    /// protection-driven shedding (keep reserves and ramp); planned shortages
+    /// are [`RotatingOutages`](Self::RotatingOutages). `first_incident_tick`
+    /// is the first incident that is not a rotating-outage order (zero when
+    /// there is none).
     UnservedEnergy {
         energy: MegawattHours,
         first_incident_tick: u32,
@@ -65,8 +85,9 @@ pub enum Lesson {
 /// The lessons of `report`, most important first, at most three. A month
 /// with nothing to learn yields `[AllClear]`.
 ///
-/// Priority: expensive peaking, unserved energy, overgeneration, frequency
-/// performance, curtailed solar, start-up costs, then the rate review.
+/// Priority: expensive peaking, rotating outages, unserved energy,
+/// overgeneration, frequency performance, curtailed solar, start-up costs,
+/// then the rate review.
 pub fn lessons_for(report: &MonthlyReport, region: &RegionDefinition) -> Vec<Lesson> {
     let served = report.served.value();
     let mut lessons = Vec::new();
@@ -87,10 +108,23 @@ pub fn lessons_for(report: &MonthlyReport, region: &RegionDefinition) -> Vec<Les
         });
     }
 
-    if report.unserved > MegawattHours::ZERO {
+    if report.rotating_outage > MegawattHours::ZERO {
+        lessons.push(Lesson::RotatingOutages {
+            energy: report.rotating_outage,
+            peak_share: report.peak_outage_share,
+        });
+    }
+
+    // `rotating_outage` is part of `unserved`: only the rest is protection's.
+    let unplanned = report.unserved - report.rotating_outage;
+    if unplanned.value() > report.unserved.value() * UNPLANNED_RELATIVE_TOLERANCE {
         lessons.push(Lesson::UnservedEnergy {
-            energy: report.unserved,
-            first_incident_tick: report.incidents.first().map_or(0, |incident| incident.tick),
+            energy: unplanned,
+            first_incident_tick: report
+                .incidents
+                .iter()
+                .find(|incident| !matches!(incident.kind, IncidentKind::RotatingOutage { .. }))
+                .map_or(0, |incident| incident.tick),
         });
     }
 
@@ -170,7 +204,7 @@ impl Projection for LessonsProjection {
 mod tests {
     use domain::region::fixtures::tiny_region;
     use domain::regulation::RateReviewOutcome;
-    use domain::session::{Incident, IncidentKind};
+    use domain::session::Incident;
     use domain::units::Megawatts;
 
     use super::*;
@@ -422,6 +456,131 @@ mod tests {
         let lessons = lessons_for(&r, &region);
         assert!(matches!(lessons[0], Lesson::Overgeneration { .. }));
         assert!(matches!(lessons[1], Lesson::FrequencyPerformance { .. }));
+        assert!(matches!(lessons[2], Lesson::SolarCurtailed { .. }));
+    }
+
+    fn outage_incident(tick: u32, share: f64) -> Incident {
+        Incident {
+            tick,
+            kind: IncidentKind::RotatingOutage {
+                share: Ratio::new(share).unwrap(),
+            },
+        }
+    }
+
+    #[test]
+    fn rotating_outages_lesson_fires_on_planned_energy() {
+        let region = tiny_region();
+        let mut r = clean_report();
+        // Planned energy is part of `unserved`: all 30 MWh of it is planned.
+        r.unserved = mwh(30.0);
+        r.rotating_outage = mwh(30.0);
+        r.peak_outage_share = Ratio::new(0.25).unwrap();
+        assert_eq!(
+            lessons_for(&r, &region),
+            vec![Lesson::RotatingOutages {
+                energy: mwh(30.0),
+                peak_share: Ratio::new(0.25).unwrap(),
+            }]
+        );
+    }
+
+    #[test]
+    fn unserved_lesson_counts_only_unplanned_energy() {
+        let region = tiny_region();
+        let mut r = clean_report();
+        r.unserved = mwh(50.0);
+        r.rotating_outage = mwh(30.0);
+        r.peak_outage_share = Ratio::new(0.25).unwrap();
+        r.incidents = vec![
+            outage_incident(0, 0.25),
+            Incident {
+                tick: 840,
+                kind: IncidentKind::LoadShed {
+                    mw: Megawatts::new(50.0),
+                },
+            },
+        ];
+        // The unserved lesson reports the 20 MWh protection shed, and its
+        // first incident skips the planned outage order at tick 0.
+        assert_eq!(
+            lessons_for(&r, &region),
+            vec![
+                Lesson::RotatingOutages {
+                    energy: mwh(30.0),
+                    peak_share: Ratio::new(0.25).unwrap(),
+                },
+                Lesson::UnservedEnergy {
+                    energy: mwh(20.0),
+                    first_incident_tick: 840,
+                },
+            ]
+        );
+
+        // With no unplanned incident recorded, the tick falls back to zero.
+        r.incidents = vec![outage_incident(60, 0.25)];
+        assert_eq!(
+            lessons_for(&r, &region)[1],
+            Lesson::UnservedEnergy {
+                energy: mwh(20.0),
+                first_incident_tick: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn an_outage_only_month_has_no_unserved_lesson() {
+        let region = tiny_region();
+        let mut r = clean_report();
+        r.peak_outage_share = Ratio::new(0.1).unwrap();
+        r.incidents = vec![outage_incident(0, 0.1)];
+
+        // Exactly equal: nothing was shed by protection.
+        r.unserved = mwh(30.0);
+        r.rotating_outage = mwh(30.0);
+        let lessons = lessons_for(&r, &region);
+        assert!(matches!(lessons[..], [Lesson::RotatingOutages { .. }]));
+
+        // Float noise from summing the two figures differently is not shed
+        // energy either.
+        r.unserved = mwh(0.1 + 0.2);
+        r.rotating_outage = mwh(0.3);
+        let lessons = lessons_for(&r, &region);
+        assert!(matches!(lessons[..], [Lesson::RotatingOutages { .. }]));
+
+        // A real, small unplanned remainder still fires.
+        r.unserved = mwh(30.5);
+        r.rotating_outage = mwh(30.0);
+        let lessons = lessons_for(&r, &region);
+        assert!(matches!(
+            lessons[..],
+            [
+                Lesson::RotatingOutages { .. },
+                Lesson::UnservedEnergy { .. }
+            ]
+        ));
+    }
+
+    #[test]
+    fn lesson_priority_places_outages_before_unserved() {
+        let region = tiny_region();
+        let mut r = everything_report();
+        r.unserved = mwh(80.0);
+        r.rotating_outage = mwh(30.0);
+        r.peak_outage_share = Ratio::new(0.2).unwrap();
+
+        // Peaking, outages, unserved: the cap of three cuts the rest.
+        let lessons = lessons_for(&r, &region);
+        assert_eq!(lessons.len(), 3);
+        assert!(matches!(lessons[0], Lesson::ExpensivePeaking { .. }));
+        assert!(matches!(lessons[1], Lesson::RotatingOutages { .. }));
+        assert!(matches!(lessons[2], Lesson::UnservedEnergy { .. }));
+
+        // Without peaking, the outages lead.
+        r.energy_by_kind.clear();
+        let lessons = lessons_for(&r, &region);
+        assert!(matches!(lessons[0], Lesson::RotatingOutages { .. }));
+        assert!(matches!(lessons[1], Lesson::UnservedEnergy { .. }));
         assert!(matches!(lessons[2], Lesson::SolarCurtailed { .. }));
     }
 
