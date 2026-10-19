@@ -355,6 +355,15 @@ impl Ratio {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `Money` is plain `i64` arithmetic, so the workspace turns overflow
+    /// checks on for release builds too: run with `--release` to see it hold.
+    #[test]
+    #[should_panic(expected = "overflow")]
+    fn money_overflow_panics_in_every_profile() {
+        let max = std::hint::black_box(Money::from_cents(i64::MAX));
+        let _ = max + Money::from_cents(1);
+    }
     use proptest::prelude::*;
 
     #[test]
