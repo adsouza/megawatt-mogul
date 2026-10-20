@@ -325,6 +325,22 @@ pub fn kind_color(kind: PlantKind) -> Rgb {
     }
 }
 
+/// The ink of outlines and letters, and the fills of the city and substation marks. The legend
+/// draws the same.
+const INK: Color32 = Color32::from_rgb(20, 22, 28);
+const CITY: Color32 = Color32::from_rgb(255, 236, 160);
+
+/// The smallest letter worth drawing, in points. Under it the square is drawn plain: kind reads by
+/// colour (see the legend), and a smaller letter would only be a smudge.
+pub const GLYPH_MIN_FONT: f32 = 9.0;
+
+/// The font size of the letter on a plant's square, or `None` if it would be under
+/// [`GLYPH_MIN_FONT`]. A capital is about 0.7 em tall, so this fits inside the square.
+pub fn glyph_font_size(layout: &MapLayout) -> Option<f32> {
+    let size = plant_half_size(layout) * 1.5;
+    (size >= GLYPH_MIN_FONT).then_some(size)
+}
+
 fn glyph_key(kind: PlantKind) -> &'static str {
     match kind {
         PlantKind::Nuclear => "plant-glyph-nuclear",
@@ -419,6 +435,43 @@ pub(super) fn reset_cache(mut cache: ResMut<MapCache>) {
     cache.clear();
 }
 
+// ---- the legend --------------------------------------------------------------------------------
+
+/// What a legend entry's swatch looks like on the map.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LegendSwatch {
+    Plant(PlantKind),
+    ConnectedCity,
+    UnconnectedCity,
+    Substation,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LegendEntry {
+    pub swatch: LegendSwatch,
+    pub label: String,
+}
+
+/// The six kinds of plant, then the city marks and the substation.
+fn legend_entries(l10n: &Localizer) -> Vec<LegendEntry> {
+    let entry = |swatch, label: String| LegendEntry { swatch, label };
+    PlantKind::ALL
+        .into_iter()
+        .map(|kind| entry(LegendSwatch::Plant(kind), kind.localize(l10n)))
+        .chain([
+            entry(
+                LegendSwatch::ConnectedCity,
+                l10n.text("legend-city-connected"),
+            ),
+            entry(
+                LegendSwatch::UnconnectedCity,
+                l10n.text("legend-city-unconnected"),
+            ),
+            entry(LegendSwatch::Substation, l10n.text("name-substation")),
+        ])
+        .collect()
+}
+
 // ---- model, presenter, draw, system ---------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq)]
@@ -431,8 +484,12 @@ pub struct MapModel {
     /// The terrain is read from the region while painting: it is too big to copy every frame.
     pub region: Arc<RegionDefinition>,
     pub objects: MapObjects,
-    /// The letter each kind of plant is drawn with.
+    /// The letter each kind of plant is drawn with, when the map is big enough to read it.
     pub glyphs: Vec<(PlantKind, String)>,
+    /// What each kind of mark on the map is. Always shown, in a corner of the map.
+    pub legend: Vec<LegendEntry>,
+    /// The legend's accessible name.
+    pub legend_label: String,
     pub selection: Selection,
 }
 
@@ -475,6 +532,8 @@ pub fn map_model(game: &Game, l10n: &Localizer, layer: MapLayer, selection: Sele
             .into_iter()
             .map(|kind| (kind, l10n.text(glyph_key(kind))))
             .collect(),
+        legend: legend_entries(l10n),
+        legend_label: l10n.text("legend-label"),
         selection,
     }
 }
@@ -500,13 +559,82 @@ pub fn draw_map(ui: &mut egui::Ui, model: &MapModel, cache: &mut MapCache) -> Ve
         Color32::WHITE,
     );
     paint_objects(&painter, &layout, model);
+    // The legend floats over the map and is not part of it: a click on it picks nothing.
+    let legend = draw_legend(ui.ctx(), response.rect, model);
     if let Some(pos) = response
         .interact_pointer_pos()
-        .filter(|_| response.clicked())
+        .filter(|pos| response.clicked() && !legend.contains(*pos))
     {
         actions.push(UiAction::Select(pick(&layout, pos, &model.objects)));
     }
     actions
+}
+
+/// The legend, in the top right corner of `map`: an overlay that takes no clicks itself. Returns
+/// the rectangle it covers, which the map's own clicks must leave out.
+fn draw_legend(ctx: &egui::Context, map: Rect, model: &MapModel) -> Rect {
+    let shown = egui::Area::new(egui::Id::new("map_legend"))
+        .order(egui::Order::Middle)
+        .pivot(egui::Align2::RIGHT_TOP)
+        .fixed_pos(map.right_top() + vec2(-8.0, 8.0))
+        .interactable(false)
+        .show(ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                egui::Grid::new("map_legend_entries")
+                    .spacing(vec2(12.0, 2.0))
+                    .show(ui, |ui| {
+                        for (i, entry) in model.legend.iter().enumerate() {
+                            ui.horizontal(|ui| {
+                                paint_swatch(ui, entry.swatch);
+                                ui.small(entry.label.as_str());
+                            });
+                            if (i + 1) % 3 == 0 {
+                                ui.end_row();
+                            }
+                        }
+                    });
+            });
+        });
+    shown.response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Other, true, model.legend_label.as_str())
+    });
+    shown.response.rect
+}
+
+/// A 12 pt swatch drawn the way the mark is on the map.
+fn paint_swatch(ui: &mut egui::Ui, swatch: LegendSwatch) {
+    let (rect, _) = ui.allocate_exact_size(vec2(12.0, 12.0), egui::Sense::hover());
+    let painter = ui.painter();
+    let centre = rect.center();
+    match swatch {
+        LegendSwatch::Plant(kind) => {
+            painter.rect(
+                rect.shrink(1.0),
+                egui::CornerRadius::same(2),
+                color32(kind_color(kind)),
+                Stroke::new(1.0, INK),
+                StrokeKind::Inside,
+            );
+        }
+        LegendSwatch::ConnectedCity => {
+            painter.circle(centre, 5.0, CITY, Stroke::new(1.5, INK));
+        }
+        LegendSwatch::UnconnectedCity => {
+            painter.circle(centre, 5.0, Color32::TRANSPARENT, Stroke::new(1.5, CITY));
+        }
+        LegendSwatch::Substation => {
+            painter.add(egui::Shape::convex_polygon(
+                vec![
+                    centre + vec2(0.0, -6.0),
+                    centre + vec2(6.0, 0.0),
+                    centre + vec2(0.0, 6.0),
+                    centre + vec2(-6.0, 0.0),
+                ],
+                Color32::WHITE,
+                Stroke::new(1.0, INK),
+            ));
+        }
+    }
 }
 
 /// Lines, then the substation, cities and plants on top, in the order a click prefers them.
@@ -527,7 +655,7 @@ fn paint_objects(painter: &egui::Painter, layout: &MapLayout, model: &MapModel) 
             ));
         }
     }
-    let ink = Color32::from_rgb(20, 22, 28);
+    let ink = INK;
     let centre = at(objects.substation);
     let reach = half * 1.2;
     painter.add(egui::Shape::convex_polygon(
@@ -542,9 +670,9 @@ fn paint_objects(painter: &egui::Painter, layout: &MapLayout, model: &MapModel) 
     ));
     for city in &objects.cities {
         let (fill, outline) = if city.connected {
-            (Color32::from_rgb(255, 236, 160), ink)
+            (CITY, ink)
         } else {
-            (Color32::TRANSPARENT, Color32::from_rgb(255, 236, 160))
+            (Color32::TRANSPARENT, CITY)
         };
         painter.circle(
             at(city.cell),
@@ -564,13 +692,15 @@ fn paint_objects(painter: &egui::Painter, layout: &MapLayout, model: &MapModel) 
             Stroke::new(1.5, ink.gamma_multiply(fade)),
             StrokeKind::Inside,
         );
-        painter.text(
-            centre,
-            egui::Align2::CENTER_CENTER,
-            model.glyph(plant.kind),
-            egui::FontId::proportional(half * 1.3),
-            ink,
-        );
+        if let Some(size) = glyph_font_size(layout) {
+            painter.text(
+                centre,
+                egui::Align2::CENTER_CENTER,
+                model.glyph(plant.kind),
+                egui::FontId::proportional(size),
+                ink,
+            );
+        }
     }
     paint_selection(painter, layout, model, half);
 }
@@ -1200,5 +1330,83 @@ mod tests {
         cache.clear();
         cache.texture(&ctx, region, MapLayer::Irradiance);
         assert_eq!(cache.rebuilds(), 3, "a cleared cache starts over");
+    }
+
+    #[test]
+    fn glyph_letters_are_drawn_only_when_legible() {
+        let layout_at =
+            |cell: f32| MapLayout::fit(area(0.0, 0.0, cell * 100.0, cell * 60.0), 100, 60);
+
+        // A 1280 x 720 window leaves the eastern map about 720 pt wide: 7.2 pt cells. No letters.
+        assert_eq!(glyph_font_size(&layout_at(7.2)), None);
+        // A big map has them.
+        assert!(glyph_font_size(&layout_at(20.0)).is_some());
+
+        let mut legible = false;
+        for step in 4..160 {
+            let cell = step as f32 * 0.25;
+            let layout = layout_at(cell);
+            match glyph_font_size(&layout) {
+                Some(size) => {
+                    legible = true;
+                    assert!(size >= GLYPH_MIN_FONT, "{size} pt at {cell} pt cells");
+                    // A capital is about 0.7 em tall: it fits inside the square.
+                    assert!(size * 0.7 <= plant_half_size(&layout) * 2.0);
+                }
+                None => assert!(!legible, "letters vanish again at {cell} pt cells"),
+            }
+        }
+        assert!(legible);
+    }
+
+    /// Where a kind sits in `PlantKind::ALL`. An exhaustive match, so adding a kind breaks the
+    /// build here until the legend test below accounts for it.
+    fn position(kind: PlantKind) -> usize {
+        match kind {
+            PlantKind::Nuclear => 0,
+            PlantKind::Coal => 1,
+            PlantKind::Ccgt => 2,
+            PlantKind::Peaker => 3,
+            PlantKind::Solar => 4,
+            PlantKind::Hydro => 5,
+        }
+    }
+
+    #[test]
+    fn the_legend_lists_every_plant_kind_then_the_other_marks() {
+        let l10n = shipped_l10n();
+        let game = eastern_game(Box::new(InMemoryCommandLog::default()));
+
+        let model = map_model(&game, &l10n, MapLayer::Terrain, Selection::None);
+
+        let swatches: Vec<LegendSwatch> = model.legend.iter().map(|e| e.swatch).collect();
+        for kind in PlantKind::ALL {
+            assert_eq!(
+                swatches[position(kind)],
+                LegendSwatch::Plant(kind),
+                "{kind:?} in ALL order"
+            );
+            assert_eq!(model.legend[position(kind)].label, kind.localize(&l10n));
+        }
+        assert_eq!(
+            swatches[6..],
+            [
+                LegendSwatch::ConnectedCity,
+                LegendSwatch::UnconnectedCity,
+                LegendSwatch::Substation
+            ]
+        );
+        let labels: Vec<&str> = model.legend[6..].iter().map(|e| e.label.as_str()).collect();
+        assert_eq!(labels, ["Connected city", "Unconnected city", "Substation"]);
+        assert_eq!(model.legend_label, "Map legend");
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    #[test]
+    fn plant_kinds_read_apart_by_colour_alone() {
+        let mut colours: Vec<Rgb> = PlantKind::ALL.into_iter().map(kind_color).collect();
+        colours.sort_unstable();
+        colours.dedup();
+        assert_eq!(colours.len(), PlantKind::ALL.len());
     }
 }

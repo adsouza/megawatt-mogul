@@ -15,7 +15,7 @@ use crate::l10n::{Localize, Localizer, format};
 use crate::sim::Session;
 
 /// The inspector's width, fixed so the map beside it never moves.
-pub const PANEL_WIDTH: f32 = 260.0;
+pub const INSPECTOR_PANEL_WIDTH: f32 = 260.0;
 
 /// One plant kind's verdict on the selected cell.
 #[derive(Debug, Clone, PartialEq)]
@@ -181,7 +181,7 @@ pub(super) fn inspector_panel(
     let mut ui = area.root_ui(contexts.ctx_mut()?, "inspector");
     let actions = egui::Panel::left("inspector")
         .resizable(false)
-        .exact_size(PANEL_WIDTH)
+        .exact_size(INSPECTOR_PANEL_WIDTH)
         .show(&mut ui, |ui| draw_inspector(ui, &model))
         .inner;
     area.claim(&ui);

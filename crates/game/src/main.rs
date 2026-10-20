@@ -4,6 +4,10 @@ use bevy::prelude::*;
 use game::GamePlugins;
 use game::paths::{AssetRoot, CliArgs, CliError, LogDir, resolve_asset_root};
 
+/// The smallest window the HUD is laid out for.
+const MIN_WINDOW_WIDTH: f32 = 1024.0;
+const MIN_WINDOW_HEIGHT: f32 = 640.0;
+
 fn main() -> AppExit {
     let args = match CliArgs::parse(std::env::args_os().skip(1)) {
         Ok(args) => args,
@@ -22,6 +26,12 @@ fn main() -> AppExit {
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Megawatt Mogul".into(),
+                // Smaller than this, the map is too small to read and the side panels crowd it.
+                resize_constraints: WindowResizeConstraints {
+                    min_width: MIN_WINDOW_WIDTH,
+                    min_height: MIN_WINDOW_HEIGHT,
+                    ..default()
+                },
                 ..default()
             }),
             ..default()

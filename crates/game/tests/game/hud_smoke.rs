@@ -16,14 +16,15 @@ use bevy_egui::egui;
 use domain::ids::{CellCoord, RegionId};
 use domain::session::{GameOverReason, GameSettings};
 use game::hud::{
-    ActionSink, ButtonModel, HudArea, InspectorModel, LinePreview, LineSection, MapCache, MapLayer,
-    MapLayout, MenuForm, MenuScreen, OpenPrompt, PlantSection, Prompt, RegionListings, Selection,
-    ToastQueue, UiAction, boot_error_model, build_model, button, dispatch, draw_boot_error,
-    draw_build, draw_game_over, draw_inspector, draw_main_menu, draw_map, draw_prompt,
-    draw_region_select, draw_toasts, draw_top_bar, game_over_model_for, hit_test, inspector_model,
-    main_menu_model, map_model, plant_half_size, prompt_model, region_select_model, toasts_model,
-    top_bar_model,
+    ActionSink, BUILD_PANEL_WIDTH, ButtonModel, HudArea, INSPECTOR_PANEL_WIDTH, InspectorModel,
+    LinePreview, LineSection, MapCache, MapLayer, MapLayout, MenuForm, MenuScreen, OpenPrompt,
+    PlantSection, Prompt, RegionListings, Selection, ToastQueue, UiAction, boot_error_model,
+    build_model, button, dispatch, draw_boot_error, draw_build, draw_game_over, draw_inspector,
+    draw_main_menu, draw_map, draw_prompt, draw_region_select, draw_toasts, draw_top_bar,
+    game_over_model_for, hit_test, inspector_model, main_menu_model, map_model, plant_half_size,
+    prompt_model, region_select_model, toasts_model, top_bar_model,
 };
+use game::l10n::Localize;
 use game::sim::{NewGameRequest, PlayerCommand, ReturnToMenu, SimSpeed};
 use game::state::{AppState, BootError};
 use infrastructure::region::RonRegionCatalog;
@@ -299,6 +300,20 @@ fn toasts_draw_newest_first_and_ask_for_nothing() {
     );
 }
 
+/// An egui `Area` sizes itself over a few frames (it can't place its right edge before it knows
+/// its width), so draw until the legend has stopped moving before measuring anything.
+fn settle_legend(harness: &Harness, mut draw: impl FnMut(&mut egui::Ui) -> Vec<UiAction>) {
+    let mut last = None;
+    for _ in 0..10 {
+        let rect = widget(&harness.draw(&mut draw), "Map legend").rect;
+        if last == Some(rect) {
+            return;
+        }
+        last = Some(rect);
+    }
+    panic!("the legend never settled: {last:?}");
+}
+
 #[test]
 fn the_map_draws_both_shipped_regions_and_selects_what_is_clicked() {
     let l10n = shipped_l10n();
@@ -312,8 +327,10 @@ fn the_map_draws_both_shipped_regions_and_selects_what_is_clicked() {
         let draw =
             |ui: &mut egui::Ui| central(ui, |ui| draw_map(ui, &model, &mut cache.borrow_mut()));
 
+        settle_legend(&harness, draw);
         let widgets = harness.draw(draw);
         let map = widget(&widgets, "Map");
+        let legend = widget(&widgets, "Map legend").rect;
         let layout = MapLayout::fit(map.rect, terrain.width(), terrain.height());
         assert!(
             map.rect.expand(0.01).contains_rect(layout.bounds()),
@@ -336,14 +353,18 @@ fn the_map_draws_both_shipped_regions_and_selects_what_is_clicked() {
         let plant = &session.plant_views()[0];
         let at = layout.cell_center(plant.cell);
         let actions = harness.click_at(at, draw);
-        assert_eq!(
-            actions,
-            vec![UiAction::Select(hit_test(&layout, at, &game))]
-        );
-        assert!(
-            matches!(actions[..], [UiAction::Select(Selection::Plant(_))]),
-            "{region}: {actions:?}"
-        );
+        if legend.contains(at) {
+            assert_eq!(actions, vec![], "{region}: the plant is under the legend");
+        } else {
+            assert_eq!(
+                actions,
+                vec![UiAction::Select(hit_test(&layout, at, &game))]
+            );
+            assert!(
+                matches!(actions[..], [UiAction::Select(Selection::Plant(_))]),
+                "{region}: {actions:?}"
+            );
+        }
 
         // Every city is selectable at its own centre, unless a plant is drawn over that point.
         let half = plant_half_size(&layout);
@@ -356,7 +377,14 @@ fn the_map_draws_both_shipped_regions_and_selects_what_is_clicked() {
                 (at.x - centre.x).abs() <= half && (at.y - centre.y).abs() <= half
             });
             let actions = harness.click_at(at, draw);
-            if covered {
+            if legend.contains(at) {
+                assert_eq!(
+                    actions,
+                    vec![],
+                    "{region} {:?}: under the legend",
+                    city.cell
+                );
+            } else if covered {
                 assert!(
                     matches!(actions[..], [UiAction::Select(Selection::Plant(_))]),
                     "{region} {:?}: {actions:?}",
@@ -399,6 +427,66 @@ fn the_map_draws_both_shipped_regions_and_selects_what_is_clicked() {
         assert_eq!(harness.click("Terrain", draw), vec![]);
     }
     assert_eq!(l10n.problems(), vec![]);
+}
+
+#[test]
+fn the_legend_names_every_mark_and_takes_no_map_clicks() {
+    let l10n = shipped_l10n();
+    for region in [EASTERN, WESTERN] {
+        let game = game_in(region);
+        let model = map_model(&game, &l10n, MapLayer::Terrain, Selection::None);
+        let harness = Harness::new();
+        let cache = RefCell::new(MapCache::default());
+        let draw =
+            |ui: &mut egui::Ui| central(ui, |ui| draw_map(ui, &model, &mut cache.borrow_mut()));
+        settle_legend(&harness, draw);
+        let widgets = harness.draw(draw);
+        let map = widget(&widgets, "Map").rect;
+        let legend = widget(&widgets, "Map legend").rect;
+
+        // It sits inside the map, and every kind of plant and mark is named in it.
+        assert!(map.contains_rect(legend), "{region}: {legend:?} in {map:?}");
+        for entry in &model.legend {
+            // egui reports a label as a Label node and a TextRun node; either has the rect.
+            let label = widgets
+                .iter()
+                .find(|w| w.text == entry.label)
+                .unwrap_or_else(|| panic!("{region}: {} is not shown", entry.label));
+            assert!(
+                legend.contains_rect(label.rect),
+                "{region}: {} {:?} in {legend:?}",
+                entry.label,
+                label.rect
+            );
+        }
+        for kind in domain::region::PlantKind::ALL {
+            assert!(shows(&widgets, &kind.localize(&l10n)), "{region}: {kind:?}");
+        }
+
+        // A click anywhere on the legend picks nothing...
+        for at in [
+            legend.center(),
+            legend.left_top() + egui::vec2(2.0, 2.0),
+            legend.right_bottom() - egui::vec2(2.0, 2.0),
+        ] {
+            assert_eq!(
+                harness.click_at(at, draw),
+                vec![],
+                "{region}: {at:?} is on the legend"
+            );
+        }
+        // ...and just beside it, on the map, a click does.
+        for at in [
+            legend.left_center() - egui::vec2(3.0, 0.0),
+            legend.left_bottom() + egui::vec2(0.0, 3.0),
+        ] {
+            let actions = harness.click_at(at, draw);
+            assert!(
+                matches!(actions[..], [UiAction::Select(_)]),
+                "{region}: {at:?} is on the map: {actions:?}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -642,7 +730,7 @@ fn planning_screen(
     actions.extend(
         egui::Panel::left("inspector")
             .resizable(false)
-            .exact_size(260.0)
+            .exact_size(INSPECTOR_PANEL_WIDTH)
             .show(&mut root, |ui| draw_inspector(ui, &inspector))
             .inner,
     );
@@ -651,7 +739,7 @@ fn planning_screen(
     actions.extend(
         egui::Panel::right("build")
             .resizable(false)
-            .exact_size(300.0)
+            .exact_size(BUILD_PANEL_WIDTH)
             .show(&mut root, |ui| draw_build(ui, &build))
             .inner,
     );

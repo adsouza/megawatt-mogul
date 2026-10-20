@@ -18,7 +18,7 @@ use crate::l10n::{Localize, LocalizeWith, Localizer, Names, format};
 use crate::sim::Session;
 
 /// The build menu's width, fixed so the map beside it never moves.
-pub const PANEL_WIDTH: f32 = 300.0;
+pub const BUILD_PANEL_WIDTH: f32 = 300.0;
 
 /// One plant kind on the selected cell: what it is, what it costs, and the button to build it.
 #[derive(Debug, Clone, PartialEq)]
@@ -413,7 +413,7 @@ pub(super) fn build_panel(
     let mut ui = area.root_ui(contexts.ctx_mut()?, "build");
     let actions = egui::Panel::right("build")
         .resizable(false)
-        .exact_size(PANEL_WIDTH)
+        .exact_size(BUILD_PANEL_WIDTH)
         .show(&mut ui, |ui| draw_build(ui, &model))
         .inner;
     area.claim(&ui);

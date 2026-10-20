@@ -29,18 +29,20 @@ pub use self::action::{
     ActionSink, ButtonModel, MenuScreen, OpenPrompt, Prompt, UiAction, button, dispatch,
 };
 pub use self::build::{
-    BuildModel, LinePreview, LineSection, LineTarget, PlantRow, PlantSection, build_model,
-    draw_build,
+    BUILD_PANEL_WIDTH, BuildModel, LinePreview, LineSection, LineTarget, PlantRow, PlantSection,
+    build_model, draw_build,
 };
 pub use self::game_over::{GameOverModel, draw_game_over, game_over_model, game_over_model_for};
 pub use self::inspector::{
-    CellInspector, InspectorModel, SuitabilityRow, draw_inspector, inspector_model, suitability_row,
+    CellInspector, INSPECTOR_PANEL_WIDTH, InspectorModel, SuitabilityRow, draw_inspector,
+    inspector_model, suitability_row,
 };
 pub use self::layout::HudArea;
 pub use self::map::{
-    CityMarker, LineMarker, MapCache, MapLayer, MapLayout, MapModel, MapObjects, PlantMarker, Rgb,
-    SUITABLE, TerrainKey, UNSUITABLE, WATER, cell_color, city_radius, draw_map, hit_test,
-    kind_color, map_model, pick, plant_half_size, terrain_image,
+    CityMarker, GLYPH_MIN_FONT, LegendEntry, LegendSwatch, LineMarker, MapCache, MapLayer,
+    MapLayout, MapModel, MapObjects, PlantMarker, Rgb, SUITABLE, TerrainKey, UNSUITABLE, WATER,
+    cell_color, city_radius, draw_map, glyph_font_size, hit_test, kind_color, map_model, pick,
+    plant_half_size, terrain_image,
 };
 pub use self::menu::{
     BootErrorModel, MainMenuModel, MenuForm, RegionChoice, RegionListings, RegionProblem,

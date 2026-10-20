@@ -77,6 +77,9 @@ map-layer-irradiance = Sunshine
 map-layer-cooling-water = Cooling water
 map-layer-hydro-potential = Hydro potential
 map-layer-suitability = Suitability: { $kind }
+legend-label = Map legend
+legend-city-connected = Connected city
+legend-city-unconnected = Unconnected city
 # One letter for each kind of plant on the map.
 plant-glyph-nuclear = N
 plant-glyph-coal = C
