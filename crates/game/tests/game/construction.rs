@@ -16,7 +16,7 @@ use game::sim::Session;
 use tempfile::TempDir;
 
 use crate::hud_smoke::{EASTERN, WESTERN, dispatch_in};
-use crate::operating_side::{HINT, label, region, side_panel};
+use crate::operating_side::{HINT, region, side_panel};
 use crate::support::egui_harness::{Widget, button, widget};
 use crate::support::egui_pass::EguiPass;
 use crate::support::{hud_app, request, shipped_l10n, update_n};
@@ -274,14 +274,11 @@ fn in_operating_a_clicked_plant_under_construction_shows_its_card_in_the_details
             card.name.as_str(),
             card.status.as_str(),
             "Capacity",
+            card.stats[0].value.as_str(),
             card.months.as_str(),
             card.in_service.as_str(),
         ] {
-            let row = label(&widgets, text);
-            assert!(
-                details.contains_rect(row),
-                "{region_id}: {text} {row:?} is outside the block {details:?}"
-            );
+            label_in(&widgets, text, details);
         }
         assert!(side_panel(&pass).contains_rect(details), "{region_id}");
     }

@@ -9,7 +9,10 @@ use bevy::prelude::*;
 use bevy_egui::egui;
 use domain::region::PlantKind;
 use domain::session::PlantView;
-use game::hud::{OperatingTab, Selection, UiAction};
+use game::hud::{
+    Edge, MAP_MIN_SIZE, OPERATING_PANEL_HEIGHT, OperatingTab, Selection, UiAction,
+    operating_side_min_height, panel_max,
+};
 use game::l10n::Names;
 use game::sim::Session;
 use tempfile::TempDir;
@@ -289,9 +292,19 @@ fn a_bottom_panel_at_its_maximum_leaves_the_details_and_the_list_in_view() {
             let bottom = egui::PanelState::load(pass.ctx(), egui::Id::new("operating"))
                 .unwrap()
                 .outer_rect;
+            // Its maximum, as `panel_resize`'s `expected_max` works it out: from the space below
+            // the bars, reserving what the side panel's minimum height needs beyond the map's.
+            let below_bars = egui::vec2(size.0, size.1 - b.panel.top());
+            let max = panel_max(
+                Edge::Bottom,
+                OPERATING_PANEL_HEIGHT,
+                egui::vec2(size.0, size.1),
+                below_bars,
+                (operating_side_min_height(pass.ctx()) - MAP_MIN_SIZE.y).max(0.0),
+            );
             assert!(
-                bottom.height() >= 200.0,
-                "{what}: the bottom panel is at least its opening height: {bottom:?}"
+                (bottom.height() - max).abs() <= ROUNDING,
+                "{what}: the bottom panel reached its maximum {max}: {bottom:?}"
             );
 
             for figure in figures {

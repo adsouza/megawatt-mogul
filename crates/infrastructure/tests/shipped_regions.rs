@@ -423,12 +423,19 @@ fn no_commands_survive_year_one() {
 
 /// Plays twelve months on both regions at seeds 0-7, each game started by
 /// `start` and given no commands beyond the phase changes, and asserts the
-/// game is still `Active` at every close.
+/// game is still `Active` at every close. Before every month the forecast
+/// shows no shortfall, so a hands-off player never sees the shortfall prompt
+/// (spec §16.4).
 fn assert_survives_year_one(start: fn(&dyn RegionCatalog, &str, u64) -> Game) {
     for id in [EAST, WEST] {
         for seed in 0..8 {
             let mut game = start(&catalog(), id, seed);
             for month in 1..=12 {
+                assert_eq!(
+                    game.session().capacity_shortfall_check(),
+                    None,
+                    "{id} seed {seed} month {month}"
+                );
                 let played = play_month(&mut game);
                 assert_eq!(
                     game.session().status(),

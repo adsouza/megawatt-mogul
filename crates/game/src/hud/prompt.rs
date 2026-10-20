@@ -143,6 +143,7 @@ pub(super) fn close_stale_prompt(session: Res<Session>, mut open: ResMut<OpenPro
 mod tests {
     use application::{Command, InMemoryCommandLog};
     use domain::session::{DayPhase, GameOverReason};
+    use domain::time::TICKS_PER_HOUR;
     use domain::units::Megawatts;
 
     use super::*;
@@ -207,7 +208,7 @@ mod tests {
                 "The forecast is short by {} at {}. Expect rotating outages if you start the \
                  day now.",
                 format::megawatts(worst.shortfall),
-                format::clock(u32::from(worst.hour) * 60),
+                format::clock(u32::from(worst.hour) * TICKS_PER_HOUR),
             )
         );
         // Start anyway begins the day; Keep planning, or a click outside, only closes the prompt.
