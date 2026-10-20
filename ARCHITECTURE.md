@@ -312,8 +312,9 @@ Every panel is split so that its decisions are testable without a window. Each l
 Confirmations go through one `OpenPrompt` resource and one `prompt_overlay`: a button sends
 `UiAction::Prompt(Some(..))`, and a new prompt is a `Prompt` variant plus its case in
 `prompt_model`. A prompt that belongs to one phase, like the shortfall confirmation on *Start the
-day*, also gets its case in `prompt_in_phase`, which closes it in the frame the phase changes. A new HUD mode, like the map layer, is a `UiAction` variant and a resource that
-`dispatch` writes.
+day*, also gets its case in `prompt_in_phase`, which closes it in the frame the phase changes. A
+new HUD mode, like the map layer or the legend's `LegendChoice`, is a `UiAction` variant and a
+resource that `dispatch` writes.
 
 **Read through the sink.** `ActionSink` holds `ResMut` of every resource `dispatch` writes. A panel
 system must not also take `Res` of one of them: Bevy rejects the conflict (error B0002) when the
@@ -340,9 +341,12 @@ panel system makes its own root `Ui`, and the `HudArea` resource keeps them from
   and never so far that the map's area drops below `MAP_MIN_SIZE` (320×200). The inspector, shown
   before the build menu, reserves the build menu's current width. The Operating bottom panel
   reserves what the side panel's minimum height (`operating_side_min_height`: the gauge, the
-  details block and three list rows, from the style) needs beyond the map's own 200. egui keeps each size in its
-  memory for the run. The content is laid out over exactly the panel's space, so content can
-  neither grow the panel nor shrink it back after a drag: only a drag moves the map.
+  details block and three list rows, from the style) needs beyond the map's own 200. That
+  minimum relies on the side panel's selected-object block having one fixed height
+  (`plant_details_height`), so every object it can show (a plant, a city, a plant under
+  construction) must fit that height. egui keeps each size in its memory for the run. The
+  content is laid out over exactly the panel's space, so content can neither grow the panel nor
+  shrink it back after a drag: only a drag moves the map.
 - Menus are whole-screen central panels. Overlays (windows, toasts, prompts, the Review and
   game-over modals) take the `Context` directly and ignore `HudArea`, except the Review backdrop,
   which reads `free_rect` to leave the top bar uncovered.

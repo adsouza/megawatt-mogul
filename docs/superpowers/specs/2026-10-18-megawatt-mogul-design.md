@@ -1563,14 +1563,16 @@ be in service. The commissioning toasts arrive with no warning.
     choice lasts the rest of the game, through every phase, and a new game starts undecided. An
     open legend drops to fewer columns to stay inside the drawn map, and a click on it still
     selects nothing.
-- **Selecting a plant under construction.** Plants under construction stay out of the plant list
-  and the commitment grid, as today. In Planning, the inspector shows a construction card: kind,
-  capacity, months left of the total, and the month it enters service. In Operating, the
-  selected-object block shows the same card.
+- **Selecting a plant under construction.** Plants under construction stay out of the commitment
+  grid, as today. Operating's plant list shows them, as it always has, with their status (*Under
+  construction*, with the months left). In Planning, the inspector shows a construction card:
+  kind, capacity, months left of the total, and the month it enters service. In Operating,
+  selecting one, in the list or on the map, shows the same card in the selected-object block.
 - **Data and arithmetic.**
   - Months left come from `PlantStatus::UnderConstruction { months_left }` and
     `LineStatus::UnderConstruction { months_left }`.
-  - The total is the kind's `build_months`, or the line build time.
+  - The total is the kind's `build_months`, or, for a line, `GameSession::line_build_months`: the
+    months its quote said, from its stored length by the rule the order and the month close use.
   - The in-service month is derived from the current month and the months left, by the same rule
     the month close applies. Read the domain to get the off-by-one right, and pin it with a test
     that plays to commissioning.

@@ -68,10 +68,20 @@ The game's tests sit in six layers, from the cheapest to the widest. None opens 
   events, so a test passes only if the button is there and clickable.
 - **The real egui pass** (`support/egui_pass.rs`). `EguiPass::attach` gives a headless app the
   primary egui context `EguiPlugin` would attach to the window; `run` and `settled` run the
-  plugin's own systems in `EguiPrimaryContextPass` with their real run conditions, and `run_with`
-  feeds input events for clicks. It catches what the other layers can't: a phase gate that draws
-  the wrong panels, and conflicting system parameters (Bevy B0002), which are only checked when the
-  pass is first initialised (`the_egui_systems_have_no_conflicting_parameters`).
+  plugin's own systems in `EguiPrimaryContextPass` with their real run conditions, and `run_with`,
+  `click_at` and `drag` feed input events. It catches what the other layers can't: a phase gate
+  that draws the wrong panels, and conflicting system parameters (Bevy B0002), which are only
+  checked when the pass is first initialised (`the_egui_systems_have_no_conflicting_parameters`).
+  The modules that drive whole screens through it:
+  - `shortfall_prompt.rs`: *Start the day* opens the prompt only on a shortfall, and its buttons,
+    a click outside and the transition frame;
+  - `operating_side.rs`: the gauge, the fixed-height details block and the plant list that fills
+    the rest, whatever is selected and however the panels are sized;
+  - `city_card.rs`: a clicked city's card in Planning's inspector and Operating's details block;
+  - `construction.rs`: the Construction tab and the construction card of a plant being built;
+  - `map_legend.rs`: every city clickable at 1024×640, 1280×720 and 2560×1440 in both regions and
+    phases, and the legend collapsed or open by the map's size, toggled by the player, and inside
+    the drawn map with every panel at its maximum.
 - **The 1024×640 fit tests** (`at_the_smallest_window_…`) lay out each screen at the minimum window
   size, for both shipped regions, and check that panels don't overlap and that the controls a
   player needs (*Apply*, *Continue*, the figures of the selected plant) are inside their panel.
@@ -90,6 +100,14 @@ The game's tests sit in six layers, from the cheapest to the widest. None opens 
   begins it; the day orders a rotating outage and the close issues a strike: both toasts must be
   on screen by the end of the frame their event arrives in, and every toast must come from an
   event. Each run takes about 0.2 s.
+
+**The empty start.** A new game runs the previous operator's schedule (spec §16.3), so its fleet
+is committed all day with AGC on. A test that needs an uncommitted fleet (a shortfall, an outage,
+a plant to start by hand) recreates the old empty start explicitly: `empty_start(&mut game)` on a
+bare `Game` (`hud::test_support` inline, `support` in `tests/game/`), or `empty_start_in(&mut app)`
+through the real `dispatch` in an app. It then asserts the shortfall or state it relies on, as
+`short_app` in `shortfall_prompt.rs` asserts `capacity_shortfall_check()` is `Some`, so the test
+can't pass for the wrong reason on a healthy fleet.
 
 `tests/game/l10n_coverage.rs` checks the translations: every literal key in `l10n::keys` exists in
 en-US, every typed value (errors, events, lessons, kinds) translates through an exhaustive table,
