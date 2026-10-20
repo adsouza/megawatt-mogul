@@ -220,7 +220,9 @@ first. Steps that need a fresh game say so; the others follow on from the step b
 - [ ] **9.1** In Planning, order a plant (a gas peaker builds in 12 months) and a line from an
   unconnected city to its nearest node. Look at the bottom panel's tabs.
   **Expected:** the fourth tab reads *Construction (2)*. Before ordering it read *Construction*,
-  and opening it then showed *Nothing under construction.*
+  and opening it then showed *Nothing under construction.* Click the city the line goes to: its
+  card no longer asks for a line but says *A line to it is under construction: connected from
+  Month Year*, the line's month on the tab.
 - [ ] **9.2** Open *Construction*.
   **Expected:** one row per project, the one in service soonest first: its name (a line also
   names its two ends), a progress bar, *N of M months left*, and *In service from Month Year*.

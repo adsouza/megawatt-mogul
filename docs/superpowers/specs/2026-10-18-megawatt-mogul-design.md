@@ -1527,7 +1527,9 @@ plants.
 - **The card's contents:**
   - the localised city name;
   - Connected or Not connected. When not connected, a one-line hint to build a line to it from the
-    build menu;
+    build menu. While a line that ends at the city's node is under construction, the hint says
+    instead when it connects: the earliest in-service month of those lines, by the Construction
+    tab's rule (§16.9). Checking the line's endpoint is enough for M1;
   - base load;
   - the expected peak today and its time;
   - in Operating, demand now and served now, with the share cut when an outage or shed is

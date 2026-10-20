@@ -7,10 +7,12 @@
 
 use application::Game;
 use bevy_egui::egui;
+use domain::grid::LineStatus;
 use domain::ids::CityId;
-use domain::time::TICKS_PER_HOUR;
+use domain::time::{SimMonth, TICKS_PER_HOUR};
 use domain::units::{Megawatts, Ratio};
 
+use super::construction::in_service_month;
 use super::top_bar::Stat;
 use crate::l10n::{Localizer, Names, format};
 
@@ -29,7 +31,8 @@ pub struct CityCardModel {
     /// Base load and the peak; in Operating, for a connected city, the demand and the load served
     /// now, and the share cut while an outage or a shed is on.
     pub stats: Vec<Stat>,
-    /// How to connect an unconnected city; `None` for a connected one.
+    /// For an unconnected city, how to connect it, or, while a line to it is being built, the
+    /// month it connects; `None` for a connected one.
     pub hint: Option<String>,
 }
 
@@ -81,8 +84,37 @@ pub fn city_card_model(game: &Game, l10n: &Localizer, city: CityId) -> Option<Ci
         }),
         connected: detail.connected,
         stats,
-        hint: (!detail.connected).then(|| l10n.text("city-connect-hint")),
+        hint: (!detail.connected).then(|| match connected_from(game, city) {
+            Some(month) => l10n.args(
+                "city-line-under-construction",
+                &[("month", format::month_year(month).into())],
+            ),
+            None => l10n.text("city-connect-hint"),
+        }),
     })
+}
+
+/// The month the first line under construction to `city` enters service, if one is being built:
+/// any line that ends at the city's node, by the Construction tab's rule ([`in_service_month`]).
+fn connected_from(game: &Game, city: CityId) -> Option<SimMonth> {
+    let session = game.session();
+    let node = session
+        .city_views()
+        .into_iter()
+        .find(|c| c.id == city)?
+        .node;
+    let (phase, month) = (session.phase(), session.clock().month());
+    session
+        .line_views()
+        .into_iter()
+        .filter(|line| line.from == node || line.to == node)
+        .filter_map(|line| match line.status {
+            LineStatus::UnderConstruction { months_left } => {
+                Some(in_service_month(phase, month, months_left))
+            }
+            LineStatus::InService => None,
+        })
+        .min()
 }
 
 /// The share of `demand` not served, when any is cut: by a rotating outage, protection's shed or
@@ -121,7 +153,10 @@ mod tests {
     use domain::session::{CityDetail, DayPhase};
 
     use super::*;
-    use crate::hud::test_support::{eastern_game, empty_start, shipped_game, shipped_l10n};
+    use crate::hud::test_support::{
+        eastern_game, empty_start, order_short_line, shipped_game, shipped_l10n,
+    };
+    use crate::hud::{Project, construction_model, in_service_month};
 
     fn card(game: &Game, city: CityId) -> CityCardModel {
         city_card_model(game, &shipped_l10n(), city)
@@ -205,6 +240,90 @@ mod tests {
 
             assert_eq!(city_card_model(&game, &l10n, CityId(9_999)), None);
         }
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    /// The node of `city`.
+    fn node_of(game: &Game, city: CityId) -> domain::ids::NodeId {
+        game.session()
+            .city_views()
+            .into_iter()
+            .find(|c| c.id == city)
+            .unwrap()
+            .node
+    }
+
+    /// The hint of an unconnected city follows the lines being built to it (spec §16.8): build a
+    /// line with none, the month it connects with one, and nothing once it is connected.
+    #[test]
+    fn the_hint_says_when_a_line_under_construction_connects_the_city() {
+        let l10n = shipped_l10n();
+        let build_hint = "Build a line to it from the build menu to connect it.";
+        let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+
+        // Unconnected, no line: build one.
+        let (line, months) = order_short_line(&mut game);
+        let view = game
+            .session()
+            .line_views()
+            .into_iter()
+            .find(|l| l.id == line)
+            .unwrap();
+        let target = game
+            .session()
+            .city_views()
+            .into_iter()
+            .find(|c| !c.connected && (c.node == view.from || c.node == view.to))
+            .expect("the line ends at an unconnected city")
+            .id;
+        let other = game
+            .session()
+            .city_views()
+            .into_iter()
+            .find(|c| !c.connected && c.id != target)
+            .expect("another unconnected city")
+            .id;
+        assert_eq!(card(&game, other).hint.as_deref(), Some(build_hint));
+
+        // Unconnected, a line under construction: the month the Construction tab shows.
+        let session = game.session();
+        let due = in_service_month(session.phase(), session.clock().month(), months);
+        let expected = format!(
+            "A line to it is under construction: connected from {}",
+            format::month_year(due)
+        );
+        let model = card(&game, target);
+        assert!(!model.connected);
+        assert_eq!(model.connection, "Not connected");
+        assert_eq!(model.hint.as_deref(), Some(expected.as_str()));
+        let row = construction_model(&game, &l10n)
+            .rows
+            .into_iter()
+            .find(|row| row.project == Project::Line(line))
+            .unwrap();
+        assert_eq!(row.in_service, due, "the tab's month");
+
+        // A second, slower line to the same city: the earliest still names the month.
+        let node = node_of(&game, target);
+        let slower = std::iter::once(game.session().substation())
+            .chain(game.session().plant_views().iter().map(|p| p.node))
+            .chain(game.session().city_views().iter().map(|c| c.node))
+            .filter_map(|to| {
+                let quote = game.session().line_quote(node, to).ok()?;
+                (quote.months > months).then_some(to)
+            })
+            .next()
+            .expect("a slower line from the same city");
+        game.execute(Command::BuildLine {
+            from: node,
+            to: slower,
+        })
+        .unwrap();
+        assert_eq!(card(&game, target).hint.as_deref(), Some(expected.as_str()));
+
+        // Connected: no hint.
+        let on = city(&game, true);
+        assert_eq!(card(&game, on).hint, None);
         assert_eq!(l10n.problems(), vec![]);
     }
 

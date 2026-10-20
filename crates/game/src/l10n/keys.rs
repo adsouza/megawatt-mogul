@@ -177,6 +177,7 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "city-connected",
     "city-not-connected",
     "city-connect-hint",
+    "city-line-under-construction",
     "city-base-load",
     "city-peak",
     "city-would-add",

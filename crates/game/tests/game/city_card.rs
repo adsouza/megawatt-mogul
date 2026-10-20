@@ -235,3 +235,89 @@ fn in_operating_a_clicked_city_shows_its_card_in_the_details_block() {
         assert_eq!(region(&widgets, "Plants"), list, "{region_id}");
     }
 }
+
+/// While a line to an unconnected city is being built, its card says when the city connects
+/// instead of asking for a line, in Planning's inspector and in Operating's details block, which
+/// keeps its height for it.
+#[test]
+fn a_city_with_a_line_under_construction_says_when_it_connects() {
+    for region_id in [EASTERN, WESTERN] {
+        let logs = TempDir::new().unwrap();
+        let mut app = hud_app(logs.path());
+        request(&mut app, region_id);
+        let session = app.world().resource::<Session>().0.session();
+        let nodes: Vec<_> = std::iter::once(session.substation())
+            .chain(session.city_views().iter().map(|c| c.node))
+            .collect();
+        let (_, city, from, to) = session
+            .city_views()
+            .into_iter()
+            .filter(|city| !city.connected)
+            .flat_map(|city| nodes.iter().map(move |to| (city.clone(), *to)))
+            .filter_map(|(city, to)| {
+                let quote = session.line_quote(city.node, to).ok()?;
+                Some((quote.months, city.id, city.node, to))
+            })
+            .min_by_key(|(months, city, _, _)| (*months, *city))
+            .expect("an unconnected city can be reached");
+        dispatch_in(
+            &mut app,
+            vec![UiAction::Command(application::Command::BuildLine {
+                from,
+                to,
+            })],
+        );
+        update_n(&mut app, 1);
+        let l10n = shipped_l10n();
+        let game = &app.world().resource::<Session>().0;
+        let hint = game::hud::city_card_model(game, &l10n, city)
+            .and_then(|card| card.hint)
+            .expect("an unconnected city's hint");
+        assert!(
+            hint.starts_with("A line to it is under construction: connected from "),
+            "{region_id}: {hint}"
+        );
+        let view = game
+            .session()
+            .city_views()
+            .into_iter()
+            .find(|c| c.id == city)
+            .unwrap();
+        let pass = EguiPass::attach(&mut app);
+
+        // Planning: in the inspector.
+        let widgets = pass.settled(&mut app, SMALL.0, SMALL.1);
+        let at = marker(&app, &widgets, &view).expect("the city can be clicked");
+        let widgets = click_city(&mut app, &pass, at);
+        assert_eq!(selection(&app), Selection::City(city), "{region_id}");
+        let inspector = egui::PanelState::load(pass.ctx(), egui::Id::new("inspector"))
+            .expect("the inspector is drawn")
+            .outer_rect;
+        label_in(&widgets, &hint, inspector);
+
+        // Operating: in the details block, at its fixed height.
+        dispatch_in(
+            &mut app,
+            vec![
+                UiAction::Command(application::Command::BeginOperating),
+                UiAction::Select(Selection::None),
+            ],
+        );
+        update_n(&mut app, 2);
+        let widgets = pass.settled(&mut app, SMALL.0, SMALL.1);
+        let details = region(&widgets, HINT);
+        let at = marker(&app, &widgets, &view).expect("the city can be clicked");
+        let widgets = click_city(&mut app, &pass, at);
+        assert_eq!(selection(&app), Selection::City(city), "{region_id}");
+        assert_eq!(
+            region(&widgets, &city_name(&app, city)),
+            details,
+            "{region_id}"
+        );
+        let row = label(&widgets, &hint);
+        assert!(
+            details.contains_rect(row),
+            "{region_id}: the hint {row:?} is outside the block {details:?}"
+        );
+    }
+}
