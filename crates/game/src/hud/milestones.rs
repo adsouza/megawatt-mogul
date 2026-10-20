@@ -170,7 +170,7 @@ mod tests {
                 (
                     "Serve a monthly peak of 50 GW",
                     "In progress",
-                    "Best monthly peak so far: 0.0 MW of 50.0 GW"
+                    "Best monthly peak so far: 0.0 GW of 50.0 GW"
                 ),
                 (
                     "Get through a full season without a strike",
@@ -218,6 +218,16 @@ mod tests {
             partway.detail,
             "Best monthly peak so far: 31.2 GW of 50.0 GW"
         );
+        // Below the gigawatt threshold the best peak is still in the goal's unit.
+        let early = milestone_row(
+            kind,
+            MilestoneStatus::InProgress(MilestoneProgress::Peak {
+                best: Megawatts::new(8_400.0),
+                goal: Megawatts::new(50_000.0),
+            }),
+            &l10n,
+        );
+        assert_eq!(early.detail, "Best monthly peak so far: 8.4 GW of 50.0 GW");
         assert!(!partway.reached);
         assert_eq!(l10n.problems(), vec![]);
     }

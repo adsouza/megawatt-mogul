@@ -390,7 +390,7 @@ impl Localize for MilestoneProgress {
             Self::Peak { best, goal } => l10n.args(
                 "milestone-progress-peak",
                 &[
-                    ("best", format::megawatts(*best).into()),
+                    ("best", format::megawatts_like(*best, *goal).into()),
                     ("goal", format::megawatts(*goal).into()),
                 ],
             ),

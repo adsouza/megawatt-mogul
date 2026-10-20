@@ -51,6 +51,12 @@ pub fn megawatts(power: Megawatts) -> String {
     scaled(power.value(), "MW", "GW")
 }
 
+/// `power` in the unit `like` would be shown in, so two figures side by side compare at a glance:
+/// `0.0 GW of 50.0 GW`, not `0.0 MW of 50.0 GW`.
+pub fn megawatts_like(power: Megawatts, like: Megawatts) -> String {
+    scaled_like(power.value(), like.value(), "MW", "GW")
+}
+
 /// `1,234 MWh`, or `12.3 GWh` from 10,000 MWh.
 pub fn megawatt_hours(energy: MegawattHours) -> String {
     scaled(energy.value(), "MWh", "GWh")
@@ -181,14 +187,26 @@ fn three_significant(value: f64) -> Rounded {
 /// Power or energy: whole units with thousands separators, one decimal below 10, and the big
 /// unit with one decimal from [`GIGA_THRESHOLD`].
 fn scaled(value: f64, small: &str, big: &str) -> String {
+    scaled_like(value, value, small, big)
+}
+
+/// [`scaled`] in the unit `like` would take.
+fn scaled_like(value: f64, like: f64, small: &str, big: &str) -> String {
     let magnitude = value.abs();
-    let sign = if value < 0.0 && magnitude >= 0.05 {
+    let in_big = like.abs() >= GIGA_THRESHOLD;
+    let shown = if in_big {
+        magnitude / 1_000.0
+    } else {
+        magnitude
+    };
+    // No sign on a figure that rounds to zero.
+    let sign = if value < 0.0 && shown >= 0.05 {
         MINUS
     } else {
         ""
     };
-    if magnitude >= GIGA_THRESHOLD {
-        format!("{sign}{:.1} {big}", magnitude / 1_000.0)
+    if in_big {
+        format!("{sign}{shown:.1} {big}")
     } else if magnitude < 10.0 {
         format!("{sign}{magnitude:.1} {small}")
     } else {
@@ -321,6 +339,31 @@ mod tests {
                 (12_345.0, "12.3 GW"),
                 (-250.0, "\u{2212}250 MW"),
                 (-12_500.0, "\u{2212}12.5 GW"),
+            ],
+        );
+    }
+
+    #[test]
+    fn megawatts_like_takes_the_unit_of_the_reference() {
+        let in_gigawatts = Megawatts::new(50_000.0);
+        check(
+            |v| megawatts_like(Megawatts::new(v), in_gigawatts),
+            &[
+                (0.0, "0.0 GW"),
+                (450.0, "0.5 GW"),
+                (8_400.0, "8.4 GW"),
+                (31_234.0, "31.2 GW"),
+                (50_000.0, "50.0 GW"),
+            ],
+        );
+        // A reference in megawatts keeps megawatts, even for a figure past it.
+        let in_megawatts = Megawatts::new(5_000.0);
+        check(
+            |v| megawatts_like(Megawatts::new(v), in_megawatts),
+            &[
+                (0.0, "0.0 MW"),
+                (1_234.0, "1,234 MW"),
+                (12_345.0, "12,345 MW"),
             ],
         );
     }
