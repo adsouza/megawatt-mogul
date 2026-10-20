@@ -39,14 +39,15 @@ first. Steps that need a fresh game say so; the others follow on from the step b
   *Hydro potential* and each *Suitability: …*.
   **Expected:** the map recolours for each, and the button of the layer on show is disabled. Plant
   letters (N, C, G, P, S, H) appear on the map only in a larger window.
-- [ ] **2.1a** Look at the end of the layer-button row: a *Legend* toggle. At 1024×640 (and up
-  to about 1900×1100) it is off and no legend covers the map; in a window big enough for the plant
-  letters it starts on. Click it.
-  **Expected:** the legend opens in the map's top right and lists the six plant kinds by colour
-  swatch, connected and unconnected cities, the substation and the two under-construction marks.
-  A click on the legend selects nothing. Drag every panel to its maximum: the legend drops to two
-  columns and stays inside the map. Click *Legend* again: it closes. Start the day: the legend
-  stays as you left it in Operating and the next month's planning.
+- [ ] **2.1a** Look at the map and at the end of the layer-button row: a *Legend* toggle.
+  **Expected:** in a fresh game the legend is open (the toggle on) in a corner of the map that
+  covers no city or plant, usually the top right; at 1280×720 it shows in Eastern Planning, for
+  instance. Only when every corner would hide a mark is it collapsed (at 1024×640 in Planning,
+  for instance). It lists the six plant kinds by colour swatch, connected and unconnected cities,
+  the substation and the two under-construction marks. A click on the legend selects
+  nothing. Click *Legend*: it closes; click again: it opens, in the clear corner or else the top
+  right. Drag every panel to its maximum: the legend drops to two columns and stays inside the
+  map. Start the day: the legend stays as you left it in Operating and the next month's planning.
 - [ ] **2.2** Click a water cell (on *Terrain*, a blue one).
   **Expected:** the inspector says *Water*, and under *Can be built here* the peaker has a reason,
   not ✓. In the build menu the *Gas peaker* row shows that reason, with *Build plant* disabled.
@@ -231,9 +232,9 @@ first. Steps that need a fresh game say so; the others follow on from the step b
   line.
   **Expected:** a short label such as *12 mo* beside the faded square and above the dashed line's
   middle. In a small window, where the letters are hidden, the labels are too. Clicking on a
-  label selects whatever is under it, not the project. The legend (open by default at this
-  size) lists *Plant under construction* (a faded square) and *Line under construction* (a dashed
-  line).
+  label selects whatever is under it, not the project. The legend lists *Plant under
+  construction* (a faded square) and *Line under construction* (a dashed line); if the new plant
+  sits under the legend's corner, the legend moves to another clear corner.
 - [ ] **9.4** Click the new plant's faded square on the map, then start the day and click it
   again.
   **Expected:** in Planning the inspector shows its construction card: its name, *Under
@@ -252,13 +253,14 @@ steps above.
 
 - [ ] The ✓ glyph in the inspector renders in the default fonts (not a box).
 - [ ] Panel widths look right, and the map's cells meet without seams.
-- [ ] The legend is collapsed by default until the map is big enough for the plant letters, so at
-  1024×640 every city can be clicked. Opened, it covers about 358×92 pt of the map's top right
-  (two columns, about 260×132, when every panel is at its maximum), and at 1024×640 it then hides
-  Minneapolis and Winnipeg (Eastern Planning) or Vancouver, Calgary and Edmonton (Western; Calgary
-  and Edmonton in Operating), which can't be clicked until it is closed again; at 1280×720 it hides
-  one Western city. Judge whether the *Legend* toggle is easy enough to find, and whether the
-  default should flip at a smaller size.
+- [ ] By default the legend (about 358×92 pt; two columns, about 260×132, with every panel at its
+  maximum) opens in the first corner that covers no city or plant, and is collapsed when none is
+  clear: in the shipped regions at 1024×640 in Planning (both regions) and Western Operating, and
+  at 1280×720 in Western Planning. Everywhere else checked it opens in the top right. So every
+  city can be clicked by default. Opened by the player with no clear corner, it goes in the top
+  right and hides cities until it is closed. Judge whether a legend that moves between corners as
+  plants are built is distracting, and whether the collapsed cases at 1024×640 leave a new player
+  without a key.
 - [ ] Map markers and the legend are legible.
 - [ ] The supply chart's plot legends fit at about 700 px wide, and the right cost axis's ticks
   (not round numbers) read acceptably.

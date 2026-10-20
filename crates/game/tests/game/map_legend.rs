@@ -1,14 +1,16 @@
-//! The map legend, drawn by the real egui pass. It is collapsed by default on a map too small to
-//! letter its plants, so at the smallest window it hides no city. It is opened and closed from a
-//! toggle in the layer-button row, and the player's choice lasts the whole game. When it is open
-//! it stays inside the drawn map, even with every panel dragged to its maximum, and a click on it
-//! selects nothing.
+//! The map legend, drawn by the real egui pass. By default it opens in the first corner of the map
+//! that hides no city or plant, and is collapsed if none is clear, so every city stays clickable.
+//! It is opened and closed from a toggle in the layer-button row, and the player's choice lasts the
+//! whole game. When it is open it stays inside the drawn map, even with every panel dragged to its
+//! maximum, and a click on it selects nothing.
 
 use application::Command;
 use bevy::prelude::*;
 use bevy_egui::egui;
 use domain::session::DayPhase;
-use game::hud::{LegendChoice, MapLayout, Selection, UiAction, hit_test};
+use game::hud::{
+    LegendChoice, MapLayout, Selection, UiAction, hit_test, legend_placement, legend_rect,
+};
 use game::sim::Session;
 use tempfile::TempDir;
 
@@ -77,17 +79,58 @@ fn overlays(pass: &EguiPass) -> Vec<(egui::LayerId, egui::Rect)> {
     })
 }
 
-/// On a settled screen of `size`, every city is picked at its centre, nothing is drawn over that
-/// point, and a real click there selects it. The legend shows only if `legend_shown`.
-fn every_city_is_clickable(region: &str, phase: DayPhase, size: (f32, f32), legend_shown: bool) {
+/// The centre of every mark a click can pick: each city and each plant, built or not.
+fn pickable_marks(app: &App, layout: &MapLayout) -> Vec<(String, egui::Pos2)> {
+    let session = session(app);
+    let cities = session
+        .city_views()
+        .into_iter()
+        .map(|city| (format!("{:?}", city.id), city.cell));
+    let plants = session
+        .plant_views()
+        .into_iter()
+        .map(|plant| (format!("{:?}", plant.id), plant.cell));
+    cities
+        .chain(plants)
+        .map(|(name, cell)| (name, layout.cell_center(cell)))
+        .collect()
+}
+
+/// On a settled screen of `size` in the legend's default state: if the legend is open, no city
+/// or plant centre lies inside it; every city is picked at its centre, nothing is drawn over that
+/// point, and a real click there selects it. Whether the legend opened.
+fn every_city_is_clickable(region: &str, phase: DayPhase, size: (f32, f32)) -> bool {
     let logs = TempDir::new().unwrap();
     let mut app = app_in(&logs, region, phase);
     let pass = EguiPass::attach(&mut app);
     let widgets = pass.settled(&mut app, size.0, size.1);
     let what = format!("{region} {phase:?} at {size:?}");
-    assert_eq!(legend(&widgets).is_some(), legend_shown, "{what}");
+    assert_eq!(choice(&app), LegendChoice(None), "{what}");
     let map = widget(&widgets, "Map").rect;
     let layout = layout(&app, &widgets);
+    let shown = legend(&widgets);
+    let marks: Vec<egui::Pos2> = pickable_marks(&app, &layout)
+        .into_iter()
+        .map(|(_, centre)| centre)
+        .collect();
+    if let Some(shown) = shown {
+        assert!(map.contains_rect(shown), "{what}: {shown:?} in {map:?}");
+        // It sits in the corner the placement rule picks for its drawn size: the size the map
+        // measured to place it is the size egui drew.
+        let corner = legend_placement(map, shown.size(), &marks)
+            .unwrap_or_else(|| panic!("{what}: no clear corner for {shown:?}"));
+        let expected = legend_rect(map, shown.size(), corner);
+        assert!(
+            (shown.min - expected.min).length() <= ROUNDING,
+            "{what}: {shown:?} is in the {corner:?} corner {expected:?}"
+        );
+        for (mark, centre) in pickable_marks(&app, &layout) {
+            assert!(
+                !shown.contains(centre),
+                "{what}: the legend {shown:?} hides {mark} at {centre:?}"
+            );
+        }
+    }
     let cities = session(&app).city_views();
     assert!(cities.len() >= 10, "{what}: {} cities", cities.len());
 
@@ -112,35 +155,36 @@ fn every_city_is_clickable(region: &str, phase: DayPhase, size: (f32, f32), lege
         assert_eq!(selection(&app), Selection::City(city.id), "{what}");
         assert_eq!(widget(&widgets, "Map").rect, map, "{what}: the map stays");
     }
+    shown.is_some()
+}
+
+/// Every region and phase at `size`: how many opened the legend by default.
+fn opened_by_default(size: (f32, f32)) -> usize {
+    [EASTERN, WESTERN]
+        .into_iter()
+        .flat_map(|region| {
+            [DayPhase::Planning, DayPhase::Operating]
+                .into_iter()
+                .map(move |phase| every_city_is_clickable(region, phase, size))
+        })
+        .filter(|opened| *opened)
+        .count()
 }
 
 #[test]
-fn at_the_smallest_window_the_legend_is_collapsed_and_every_city_can_be_clicked() {
-    for region in [EASTERN, WESTERN] {
-        for phase in [DayPhase::Planning, DayPhase::Operating] {
-            every_city_is_clickable(region, phase, SMALL, false);
-        }
-    }
+fn at_the_smallest_window_the_default_legend_hides_no_mark() {
+    opened_by_default(SMALL);
 }
 
-/// 1280×720 is still too small to letter the plants (Eastern cells are about 6.7 pt, under the
-/// 13.3 pt the 9 pt letters need), so the legend is collapsed there too.
+/// The key shows at common window sizes: in a corner that hides nothing.
 #[test]
-fn at_1280_by_720_the_legend_is_collapsed_and_every_city_can_be_clicked() {
-    for region in [EASTERN, WESTERN] {
-        for phase in [DayPhase::Planning, DayPhase::Operating] {
-            every_city_is_clickable(region, phase, MEDIUM, false);
-        }
-    }
+fn at_1280_by_720_the_legend_opens_by_default_and_hides_no_mark() {
+    assert!(opened_by_default(MEDIUM) >= 1, "no 1280×720 case opens it");
 }
 
 #[test]
-fn on_a_map_big_enough_for_plant_letters_the_legend_opens_and_hides_no_city() {
-    for region in [EASTERN, WESTERN] {
-        for phase in [DayPhase::Planning, DayPhase::Operating] {
-            every_city_is_clickable(region, phase, LARGE, true);
-        }
-    }
+fn on_a_large_map_the_default_legend_hides_no_mark() {
+    opened_by_default(LARGE);
 }
 
 /// Drags the inner edge of the outer panel `id` as far as it goes.
@@ -166,6 +210,17 @@ fn drag_to_maximum(app: &mut App, pass: &EguiPass, id: &str, size: (f32, f32)) {
     pass.settled(app, size.0, size.1);
 }
 
+/// Clicks *Legend* until the player has opened the legend: once, or twice when it was open by
+/// default (the first click closes it). The widgets drawn after.
+fn open_by_player(app: &mut App, pass: &EguiPass, size: (f32, f32)) -> Vec<Widget> {
+    let mut widgets = click_button(app, pass, size, TOGGLE);
+    if choice(app) == LegendChoice(Some(false)) {
+        widgets = click_button(app, pass, size, TOGGLE);
+    }
+    assert_eq!(choice(app), LegendChoice(Some(true)));
+    widgets
+}
+
 /// Clicks the one button labelled `label` on a settled screen, then settles.
 fn click_button(app: &mut App, pass: &EguiPass, size: (f32, f32), label: &str) -> Vec<Widget> {
     let widgets = pass.settled(app, size.0, size.1);
@@ -174,9 +229,9 @@ fn click_button(app: &mut App, pass: &EguiPass, size: (f32, f32), label: &str) -
     pass.settled(app, size.0, size.1)
 }
 
-/// With every panel at its maximum at 1024×640 the drawn map is about 304×155. The legend the
-/// player opens there fits inside it, by dropping to fewer columns; a click on it selects
-/// nothing, and the toggle closes it again.
+/// With every panel at its maximum at 1024×640 the drawn map is about 304×155. The legend, by
+/// default or opened by the player, fits inside it by dropping to fewer columns; a click on it
+/// selects nothing, and the toggle closes it again.
 #[test]
 fn the_legend_the_player_opens_stays_inside_the_map_with_every_panel_at_its_maximum() {
     let panels = [
@@ -206,12 +261,16 @@ fn the_legend_the_player_opens_stays_inside_the_map_with_every_panel_at_its_maxi
                 map.width() < open_map.width() && map.height() < open_map.height(),
                 "{what}: the panels grew, the map is {map:?}"
             );
-            assert_eq!(legend(&widgets), None, "{what}: collapsed by default");
             assert_eq!(choice(&app), LegendChoice(None), "{what}");
+            if let Some(shown) = legend(&widgets) {
+                assert!(
+                    map.contains_rect(shown),
+                    "{what}: by default {shown:?} in {map:?}"
+                );
+            }
 
             // Opened by the player: inside the drawn map, which doesn't move.
-            let widgets = click_button(&mut app, &pass, SMALL, TOGGLE);
-            assert_eq!(choice(&app), LegendChoice(Some(true)), "{what}");
+            let widgets = open_by_player(&mut app, &pass, SMALL);
             let shown = legend(&widgets).unwrap_or_else(|| panic!("{what}: the legend shows"));
             assert_eq!(widget(&widgets, "Map").rect, map, "{what}: the map stays");
             assert!(
@@ -233,18 +292,18 @@ fn the_legend_the_player_opens_stays_inside_the_map_with_every_panel_at_its_maxi
     }
 }
 
-/// On the largest maps the legend opens by default inside the map, and the player can close it.
+/// Opened by the player on a large map, the legend sits inside the map, and the toggle closes it.
 #[test]
-fn the_legend_open_by_default_fits_the_map_and_the_player_can_close_it() {
+fn on_a_large_map_the_player_opens_and_closes_the_legend() {
     for region in [EASTERN, WESTERN] {
         for phase in [DayPhase::Planning, DayPhase::Operating] {
             let logs = TempDir::new().unwrap();
             let mut app = app_in(&logs, region, phase);
             let pass = EguiPass::attach(&mut app);
             let what = format!("{region} {phase:?}");
-            let widgets = pass.settled(&mut app, LARGE.0, LARGE.1);
+            let widgets = open_by_player(&mut app, &pass, LARGE);
             let map = widget(&widgets, "Map").rect;
-            let shown = legend(&widgets).unwrap_or_else(|| panic!("{what}: open by default"));
+            let shown = legend(&widgets).unwrap_or_else(|| panic!("{what}: open"));
             assert!(map.contains_rect(shown), "{what}: {shown:?} in {map:?}");
 
             let widgets = click_button(&mut app, &pass, LARGE, TOGGLE);
@@ -261,7 +320,7 @@ fn the_players_legend_choice_lasts_through_the_phases_of_a_game() {
     let logs = TempDir::new().unwrap();
     let mut app = app_in(&logs, EASTERN, DayPhase::Planning);
     let pass = EguiPass::attach(&mut app);
-    let widgets = click_button(&mut app, &pass, SMALL, TOGGLE);
+    let widgets = open_by_player(&mut app, &pass, SMALL);
     assert!(legend(&widgets).is_some());
 
     for (command, phase) in [

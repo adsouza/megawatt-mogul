@@ -69,8 +69,10 @@ Each ruling ends with what it costs if it turns out to be wrong.
 - **Minimum window and map shapes.**
   - The minimum window is 1024×640.
   - Map markers hit-test the shapes as drawn.
-  - Kind letters appear only at 9 pt or larger, and an always-visible colour legend explains the
-    markers.
+  - Kind letters appear only at 9 pt or larger, and a colour legend explains the markers. By
+    default it shows in the first corner of the map (top right, bottom right, bottom left, top
+    left) that covers no city or plant, and is collapsed only when no corner is clear; a *Legend*
+    toggle lets the player show or hide it (Plan 2a final fix wave).
 
   If wrong: kinds are read by colour at small sizes.
 - **Line ends.** They are chosen in the build menu, not by clicking the map. If wrong: an extra

@@ -1558,8 +1558,12 @@ be in service. The commissioning toasts arrive with no warning.
     (§8, Plan 2 ruling N1).
   - The map legend gains the two under-construction marks.
   - The legend can be collapsed (playtest, final fix wave): a *Legend* toggle ends the
-    layer-button row. Until the player uses it, the legend is open only on a map big enough to
-    letter its plants (`glyph_font_size` is `Some`), so at 1024×640 it hides no city. The player's
+    layer-button row. Until the player uses it, the legend opens in the first corner of the drawn
+    map, trying top right, bottom right, bottom left and top left, whose rectangle covers no
+    pickable mark: no city centre and no plant centre, plants under construction included. With no
+    clear corner it is collapsed. So by default it never hides a city or plant, and it shows at
+    common window sizes (1280×720 included). Once the player chooses, their choice wins: opened,
+    it goes in the clear corner if there is one, else the top right, where it may cover marks. The
     choice lasts the rest of the game, through every phase, and a new game starts undecided. An
     open legend drops to fewer columns to stay inside the drawn map, and a click on it still
     selects nothing.

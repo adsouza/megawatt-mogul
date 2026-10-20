@@ -50,8 +50,8 @@ fn map(app: &App, widgets: &[Widget]) -> (MapLayout, egui::Rect) {
 }
 
 /// A cell a peaker can be built on whose centre a click reaches: nothing is drawn there yet, and
-/// the legend doesn't cover it. Searched from the bottom left, away from the legend in the top
-/// right, so it stays clickable in Operating's layout too.
+/// the legend doesn't cover it. Searched from the bottom left, away from the legend, which
+/// prefers the top right, so it stays clickable in Operating's layout too.
 fn clickable_site(app: &App, widgets: &[Widget]) -> CellCoord {
     let game = &app.world().resource::<Session>().0;
     let region = game.session().region();

@@ -88,11 +88,12 @@ pub use self::layout::{
     panel_max,
 };
 pub use self::map::{
-    CityMarker, GLYPH_MIN_FONT, LEGEND_COLUMNS, LabelAnchor, LegendChoice, LegendEntry,
-    LegendSwatch, LineMarker, MapCache, MapLayer, MapLayout, MapModel, MapObjects, MonthsLeftLabel,
-    PlacedLabel, PlantMarker, Rgb, SUITABLE, TerrainKey, UNSUITABLE, WATER, cell_color,
-    city_radius, draw_map, glyph_font_size, hit_test, kind_color, legend_columns, legend_open,
-    legend_toggle, map_model, months_left_labels, pick, plant_half_size, terrain_image,
+    CityMarker, GLYPH_MIN_FONT, LEGEND_COLUMNS, LEGEND_CORNERS, LEGEND_INSET, LabelAnchor,
+    LegendChoice, LegendEntry, LegendSwatch, LineMarker, MapCache, MapLayer, MapLayout, MapModel,
+    MapObjects, MonthsLeftLabel, PlacedLabel, PlantMarker, Rgb, SUITABLE, TerrainKey, UNSUITABLE,
+    WATER, cell_color, city_radius, draw_map, glyph_font_size, hit_test, kind_color,
+    legend_columns, legend_corner, legend_placement, legend_rect, legend_toggle, map_model,
+    months_left_labels, pick, pickable_marks, plant_half_size, terrain_image,
 };
 pub use self::menu::{
     BootErrorModel, MainMenuModel, MenuForm, RegionChoice, RegionListings, RegionProblem,

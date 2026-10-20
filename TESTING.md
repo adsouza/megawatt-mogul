@@ -80,8 +80,9 @@ The game's tests sit in six layers, from the cheapest to the widest. None opens 
   - `city_card.rs`: a clicked city's card in Planning's inspector and Operating's details block;
   - `construction.rs`: the Construction tab and the construction card of a plant being built;
   - `map_legend.rs`: every city clickable at 1024×640, 1280×720 and 2560×1440 in both regions and
-    phases, and the legend collapsed or open by the map's size, toggled by the player, and inside
-    the drawn map with every panel at its maximum.
+    phases, with the default legend (open in a corner that hides no city or plant, or collapsed)
+    and opening at 1280×720; the legend toggled by the player, and inside the drawn map with every
+    panel at its maximum.
 - **The 1024×640 fit tests** (`at_the_smallest_window_…`) lay out each screen at the minimum window
   size, for both shipped regions, and check that panels don't overlap and that the controls a
   player needs (*Apply*, *Continue*, the figures of the selected plant) are inside their panel.

@@ -54,7 +54,7 @@ pub(super) fn reset_layer(mut layer: ResMut<MapLayer>) {
 }
 
 /// Whether the player has chosen to show the map legend: `None` until they click its toggle, and
-/// then the map's size decides ([`legend_open`]). It lasts the whole game, through every phase
+/// then a corner that hides nothing decides ([`legend_corner`]). It lasts the whole game, through every phase
 /// (unlike `UiState`, which a month's planning owns), and a new game starts undecided.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct LegendChoice(pub Option<bool>);
@@ -609,14 +609,53 @@ fn legend_entries(l10n: &Localizer) -> Vec<LegendEntry> {
         .collect()
 }
 
-/// Whether the legend shows on a map laid out as `layout`: the player's choice once they have
-/// made one. Until then it is open only on a map big enough to letter its plants
-/// ([`glyph_font_size`]): on a smaller map it would hide cities (at 1024×640, several), and a
-/// click on it selects nothing.
-pub fn legend_open(choice: LegendChoice, layout: &MapLayout) -> bool {
-    choice
-        .0
-        .unwrap_or_else(|| glyph_font_size(layout).is_some())
+/// The corners of the map the legend tries, in order of preference.
+pub const LEGEND_CORNERS: [egui::Align2; 4] = [
+    egui::Align2::RIGHT_TOP,
+    egui::Align2::RIGHT_BOTTOM,
+    egui::Align2::LEFT_BOTTOM,
+    egui::Align2::LEFT_TOP,
+];
+
+/// How far the legend sits in from the map's edges, in points.
+pub const LEGEND_INSET: f32 = 8.0;
+
+/// The rectangle a legend of `size` covers in `corner` of `map`, [`LEGEND_INSET`] in from its
+/// edges.
+pub fn legend_rect(map: Rect, size: egui::Vec2, corner: egui::Align2) -> Rect {
+    let anchor = corner.pos_in_rect(&map.shrink(LEGEND_INSET));
+    corner.anchor_size(anchor, size)
+}
+
+/// The first corner, in [`LEGEND_CORNERS`] order, where a legend of `size` fits inside `map` and
+/// covers none of `marks`; `None` when every corner would hide one.
+pub fn legend_placement(map: Rect, size: egui::Vec2, marks: &[Pos2]) -> Option<egui::Align2> {
+    LEGEND_CORNERS.into_iter().find(|corner| {
+        let rect = legend_rect(map, size, *corner);
+        map.contains_rect(rect) && !marks.iter().any(|mark| rect.contains(*mark))
+    })
+}
+
+/// What a click on the map can pick, at its centre: every city and every plant, built or not.
+pub fn pickable_marks(layout: &MapLayout, objects: &MapObjects) -> Vec<Pos2> {
+    let cities = objects.cities.iter().map(|city| city.cell);
+    let plants = objects.plants.iter().map(|plant| plant.cell);
+    cities
+        .chain(plants)
+        .map(|cell| layout.cell_center(cell))
+        .collect()
+}
+
+/// Where the legend shows, if at all, given the corner that hides nothing (`clear`). Until the
+/// player chooses, it shows only there, so it never hides a city or plant (a click on it selects
+/// nothing); with no clear corner it is collapsed. Once they choose, their choice wins: opened, it
+/// goes in the clear corner if there is one, else the top right.
+pub fn legend_corner(choice: LegendChoice, clear: Option<egui::Align2>) -> Option<egui::Align2> {
+    match choice.0 {
+        None => clear,
+        Some(true) => Some(clear.unwrap_or(egui::Align2::RIGHT_TOP)),
+        Some(false) => None,
+    }
 }
 
 /// The legend's toggle in the layer-button row: on while the legend shows, and a click asks for
@@ -667,12 +706,12 @@ pub struct MapModel {
     pub glyphs: Vec<(PlantKind, String)>,
     /// The months left of each plant and line under construction, labelled beside it.
     pub months_left: Vec<MonthsLeftLabel>,
-    /// What each kind of mark on the map is, in the map's top right corner when it shows.
+    /// What each kind of mark on the map is, in a corner of the map when it shows.
     pub legend: Vec<LegendEntry>,
     /// The legend's accessible name.
     pub legend_label: String,
-    /// Whether the player chose to show the legend; the draw function settles the default by the
-    /// map's size ([`legend_open`]).
+    /// Whether the player chose to show the legend; the draw function places it by the marks on
+    /// the drawn map ([`legend_corner`]).
     pub legend_choice: LegendChoice,
     /// The label of the legend's toggle in the layer-button row.
     pub legend_toggle: String,
@@ -760,8 +799,13 @@ pub fn draw_map(ui: &mut egui::Ui, model: &MapModel, cache: &mut MapCache) -> Ve
         Color32::WHITE,
     );
     paint_objects(&painter, &layout, model);
-    let open = legend_open(model.legend_choice, &layout);
-    let toggle = legend_toggle(&model.legend_toggle, open);
+    let legend_layout = measure_legend(ui, response.rect, model);
+    let marks = pickable_marks(&layout, &model.objects);
+    let corner = legend_corner(
+        model.legend_choice,
+        legend_placement(response.rect, legend_layout.size, &marks),
+    );
+    let toggle = legend_toggle(&model.legend_toggle, corner.is_some());
     let clicked = ui.put(
         toggle_slot,
         egui::Button::new(toggle.button.label.as_str()).selected(toggle.on),
@@ -770,7 +814,8 @@ pub fn draw_map(ui: &mut egui::Ui, model: &MapModel, cache: &mut MapCache) -> Ve
         actions.push(toggle.button.action.clone());
     }
     // The legend floats over the map and is not part of it: a click on it picks nothing.
-    let legend = open.then(|| draw_legend(ui.ctx(), response.rect, model));
+    let legend =
+        corner.map(|corner| draw_legend(ui.ctx(), response.rect, corner, legend_layout, model));
     if let Some(pos) = response
         .interact_pointer_pos()
         .filter(|pos| response.clicked() && !legend.is_some_and(|legend| legend.contains(*pos)))
@@ -792,41 +837,79 @@ fn button_size(ui: &egui::Ui, label: &str) -> egui::Vec2 {
     vec2(size.x, size.y.max(ui.spacing().interact_size.y))
 }
 
-/// How far the legend sits in from the map's edges, in points.
-const LEGEND_INSET: f32 = 8.0;
 /// The space between the legend's columns and between its rows, in points.
 const LEGEND_SPACING: egui::Vec2 = vec2(12.0, 2.0);
 /// A legend swatch's side, in points.
 const SWATCH: f32 = 12.0;
 
-/// The legend, in the top right corner of `map`: an overlay that takes no clicks itself. It takes
-/// as many columns, up to three, as fit inside the map. Returns the rectangle it covers, which the
-/// map's own clicks must leave out.
-fn draw_legend(ctx: &egui::Context, map: Rect, model: &MapModel) -> Rect {
+/// The legend's shape on a map: its columns and its outer size, frame included.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct LegendLayout {
+    columns: usize,
+    size: egui::Vec2,
+}
+
+/// Measures the legend before it is drawn, so it can be placed: as many columns, up to three, as
+/// fit inside `map`, and the size those make. Each entry is a swatch and a small label in a row
+/// at least an interactive widget tall, as the grid lays them out.
+fn measure_legend(ui: &egui::Ui, map: Rect, model: &MapModel) -> LegendLayout {
+    let style = ui.style();
+    let frame = egui::Frame::popup(style);
+    let font = egui::TextStyle::Small.resolve(style);
+    let gap = ui.spacing().item_spacing.x;
+    let mut text_height = 0.0_f32;
+    let widths: Vec<f32> = model
+        .legend
+        .iter()
+        .map(|entry| {
+            let text = ui.painter().layout_no_wrap(
+                entry.label.clone(),
+                font.clone(),
+                Color32::PLACEHOLDER,
+            );
+            text_height = text_height.max(text.size().y);
+            SWATCH + gap + text.size().x
+        })
+        .collect();
+    let margin = frame.total_margin().sum();
+    let room = map.width() - 2.0 * LEGEND_INSET - margin.x;
+    let columns = legend_columns(&widths, LEGEND_SPACING.x, room);
+    let column_widths: f32 = (0..columns)
+        .map(|column| {
+            widths
+                .iter()
+                .skip(column)
+                .step_by(columns)
+                .fold(0.0_f32, |widest, width| widest.max(*width))
+        })
+        .sum();
+    let rows = widths.len().div_ceil(columns);
+    let row_height = SWATCH.max(text_height).max(ui.spacing().interact_size.y);
+    let gaps = |n: usize| n.saturating_sub(1) as f32;
+    let size = vec2(
+        column_widths + LEGEND_SPACING.x * gaps(columns),
+        row_height * rows as f32 + LEGEND_SPACING.y * gaps(rows),
+    ) + margin;
+    LegendLayout { columns, size }
+}
+
+/// The legend, in `corner` of `map`: an overlay that takes no clicks itself, laid out as
+/// [`measure_legend`] measured it. Returns the rectangle it covers, which the map's own clicks
+/// must leave out.
+fn draw_legend(
+    ctx: &egui::Context,
+    map: Rect,
+    corner: egui::Align2,
+    layout: LegendLayout,
+    model: &MapModel,
+) -> Rect {
     let shown = egui::Area::new(egui::Id::new("map_legend"))
         .order(egui::Order::Middle)
-        .pivot(egui::Align2::RIGHT_TOP)
-        .fixed_pos(map.right_top() + vec2(-LEGEND_INSET, LEGEND_INSET))
+        .pivot(corner)
+        .fixed_pos(corner.pos_in_rect(&map.shrink(LEGEND_INSET)))
         .interactable(false)
         .show(ctx, |ui| {
-            let frame = egui::Frame::popup(ui.style());
-            let font = egui::TextStyle::Small.resolve(ui.style());
-            let gap = ui.spacing().item_spacing.x;
-            let widths: Vec<f32> = model
-                .legend
-                .iter()
-                .map(|entry| {
-                    let text = ui.painter().layout_no_wrap(
-                        entry.label.clone(),
-                        font.clone(),
-                        Color32::PLACEHOLDER,
-                    );
-                    SWATCH + gap + text.size().x
-                })
-                .collect();
-            let room = map.width() - 2.0 * LEGEND_INSET - frame.total_margin().sum().x;
-            let columns = legend_columns(&widths, LEGEND_SPACING.x, room);
-            frame.show(ui, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
                 egui::Grid::new("map_legend_entries")
                     .spacing(LEGEND_SPACING)
                     .show(ui, |ui| {
@@ -835,7 +918,7 @@ fn draw_legend(ctx: &egui::Context, map: Rect, model: &MapModel) -> Rect {
                                 paint_swatch(ui, entry.swatch);
                                 ui.small(entry.label.as_str());
                             });
-                            if (i + 1) % columns == 0 {
+                            if (i + 1) % layout.columns == 0 {
                                 ui.end_row();
                             }
                         }
@@ -1876,27 +1959,91 @@ mod tests {
     }
 
     #[test]
-    fn the_legend_opens_by_default_only_on_a_map_big_enough_to_letter_its_plants() {
-        let layout_at =
-            |cell: f32| MapLayout::fit(area(0.0, 0.0, cell * 100.0, cell * 60.0), 100, 60);
+    fn the_legend_takes_the_first_corner_that_hides_no_mark() {
+        use egui::Align2;
+        let map = area(100.0, 50.0, 400.0, 300.0);
+        let size = vec2(120.0, 60.0);
+        let rect = |corner| legend_rect(map, size, corner);
+
+        // Each corner is inset from the map's edges by the same margin.
+        assert_eq!(rect(Align2::RIGHT_TOP), area(372.0, 58.0, 120.0, 60.0));
+        assert_eq!(rect(Align2::RIGHT_BOTTOM), area(372.0, 282.0, 120.0, 60.0));
+        assert_eq!(rect(Align2::LEFT_BOTTOM), area(108.0, 282.0, 120.0, 60.0));
+        assert_eq!(rect(Align2::LEFT_TOP), area(108.0, 58.0, 120.0, 60.0));
+
+        // An empty map: the top right, the first preference.
+        assert_eq!(legend_placement(map, size, &[]), Some(Align2::RIGHT_TOP));
+        // Each corner blocked in turn sends it to the next, in order.
+        let mut marks = Vec::new();
+        for (blocked, next) in LEGEND_CORNERS.iter().zip(
+            LEGEND_CORNERS
+                .iter()
+                .skip(1)
+                .map(Some)
+                .chain(std::iter::once(None)),
+        ) {
+            marks.push(rect(*blocked).center());
+            assert_eq!(
+                legend_placement(map, size, &marks),
+                next.copied(),
+                "after blocking {blocked:?}"
+            );
+        }
+        // One mark in a lower corner only: the top right is still preferred.
+        assert_eq!(
+            legend_placement(map, size, &[rect(Align2::LEFT_BOTTOM).center()]),
+            Some(Align2::RIGHT_TOP)
+        );
+        // Only the top left clear: the top left.
+        let three: Vec<Pos2> = LEGEND_CORNERS[..3]
+            .iter()
+            .map(|c| rect(*c).left_top() + vec2(1.0, 1.0))
+            .collect();
+        assert_eq!(legend_placement(map, size, &three), Some(Align2::LEFT_TOP));
+        // A mark just outside a corner's rect doesn't block it.
+        let beside = rect(Align2::RIGHT_TOP).left_center() - vec2(0.5, 0.0);
+        assert_eq!(
+            legend_placement(map, size, &[beside]),
+            Some(Align2::RIGHT_TOP)
+        );
+        // A map smaller than the legend has no room in any corner.
+        assert_eq!(
+            legend_placement(area(0.0, 0.0, 100.0, 40.0), size, &[]),
+            None
+        );
+    }
+
+    #[test]
+    fn the_player_s_choice_wins_and_an_opened_legend_still_prefers_a_clear_corner() {
+        use egui::Align2;
         let undecided = LegendChoice::default();
         assert_eq!(undecided, LegendChoice(None));
-
-        // The smallest window's Eastern map, about 4.5 pt cells: collapsed. A big map: open.
-        assert!(!legend_open(undecided, &layout_at(4.48)));
-        assert!(legend_open(undecided, &layout_at(20.0)));
-        for step in 4..160 {
-            let cell = step as f32 * 0.25;
-            let layout = layout_at(cell);
+        for clear in LEGEND_CORNERS.into_iter().map(Some).chain([None]) {
+            assert_eq!(legend_corner(undecided, clear), clear, "by default");
+            assert_eq!(legend_corner(LegendChoice(Some(false)), clear), None);
             assert_eq!(
-                legend_open(undecided, &layout),
-                glyph_font_size(&layout).is_some(),
-                "{cell} pt cells"
+                legend_corner(LegendChoice(Some(true)), clear),
+                Some(clear.unwrap_or(Align2::RIGHT_TOP)),
+                "opened, with {clear:?} clear"
             );
-            // The player's choice wins either way.
-            assert!(legend_open(LegendChoice(Some(true)), &layout), "{cell}");
-            assert!(!legend_open(LegendChoice(Some(false)), &layout), "{cell}");
         }
+    }
+
+    #[test]
+    fn every_city_and_plant_is_a_pickable_mark() {
+        let (game, plant, _) = building();
+        let objects = MapObjects::of(&game);
+        let layout = MapLayout::fit(area(0.0, 0.0, 1000.0, 600.0), 100, 60);
+
+        let marks = pickable_marks(&layout, &objects);
+
+        assert_eq!(marks.len(), objects.cities.len() + objects.plants.len());
+        for city in &objects.cities {
+            assert!(marks.contains(&layout.cell_center(city.cell)));
+        }
+        let unbuilt = objects.plants.iter().find(|p| p.id == plant).unwrap();
+        assert!(!unbuilt.built());
+        assert!(marks.contains(&layout.cell_center(unbuilt.cell)));
     }
 
     #[test]

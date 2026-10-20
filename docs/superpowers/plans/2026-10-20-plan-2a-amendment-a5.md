@@ -240,7 +240,7 @@ Spec §16.8. Added after playtest feedback, and it runs after Task 3. Task 3 alr
 Operating selected-plant block above the plant list, and this task reuses that block.
 
 **Files:**
-- Modify: `crates/domain/src/session/views.rs`, adding `city_view` and `CityDetail`, with tests
+- Modify: `crates/domain/src/session/views.rs`, adding `city_detail` (named `city_view` until the final fix wave) and `CityDetail`, with tests
 - Create: `crates/game/src/hud/city_card.rs`, holding the model, presenter and draw for the card
 - Modify: `crates/game/src/hud/inspector.rs` (Planning: a city card when a city is selected)
 - Modify: the Operating selected-object block in `crates/game/src/hud/plant_panel.rs` or
@@ -259,7 +259,7 @@ Operating selected-plant block above the plant list, and this task reuses that b
   - `l10n::format::{megawatts, clock, percent}`;
   - `Selection::City(CityId)`.
 - Produces:
-  - `GameSession::city_view(id: CityId) -> Option<CityDetail>`;
+  - `GameSession::city_detail(id: CityId) -> Option<CityDetail>`;
   - `CityDetail { id, name_key, connected, base_load, share: Ratio, peak: Megawatts, peak_hour: u8, now: Option<Megawatts>, served_now: Option<Megawatts> }`.
 
   The exact field names are the implementer's call; record them in the report.

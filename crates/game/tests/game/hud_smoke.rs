@@ -19,17 +19,18 @@ use bevy_egui::egui;
 use domain::ids::{CellCoord, RegionId};
 use domain::session::{GameOverReason, GameSettings};
 use game::hud::{
-    ActionSink, BUILD_PANEL_WIDTH, ButtonModel, CommitmentForm, GameOverView, HudArea,
-    INSPECTOR_PANEL_WIDTH, InspectorModel, LastSpeed, LegendChoice, LinePreview, LineSection,
-    MapCache, MapLayer, MapLayout, MenuForm, MenuScreen, MilestonesOpen, OPERATING_LOG_WIDTH,
-    OPERATING_PANEL_HEIGHT, OPERATING_SIDE_WIDTH, OpenPrompt, OperatingTab, PLANNING_PANEL_HEIGHT,
-    PlanningTab, PlantPanelForm, PlantPanelModel, PlantSection, Prompt, RegionListings, Selection,
-    ToastQueue, UiAction, UiState, boot_error_model, build_model, button, dispatch,
-    draw_boot_error, draw_build, draw_game_over, draw_inspector, draw_main_menu, draw_map,
-    draw_planning, draw_plant_panel, draw_prompt, draw_region_select, draw_speed, draw_toasts,
-    draw_top_bar, draw_warnings, game_over_model_for, hit_test, inspector_model, is_commitable,
-    main_menu_model, map_model, planning_model, plant_half_size, plant_panel_model, prompt_model,
-    region_select_model, speed_model, toasts_model, top_bar_model, warnings_for,
+    ActionSink, BUILD_PANEL_WIDTH, ButtonModel, CityMarker, CommitmentForm, GameOverView, HudArea,
+    INSPECTOR_PANEL_WIDTH, InspectorModel, LEGEND_CORNERS, LastSpeed, LegendChoice, LinePreview,
+    LineSection, MapCache, MapLayer, MapLayout, MenuForm, MenuScreen, MilestonesOpen,
+    OPERATING_LOG_WIDTH, OPERATING_PANEL_HEIGHT, OPERATING_SIDE_WIDTH, OpenPrompt, OperatingTab,
+    PLANNING_PANEL_HEIGHT, PlanningTab, PlantPanelForm, PlantPanelModel, PlantSection, Prompt,
+    RegionListings, Selection, ToastQueue, UiAction, UiState, boot_error_model, build_model,
+    button, dispatch, draw_boot_error, draw_build, draw_game_over, draw_inspector, draw_main_menu,
+    draw_map, draw_planning, draw_plant_panel, draw_prompt, draw_region_select, draw_speed,
+    draw_toasts, draw_top_bar, draw_warnings, game_over_model_for, hit_test, inspector_model,
+    is_commitable, legend_placement, legend_rect, main_menu_model, map_model, pickable_marks,
+    planning_model, plant_half_size, plant_panel_model, prompt_model, region_select_model,
+    speed_model, toasts_model, top_bar_model, warnings_for,
 };
 use game::l10n::Localize;
 use game::sim::{NewGameRequest, PlayerCommand, ReturnToMenu, Session, SimSpeed};
@@ -569,6 +570,97 @@ fn the_legend_names_every_mark_and_takes_no_map_clicks() {
             );
         }
     }
+}
+
+/// The legend shows in the first corner that hides no mark: a city added under it moves it to
+/// the next clear corner, a mark in every corner collapses it, and a legend the player opens with
+/// no clear corner goes in the top right.
+#[test]
+fn the_legend_moves_to_a_clear_corner_and_collapses_when_none_is() {
+    let l10n = shipped_l10n();
+    let game = eastern_game();
+    let terrain = game.session().region().terrain();
+    let harness = Harness::new();
+    let cache = RefCell::new(MapCache::default());
+    let drawn = |model: &game::hud::MapModel| {
+        let draw =
+            |ui: &mut egui::Ui| central(ui, |ui| draw_map(ui, model, &mut cache.borrow_mut()));
+        for _ in 0..3 {
+            harness.draw(draw);
+        }
+        let widgets = harness.draw(draw);
+        let map = widget(&widgets, "Map").rect;
+        let legend = widgets
+            .iter()
+            .find(|w| w.text == "Map legend")
+            .map(|w| w.rect);
+        (map, legend)
+    };
+    // egui snaps an area to whole points.
+    let near = |a: Option<egui::Rect>, b: Option<egui::Rect>| match (a, b) {
+        (Some(a), Some(b)) => (a.min - b.min).length() <= 1.0 && (a.max - b.max).length() <= 1.0,
+        (a, b) => a == b,
+    };
+    let mut model = map_model(
+        &game,
+        &l10n,
+        MapLayer::Terrain,
+        LegendChoice::default(),
+        Selection::None,
+    );
+    let (map, legend) = drawn(&model);
+    let layout = MapLayout::fit(map, terrain.width(), terrain.height());
+    let first = legend.expect("open by default on an uncluttered corner");
+    let size = first.size();
+    assert!(
+        near(
+            Some(first),
+            Some(legend_rect(map, size, egui::Align2::RIGHT_TOP))
+        ),
+        "{first:?}"
+    );
+
+    // A city in each corner in turn: the legend takes the next clear one, in order.
+    let mut blocked = Vec::new();
+    for corner in LEGEND_CORNERS {
+        let cell = layout
+            .cell_at(legend_rect(map, size, corner).center())
+            .expect("the corner is on the grid");
+        model.objects.cities.push(CityMarker {
+            id: domain::ids::CityId(900 + blocked.len() as u32),
+            cell,
+            connected: false,
+        });
+        blocked.push(corner);
+        let marks = pickable_marks(&layout, &model.objects);
+        let expected = legend_placement(map, size, &marks);
+        assert_eq!(
+            expected,
+            LEGEND_CORNERS.get(blocked.len()).copied(),
+            "after {blocked:?}"
+        );
+        let (_, legend) = drawn(&model);
+        let at = expected.map(|corner| legend_rect(map, size, corner));
+        assert!(
+            near(legend, at),
+            "after {blocked:?}: {legend:?}, not {at:?}"
+        );
+        if let Some(legend) = legend {
+            assert!(!marks.iter().any(|mark| legend.contains(*mark)));
+        }
+    }
+
+    // Every corner blocked: collapsed, and the toggle offers to open it, in the top right.
+    let draw = |ui: &mut egui::Ui| central(ui, |ui| draw_map(ui, &model, &mut cache.borrow_mut()));
+    assert_eq!(
+        harness.click("Legend", draw),
+        vec![UiAction::ShowLegend(true)]
+    );
+    model.legend_choice = LegendChoice(Some(true));
+    let (_, legend) = drawn(&model);
+    let top_right = Some(legend_rect(map, size, egui::Align2::RIGHT_TOP));
+    assert!(near(legend, top_right), "{legend:?}, not {top_right:?}");
+    assert_eq!(l10n.problems(), vec![]);
 }
 
 #[test]
