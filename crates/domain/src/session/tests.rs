@@ -69,17 +69,28 @@ fn new_session_starts_active_in_the_start_month() {
     assert_eq!(snapshot.last_tick, None);
 }
 
+/// The fixture's start fleet plus a solar farm, which is not dispatchable,
+/// and a hydro plant, which is scheduled only under AGC.
+fn session_with_solar_and_hydro() -> GameSession {
+    session_with(|parts| {
+        for (kind, cell) in [
+            (PlantKind::Solar, CellCoord { x: 5, y: 5 }),
+            (PlantKind::Hydro, CellCoord { x: 10, y: 1 }),
+        ] {
+            parts
+                .start
+                .fleet
+                .push(crate::region::StartPlantDef { kind, cell });
+        }
+    })
+}
+
 #[test]
 fn a_new_game_runs_the_previous_operators_schedule() {
-    // The fixture's start fleet plus a solar farm, which is not dispatchable.
-    let s = session_with(|parts| {
-        parts.start.fleet.push(crate::region::StartPlantDef {
-            kind: PlantKind::Solar,
-            cell: CellCoord { x: 5, y: 5 },
-        });
-    });
+    let s = session_with_solar_and_hydro();
     let views = s.plant_views();
     assert!(views.iter().any(|p| p.kind == PlantKind::Solar));
+    assert!(views.iter().any(|p| p.kind == PlantKind::Hydro));
     assert!(views.iter().filter(|p| p.kind.is_dispatchable()).count() >= 3);
     for plant in &views {
         if plant.kind.is_dispatchable() {
@@ -95,7 +106,11 @@ fn a_new_game_runs_the_previous_operators_schedule() {
 
 #[test]
 fn the_hands_off_plan_changes_nothing_on_a_new_game() {
-    let mut s = session();
+    // Solar is not dispatchable, so the plan leaves it alone; hydro on AGC
+    // is part of the inherited schedule too.
+    let mut s = session_with_solar_and_hydro();
+    assert!(s.plant_views().iter().any(|p| p.kind == PlantKind::Solar));
+    assert!(s.plant_views().iter().any(|p| p.kind == PlantKind::Hydro));
     let before = s.state_hash();
     let dispatchable: Vec<PlantId> = s
         .plant_views()

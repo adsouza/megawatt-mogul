@@ -30,13 +30,14 @@ const SEED: u64 = 2027;
 /// close, so the reserve review and the annual rate review are pinned too.
 const MONTHS: usize = 9;
 
-/// Plays the fixed script: AGC for the start fleet and one CCGT in month 1,
-/// AGC alone afterwards. Returns the game and each month's operated-day
-/// events, ending with its close.
+/// Plays the fixed script: month 1 relies on the inherited schedule (spec
+/// §16.3) for the start fleet and only orders one CCGT; months 2-9 commit
+/// every commissioned plant all day on AGC, which picks up the CCGT once
+/// built. Returns the game and each month's operated-day events, ending with
+/// its close.
 fn scripted_game() -> (Game, Vec<Vec<DomainEvent>>) {
     let (mut game, _) = game_on(tiny_region_parts(), SEED);
     let mut months = vec![play_month(&mut game, |g| {
-        auto_follow_all(g);
         g.execute(Command::BuildPlant {
             kind: PlantKind::Ccgt,
             cell: CellCoord { x: 4, y: 4 },

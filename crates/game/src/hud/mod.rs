@@ -353,7 +353,6 @@ pub(crate) mod test_support {
     use std::path::{Path, PathBuf};
 
     use application::{Command, CommandLogError, CommandLogSink, Game, LogHeader, LogRecord};
-    use domain::generation::PlantStatus;
     use domain::ids::{PlantId, RegionId};
     use domain::session::GameSettings;
     use infrastructure::region::RonRegionCatalog;
@@ -437,10 +436,7 @@ pub(crate) mod test_support {
             .session()
             .plant_views()
             .iter()
-            .filter(|plant| {
-                plant.kind.is_dispatchable()
-                    && !matches!(plant.status, PlantStatus::UnderConstruction { .. })
-            })
+            .filter(|plant| crate::hud::is_commitable(plant))
             .map(|plant| plant.id)
             .collect();
         for plant in plants {
