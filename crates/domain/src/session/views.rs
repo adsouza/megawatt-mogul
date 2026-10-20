@@ -1,5 +1,7 @@
 //! Read-only views of the session for projections and display.
 
+use std::collections::BTreeMap;
+
 use super::{DayPhase, GameSession, Incident};
 use crate::company::CapitalChange;
 use crate::demand::{ForecastPoint, hourly_forecast};
@@ -229,6 +231,14 @@ impl GameSession {
     /// and starts empty again.
     pub fn incidents_today(&self) -> &[Incident] {
         self.month_to_date.incidents()
+    }
+
+    /// The energy each plant has produced so far in the played day, unweighted (the month close
+    /// weights it by the month's days). Only plants that were connected and commissioned at some
+    /// tick are listed. The day starts empty at `BeginOperating`, and the month close reports it
+    /// and starts empty again. A physical figure only: nothing is priced before the close.
+    pub fn plant_energy_today(&self) -> &BTreeMap<PlantId, MegawattHours> {
+        self.month_to_date.plant_energy()
     }
 
     pub fn grid_snapshot(&self) -> GridSnapshot {

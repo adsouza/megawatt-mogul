@@ -2,8 +2,8 @@
 //!
 //! The list shows every plant, its status, output and whether AGC is on; clicking a row selects
 //! the plant, as clicking it on the map does. The panel below follows [`Selection`]: the plant's
-//! output, target, ramp rate, marginal cost, energy and revenue so far, its water, and the controls
-//! (AGC, start, stop and a target slider).
+//! output, target, ramp rate, marginal cost, its energy today, its energy and revenue over the
+//! months closed so far, its water, and the controls (AGC, start, stop and a target slider).
 //!
 //! The slider edits [`PlantPanelForm`], not the game. Its value is sent as one
 //! `SetDispatchTarget` when a drag ends or a keyboard step lands, never while it is being dragged,
@@ -81,8 +81,8 @@ pub struct SelectedPlant {
     pub start: ButtonModel,
     pub stop: ButtonModel,
     pub slider: TargetSlider,
-    /// Output, target, ramp rate, marginal cost, energy and revenue so far, and the water left
-    /// for a hydro plant.
+    /// Output, target, ramp rate, marginal cost, energy today, energy and revenue over the closed
+    /// months, and the water left for a hydro plant.
     pub stats: Vec<Stat>,
 }
 
@@ -194,13 +194,34 @@ pub fn plant_panel_model(game: &Game, l10n: &Localizer, selection: Selection) ->
         ),
         stat("plant-ramp", format::ramp_rate(spec.ramp)),
         stat("plant-marginal-cost", format::price(spec.marginal_cost)),
+        // The played day's energy, as it happens. It is not priced: revenue is booked once, at
+        // the month close, so the money figure covers closed months only.
         stat(
             "plant-energy-today",
-            format::megawatt_hours(history.map_or(MegawattHours::ZERO, |h| h.energy)),
+            format::megawatt_hours(
+                session
+                    .plant_energy_today()
+                    .get(&plant.id)
+                    .copied()
+                    .unwrap_or(MegawattHours::ZERO),
+            ),
         ),
         stat(
-            "plant-revenue-today",
-            format::money(history.map_or(Money::ZERO, |h| h.revenue)),
+            "plant-closed-months",
+            l10n.args(
+                "plant-closed-months-value",
+                &[
+                    (
+                        "energy",
+                        format::megawatt_hours(history.map_or(MegawattHours::ZERO, |h| h.energy))
+                            .into(),
+                    ),
+                    (
+                        "revenue",
+                        format::money(history.map_or(Money::ZERO, |h| h.revenue)).into(),
+                    ),
+                ],
+            ),
         ),
     ];
     if let Some(water) = plant.hydro_budget {
@@ -453,7 +474,9 @@ mod tests {
     #[test]
     fn an_online_plant_under_manual_control_shows_its_figures_and_controls() {
         let l10n = shipped_l10n();
-        let game = operating();
+        let mut game = operating();
+        // An hour into the day.
+        game.execute(Command::AdvanceTicks { n: 55 }).unwrap();
         let session = game.session();
         let coal = view(&game, PlantKind::Coal);
         let spec = session.region().spec(PlantKind::Coal).clone();
@@ -504,8 +527,11 @@ mod tests {
             .iter()
             .map(|stat| (stat.label.as_str(), stat.value.as_str()))
             .collect();
+        // Today's energy is the played hour's, before any month has closed.
+        let today = session.plant_energy_today()[&coal.id];
+        assert!(today > MegawattHours::ZERO, "{today:?}");
         let history = game.projections().plant_history.get(coal.id);
-        assert_eq!(history, None, "no month has closed yet");
+        assert_eq!(history.map(|h| h.energy), None, "no month has closed yet");
         assert_eq!(
             stats,
             [
@@ -513,12 +539,67 @@ mod tests {
                 ("Target", format::megawatts(target).as_str()),
                 ("Ramp rate", format::ramp_rate(spec.ramp).as_str()),
                 ("Marginal cost", format::price(spec.marginal_cost).as_str()),
-                (
-                    "Energy so far",
-                    format::megawatt_hours(MegawattHours::ZERO).as_str()
-                ),
-                ("Revenue so far", format::money(Money::ZERO).as_str()),
+                ("Energy today", format::megawatt_hours(today).as_str()),
+                ("Closed months", "0.0 MWh, $0.00"),
             ]
+        );
+        assert_ne!(
+            format::megawatt_hours(today),
+            format::megawatt_hours(MegawattHours::ZERO)
+        );
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    #[test]
+    fn closed_months_show_the_plants_history_and_today_starts_again() {
+        let l10n = shipped_l10n();
+        let mut game = operating();
+        game.execute(Command::AdvanceTicks {
+            n: domain::time::TICKS_PER_DAY - 5,
+        })
+        .unwrap();
+        game.execute(Command::FinishReview).unwrap();
+        let coal = view(&game, PlantKind::Coal);
+        let history = *game
+            .projections()
+            .plant_history
+            .get(coal.id)
+            .expect("the month closed with the coal fleet running");
+        assert!(history.energy > MegawattHours::ZERO);
+
+        let model = selected(&game, coal.id);
+
+        let figure = |label: &str| {
+            model
+                .stats
+                .iter()
+                .find(|stat| stat.label == label)
+                .unwrap_or_else(|| panic!("no {label} in {:?}", model.stats))
+                .value
+                .clone()
+        };
+        assert_eq!(
+            figure("Energy today"),
+            format::megawatt_hours(MegawattHours::ZERO),
+            "a new day has not begun"
+        );
+        assert_eq!(
+            figure("Closed months"),
+            l10n.args(
+                "plant-closed-months-value",
+                &[
+                    ("energy", format::megawatt_hours(history.energy).into()),
+                    ("revenue", format::money(history.revenue).into()),
+                ],
+            )
+        );
+        assert_eq!(
+            figure("Closed months"),
+            format!(
+                "{}, {}",
+                format::megawatt_hours(history.energy),
+                format::money(history.revenue)
+            )
         );
         assert_eq!(l10n.problems(), vec![]);
     }

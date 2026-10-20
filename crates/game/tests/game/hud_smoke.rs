@@ -1836,8 +1836,8 @@ fn at_the_smallest_window_the_operating_controls_fit_without_overlap() {
                 "Target",
                 "Ramp rate",
                 "Marginal cost",
-                "Energy so far",
-                "Revenue so far",
+                "Energy today",
+                "Closed months",
             ] {
                 let row = widgets
                     .iter()

@@ -267,6 +267,30 @@ fn the_days_incidents_are_visible_while_operating_and_start_empty_each_day() {
 }
 
 #[test]
+fn the_days_plant_energy_grows_while_operating_and_starts_empty_each_day() {
+    let mut s = session();
+    let coal = plant_of(&s, PlantKind::Coal);
+    s.start_plant(coal).unwrap();
+    s.set_auto_follow(coal, true).unwrap();
+    assert!(s.plant_energy_today().is_empty(), "nothing yet in Planning");
+
+    s.begin_operating().unwrap();
+    run_ticks(&mut s, 60);
+
+    // Unweighted: the played day's own energy, a minute at a time.
+    let hour = s.plant_energy_today()[&coal];
+    assert!(hour > MegawattHours::ZERO, "{hour:?}");
+    assert_eq!(s.plant_energy_today(), s.month_to_date.plant_energy());
+    run_ticks(&mut s, 60);
+    assert!(s.plant_energy_today()[&coal] > hour);
+
+    // The close weights it into the report, and the next day starts empty.
+    run_ticks(&mut s, TICKS_PER_DAY - 120);
+    assert_eq!(s.phase(), DayPhase::Review);
+    assert!(s.plant_energy_today().is_empty());
+}
+
+#[test]
 fn full_day_moves_to_review() {
     let mut s = session();
     s.begin_operating().unwrap();

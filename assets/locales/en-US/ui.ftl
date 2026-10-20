@@ -209,8 +209,10 @@ plant-target-slider = Set target
 plant-target-none = none
 plant-ramp = Ramp rate
 plant-marginal-cost = Marginal cost
-plant-energy-today = Energy so far
-plant-revenue-today = Revenue so far
+plant-energy-today = Energy today
+# The plant's weighted energy and its revenue over every month closed so far.
+plant-closed-months = Closed months
+plant-closed-months-value = { $energy }, { $revenue }
 plant-hydro-budget = Water left today
 plant-start = Start
 plant-stop = Stop
