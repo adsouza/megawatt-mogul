@@ -59,7 +59,7 @@ pub struct TargetModel {
     pub label: String,
     /// What the field holds: what was typed, or else the plant's current target.
     pub text: String,
-    /// `240 MW to 600 MW`: what the domain accepts.
+    /// `240–600 MW`: what the domain accepts.
     pub range: String,
     /// Whether `text` is a number in that range.
     pub valid: bool,
@@ -256,8 +256,8 @@ pub fn commitment_model(
                 range: l10n.args(
                     "commitment-target-range",
                     &[
-                        ("min", format::megawatts(min).into()),
-                        ("max", format::megawatts(capacity).into()),
+                        ("min", format::plain_megawatts(min).into()),
+                        ("max", format::plain_megawatts(capacity).into()),
                     ],
                 ),
                 set: ButtonModel::new(l10n.text("commitment-target-set"), set_action)
@@ -446,14 +446,12 @@ fn draw_row(
             .targets
             .entry(row.plant)
             .or_insert_with(|| row.target.text.clone());
-        let field = ui
-            .add(
-                egui::TextEdit::singleline(text)
-                    .desired_width(46.0)
-                    .hint_text(row.target.label.as_str()),
-            )
-            .on_hover_text(row.target.label.as_str());
-        let _ = field;
+        ui.add(
+            egui::TextEdit::singleline(text)
+                .desired_width(46.0)
+                .hint_text(row.target.label.as_str()),
+        )
+        .on_hover_text(row.target.label.as_str());
         button(ui, &row.target.set, actions);
         let range = egui::RichText::new(row.target.range.as_str());
         if row.target.valid {
@@ -822,9 +820,9 @@ mod tests {
         assert_eq!(
             untouched.range,
             format!(
-                "{} to {}",
-                format::megawatts(spec.min_output()),
-                format::megawatts(spec.capacity)
+                "{}–{} MW",
+                format::plain_megawatts(spec.min_output()),
+                format::plain_megawatts(spec.capacity)
             )
         );
         assert!(untouched.valid);

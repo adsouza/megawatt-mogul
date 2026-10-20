@@ -156,7 +156,7 @@ commitment-agc = AGC
 commitment-agc-tip = Automatic generation control: the plant follows the load by itself.
 commitment-target = Initial target
 commitment-target-set = Set
-commitment-target-range = { $min } to { $max }
+commitment-target-range = { $min }–{ $max } MW
 commitment-hydro-budget = Water for the day: { $energy }
 commitment-unsaved = Apply or revert your changes before starting the day.
 forecast-title = Forecast
@@ -170,6 +170,8 @@ warning-shortfall = { $time }: short by { $amount }. Expect a rotating outage.
 warning-min-gen = { $time }: committed minimum exceeds load by { $amount }.
 warning-hydro-dry = { $plant } has no water to spare today.
 warning-show-hour = Show hour
+warnings-more = +{ $count } more
+warnings-less = Hide
 start-operating = Start the day
 
 ## Operating

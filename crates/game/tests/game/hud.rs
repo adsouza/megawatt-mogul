@@ -28,8 +28,8 @@ use application::{CommandError, RegionLoadError};
 use bevy::time::TimeUpdateStrategy;
 use domain::ids::{CellCoord, RegionId};
 use game::hud::{
-    CommitmentForm, MapLayer, MenuForm, OpenPrompt, PlanningTab, Prompt, RegionListings, Selection,
-    ToastQueue, UiAction, UiState, toasts_model,
+    ActionSink, CommitmentForm, MapLayer, MenuForm, OpenPrompt, PlanningTab, Prompt,
+    RegionListings, Selection, ToastQueue, UiAction, UiState, dispatch, toasts_model,
 };
 use game::l10n::{LocalizeWith, Localizer, Names};
 use game::sim::{NewGameRequest, ReturnToMenu};
@@ -162,8 +162,9 @@ fn the_egui_systems_have_no_conflicting_parameters() {
 // ---- the Planning panel's state -------------------------------------------------------------
 
 use application::Command;
+use bevy::ecs::system::RunSystemOnce;
 use domain::region::PlantKind;
-use game::sim::{PlayerCommand, Session};
+use game::sim::Session;
 
 /// The id of the first plant of `kind` in the running game.
 fn plant_of(app: &App, kind: PlantKind) -> domain::ids::PlantId {
@@ -190,15 +191,23 @@ fn commitment_of(app: &App, plant: domain::ids::PlantId) -> [bool; 24] {
         .commitment
 }
 
-/// What the HUD does for a click on Apply: it records the draft and the pending commit
-/// (`dispatch` does this through `UiState::apply`) and sends the command.
+/// Runs `actions` through the real `dispatch`, as a panel system would after drawing.
+fn dispatch_in(app: &mut App, actions: Vec<UiAction>) {
+    app.world_mut()
+        .run_system_once(move |mut sink: ActionSink| dispatch(actions.clone(), &mut sink))
+        .unwrap();
+}
+
+/// What the HUD does for an edit followed by a click on Apply, through `dispatch`: it records the
+/// draft and the pending commit and sends the command.
 fn send_commit(app: &mut App, plant: domain::ids::PlantId, hours: [bool; 24]) {
-    let world = app.world_mut();
-    let commit = Command::CommitPlant { plant, hours };
-    let mut ui = world.resource_mut::<UiState>();
-    ui.apply(&UiAction::EditCommitment { plant, hours });
-    ui.apply(&UiAction::Command(commit.clone()));
-    world.write_message(PlayerCommand(commit));
+    dispatch_in(
+        app,
+        vec![
+            UiAction::EditCommitment { plant, hours },
+            UiAction::Command(Command::CommitPlant { plant, hours }),
+        ],
+    );
 }
 
 #[test]
@@ -207,15 +216,19 @@ fn leaving_a_game_resets_the_planning_panel_state() {
     let mut app = hud_app(&logs);
     request(&mut app, "eastern_interconnection");
     let plant = plant_of(&app, PlantKind::Coal);
+    dispatch_in(
+        &mut app,
+        vec![
+            UiAction::SetPlanningTab(PlanningTab::Tariff),
+            UiAction::ShowHour(Some(7)),
+            UiAction::EditCommitment {
+                plant,
+                hours: [true; 24],
+            },
+        ],
+    );
     {
         let world = app.world_mut();
-        let mut ui = world.resource_mut::<UiState>();
-        ui.apply(&UiAction::SetPlanningTab(PlanningTab::Tariff));
-        ui.apply(&UiAction::ShowHour(Some(7)));
-        ui.apply(&UiAction::EditCommitment {
-            plant,
-            hours: [true; 24],
-        });
         world
             .resource_mut::<CommitmentForm>()
             .targets
@@ -232,13 +245,67 @@ fn leaving_a_game_resets_the_planning_panel_state() {
     );
 }
 
+/// `dispatch` is the one writer of the Planning panel's state: every Planning interaction reaches
+/// `UiState` through it.
+#[test]
+fn dispatch_writes_the_planning_state() {
+    let logs = TempDir::new().unwrap();
+    let mut app = hud_app(&logs);
+    request(&mut app, "eastern_interconnection");
+    let coal = plant_of(&app, PlantKind::Coal);
+    let mut hours = [false; 24];
+    hours[6..18].fill(true);
+
+    dispatch_in(
+        &mut app,
+        vec![UiAction::EditCommitment { plant: coal, hours }],
+    );
+    assert_eq!(
+        app.world().resource::<UiState>().draft_of(coal),
+        Some(hours)
+    );
+
+    dispatch_in(
+        &mut app,
+        vec![UiAction::Command(Command::CommitPlant {
+            plant: coal,
+            hours,
+        })],
+    );
+    let ui = app.world().resource::<UiState>();
+    assert_eq!(
+        ui.pending.map(|pending| (pending.plant, pending.hours)),
+        Some((coal, hours))
+    );
+    assert_eq!(
+        ui.draft_of(coal),
+        Some(hours),
+        "the draft waits for the game's answer"
+    );
+
+    dispatch_in(
+        &mut app,
+        vec![
+            UiAction::ShowHour(Some(18)),
+            UiAction::SetPlanningTab(PlanningTab::Forecast),
+        ],
+    );
+    let ui = app.world().resource::<UiState>();
+    assert_eq!(ui.highlight_hour, Some(18));
+    assert_eq!(ui.tab, PlanningTab::Forecast);
+
+    dispatch_in(&mut app, vec![UiAction::DiscardCommitmentDraft]);
+    assert_eq!(app.world().resource::<UiState>().draft, None);
+}
+
 #[test]
 fn a_new_game_starts_on_the_commitments_tab() {
     let logs = TempDir::new().unwrap();
     let mut app = hud_app(&logs);
-    app.world_mut()
-        .resource_mut::<UiState>()
-        .apply(&UiAction::SetPlanningTab(PlanningTab::Forecast));
+    dispatch_in(
+        &mut app,
+        vec![UiAction::SetPlanningTab(PlanningTab::Forecast)],
+    );
 
     request(&mut app, "eastern_interconnection");
 
@@ -261,6 +328,10 @@ fn an_infeasible_commit_reverts_the_row_and_shows_the_toast() {
     infeasible[..12].fill(true);
 
     send_commit(&mut app, nuclear, infeasible);
+    // Sent, not yet answered: the row shows the attempt and the commit is pending.
+    let ui = app.world().resource::<UiState>();
+    assert_eq!(ui.draft_of(nuclear), Some(infeasible));
+    assert_eq!(ui.pending.map(|pending| pending.plant), Some(nuclear));
     update_n(&mut app, 1);
 
     let ui = app.world().resource::<UiState>();
@@ -287,6 +358,10 @@ fn a_feasible_commit_lands_and_clears_the_draft_without_a_toast() {
     evening[16..22].fill(true);
 
     send_commit(&mut app, peaker, evening);
+    assert_eq!(
+        app.world().resource::<UiState>().draft_of(peaker),
+        Some(evening)
+    );
     update_n(&mut app, 1);
 
     let ui = app.world().resource::<UiState>();
@@ -294,4 +369,43 @@ fn a_feasible_commit_lands_and_clears_the_draft_without_a_toast() {
     assert_eq!(ui.pending, None);
     assert_eq!(commitment_of(&app, peaker), evening);
     assert_eq!(toasts(&app), Vec::<String>::new());
+}
+
+/// A highlighted hour and an edit belong to the month being planned: once the day begins they go.
+#[test]
+fn beginning_the_day_resets_the_planning_panel_state() {
+    let logs = TempDir::new().unwrap();
+    let mut app = hud_app(&logs);
+    request(&mut app, "eastern_interconnection");
+    let coal = plant_of(&app, PlantKind::Coal);
+    dispatch_in(
+        &mut app,
+        vec![
+            UiAction::SetPlanningTab(PlanningTab::Forecast),
+            UiAction::ShowHour(Some(9)),
+            UiAction::EditCommitment {
+                plant: coal,
+                hours: [true; 24],
+            },
+        ],
+    );
+    app.world_mut()
+        .resource_mut::<CommitmentForm>()
+        .targets
+        .insert(coal, "300".to_owned());
+    assert_ne!(*app.world().resource::<UiState>(), UiState::default());
+
+    dispatch_in(&mut app, vec![UiAction::Command(Command::BeginOperating)]);
+    update_n(&mut app, 3);
+
+    let phase = *app
+        .world()
+        .resource::<State<game::state::PhaseState>>()
+        .get();
+    assert_eq!(phase, game::state::PhaseState::Operating);
+    assert_eq!(*app.world().resource::<UiState>(), UiState::default());
+    assert_eq!(
+        *app.world().resource::<CommitmentForm>(),
+        CommitmentForm::default()
+    );
 }

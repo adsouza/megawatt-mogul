@@ -128,6 +128,8 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "warning-min-gen",
     "warning-hydro-dry",
     "warning-show-hour",
+    "warnings-more",
+    "warnings-less",
     "start-operating",
     // Operating
     "speed-pause",

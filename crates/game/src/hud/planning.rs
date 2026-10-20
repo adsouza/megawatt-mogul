@@ -86,7 +86,7 @@ pub fn planning_model(
         begin_hint: unsaved.then(|| l10n.text("commitment-unsaved")),
         content: match ui.tab {
             PlanningTab::Commitments => PlanningContent::Commitments {
-                warnings: warnings_model(game, l10n),
+                warnings: warnings_model(game, l10n, ui),
                 grid: commitment_model(game, l10n, ui, form),
             },
             PlanningTab::Forecast => {

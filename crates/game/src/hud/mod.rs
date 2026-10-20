@@ -252,7 +252,19 @@ pub(crate) mod test_support {
 
     /// A new game in the shipped region `region`, seed 7, in Planning, recording to `sink`.
     pub fn shipped_game(region: &str, sink: Box<dyn CommandLogSink>) -> Game {
-        let catalog = RonRegionCatalog::new(shipped_assets().join("regions"));
+        game_in_dir(&shipped_assets().join("regions"), region, sink)
+    }
+
+    fn shipped_game_in(dir: &Path, region: &str) -> Game {
+        game_in_dir(
+            dir,
+            region,
+            Box::new(application::InMemoryCommandLog::default()),
+        )
+    }
+
+    fn game_in_dir(dir: &Path, region: &str, sink: Box<dyn CommandLogSink>) -> Game {
+        let catalog = RonRegionCatalog::new(dir.to_path_buf());
         Game::start_new(
             &catalog,
             &RegionId::new(region),
@@ -261,6 +273,35 @@ pub(crate) mod test_support {
             sink,
         )
         .unwrap_or_else(|error| panic!("the shipped region {region} must start: {error}"))
+    }
+
+    /// A new game in the shipped western region after `edit` has rewritten its RON, seed 7, in
+    /// Planning. For a case the shipped data never reaches, such as a tiny load.
+    pub fn edited_western_game(edit: impl FnOnce(String) -> String) -> Game {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        let source = shipped_assets()
+            .join("regions")
+            .join("western_interconnection.ron");
+        let text = std::fs::read_to_string(&source).expect("the shipped region reads");
+        std::fs::write(dir.path().join("western_interconnection.ron"), edit(text))
+            .expect("the edited region writes");
+        // The game holds the loaded region in memory, so the directory can go once it started.
+        shipped_game_in(dir.path(), "western_interconnection")
+    }
+
+    /// The text of a region with every city's base load set to `mw`.
+    pub fn flat_load(text: String, mw: f64) -> String {
+        text.lines()
+            .map(|line| match line.find("base_load_mw: ") {
+                Some(at) => {
+                    let from = at + "base_load_mw: ".len();
+                    let to = from + line[from..].find([',', ')']).expect("the field ends");
+                    format!("{}{mw:?}{}", &line[..from], &line[to..])
+                }
+                None => line.to_owned(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     /// A new eastern game, seed 7, in Planning, recording to `sink`.

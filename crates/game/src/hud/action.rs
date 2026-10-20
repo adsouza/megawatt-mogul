@@ -36,6 +36,8 @@ pub enum UiAction {
     SetPlanningTab(PlanningTab),
     /// Tint an hour's column in the commitment grid (a warning's *show hour*), or clear it.
     ShowHour(Option<u8>),
+    /// Open or close the list of the planning warnings past the first.
+    ToggleWarnings,
     /// Change the commitment pattern being edited for a plant. Nothing reaches the game until the
     /// pattern is applied, as a `CommitPlant` command.
     EditCommitment {
@@ -206,6 +208,7 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             UiAction::SetPlanningTab(_)
             | UiAction::ShowHour(_)
             | UiAction::EditCommitment { .. }
+            | UiAction::ToggleWarnings
             | UiAction::DiscardCommitmentDraft => {}
             UiAction::Navigate(screen) => sink.next_state.set(screen.into()),
             UiAction::Prompt(prompt) => sink.prompt.0 = prompt,

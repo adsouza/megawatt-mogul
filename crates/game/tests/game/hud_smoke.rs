@@ -21,9 +21,9 @@ use game::hud::{
     OpenPrompt, PLANNING_PANEL_HEIGHT, PlanningTab, PlantSection, Prompt, RegionListings,
     Selection, ToastQueue, UiAction, UiState, boot_error_model, build_model, button, dispatch,
     draw_boot_error, draw_build, draw_game_over, draw_inspector, draw_main_menu, draw_map,
-    draw_planning, draw_prompt, draw_region_select, draw_toasts, draw_top_bar, game_over_model_for,
-    hit_test, inspector_model, main_menu_model, map_model, planning_model, plant_half_size,
-    prompt_model, region_select_model, toasts_model, top_bar_model,
+    draw_planning, draw_prompt, draw_region_select, draw_toasts, draw_top_bar, draw_warnings,
+    game_over_model_for, hit_test, inspector_model, main_menu_model, map_model, planning_model,
+    plant_half_size, prompt_model, region_select_model, toasts_model, top_bar_model, warnings_for,
 };
 use game::l10n::Localize;
 use game::sim::{NewGameRequest, PlayerCommand, ReturnToMenu, SimSpeed};
@@ -920,6 +920,92 @@ fn plant_named(game: &Game, name: &str) -> domain::ids::PlantId {
         .id
 }
 
+/// However many warnings there are, the strip is one line: the first warning and a button for
+/// the rest, which open in a popup instead of taking rows from the grid.
+#[test]
+fn the_warnings_strip_is_one_line_with_the_rest_behind_a_button() {
+    use domain::session::{CapacityShortfallWarning, MinimumGenerationWarning};
+    use domain::units::Megawatts;
+    let l10n = shipped_l10n();
+    let dry = ["Hydro plant 5".to_owned(), "Hydro plant 9".to_owned()];
+    let model = |expanded| {
+        warnings_for(
+            Some(CapacityShortfallWarning {
+                hour: 18,
+                demand: Megawatts::new(22_000.0),
+                deliverable: Megawatts::new(10_000.0),
+                shortfall: Megawatts::new(12_000.0),
+            }),
+            Some(MinimumGenerationWarning {
+                hour: 3,
+                committed_minimum: Megawatts::new(3_300.0),
+                net_load: Megawatts::new(3_000.0),
+                excess: Megawatts::new(300.0),
+            }),
+            &dry,
+            expanded,
+            &l10n,
+        )
+    };
+    let harness = Harness::with_screen(1024.0, 640.0);
+    let open = std::cell::Cell::new(false);
+    let draw = |ui: &mut egui::Ui| {
+        let model = model(open.get());
+        egui::Panel::bottom("planning")
+            .exact_size(PLANNING_PANEL_HEIGHT)
+            .show(ui, |ui| draw_warnings(ui, &model))
+            .inner
+    };
+
+    // Closed: the heading, the first warning and "+3 more" share one line, and nothing else shows.
+    let widgets = harness.draw(draw);
+    let strip = widgets
+        .iter()
+        .find(|w| w.text == "Warnings")
+        .expect("the heading")
+        .rect;
+    assert!(strip.height() < 30.0, "{strip:?}");
+    assert!(shows(&widgets, "18:00: short by 12.0 GW"));
+    assert!(!shows(&widgets, "committed minimum") && !shows(&widgets, "no water"));
+    let more = find_button(&widgets, "+3 more").rect;
+    assert!(
+        (more.top() - strip.top()).abs() < 4.0,
+        "on the strip's line"
+    );
+    assert_eq!(buttons(&widgets, "Show hour").len(), 1);
+
+    // The button asks to open the rest.
+    assert_eq!(
+        harness.click("+3 more", draw),
+        vec![UiAction::ToggleWarnings]
+    );
+    open.set(true);
+
+    // Open: the rest are in a popup above the strip, so the strip itself did not move or grow.
+    let widgets = harness.draw(draw);
+    let again = widgets.iter().find(|w| w.text == "Warnings").unwrap().rect;
+    assert_eq!(again, strip);
+    for text in [
+        "03:00: committed minimum exceeds load by 300 MW.",
+        "Hydro plant 5 has no water to spare today.",
+        "Hydro plant 9 has no water to spare today.",
+    ] {
+        assert!(shows(&widgets, text), "{text}");
+    }
+    assert_eq!(
+        buttons(&widgets, "Show hour").len(),
+        2,
+        "the first's and the second's"
+    );
+    assert_eq!(harness.click("Hide", draw), vec![UiAction::ToggleWarnings]);
+    // The popup's Show hour works like the strip's.
+    assert_eq!(
+        harness.click_nth("Show hour", 0, draw),
+        vec![UiAction::ShowHour(Some(3))],
+        "the popup sits above the strip, so its button is the first in drawing order"
+    );
+}
+
 /// A planning screen of one game, drawn by one harness so egui's remembered sizes carry over.
 struct PlanningScreen {
     game: Game,
@@ -1071,6 +1157,40 @@ fn at_the_smallest_window_the_map_the_panels_and_the_grid_all_fit_without_overla
                 );
             }
         }
+
+        // A row being edited grows Apply and Revert, the controls the player needs most (the day
+        // waits for them), so they must fit too: inside the screen and the panel, with the row's
+        // last widget (the range label) clear of the panel's right edge and its scroll bar.
+        let first = row_names(&widgets).remove(0);
+        screen.click(&format!("{first} at 00:00: off"));
+        let dirty = screen.widgets();
+        let apply = find_button(&dirty, "Apply").rect;
+        let revert = find_button(&dirty, "Revert").rect;
+        let panel = egui::Rect::from_min_max(
+            egui::pos2(0.0, 640.0 - PLANNING_PANEL_HEIGHT),
+            egui::pos2(1024.0, 640.0),
+        );
+        for (name, rect) in [("Apply", apply), ("Revert", revert)] {
+            assert!(
+                screen_rect.contains_rect(rect) && panel.contains_rect(rect),
+                "{region}: {name} {rect:?} is not inside the panel"
+            );
+        }
+        let row_right = dirty
+            .iter()
+            .filter(|w| (w.rect.top() - apply.top()).abs() < 4.0 && w.rect.height() < 30.0)
+            .map(|w| w.rect.right())
+            .fold(0.0_f32, f32::max);
+        assert!(
+            row_right <= begin.right() - 16.0,
+            "{region}: the dirty row reaches {row_right}, the panel's edge is {}",
+            begin.right()
+        );
+        assert!(!apply.intersects(revert), "{region}");
+        assert!(
+            !apply.intersects(set) && !revert.intersects(set),
+            "{region}"
+        );
     }
 }
 
@@ -1244,9 +1364,9 @@ fn the_agc_switch_and_the_initial_target_field_send_their_commands() {
     assert!(shows(
         &widgets,
         &format!(
-            "{} to {}",
-            game::l10n::format::megawatts(spec.min_output()),
-            game::l10n::format::megawatts(spec.capacity)
+            "{}–{} MW",
+            game::l10n::format::plain_megawatts(spec.min_output()),
+            game::l10n::format::plain_megawatts(spec.capacity)
         )
     ));
 

@@ -50,6 +50,8 @@ pub struct UiState {
     pub tab: PlanningTab,
     /// The hour a warning pointed at: its column is tinted in the grid and marked in the chart.
     pub highlight_hour: Option<u8>,
+    /// Whether the warnings past the first are listed.
+    pub warnings_open: bool,
     /// The one row being edited. Editing another row sends this one first.
     pub draft: Option<CommitDraft>,
     /// The commit sent and not yet answered.
@@ -69,6 +71,7 @@ impl UiState {
         match action {
             UiAction::SetPlanningTab(tab) => self.tab = *tab,
             UiAction::ShowHour(hour) => self.highlight_hour = *hour,
+            UiAction::ToggleWarnings => self.warnings_open = !self.warnings_open,
             UiAction::EditCommitment { plant, hours } => {
                 self.draft = Some(CommitDraft {
                     plant: *plant,
@@ -155,6 +158,11 @@ mod tests {
         assert_eq!(ui.highlight_hour, Some(18));
         assert_eq!(ui.draft_of(PLANT), Some(day()));
         assert_eq!(ui.draft_of(OTHER), None);
+
+        ui.apply(&UiAction::ToggleWarnings);
+        assert!(ui.warnings_open);
+        ui.apply(&UiAction::ToggleWarnings);
+        assert!(!ui.warnings_open);
 
         ui.apply(&UiAction::ShowHour(None));
         ui.apply(&UiAction::DiscardCommitmentDraft);

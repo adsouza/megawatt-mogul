@@ -8,12 +8,14 @@
 
 use application::Game;
 use bevy_egui::egui;
-use domain::session::{CapacityShortfallWarning, MinimumGenerationWarning};
+use domain::region::PlantKind;
+use domain::session::{CapacityShortfallWarning, MinimumGenerationWarning, PlantView};
 use domain::time::TICKS_PER_HOUR;
 use domain::units::MegawattHours;
 
-use super::action::{ButtonModel, UiAction, button};
-use super::plant_list::plants_by_kind;
+use super::action::{ButtonModel, ToggleModel, UiAction, button, toggle_button};
+use super::plant_list::is_commitable;
+use super::ui_state::UiState;
 use crate::l10n::{Localizer, Names, format};
 
 /// What a warning is about.
@@ -39,9 +41,15 @@ pub struct WarningRow {
 #[derive(Debug, Clone, PartialEq)]
 pub struct WarningsModel {
     pub heading: String,
+    /// Every warning, in order. The strip shows the first; the rest are listed on request, so a
+    /// long list never takes rows from the grid.
     pub rows: Vec<WarningRow>,
     /// Shown when there is nothing to warn about.
     pub none: Option<String>,
+    /// `+3 more`, or `Hide` once they are listed. Only when there is more than one warning.
+    pub more: Option<ToggleModel>,
+    /// Whether the warnings past the first are listed.
+    pub expanded: bool,
 }
 
 fn time_of(hour: u8) -> String {
@@ -62,6 +70,7 @@ pub fn warnings_for(
     shortfall: Option<CapacityShortfallWarning>,
     min_generation: Option<MinimumGenerationWarning>,
     dry_hydro: &[String],
+    expanded: bool,
     l10n: &Localizer,
 ) -> WarningsModel {
     let mut rows = Vec::new();
@@ -98,61 +107,109 @@ pub fn warnings_for(
             show_hour: None,
         });
     }
+    let more = (rows.len() > 1).then(|| ToggleModel {
+        button: ButtonModel::new(
+            if expanded {
+                l10n.text("warnings-less")
+            } else {
+                l10n.args(
+                    "warnings-more",
+                    &[("count", (rows.len() as u32 - 1).into())],
+                )
+            },
+            UiAction::ToggleWarnings,
+        ),
+        on: expanded,
+    });
     WarningsModel {
         heading: l10n.text("warnings-title"),
         none: rows.is_empty().then(|| l10n.text("warnings-none")),
+        expanded: expanded && more.is_some(),
+        more,
         rows,
     }
 }
 
-/// The warnings for the game as planned now.
-pub fn warnings_model(game: &Game, l10n: &Localizer) -> WarningsModel {
-    let session = game.session();
-    let names = Names::new(l10n, session);
-    let dry_hydro: Vec<String> = plants_by_kind(game)
+/// The names of the hydro plants among `views` that start the day with no water, in id order.
+/// Water the plant has is not a warning, however little.
+pub fn dry_hydro_plants(views: &[PlantView], names: &Names) -> Vec<String> {
+    views
         .iter()
-        .flat_map(|group| &group.plants)
+        .filter(|plant| plant.kind == PlantKind::Hydro && is_commitable(plant))
         .filter(|plant| {
             plant
                 .hydro_day_budget
                 .is_some_and(|budget| budget <= MegawattHours::ZERO)
         })
         .map(|plant| names.plant(plant.id))
-        .collect();
+        .collect()
+}
+
+/// The warnings for the game as planned now.
+pub fn warnings_model(game: &Game, l10n: &Localizer, ui: &UiState) -> WarningsModel {
+    let session = game.session();
+    let names = Names::new(l10n, session);
+    let views = session.plant_views();
+    let dry_hydro = dry_hydro_plants(&views, &names);
     warnings_for(
         session.capacity_shortfall_check(),
         session.minimum_generation_check(),
         &dry_hydro,
+        ui.warnings_open,
         l10n,
     )
 }
 
+/// The strip: the heading and the first warning on one line, with a button for the rest, which
+/// are listed in a popup above it rather than in the panel.
 pub fn draw_warnings(ui: &mut egui::Ui, model: &WarningsModel) -> Vec<UiAction> {
     let mut actions = Vec::new();
-    ui.horizontal_wrapped(|ui| {
+    let mut more_at = None;
+    ui.horizontal(|ui| {
         ui.strong(model.heading.as_str());
         if let Some(none) = &model.none {
             ui.weak(none.as_str());
         }
-        for row in &model.rows {
-            ui.separator();
-            ui.colored_label(ui.visuals().warn_fg_color, row.text.as_str());
-            if let Some(show) = &row.show_hour {
-                button(ui, show, &mut actions);
-            }
+        if let Some(first) = model.rows.first() {
+            draw_row(ui, first, &mut actions);
+        }
+        if let Some(more) = &model.more {
+            more_at = Some(toggle_button(ui, more, &mut actions).rect);
         }
     });
+    if let (true, Some(at)) = (model.expanded, more_at) {
+        egui::Area::new(egui::Id::new("warnings_more"))
+            .order(egui::Order::Foreground)
+            .pivot(egui::Align2::LEFT_BOTTOM)
+            .fixed_pos(at.left_top())
+            .show(ui.ctx(), |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    for row in &model.rows[1..] {
+                        ui.horizontal(|ui| draw_row(ui, row, &mut actions));
+                    }
+                });
+            });
+    }
     actions
+}
+
+fn draw_row(ui: &mut egui::Ui, row: &WarningRow, actions: &mut Vec<UiAction>) {
+    ui.colored_label(ui.visuals().warn_fg_color, row.text.as_str());
+    if let Some(show) = &row.show_hour {
+        button(ui, show, actions);
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use application::InMemoryCommandLog;
+    use application::{Command, InMemoryCommandLog};
     use domain::region::PlantKind;
     use domain::units::Megawatts;
 
     use super::*;
-    use crate::hud::test_support::{eastern_game, shipped_game, shipped_l10n};
+    use crate::hud::test_support::{
+        eastern_game, edited_western_game, flat_load, shipped_game, shipped_l10n,
+    };
 
     fn shortfall(hour: u8) -> CapacityShortfallWarning {
         CapacityShortfallWarning {
@@ -180,6 +237,7 @@ mod tests {
             Some(shortfall(18)),
             Some(min_gen(3)),
             &["Hydro plant 5".to_owned(), "Hydro plant 9".to_owned()],
+            false,
             &l10n,
         );
 
@@ -216,6 +274,7 @@ mod tests {
             Some(shortfall(18)),
             Some(min_gen(3)),
             &["Hydro plant 5".to_owned()],
+            false,
             &l10n,
         );
 
@@ -241,7 +300,7 @@ mod tests {
     fn no_findings_say_so() {
         let l10n = shipped_l10n();
 
-        let model = warnings_for(None, None, &[], &l10n);
+        let model = warnings_for(None, None, &[], false, &l10n);
 
         assert!(model.rows.is_empty());
         assert_eq!(
@@ -259,7 +318,7 @@ mod tests {
             .capacity_shortfall_check()
             .expect("nothing is committed, so demand goes uncovered");
 
-        let model = warnings_model(&game, &l10n);
+        let model = warnings_model(&game, &l10n, &UiState::default());
 
         assert_eq!(model.rows[0].kind, WarningKind::Shortfall);
         assert_eq!(
@@ -294,7 +353,7 @@ mod tests {
             "the western fleet has hydro"
         );
 
-        let model = warnings_model(&game, &l10n);
+        let model = warnings_model(&game, &l10n, &UiState::default());
 
         assert!(
             model
@@ -304,5 +363,115 @@ mod tests {
             "{:?}",
             model.rows
         );
+    }
+
+    #[test]
+    fn only_the_first_warning_is_in_the_strip_and_the_rest_are_behind_a_button() {
+        let l10n = shipped_l10n();
+        let dry = ["Hydro plant 5".to_owned(), "Hydro plant 9".to_owned()];
+
+        let closed = warnings_for(Some(shortfall(18)), Some(min_gen(3)), &dry, false, &l10n);
+        let more = closed.more.as_ref().expect("four warnings");
+        assert_eq!(closed.rows.len(), 4, "all are kept for the popup");
+        assert_eq!(more.button.label, "+3 more");
+        assert_eq!(more.button.action, UiAction::ToggleWarnings);
+        assert!(!more.on && !closed.expanded);
+
+        let open = warnings_for(Some(shortfall(18)), Some(min_gen(3)), &dry, true, &l10n);
+        assert_eq!(open.more.as_ref().unwrap().button.label, "Hide");
+        assert!(open.expanded);
+
+        // One warning, or none, needs no button, whatever was asked for.
+        let one = warnings_for(Some(shortfall(18)), None, &[], true, &l10n);
+        assert!(one.more.is_none() && !one.expanded);
+        assert!(warnings_for(None, None, &[], true, &l10n).more.is_none());
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    /// The shipped regions' rivers always run (a region's monthly flow must be positive), so no
+    /// start fleet is dry. The rule is tested on real views with their budgets set.
+    #[test]
+    fn only_a_hydro_plant_with_no_water_for_the_day_is_dry() {
+        let l10n = shipped_l10n();
+        let game = shipped_game(
+            "western_interconnection",
+            Box::new(InMemoryCommandLog::default()),
+        );
+        let names = Names::new(&l10n, game.session());
+        let mut views = game.session().plant_views();
+        let hydro: Vec<usize> = (0..views.len())
+            .filter(|i| views[*i].kind == PlantKind::Hydro)
+            .collect();
+        assert_eq!(hydro.len(), 3);
+        assert_eq!(dry_hydro_plants(&views, &names), Vec::<String>::new());
+
+        // The first has none, the second a trickle, the third plenty.
+        views[hydro[0]].hydro_day_budget = Some(MegawattHours::ZERO);
+        views[hydro[1]].hydro_day_budget = Some(MegawattHours::new(0.5));
+        assert_eq!(
+            dry_hydro_plants(&views, &names),
+            [names.plant(views[hydro[0]].id)]
+        );
+
+        // Every hydro plant dry, and the dry ones come in id order.
+        for i in &hydro {
+            views[*i].hydro_day_budget = Some(MegawattHours::ZERO);
+        }
+        let all: Vec<String> = hydro.iter().map(|i| names.plant(views[*i].id)).collect();
+        assert_eq!(dry_hydro_plants(&views, &names), all);
+
+        // A plant that is not hydro is never dry.
+        let peaker = views
+            .iter_mut()
+            .find(|p| p.kind == PlantKind::Peaker)
+            .unwrap();
+        peaker.hydro_day_budget = Some(MegawattHours::ZERO);
+        assert_eq!(dry_hydro_plants(&views, &names).len(), 3);
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    #[test]
+    fn a_committed_minimum_above_a_tiny_load_is_warned_about_at_the_domains_hour() {
+        let l10n = shipped_l10n();
+        let mut game = edited_western_game(|text| flat_load(text, 5.0));
+        let plants: Vec<_> = game
+            .session()
+            .plant_views()
+            .into_iter()
+            .filter(|plant| plant.kind == PlantKind::Ccgt)
+            .map(|plant| plant.id)
+            .collect();
+        for plant in plants {
+            game.execute(Command::StartPlant { plant }).unwrap();
+        }
+        let worst = game
+            .session()
+            .minimum_generation_check()
+            .expect("combined-cycle minimums exceed a 5 MW load");
+
+        let model = warnings_model(&game, &l10n, &UiState::default());
+
+        let row = model
+            .rows
+            .iter()
+            .find(|row| row.kind == WarningKind::MinimumGeneration)
+            .expect("a minimum generation warning");
+        assert_eq!(
+            row.text,
+            l10n.args(
+                "warning-min-gen",
+                &[
+                    ("time", format::clock(u32::from(worst.hour) * 60).into()),
+                    ("amount", format::megawatts(worst.excess).into()),
+                ]
+            )
+        );
+        assert_eq!(
+            row.show_hour.as_ref().unwrap().action,
+            UiAction::ShowHour(Some(worst.hour))
+        );
+        // No shortfall on a load that small, so this warning leads.
+        assert_eq!(model.rows[0].kind, WarningKind::MinimumGeneration);
+        assert_eq!(l10n.problems(), vec![]);
     }
 }
