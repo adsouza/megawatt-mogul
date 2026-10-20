@@ -6,7 +6,8 @@
   partial-year rate review (§13, 2026-10-18); A3, over-frequency protection, a minimum-generation
   warning and frequency-performance strikes (§14, 2026-10-18); A4, rotating outages and staged
   under-frequency shedding (§15, 2026-10-19); A5, the inherited schedule, the shortfall
-  confirmation, and window and panel sizing (§16, 2026-10-20)
+  confirmation, window and panel sizing, the city card and
+  construction progress (§16, 2026-10-20)
 - **Engine:** Rust 1.98, Bevy 0.20, bevy_egui 0.43, bevy-inspector-egui 0.38
 
 ## 1. Vision and goals
@@ -1480,5 +1481,83 @@ the commitment grid, the charts or the plant list more space.
 - **The map still never moves on its own.** Only a drag changes a panel's size. A selection
   change, a tab change or a phase change leaves it alone, as before. A panel's size lasts for the
   rest of the run. It isn't saved to disk, because there is no settings persistence yet.
+- **The Operating side panel, from top to bottom** (playtest):
+  1. the frequency gauge;
+  2. the selected plant's details, in a block of fixed height. With nothing selected, a
+     placeholder of the same height stands in;
+  3. the plant list, which fills the rest of the panel's height and scrolls, with at least three
+     rows at 1024×640.
+
+  The list's position doesn't change when the selection does.
 - **Out of scope:** remembering the window size between runs, and fullscreen.
+
+### 16.8 The city card (playtest, read side and presentation)
+
+Playtesting found that selecting a city on the map shows neither its name nor anything about its
+demand. Planning's inspector only describes cells, and Operating's side panel only describes
+plants.
+
+- **A read-only domain query.** `GameSession::city_view(id) -> Option<CityDetail>` returns the
+  following figures for the coming day, or for the day being played:
+  - the city's `base_load`;
+  - whether it is connected;
+  - its share of the connected base load;
+  - its expected demand at the forecast peak, and the hour of that peak;
+  - in Operating, its current demand and the load served to it.
+
+  All cities share one demand shape and one noise process, and rotating outages and protection
+  shed spread proportionally across connected cities (§15.3, §15.4). So a city's figures are the
+  system figures scaled by its share of base load. An unconnected city has no current demand. The
+  card shows the demand it **would** add once connected (`base_load` scaled by the forecast
+  shape), so that connecting it is an informed choice. The query holds no strings and no prices.
+- **Where the card shows.** It shows wherever a plant's details show, and the selected object
+  drives it:
+  - In Planning, the inspector shows a city card when a city is selected. A cell keeps its cell
+    card.
+  - In Operating, the side panel's selected-object block (above the plant list, §16.7) shows the
+    city card instead of plant details. It keeps the same fixed height, so the list doesn't move.
+- **The card's contents:**
+  - the localised city name;
+  - Connected or Not connected. When not connected, a one-line hint to build a line to it from the
+    build menu;
+  - base load;
+  - the expected peak today and its time;
+  - in Operating, demand now and served now, with the share cut when an outage or shed is
+    active.
+- **Strings.** Every string goes in `ui.ftl`. The l10n coverage test includes the city name keys,
+  as it already does.
+
+### 16.9 Construction progress (playtest, presentation)
+
+Playtesting found that after a plant or line is ordered, the player sees no sign of its progress.
+The map draws the project faded or dashed, but nothing says how long it has left or when it will
+be in service. The commissioning toasts arrive with no warning.
+
+- **The Construction tab.** Planning's bottom panel gets a fourth tab, after Commitments,
+  Forecast and Tariff. It lists every plant and line under construction, soonest first and then
+  by id. Each row shows:
+  - the project's localised name;
+  - months left of its total build time, with a progress bar;
+  - the month it enters service.
+
+  With nothing under construction, the tab says so in one line. The tab's label shows the number
+  of projects, for example "Construction (2)", so the player can see it without opening the tab.
+- **On the map.**
+  - A plant or line under construction shows its months left (for example "3 mo") next to its
+    faded marker or dashed line. Like the plant letters, the label is drawn only at 9 pt or more
+    (§8, Plan 2 ruling N1).
+  - The map legend gains the two under-construction marks.
+- **Selecting a plant under construction.** Plants under construction stay out of the plant list
+  and the commitment grid, as today. In Planning, the inspector shows a construction card: kind,
+  capacity, months left of the total, and the month it enters service. In Operating, the
+  selected-object block shows the same card.
+- **Data and arithmetic.**
+  - Months left come from `PlantStatus::UnderConstruction { months_left }` and
+    `LineStatus::UnderConstruction { months_left }`.
+  - The total is the kind's `build_months`, or the line build time.
+  - The in-service month is derived from the current month and the months left, by the same rule
+    the month close applies. Read the domain to get the off-by-one right, and pin it with a test
+    that plays to commissioning.
+  - No new domain state. A read-only query is added only if the in-service month can't be derived
+    from public views.
 

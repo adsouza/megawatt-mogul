@@ -5,7 +5,7 @@
 **Goal:** A new game starts on the previous operator's schedule: every dispatchable start-fleet
 plant is committed all day with AGC on. Start the day asks for confirmation when the forecast shows
 a shortfall. The window opens at about 80% of the monitor, and the side and bottom panels can be
-resized.
+resized. Selecting a city shows a card with its name and demand. Construction progress is visible.
 
 **Architecture:**
 - The inherited schedule is a domain rule in `GameSession::new`, shipped with a
@@ -15,7 +15,7 @@ resized.
 
 **Tech Stack:** unchanged (Rust 1.98, Bevy 0.20, bevy_egui 0.43.1; no new crates).
 
-**Spec:** `docs/superpowers/specs/2026-10-18-megawatt-mogul-design.md` §16 (A5), with §16.7 for Task 3. It builds on §14.5
+**Spec:** `docs/superpowers/specs/2026-10-18-megawatt-mogul-design.md` §16 (A5), with §16.7 for Task 3 §16.8 for Task 4 and §16.9 for Task 5. It builds on §14.5
 (the hands-off plan) and §15.5 (the capacity-shortfall check).
 
 ## Global Constraints
@@ -231,4 +231,126 @@ Spec §16.7. Added after playtest feedback.
   dragging a panel's edge with the minimum and maximum limits.
 - [ ] **Step 6: Run everything.** `cargo nextest run --workspace`, clippy and the format check.
 - [ ] **Step 7: Commit**: `feat(game): open at 80% of the monitor; resizable side and bottom panels`.
+
+---
+
+### Task 4: The city card (domain query and game)
+
+Spec §16.8. Added after playtest feedback, and it runs after Task 3. Task 3 already moves the
+Operating selected-plant block above the plant list, and this task reuses that block.
+
+**Files:**
+- Modify: `crates/domain/src/session/views.rs`, adding `city_view` and `CityDetail`, with tests
+- Create: `crates/game/src/hud/city_card.rs`, holding the model, presenter and draw for the card
+- Modify: `crates/game/src/hud/inspector.rs` (Planning: a city card when a city is selected)
+- Modify: the Operating selected-object block in `crates/game/src/hud/plant_panel.rs` or
+  `operating.rs`
+- Modify: `assets/locales/en-US/ui.ftl` and `crates/game/src/l10n/keys.rs`
+- Test: domain unit tests, inline presenter tests, and a real-pass test in `tests/game/` (for
+  example `city_card.rs`)
+- Docs: the playtest checklist
+
+**Interfaces:**
+- Consumes:
+  - `GameSession::{city_views, hourly_forecast, grid_snapshot}`;
+  - `CityDef.base_load`;
+  - `TickSummary.{demand, served}`;
+  - `Names` for the localised city name;
+  - `l10n::format::{megawatts, clock, percent}`;
+  - `Selection::City(CityId)`.
+- Produces:
+  - `GameSession::city_view(id: CityId) -> Option<CityDetail>`;
+  - `CityDetail { id, name_key, connected, base_load, share: Ratio, peak: Megawatts, peak_hour: u8, now: Option<Megawatts>, served_now: Option<Megawatts> }`.
+
+  The exact field names are the implementer's call; record them in the report.
+  - `share` is the city's base load divided by the total connected base load, or 0 if the city
+    is unconnected.
+  - `peak` and `peak_hour` come from the forecast shape. For an unconnected city they are the
+    demand it would add if connected.
+  - `now` and `served_now` are set only in Operating, and only for a connected city.
+- Produces: `CityCardModel`, `city_card_model(&Game, &Localizer, CityId)` and `draw_city_card`.
+
+- [ ] **Step 1: Write the failing tests.**
+  - Domain:
+    - `a_city_view_scales_the_system_by_base_load`: the connected cities' `now` values sum to the
+      last tick's `demand`, and their `served_now` values sum to `served`, within 1e-9 relative.
+    - `an_unconnected_city_shows_what_it_would_add`: `share` is 0, `now` is `None`, and `peak`
+      equals its `base_load` times the peak shape factor.
+    - `a_city_view_of_an_unknown_id_is_none`.
+  - Presenter:
+    - the card names the city through `Names` and shows Connected or Not connected. The
+      not-connected hint appears only for an unconnected city;
+    - in Planning there are no now/served rows;
+    - in Operating, during an outage, the card shows the cut share.
+  - Real pass at 1024×640, in both regions:
+    - in Planning, click a city on the map. The inspector shows its name and its base load;
+    - in Operating, click a city. The selected-object block shows the city card, the plant list
+      rect is unchanged, and clicking a plant switches back to plant details.
+- [ ] **Step 2: Run them and see them fail.**
+- [ ] **Step 3: Implement.** Keep the domain query pure, with no strings or prices. Add the
+  strings to `ALL_UI_KEYS`.
+- [ ] **Step 4: Update the playtest checklist.** Add a step: select a city in Planning and in
+  Operating, then check the name, connection, base load and peak, and the now and served figures
+  in Operating.
+- [ ] **Step 5: Run everything.** `cargo nextest run --workspace`, clippy and the format check.
+- [ ] **Step 6: Commit.** `feat: a city card with its name and demand`.
+
+---
+
+### Task 5: Construction progress (game)
+
+Spec §16.9. This task was added after playtest feedback, and it runs after Task 4. It reuses the
+inspector and the Operating selected-object block, which Task 4 extends to cities.
+
+**Files:**
+- Create: `crates/game/src/hud/construction.rs`, holding the tab's model, presenter and draw, plus
+  the construction card
+- Modify: `hud/ui_state.rs` (`PlanningTab::Construction`), `hud/planning.rs` (the tab),
+  `hud/map.rs` (months-left labels and legend entries), `hud/inspector.rs` and the Operating
+  selected-object block (the construction card)
+- Modify: `assets/locales/en-US/ui.ftl`, `crates/game/src/l10n/keys.rs`
+- Test: inline presenter tests, glue tests for the new tab action, and a real-pass test module
+  (for example `tests/game/construction.rs`)
+- Docs: the playtest checklist
+
+**Interfaces:**
+- Consumes:
+  - `plant_views()` (`PlantStatus::UnderConstruction { months_left }`) and `line_views()`
+    (`LineStatus::UnderConstruction { months_left }`);
+  - `region().spec(kind).build_months` and the line build time;
+  - `clock().month()`;
+  - `Names`;
+  - `l10n::format`;
+  - `UiAction::SetPlanningTab`.
+- Produces:
+  - `ConstructionModel { rows: Vec<ConstructionRow>, empty: Option<String> }`;
+  - `construction_model(&Game, &Localizer)`;
+  - `ConstructionCardModel` for a selected plant under construction;
+  - `PlanningTab::Construction`.
+
+- [ ] **Step 1: Write the failing tests.**
+  - `construction_rows_sort_soonest_first_then_by_id`. Order a plant and a line with different
+    build times, and check each row's months left, total, progress and in-service month.
+  - `the_in_service_month_matches_commissioning`. Order a plant, then play months until its
+    `PlantCommissioned` event. The month it fires in is the month the row predicted. Do the same
+    for a line.
+  - `the_construction_tab_label_counts_projects`. The label shows "(2)" with two projects and no
+    count with none. The empty tab shows its one-line message.
+  - `a_selected_plant_under_construction_shows_its_card`, in both Planning and Operating.
+  - Map: the months-left label appears only at a font size of 9 pt or more. The legend lists the
+    under-construction marks.
+  - A glue test through the real `dispatch` for selecting the Construction tab.
+  - A real-pass test at 1024×640 in both regions:
+    1. order a plant and a line;
+    2. open the Construction tab, which fits;
+    3. check that both rows show;
+    4. click the plant on the map, and the card shows.
+- [ ] **Step 2: Run them and see them fail.**
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Update the playtest checklist.** Add a step: order a plant and a line, then check
+  the Construction tab, the map labels, the selection card, and the commissioning toast in the
+  predicted month.
+- [ ] **Step 5: Run everything.** Run `cargo nextest run --workspace`, clippy and the format
+  check.
+- [ ] **Step 6: Commit**: `feat(game): construction progress on a Planning tab, the map and the inspector`.
 
