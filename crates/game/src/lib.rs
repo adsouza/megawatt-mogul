@@ -7,6 +7,7 @@
 pub mod hud;
 pub mod l10n;
 pub mod paths;
+pub mod sim;
 pub mod state;
 
 use bevy::app::{PluginGroup, PluginGroupBuilder};
@@ -14,9 +15,10 @@ use bevy_egui::EguiPlugin;
 
 use crate::hud::HudPlugin;
 use crate::l10n::LocalizationPlugin;
+use crate::sim::SimulationPlugin;
 use crate::state::AppStatePlugin;
 
-/// The headless-safe plugins: app states and localisation, and later the simulation.
+/// The headless-safe plugins: app states, localisation and the simulation bridge.
 ///
 /// Needs no window or renderer, so tests run it on `MinimalPlugins` (plus `StatesPlugin`).
 pub struct CorePlugins;
@@ -26,6 +28,7 @@ impl PluginGroup for CorePlugins {
         PluginGroupBuilder::start::<Self>()
             .add(AppStatePlugin)
             .add(LocalizationPlugin)
+            .add(SimulationPlugin)
     }
 }
 

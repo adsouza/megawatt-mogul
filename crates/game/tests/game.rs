@@ -13,6 +13,8 @@ mod hud;
 mod l10n_coverage;
 #[path = "game/layout.rs"]
 mod layout;
+#[path = "game/simulation.rs"]
+mod simulation;
 #[path = "game/states.rs"]
 mod states;
 #[path = "game/support/mod.rs"]

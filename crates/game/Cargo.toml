@@ -20,6 +20,7 @@ test = false
 [dependencies]
 domain = { workspace = true }
 application = { workspace = true }
+infrastructure = { workspace = true }
 bevy_egui = { workspace = true }
 fluent-bundle = { workspace = true }
 tracing = { workspace = true }
@@ -48,7 +49,6 @@ features = [
 # what the 3D diorama needs.
 
 [dev-dependencies]
-infrastructure = { workspace = true }
 tempfile = { workspace = true }
 
 [lints]
