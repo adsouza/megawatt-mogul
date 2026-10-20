@@ -35,7 +35,7 @@ use game::sim::ReturnToMenu;
 use game::state::AppState;
 use tempfile::TempDir;
 
-use crate::support::egui_harness::Widget;
+use crate::support::egui_harness::has;
 use crate::support::egui_pass::EguiPass;
 use crate::support::{request, shipped_l10n, update_n};
 
@@ -154,11 +154,6 @@ fn the_egui_systems_have_no_conflicting_parameters() {
     update_n(&mut app, 3);
     let widgets = pass.run(&mut app, 1024.0, 640.0);
     assert!(has(&widgets, "Month in review") && has(&widgets, "Connect 10 cities"));
-}
-
-/// Whether some widget's text is exactly `text`.
-fn has(widgets: &[Widget], text: &str) -> bool {
-    widgets.iter().any(|widget| widget.text == text)
 }
 
 /// The real systems draw each phase's panels, by their run conditions, and none of the other

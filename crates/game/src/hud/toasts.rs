@@ -138,7 +138,9 @@ pub(super) fn toasts_overlay(
     if model.toasts.is_empty() {
         return Ok(());
     }
+    // Above every panel, window and modal, so a toast is never hidden behind the Review modal.
     egui::Area::new(egui::Id::new("toasts"))
+        .order(egui::Order::Tooltip)
         .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-12.0, -12.0))
         .interactable(false)
         .show(contexts.ctx_mut()?, |ui| draw_toasts(ui, &model));

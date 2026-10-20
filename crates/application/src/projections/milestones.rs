@@ -41,9 +41,9 @@ pub enum MilestoneStatus {
 pub enum MilestoneProgress {
     /// The largest monthly peak so far, against the peak to serve.
     Peak { best: Megawatts, goal: Megawatts },
-    /// Strike-free closed months in a row within the current season (none
-    /// while a strike issued this month taints it), against the months a
-    /// season needs.
+    /// Strike-free closed months in a row within the season being played
+    /// (none while a strike issued this month taints it, or when the run
+    /// belongs to an earlier season), against the months a season needs.
     StrikeFreeMonths { months: u32, needed: u32 },
     /// Cities connected now, against the cities to connect.
     Cities { connected: u32, needed: u32 },
@@ -94,8 +94,9 @@ impl MilestoneProjection {
         self.reached.iter().map(|(kind, _)| *kind).collect()
     }
 
-    /// When `kind` was reached, or how far the player is from it.
-    pub fn status(&self, kind: MilestoneKind) -> MilestoneStatus {
+    /// When `kind` was reached, or how far the player is from it in `now`,
+    /// the month being played (or reviewed).
+    pub fn status(&self, kind: MilestoneKind, now: SimMonth) -> MilestoneStatus {
         if let Some((_, month)) = self.reached.iter().find(|(reached, _)| *reached == kind) {
             return MilestoneStatus::Reached { month: *month };
         }
@@ -106,7 +107,8 @@ impl MilestoneProjection {
             },
             MilestoneKind::FullSeasonWithoutStrike => MilestoneProgress::StrikeFreeMonths {
                 months: match self.run {
-                    Some(run) if !self.strike_pending => run.months,
+                    // A run of last season's months is no progress in this one.
+                    Some(run) if !self.strike_pending && run.season == now.season() => run.months,
                     _ => 0,
                 },
                 needed: SEASON_MONTHS,
@@ -365,24 +367,26 @@ mod tests {
     #[test]
     fn status_shows_progress_until_reached_and_then_the_month() {
         let start = session().clock().month();
+        // The month in review: the run's own season.
+        let now = SimMonth::new(2027, 4).unwrap();
         let mut milestones = MilestoneProjection::new(&session());
         let cities = MilestoneKind::ConnectCities { count: 10 };
         assert_eq!(
-            milestones.status(PEAK_50),
+            milestones.status(PEAK_50, now),
             MilestoneStatus::InProgress(MilestoneProgress::Peak {
                 best: Megawatts::new(0.0),
                 goal: Megawatts::new(50_000.0),
             })
         );
         assert_eq!(
-            milestones.status(FULL_SEASON),
+            milestones.status(FULL_SEASON, now),
             MilestoneStatus::InProgress(MilestoneProgress::StrikeFreeMonths {
                 months: 0,
                 needed: 3,
             })
         );
         assert_eq!(
-            milestones.status(cities),
+            milestones.status(cities, now),
             MilestoneStatus::InProgress(MilestoneProgress::Cities {
                 connected: 2,
                 needed: 10,
@@ -393,7 +397,7 @@ mod tests {
         close(&mut milestones, 3, 30_000.0);
         close(&mut milestones, 4, 20_000.0);
         assert_eq!(
-            milestones.status(PEAK_50),
+            milestones.status(PEAK_50, now),
             MilestoneStatus::InProgress(MilestoneProgress::Peak {
                 best: Megawatts::new(30_000.0),
                 goal: Megawatts::new(50_000.0),
@@ -401,7 +405,7 @@ mod tests {
             "the best peak so far, not the last"
         );
         assert_eq!(
-            milestones.status(FULL_SEASON),
+            milestones.status(FULL_SEASON, now),
             MilestoneStatus::InProgress(MilestoneProgress::StrikeFreeMonths {
                 months: 2,
                 needed: 3,
@@ -409,7 +413,7 @@ mod tests {
         );
         strike(&mut milestones);
         assert_eq!(
-            milestones.status(FULL_SEASON),
+            milestones.status(FULL_SEASON, now),
             MilestoneStatus::InProgress(MilestoneProgress::StrikeFreeMonths {
                 months: 0,
                 needed: 3,
@@ -419,15 +423,42 @@ mod tests {
 
         close(&mut milestones, 6, 55_000.0);
         assert_eq!(
-            milestones.status(PEAK_50),
+            milestones.status(PEAK_50, now),
             MilestoneStatus::Reached {
                 month: SimMonth::new(2027, 6).unwrap()
             }
         );
         milestones.set_connected_cities(10, start);
         assert_eq!(
-            milestones.status(cities),
+            milestones.status(cities, now),
             MilestoneStatus::Reached { month: start }
         );
+    }
+
+    #[test]
+    fn a_strike_free_run_from_last_season_is_no_progress_in_this_one() {
+        let mut milestones = MilestoneProjection::new(&session());
+        // March struck, April and May clean: two months of Spring.
+        close(&mut milestones, 2, 100.0);
+        strike(&mut milestones);
+        close(&mut milestones, 3, 100.0);
+        close(&mut milestones, 4, 100.0);
+        close(&mut milestones, 5, 100.0);
+        let progress = |months| {
+            MilestoneStatus::InProgress(MilestoneProgress::StrikeFreeMonths { months, needed: 3 })
+        };
+        let may = SimMonth::new(2027, 5).unwrap();
+        assert_eq!(
+            milestones.status(FULL_SEASON, may),
+            progress(2),
+            "May's review"
+        );
+
+        // June is Summer: no Summer month has closed yet.
+        let june = SimMonth::new(2027, 6).unwrap();
+        assert_eq!(milestones.status(FULL_SEASON, june), progress(0));
+
+        close(&mut milestones, 6, 100.0);
+        assert_eq!(milestones.status(FULL_SEASON, june), progress(1));
     }
 }

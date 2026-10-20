@@ -15,6 +15,8 @@ mod hud_smoke;
 mod l10n_coverage;
 #[path = "game/layout.rs"]
 mod layout;
+#[path = "game/review_smoke.rs"]
+mod review_smoke;
 #[path = "game/simulation.rs"]
 mod simulation;
 #[path = "game/states.rs"]

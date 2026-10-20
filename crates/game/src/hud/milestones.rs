@@ -47,11 +47,12 @@ pub struct MilestonesModel {
 
 pub fn milestones_model(game: &Game, l10n: &Localizer) -> MilestonesModel {
     let milestones = &game.projections().milestones;
+    let now = game.session().clock().month();
     MilestonesModel {
         title: l10n.text("milestones-title"),
         rows: MILESTONES
             .iter()
-            .map(|kind| milestone_row(*kind, milestones.status(*kind), l10n))
+            .map(|kind| milestone_row(*kind, milestones.status(*kind, now), l10n))
             .collect(),
         close: ButtonModel::new(l10n.text("ui-close"), UiAction::ToggleMilestones),
     }

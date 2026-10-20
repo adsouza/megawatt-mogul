@@ -23,6 +23,8 @@ use crate::sim::Session;
 pub const REVIEW_WIDTH: f32 = 640.0;
 /// The space kept clear between the modal and the edges of the dimmed area.
 pub const REVIEW_MARGIN: f32 = 16.0;
+/// The height of the separator above Continue, reserved under the scroll area.
+const FOOTER_SEPARATOR: f32 = 6.0;
 /// How much the backdrop darkens the map.
 const BACKDROP: egui::Color32 = egui::Color32::from_black_alpha(100);
 
@@ -233,14 +235,14 @@ pub fn draw_review(ui: &mut egui::Ui, model: &ReviewModel) -> Vec<UiAction> {
     });
     ui.separator();
     let spacing = ui.spacing();
-    // The separator and Continue's row, below the scroll area.
-    let footer = spacing.interact_size.y + 3.0 * spacing.item_spacing.y + 6.0;
+    // The separator and Continue's row below the scroll area, with the gaps between them.
+    let footer = FOOTER_SEPARATOR + spacing.interact_size.y + 3.0 * spacing.item_spacing.y;
     egui::ScrollArea::vertical()
         .id_salt("review_sections")
         .auto_shrink([false, false])
         .max_height((ui.available_height() - footer).max(0.0))
         .show(ui, |ui| draw_sections(ui, model));
-    ui.separator();
+    ui.add(egui::Separator::default().spacing(FOOTER_SEPARATOR));
     ui.vertical_centered(|ui| {
         button(ui, &model.continue_button, &mut actions);
     });
@@ -313,7 +315,8 @@ fn draw_sections(ui: &mut egui::Ui, model: &ReviewModel) {
 }
 
 /// Dims the map under the top bar (a backdrop that takes clicks and does nothing with them, so
-/// only Continue leaves Review), then draws the modal over it.
+/// only Continue leaves Review) and draws the modal over it, in one layer under the floating
+/// windows.
 pub(super) fn review_modal(
     mut contexts: EguiContexts,
     area: Res<HudArea>,
@@ -326,22 +329,21 @@ pub(super) fn review_modal(
     };
     let ctx = contexts.ctx_mut()?;
     let behind = area.free_rect(ctx);
-    egui::Area::new(egui::Id::new("review_backdrop"))
+    let modal = review_rect(behind);
+    let frame = egui::Frame::window(&ctx.global_style());
+    let inner = (modal.size() - frame.total_margin().sum()).max(egui::Vec2::ZERO);
+    // One layer for the backdrop and the modal, at `Middle`: egui raises a pressed area above the
+    // others of its order, so a modal of its own at `Foreground` would rise over the Milestones
+    // window when clicked.
+    let actions = egui::Area::new(egui::Id::new("review"))
         .order(egui::Order::Middle)
         .fixed_pos(behind.min)
         .show(ctx, |ui| {
             let (rect, _) = ui.allocate_exact_size(behind.size(), egui::Sense::click_and_drag());
             ui.painter().rect_filled(rect, 0.0, BACKDROP);
-        });
-    let modal = review_rect(behind);
-    let frame = egui::Frame::window(&ctx.global_style());
-    let inner = (modal.size() - frame.total_margin().sum()).max(egui::Vec2::ZERO);
-    let actions = egui::Area::new(egui::Id::new("review"))
-        .order(egui::Order::Foreground)
-        .fixed_pos(modal.min)
-        .show(ctx, |ui| {
+            let mut modal_ui = ui.new_child(egui::UiBuilder::new().max_rect(modal));
             frame
-                .show(ui, |ui| {
+                .show(&mut modal_ui, |ui| {
                     ui.set_width(inner.x);
                     ui.set_height(inner.y);
                     draw_review(ui, &model)
@@ -628,6 +630,7 @@ mod tests {
             UiAction::Command(Command::FinishReview)
         );
         assert!(model.continue_button.enabled);
+        assert_eq!(l10n.problems(), vec![]);
     }
 
     #[test]
@@ -646,6 +649,7 @@ mod tests {
                 DayPhase::Review
             ));
         }
+        assert_eq!(l10n.problems(), vec![]);
     }
 
     #[test]

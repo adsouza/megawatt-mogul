@@ -266,6 +266,11 @@ pub fn nth_button<'a>(widgets: &'a [Widget], label: &str, n: usize) -> &'a Widge
         .unwrap_or_else(|| panic!("no button {label:?} number {n} among {widgets:#?}"))
 }
 
+/// Whether some widget's text is exactly `text`.
+pub fn has(widgets: &[Widget], text: &str) -> bool {
+    widgets.iter().any(|widget| widget.text == text)
+}
+
 /// Whether any widget's text contains `text`.
 pub fn shows(widgets: &[Widget], text: &str) -> bool {
     widgets.iter().any(|widget| widget.text.contains(text))
