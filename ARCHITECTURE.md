@@ -28,7 +28,9 @@ game ──▶ application ──▶ domain
 
 The rule is enforced by the compiler: `domain/Cargo.toml` does not list Bevy, so an import is
 impossible, and `crates/domain/tests/dependency_rule.rs` fails if a framework or I/O crate appears
-there. `cargo test -p domain` and `-p application` never compile Bevy, so feedback takes seconds.
+there, or if the `domain`, `application` or `infrastructure` manifest lists Bevy or egui (`bevy`,
+`bevy_*`, `egui`, `egui_*`) in any dependency table. `cargo test -p domain` and `-p application`
+never compile Bevy, so feedback takes seconds.
 
 ## Where things go
 

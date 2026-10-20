@@ -18,7 +18,8 @@ commit leaves `cargo nextest run --workspace`, clippy and `cargo fmt --check` gr
 Beyond the inline unit and property tests, the integration suites are
 `application/tests/{scenarios,determinism,state_machine,pipeline,rules_version_guard}.rs`, the adapter
 suites are `infrastructure/tests/{region_catalog,shipped_regions,command_log}.rs`, the game's are the
-modules of `game/tests/game.rs`, and `domain/tests/dependency_rule.rs` enforces the dependency rule.
+modules of `game/tests/game.rs`, and `domain/tests/dependency_rule.rs` enforces the dependency rule
+(on the `domain`, `application` and `infrastructure` manifests).
 
 ## Running each layer
 
