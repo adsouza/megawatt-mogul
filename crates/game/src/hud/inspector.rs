@@ -10,6 +10,7 @@ use domain::session::DayPhase;
 use super::action::{ActionSink, ButtonModel, UiAction, button, dispatch};
 use super::build::BUILD_PANEL;
 use super::city_card::{CityCardModel, city_card_model, draw_city_card};
+use super::construction::{ConstructionCardModel, construction_card_model, draw_construction_card};
 use super::layout::{Edge, HudArea, OuterPanel};
 use super::selection::Selection;
 use super::top_bar::Stat;
@@ -59,13 +60,15 @@ pub enum InspectorModel {
     Cell(CellInspector),
     /// A city is selected (spec §16.8).
     City(CityCardModel),
-    /// Nothing, or something that is neither a map cell nor a city, is selected. The panel keeps its place, so
-    /// the map beside it does not move.
+    /// A plant under construction is selected (spec §16.9).
+    Construction(ConstructionCardModel),
+    /// Nothing, or something that is neither a map cell, a city nor a plant under construction,
+    /// is selected. The panel keeps its place, so the map beside it does not move.
     Empty { hint: String },
 }
 
-/// The inspector (Planning only, spec §8.4): the selected cell or city (§16.8), or a hint to
-/// select a cell. `None` outside Planning.
+/// The inspector (Planning only, spec §8.4): the selected cell or city (§16.8), the selected
+/// plant under construction (§16.9), or a hint to select a cell. `None` outside Planning.
 pub fn inspector_model(
     game: &Game,
     l10n: &Localizer,
@@ -77,6 +80,10 @@ pub fn inspector_model(
     let model = match selection {
         Selection::Cell(at) => cell_inspector(game, l10n, at).map(InspectorModel::Cell),
         Selection::City(city) => city_card_model(game, l10n, city).map(InspectorModel::City),
+        // A built plant has its details in Operating; one being built shows its progress here.
+        Selection::Plant(plant) => {
+            construction_card_model(game, l10n, plant).map(InspectorModel::Construction)
+        }
         _ => None,
     };
     Some(model.unwrap_or_else(|| InspectorModel::Empty {
@@ -151,6 +158,7 @@ pub fn draw_inspector(ui: &mut egui::Ui, model: &InspectorModel) -> Vec<UiAction
             }
             InspectorModel::Cell(cell) => draw_cell(ui, cell, &mut actions),
             InspectorModel::City(city) => draw_city_card(ui, city),
+            InspectorModel::Construction(card) => draw_construction_card(ui, card),
         });
     actions
 }
@@ -208,7 +216,7 @@ mod tests {
     use domain::region::SiteError;
 
     use super::*;
-    use crate::hud::test_support::{eastern_game, shipped_l10n};
+    use crate::hud::test_support::{eastern_game, order_plant, shipped_l10n};
     use crate::l10n::format;
 
     fn cells(region: &RegionDefinition) -> impl Iterator<Item = CellCoord> {
@@ -351,6 +359,28 @@ mod tests {
                 "{selection:?}"
             );
         }
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    /// A selected plant under construction shows its construction card; a built plant keeps the
+    /// hint (spec §16.9).
+    #[test]
+    fn a_selected_plant_under_construction_shows_its_card() {
+        let l10n = shipped_l10n();
+        let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let built = game.session().plant_views()[0].id;
+        let plant = order_plant(&mut game, domain::region::PlantKind::Peaker, 0);
+
+        assert_eq!(
+            inspector_model(&game, &l10n, Selection::Plant(plant)),
+            Some(InspectorModel::Construction(
+                construction_card_model(&game, &l10n, plant).expect("a card")
+            ))
+        );
+        assert!(matches!(
+            inspector_model(&game, &l10n, Selection::Plant(built)),
+            Some(InspectorModel::Empty { .. })
+        ));
         assert_eq!(l10n.problems(), vec![]);
     }
 

@@ -25,6 +25,8 @@ pub enum PlanningTab {
     Forecast,
     /// The tariff and the projected rate review.
     Tariff,
+    /// The plants and lines under construction (spec §16.9).
+    Construction,
 }
 
 /// A commitment pattern the player is editing and has not applied yet.

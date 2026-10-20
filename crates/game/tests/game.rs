@@ -9,6 +9,8 @@
 mod city_card;
 #[path = "game/cli.rs"]
 mod cli;
+#[path = "game/construction.rs"]
+mod construction;
 #[path = "game/end_to_end.rs"]
 mod end_to_end;
 #[path = "game/hud.rs"]

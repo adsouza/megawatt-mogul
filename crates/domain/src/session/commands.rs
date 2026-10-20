@@ -106,8 +106,22 @@ impl GameSession {
         Ok(LineQuote {
             cells,
             capital: line_cost(params, cells),
-            months: cells.div_ceil(params.cells_per_month).max(1),
+            months: self.line_months(cells),
         })
+    }
+
+    /// The months `line` takes to build in all: what its quote said when it was ordered, by the
+    /// rule [`GameSession::build_line`] charges, so a line under construction can show its total
+    /// beside its months left (spec §16.9). Pure. `None` for a line the network doesn't have.
+    pub fn line_build_months(&self, line: LineId) -> Option<u32> {
+        let line = self.power.network().line(line)?;
+        let length = self.line_length(line.from, line.to).ok()?;
+        Some(self.line_months(whole_cells(length)))
+    }
+
+    /// `max(1, ceil(cells / cells_per_month))`: the months a line of `cells` takes to build.
+    fn line_months(&self, cells: u32) -> u32 {
+        cells.div_ceil(self.region.lines().cells_per_month).max(1)
     }
 
     /// Distance between two distinct existing nodes, in cells.

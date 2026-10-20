@@ -208,6 +208,33 @@ first. Steps that need a fresh game say so; the others follow on from the step b
   list doesn't move. Clicking the plant brings its details back. In the outage of step 3.6, a
   connected city also shows *Cut*, the share of its demand cut, the same for every connected city.
 
+## 9. Construction progress
+
+- [ ] **9.1** In Planning, order a plant (a gas peaker builds in 12 months) and a line from an
+  unconnected city to its nearest node. Look at the bottom panel's tabs.
+  **Expected:** the fourth tab reads *Construction (2)*. Before ordering it read *Construction*,
+  and opening it then showed *Nothing under construction.*
+- [ ] **9.2** Open *Construction*.
+  **Expected:** one row per project, the one in service soonest first: its name (a line also
+  names its two ends), a progress bar, *N of M months left*, and *In service from Month Year*.
+  At 1024×640 the rows fit, and *Start the day* stays in view.
+- [ ] **9.3** Grow the window until the map's plant letters show, and look at the new plant and
+  line.
+  **Expected:** a short label such as *12 mo* beside the faded square and above the dashed line's
+  middle. In a small window, where the letters are hidden, the labels are too. Clicking on a
+  label selects whatever is under it, not the project. The legend lists *Plant under
+  construction* (a faded square) and *Line under construction* (a dashed line).
+- [ ] **9.4** Click the new plant's faded square on the map, then start the day and click it
+  again.
+  **Expected:** in Planning the inspector shows its construction card: its name, *Under
+  construction*, *Capacity*, *N of M months left* with a bar, and *In service from Month Year*.
+  In Operating the same card fills the block above the *Plants* list, which doesn't move.
+- [ ] **9.5** Play months until the project is due.
+  **Expected:** each month the months left go down by one and the in-service month stays the
+  same. The commissioning toast arrives at the close of the month before the predicted month, in
+  its Review; in the predicted month the project is gone from the tab, the line is solid, and the
+  plant is in service (in the commitment grid, off and ready to start).
+
 ## Known visual risks to eyeball
 
 These came out of the reviews and couldn't be checked headlessly. Look at each while running the
@@ -215,7 +242,11 @@ steps above.
 
 - [ ] The ✓ glyph in the inspector renders in the default fonts (not a box).
 - [ ] Panel widths look right, and the map's cells meet without seams.
-- [ ] Western at 1024×640: the legend sits close above Edmonton; check it doesn't hide it.
+- [ ] At 1024×640 the legend, now four rows with the under-construction marks (§9.3), covers
+  about 358×92 pt of the map's top right. In Planning it hides Minneapolis and Winnipeg
+  (Eastern) and Vancouver, Calgary and Edmonton (Western); in Western Operating, Calgary and
+  Edmonton. A click on the legend selects nothing, so those cities can't be clicked there until the
+  window is larger. Judge whether that is acceptable.
 - [ ] Map markers and the legend are legible.
 - [ ] The supply chart's plot legends fit at about 700 px wide, and the right cost axis's ticks
   (not round numbers) read acceptably.

@@ -267,6 +267,56 @@ fn line_quote_matches_what_build_line_charges() {
     assert_eq!(booked, quote.capital);
 }
 
+/// A line's total build time is its quote's months, and stays so while it is built and after it
+/// enters service (spec §16.9).
+#[test]
+fn line_build_months_is_what_the_quote_said() {
+    let mut s = session();
+    let root = s.substation;
+    let (far, _) = s.build_plant(PlantKind::Peaker, cell(5, 5)).unwrap();
+    let (near, _) = s.build_plant(PlantKind::Peaker, cell(7, 5)).unwrap();
+    let far = s.power().plant(far).unwrap().node();
+    let near = s.power().plant(near).unwrap().node();
+    let far_quote = s.line_quote(root, far).unwrap();
+    assert_eq!(
+        far_quote.months, 2,
+        "sqrt(5) cells: 3 whole cells, 2 months"
+    );
+    let near_quote = s.line_quote(near, root).unwrap();
+    assert_eq!(near_quote.months, 1);
+
+    let (far_line, _) = s.build_line(root, far).unwrap();
+    let (near_line, _) = s.build_line(near, root).unwrap();
+    let before = s.state_hash();
+    assert_eq!(s.line_build_months(far_line), Some(far_quote.months));
+    assert_eq!(s.line_build_months(near_line), Some(near_quote.months));
+    assert_eq!(s.state_hash(), before, "a pure query");
+    assert_eq!(s.line_build_months(LineId(9_999)), None);
+
+    // A month on, the far line has a month left of its two, and the near one is in service.
+    s.begin_operating().unwrap();
+    run_ticks(&mut s, TICKS_PER_DAY);
+    let status = |line| {
+        s.line_views()
+            .into_iter()
+            .find(|l| l.id == line)
+            .unwrap()
+            .status
+    };
+    assert_eq!(
+        status(far_line),
+        LineStatus::UnderConstruction { months_left: 1 }
+    );
+    assert_eq!(status(near_line), LineStatus::InService);
+    assert_eq!(s.line_build_months(far_line), Some(2));
+    assert_eq!(s.line_build_months(near_line), Some(1));
+    // The start network's lines answer by the same rule.
+    for line in s.line_views() {
+        let months = s.line_build_months(line.id).expect("a known line");
+        assert!(months >= 1, "{line:?}");
+    }
+}
+
 #[test]
 fn line_quote_floors_a_short_line_at_one_month() {
     let mut s = session();

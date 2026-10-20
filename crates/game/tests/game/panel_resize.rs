@@ -351,6 +351,7 @@ fn the_map_never_moves_on_its_own_after_a_resize() {
                 vec![UiAction::Select(Selection::Cell(land))],
                 vec![UiAction::SetPlanningTab(PlanningTab::Forecast)],
                 vec![UiAction::SetPlanningTab(PlanningTab::Tariff)],
+                vec![UiAction::SetPlanningTab(PlanningTab::Construction)],
                 vec![UiAction::Select(Selection::None)],
             ] {
                 dispatch_in(&mut screen.app, actions.clone());

@@ -362,6 +362,36 @@ fn dispatch_writes_the_planning_state() {
     assert_eq!(app.world().resource::<UiState>().draft, None);
 }
 
+/// The Construction tab (spec §16.9) opens through the real `dispatch`, which hands
+/// `SetPlanningTab` to `UiState::apply`, and a new game goes back to Commitments.
+#[test]
+fn dispatch_opens_the_construction_tab() {
+    let logs = TempDir::new().unwrap();
+    let mut app = hud_app(&logs);
+    request(&mut app, "eastern_interconnection");
+    assert_eq!(
+        app.world().resource::<UiState>().tab,
+        PlanningTab::Commitments
+    );
+
+    dispatch_in(
+        &mut app,
+        vec![UiAction::SetPlanningTab(PlanningTab::Construction)],
+    );
+    assert_eq!(
+        app.world().resource::<UiState>().tab,
+        PlanningTab::Construction
+    );
+
+    app.world_mut().write_message(ReturnToMenu);
+    update_n(&mut app, 2);
+    request(&mut app, "eastern_interconnection");
+    assert_eq!(
+        app.world().resource::<UiState>().tab,
+        PlanningTab::Commitments
+    );
+}
+
 #[test]
 fn a_new_game_starts_on_the_commitments_tab() {
     let logs = TempDir::new().unwrap();

@@ -301,7 +301,9 @@ fn text_row(ctx: &egui::Context) -> f32 {
 /// A selected city's card shows in the same block (spec §16.8). Its tallest form, a connected
 /// city in an outage with [`MOST_CITY_STATS`](super::city_card::MOST_CITY_STATS) figures under
 /// its name and connection, needs well under this height; the real-pass test in
-/// `tests/game/city_card.rs` checks that every row of it lies inside the block.
+/// `tests/game/city_card.rs` checks that every row of it lies inside the block. So does a selected
+/// plant's construction card (spec §16.9): its name, status, capacity, months left, progress bar
+/// and in-service month, checked in `tests/game/construction.rs`.
 pub fn plant_details_height(ctx: &egui::Context) -> f32 {
     let spacing = ctx.global_style().spacing.clone();
     let rows = MOST_PLANT_STATS as f32;

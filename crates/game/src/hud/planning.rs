@@ -13,6 +13,8 @@
 //!   plants than fit. Warnings sit over the grid because *show hour* tints a column of it.
 //! - **Forecast**: the chart. Side by side with the grid there would be no room at 1024 px.
 //! - **Tariff**: the tariff and the projected rate review.
+//! - **Construction**: the plants and lines under construction, with their progress and the month
+//!   each enters service (spec §16.9). Its label counts them.
 //!
 //! *Start the day* is always in view in the tab row. It waits while a row has an edit that has not
 //! been applied, since the day would begin without it. When the forecast is short (spec §16.4) it
@@ -27,6 +29,9 @@ use super::action::{
     ActionSink, ButtonModel, Prompt, ToggleModel, UiAction, button, dispatch, toggle_button,
 };
 use super::commitment::{CommitmentModel, commitment_model, draw_commitment, has_unsaved_draft};
+use super::construction::{
+    ConstructionModel, construction_model, construction_tab_label, draw_construction,
+};
 use super::forecast_chart::{ForecastModel, draw_forecast_chart, forecast_model};
 use super::layout::{Edge, HudArea, OuterPanel};
 use super::planning_warnings::{WarningsModel, draw_warnings, warnings_model};
@@ -53,6 +58,7 @@ pub enum PlanningContent {
     },
     Forecast(Box<ForecastModel>),
     Tariff(TariffModel),
+    Construction(ConstructionModel),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -77,16 +83,20 @@ pub fn planning_model(
     if game.session().phase() != DayPhase::Planning {
         return None;
     }
-    let tab = |tab: PlanningTab, key: &str| ToggleModel {
-        button: ButtonModel::new(l10n.text(key), UiAction::SetPlanningTab(tab)),
+    let tab = |tab: PlanningTab, label: String| ToggleModel {
+        button: ButtonModel::new(label, UiAction::SetPlanningTab(tab)),
         on: ui.tab == tab,
     };
     let unsaved = has_unsaved_draft(game, ui);
     Some(PlanningModel {
         tabs: vec![
-            tab(PlanningTab::Commitments, "commitment-title"),
-            tab(PlanningTab::Forecast, "forecast-title"),
-            tab(PlanningTab::Tariff, "tariff-title"),
+            tab(PlanningTab::Commitments, l10n.text("commitment-title")),
+            tab(PlanningTab::Forecast, l10n.text("forecast-title")),
+            tab(PlanningTab::Tariff, l10n.text("tariff-title")),
+            tab(
+                PlanningTab::Construction,
+                construction_tab_label(game, l10n),
+            ),
         ],
         begin: ButtonModel::new(l10n.text("start-operating"), start_the_day(game))
             .enabled_if(!unsaved),
@@ -100,6 +110,9 @@ pub fn planning_model(
                 PlanningContent::Forecast(Box::new(forecast_model(game, l10n, ui)))
             }
             PlanningTab::Tariff => PlanningContent::Tariff(tariff_model(game, l10n)),
+            PlanningTab::Construction => {
+                PlanningContent::Construction(construction_model(game, l10n))
+            }
         },
     })
 }
@@ -145,6 +158,7 @@ pub fn draw_planning(
         }
         PlanningContent::Forecast(chart) => actions.extend(draw_forecast_chart(ui, chart)),
         PlanningContent::Tariff(tariff) => actions.extend(draw_tariff(ui, tariff)),
+        PlanningContent::Construction(construction) => draw_construction(ui, construction),
     }
     actions
 }
@@ -177,7 +191,8 @@ mod tests {
     use crate::hud::action::Prompt;
     use crate::hud::planning_warnings::WarningKind;
     use crate::hud::test_support::{
-        eastern_game, edited_western_game, empty_start, flat_load, shipped_game, shipped_l10n,
+        eastern_game, edited_western_game, empty_start, flat_load, order_plant, order_short_line,
+        shipped_game, shipped_l10n,
     };
 
     fn build(game: &Game, ui: &UiState) -> PlanningModel {
@@ -201,7 +216,8 @@ mod tests {
             [
                 ("Commitments", true),
                 ("Forecast", false),
-                ("Tariff", false)
+                ("Tariff", false),
+                ("Construction", false),
             ]
         );
         assert!(matches!(model.content, PlanningContent::Commitments { .. }));
@@ -230,6 +246,7 @@ mod tests {
                 UiAction::SetPlanningTab(PlanningTab::Commitments),
                 UiAction::SetPlanningTab(PlanningTab::Forecast),
                 UiAction::SetPlanningTab(PlanningTab::Tariff),
+                UiAction::SetPlanningTab(PlanningTab::Construction),
             ]
         );
 
@@ -243,6 +260,54 @@ mod tests {
             build(&game, &ui).content,
             PlanningContent::Tariff(_)
         ));
+
+        ui.apply(&UiAction::SetPlanningTab(PlanningTab::Construction));
+        let construction = build(&game, &ui);
+        assert!(matches!(
+            construction.content,
+            PlanningContent::Construction(_)
+        ));
+        assert!(construction.tabs[3].on && !construction.tabs[2].on);
+    }
+
+    /// The Construction tab's label counts the projects; with none, the tab says so in one line
+    /// (spec §16.9).
+    #[test]
+    fn the_construction_tab_label_counts_projects() {
+        let l10n = shipped_l10n();
+        let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let ui = UiState {
+            tab: PlanningTab::Construction,
+            ..UiState::default()
+        };
+        let label = |model: &PlanningModel| model.tabs[3].button.label.clone();
+
+        let empty = build(&game, &ui);
+        assert_eq!(label(&empty), "Construction");
+        assert_eq!(
+            empty.content,
+            PlanningContent::Construction(ConstructionModel {
+                rows: Vec::new(),
+                empty: Some("Nothing under construction.".to_owned()),
+            })
+        );
+
+        order_plant(&mut game, PlantKind::Peaker, 0);
+        order_short_line(&mut game);
+        let two = build(&game, &ui);
+        assert_eq!(label(&two), "Construction (2)");
+        let PlanningContent::Construction(model) = &two.content else {
+            panic!("the Construction tab is open");
+        };
+        assert_eq!(model, &construction_model(&game, &l10n));
+        assert_eq!(model.rows.len(), 2);
+        assert_eq!(model.empty, None);
+        // The label counts on every tab, so the player sees it without opening this one.
+        assert_eq!(
+            label(&build(&game, &UiState::default())),
+            "Construction (2)"
+        );
+        assert_eq!(l10n.problems(), vec![]);
     }
 
     #[test]
@@ -308,6 +373,7 @@ mod tests {
             PlanningTab::Commitments,
             PlanningTab::Forecast,
             PlanningTab::Tariff,
+            PlanningTab::Construction,
         ] {
             let ui = UiState {
                 tab,

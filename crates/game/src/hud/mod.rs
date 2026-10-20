@@ -14,6 +14,7 @@ mod action;
 mod build;
 mod city_card;
 mod commitment;
+mod construction;
 mod forecast_chart;
 mod frequency;
 mod game_over;
@@ -56,6 +57,11 @@ pub use self::commitment::{
     CELL_WIDTH, CommitmentModel, CommitmentRow, HourCell, HourHeader, KindGroup, NAME_WIDTH,
     ROW_HEIGHT, TargetModel, commitment_model, draw_commitment, has_unsaved_draft,
 };
+pub use self::construction::{
+    ConstructionCardModel, ConstructionModel, ConstructionRow, Project, construction_card_model,
+    construction_model, construction_tab_label, draw_construction, draw_construction_card,
+    in_service_month,
+};
 pub use self::forecast_chart::{
     ForecastModel, StackModel, draw_forecast_chart, forecast_model, stacked_committed_capacity,
 };
@@ -82,10 +88,10 @@ pub use self::layout::{
     panel_max,
 };
 pub use self::map::{
-    CityMarker, GLYPH_MIN_FONT, LegendEntry, LegendSwatch, LineMarker, MapCache, MapLayer,
-    MapLayout, MapModel, MapObjects, PlantMarker, Rgb, SUITABLE, TerrainKey, UNSUITABLE, WATER,
-    cell_color, city_radius, draw_map, glyph_font_size, hit_test, kind_color, map_model, pick,
-    plant_half_size, terrain_image,
+    CityMarker, GLYPH_MIN_FONT, LabelAnchor, LegendEntry, LegendSwatch, LineMarker, MapCache,
+    MapLayer, MapLayout, MapModel, MapObjects, MonthsLeftLabel, PlacedLabel, PlantMarker, Rgb,
+    SUITABLE, TerrainKey, UNSUITABLE, WATER, cell_color, city_radius, draw_map, glyph_font_size,
+    hit_test, kind_color, map_model, months_left_labels, pick, plant_half_size, terrain_image,
 };
 pub use self::menu::{
     BootErrorModel, MainMenuModel, MenuForm, RegionChoice, RegionListings, RegionProblem,
@@ -360,7 +366,9 @@ pub(crate) mod test_support {
     use std::path::{Path, PathBuf};
 
     use application::{Command, CommandLogError, CommandLogSink, Game, LogHeader, LogRecord};
-    use domain::ids::{PlantId, RegionId};
+    use domain::events::DomainEvent;
+    use domain::ids::{CellCoord, LineId, NodeId, PlantId, RegionId};
+    use domain::region::PlantKind;
     use domain::session::GameSettings;
     use infrastructure::region::RonRegionCatalog;
 
@@ -452,6 +460,71 @@ pub(crate) mod test_support {
             game.execute(Command::SetAutoFollow { plant, on: false })
                 .expect("turn AGC off");
         }
+    }
+
+    /// Orders a plant of `kind` (Planning only) on the `nth` cell, in row order, where the region
+    /// allows one and no plant stands yet. Returns the new plant.
+    pub fn order_plant(game: &mut Game, kind: PlantKind, nth: usize) -> PlantId {
+        let session = game.session();
+        let region = session.region();
+        let taken: Vec<CellCoord> = session.plant_views().iter().map(|p| p.cell).collect();
+        let (w, h) = (region.terrain().width(), region.terrain().height());
+        let cell = (0..h)
+            .flat_map(|y| (0..w).map(move |x| CellCoord { x, y }))
+            .filter(|at| region.site_check(kind, *at).is_ok() && !taken.contains(at))
+            .nth(nth)
+            .unwrap_or_else(|| panic!("a site for {kind:?}"));
+        let events = game
+            .execute(Command::BuildPlant { kind, cell })
+            .expect("a plant can be ordered in Planning");
+        events
+            .iter()
+            .find_map(|event| match event {
+                DomainEvent::PlantConstructionStarted { plant, .. } => Some(*plant),
+                _ => None,
+            })
+            .expect("the plant's construction starts")
+    }
+
+    /// Orders the quickest line from a city the start leaves unconnected (Planning only).
+    /// Returns the line and its build time in months.
+    pub fn order_short_line(game: &mut Game) -> (LineId, u32) {
+        order_line(game, 1)
+    }
+
+    /// Orders the quickest line that takes at least `months` to build, from a city the start
+    /// leaves unconnected (Planning only). Returns the line and its build time in months.
+    pub fn order_line(game: &mut Game, months: u32) -> (LineId, u32) {
+        let session = game.session();
+        let nodes: Vec<NodeId> = std::iter::once(session.substation())
+            .chain(session.city_views().iter().map(|c| c.node))
+            .chain(session.plant_views().iter().map(|p| p.node))
+            .collect();
+        let (took, from, to) = session
+            .city_views()
+            .iter()
+            .filter(|city| !city.connected)
+            .flat_map(|city| nodes.iter().map(move |to| (city.node, *to)))
+            .filter_map(|(from, to)| {
+                session
+                    .line_quote(from, to)
+                    .ok()
+                    .map(|quote| (quote.months, from, to))
+            })
+            .filter(|(took, _, _)| *took >= months)
+            .min()
+            .expect("an unconnected city can be reached");
+        let events = game
+            .execute(Command::BuildLine { from, to })
+            .expect("a line can be ordered in Planning");
+        let line = events
+            .iter()
+            .find_map(|event| match event {
+                DomainEvent::LineConstructionStarted { line } => Some(*line),
+                _ => None,
+            })
+            .expect("the line's construction starts");
+        (line, took)
     }
 
     /// A command log that takes the header and then fails every command, like a full disk.

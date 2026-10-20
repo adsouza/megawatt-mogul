@@ -132,8 +132,15 @@ pub struct PlantMarker {
     pub id: PlantId,
     pub kind: PlantKind,
     pub cell: CellCoord,
-    /// False while under construction: drawn faded.
-    pub built: bool,
+    /// The months left while under construction, `None` once built. Drawn faded, and labelled
+    /// with its months left (spec §16.9), until then.
+    pub months_left: Option<u32>,
+}
+
+impl PlantMarker {
+    pub fn built(&self) -> bool {
+        self.months_left.is_none()
+    }
 }
 
 /// A city on the map.
@@ -150,8 +157,15 @@ pub struct CityMarker {
 pub struct LineMarker {
     pub from: CellCoord,
     pub to: CellCoord,
-    /// False while under construction: drawn dashed.
-    pub in_service: bool,
+    /// The months left while under construction, `None` in service. Drawn dashed, and labelled
+    /// with its months left, until then.
+    pub months_left: Option<u32>,
+}
+
+impl LineMarker {
+    pub fn in_service(&self) -> bool {
+        self.months_left.is_none()
+    }
 }
 
 /// What stands on the map, as drawn and as picked: a few dozen items, in id order.
@@ -180,7 +194,10 @@ impl MapObjects {
                     id: plant.id,
                     kind: plant.kind,
                     cell: plant.cell,
-                    built: !matches!(plant.status, PlantStatus::UnderConstruction { .. }),
+                    months_left: match plant.status {
+                        PlantStatus::UnderConstruction { months_left } => Some(months_left),
+                        _ => None,
+                    },
                 }
             })
             .collect();
@@ -203,7 +220,10 @@ impl MapObjects {
                 Some(LineMarker {
                     from: *nodes.get(&line.from)?,
                     to: *nodes.get(&line.to)?,
-                    in_service: line.status == LineStatus::InService,
+                    months_left: match line.status {
+                        LineStatus::UnderConstruction { months_left } => Some(months_left),
+                        LineStatus::InService => None,
+                    },
                 })
             })
             .collect();
@@ -334,6 +354,14 @@ pub fn kind_color(kind: PlantKind) -> Rgb {
 /// draws the same.
 const INK: Color32 = Color32::from_rgb(20, 22, 28);
 const CITY: Color32 = Color32::from_rgb(255, 236, 160);
+/// A line in service, and one under construction (drawn dashed).
+const IN_SERVICE_LINE: Color32 = Color32::from_rgb(255, 230, 120);
+const DASHED_LINE: Color32 = Color32::from_rgb(200, 200, 210);
+/// The legend's under-construction square: no kind in particular, faded as the map fades it.
+const UNBUILT: Color32 = Color32::from_rgb(200, 200, 210);
+/// A months-left label's text, and the backing that keeps it legible on any terrain.
+const LABEL_TEXT: Color32 = Color32::WHITE;
+const LABEL_BACKING: Color32 = Color32::from_rgba_premultiplied(0, 0, 0, 170);
 
 /// The smallest letter worth drawing, in points. Under it the square is drawn plain: kind reads by
 /// colour (see the legend), and a smaller letter would only be a smudge.
@@ -355,6 +383,92 @@ fn glyph_key(kind: PlantKind) -> &'static str {
         PlantKind::Solar => "plant-glyph-solar",
         PlantKind::Hydro => "plant-glyph-hydro",
     }
+}
+
+/// How faded a plant under construction is drawn, and its legend swatch.
+const PLANT_FADE: f32 = 0.45;
+
+/// What a months-left label is drawn beside.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LabelAnchor {
+    /// A plant under construction: right of its faded square.
+    Plant(CellCoord),
+    /// A line under construction: above its dashed line's midpoint.
+    Line { from: CellCoord, to: CellCoord },
+}
+
+/// A project under construction's months left, as the map labels it: `3 mo` (spec §16.9).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MonthsLeftLabel {
+    pub anchor: LabelAnchor,
+    pub text: String,
+}
+
+/// A months-left label placed on the screen: its text drawn at `pos`, aligned by `align`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlacedLabel<'a> {
+    pub pos: Pos2,
+    pub align: egui::Align2,
+    /// The font size: the plant letters' size, so at least [`GLYPH_MIN_FONT`].
+    pub size: f32,
+    pub text: &'a str,
+}
+
+/// Where the months-left labels go on `layout`. Like the plant letters, none is drawn under
+/// [`GLYPH_MIN_FONT`]. They are paint only: a click goes to what is drawn under them ([`pick`]).
+pub fn months_left_labels<'a>(
+    layout: &MapLayout,
+    labels: &'a [MonthsLeftLabel],
+) -> Vec<PlacedLabel<'a>> {
+    let Some(size) = glyph_font_size(layout) else {
+        return Vec::new();
+    };
+    let gap = LABEL_GAP;
+    labels
+        .iter()
+        .map(|label| {
+            let (pos, align) = match label.anchor {
+                LabelAnchor::Plant(cell) => (
+                    layout.cell_center(cell) + vec2(plant_half_size(layout) + gap, 0.0),
+                    egui::Align2::LEFT_CENTER,
+                ),
+                LabelAnchor::Line { from, to } => (
+                    layout.cell_center(from).lerp(layout.cell_center(to), 0.5) - vec2(0.0, gap),
+                    egui::Align2::CENTER_BOTTOM,
+                ),
+            };
+            PlacedLabel {
+                pos,
+                align,
+                size,
+                text: label.text.as_str(),
+            }
+        })
+        .collect()
+}
+
+/// The space between a months-left label and its mark, in points.
+const LABEL_GAP: f32 = 2.0;
+
+/// The months-left labels of `objects`: each plant's, then each line's, in id order.
+fn months_left_of(objects: &MapObjects, l10n: &Localizer) -> Vec<MonthsLeftLabel> {
+    let text = |months: u32| l10n.args("map-months-left", &[("months", months.into())]);
+    let plants = objects.plants.iter().filter_map(|plant| {
+        plant.months_left.map(|months| MonthsLeftLabel {
+            anchor: LabelAnchor::Plant(plant.cell),
+            text: text(months),
+        })
+    });
+    let lines = objects.lines.iter().filter_map(|line| {
+        line.months_left.map(|months| MonthsLeftLabel {
+            anchor: LabelAnchor::Line {
+                from: line.from,
+                to: line.to,
+            },
+            text: text(months),
+        })
+    });
+    plants.chain(lines).collect()
 }
 
 // ---- the terrain texture ---------------------------------------------------------------------
@@ -445,6 +559,10 @@ pub enum LegendSwatch {
     ConnectedCity,
     UnconnectedCity,
     Substation,
+    /// A faded plant square.
+    PlantUnderConstruction,
+    /// A dashed line.
+    LineUnderConstruction,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -453,7 +571,7 @@ pub struct LegendEntry {
     pub label: String,
 }
 
-/// The six kinds of plant, then the city marks and the substation.
+/// The six kinds of plant, then the city marks, the substation and the under-construction marks.
 fn legend_entries(l10n: &Localizer) -> Vec<LegendEntry> {
     let entry = |swatch, label: String| LegendEntry { swatch, label };
     PlantKind::ALL
@@ -469,6 +587,14 @@ fn legend_entries(l10n: &Localizer) -> Vec<LegendEntry> {
                 l10n.text("legend-city-unconnected"),
             ),
             entry(LegendSwatch::Substation, l10n.text("name-substation")),
+            entry(
+                LegendSwatch::PlantUnderConstruction,
+                l10n.text("legend-plant-under-construction"),
+            ),
+            entry(
+                LegendSwatch::LineUnderConstruction,
+                l10n.text("legend-line-under-construction"),
+            ),
         ])
         .collect()
 }
@@ -487,6 +613,8 @@ pub struct MapModel {
     pub objects: MapObjects,
     /// The letter each kind of plant is drawn with, when the map is big enough to read it.
     pub glyphs: Vec<(PlantKind, String)>,
+    /// The months left of each plant and line under construction, labelled beside it.
+    pub months_left: Vec<MonthsLeftLabel>,
     /// What each kind of mark on the map is. Always shown, in a corner of the map.
     pub legend: Vec<LegendEntry>,
     /// The legend's accessible name.
@@ -518,6 +646,7 @@ fn layer_label(layer: MapLayer, l10n: &Localizer) -> String {
 }
 
 pub fn map_model(game: &Game, l10n: &Localizer, layer: MapLayer, selection: Selection) -> MapModel {
+    let objects = MapObjects::of(game);
     MapModel {
         label: l10n.text("map-label"),
         layers: MapLayer::all()
@@ -528,7 +657,8 @@ pub fn map_model(game: &Game, l10n: &Localizer, layer: MapLayer, selection: Sele
             .collect(),
         layer,
         region: Arc::clone(game.session().region()),
-        objects: MapObjects::of(game),
+        months_left: months_left_of(&objects, l10n),
+        objects,
         glyphs: PlantKind::ALL
             .into_iter()
             .map(|kind| (kind, l10n.text(glyph_key(kind))))
@@ -623,6 +753,23 @@ fn paint_swatch(ui: &mut egui::Ui, swatch: LegendSwatch) {
         LegendSwatch::UnconnectedCity => {
             painter.circle(centre, 5.0, Color32::TRANSPARENT, Stroke::new(1.5, CITY));
         }
+        LegendSwatch::PlantUnderConstruction => {
+            painter.rect(
+                rect.shrink(1.0),
+                egui::CornerRadius::same(2),
+                UNBUILT.gamma_multiply(PLANT_FADE),
+                Stroke::new(1.0, INK.gamma_multiply(PLANT_FADE)),
+                StrokeKind::Inside,
+            );
+        }
+        LegendSwatch::LineUnderConstruction => {
+            painter.extend(egui::Shape::dashed_line(
+                &[rect.left_center(), rect.right_center()],
+                Stroke::new(1.5, DASHED_LINE),
+                3.0,
+                2.0,
+            ));
+        }
         LegendSwatch::Substation => {
             painter.add(egui::Shape::convex_polygon(
                 vec![
@@ -638,19 +785,20 @@ fn paint_swatch(ui: &mut egui::Ui, swatch: LegendSwatch) {
     }
 }
 
-/// Lines, then the substation, cities and plants on top, in the order a click prefers them.
+/// Lines, then the substation, cities and plants on top, in the order a click prefers them, then
+/// the months-left labels.
 fn paint_objects(painter: &egui::Painter, layout: &MapLayout, model: &MapModel) {
     let objects = &model.objects;
     let half = plant_half_size(layout);
     let at = |cell| layout.cell_center(cell);
     for line in &objects.lines {
         let ends = [at(line.from), at(line.to)];
-        if line.in_service {
-            painter.line_segment(ends, Stroke::new(2.0, Color32::from_rgb(255, 230, 120)));
+        if line.in_service() {
+            painter.line_segment(ends, Stroke::new(2.0, IN_SERVICE_LINE));
         } else {
             painter.extend(egui::Shape::dashed_line(
                 &ends,
-                Stroke::new(1.5, Color32::from_rgb(200, 200, 210)),
+                Stroke::new(1.5, DASHED_LINE),
                 5.0,
                 4.0,
             ));
@@ -684,7 +832,7 @@ fn paint_objects(painter: &egui::Painter, layout: &MapLayout, model: &MapModel) 
     }
     for plant in &objects.plants {
         let fill = color32(kind_color(plant.kind));
-        let fade = if plant.built { 1.0 } else { 0.45 };
+        let fade = if plant.built() { 1.0 } else { PLANT_FADE };
         let centre = at(plant.cell);
         painter.rect(
             Rect::from_center_size(centre, vec2(half * 2.0, half * 2.0)),
@@ -703,7 +851,23 @@ fn paint_objects(painter: &egui::Painter, layout: &MapLayout, model: &MapModel) 
             );
         }
     }
+    paint_months_left(painter, layout, model);
     paint_selection(painter, layout, model, half);
+}
+
+/// Each project's months left beside it, on a dark backing. Paint only, so a click passes
+/// through to the mark or cell under it.
+fn paint_months_left(painter: &egui::Painter, layout: &MapLayout, model: &MapModel) {
+    for label in months_left_labels(layout, &model.months_left) {
+        let galley = painter.layout_no_wrap(
+            label.text.to_owned(),
+            egui::FontId::proportional(label.size),
+            LABEL_TEXT,
+        );
+        let rect = label.align.anchor_size(label.pos, galley.size());
+        painter.rect_filled(rect.expand(1.0), egui::CornerRadius::same(2), LABEL_BACKING);
+        painter.galley(rect.min, galley, LABEL_TEXT);
+    }
 }
 
 /// A white ring (or outline, for a cell) around what is selected.
@@ -764,7 +928,9 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
-    use crate::hud::test_support::{eastern_game, shipped_game, shipped_l10n};
+    use crate::hud::test_support::{
+        eastern_game, order_plant, order_short_line, shipped_game, shipped_l10n,
+    };
 
     fn area(x: f32, y: f32, w: f32, h: f32) -> Rect {
         Rect::from_min_size(pos2(x, y), vec2(w, h))
@@ -847,7 +1013,7 @@ mod tests {
                 id: PlantId(7),
                 kind: PlantKind::Coal,
                 cell: stacked,
-                built: true,
+                months_left: None,
             }],
             cities: vec![CityMarker {
                 id: CityId(3),
@@ -879,7 +1045,7 @@ mod tests {
             id: PlantId(id),
             kind: PlantKind::Coal,
             cell: at,
-            built: true,
+            months_left: None,
         }
     }
 
@@ -1107,7 +1273,7 @@ mod tests {
 
         assert_eq!(objects.plants.len(), session.plant_views().len());
         assert!(
-            objects.plants.iter().all(|p| p.built),
+            objects.plants.iter().all(PlantMarker::built),
             "the start fleet is built"
         );
         assert_eq!(objects.cities.len(), session.city_views().len());
@@ -1118,7 +1284,7 @@ mod tests {
         assert_eq!(objects.substation, session.region().start().substation);
         let lines: Vec<LineView> = session.line_views();
         assert_eq!(objects.lines.len(), lines.len());
-        assert!(objects.lines.iter().all(|l| l.in_service));
+        assert!(objects.lines.iter().all(LineMarker::in_service));
         assert_eq!(
             objects.nodes.get(&session.substation()),
             Some(&objects.substation)
@@ -1402,13 +1568,145 @@ mod tests {
             [
                 LegendSwatch::ConnectedCity,
                 LegendSwatch::UnconnectedCity,
-                LegendSwatch::Substation
+                LegendSwatch::Substation,
+                LegendSwatch::PlantUnderConstruction,
+                LegendSwatch::LineUnderConstruction,
             ]
         );
         let labels: Vec<&str> = model.legend[6..].iter().map(|e| e.label.as_str()).collect();
-        assert_eq!(labels, ["Connected city", "Unconnected city", "Substation"]);
+        assert_eq!(
+            labels,
+            [
+                "Connected city",
+                "Unconnected city",
+                "Substation",
+                "Plant under construction",
+                "Line under construction",
+            ]
+        );
         assert_eq!(model.legend_label, "Map legend");
         assert_eq!(l10n.problems(), vec![]);
+    }
+
+    /// A game with a peaker and a short line ordered: both under construction.
+    fn building() -> (Game, PlantId, u32) {
+        let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let plant = order_plant(&mut game, PlantKind::Peaker, 0);
+        let (_, months) = order_short_line(&mut game);
+        (game, plant, months)
+    }
+
+    #[test]
+    fn projects_under_construction_carry_their_months_left() {
+        let l10n = shipped_l10n();
+        let (game, plant, line_months) = building();
+        let session = game.session();
+        let peaker = session.region().spec(PlantKind::Peaker).build_months;
+
+        let model = map_model(&game, &l10n, MapLayer::Terrain, Selection::None);
+
+        let marker = model.objects.plants.iter().find(|p| p.id == plant).unwrap();
+        assert_eq!(marker.months_left, Some(peaker));
+        assert!(!marker.built());
+        let building: Vec<&LineMarker> = model
+            .objects
+            .lines
+            .iter()
+            .filter(|l| !l.in_service())
+            .collect();
+        assert_eq!(building.len(), 1);
+        assert_eq!(building[0].months_left, Some(line_months));
+        assert_eq!(
+            model.months_left,
+            [
+                MonthsLeftLabel {
+                    anchor: LabelAnchor::Plant(marker.cell),
+                    text: format!("{peaker} mo"),
+                },
+                MonthsLeftLabel {
+                    anchor: LabelAnchor::Line {
+                        from: building[0].from,
+                        to: building[0].to,
+                    },
+                    text: format!("{line_months} mo"),
+                },
+            ]
+        );
+        // The start fleet and network are built: no labels.
+        let fresh = eastern_game(Box::new(InMemoryCommandLog::default()));
+        assert_eq!(
+            map_model(&fresh, &l10n, MapLayer::Terrain, Selection::None).months_left,
+            []
+        );
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    #[test]
+    fn the_months_left_labels_are_drawn_only_at_9_pt_or_more() {
+        let l10n = shipped_l10n();
+        let (game, _, _) = building();
+        let model = map_model(&game, &l10n, MapLayer::Terrain, Selection::None);
+        let layout_at =
+            |cell: f32| MapLayout::fit(area(0.0, 0.0, cell * 100.0, cell * 60.0), 100, 60);
+
+        // At the smallest window's map, about 5 pt cells, none.
+        assert_eq!(months_left_labels(&layout_at(5.0), &model.months_left), []);
+        for step in 4..160 {
+            let cell = step as f32 * 0.25;
+            let layout = layout_at(cell);
+            let placed = months_left_labels(&layout, &model.months_left);
+            match glyph_font_size(&layout) {
+                None => assert_eq!(placed, [], "{cell} pt cells"),
+                Some(size) => {
+                    assert_eq!(placed.len(), 2, "{cell} pt cells");
+                    for label in &placed {
+                        assert!(label.size >= GLYPH_MIN_FONT, "{cell} pt cells");
+                        assert_eq!(label.size, size);
+                    }
+                }
+            }
+        }
+        // Beside the plant's square, and above the line's midpoint.
+        let layout = layout_at(20.0);
+        let placed = months_left_labels(&layout, &model.months_left);
+        let LabelAnchor::Plant(at) = model.months_left[0].anchor else {
+            panic!("the plant's label comes first");
+        };
+        let centre = layout.cell_center(at);
+        assert_eq!(placed[0].text, model.months_left[0].text);
+        assert_eq!(placed[0].align, egui::Align2::LEFT_CENTER);
+        assert!(placed[0].pos.x > centre.x + plant_half_size(&layout));
+        assert_eq!(placed[0].pos.y, centre.y);
+        let LabelAnchor::Line { from, to } = model.months_left[1].anchor else {
+            panic!("then the line's");
+        };
+        let middle = layout.cell_center(from).lerp(layout.cell_center(to), 0.5);
+        assert_eq!(placed[1].align, egui::Align2::CENTER_BOTTOM);
+        assert_eq!(placed[1].pos.x, middle.x);
+        assert!(placed[1].pos.y < middle.y);
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    /// A label is paint only: a click on it goes to what is drawn there, not to its plant.
+    #[test]
+    fn a_months_left_label_takes_no_click() {
+        let l10n = shipped_l10n();
+        let (game, plant, _) = building();
+        let model = map_model(&game, &l10n, MapLayer::Terrain, Selection::None);
+        let layout = MapLayout::fit(area(0.0, 0.0, 2000.0, 1200.0), 100, 60);
+        let placed = months_left_labels(&layout, &model.months_left);
+        assert_eq!(placed.len(), 2);
+        let on_text = placed[0].pos + vec2(4.0, 0.0);
+        let hit = pick(&layout, on_text, &model.objects);
+        assert_ne!(hit, Selection::Plant(plant));
+        let covered = model
+            .objects
+            .plants
+            .iter()
+            .any(|p| covers(&layout, p, on_text));
+        if !covered {
+            assert_eq!(hit, Selection::Cell(layout.cell_at(on_text).unwrap()));
+        }
     }
 
     #[test]

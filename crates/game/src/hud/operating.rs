@@ -5,8 +5,8 @@
 //!   a tab, *Supply* (the supply chart) or *Hydro* (the hydro schedule). Beside it is a column of
 //!   fixed width ([`OPERATING_LOG_WIDTH`]) holding the ramp warnings and the incident ticker.
 //! - **The side panel** on the right, opening at [`OPERATING_SIDE_WIDTH`]: the frequency
-//!   gauge, the selected plant's details or city's card (or a placeholder of the same height),
-//!   and the plant list, which fills the rest.
+//!   gauge, the selected plant's details, city's card or construction card (or a placeholder of
+//!   the same height), and the plant list, which fills the rest.
 //!
 //! The speed controls are a bar of their own under the top bar (`speed.rs`). The map takes what is
 //! left.
@@ -18,6 +18,7 @@ use domain::session::DayPhase;
 
 use super::action::{ActionSink, ButtonModel, ToggleModel, UiAction, dispatch, toggle_button};
 use super::city_card::{CityCardModel, city_card_model, draw_city_card};
+use super::construction::{ConstructionCardModel, construction_card_model, draw_construction_card};
 use super::frequency::{FrequencyModel, draw_frequency, frequency_model};
 use super::hydro_panel::{HydroModel, draw_hydro, hydro_model};
 use super::incidents::{IncidentsModel, draw_incidents, incidents_model};
@@ -151,6 +152,8 @@ pub enum SelectedObject {
     Plant(PlantPanelModel),
     /// The selected city's card (spec §16.8).
     City(CityCardModel),
+    /// The card of a selected plant under construction (spec §16.9).
+    Construction(ConstructionCardModel),
 }
 
 impl SelectedObject {
@@ -159,6 +162,7 @@ impl SelectedObject {
         match self {
             Self::Plant(plant) => plant.name(),
             Self::City(city) => &city.name,
+            Self::Construction(card) => &card.name,
         }
     }
 }
@@ -184,6 +188,10 @@ pub fn operating_side_model(
         plants: plant_list_model(game, l10n, selection),
         selected: match selection {
             Selection::City(city) => city_card_model(game, l10n, city).map(SelectedObject::City),
+            // `None` for a built plant, which shows its details.
+            Selection::Plant(plant) => {
+                construction_card_model(game, l10n, plant).map(SelectedObject::Construction)
+            }
             _ => None,
         }
         .unwrap_or_else(|| SelectedObject::Plant(plant_panel_model(game, l10n, selection))),
@@ -209,9 +217,9 @@ pub fn operating_side_min_height(ctx: &egui::Context) -> f32 {
         + frame
 }
 
-/// From the top: the gauge, then the selected plant's details or city's card in a block of fixed
-/// height (the same with nothing selected, so the list never moves), then the plant list, which
-/// takes all the height left.
+/// From the top: the gauge, then the selected plant's details, city's card or construction card
+/// in a block of fixed height (the same with nothing selected, so the list never moves), then
+/// the plant list, which takes all the height left.
 pub fn draw_operating_side(
     ui: &mut egui::Ui,
     model: &OperatingSideModel,
@@ -236,6 +244,12 @@ pub fn draw_operating_side(
                     .id_salt("operating_city_card")
                     .auto_shrink([false, false])
                     .show(ui, |ui| draw_city_card(ui, city));
+            }
+            SelectedObject::Construction(card) => {
+                egui::ScrollArea::vertical()
+                    .id_salt("operating_construction_card")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| draw_construction_card(ui, card));
             }
         }
     });
@@ -289,7 +303,7 @@ mod tests {
     use application::{Command, InMemoryCommandLog};
 
     use super::*;
-    use crate::hud::test_support::{eastern_game, shipped_l10n};
+    use crate::hud::test_support::{eastern_game, order_plant, shipped_l10n};
 
     #[test]
     fn the_panels_are_operating_only() {
@@ -333,6 +347,30 @@ mod tests {
                 "{selection:?}"
             );
         }
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    /// A plant under construction shows its construction card in the block; a built plant keeps
+    /// its details (spec §16.9).
+    #[test]
+    fn a_selected_plant_under_construction_shows_its_card() {
+        let l10n = shipped_l10n();
+        let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let built = game.session().plant_views()[0].id;
+        let plant = order_plant(&mut game, domain::region::PlantKind::Peaker, 0);
+        game.execute(Command::BeginOperating).unwrap();
+
+        let side = |selection| operating_side_model(&game, &l10n, selection).unwrap();
+        let card = construction_card_model(&game, &l10n, plant).expect("a card");
+        assert_eq!(side(Selection::Plant(plant)).selected.name(), card.name);
+        assert_eq!(
+            side(Selection::Plant(plant)).selected,
+            SelectedObject::Construction(card)
+        );
+        assert_eq!(
+            side(Selection::Plant(built)).selected,
+            SelectedObject::Plant(plant_panel_model(&game, &l10n, Selection::Plant(built)))
+        );
         assert_eq!(l10n.problems(), vec![]);
     }
 

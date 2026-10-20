@@ -93,6 +93,10 @@ map-layer-suitability = Suitability: { $kind }
 legend-label = Map legend
 legend-city-connected = Connected city
 legend-city-unconnected = Unconnected city
+legend-plant-under-construction = Plant under construction
+legend-line-under-construction = Line under construction
+# Beside a plant or line under construction on the map: its months left, kept short.
+map-months-left = { $months } mo
 # One letter for each kind of plant on the map.
 plant-glyph-nuclear = N
 plant-glyph-coal = C
@@ -189,6 +193,18 @@ start-operating = Start the day
 shortfall-start-question = The forecast is short by { $amount } at { $time }. Expect rotating outages if you start the day now.
 shortfall-start-anyway = Start anyway
 shortfall-start-keep-planning = Keep planning
+# The Construction tab (spec §16.9), and the card of a selected plant under construction.
+construction-title = Construction
+construction-title-count = Construction ({ $count })
+construction-empty = Nothing under construction.
+construction-months-left = { $total ->
+    [one] { $left } of 1 month left
+   *[other] { $left } of { $total } months left
+}
+construction-in-service = In service from { $month }
+# A line under construction on the tab: its name and the two ends it joins.
+construction-line-name = { $line }: { $from } to { $to }
+construction-card-status = Under construction
 
 ## Operating
 
