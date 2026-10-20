@@ -83,6 +83,28 @@ impl EguiPass {
         self.run_with(app, width, height, vec![button(false)]);
     }
 
+    /// Drags with the primary button from `from` to `to`: a pass that presses at `from`, one per
+    /// step of the way (halfway, then `to`), and one that releases at `to`. Like
+    /// [`Self::click_at`], run it on a settled screen and don't settle around it.
+    pub fn drag(&self, app: &mut App, width: f32, height: f32, from: egui::Pos2, to: egui::Pos2) {
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        self.run_with(
+            app,
+            width,
+            height,
+            vec![egui::Event::PointerMoved(from), button(from, true)],
+        );
+        for at in [from.lerp(to, 0.5), to] {
+            self.run_with(app, width, height, vec![egui::Event::PointerMoved(at)]);
+        }
+        self.run_with(app, width, height, vec![button(to, false)]);
+    }
+
     /// Runs the pass twice, so sizes egui takes from the previous pass have settled.
     pub fn settled(&self, app: &mut App, width: f32, height: f32) -> Vec<Widget> {
         self.run(app, width, height);

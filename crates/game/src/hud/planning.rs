@@ -4,9 +4,10 @@
 //! # Layout
 //!
 //! The window is at least 1024×640, and the commitment grid is the primary planning tool, so it
-//! gets the full width in a bottom panel of fixed height ([`PLANNING_PANEL_HEIGHT`]). The
-//! inspector and the build menu keep their fixed side columns above it, and the map takes what is
-//! left, so nothing here ever moves the map between frames. The panel's content is a tab:
+//! gets the full width in a bottom panel that opens at [`PLANNING_PANEL_HEIGHT`] and that the
+//! player can drag taller (spec §16.7). The inspector and the build menu keep their side columns
+//! above it, and the map takes what is left, so only a drag ever moves the map. The panel's
+//! content is a tab:
 //!
 //! - **Commitments**: the planning warnings, then the grid, which scrolls when the fleet has more
 //!   plants than fit. Warnings sit over the grid because *show hour* tints a column of it.
@@ -27,7 +28,7 @@ use super::action::{
 };
 use super::commitment::{CommitmentModel, commitment_model, draw_commitment, has_unsaved_draft};
 use super::forecast_chart::{ForecastModel, draw_forecast_chart, forecast_model};
-use super::layout::HudArea;
+use super::layout::{Edge, HudArea, OuterPanel};
 use super::planning_warnings::{WarningsModel, draw_warnings, warnings_model};
 use super::tariff::{TariffModel, draw_tariff, tariff_model};
 use super::ui_state::{CommitmentForm, PlanningTab, UiState};
@@ -36,6 +37,13 @@ use crate::sim::Session;
 
 /// The panel's height, including its margins, fixed so the map above it never moves.
 pub const PLANNING_PANEL_HEIGHT: f32 = 240.0;
+/// The Planning panel as an outer panel: along the bottom, resizable from
+/// [`PLANNING_PANEL_HEIGHT`].
+pub const PLANNING_PANEL: OuterPanel = OuterPanel {
+    id: "planning",
+    edge: Edge::Bottom,
+    size: PLANNING_PANEL_HEIGHT,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlanningContent {
@@ -152,13 +160,9 @@ pub(super) fn planning_panel(
     let Some(model) = planning_model(&session.0, &l10n, sink.ui_state(), &form) else {
         return Ok(());
     };
-    let mut ui = area.root_ui(contexts.ctx_mut()?, "planning");
-    let actions = egui::Panel::bottom("planning")
-        .resizable(false)
-        .exact_size(PLANNING_PANEL_HEIGHT)
-        .show(&mut ui, |ui| draw_planning(ui, &model, &mut form))
-        .inner;
-    area.claim(&ui);
+    let actions = area.show_panel(contexts.ctx_mut()?, PLANNING_PANEL, 0.0, |ui| {
+        draw_planning(ui, &model, &mut form)
+    });
     dispatch(actions, &mut sink);
     Ok(())
 }

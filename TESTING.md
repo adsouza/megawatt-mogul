@@ -75,6 +75,10 @@ The game's tests sit in six layers, from the cheapest to the widest. None opens 
 - **The 1024×640 fit tests** (`at_the_smallest_window_…`) lay out each screen at the minimum window
   size, for both shipped regions, and check that panels don't overlap and that the controls a
   player needs (*Apply*, *Continue*, the figures of the selected plant) are inside their panel.
+- **The panel resize tests** (`tests/game/panel_resize.rs`) drag each outer panel's inner edge
+  through the real pass (`EguiPass::drag`) at 1024×640 and 2560×1440: it grows with the drag,
+  stops at its opening size and at its maximum, the map's area keeps 320×200, and a selection,
+  a tab or a whole day afterwards moves neither a panel nor the map.
 - **The end-to-end month** (`tests/game/end_to_end.rs`), for each shipped region on seed 7: a new
   game, which already runs the hands-off plan (spec §16.3), so no planning command is sent;
   *Start the day*, which begins the day directly with no shortfall; 8×, the fixed-step driver to

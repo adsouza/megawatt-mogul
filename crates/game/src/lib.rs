@@ -9,6 +9,7 @@ pub mod l10n;
 pub mod paths;
 pub mod sim;
 pub mod state;
+pub mod window;
 
 use bevy::app::{PluginGroup, PluginGroupBuilder};
 use bevy_egui::EguiPlugin;

@@ -11,7 +11,7 @@ use domain::region::PlantKind;
 use domain::session::DayPhase;
 
 use super::action::{ActionSink, ButtonModel, UiAction, button, dispatch};
-use super::layout::HudArea;
+use super::layout::{Edge, HudArea, OuterPanel};
 use super::selection::Selection;
 use super::top_bar::Stat;
 use crate::l10n::{Localize, LocalizeWith, Localizer, Names, format};
@@ -19,6 +19,12 @@ use crate::sim::Session;
 
 /// The build menu's width, fixed so the map beside it never moves.
 pub const BUILD_PANEL_WIDTH: f32 = 300.0;
+/// The build menu as an outer panel: on the right, resizable from [`BUILD_PANEL_WIDTH`].
+pub const BUILD_PANEL: OuterPanel = OuterPanel {
+    id: "build",
+    edge: Edge::Right,
+    size: BUILD_PANEL_WIDTH,
+};
 
 /// One plant kind on the selected cell: what it is, what it costs, and the button to build it.
 #[derive(Debug, Clone, PartialEq)]
@@ -410,13 +416,9 @@ pub(super) fn build_panel(
     let Some(model) = build_model(&session.0, &l10n, sink.selection()) else {
         return Ok(());
     };
-    let mut ui = area.root_ui(contexts.ctx_mut()?, "build");
-    let actions = egui::Panel::right("build")
-        .resizable(false)
-        .exact_size(BUILD_PANEL_WIDTH)
-        .show(&mut ui, |ui| draw_build(ui, &model))
-        .inner;
-    area.claim(&ui);
+    let actions = area.show_panel(contexts.ctx_mut()?, BUILD_PANEL, 0.0, |ui| {
+        draw_build(ui, &model)
+    });
     dispatch(actions, &mut sink);
     Ok(())
 }

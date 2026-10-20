@@ -8,7 +8,8 @@ use domain::region::{PlantKind, RegionDefinition};
 use domain::session::DayPhase;
 
 use super::action::{ActionSink, ButtonModel, UiAction, button, dispatch};
-use super::layout::HudArea;
+use super::build::BUILD_PANEL;
+use super::layout::{Edge, HudArea, OuterPanel};
 use super::selection::Selection;
 use super::top_bar::Stat;
 use crate::l10n::{Localize, Localizer, format};
@@ -16,6 +17,12 @@ use crate::sim::Session;
 
 /// The inspector's width, fixed so the map beside it never moves.
 pub const INSPECTOR_PANEL_WIDTH: f32 = 260.0;
+/// The inspector as an outer panel: on the left, resizable from [`INSPECTOR_PANEL_WIDTH`].
+pub const INSPECTOR_PANEL: OuterPanel = OuterPanel {
+    id: "inspector",
+    edge: Edge::Left,
+    size: INSPECTOR_PANEL_WIDTH,
+};
 
 /// One plant kind's verdict on the selected cell.
 #[derive(Debug, Clone, PartialEq)]
@@ -183,13 +190,12 @@ pub(super) fn inspector_panel(
     let Some(model) = inspector_model(&session.0, &l10n, sink.selection()) else {
         return Ok(());
     };
-    let mut ui = area.root_ui(contexts.ctx_mut()?, "inspector");
-    let actions = egui::Panel::left("inspector")
-        .resizable(false)
-        .exact_size(INSPECTOR_PANEL_WIDTH)
-        .show(&mut ui, |ui| draw_inspector(ui, &model))
-        .inner;
-    area.claim(&ui);
+    let ctx = contexts.ctx_mut()?;
+    // The build menu claims its side after this panel: leave the map room beside it too.
+    let reserved = BUILD_PANEL.current_size(ctx);
+    let actions = area.show_panel(ctx, INSPECTOR_PANEL, reserved, |ui| {
+        draw_inspector(ui, &model)
+    });
     dispatch(actions, &mut sink);
     Ok(())
 }

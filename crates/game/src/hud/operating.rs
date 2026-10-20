@@ -1,10 +1,10 @@
-//! The Operating screen's two panels (spec §8.4), laid out like Planning's so the map keeps a
-//! fixed place:
+//! The Operating screen's two panels (spec §8.4), laid out like Planning's so the map moves only
+//! when the player drags a panel's edge (both are resizable from their opening sizes, §16.7):
 //!
-//! - **The bottom panel**, full width and of fixed height ([`OPERATING_PANEL_HEIGHT`]). Its body is
+//! - **The bottom panel**, full width, opening at [`OPERATING_PANEL_HEIGHT`]. Its body is
 //!   a tab, *Supply* (the supply chart) or *Hydro* (the hydro schedule). Beside it is a column of
 //!   fixed width ([`OPERATING_LOG_WIDTH`]) holding the ramp warnings and the incident ticker.
-//! - **The side panel** on the right, of fixed width ([`OPERATING_SIDE_WIDTH`]): the frequency
+//! - **The side panel** on the right, opening at [`OPERATING_SIDE_WIDTH`]: the frequency
 //!   gauge, the plant list, and the selected plant's panel (or a placeholder of the same size).
 //!
 //! The speed controls are a bar of their own under the top bar (`speed.rs`). The map takes what is
@@ -19,7 +19,7 @@ use super::action::{ActionSink, ButtonModel, ToggleModel, UiAction, dispatch, to
 use super::frequency::{FrequencyModel, draw_frequency, frequency_model};
 use super::hydro_panel::{HydroModel, draw_hydro, hydro_model};
 use super::incidents::{IncidentsModel, draw_incidents, incidents_model};
-use super::layout::HudArea;
+use super::layout::{Edge, HudArea, OuterPanel};
 use super::plant_panel::{
     PLANT_LIST_HEIGHT, PlantListModel, PlantPanelForm, PlantPanelModel, draw_plant_list,
     draw_plant_panel, plant_list_model, plant_panel_model,
@@ -36,6 +36,18 @@ pub const OPERATING_PANEL_HEIGHT: f32 = 200.0;
 pub const OPERATING_LOG_WIDTH: f32 = 300.0;
 /// The right side panel's width.
 pub const OPERATING_SIDE_WIDTH: f32 = 300.0;
+/// The bottom panel as an outer panel, resizable from [`OPERATING_PANEL_HEIGHT`].
+pub const OPERATING_PANEL: OuterPanel = OuterPanel {
+    id: "operating",
+    edge: Edge::Bottom,
+    size: OPERATING_PANEL_HEIGHT,
+};
+/// The side panel as an outer panel, resizable from [`OPERATING_SIDE_WIDTH`].
+pub const OPERATING_SIDE_PANEL: OuterPanel = OuterPanel {
+    id: "operating_side",
+    edge: Edge::Right,
+    size: OPERATING_SIDE_WIDTH,
+};
 /// The frequency gauge's height in the side panel, room for every line it can show.
 pub const FREQUENCY_GAUGE_HEIGHT: f32 = 104.0;
 /// The ramp warnings' share of the column; the incidents take the rest.
@@ -188,13 +200,9 @@ pub(super) fn operating_panel(
     let Some(model) = operating_panel_model(&session.0, &l10n, sink.operating_tab()) else {
         return Ok(());
     };
-    let mut ui = area.root_ui(contexts.ctx_mut()?, "operating");
-    let actions = egui::Panel::bottom("operating")
-        .resizable(false)
-        .exact_size(OPERATING_PANEL_HEIGHT)
-        .show(&mut ui, |ui| draw_operating_panel(ui, &model))
-        .inner;
-    area.claim(&ui);
+    let actions = area.show_panel(contexts.ctx_mut()?, OPERATING_PANEL, 0.0, |ui| {
+        draw_operating_panel(ui, &model)
+    });
     dispatch(actions, &mut sink);
     Ok(())
 }
@@ -210,13 +218,9 @@ pub(super) fn operating_side(
     let Some(model) = operating_side_model(&session.0, &l10n, sink.selection()) else {
         return Ok(());
     };
-    let mut ui = area.root_ui(contexts.ctx_mut()?, "operating_side");
-    let actions = egui::Panel::right("operating_side")
-        .resizable(false)
-        .exact_size(OPERATING_SIDE_WIDTH)
-        .show(&mut ui, |ui| draw_operating_side(ui, &model, &mut form))
-        .inner;
-    area.claim(&ui);
+    let actions = area.show_panel(contexts.ctx_mut()?, OPERATING_SIDE_PANEL, 0.0, |ui| {
+        draw_operating_side(ui, &model, &mut form)
+    });
     dispatch(actions, &mut sink);
     Ok(())
 }

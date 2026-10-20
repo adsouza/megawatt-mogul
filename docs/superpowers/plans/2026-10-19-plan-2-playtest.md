@@ -6,7 +6,8 @@ has to look at. Run each step in order and tick it when the expected result matc
 fails, note the step number and what you saw.
 
 Use a debug build (`cargo run -p game`) with a window at the minimum size, 1024×640, unless a step
-says otherwise. Steps that need a fresh game say so; the others follow on from the step before.
+says otherwise. The window opens larger on a large monitor (step 7.1): drag it down to its minimum
+first. Steps that need a fresh game say so; the others follow on from the step before.
 
 ## 0. Launch smoke
 
@@ -155,6 +156,30 @@ says otherwise. Steps that need a fresh game say so; the others follow on from t
   **Expected:** the *Game over* modal returns, as before. *See the month* and *Back* can be repeated.
 - [ ] **6.4** Click *Main menu*.
   **Expected:** the main menu, with a new seed in the field.
+
+## 7. Window and panel sizing
+
+- [ ] **7.1** On a monitor larger than 1280×800 (logical), run `cargo run -p game`.
+  **Expected:** the window opens centred on the primary monitor at about 80% of its width and
+  height (on a 2560×1440 monitor, about 2048×1152), not at 1280×720. On a 1280×800 monitor or
+  smaller it opens at 1024×640, or the whole monitor if that is smaller. Resize it by hand: it
+  keeps your size, and it can't go below 1024×640.
+- [ ] **7.2** Start a game (Planning). Hover the inner edge of the inspector, the build menu and
+  the bottom panel in turn, then drag each edge toward the map.
+  **Expected:** the cursor shows a resize arrow on each edge. Each panel follows the drag and the
+  map shrinks to make room. Each stops at a maximum: a side panel at 40% of the window's width, the
+  bottom panel at half its height, and short of that wherever the map would drop below 320×200.
+  With both side panels dragged out, the map keeps its room and neither panel squeezes the other.
+- [ ] **7.3** Drag each edge back past where it started.
+  **Expected:** each panel stops at its opening size (inspector 260, build 300, bottom 240) and
+  goes no smaller; the map returns to where it was.
+- [ ] **7.4** Grow the bottom panel and a side panel, then select a cell, switch the bottom tabs,
+  and start the day; in Operating, drag the side panel's and the bottom panel's edges the same way
+  (side 300 to 40% of the width, bottom 200 to half the height). Select a plant and switch
+  *Supply*/*Hydro*. Run the day to the close and click *Continue*.
+  **Expected:** the map moves only while you drag. Selections, tabs and the phase changes leave
+  every panel's size alone; back in Planning, and in the next day's Operating, each panel is as
+  you left it. The charts, the commitment grid and the plant panel use the extra room.
 
 ## Known visual risks to eyeball
 

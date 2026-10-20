@@ -230,7 +230,11 @@ parses the command line and opens the window.
 
 `CorePlugins` groups the first three. They need no window or renderer, so the tests run them on
 `MinimalPlugins` plus `StatesPlugin`. `GamePlugins` adds `EguiPlugin` and `HudPlugin`, and
-`main.rs` puts it on `DefaultPlugins` with a 1024×640 minimum window.
+`main.rs` puts it on `DefaultPlugins` with a 1024×640 minimum window, plus `WindowSizingPlugin`
+(`window.rs`). Bevy 0.20 spawns the `Monitor` entities only once the winit event loop runs, so
+that plugin waits for the `PrimaryMonitor`, sizes the window once to `opening_size` (80% of the
+monitor's logical size, clamped between the minimum window and the monitor) centred on it, and
+then never runs again, so the player's own resize wins.
 
 - **Boot** waits for every `require_for_boot::<R>()` resource: `AssetRoot` and `LogDir` (from the
   command line), `Localizer` and `Catalog`. A `BootError` keeps the app in `Boot`, which shows it.
@@ -329,7 +333,14 @@ panel system makes its own root `Ui`, and the `HudArea` resource keeps them from
 - The claiming order: the top bar, then (Operating) the speed bar, then the phase's bottom panel
   across the full width, then its side panels (the inspector and build menu in Planning, the
   frequency gauge and plants in Operating), and last the map, a central panel that fills the rest
-  and claims nothing. Every panel has a fixed size, so the map never moves.
+  and claims nothing.
+- These outer panels are resizable (spec §16.7): `HudArea::show_panel` shows an `OuterPanel`
+  that opens at its fixed size, which is also its minimum, and grows by a drag of its inner edge
+  up to `panel_max`: 40% of the screen's width for a side panel, half its height for a bottom one,
+  and never so far that the map's area drops below `MAP_MIN_SIZE` (320×200). The inspector, shown
+  before the build menu, reserves the build menu's current width. egui keeps each size in its
+  memory for the run. The content is laid out over exactly the panel's space, so content can
+  neither grow the panel nor shrink it back after a drag: only a drag moves the map.
 - Menus are whole-screen central panels. Overlays (windows, toasts, prompts, the Review and
   game-over modals) take the `Context` directly and ignore `HudArea`, except the Review backdrop,
   which reads `free_rect` to leave the top bar uncovered.

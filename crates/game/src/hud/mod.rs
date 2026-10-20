@@ -75,7 +75,10 @@ pub use self::inspector::{
     CellInspector, INSPECTOR_PANEL_WIDTH, InspectorModel, SuitabilityRow, draw_inspector,
     inspector_model, suitability_row,
 };
-pub use self::layout::HudArea;
+pub use self::layout::{
+    BOTTOM_PANEL_MAX_SHARE, Edge, HudArea, MAP_MIN_SIZE, OuterPanel, SIDE_PANEL_MAX_SHARE,
+    panel_max,
+};
 pub use self::map::{
     CityMarker, GLYPH_MIN_FONT, LegendEntry, LegendSwatch, LineMarker, MapCache, MapLayer,
     MapLayout, MapModel, MapObjects, PlantMarker, Rgb, SUITABLE, TerrainKey, UNSUITABLE, WATER,
@@ -311,8 +314,9 @@ impl Plugin for HudPlugin {
             // Planning has the commitments, forecast and tariff along the bottom and the
             // inspector and build menu at the sides; Operating has the supply chart, hydro
             // schedule, ramp warnings and incidents along the bottom and the frequency gauge and
-            // plants on the right. Every panel holds a fixed size, so the map doesn't move when
-            // the selection changes or a tab opens.
+            // plants on the right. Every panel holds its size (its opening size, or where the
+            // player dragged it), so the map doesn't move when the selection changes or a tab
+            // opens.
             .add_systems(
                 EguiPrimaryContextPass,
                 (
