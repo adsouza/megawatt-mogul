@@ -16,7 +16,7 @@ use domain::session::PlantView;
 use domain::units::Megawatts;
 
 use super::action::{ButtonModel, ToggleModel, UiAction, button, toggle_button};
-use super::map::{Rgb, kind_color};
+use super::map::{Rgb, color32, kind_color};
 use super::plant_list::plants_by_kind;
 use super::ui_state::{CommitDraft, CommitmentForm, UiState};
 use crate::l10n::{Localizer, Names, format};
@@ -347,10 +347,6 @@ fn hour_square(
         }
     }
     response.on_hover_text(label)
-}
-
-fn color32([r, g, b]: Rgb) -> egui::Color32 {
-    egui::Color32::from_rgb(r, g, b)
 }
 
 /// The header row: a column of space over the names, then one label per hour.

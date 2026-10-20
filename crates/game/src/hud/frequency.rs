@@ -13,7 +13,7 @@ use domain::session::GridSnapshot;
 use domain::units::{Hertz, Megawatts};
 
 use super::action::UiAction;
-use super::map::Rgb;
+use super::map::{Rgb, color32};
 use super::top_bar::Stat;
 use crate::l10n::{Localizer, format};
 
@@ -175,10 +175,6 @@ pub fn frequency_model_for(
             )
         }),
     }
-}
-
-fn color32([r, g, b]: Rgb) -> egui::Color32 {
-    egui::Color32::from_rgb(r, g, b)
 }
 
 /// The dial's height.

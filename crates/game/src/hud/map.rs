@@ -266,6 +266,11 @@ pub fn hit_test(layout: &MapLayout, pos: Pos2, game: &Game) -> Selection {
 /// An sRGB colour, kept free of egui types so the shading is testable.
 pub type Rgb = [u8; 3];
 
+/// The opaque egui colour of `rgb`, for the draw functions: the one place an [`Rgb`] becomes egui's.
+pub(super) fn color32([r, g, b]: Rgb) -> Color32 {
+    Color32::from_rgb(r, g, b)
+}
+
 /// Open water, on every layer that shades land only.
 pub const WATER: Rgb = [28, 52, 96];
 /// A cell the plant can be built on, on the suitability layer.
@@ -350,10 +355,6 @@ fn glyph_key(kind: PlantKind) -> &'static str {
         PlantKind::Solar => "plant-glyph-solar",
         PlantKind::Hydro => "plant-glyph-hydro",
     }
-}
-
-fn color32([r, g, b]: Rgb) -> Color32 {
-    Color32::from_rgb(r, g, b)
 }
 
 // ---- the terrain texture ---------------------------------------------------------------------
@@ -767,6 +768,14 @@ mod tests {
 
     fn area(x: f32, y: f32, w: f32, h: f32) -> Rect {
         Rect::from_min_size(pos2(x, y), vec2(w, h))
+    }
+
+    #[test]
+    fn an_rgb_becomes_the_same_opaque_egui_colour() {
+        for rgb in [WATER, SUITABLE, [0, 0, 0], [255, 255, 255], [1, 2, 3]] {
+            let colour = color32(rgb);
+            assert_eq!(colour.to_array(), [rgb[0], rgb[1], rgb[2], 255], "{rgb:?}");
+        }
     }
 
     proptest! {

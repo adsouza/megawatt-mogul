@@ -12,7 +12,7 @@ use domain::units::Megawatts;
 use egui_plot::{Bar, BarChart, FilledArea, Legend, Line, Plot, VLine};
 
 use super::action::UiAction;
-use super::map::{Rgb, kind_color};
+use super::map::{Rgb, color32, kind_color};
 use super::plant_list::plants_by_kind;
 use super::ui_state::UiState;
 use crate::l10n::{Localize, Localizer};
@@ -112,10 +112,6 @@ pub fn forecast_model(game: &Game, l10n: &Localizer, ui: &UiState) -> ForecastMo
         stacks: stacked_committed_capacity(game, l10n),
         highlight_hour: ui.highlight_hour,
     }
-}
-
-fn color32([r, g, b]: Rgb) -> egui::Color32 {
-    egui::Color32::from_rgb(r, g, b)
 }
 
 /// The chart, filling the space it is given. It asks for nothing: the plot is not interactive, so

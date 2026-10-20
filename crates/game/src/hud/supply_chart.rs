@@ -12,7 +12,7 @@ use egui_plot::{AxisHints, FilledArea, HPlacement, Legend, Line, LineStyle, Plot
 
 use super::action::UiAction;
 use super::frequency::SHEDDING_COLOR;
-use super::map::{Rgb, kind_color};
+use super::map::{Rgb, color32, kind_color};
 use super::plant_list::kinds_in_merit_order;
 use crate::l10n::{Localize, Localizer};
 
@@ -128,10 +128,6 @@ pub fn supply_model(game: &Game, l10n: &Localizer) -> SupplyModel {
             .collect(),
         now: hours(now),
     }
-}
-
-fn color32([r, g, b]: Rgb) -> egui::Color32 {
-    egui::Color32::from_rgb(r, g, b)
 }
 
 /// The chart, filling the space it is given. It asks for nothing: the plot is not interactive.

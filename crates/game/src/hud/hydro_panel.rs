@@ -12,7 +12,7 @@ use domain::time::TICKS_PER_HOUR;
 use egui_plot::{Bar, BarChart, Legend, Plot};
 
 use super::action::UiAction;
-use super::map::{Rgb, kind_color};
+use super::map::{Rgb, color32, kind_color};
 use crate::l10n::{Localizer, Names, format};
 
 /// One scheduled plant.
@@ -91,10 +91,6 @@ pub fn hydro_model_for(
         frozen_hours,
         frozen_note: l10n.text("hydro-frozen"),
     }
-}
-
-fn color32([r, g, b]: Rgb) -> egui::Color32 {
-    egui::Color32::from_rgb(r, g, b)
 }
 
 /// The width of the column of water levels beside the chart.
