@@ -179,12 +179,13 @@ fn at_the_smallest_window_the_default_legend_hides_no_mark() {
 /// The key shows at common window sizes: in a corner that hides nothing.
 #[test]
 fn at_1280_by_720_the_legend_opens_by_default_and_hides_no_mark() {
-    assert!(opened_by_default(MEDIUM) >= 1, "no 1280×720 case opens it");
+    // Only Western Planning keeps it closed: the West's narrow terrain puts a city in every corner.
+    assert_eq!(opened_by_default(MEDIUM), 3, "1280×720 cases that open it");
 }
 
 #[test]
 fn on_a_large_map_the_default_legend_hides_no_mark() {
-    opened_by_default(LARGE);
+    assert_eq!(opened_by_default(LARGE), 4, "2560×1440 cases that open it");
 }
 
 /// Drags the inner edge of the outer panel `id` as far as it goes.

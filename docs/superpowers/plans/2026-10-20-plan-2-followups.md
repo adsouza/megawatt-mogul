@@ -129,7 +129,6 @@ Each ruling ends with what it costs if it turns out to be wrong.
 - **Map polish.**
   - Map labels can run past the right edge when the map is full width (Review). Flip the label
     anchors near the edge.
-  - The legend omits under-construction marks: dashed lines and faded squares.
   - Orange, red and yellow are close. The colour test checks only that RGB values are unique.
 
 ### Infrastructure and CI
@@ -197,3 +196,73 @@ Each ruling ends with what it costs if it turns out to be wrong.
   - Its open state survives a tab switch.
 - **Hydro shading.** `hydro_shade` repeats after four plants.
 - **Supply chart.** The cost-axis ticks aren't round numbers. This is a playtest item.
+
+## Plan 2a (Amendment A5 and playtest fixes)
+
+Plan 2a started as Amendment A5 (the inherited schedule and the shortfall confirmation). Three
+playtest-driven tasks and a colour fix were added to it. It ran the same way as Plan 2, with two
+whole-branch reviews and one fix wave.
+
+### Rulings
+
+- **The start fleet.** A new game commits every dispatchable start-fleet plant all day with AGC on
+  (`SIM_RULES_VERSION` 4).
+  - Tests that need an uncommitted fleet call `empty_start` and assert the shortfall they rely on.
+  - The rules-version guard's month 1 depends on the inherited schedule, so the guard can see it.
+  - If wrong: none.
+- **The shortfall confirmation.**
+  - It is Planning-only. *Start anyway* sends `BeginOperating`.
+  - The prompt closes when the phase changes, both in the presenter and after `SimSet::Apply`.
+  - It keeps the figures it opened with.
+  - If wrong: none.
+- **Window and panels.**
+  - The window opens at 80% of the monitor.
+  - The outer panels resize from their old size, which is now their minimum. Side panels go up to
+    40% of the width and bottom panels up to 50% of the height.
+  - The map's *area* keeps at least 320×200.
+  - The Operating bottom panel reserves the side panel's minimum height (gauge, selected-object
+    block and three list rows).
+  - If wrong: at 1024×640 the Operating bottom panel barely grows.
+- **The Operating side panel.**
+  - The order is gauge, then a fixed-height selected-object block (plant, city or construction
+    card), then a plant list that fills the rest.
+  - Every selectable object must fit the block.
+  - If wrong: a layout swap.
+- **The city card.** It shows the system figures scaled by the city's base-load share. An
+  unconnected city shows what it would add, or when a line under construction will connect it.
+  If wrong: a card layout change.
+- **Construction progress.**
+  - The in-service month is the first month the project can be used. The commissioning toast
+    comes in the Review of the month before.
+  - `line_build_months` shares `line_quote`'s months rule.
+  - If wrong: none.
+- **The legend.**
+  - It is collapsible.
+  - Until the player chooses, it opens in the first corner that covers no city or plant centre,
+    and otherwise stays collapsed.
+  - If wrong: the legend moves between corners until the player chooses.
+- **The served line.** It is green (the gauge's in-band colour) and kept more than 80 RGB away
+  from every stack colour. If wrong: none.
+
+### Follow-ups
+
+- **A 1-column legend.** Try it before collapsing. It would fit the empty margin beside the West's
+  narrow terrain at 1280×720, where every corner of the full legend hits a city.
+- **The layer-button row wraps** to as many as six rows on a narrow map, which costs the drawn map
+  height. Try a single non-wrapping row or a dropdown.
+- **The city card.**
+  - Planning has no Close button (add it for Planning only, if asked).
+  - The name uses a heading, while plant details use bold text.
+- **Duplicate AccessKit names.** A city and a plant with the same name would share one.
+- **The legend toggle** is a raw `egui::Button` drawn with `ui.put`, not the shared
+  `toggle_button` helper.
+- **The legend's measurement has no runtime check.** A future label that wraps could make the
+  measurement drift from the drawn size.
+- **No test catches a dropped months-left map label.** The plant letters have the same gap.
+- **Not checked in a real window yet:**
+  - the confirmation prompt's look;
+  - dragging a panel by hand;
+  - the legend toggle and its corner.
+
+  Run the playtest checklist's steps 2.1a, 2.8, 3.6 and 7–9.
+
