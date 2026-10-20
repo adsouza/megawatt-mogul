@@ -63,6 +63,7 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "inspector-hydro-potential",
     "inspector-can-build",
     "inspector-site-ok",
+    "inspector-select-cell",
     "build-title",
     "build-plant",
     "build-plant-heading",
@@ -82,6 +83,7 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "build-line-cells",
     "build-cells-value",
     "name-substation",
+    "name-node-unknown",
     // Planning: tariff, commitments and forecast
     "tariff-title",
     "tariff-current",

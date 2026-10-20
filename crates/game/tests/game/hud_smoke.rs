@@ -4,6 +4,7 @@
 //! regions and translations, a real `Game`), and a scripted click must produce the expected
 //! `UiAction`.
 
+use std::cell::RefCell;
 use std::fs;
 use std::path::Path;
 
@@ -15,12 +16,13 @@ use bevy_egui::egui;
 use domain::ids::{CellCoord, RegionId};
 use domain::session::{GameOverReason, GameSettings};
 use game::hud::{
-    ActionSink, ButtonModel, HudArea, LinePreview, LineSection, MapLayer, MapLayout, MenuForm,
-    MenuScreen, OpenPrompt, PlantSection, Prompt, RegionListings, Selection, ToastQueue, UiAction,
-    boot_error_model, build_model, button, dispatch, draw_boot_error, draw_build, draw_game_over,
-    draw_inspector, draw_main_menu, draw_map, draw_prompt, draw_region_select, draw_toasts,
-    draw_top_bar, game_over_model_for, hit_test, inspector_model, main_menu_model, map_model,
-    prompt_model, region_select_model, toasts_model, top_bar_model,
+    ActionSink, ButtonModel, HudArea, InspectorModel, LinePreview, LineSection, MapCache, MapLayer,
+    MapLayout, MenuForm, MenuScreen, OpenPrompt, PlantSection, Prompt, RegionListings, Selection,
+    ToastQueue, UiAction, boot_error_model, build_model, button, dispatch, draw_boot_error,
+    draw_build, draw_game_over, draw_inspector, draw_main_menu, draw_map, draw_prompt,
+    draw_region_select, draw_toasts, draw_top_bar, game_over_model_for, hit_test, inspector_model,
+    main_menu_model, map_model, plant_half_size, prompt_model, region_select_model, toasts_model,
+    top_bar_model,
 };
 use game::sim::{NewGameRequest, PlayerCommand, ReturnToMenu, SimSpeed};
 use game::state::{AppState, BootError};
@@ -306,7 +308,9 @@ fn the_map_draws_both_shipped_regions_and_selects_what_is_clicked() {
         let terrain = session.region().terrain();
         let model = map_model(&game, &l10n, MapLayer::Terrain, Selection::None);
         let harness = Harness::new();
-        let draw = |ui: &mut egui::Ui| central(ui, |ui| draw_map(ui, &model));
+        let cache = RefCell::new(MapCache::default());
+        let draw =
+            |ui: &mut egui::Ui| central(ui, |ui| draw_map(ui, &model, &mut cache.borrow_mut()));
 
         let widgets = harness.draw(draw);
         let map = widget(&widgets, "Map");
@@ -341,15 +345,34 @@ fn the_map_draws_both_shipped_regions_and_selects_what_is_clicked() {
             "{region}: {actions:?}"
         );
 
-        let city = &session.city_views()[0];
-        let actions = harness.click_at(layout.cell_center(city.cell), draw);
-        assert!(
-            matches!(
-                actions[..],
-                [UiAction::Select(Selection::City(_) | Selection::Plant(_))]
-            ),
-            "{region}: {actions:?}"
-        );
+        // Every city is selectable at its own centre, unless a plant is drawn over that point.
+        let half = plant_half_size(&layout);
+        let plants = session.plant_views();
+        let mut selected = 0;
+        for city in session.city_views() {
+            let at = layout.cell_center(city.cell);
+            let covered = plants.iter().any(|plant| {
+                let centre = layout.cell_center(plant.cell);
+                (at.x - centre.x).abs() <= half && (at.y - centre.y).abs() <= half
+            });
+            let actions = harness.click_at(at, draw);
+            if covered {
+                assert!(
+                    matches!(actions[..], [UiAction::Select(Selection::Plant(_))]),
+                    "{region} {:?}: {actions:?}",
+                    city.cell
+                );
+            } else {
+                assert_eq!(
+                    actions,
+                    vec![UiAction::Select(Selection::City(city.id))],
+                    "{region} {:?}",
+                    city.cell
+                );
+                selected += 1;
+            }
+        }
+        assert!(selected > 0, "{region}: some city is selectable");
 
         let bare = layout.cell_center(domain::ids::CellCoord { x: 0, y: 0 });
         assert_eq!(
@@ -383,6 +406,7 @@ fn every_map_layer_draws() {
     let l10n = shipped_l10n();
     let game = eastern_game();
     let harness = Harness::new();
+    let cache = RefCell::new(MapCache::default());
     for layer in MapLayer::all() {
         let model = map_model(
             &game,
@@ -390,7 +414,8 @@ fn every_map_layer_draws() {
             layer,
             Selection::Cell(domain::ids::CellCoord { x: 3, y: 3 }),
         );
-        let widgets = harness.draw(|ui| central(ui, |ui| draw_map(ui, &model)));
+        let widgets =
+            harness.draw(|ui| central(ui, |ui| draw_map(ui, &model, &mut cache.borrow_mut())));
         assert!(shows(&widgets, "Map"), "{layer:?}");
     }
 }
@@ -406,6 +431,10 @@ fn the_inspector_lists_what_can_be_built_on_the_selected_cell() {
         .find(|at| !terrain.get(*at).unwrap().land)
         .unwrap();
     let model = inspector_model(&game, &l10n, Selection::Cell(water)).unwrap();
+    let InspectorModel::Cell(cell) = &model else {
+        panic!("{model:?}");
+    };
+    let title = cell.title.clone();
     let harness = Harness::new();
     let draw = |ui: &mut egui::Ui| {
         egui::Panel::left("inspector")
@@ -415,7 +444,7 @@ fn the_inspector_lists_what_can_be_built_on_the_selected_cell() {
 
     let widgets = harness.draw(draw);
 
-    assert!(shows(&widgets, &model.title));
+    assert!(shows(&widgets, &title));
     assert!(shows(&widgets, "Water"));
     assert!(shows(&widgets, "Can be built here"));
     assert!(
@@ -588,51 +617,63 @@ fn a_plant_section_without_a_cell_asks_for_one() {
 
 /// The planning screen as its systems lay it out: the top bar, then the inspector and the build
 /// menu claiming the sides, then the map filling what is left.
+fn planning_screen(
+    ui: &mut egui::Ui,
+    game: &Game,
+    selection: Selection,
+    cache: &mut MapCache,
+) -> Vec<UiAction> {
+    let l10n = shipped_l10n();
+    let bar = top_bar_model(game, &l10n);
+    let inspector = inspector_model(game, &l10n, selection).unwrap();
+    let build = build_model(game, &l10n, selection).unwrap();
+    let map = map_model(game, &l10n, MapLayer::Terrain, selection);
+    let ctx = ui.ctx().clone();
+    let mut area = HudArea::default();
+    let mut actions = Vec::new();
+    let mut root = area.root_ui(&ctx, "top_bar");
+    actions.extend(
+        egui::Panel::top("top_bar")
+            .show(&mut root, |ui| draw_top_bar(ui, &bar))
+            .inner,
+    );
+    area.claim(&root);
+    let mut root = area.root_ui(&ctx, "inspector");
+    actions.extend(
+        egui::Panel::left("inspector")
+            .resizable(false)
+            .exact_size(260.0)
+            .show(&mut root, |ui| draw_inspector(ui, &inspector))
+            .inner,
+    );
+    area.claim(&root);
+    let mut root = area.root_ui(&ctx, "build");
+    actions.extend(
+        egui::Panel::right("build")
+            .resizable(false)
+            .exact_size(300.0)
+            .show(&mut root, |ui| draw_build(ui, &build))
+            .inner,
+    );
+    area.claim(&root);
+    let mut root = area.root_ui(&ctx, "map");
+    actions.extend(
+        egui::CentralPanel::default()
+            .show(&mut root, |ui| draw_map(ui, &map, cache))
+            .inner,
+    );
+    actions
+}
+
 #[test]
 fn the_planning_screen_gives_the_map_the_space_the_panels_leave() {
-    let l10n = shipped_l10n();
     let game = eastern_game();
     let land = domain::ids::CellCoord { x: 60, y: 25 };
     assert!(game.session().region().terrain().get(land).unwrap().land);
     let selection = Selection::Cell(land);
-    let bar = top_bar_model(&game, &l10n);
-    let inspector = inspector_model(&game, &l10n, selection).unwrap();
-    let build = build_model(&game, &l10n, selection).unwrap();
-    let map = map_model(&game, &l10n, MapLayer::Terrain, selection);
     let harness = Harness::new();
-    let draw = |ui: &mut egui::Ui| {
-        let ctx = ui.ctx().clone();
-        let mut area = HudArea::default();
-        let mut actions = Vec::new();
-        let mut root = area.root_ui(&ctx, "top_bar");
-        actions.extend(
-            egui::Panel::top("top_bar")
-                .show(&mut root, |ui| draw_top_bar(ui, &bar))
-                .inner,
-        );
-        area.claim(&root);
-        let mut root = area.root_ui(&ctx, "inspector");
-        actions.extend(
-            egui::Panel::left("inspector")
-                .show(&mut root, |ui| draw_inspector(ui, &inspector))
-                .inner,
-        );
-        area.claim(&root);
-        let mut root = area.root_ui(&ctx, "build");
-        actions.extend(
-            egui::Panel::right("build")
-                .show(&mut root, |ui| draw_build(ui, &build))
-                .inner,
-        );
-        area.claim(&root);
-        let mut root = area.root_ui(&ctx, "map");
-        actions.extend(
-            egui::CentralPanel::default()
-                .show(&mut root, |ui| draw_map(ui, &map))
-                .inner,
-        );
-        actions
-    };
+    let cache = RefCell::new(MapCache::default());
+    let draw = |ui: &mut egui::Ui| planning_screen(ui, &game, selection, &mut cache.borrow_mut());
 
     let widgets = harness.draw(draw);
 
@@ -672,6 +713,41 @@ fn the_planning_screen_gives_the_map_the_space_the_panels_leave() {
     assert_eq!(
         harness.click("Close", draw),
         vec![UiAction::Select(Selection::None)]
+    );
+}
+
+/// Clicking around the map changes what the side panels hold, but never the map's own place: it
+/// would jump under the pointer otherwise.
+#[test]
+fn the_map_does_not_move_when_the_selection_changes_kind() {
+    let game = eastern_game();
+    let session = game.session();
+    let land = domain::ids::CellCoord { x: 60, y: 25 };
+    let selections = [
+        Selection::None,
+        Selection::Cell(land),
+        Selection::Plant(session.plant_views()[0].id),
+        Selection::City(session.city_views()[0].id),
+        Selection::LineFrom(session.substation()),
+        Selection::None,
+        Selection::Cell(land),
+    ];
+    // One harness throughout, so egui's remembered panel sizes carry from frame to frame.
+    let harness = Harness::new();
+    let cache = RefCell::new(MapCache::default());
+
+    let rects: Vec<_> = selections
+        .into_iter()
+        .map(|selection| {
+            let widgets =
+                harness.draw(|ui| planning_screen(ui, &game, selection, &mut cache.borrow_mut()));
+            widget(&widgets, "Map").rect
+        })
+        .collect();
+
+    assert!(
+        rects.windows(2).all(|pair| pair[0] == pair[1]),
+        "the map moved: {rects:?}"
     );
 }
 

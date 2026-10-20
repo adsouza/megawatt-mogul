@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use domain::ids::{CityId, LineId, PlantId};
+use domain::ids::{CityId, LineId, NodeId, PlantId};
 use domain::region::PlantKind;
 use domain::session::GameSession;
 
@@ -19,20 +19,43 @@ pub struct Names<'a> {
     l10n: &'a Localizer,
     plants: BTreeMap<PlantId, PlantKind>,
     cities: BTreeMap<CityId, String>,
+    /// What stands on each network node, for naming the ends of a line.
+    nodes: BTreeMap<NodeId, NodeThing>,
+}
+
+/// What a network node is.
+#[derive(Debug, Clone, Copy)]
+enum NodeThing {
+    Substation,
+    Plant(PlantId),
+    City(CityId),
 }
 
 impl<'a> Names<'a> {
     /// A snapshot of the plants and cities of `session`.
     pub fn new(l10n: &'a Localizer, session: &GameSession) -> Self {
+        let plant_views = session.plant_views();
+        let city_views = session.city_views();
+        let nodes = std::iter::once((session.substation(), NodeThing::Substation))
+            .chain(
+                city_views
+                    .iter()
+                    .map(|city| (city.node, NodeThing::City(city.id))),
+            )
+            .chain(
+                plant_views
+                    .iter()
+                    .map(|plant| (plant.node, NodeThing::Plant(plant.id))),
+            )
+            .collect();
         Self {
+            nodes,
             l10n,
-            plants: session
-                .plant_views()
+            plants: plant_views
                 .into_iter()
                 .map(|plant| (plant.id, plant.kind))
                 .collect(),
-            cities: session
-                .city_views()
+            cities: city_views
                 .into_iter()
                 .map(|city| (city.id, city.name_key))
                 .collect(),
@@ -45,6 +68,7 @@ impl<'a> Names<'a> {
             l10n,
             plants: BTreeMap::new(),
             cities: BTreeMap::new(),
+            nodes: BTreeMap::new(),
         }
     }
 
@@ -77,6 +101,19 @@ impl<'a> Names<'a> {
             None => self
                 .l10n
                 .args("name-city-unknown", &[("id", id.0.to_string().into())]),
+        }
+    }
+
+    /// The name of a network node: `Substation`, a city's name or `Coal plant 7`; a node the
+    /// session does not know is `Grid point 12`.
+    pub fn node(&self, id: NodeId) -> String {
+        match self.nodes.get(&id) {
+            Some(NodeThing::Substation) => self.l10n.text("name-substation"),
+            Some(NodeThing::Plant(plant)) => self.plant(*plant),
+            Some(NodeThing::City(city)) => self.city(*city),
+            None => self
+                .l10n
+                .args("name-node-unknown", &[("id", id.0.to_string().into())]),
         }
     }
 

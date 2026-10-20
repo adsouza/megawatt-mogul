@@ -130,7 +130,10 @@ impl LocalizeWith for DomainError {
             Self::LineToSelf { node: _ } => l10n.text("error-line-to-self"),
             Self::DuplicateLine { from, to } => l10n.args(
                 "error-duplicate-line",
-                &[("from", id_of!(from)), ("to", id_of!(to))],
+                &[
+                    ("from", names.node(*from).into()),
+                    ("to", names.node(*to).into()),
+                ],
             ),
             Self::DuplicateLineId { line } => l10n.args(
                 "error-duplicate-line-id",

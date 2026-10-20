@@ -93,6 +93,7 @@ inspector-cooling-water = Cooling water
 inspector-hydro-potential = Hydro potential
 inspector-can-build = Can be built here
 inspector-site-ok = ✓
+inspector-select-cell = Select a cell to see what can be built there
 build-title = Build
 build-plant = Build plant
 build-plant-heading = Plant at ({ $x }, { $y })
@@ -118,6 +119,7 @@ build-cells-value = { $cells ->
    *[other] { $cells } cells
 }
 name-substation = Substation
+name-node-unknown = Grid point { $id }
 
 ## Planning: tariff, commitments and forecast
 

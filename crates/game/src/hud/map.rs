@@ -13,7 +13,7 @@ use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 use domain::generation::PlantStatus;
 use domain::grid::LineStatus;
-use domain::ids::{CellCoord, CityId, NodeId, PlantId};
+use domain::ids::{CellCoord, CityId, NodeId, PlantId, RegionId};
 use domain::region::{PlantKind, RegionDefinition};
 use egui::{Color32, Pos2, Rect, Stroke, StrokeKind, vec2};
 
@@ -217,46 +217,46 @@ impl MapObjects {
     }
 }
 
-/// How close to a marker's centre a click counts as on it, in points: a cell and a half, and never
-/// too small to hit on a big map.
-pub fn marker_radius(layout: &MapLayout) -> f32 {
-    (layout.cell_size() * 1.5).max(6.0)
+/// Half the side of a plant's drawn square, in points: well inside its cell, so the plants of a
+/// dense cluster leave their neighbours' cells (and cities) clickable.
+pub fn plant_half_size(layout: &MapLayout) -> f32 {
+    (layout.cell_size() * 0.45).max(3.0)
 }
 
-/// What a click at `pos` selects: the nearest plant in reach, else the nearest city in reach, else
-/// the cell, else nothing.
+/// The radius of a city's drawn circle, in points.
+pub fn city_radius(layout: &MapLayout) -> f32 {
+    (layout.cell_size() * 0.4).max(3.0)
+}
+
+/// What a click at `pos` selects: what is drawn there, topmost first. That is a plant (its drawn
+/// square), else a city (its drawn circle), else the cell, else nothing. Among objects drawn on
+/// top of each other, the one drawn last is on top.
 pub fn pick(layout: &MapLayout, pos: Pos2, objects: &MapObjects) -> Selection {
     if layout.cell_size() <= 0.0 {
         return Selection::None;
     }
-    let reach = marker_radius(layout);
-    let nearest = |markers: &mut dyn Iterator<Item = (Selection, CellCoord)>| {
-        markers
-            .map(|(selection, cell)| (selection, (layout.cell_center(cell) - pos).length()))
-            .filter(|(_, distance)| *distance <= reach)
-            // The first of equals wins, which is the lowest id: the lists are in id order.
-            .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(selection, _)| selection)
-    };
-    nearest(
-        &mut objects
-            .plants
+    let half = plant_half_size(layout);
+    let radius = city_radius(layout);
+    let plant = objects.plants.iter().rev().find(|plant| {
+        let offset = pos - layout.cell_center(plant.cell);
+        offset.x.abs() <= half && offset.y.abs() <= half
+    });
+    let city = || {
+        objects
+            .cities
             .iter()
-            .map(|plant| (Selection::Plant(plant.id), plant.cell)),
-    )
-    .or_else(|| {
-        nearest(
-            &mut objects
-                .cities
-                .iter()
-                .map(|city| (Selection::City(city.id), city.cell)),
-        )
-    })
-    .or_else(|| layout.cell_at(pos).map(Selection::Cell))
-    .unwrap_or(Selection::None)
+            .rev()
+            .find(|city| (pos - layout.cell_center(city.cell)).length() <= radius)
+    };
+    plant
+        .map(|plant| Selection::Plant(plant.id))
+        .or_else(|| city().map(|city| Selection::City(city.id)))
+        .or_else(|| layout.cell_at(pos).map(Selection::Cell))
+        .unwrap_or(Selection::None)
 }
 
-/// What a click at `pos` selects in `game`: [`pick`] over the game's own markers.
+/// What a click at `pos` selects in `game`: [`pick`] over the game's own markers. The reference
+/// path for tests: the map itself draws, and picks from, the markers in its model.
 pub fn hit_test(layout: &MapLayout, pos: Pos2, game: &Game) -> Selection {
     pick(layout, pos, &MapObjects::of(game))
 }
@@ -340,6 +340,85 @@ fn color32([r, g, b]: Rgb) -> Color32 {
     Color32::from_rgb(r, g, b)
 }
 
+// ---- the terrain texture ---------------------------------------------------------------------
+
+/// What the terrain texture depends on: the region's terrain and the layer shading it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerrainKey {
+    pub region: RegionId,
+    pub layer: MapLayer,
+}
+
+impl TerrainKey {
+    pub fn of(region: &RegionDefinition, layer: MapLayer) -> Self {
+        Self {
+            region: region.id().clone(),
+            layer,
+        }
+    }
+}
+
+/// One pixel per cell, shaded by `layer`. Pure; the map draws it as a single textured quad.
+pub fn terrain_image(layer: MapLayer, region: &RegionDefinition) -> egui::ColorImage {
+    let terrain = region.terrain();
+    let (width, height) = (terrain.width(), terrain.height());
+    let mut rgb = Vec::with_capacity(usize::from(width) * usize::from(height) * 3);
+    for y in 0..height {
+        for x in 0..width {
+            rgb.extend_from_slice(&cell_color(layer, region, CellCoord { x, y }));
+        }
+    }
+    egui::ColorImage::from_rgb([usize::from(width), usize::from(height)], &rgb)
+}
+
+/// The uploaded terrain texture, rebuilt only when its [`TerrainKey`] changes. A resource, cleared
+/// when a game starts or ends (the key names a region, not a file's contents).
+#[derive(Resource, Default)]
+pub struct MapCache {
+    cached: Option<(TerrainKey, egui::TextureHandle)>,
+    rebuilds: u32,
+}
+
+impl MapCache {
+    /// The texture for `region` shaded by `layer`: the cached one unless the key changed.
+    pub fn texture(
+        &mut self,
+        ctx: &egui::Context,
+        region: &RegionDefinition,
+        layer: MapLayer,
+    ) -> egui::TextureId {
+        let key = TerrainKey::of(region, layer);
+        if let Some((cached, handle)) = &self.cached
+            && *cached == key
+        {
+            return handle.id();
+        }
+        // Nearest filtering keeps each cell a crisp block, however far the map is scaled.
+        let handle = ctx.load_texture(
+            "terrain",
+            terrain_image(layer, region),
+            egui::TextureOptions::NEAREST,
+        );
+        let id = handle.id();
+        self.cached = Some((key, handle));
+        self.rebuilds += 1;
+        id
+    }
+
+    /// How many times the texture has been built: tests watch it to see the cache hold.
+    pub fn rebuilds(&self) -> u32 {
+        self.rebuilds
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.cached = None;
+    }
+}
+
+pub(super) fn reset_cache(mut cache: ResMut<MapCache>) {
+    cache.clear();
+}
+
 // ---- model, presenter, draw, system ---------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq)]
@@ -400,7 +479,7 @@ pub fn map_model(game: &Game, l10n: &Localizer, layer: MapLayer, selection: Sele
     }
 }
 
-pub fn draw_map(ui: &mut egui::Ui, model: &MapModel) -> Vec<UiAction> {
+pub fn draw_map(ui: &mut egui::Ui, model: &MapModel, cache: &mut MapCache) -> Vec<UiAction> {
     let mut actions = Vec::new();
     ui.horizontal_wrapped(|ui| {
         for layer in &model.layers {
@@ -413,7 +492,13 @@ pub fn draw_map(ui: &mut egui::Ui, model: &MapModel) -> Vec<UiAction> {
     });
     let terrain = model.region.terrain();
     let layout = MapLayout::fit(response.rect, terrain.width(), terrain.height());
-    paint_cells(&painter, &layout, model);
+    let texture = cache.texture(ui.ctx(), &model.region, model.layer);
+    painter.image(
+        texture,
+        layout.bounds(),
+        Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+        Color32::WHITE,
+    );
     paint_objects(&painter, &layout, model);
     if let Some(pos) = response
         .interact_pointer_pos()
@@ -424,26 +509,10 @@ pub fn draw_map(ui: &mut egui::Ui, model: &MapModel) -> Vec<UiAction> {
     actions
 }
 
-/// One rect per cell, coloured by the layer. Each is grown a hair so the anti-aliased edges of
-/// neighbours overlap instead of leaving seams.
-fn paint_cells(painter: &egui::Painter, layout: &MapLayout, model: &MapModel) {
-    let terrain = model.region.terrain();
-    for y in 0..terrain.height() {
-        for x in 0..terrain.width() {
-            let at = CellCoord { x, y };
-            painter.rect_filled(
-                layout.cell_rect(at).expand(0.3),
-                egui::CornerRadius::ZERO,
-                color32(cell_color(model.layer, &model.region, at)),
-            );
-        }
-    }
-}
-
 /// Lines, then the substation, cities and plants on top, in the order a click prefers them.
 fn paint_objects(painter: &egui::Painter, layout: &MapLayout, model: &MapModel) {
     let objects = &model.objects;
-    let half = marker_radius(layout) * 0.7;
+    let half = plant_half_size(layout);
     let at = |cell| layout.cell_center(cell);
     for line in &objects.lines {
         let ends = [at(line.from), at(line.to)];
@@ -460,12 +529,13 @@ fn paint_objects(painter: &egui::Painter, layout: &MapLayout, model: &MapModel) 
     }
     let ink = Color32::from_rgb(20, 22, 28);
     let centre = at(objects.substation);
+    let reach = half * 1.2;
     painter.add(egui::Shape::convex_polygon(
         vec![
-            centre + vec2(0.0, -half),
-            centre + vec2(half, 0.0),
-            centre + vec2(0.0, half),
-            centre + vec2(-half, 0.0),
+            centre + vec2(0.0, -reach),
+            centre + vec2(reach, 0.0),
+            centre + vec2(0.0, reach),
+            centre + vec2(-reach, 0.0),
         ],
         Color32::WHITE,
         Stroke::new(1.5, ink),
@@ -476,7 +546,12 @@ fn paint_objects(painter: &egui::Painter, layout: &MapLayout, model: &MapModel) 
         } else {
             (Color32::TRANSPARENT, Color32::from_rgb(255, 236, 160))
         };
-        painter.circle(at(city.cell), half * 0.85, fill, Stroke::new(2.0, outline));
+        painter.circle(
+            at(city.cell),
+            city_radius(layout),
+            fill,
+            Stroke::new(2.0, outline),
+        );
     }
     for plant in &objects.plants {
         let fill = color32(kind_color(plant.kind));
@@ -504,7 +579,7 @@ fn paint_objects(painter: &egui::Painter, layout: &MapLayout, model: &MapModel) 
 fn paint_selection(painter: &egui::Painter, layout: &MapLayout, model: &MapModel, half: f32) {
     let ring = Stroke::new(2.0, Color32::WHITE);
     let objects = &model.objects;
-    let around = |cell| painter.circle_stroke(layout.cell_center(cell), half * 1.45, ring);
+    let around = |cell| painter.circle_stroke(layout.cell_center(cell), half * 1.5, ring);
     match model.selection {
         Selection::None => {}
         Selection::Cell(at) => {
@@ -538,12 +613,13 @@ pub(super) fn map_panel(
     area: Res<HudArea>,
     session: Res<Session>,
     l10n: Res<Localizer>,
+    mut cache: ResMut<MapCache>,
     mut sink: ActionSink,
 ) -> Result {
     let model = map_model(&session.0, &l10n, sink.layer(), sink.selection());
     let mut ui = area.root_ui(contexts.ctx_mut()?, "map");
     let actions = egui::CentralPanel::default()
-        .show(&mut ui, |ui| draw_map(ui, &model))
+        .show(&mut ui, |ui| draw_map(ui, &model, &mut cache))
         .inner;
     dispatch(actions, &mut sink);
     Ok(())
@@ -554,58 +630,55 @@ mod tests {
     use application::InMemoryCommandLog;
     use domain::session::LineView;
     use egui::{pos2, vec2};
+    use proptest::prelude::*;
 
     use super::*;
-    use crate::hud::test_support::{eastern_game, shipped_l10n};
+    use crate::hud::test_support::{eastern_game, shipped_game, shipped_l10n};
 
     fn area(x: f32, y: f32, w: f32, h: f32) -> Rect {
         Rect::from_min_size(pos2(x, y), vec2(w, h))
     }
 
-    #[test]
-    fn map_layout_keeps_aspect_and_fits() {
-        // A 100 x 60 grid in areas wider than, taller than, and exactly the grid's shape.
-        for panel in [
-            area(0.0, 0.0, 1000.0, 300.0),
-            area(40.0, 20.0, 300.0, 900.0),
-            area(0.0, 0.0, 800.0, 480.0),
-            area(-50.0, 10.0, 77.0, 1234.0),
-        ] {
-            let layout = MapLayout::fit(panel, 100, 60);
+    proptest! {
+        #[test]
+        fn map_layout_keeps_aspect_and_fits(
+            cols in 1u16..=200,
+            rows in 1u16..=200,
+            x in -500.0f32..500.0,
+            y in -500.0f32..500.0,
+            width in 50.0f32..4000.0,
+            height in 50.0f32..4000.0,
+            pick_x in 0u16..200,
+            pick_y in 0u16..200,
+        ) {
+            // Any grid shape (portrait too) in any panel.
+            let panel = area(x, y, width, height);
+            let layout = MapLayout::fit(panel, cols, rows);
             let bounds = layout.bounds();
 
-            assert!(
-                panel.expand(0.001).contains_rect(bounds),
-                "{bounds:?} in {panel:?}"
+            prop_assert!(panel.expand(0.01).contains_rect(bounds), "{bounds:?} in {panel:?}");
+            let shape = f32::from(cols) / f32::from(rows);
+            prop_assert!(
+                ((bounds.width() / bounds.height()) / shape - 1.0).abs() < 1e-3,
+                "aspect {bounds:?} for {cols} x {rows}"
             );
-            assert!(
-                (bounds.width() / bounds.height() - 100.0 / 60.0).abs() < 1e-4,
-                "aspect {bounds:?}"
-            );
-            let touches_width = (bounds.width() - panel.width()).abs() < 1e-3;
-            let touches_height = (bounds.height() - panel.height()).abs() < 1e-3;
-            assert!(
-                touches_width || touches_height,
-                "{bounds:?} fills {panel:?}"
-            );
-            assert!(
-                (bounds.center() - panel.center()).length() < 1e-3,
-                "centred {bounds:?} in {panel:?}"
-            );
-            assert!((layout.cell_size() * 100.0 - bounds.width()).abs() < 1e-3);
+            // It is the biggest fit: it fills the panel's width or its height.
+            let slack = (panel.width() - bounds.width()).min(panel.height() - bounds.height());
+            prop_assert!(slack.abs() < 0.01, "{bounds:?} fills {panel:?}");
+            prop_assert!((bounds.center() - panel.center()).length() < 0.01);
+            prop_assert!((layout.cell_size() * f32::from(cols) - bounds.width()).abs() < 0.01);
 
-            // Every cell round-trips through its centre, and the corners are on the grid.
-            for at in [
+            // Every cell round-trips through its centre, and corners are on the grid.
+            let at = CellCoord { x: pick_x % cols, y: pick_y % rows };
+            prop_assert_eq!(layout.cell_at(layout.cell_center(at)), Some(at));
+            for corner in [
                 CellCoord { x: 0, y: 0 },
-                CellCoord { x: 99, y: 59 },
-                CellCoord { x: 37, y: 12 },
-                CellCoord { x: 99, y: 0 },
+                CellCoord { x: cols - 1, y: rows - 1 },
             ] {
-                assert_eq!(layout.cell_at(layout.cell_center(at)), Some(at));
-                assert!(bounds.contains(layout.cell_rect(at).center()));
+                prop_assert_eq!(layout.cell_at(layout.cell_center(corner)), Some(corner));
             }
-            assert_eq!(layout.cell_at(bounds.min - vec2(1.0, 0.0)), None);
-            assert_eq!(layout.cell_at(bounds.max + vec2(0.0, 1.0)), None);
+            prop_assert_eq!(layout.cell_at(bounds.min - vec2(1.0, 0.0)), None);
+            prop_assert_eq!(layout.cell_at(bounds.max + vec2(0.0, 1.0)), None);
         }
     }
 
@@ -662,44 +735,129 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_marker_is_hit_within_its_radius_and_the_nearest_wins() {
-        let layout = MapLayout::fit(area(0.0, 0.0, 1000.0, 600.0), 100, 60);
-        let near = PlantMarker {
-            id: PlantId(2),
-            kind: PlantKind::Ccgt,
-            cell: cell(40, 20),
-            built: true,
-        };
-        let far = PlantMarker {
-            id: PlantId(1),
+    fn plant_at(id: u32, at: CellCoord) -> PlantMarker {
+        PlantMarker {
+            id: PlantId(id),
             kind: PlantKind::Coal,
-            cell: cell(41, 20),
+            cell: at,
             built: true,
-        };
-        let objects = MapObjects {
-            plants: vec![far, near],
-            cities: Vec::new(),
+        }
+    }
+
+    fn objects_of(plants: Vec<PlantMarker>, cities: Vec<CityMarker>) -> MapObjects {
+        MapObjects {
+            plants,
+            cities,
             substation: cell(0, 0),
             lines: Vec::new(),
             nodes: BTreeMap::new(),
-        };
-        let radius = marker_radius(&layout);
-        assert!(radius >= layout.cell_size());
+        }
+    }
 
-        // Just beside the nearer plant's centre, within its radius, still picks it...
-        let beside = layout.cell_center(near.cell) + vec2(-radius * 0.9, 0.0);
-        assert_eq!(pick(&layout, beside, &objects), Selection::Plant(near.id));
-        // ...even though the other plant is also in reach from a point between them: the nearer
-        // centre wins whatever the order of the list.
-        let between = layout.cell_center(near.cell) + vec2(layout.cell_size() * 0.3, 0.0);
-        assert_eq!(pick(&layout, between, &objects), Selection::Plant(near.id));
-        // Well clear of both, it is just a cell.
-        let clear = layout.cell_center(cell(70, 50));
-        assert_eq!(
-            pick(&layout, clear, &objects),
-            Selection::Cell(cell(70, 50))
+    #[test]
+    fn a_marker_is_hit_only_where_it_is_drawn() {
+        let layout = MapLayout::fit(area(0.0, 0.0, 1000.0, 600.0), 100, 60);
+        let plant = plant_at(1, cell(40, 20));
+        let city = CityMarker {
+            id: CityId(2),
+            cell: cell(42, 20),
+            connected: true,
+        };
+        let objects = objects_of(vec![plant], vec![city]);
+        let (half, radius) = (plant_half_size(&layout), city_radius(&layout));
+        assert!(
+            half < layout.cell_size() / 2.0,
+            "the plant fits inside its cell"
         );
+        assert!(
+            radius < layout.cell_size() / 2.0,
+            "the city fits inside its cell"
+        );
+
+        // The plant's drawn square, corner to corner, is the plant.
+        let centre = layout.cell_center(plant.cell);
+        for corner in [
+            vec2(half, half),
+            vec2(-half, half),
+            vec2(half, -half),
+            vec2(-half, -half),
+        ] {
+            assert_eq!(
+                pick(&layout, centre + corner * 0.99, &objects),
+                Selection::Plant(plant.id)
+            );
+        }
+        // Just outside the square, still inside the plant's own cell, is the cell.
+        for outside in [
+            vec2(half + 0.2, 0.0),
+            vec2(0.0, -half - 0.2),
+            vec2(half + 0.2, half + 0.2),
+        ] {
+            assert_eq!(
+                pick(&layout, centre + outside, &objects),
+                Selection::Cell(plant.cell),
+                "{outside:?}"
+            );
+        }
+        // The city is its drawn circle: inside the radius it is the city, in the cell's corner
+        // beyond it, the cell.
+        let city_centre = layout.cell_center(city.cell);
+        assert_eq!(
+            pick(&layout, city_centre + vec2(radius * 0.99, 0.0), &objects),
+            Selection::City(city.id)
+        );
+        let diagonal = vec2(radius * 0.7, radius * 0.7);
+        assert_eq!(
+            pick(&layout, city_centre + diagonal, &objects),
+            Selection::City(city.id)
+        );
+        assert_eq!(
+            pick(&layout, city_centre + diagonal * 1.2, &objects),
+            Selection::Cell(city.cell)
+        );
+        // The next cell over, between the two, is just a cell.
+        let between = layout.cell_center(cell(41, 20));
+        assert_eq!(
+            pick(&layout, between, &objects),
+            Selection::Cell(cell(41, 20))
+        );
+    }
+
+    #[test]
+    fn of_objects_drawn_on_top_of_each_other_the_last_drawn_is_picked() {
+        let layout = MapLayout::fit(area(0.0, 0.0, 1000.0, 600.0), 100, 60);
+        let at = cell(10, 10);
+        let objects = objects_of(
+            vec![plant_at(5, at), plant_at(6, at)],
+            vec![
+                CityMarker {
+                    id: CityId(1),
+                    cell: at,
+                    connected: true,
+                },
+                CityMarker {
+                    id: CityId(2),
+                    cell: at,
+                    connected: true,
+                },
+            ],
+        );
+        let centre = layout.cell_center(at);
+
+        assert_eq!(
+            pick(&layout, centre, &objects),
+            Selection::Plant(PlantId(6))
+        );
+        let cities = objects_of(Vec::new(), objects.cities.clone());
+        assert_eq!(pick(&layout, centre, &cities), Selection::City(CityId(2)));
+    }
+
+    /// Whether a plant's drawn square covers `pos`, worked out from the plant's centre and half
+    /// side rather than through `pick`.
+    fn covers(layout: &MapLayout, plant: &PlantMarker, pos: Pos2) -> bool {
+        let half = plant_half_size(layout);
+        let centre = layout.cell_center(plant.cell);
+        (pos.x - centre.x).abs() <= half && (pos.y - centre.y).abs() <= half
     }
 
     #[test]
@@ -707,45 +865,97 @@ mod tests {
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
         let session = game.session();
         let layout = MapLayout::fit(area(20.0, 10.0, 1000.0, 600.0), 100, 60);
+        let objects = MapObjects::of(&game);
 
+        // A plant is hit at its own centre (the topmost of any on the same cell).
         for plant in session.plant_views() {
-            let Selection::Plant(found) = hit_test(&layout, layout.cell_center(plant.cell), &game)
-            else {
-                panic!("plant {:?} at {:?} is not hit", plant.id, plant.cell);
+            let hit = hit_test(&layout, layout.cell_center(plant.cell), &game);
+            let Selection::Plant(found) = hit else {
+                panic!(
+                    "plant {:?} at {:?} is not hit: {hit:?}",
+                    plant.id, plant.cell
+                );
             };
-            let found = session
-                .plant_views()
-                .into_iter()
-                .find(|p| p.id == found)
-                .unwrap();
+            let found = objects.plants.iter().find(|p| p.id == found).unwrap();
             assert_eq!(found.cell, plant.cell, "the plant on that cell");
         }
+        // Every city is hit at its own centre, unless a plant is drawn over that point.
+        let mut selectable = 0;
         for city in session.city_views() {
-            let hit = hit_test(&layout, layout.cell_center(city.cell), &game);
-            assert!(
-                matches!(hit, Selection::City(_) | Selection::Plant(_)),
-                "{hit:?}"
-            );
+            let centre = layout.cell_center(city.cell);
+            let covered = objects.plants.iter().any(|p| covers(&layout, p, centre));
+            let hit = hit_test(&layout, centre, &game);
+            if covered {
+                assert!(
+                    matches!(hit, Selection::Plant(_)),
+                    "{:?}: {hit:?}",
+                    city.cell
+                );
+            } else {
+                assert_eq!(hit, Selection::City(city.id), "{:?}", city.cell);
+                selectable += 1;
+            }
         }
-        let terrain = session.region().terrain();
-        let empty = (0..terrain.height())
-            .flat_map(|y| (0..terrain.width()).map(move |x| cell(x, y)))
-            .find(|c| {
-                let pos = layout.cell_center(*c);
-                let objects = MapObjects::of(&game);
-                objects
-                    .plants
-                    .iter()
-                    .map(|p| p.cell)
-                    .chain(objects.cities.iter().map(|c| c.cell))
-                    .all(|other| {
-                        (layout.cell_center(other) - pos).length() > 3.0 * marker_radius(&layout)
-                    })
-            })
-            .expect("some cell is clear of every marker");
+        assert!(
+            selectable + 2 >= session.city_views().len(),
+            "at most a couple of cities share a cell with a plant: {selectable}"
+        );
+    }
+
+    #[test]
+    fn a_dense_cluster_leaves_its_cells_clickable() {
+        let game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let layout = MapLayout::fit(area(0.0, 0.0, 1000.0, 600.0), 100, 60);
+        let objects = MapObjects::of(&game);
+        let occupied: Vec<CellCoord> = objects
+            .plants
+            .iter()
+            .map(|p| p.cell)
+            .chain(objects.cities.iter().map(|c| c.cell))
+            .collect();
+
+        // Next to every plant, any cell that holds no marker is that cell, not the plant.
+        let mut checked = 0;
+        for plant in &objects.plants {
+            for (dx, dy) in [
+                (-1i32, -1i32),
+                (0, -1),
+                (1, -1),
+                (-1, 0),
+                (1, 0),
+                (-1, 1),
+                (0, 1),
+                (1, 1),
+            ] {
+                let (nx, ny) = (i32::from(plant.cell.x) + dx, i32::from(plant.cell.y) + dy);
+                if !(0..100).contains(&nx) || !(0..60).contains(&ny) {
+                    continue;
+                }
+                let neighbour = CellCoord {
+                    x: nx as u16,
+                    y: ny as u16,
+                };
+                if occupied.contains(&neighbour) {
+                    continue;
+                }
+                let at = layout.cell_center(neighbour);
+                assert_eq!(
+                    hit_test(&layout, at, &game),
+                    Selection::Cell(neighbour),
+                    "next to the plant at {:?}",
+                    plant.cell
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 100, "{checked} neighbouring cells checked");
+        // The corner of a plant's own cell, outside its square, is the cell too.
+        let plant = &objects.plants[0];
+        let corner = layout.cell_rect(plant.cell).max - vec2(0.1, 0.1);
+        assert!(!covers(&layout, plant, corner));
         assert_eq!(
-            hit_test(&layout, layout.cell_center(empty), &game),
-            Selection::Cell(empty)
+            hit_test(&layout, corner, &game),
+            Selection::Cell(plant.cell)
         );
     }
 
@@ -917,5 +1127,78 @@ mod tests {
         assert_eq!(glyphs.len(), 6, "each kind has its own glyph");
         assert_eq!(model.label, l10n.text("map-label"));
         assert_eq!(l10n.problems(), vec![]);
+    }
+
+    #[test]
+    fn the_terrain_texture_key_follows_the_region_and_the_layer() {
+        let eastern = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let western = shipped_game(
+            "western_interconnection",
+            Box::new(InMemoryCommandLog::default()),
+        );
+        let (east, west) = (eastern.session().region(), western.session().region());
+        let key = |region: &RegionDefinition, layer| TerrainKey::of(region, layer);
+
+        assert_eq!(key(east, MapLayer::Terrain), key(east, MapLayer::Terrain));
+        assert_ne!(
+            key(east, MapLayer::Terrain),
+            key(east, MapLayer::Irradiance)
+        );
+        assert_ne!(
+            key(east, MapLayer::Suitability(PlantKind::Coal)),
+            key(east, MapLayer::Suitability(PlantKind::Solar))
+        );
+        assert_ne!(key(east, MapLayer::Terrain), key(west, MapLayer::Terrain));
+    }
+
+    #[test]
+    fn the_terrain_image_has_one_pixel_per_cell_in_the_layer_s_colours() {
+        for region in ["eastern_interconnection", "western_interconnection"] {
+            let game = shipped_game(region, Box::new(InMemoryCommandLog::default()));
+            let region = game.session().region();
+            let terrain = region.terrain();
+            for layer in [MapLayer::Terrain, MapLayer::Suitability(PlantKind::Hydro)] {
+                let image = terrain_image(layer, region);
+
+                assert_eq!(
+                    image.size,
+                    [usize::from(terrain.width()), usize::from(terrain.height())]
+                );
+                assert_eq!(image.pixels.len(), image.size[0] * image.size[1]);
+                for at in [
+                    cell(0, 0),
+                    cell(terrain.width() - 1, terrain.height() - 1),
+                    cell(37, 12),
+                ] {
+                    let [r, g, b] = cell_color(layer, region, at);
+                    assert_eq!(
+                        image.pixels[usize::from(at.y) * image.size[0] + usize::from(at.x)],
+                        Color32::from_rgb(r, g, b)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_cache_rebuilds_the_texture_only_when_the_key_changes() {
+        let game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let region = game.session().region();
+        let ctx = egui::Context::default();
+        let mut cache = MapCache::default();
+        assert_eq!(cache.rebuilds(), 0);
+
+        let first = cache.texture(&ctx, region, MapLayer::Terrain);
+        assert_eq!(cache.texture(&ctx, region, MapLayer::Terrain), first);
+        assert_eq!(cache.rebuilds(), 1, "the second frame reuses it");
+
+        cache.texture(&ctx, region, MapLayer::Irradiance);
+        assert_eq!(cache.rebuilds(), 2, "another layer is another texture");
+        cache.texture(&ctx, region, MapLayer::Irradiance);
+        assert_eq!(cache.rebuilds(), 2);
+
+        cache.clear();
+        cache.texture(&ctx, region, MapLayer::Irradiance);
+        assert_eq!(cache.rebuilds(), 3, "a cleared cache starts over");
     }
 }

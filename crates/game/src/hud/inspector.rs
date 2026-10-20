@@ -5,6 +5,7 @@ use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 use domain::ids::CellCoord;
 use domain::region::{PlantKind, RegionDefinition};
+use domain::session::DayPhase;
 
 use super::action::{ActionSink, ButtonModel, UiAction, button, dispatch};
 use super::layout::HudArea;
@@ -12,6 +13,9 @@ use super::selection::Selection;
 use super::top_bar::Stat;
 use crate::l10n::{Localize, Localizer, format};
 use crate::sim::Session;
+
+/// The inspector's width, fixed so the map beside it never moves.
+pub const PANEL_WIDTH: f32 = 260.0;
 
 /// One plant kind's verdict on the selected cell.
 #[derive(Debug, Clone, PartialEq)]
@@ -24,8 +28,9 @@ pub struct SuitabilityRow {
     pub ok: bool,
 }
 
+/// What the inspector says about one cell.
 #[derive(Debug, Clone, PartialEq)]
-pub struct InspectorModel {
+pub struct CellInspector {
     /// `Cell (12, 34)`.
     pub title: String,
     /// `Land` or `Water`.
@@ -40,22 +45,45 @@ pub struct InspectorModel {
     pub close: ButtonModel,
 }
 
-/// The inspector for the selected cell; `None` unless a cell on the map is selected.
+#[derive(Debug, Clone, PartialEq)]
+pub enum InspectorModel {
+    /// A cell on the map is selected.
+    Cell(CellInspector),
+    /// Nothing, or something that is not a map cell, is selected. The panel keeps its place, so
+    /// the map beside it does not move.
+    Empty { hint: String },
+}
+
+/// The inspector (Planning only, spec §8.4): the selected cell, or a hint to select one. `None`
+/// outside Planning.
 pub fn inspector_model(
     game: &Game,
     l10n: &Localizer,
     selection: Selection,
 ) -> Option<InspectorModel> {
-    let Selection::Cell(at) = selection else {
+    if game.session().phase() != DayPhase::Planning {
         return None;
+    }
+    let cell_model = match selection {
+        Selection::Cell(at) => cell_inspector(game, l10n, at),
+        _ => None,
     };
+    Some(cell_model.map_or_else(
+        || InspectorModel::Empty {
+            hint: l10n.text("inspector-select-cell"),
+        },
+        InspectorModel::Cell,
+    ))
+}
+
+fn cell_inspector(game: &Game, l10n: &Localizer, at: CellCoord) -> Option<CellInspector> {
     let region = game.session().region();
     let cell = region.terrain().get(at)?;
     let reading = |key: &str, value| Stat {
         label: l10n.text(key),
         value: format::percent(value),
     };
-    Some(InspectorModel {
+    Some(CellInspector {
         title: l10n.args(
             "inspector-title",
             &[
@@ -104,6 +132,16 @@ pub fn suitability_row(
 
 pub fn draw_inspector(ui: &mut egui::Ui, model: &InspectorModel) -> Vec<UiAction> {
     let mut actions = Vec::new();
+    match model {
+        InspectorModel::Empty { hint } => {
+            ui.weak(hint.as_str());
+        }
+        InspectorModel::Cell(cell) => draw_cell(ui, cell, &mut actions),
+    }
+    actions
+}
+
+fn draw_cell(ui: &mut egui::Ui, model: &CellInspector, actions: &mut Vec<UiAction>) {
     ui.heading(model.title.as_str());
     ui.label(model.terrain.as_str());
     egui::Grid::new("inspector_readings").show(ui, |ui| {
@@ -115,20 +153,19 @@ pub fn draw_inspector(ui: &mut egui::Ui, model: &InspectorModel) -> Vec<UiAction
     });
     ui.separator();
     ui.strong(model.suitability_heading.as_str());
-    egui::Grid::new("inspector_suitability").show(ui, |ui| {
-        for row in &model.suitability {
+    for row in &model.suitability {
+        // Wrapped, not a grid: a siting error is a sentence, and the panel is a fixed width.
+        ui.horizontal_wrapped(|ui| {
             ui.label(row.label.as_str());
             if row.ok {
                 ui.colored_label(egui::Color32::from_rgb(90, 190, 110), row.verdict.as_str());
             } else {
                 ui.weak(row.verdict.as_str());
             }
-            ui.end_row();
-        }
-    });
+        });
+    }
     ui.separator();
-    button(ui, &model.close, &mut actions);
-    actions
+    button(ui, &model.close, actions);
 }
 
 pub(super) fn inspector_panel(
@@ -143,7 +180,8 @@ pub(super) fn inspector_panel(
     };
     let mut ui = area.root_ui(contexts.ctx_mut()?, "inspector");
     let actions = egui::Panel::left("inspector")
-        .default_size(260.0)
+        .resizable(false)
+        .exact_size(PANEL_WIDTH)
         .show(&mut ui, |ui| draw_inspector(ui, &model))
         .inner;
     area.claim(&ui);
@@ -153,7 +191,7 @@ pub(super) fn inspector_panel(
 
 #[cfg(test)]
 mod tests {
-    use application::InMemoryCommandLog;
+    use application::{Command, InMemoryCommandLog};
     use domain::region::SiteError;
 
     use super::*;
@@ -227,7 +265,7 @@ mod tests {
             .unwrap();
         let terrain_cell = region.terrain().get(at).unwrap();
 
-        let model = inspector_model(&game, &l10n, Selection::Cell(at)).expect("a cell is selected");
+        let model = cell_model(&game, &l10n, at);
 
         assert_eq!(model.title, format!("Cell ({}, {})", at.x, at.y));
         assert_eq!(model.terrain, l10n.text("inspector-land"));
@@ -267,12 +305,19 @@ mod tests {
         let water = cells(region)
             .find(|at| !region.terrain().get(*at).unwrap().land)
             .unwrap();
-        let model = inspector_model(&game, &l10n, Selection::Cell(water)).unwrap();
+        let model = cell_model(&game, &l10n, water);
         assert_eq!(model.terrain, l10n.text("inspector-water"));
     }
 
+    fn cell_model(game: &Game, l10n: &Localizer, at: CellCoord) -> CellInspector {
+        match inspector_model(game, l10n, Selection::Cell(at)) {
+            Some(InspectorModel::Cell(model)) => model,
+            other => panic!("a cell is selected: {other:?}"),
+        }
+    }
+
     #[test]
-    fn only_a_cell_on_the_map_has_an_inspector() {
+    fn anything_but_a_cell_on_the_map_keeps_the_panel_with_a_hint() {
         let l10n = shipped_l10n();
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
         let session = game.session();
@@ -289,10 +334,25 @@ mod tests {
         ] {
             assert_eq!(
                 inspector_model(&game, &l10n, selection),
-                None,
+                Some(InspectorModel::Empty {
+                    hint: "Select a cell to see what can be built there".to_owned()
+                }),
                 "{selection:?}"
             );
         }
         assert_eq!(l10n.problems(), vec![]);
+    }
+
+    #[test]
+    fn the_inspector_is_planning_only() {
+        let l10n = shipped_l10n();
+        let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let at = CellCoord { x: 10, y: 10 };
+        assert!(inspector_model(&game, &l10n, Selection::Cell(at)).is_some());
+
+        game.execute(Command::BeginOperating).unwrap();
+
+        assert_eq!(inspector_model(&game, &l10n, Selection::Cell(at)), None);
+        assert_eq!(inspector_model(&game, &l10n, Selection::None), None);
     }
 }

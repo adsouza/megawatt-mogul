@@ -2611,6 +2611,7 @@ dependencies = [
  "domain",
  "fluent-bundle",
  "infrastructure",
+ "proptest",
  "tempfile",
  "tracing",
  "unic-langid",

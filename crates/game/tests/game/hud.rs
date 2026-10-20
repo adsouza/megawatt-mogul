@@ -152,8 +152,8 @@ fn the_egui_systems_have_no_conflicting_parameters() {
 
     app.world_mut()
         .schedule_scope(EguiPrimaryContextPass, |world, schedule| {
-            schedule
-                .initialize(world)
-                .expect("the egui pass builds without ambiguity or cycles");
+            schedule.initialize(world).expect(
+                "the egui pass initialises: its systems build, and their parameters are disjoint",
+            );
         });
 }

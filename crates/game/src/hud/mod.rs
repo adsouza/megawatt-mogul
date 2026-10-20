@@ -34,12 +34,13 @@ pub use self::build::{
 };
 pub use self::game_over::{GameOverModel, draw_game_over, game_over_model, game_over_model_for};
 pub use self::inspector::{
-    InspectorModel, SuitabilityRow, draw_inspector, inspector_model, suitability_row,
+    CellInspector, InspectorModel, SuitabilityRow, draw_inspector, inspector_model, suitability_row,
 };
 pub use self::layout::HudArea;
 pub use self::map::{
-    CityMarker, LineMarker, MapLayer, MapLayout, MapModel, MapObjects, PlantMarker, Rgb, SUITABLE,
-    UNSUITABLE, WATER, cell_color, draw_map, hit_test, kind_color, map_model, marker_radius, pick,
+    CityMarker, LineMarker, MapCache, MapLayer, MapLayout, MapModel, MapObjects, PlantMarker, Rgb,
+    SUITABLE, TerrainKey, UNSUITABLE, WATER, cell_color, city_radius, draw_map, hit_test,
+    kind_color, map_model, pick, plant_half_size, terrain_image,
 };
 pub use self::menu::{
     BootErrorModel, MainMenuModel, MenuForm, RegionChoice, RegionListings, RegionProblem,
@@ -90,6 +91,7 @@ impl Plugin for HudPlugin {
             .and_then(in_state(PhaseState::Planning).or_else(in_state(PhaseState::Operating)));
         app.init_resource::<Selection>()
             .init_resource::<MapLayer>()
+            .init_resource::<MapCache>()
             .init_resource::<OpenPrompt>()
             .init_resource::<ToastQueue>()
             .init_resource::<HudArea>()
@@ -113,6 +115,7 @@ impl Plugin for HudPlugin {
                 (
                     selection::reset_selection,
                     map::reset_layer,
+                    map::reset_cache,
                     action::close_prompt,
                 ),
             )
@@ -122,6 +125,7 @@ impl Plugin for HudPlugin {
                     menu::reseed_menu,
                     selection::reset_selection,
                     map::reset_layer,
+                    map::reset_cache,
                     action::close_prompt,
                 ),
             )
@@ -167,12 +171,14 @@ impl Plugin for HudPlugin {
                 ),
             )
             // The planning screen: side panels claim their share, then the map fills what is
-            // left. The map and the inspector show while planning and operating; only planning
-            // orders anything, so the build menu is planning-only.
+            // left. The map shows while planning and operating. The inspector and the build menu are
+            // for planning only: they hold fixed widths there, so the map doesn't move when the
+            // selection changes, and in operating the map gets the whole width.
             .add_systems(
                 EguiPrimaryContextPass,
                 (
-                    inspector::inspector_panel.run_if(on_the_map.clone()),
+                    inspector::inspector_panel
+                        .run_if(in_state(PhaseState::Planning).and_then(on_the_map.clone())),
                     build::build_panel
                         .run_if(in_state(PhaseState::Planning).and_then(on_the_map.clone())),
                     map::map_panel.run_if(on_the_map),
@@ -205,17 +211,22 @@ pub(crate) mod test_support {
             .unwrap_or_else(|error| panic!("the shipped translations must load: {error}"))
     }
 
-    /// A new eastern game, seed 7, in Planning, recording to `sink`.
-    pub fn eastern_game(sink: Box<dyn CommandLogSink>) -> Game {
+    /// A new game in the shipped region `region`, seed 7, in Planning, recording to `sink`.
+    pub fn shipped_game(region: &str, sink: Box<dyn CommandLogSink>) -> Game {
         let catalog = RonRegionCatalog::new(shipped_assets().join("regions"));
         Game::start_new(
             &catalog,
-            &RegionId::new("eastern_interconnection"),
+            &RegionId::new(region),
             7,
             GameSettings::default(),
             sink,
         )
-        .unwrap_or_else(|error| panic!("the shipped eastern region must start: {error}"))
+        .unwrap_or_else(|error| panic!("the shipped region {region} must start: {error}"))
+    }
+
+    /// A new eastern game, seed 7, in Planning, recording to `sink`.
+    pub fn eastern_game(sink: Box<dyn CommandLogSink>) -> Game {
+        shipped_game("eastern_interconnection", sink)
     }
 
     /// A command log that takes the header and then fails every command, like a full disk.

@@ -49,6 +49,7 @@ features = [
 # what the 3D diorama needs.
 
 [dev-dependencies]
+proptest = { workspace = true }
 tempfile = { workspace = true }
 
 [lints]

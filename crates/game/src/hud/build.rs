@@ -17,6 +17,9 @@ use super::top_bar::Stat;
 use crate::l10n::{Localize, LocalizeWith, Localizer, Names, format};
 use crate::sim::Session;
 
+/// The build menu's width, fixed so the map beside it never moves.
+pub const PANEL_WIDTH: f32 = 300.0;
+
 /// One plant kind on the selected cell: what it is, what it costs, and the button to build it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlantRow {
@@ -70,7 +73,8 @@ pub enum LineSection {
         hint: String,
         from: Vec<ButtonModel>,
     },
-    /// Choosing where it ends: every other node with its quote, nearest first.
+    /// Choosing where it ends: every other node with its quote; buildable ones first, each group
+    /// nearest first.
     End {
         heading: String,
         hint: String,
@@ -243,7 +247,8 @@ fn line_start_section(
     }
 }
 
-/// Where the line ends: every other node, nearest first, with what a line there would cost.
+/// Where the line ends: every other node with what a line there would cost, or why it can't be
+/// built. The buildable ones come first; each group is nearest first.
 fn line_end_section(
     game: &Game,
     l10n: &Localizer,
@@ -258,13 +263,12 @@ fn line_end_section(
         .filter(|choice| choice.node != from.node)
         .map(|choice| (distance_cells(from.cell, choice.cell), choice))
         .collect();
-    // Stable: equally near nodes stay in listing order.
     others.sort_by(|a, b| a.0.total_cmp(&b.0));
     let stat = |key: &str, value: String| Stat {
         label: l10n.text(key),
         value,
     };
-    let targets = others
+    let mut targets: Vec<LineTarget> = others
         .into_iter()
         .map(|(_, to)| {
             let quote = session.line_quote(from.node, to.node);
@@ -295,6 +299,8 @@ fn line_end_section(
             }
         })
         .collect();
+    // Stable: the buildable lines first, each group nearest first.
+    targets.sort_by_key(|target| matches!(target.preview, LinePreview::Rejected(_)));
     LineSection::End {
         heading,
         hint: l10n.args("build-line-hint-to", &[("node", from.name.as_str().into())]),
@@ -309,7 +315,12 @@ fn line_end_section(
 pub fn draw_build(ui: &mut egui::Ui, model: &BuildModel) -> Vec<UiAction> {
     let mut actions = Vec::new();
     ui.heading(model.title.as_str());
-    egui::ScrollArea::vertical().show(ui, |ui| {
+    // Each line stage scrolls on its own, so switching stage starts at the top.
+    let stage = match model.line {
+        LineSection::Start { .. } => "build_line_start",
+        LineSection::End { .. } => "build_line_end",
+    };
+    egui::ScrollArea::vertical().id_salt(stage).show(ui, |ui| {
         draw_plant_section(ui, &model.plant, &mut actions);
         ui.separator();
         draw_line_section(ui, &model.line, &mut actions);
@@ -401,7 +412,8 @@ pub(super) fn build_panel(
     };
     let mut ui = area.root_ui(contexts.ctx_mut()?, "build");
     let actions = egui::Panel::right("build")
-        .default_size(300.0)
+        .resizable(false)
+        .exact_size(PANEL_WIDTH)
         .show(&mut ui, |ui| draw_build(ui, &model))
         .inner;
     area.claim(&ui);
@@ -602,7 +614,7 @@ mod tests {
     }
 
     #[test]
-    fn line_targets_are_listed_nearest_first_and_name_their_nodes() {
+    fn buildable_lines_come_first_and_each_group_is_nearest_first_and_named() {
         let l10n = shipped_l10n();
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
         let session = game.session();
@@ -626,14 +638,37 @@ mod tests {
                 .expect("every target is a plant or a city")
         };
         let start = session.region().start().substation;
-        let distances: Vec<f64> = targets(&model)
-            .iter()
-            .map(|t| distance_cells(start, cell_of(t.node)))
-            .collect();
-        assert!(
-            distances.windows(2).all(|pair| pair[0] <= pair[1]),
-            "nearest first: {distances:?}"
+        let refused = |t: &LineTarget| matches!(t.preview, LinePreview::Rejected(_));
+        let (buildable, joined): (Vec<&LineTarget>, Vec<&LineTarget>) =
+            targets(&model).iter().partition(|t| !refused(t));
+        assert!(!buildable.is_empty() && !joined.is_empty());
+        let in_order: Vec<&LineTarget> = buildable.iter().chain(&joined).copied().collect();
+        assert_eq!(
+            in_order.iter().map(|t| t.node).collect::<Vec<_>>(),
+            targets(&model).iter().map(|t| t.node).collect::<Vec<_>>(),
+            "every refused line is listed after every buildable one"
         );
+        for group in [&buildable, &joined] {
+            let distances: Vec<f64> = group
+                .iter()
+                .map(|t| distance_cells(start, cell_of(t.node)))
+                .collect();
+            assert!(
+                distances.windows(2).all(|pair| pair[0] <= pair[1]),
+                "nearest first: {distances:?}"
+            );
+        }
+        // An already-joined line says who is joined, by name, not by grid point.
+        for target in &joined {
+            let LinePreview::Rejected(reason) = &target.preview else {
+                unreachable!()
+            };
+            let who = target.name.strip_prefix("Line to ").unwrap();
+            assert_eq!(
+                reason,
+                &format!("Substation and {who} are already connected.")
+            );
+        }
         let names: Vec<&str> = targets(&model).iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"Line to Pittsburgh"), "{names:?}");
         assert!(names.contains(&"Line to Nashville"), "{names:?}");

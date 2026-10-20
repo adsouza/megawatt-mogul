@@ -825,6 +825,38 @@ fn a_city_toast_uses_the_localised_city_name() {
 }
 
 #[test]
+fn an_already_joined_line_names_both_ends_and_falls_back_to_the_grid_point() {
+    let l10n = shipped();
+    let session = shipped_session();
+    let names = Names::new(&l10n, &session);
+    let city = session.city_views().remove(0);
+    let plant = session.plant_views().remove(0);
+    let ghost = NodeId(99_999);
+
+    let named = |from, to| DomainError::DuplicateLine { from, to }.localize_with(&l10n, &names);
+
+    let substation = named(session.substation(), city.node);
+    assert_eq!(
+        substation,
+        format!(
+            "Substation and {} are already connected.",
+            l10n.text(&city.name_key)
+        )
+    );
+    let plant_end = named(plant.node, city.node);
+    assert!(
+        plant_end.starts_with(&plant.kind.localize(&l10n)),
+        "{plant_end}"
+    );
+    assert!(!plant_end.contains('#'), "{plant_end}");
+    assert_eq!(
+        named(ghost, session.substation()),
+        "Grid point 99999 and Substation are already connected."
+    );
+    assert_eq!(l10n.problems(), vec![]);
+}
+
+#[test]
 fn a_plant_toast_uses_the_plant_kind() {
     let l10n = shipped();
     let session = shipped_session();
