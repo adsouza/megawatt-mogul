@@ -5,8 +5,8 @@
 //!   a tab, *Supply* (the supply chart) or *Hydro* (the hydro schedule). Beside it is a column of
 //!   fixed width ([`OPERATING_LOG_WIDTH`]) holding the ramp warnings and the incident ticker.
 //! - **The side panel** on the right, opening at [`OPERATING_SIDE_WIDTH`]: the frequency
-//!   gauge, the selected plant's details (or a placeholder of the same height), and the plant
-//!   list, which fills the rest.
+//!   gauge, the selected plant's details or city's card (or a placeholder of the same height),
+//!   and the plant list, which fills the rest.
 //!
 //! The speed controls are a bar of their own under the top bar (`speed.rs`). The map takes what is
 //! left.
@@ -17,6 +17,7 @@ use bevy_egui::{EguiContexts, egui};
 use domain::session::DayPhase;
 
 use super::action::{ActionSink, ButtonModel, ToggleModel, UiAction, dispatch, toggle_button};
+use super::city_card::{CityCardModel, city_card_model, draw_city_card};
 use super::frequency::{FrequencyModel, draw_frequency, frequency_model};
 use super::hydro_panel::{HydroModel, draw_hydro, hydro_model};
 use super::incidents::{IncidentsModel, draw_incidents, incidents_model};
@@ -143,11 +144,30 @@ pub fn draw_operating_panel(ui: &mut egui::Ui, model: &OperatingPanelModel) -> V
     actions
 }
 
+/// What the side panel's selected-object block shows.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SelectedObject {
+    /// The selected plant's details, or the placeholder when nothing (or a cell) is selected.
+    Plant(PlantPanelModel),
+    /// The selected city's card (spec §16.8).
+    City(CityCardModel),
+}
+
+impl SelectedObject {
+    /// What the block is called: the plant's or the city's name, or the placeholder's hint.
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Plant(plant) => plant.name(),
+            Self::City(city) => &city.name,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct OperatingSideModel {
     pub frequency: FrequencyModel,
     pub plants: PlantListModel,
-    pub selected: PlantPanelModel,
+    pub selected: SelectedObject,
 }
 
 /// The side panel; `None` outside Operating.
@@ -162,7 +182,11 @@ pub fn operating_side_model(
     Some(OperatingSideModel {
         frequency: frequency_model(game, l10n),
         plants: plant_list_model(game, l10n, selection),
-        selected: plant_panel_model(game, l10n, selection),
+        selected: match selection {
+            Selection::City(city) => city_card_model(game, l10n, city).map(SelectedObject::City),
+            _ => None,
+        }
+        .unwrap_or_else(|| SelectedObject::Plant(plant_panel_model(game, l10n, selection))),
     })
 }
 
@@ -185,9 +209,9 @@ pub fn operating_side_min_height(ctx: &egui::Context) -> f32 {
         + frame
 }
 
-/// From the top: the gauge, then the selected plant's details in a block of fixed height (the
-/// same with nothing selected, so the list never moves), then the plant list, which takes all
-/// the height left.
+/// From the top: the gauge, then the selected plant's details or city's card in a block of fixed
+/// height (the same with nothing selected, so the list never moves), then the plant list, which
+/// takes all the height left.
 pub fn draw_operating_side(
     ui: &mut egui::Ui,
     model: &OperatingSideModel,
@@ -203,7 +227,17 @@ pub fn draw_operating_side(
     let details = egui::vec2(width, plant_details_height(ui.ctx()));
     let block = ui.allocate_ui(details, |ui| {
         ui.set_min_size(details);
-        actions.extend(draw_plant_panel(ui, &model.selected, form));
+        match &model.selected {
+            SelectedObject::Plant(plant) => actions.extend(draw_plant_panel(ui, plant, form)),
+            // In a scroll area, like the plant's figures, so the block keeps its height whatever
+            // the card holds.
+            SelectedObject::City(city) => {
+                egui::ScrollArea::vertical()
+                    .id_salt("operating_city_card")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| draw_city_card(ui, city));
+            }
+        }
     });
     named_region(&block.response, model.selected.name());
     ui.add(egui::Separator::default().spacing(SIDE_SEPARATOR_SPACING));
@@ -271,6 +305,35 @@ mod tests {
 
         assert!(operating_panel_model(&game, &l10n, OperatingTab::Supply).is_some());
         assert!(operating_side_model(&game, &l10n, Selection::None).is_some());
+    }
+
+    /// The block shows the selected city's card, and a plant's details (or the placeholder)
+    /// otherwise (spec §16.8).
+    #[test]
+    fn the_selected_block_follows_a_city_or_a_plant() {
+        let l10n = shipped_l10n();
+        let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        game.execute(Command::BeginOperating).unwrap();
+        game.execute(Command::AdvanceTicks { n: 5 }).unwrap();
+        let session = game.session();
+        let city = session.city_views()[0].id;
+        let plant = session.plant_views()[0].id;
+
+        let side = |selection| operating_side_model(&game, &l10n, selection).unwrap();
+        let card = city_card_model(&game, &l10n, city).unwrap();
+        assert_eq!(side(Selection::City(city)).selected.name(), card.name);
+        assert_eq!(
+            side(Selection::City(city)).selected,
+            SelectedObject::City(card)
+        );
+        for selection in [Selection::Plant(plant), Selection::None] {
+            assert_eq!(
+                side(selection).selected,
+                SelectedObject::Plant(plant_panel_model(&game, &l10n, selection)),
+                "{selection:?}"
+            );
+        }
+        assert_eq!(l10n.problems(), vec![]);
     }
 
     #[test]

@@ -9,6 +9,7 @@ use domain::session::DayPhase;
 
 use super::action::{ActionSink, ButtonModel, UiAction, button, dispatch};
 use super::build::BUILD_PANEL;
+use super::city_card::{CityCardModel, city_card_model, draw_city_card};
 use super::layout::{Edge, HudArea, OuterPanel};
 use super::selection::Selection;
 use super::top_bar::Stat;
@@ -56,13 +57,15 @@ pub struct CellInspector {
 pub enum InspectorModel {
     /// A cell on the map is selected.
     Cell(CellInspector),
-    /// Nothing, or something that is not a map cell, is selected. The panel keeps its place, so
+    /// A city is selected (spec §16.8).
+    City(CityCardModel),
+    /// Nothing, or something that is neither a map cell nor a city, is selected. The panel keeps its place, so
     /// the map beside it does not move.
     Empty { hint: String },
 }
 
-/// The inspector (Planning only, spec §8.4): the selected cell, or a hint to select one. `None`
-/// outside Planning.
+/// The inspector (Planning only, spec §8.4): the selected cell or city (§16.8), or a hint to
+/// select a cell. `None` outside Planning.
 pub fn inspector_model(
     game: &Game,
     l10n: &Localizer,
@@ -71,16 +74,14 @@ pub fn inspector_model(
     if game.session().phase() != DayPhase::Planning {
         return None;
     }
-    let cell_model = match selection {
-        Selection::Cell(at) => cell_inspector(game, l10n, at),
+    let model = match selection {
+        Selection::Cell(at) => cell_inspector(game, l10n, at).map(InspectorModel::Cell),
+        Selection::City(city) => city_card_model(game, l10n, city).map(InspectorModel::City),
         _ => None,
     };
-    Some(cell_model.map_or_else(
-        || InspectorModel::Empty {
-            hint: l10n.text("inspector-select-cell"),
-        },
-        InspectorModel::Cell,
-    ))
+    Some(model.unwrap_or_else(|| InspectorModel::Empty {
+        hint: l10n.text("inspector-select-cell"),
+    }))
 }
 
 fn cell_inspector(game: &Game, l10n: &Localizer, at: CellCoord) -> Option<CellInspector> {
@@ -149,6 +150,7 @@ pub fn draw_inspector(ui: &mut egui::Ui, model: &InspectorModel) -> Vec<UiAction
                 ui.weak(hint.as_str());
             }
             InspectorModel::Cell(cell) => draw_cell(ui, cell, &mut actions),
+            InspectorModel::City(city) => draw_city_card(ui, city),
         });
     actions
 }
@@ -333,13 +335,11 @@ mod tests {
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
         let session = game.session();
         let plant = session.plant_views()[0].id;
-        let city = session.city_views()[0].id;
         let outside = CellCoord { x: 5000, y: 5000 };
 
         for selection in [
             Selection::None,
             Selection::Plant(plant),
-            Selection::City(city),
             Selection::LineFrom(session.substation()),
             Selection::Cell(outside),
         ] {
@@ -351,6 +351,29 @@ mod tests {
                 "{selection:?}"
             );
         }
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    /// A selected city shows its card in place of the cell hint (spec §16.8).
+    #[test]
+    fn a_selected_city_shows_its_card() {
+        let l10n = shipped_l10n();
+        let game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        for city in game.session().city_views() {
+            assert_eq!(
+                inspector_model(&game, &l10n, Selection::City(city.id)),
+                Some(InspectorModel::City(
+                    city_card_model(&game, &l10n, city.id).expect("a known city")
+                )),
+                "{:?}",
+                city.id
+            );
+        }
+        // A city the session doesn't know keeps the hint.
+        assert!(matches!(
+            inspector_model(&game, &l10n, Selection::City(domain::ids::CityId(9_999))),
+            Some(InspectorModel::Empty { .. })
+        ));
         assert_eq!(l10n.problems(), vec![]);
     }
 

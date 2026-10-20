@@ -193,6 +193,21 @@ first. Steps that need a fresh game say so; the others follow on from the step b
   figure of the plant down to *Water left today*, and at least three rows of the *Plants* list.
   In a taller window the bottom panel can grow further, and the side panel keeps that minimum.
 
+## 8. Selecting a city
+
+- [ ] **8.1** In Planning, click a connected city (a filled circle) on the map, then an
+  unconnected one (a hollow ring).
+  **Expected:** the inspector shows the city's name, *Connected* or *Not connected*, its *Base
+  load* and *Peak today* (*… MW at HH:00*). The unconnected city shows *Would add at peak* instead,
+  and the hint *Build a line to it from the build menu to connect it.* Clicking a cell brings the
+  cell card back.
+- [ ] **8.2** Start the day and click a connected city on the map, then an unconnected one, then
+  a plant in the *Plants* list.
+  **Expected:** the block above the list shows the city's card: its name, connection, base load
+  and peak, and for the connected city *Demand now* and *Served now*, which move with the day. The
+  list doesn't move. Clicking the plant brings its details back. In the outage of step 3.6, a
+  connected city also shows *Cut*, the share of its demand cut, the same for every connected city.
+
 ## Known visual risks to eyeball
 
 These came out of the reviews and couldn't be checked headlessly. Look at each while running the

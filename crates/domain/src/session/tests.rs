@@ -619,6 +619,146 @@ fn city_views_follow_region_cities() {
     assert!(!city3.connected);
 }
 
+/// The tiny region with city 3 connected and carrying 3,000 MW: the start
+/// fleet can't cover it, so the day runs in a rotating outage.
+fn session_in_an_outage() -> GameSession {
+    let mut parts = crate::region::fixtures::tiny_region_parts();
+    parts.start.connected_cities.push(CityId(3));
+    let city = parts.cities.iter_mut().find(|c| c.id == CityId(3)).unwrap();
+    city.base_load = Megawatts::new(3_000.0);
+    let region = crate::region::RegionDefinition::try_from(parts).unwrap();
+    GameSession::new(Arc::new(region), 1, GameSettings::default())
+}
+
+/// The forecast mean's peak over the day for a city of `base_load`: the
+/// largest shape factor at minute 30 of an hour, and that hour, the earliest
+/// on a tie.
+fn peak_of(s: &GameSession, base_load: f64) -> (f64, u8) {
+    let shape = s.region().demand();
+    let month = s.clock().month();
+    (0..24u8).fold((f64::MIN, 0), |(best, at), hour| {
+        let factor = crate::demand::shape_factor(shape, month, u32::from(hour) * 60 + 30);
+        if base_load * factor > best {
+            (base_load * factor, hour)
+        } else {
+            (best, at)
+        }
+    })
+}
+
+fn close_relative(a: f64, b: f64) -> bool {
+    (a - b).abs() <= 1e-9 * b.abs().max(1.0)
+}
+
+#[test]
+fn a_city_view_scales_the_system_by_base_load() {
+    let mut s = session_in_an_outage();
+    let ids: Vec<CityId> = s.city_views().iter().map(|c| c.id).collect();
+    let details = |s: &GameSession| -> Vec<CityDetail> {
+        ids.iter().map(|id| s.city_view(*id).unwrap()).collect()
+    };
+
+    // Planning: shares of the 4,000 MW connected, the forecast's peak, and
+    // nothing live yet.
+    let planning = details(&s);
+    assert!(planning.iter().all(|c| c.connected));
+    let total: f64 = planning.iter().map(|c| c.base_load.value()).sum();
+    assert_eq!(total, 4_000.0);
+    let forecast = s.hourly_forecast();
+    let system_peak = forecast.iter().fold(
+        forecast[0],
+        |best, p| if p.mean > best.mean { *p } else { best },
+    );
+    for city in &planning {
+        assert!(close_relative(
+            city.share.value(),
+            city.base_load.value() / total
+        ));
+        assert_eq!(city.peak_hour, system_peak.hour, "{:?}", city.id);
+        assert!(close_relative(
+            city.peak.value(),
+            city.share.value() * system_peak.mean.value()
+        ));
+        assert_eq!((city.demand_now, city.served_now), (None, None));
+    }
+    let shares: f64 = planning.iter().map(|c| c.share.value()).sum();
+    assert!(close_relative(shares, 1.0));
+
+    // Operating, before the first tick: still nothing live.
+    s.begin_operating().unwrap();
+    assert!(details(&s).iter().all(|c| c.demand_now.is_none()));
+
+    // After some ticks: the cities' figures add up to the system's.
+    run_ticks(&mut s, 90);
+    let tick = s.grid_snapshot().last_tick.unwrap();
+    assert!(
+        tick.served < tick.demand,
+        "the day is in an outage: {tick:?}"
+    );
+    let operating = details(&s);
+    let demand: f64 = operating
+        .iter()
+        .map(|c| c.demand_now.unwrap().value())
+        .sum();
+    let served: f64 = operating
+        .iter()
+        .map(|c| c.served_now.unwrap().value())
+        .sum();
+    assert!(
+        close_relative(demand, tick.demand.value()),
+        "{demand} vs {tick:?}"
+    );
+    assert!(
+        close_relative(served, tick.served.value()),
+        "{served} vs {tick:?}"
+    );
+    for city in &operating {
+        assert!(close_relative(
+            city.demand_now.unwrap().value(),
+            city.share.value() * tick.demand.value()
+        ));
+    }
+
+    // Review: the day is over, so nothing is live.
+    run_ticks(&mut s, TICKS_PER_DAY - 90);
+    assert_eq!(s.phase(), DayPhase::Review);
+    assert!(details(&s).iter().all(|c| c.demand_now.is_none()));
+}
+
+#[test]
+fn an_unconnected_city_shows_what_it_would_add() {
+    let mut s = session();
+    let (peak, hour) = peak_of(&s, 300.0);
+    let expect = |s: &GameSession| {
+        let city = s.city_view(CityId(3)).unwrap();
+        assert_eq!(city.id, CityId(3));
+        assert_eq!(city.name_key, "city-tiny-3");
+        assert!(!city.connected);
+        assert_eq!(city.base_load, Megawatts::new(300.0));
+        assert_eq!(city.share, Ratio::ZERO);
+        assert!(close_relative(city.peak.value(), peak), "{city:?}");
+        assert_eq!(city.peak_hour, hour);
+        assert_eq!((city.demand_now, city.served_now), (None, None));
+    };
+    expect(&s);
+
+    s.begin_operating().unwrap();
+    run_ticks(&mut s, 30);
+    expect(&s);
+    // The connected cities' shares still add up to one without it.
+    let shares: f64 = [CityId(1), CityId(2)]
+        .iter()
+        .map(|id| s.city_view(*id).unwrap().share.value())
+        .sum();
+    assert!(close_relative(shares, 1.0));
+}
+
+#[test]
+fn a_city_view_of_an_unknown_id_is_none() {
+    let s = session();
+    assert_eq!(s.city_view(CityId(99)), None);
+}
+
 #[test]
 fn line_views_list_every_line_in_id_order_with_its_status() {
     let mut s = session();

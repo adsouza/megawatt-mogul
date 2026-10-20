@@ -220,6 +220,19 @@ plant-closed-months-value = { $energy }, { $revenue }
 plant-hydro-budget = Water left today
 plant-start = Start
 plant-stop = Stop
+# The city card (spec §16.8), in Planning's inspector and Operating's side panel.
+city-connected = Connected
+city-not-connected = Not connected
+city-connect-hint = Build a line to it from the build menu to connect it.
+city-base-load = Base load
+city-peak = Peak today
+# What an unconnected city would add to demand, at the day's peak, once a line reaches it.
+city-would-add = Would add at peak
+city-peak-value = { $power } at { $time }
+city-demand-now = Demand now
+city-served-now = Served now
+# The share of the city's demand a rotating outage or protection's shed cuts now.
+city-cut = Cut
 operating-tab-supply = Supply
 supply-chart-title = Supply and demand
 supply-chart-demand = Demand

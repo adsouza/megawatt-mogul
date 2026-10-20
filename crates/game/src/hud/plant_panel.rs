@@ -297,6 +297,11 @@ fn text_row(ctx: &egui::Context) -> f32 {
 /// The height of the selected plant's block: what its content needs for the plant with the most
 /// figures ([`MOST_PLANT_STATS`]), with no room to spare. It is the same whatever is selected (or
 /// nothing), so the list under it never moves when the selection changes.
+///
+/// A selected city's card shows in the same block (spec §16.8). Its tallest form, a connected
+/// city in an outage with [`MOST_CITY_STATS`](super::city_card::MOST_CITY_STATS) figures under
+/// its name and connection, needs well under this height; the real-pass test in
+/// `tests/game/city_card.rs` checks that every row of it lies inside the block.
 pub fn plant_details_height(ctx: &egui::Context) -> f32 {
     let spacing = ctx.global_style().spacing.clone();
     let rows = MOST_PLANT_STATS as f32;

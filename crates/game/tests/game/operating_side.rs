@@ -25,7 +25,7 @@ const LARGE: (f32, f32) = (2560.0, 1440.0);
 const ROUNDING: f32 = 1.0;
 
 /// The placeholder's text when no plant is selected.
-const HINT: &str = "Select a plant in the list or on the map.";
+pub(crate) const HINT: &str = "Select a plant in the list or on the map.";
 /// The selected plant's figures that must show without scrolling, down to the last.
 const FIGURES: [&str; 6] = [
     "Output",
@@ -37,7 +37,7 @@ const FIGURES: [&str; 6] = [
 ];
 
 /// The named region (not a label or a button) labelled `text`: a block of the side panel.
-fn region(widgets: &[Widget], text: &str) -> egui::Rect {
+pub(crate) fn region(widgets: &[Widget], text: &str) -> egui::Rect {
     let mut found = widgets
         .iter()
         .filter(|w| w.text == text && w.role == egui::accesskit::Role::Unknown);
@@ -47,7 +47,7 @@ fn region(widgets: &[Widget], text: &str) -> egui::Rect {
     }
 }
 
-fn label(widgets: &[Widget], text: &str) -> egui::Rect {
+pub(crate) fn label(widgets: &[Widget], text: &str) -> egui::Rect {
     widgets
         .iter()
         .find(|w| w.text == text && w.role == egui::accesskit::Role::Label)
@@ -56,7 +56,7 @@ fn label(widgets: &[Widget], text: &str) -> egui::Rect {
 }
 
 /// The side panel's outer rect, as egui last laid it out.
-fn side_panel(pass: &EguiPass) -> egui::Rect {
+pub(crate) fn side_panel(pass: &EguiPass) -> egui::Rect {
     egui::PanelState::load(pass.ctx(), egui::Id::new("operating_side"))
         .expect("the side panel is drawn")
         .outer_rect

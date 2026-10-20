@@ -50,6 +50,36 @@ pub struct CityView {
     pub connected: bool,
 }
 
+/// One city's demand, for the coming day in Planning or the day being played
+/// (spec §16.8). Every city shares one demand shape and one noise process,
+/// and a rotating outage or protection's shed falls on connected cities in
+/// proportion, so a connected city's figures are the system's scaled by its
+/// share of the connected base load.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CityDetail {
+    pub id: CityId,
+    pub name_key: String,
+    /// Whether the city is energised and therefore a customer.
+    pub connected: bool,
+    pub base_load: Megawatts,
+    /// `base_load` over the connected cities' total base load; zero for an
+    /// unconnected city.
+    pub share: Ratio,
+    /// The city's forecast demand in the hour of the day's forecast peak, the
+    /// mean at minute 30 as in [`GameSession::hourly_forecast`]. For an
+    /// unconnected city, the demand it would add once connected.
+    pub peak: Megawatts,
+    /// The hour of [`Self::peak`], 0 to 23, the earliest on a tie.
+    pub peak_hour: u8,
+    /// The city's share of the last tick's demand, before any outage or
+    /// shed: `Some` only while Operating, for a connected city, once a tick
+    /// has run.
+    pub demand_now: Option<Megawatts>,
+    /// The city's share of the load the last tick served, when
+    /// [`Self::demand_now`] is `Some`.
+    pub served_now: Option<Megawatts>,
+}
+
 /// One transmission line as the player sees it. Direction carries no meaning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LineView {
@@ -189,6 +219,47 @@ impl GameSession {
                 connected: self.power.network().is_connected(city.node()),
             })
             .collect()
+    }
+
+    /// One city's demand figures (spec §16.8), or `None` for an id the
+    /// session doesn't know. Pure: no randomness, no state change.
+    pub fn city_view(&self, id: CityId) -> Option<CityDetail> {
+        let city = self.power.cities().get(&id)?;
+        let network = self.power.network();
+        let connected = network.is_connected(city.node());
+        let base_load = city.def().base_load;
+        let connected_load: Megawatts = self
+            .power
+            .cities()
+            .values()
+            .filter(|other| network.is_connected(other.node()))
+            .map(|other| other.def().base_load)
+            .sum();
+        let share = if connected && connected_load > Megawatts::ZERO {
+            Ratio::new((base_load / connected_load).clamp(0.0, 1.0)).unwrap_or(Ratio::ZERO)
+        } else {
+            Ratio::ZERO
+        };
+        // The city's own forecast: the system's shape on its base load alone, so
+        // an unconnected city shows what it would add.
+        let forecast = hourly_forecast([city], self.region.demand(), self.clock.month());
+        let peak = forecast.iter().fold(forecast[0], |best, point| {
+            if point.mean > best.mean { *point } else { best }
+        });
+        let live = (connected && self.phase == DayPhase::Operating)
+            .then(|| self.day_ticks.last())
+            .flatten();
+        Some(CityDetail {
+            id,
+            name_key: city.def().name_key.clone(),
+            connected,
+            base_load,
+            share,
+            peak: peak.mean,
+            peak_hour: peak.hour,
+            demand_now: live.map(|tick| share.of(tick.demand)),
+            served_now: live.map(|tick| share.of(tick.served)),
+        })
     }
 
     /// Every transmission line, in id order, built or under construction.

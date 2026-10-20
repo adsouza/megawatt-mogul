@@ -12,6 +12,7 @@
 
 mod action;
 mod build;
+mod city_card;
 mod commitment;
 mod forecast_chart;
 mod frequency;
@@ -50,6 +51,7 @@ pub use self::build::{
     BUILD_PANEL_WIDTH, BuildModel, LinePreview, LineSection, LineTarget, PlantRow, PlantSection,
     build_model, draw_build,
 };
+pub use self::city_card::{CityCardModel, MOST_CITY_STATS, city_card_model, draw_city_card};
 pub use self::commitment::{
     CELL_WIDTH, CommitmentModel, CommitmentRow, HourCell, HourHeader, KindGroup, NAME_WIDTH,
     ROW_HEIGHT, TargetModel, commitment_model, draw_commitment, has_unsaved_draft,
@@ -96,8 +98,9 @@ pub use self::milestones::{
 };
 pub use self::operating::{
     FREQUENCY_GAUGE_HEIGHT, OPERATING_LOG_WIDTH, OPERATING_PANEL_HEIGHT, OPERATING_SIDE_WIDTH,
-    OperatingContent, OperatingPanelModel, OperatingSideModel, OperatingTab, draw_operating_panel,
-    draw_operating_side, operating_panel_model, operating_side_min_height, operating_side_model,
+    OperatingContent, OperatingPanelModel, OperatingSideModel, OperatingTab, SelectedObject,
+    draw_operating_panel, draw_operating_side, operating_panel_model, operating_side_min_height,
+    operating_side_model,
 };
 pub use self::planning::{
     PLANNING_PANEL_HEIGHT, PlanningContent, PlanningModel, draw_planning, planning_model,
