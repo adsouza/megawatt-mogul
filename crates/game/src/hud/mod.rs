@@ -14,6 +14,7 @@ mod action;
 mod game_over;
 mod layout;
 mod menu;
+mod prompt;
 mod selection;
 mod toasts;
 mod top_bar;
@@ -31,13 +32,12 @@ pub use self::menu::{
     RegionSelectModel, boot_error_model, draw_boot_error, draw_main_menu, draw_region_select,
     main_menu_model, new_game_action, region_select_model,
 };
+pub use self::prompt::{PromptModel, draw_prompt, prompt_after, prompt_model};
 pub use self::selection::Selection;
 pub use self::toasts::{
     MAX_TOASTS, TOAST_SECONDS, ToastQueue, ToastsModel, draw_toasts, toasts_model,
 };
-pub use self::top_bar::{
-    LeavePromptModel, Stat, TopBarModel, draw_leave_prompt, draw_top_bar, top_bar_model,
-};
+pub use self::top_bar::{Stat, TopBarModel, draw_top_bar, top_bar_model};
 use crate::l10n::Localizer;
 use crate::sim::{Catalog, Session, SimSet, default_seed};
 use crate::state::{AppState, BootError};
@@ -56,7 +56,7 @@ pub enum HudSet {
     Overlays,
 }
 
-/// The egui panels: the shell screens, the top bar, toasts and the game-over modal.
+/// The egui panels: the shell screens, the top bar, toasts, prompts and the game-over modal.
 pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
@@ -94,11 +94,20 @@ impl Plugin for HudPlugin {
             )
             .add_systems(
                 OnExit(AppState::InGame),
-                (menu::reseed_menu, action::close_prompt),
+                (
+                    menu::reseed_menu,
+                    selection::reset_selection,
+                    action::close_prompt,
+                ),
             )
             .add_systems(
                 Update,
-                toasts::collect_toasts.after(SimSet::Apply).run_if(has_l10n),
+                (
+                    toasts::collect_toasts.after(SimSet::Apply).run_if(has_l10n),
+                    prompt::close_prompt_when_over
+                        .after(SimSet::Apply)
+                        .run_if(in_game.clone()),
+                ),
             )
             .add_systems(
                 EguiPrimaryContextPass,
@@ -124,6 +133,9 @@ impl Plugin for HudPlugin {
                     game_over::game_over_modal
                         .in_set(HudSet::Overlays)
                         .run_if(in_game.and_then(has_l10n)),
+                    prompt::prompt_overlay
+                        .in_set(HudSet::Overlays)
+                        .run_if(has_l10n.and_then(|open: Res<OpenPrompt>| open.0.is_some())),
                     toasts::toasts_overlay
                         .in_set(HudSet::Overlays)
                         .run_if(has_l10n),

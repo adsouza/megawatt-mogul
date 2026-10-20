@@ -5,7 +5,7 @@ use application::Game;
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 
-use super::action::{ActionSink, ButtonModel, OpenPrompt, Prompt, UiAction, button, dispatch};
+use super::action::{ActionSink, ButtonModel, Prompt, UiAction, button, dispatch};
 use super::layout::HudArea;
 use crate::l10n::{Localize, Localizer, format};
 use crate::sim::Session;
@@ -30,21 +30,11 @@ pub struct TopBarModel {
     /// Set once the command log has failed: the game goes on, but its recording is incomplete
     /// (Review Focus 4). It stays for the rest of the game.
     pub recording_stopped: Option<String>,
-    /// Opens the leave prompt; it does not leave by itself.
+    /// Opens the leave prompt (see `prompt.rs`); it does not leave by itself.
     pub menu: ButtonModel,
-    /// Shown while the player is being asked whether to leave.
-    pub leave_prompt: Option<LeavePromptModel>,
 }
 
-/// "Leave this game?": leaving drops the game, which can't be resumed yet.
-#[derive(Debug, Clone, PartialEq)]
-pub struct LeavePromptModel {
-    pub question: String,
-    pub leave: ButtonModel,
-    pub stay: ButtonModel,
-}
-
-pub fn top_bar_model(game: &Game, l10n: &Localizer, prompt: OpenPrompt) -> TopBarModel {
+pub fn top_bar_model(game: &Game, l10n: &Localizer) -> TopBarModel {
     let session = game.session();
     let grid = session.grid_snapshot();
     let company = session.company_view();
@@ -87,11 +77,6 @@ pub fn top_bar_model(game: &Game, l10n: &Localizer, prompt: OpenPrompt) -> TopBa
             l10n.text("topbar-menu"),
             UiAction::Prompt(Some(Prompt::LeaveGame)),
         ),
-        leave_prompt: (prompt.0 == Some(Prompt::LeaveGame)).then(|| LeavePromptModel {
-            question: l10n.text("leave-game-question"),
-            leave: ButtonModel::new(l10n.text("leave-game-leave"), UiAction::ReturnToMenu),
-            stay: ButtonModel::new(l10n.text("leave-game-stay"), UiAction::Prompt(None)),
-        }),
     }
 }
 
@@ -123,41 +108,19 @@ pub fn draw_top_bar(ui: &mut egui::Ui, model: &TopBarModel) -> Vec<UiAction> {
     actions
 }
 
-pub fn draw_leave_prompt(ui: &mut egui::Ui, model: &LeavePromptModel) -> Vec<UiAction> {
-    let mut actions = Vec::new();
-    ui.label(model.question.as_str());
-    ui.add_space(12.0);
-    ui.horizontal(|ui| {
-        button(ui, &model.leave, &mut actions);
-        button(ui, &model.stay, &mut actions);
-    });
-    actions
-}
-
 pub(super) fn top_bar_panel(
     mut contexts: EguiContexts,
     mut area: ResMut<HudArea>,
     session: Res<Session>,
     l10n: Res<Localizer>,
-    prompt: Res<OpenPrompt>,
     mut sink: ActionSink,
 ) -> Result {
-    let model = top_bar_model(&session.0, &l10n, *prompt);
-    let ctx = contexts.ctx_mut()?;
-    let mut ui = area.root_ui(ctx, "top_bar");
-    let mut actions = egui::Panel::top("top_bar")
+    let model = top_bar_model(&session.0, &l10n);
+    let mut ui = area.root_ui(contexts.ctx_mut()?, "top_bar");
+    let actions = egui::Panel::top("top_bar")
         .show(&mut ui, |ui| draw_top_bar(ui, &model))
         .inner;
     area.claim(&ui);
-    if let Some(leave) = &model.leave_prompt {
-        let shown = egui::Modal::new(egui::Id::new("leave_prompt"))
-            .show(ctx, |ui| draw_leave_prompt(ui, leave));
-        actions.extend(shown.inner);
-        // A click outside the prompt is a "Stay".
-        if shown.backdrop_response.clicked() {
-            actions.push(leave.stay.action.clone());
-        }
-    }
     dispatch(actions, &mut sink);
     Ok(())
 }
@@ -177,7 +140,7 @@ mod tests {
         let company = session.company_view();
         let month = session.grid_snapshot().month;
 
-        let model = top_bar_model(&game, &l10n, OpenPrompt::default());
+        let model = top_bar_model(&game, &l10n);
 
         assert_eq!(model.date, format::month_year(month));
         assert_eq!(model.season, month.season().localize(&l10n));
@@ -202,15 +165,12 @@ mod tests {
     fn top_bar_shows_recording_stopped() {
         let l10n = shipped_l10n();
         let mut game = eastern_game(Box::new(FullDisk));
-        assert_eq!(
-            top_bar_model(&game, &l10n, OpenPrompt::default()).recording_stopped,
-            None
-        );
+        assert_eq!(top_bar_model(&game, &l10n).recording_stopped, None);
 
         // The game carries on after the log fails to record this command.
         game.execute(Command::BeginOperating).unwrap();
 
-        let model = top_bar_model(&game, &l10n, OpenPrompt::default());
+        let model = top_bar_model(&game, &l10n);
         let warning = model.recording_stopped.expect("the warning is shown");
         assert!(warning.starts_with("Recording stopped"), "{warning}");
         assert!(warning.contains("disk full"), "{warning}");
@@ -224,7 +184,7 @@ mod tests {
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
         let limit = game.session().region().regulator().strikes_to_revoke;
 
-        let model = top_bar_model(&game, &l10n, OpenPrompt::default());
+        let model = top_bar_model(&game, &l10n);
 
         assert_eq!(model.strikes.label, l10n.text("topbar-strikes"));
         assert_eq!(model.strikes.value, format!("0/{limit}"));
@@ -233,26 +193,12 @@ mod tests {
     }
 
     #[test]
-    fn menu_asks_before_leaving() {
+    fn the_menu_button_opens_the_leave_prompt_and_does_not_leave() {
         let l10n = shipped_l10n();
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
 
-        // Menu opens the prompt and nothing else: it never leaves by itself.
-        let closed = top_bar_model(&game, &l10n, OpenPrompt::default());
-        assert_eq!(
-            closed.menu.action,
-            UiAction::Prompt(Some(Prompt::LeaveGame))
-        );
-        assert_eq!(closed.leave_prompt, None);
+        let model = top_bar_model(&game, &l10n);
 
-        let open = top_bar_model(&game, &l10n, OpenPrompt(Some(Prompt::LeaveGame)));
-        let prompt = open.leave_prompt.expect("the prompt is shown while open");
-        assert_eq!(prompt.question, "Leave this game? It can't be resumed yet.");
-        // Leave is the only way out of the game; Stay just closes the prompt.
-        assert_eq!(prompt.leave.label, "Leave");
-        assert_eq!(prompt.leave.action, UiAction::ReturnToMenu);
-        assert_eq!(prompt.stay.label, "Stay");
-        assert_eq!(prompt.stay.action, UiAction::Prompt(None));
-        assert_eq!(l10n.problems(), vec![]);
+        assert_eq!(model.menu.action, UiAction::Prompt(Some(Prompt::LeaveGame)));
     }
 }

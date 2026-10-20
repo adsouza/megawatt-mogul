@@ -110,6 +110,10 @@ pub(super) fn collect_toasts(
     mut queue: ResMut<ToastQueue>,
 ) {
     let now = time.elapsed_secs_f64();
+    queue.expire(now);
+    if failures.is_empty() && events.is_empty() {
+        return;
+    }
     let names = match &session {
         Some(session) => Names::new(&l10n, session.0.session()),
         None => Names::empty(&l10n),
@@ -122,7 +126,6 @@ pub(super) fn collect_toasts(
             queue.push(text, now);
         }
     }
-    queue.expire(now);
 }
 
 pub(super) fn toasts_overlay(

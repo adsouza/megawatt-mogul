@@ -1,10 +1,13 @@
 //! Shared helpers for the game integration tests.
 
+pub mod egui_harness;
+
 use std::path::{Path, PathBuf};
 
 use bevy::prelude::*;
 use bevy::state::app::StatesPlugin;
 use game::CorePlugins;
+use game::l10n::{LOCALE, Localizer};
 use game::paths::{AssetRoot, LogDir};
 
 /// A windowless app with the core (headless-safe) plugins, reading assets from `assets` and
@@ -27,4 +30,10 @@ pub fn update_n(app: &mut App, n: usize) {
 /// The workspace's shipped `assets/` directory. Tests only read from it.
 pub fn shipped_assets() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")
+}
+
+/// The shipped en-US translations.
+pub fn shipped_l10n() -> Localizer {
+    Localizer::load(&shipped_assets().join("locales").join(LOCALE))
+        .unwrap_or_else(|error| panic!("the shipped translations must load: {error}"))
 }

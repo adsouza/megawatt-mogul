@@ -1,8 +1,8 @@
 //! Smoke tests for the HUD's draw functions and its action dispatch.
 //!
-//! Each screen is drawn in a bare `egui::Context` with no renderer, against real data (the shipped
-//! regions and translations, a real `Game`). A scripted click (pointer press and release on the
-//! button's rect, found through egui's AccessKit tree) must produce the expected `UiAction`.
+//! Each screen is drawn with the shared headless [`Harness`] against real data (the shipped
+//! regions and translations, a real `Game`), and a scripted click must produce the expected
+//! `UiAction`.
 
 use std::fs;
 use std::path::Path;
@@ -11,139 +11,27 @@ use application::{Command, Game, InMemoryCommandLog, RegionCatalog};
 use bevy::ecs::message::{Message, Messages};
 use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::*;
-use bevy_egui::egui::{self, Event, Modifiers, PointerButton, Pos2, RawInput, Rect, accesskit};
+use bevy_egui::egui;
 use domain::ids::{CellCoord, RegionId};
 use domain::session::{GameOverReason, GameSettings};
 use game::hud::{
-    ActionSink, MenuForm, MenuScreen, OpenPrompt, Prompt, RegionListings, Selection, ToastQueue,
-    UiAction, boot_error_model, dispatch, draw_boot_error, draw_game_over, draw_leave_prompt,
-    draw_main_menu, draw_region_select, draw_toasts, draw_top_bar, game_over_model_for,
-    main_menu_model, region_select_model, toasts_model, top_bar_model,
+    ActionSink, ButtonModel, MenuForm, MenuScreen, OpenPrompt, Prompt, RegionListings, Selection,
+    ToastQueue, UiAction, boot_error_model, button, dispatch, draw_boot_error, draw_game_over,
+    draw_main_menu, draw_prompt, draw_region_select, draw_toasts, draw_top_bar,
+    game_over_model_for, main_menu_model, prompt_model, region_select_model, toasts_model,
+    top_bar_model,
 };
-use game::l10n::Localizer;
 use game::sim::{NewGameRequest, PlayerCommand, ReturnToMenu, SimSpeed};
 use game::state::{AppState, BootError};
 use infrastructure::region::RonRegionCatalog;
 use tempfile::TempDir;
 
-use crate::support::{headless_app, shipped_assets, update_n};
+use crate::support::egui_harness::{Harness, button as find_button, central, shows};
+use crate::support::{headless_app, shipped_assets, shipped_l10n, update_n};
 
 const EASTERN: &str = "eastern_interconnection";
 
-// ---- a headless egui harness ----------------------------------------------------------------
-
-/// A widget as AccessKit describes it.
-#[derive(Debug)]
-struct Widget {
-    role: accesskit::Role,
-    text: String,
-    rect: Rect,
-    disabled: bool,
-}
-
-struct Harness {
-    ctx: egui::Context,
-}
-
-impl Harness {
-    fn new() -> Self {
-        let ctx = egui::Context::default();
-        ctx.enable_accesskit();
-        Self { ctx }
-    }
-
-    fn input(events: Vec<Event>) -> RawInput {
-        RawInput {
-            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(1280.0, 800.0))),
-            events,
-            ..RawInput::default()
-        }
-    }
-
-    /// Runs one egui pass with `events`: the actions drawn, and every widget on screen.
-    fn frame(
-        &self,
-        events: Vec<Event>,
-        draw: &mut dyn FnMut(&mut egui::Ui) -> Vec<UiAction>,
-    ) -> (Vec<UiAction>, Vec<Widget>) {
-        let mut actions = Vec::new();
-        let output = self
-            .ctx
-            .run_ui(Self::input(events), |ui| actions.extend(draw(ui)));
-        let widgets = output
-            .platform_output
-            .accesskit_update
-            .as_ref()
-            .map(|update| {
-                update
-                    .nodes
-                    .iter()
-                    .filter_map(|(_, node)| {
-                        let bounds = node.bounds()?;
-                        let text = node.label().or(node.value())?.to_owned();
-                        Some(Widget {
-                            role: node.role(),
-                            text,
-                            rect: Rect::from_min_max(
-                                Pos2::new(bounds.x0 as f32, bounds.y0 as f32),
-                                Pos2::new(bounds.x1 as f32, bounds.y1 as f32),
-                            ),
-                            disabled: node.is_disabled(),
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        output.drop_without_applying_deltas();
-        (actions, widgets)
-    }
-
-    /// Draws once, with no input: nothing may be asked for unprompted.
-    fn draw(&self, mut draw: impl FnMut(&mut egui::Ui) -> Vec<UiAction>) -> Vec<Widget> {
-        let (actions, widgets) = self.frame(Vec::new(), &mut draw);
-        assert_eq!(actions, vec![], "an unclicked screen asked for something");
-        widgets
-    }
-
-    /// Draws once to find the button labelled `label`, then presses and releases the primary
-    /// pointer button on it: the actions of those two frames.
-    fn click(
-        &self,
-        label: &str,
-        mut draw: impl FnMut(&mut egui::Ui) -> Vec<UiAction>,
-    ) -> Vec<UiAction> {
-        let widgets = self.draw(&mut draw);
-        let at = button(&widgets, label).rect.center();
-        let press = |pressed| Event::PointerButton {
-            pos: at,
-            button: PointerButton::Primary,
-            pressed,
-            modifiers: Modifiers::NONE,
-        };
-        let mut actions = self
-            .frame(vec![Event::PointerMoved(at), press(true)], &mut draw)
-            .0;
-        actions.extend(self.frame(vec![press(false)], &mut draw).0);
-        actions
-    }
-}
-
-fn button<'a>(widgets: &'a [Widget], label: &str) -> &'a Widget {
-    widgets
-        .iter()
-        .find(|widget| widget.role == accesskit::Role::Button && widget.text == label)
-        .unwrap_or_else(|| panic!("no button {label:?} among {widgets:#?}"))
-}
-
-fn shows(widgets: &[Widget], text: &str) -> bool {
-    widgets.iter().any(|widget| widget.text.contains(text))
-}
-
 // ---- fixtures -------------------------------------------------------------------------------
-
-fn shipped_l10n() -> Localizer {
-    Localizer::load(&shipped_assets().join("locales").join("en-US")).unwrap()
-}
 
 fn listings_in(dir: &Path) -> RegionListings {
     RegionListings(RonRegionCatalog::new(dir.to_path_buf()).list())
@@ -178,10 +66,6 @@ fn eastern_game() -> Game {
         Box::new(InMemoryCommandLog::default()),
     )
     .unwrap()
-}
-
-fn central(ui: &mut egui::Ui, draw: impl FnOnce(&mut egui::Ui) -> Vec<UiAction>) -> Vec<UiAction> {
-    egui::CentralPanel::default().show(ui, draw).inner
 }
 
 // ---- screens --------------------------------------------------------------------------------
@@ -263,8 +147,8 @@ fn a_broken_region_is_listed_disabled_next_to_a_good_one() {
     let draw = |ui: &mut egui::Ui| central(ui, |ui| draw_region_select(ui, &model));
 
     let widgets = harness.draw(draw);
-    assert!(button(&widgets, "broken").disabled);
-    assert!(!button(&widgets, "Eastern Interconnection").disabled);
+    assert!(find_button(&widgets, "broken").disabled);
+    assert!(!find_button(&widgets, "Eastern Interconnection").disabled);
     assert!(shows(&widgets, "Unavailable"));
 
     assert_eq!(harness.click("broken", draw), vec![]);
@@ -301,7 +185,7 @@ fn an_empty_or_missing_regions_folder_offers_back() {
 fn the_top_bar_draws_a_real_game_and_its_menu_button_asks_first() {
     let l10n = shipped_l10n();
     let game = eastern_game();
-    let model = top_bar_model(&game, &l10n, OpenPrompt::default());
+    let model = top_bar_model(&game, &l10n);
     let harness = Harness::new();
     let draw = |ui: &mut egui::Ui| {
         egui::Panel::top("top_bar")
@@ -323,18 +207,39 @@ fn the_top_bar_draws_a_real_game_and_its_menu_button_asks_first() {
 fn the_leave_prompt_leaves_only_on_leave() {
     let l10n = shipped_l10n();
     let game = eastern_game();
-    let model = top_bar_model(&game, &l10n, OpenPrompt(Some(Prompt::LeaveGame)));
-    let prompt = model.leave_prompt.expect("the prompt is open");
+    let prompt = prompt_model(OpenPrompt(Some(Prompt::LeaveGame)), Some(&game), &l10n)
+        .expect("the prompt is open");
     let harness = Harness::new();
     let draw = |ui: &mut egui::Ui| {
-        egui::Modal::new(egui::Id::new("leave_prompt"))
-            .show(ui.ctx(), |ui| draw_leave_prompt(ui, &prompt))
+        egui::Modal::new(egui::Id::new("prompt"))
+            .show(ui.ctx(), |ui| draw_prompt(ui, &prompt))
             .inner
     };
 
     assert!(shows(&harness.draw(draw), "can't be resumed yet"));
     assert_eq!(harness.click("Stay", draw), vec![UiAction::Prompt(None)]);
     assert_eq!(harness.click("Leave", draw), vec![UiAction::ReturnToMenu]);
+}
+
+#[test]
+fn the_harness_tells_repeated_labels_apart() {
+    let first = ButtonModel::new("Go".to_owned(), UiAction::Quit);
+    let second = ButtonModel::new("Go".to_owned(), UiAction::ReturnToMenu);
+    let harness = Harness::new();
+    let draw = |ui: &mut egui::Ui| {
+        central(ui, |ui| {
+            let mut actions = Vec::new();
+            button(ui, &first, &mut actions);
+            button(ui, &second, &mut actions);
+            actions
+        })
+    };
+
+    assert_eq!(harness.click_nth("Go", 0, draw), vec![UiAction::Quit]);
+    assert_eq!(
+        harness.click_nth("Go", 1, draw),
+        vec![UiAction::ReturnToMenu]
+    );
 }
 
 #[test]
@@ -438,6 +343,10 @@ fn dispatch_is_the_one_mapping_from_actions_to_messages() {
     assert_eq!(sent::<AppExit>(&app), vec![AppExit::Success]);
     assert_eq!(*app.world().resource::<SimSpeed>(), SimSpeed::X4);
     assert_eq!(*app.world().resource::<Selection>(), Selection::Cell(cell));
+    assert_eq!(
+        *app.world().resource::<OpenPrompt>(),
+        OpenPrompt(Some(Prompt::LeaveGame))
+    );
 }
 
 #[test]
