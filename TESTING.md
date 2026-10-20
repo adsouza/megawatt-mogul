@@ -76,14 +76,16 @@ The game's tests sit in six layers, from the cheapest to the widest. None opens 
   size, for both shipped regions, and check that panels don't overlap and that the controls a
   player needs (*Apply*, *Continue*, the figures of the selected plant) are inside their panel.
 - **The end-to-end month** (`tests/game/end_to_end.rs`), for each shipped region on seed 7: a new
-  game, which already runs the hands-off plan (spec §16.3: the grid's *All day* and *AGC* buttons
-  have nothing left to do), *Start the day*, 8×, the fixed-step driver to the close, then
-  *Continue*. It asserts the phases
+  game, which already runs the hands-off plan (spec §16.3), so no planning command is sent;
+  *Start the day*, which begins the day directly with no shortfall; 8×, the fixed-step driver to
+  the close, then *Continue*. It asserts the phases
   Planning → Operating → Review → Planning, no `CommandFailed`, a log that gains one line per
   command, and the month's report. It asserts nothing about the month's outcome, which the
   `infrastructure` acceptance runs pin. A third run undoes the inherited schedule first
-  (`support::empty_start_in`), so the day orders a rotating outage and the close issues a strike: both toasts must be on screen by the end of the frame
-  their event arrives in, and every toast must come from an event. Each run takes about 0.2 s.
+  (`support::empty_start_in`), so *Start the day* opens the shortfall prompt and *Start anyway*
+  begins it; the day orders a rotating outage and the close issues a strike: both toasts must be
+  on screen by the end of the frame their event arrives in, and every toast must come from an
+  event. Each run takes about 0.2 s.
 
 `tests/game/l10n_coverage.rs` checks the translations: every literal key in `l10n::keys` exists in
 en-US, every typed value (errors, events, lessons, kinds) translates through an exhaustive table,

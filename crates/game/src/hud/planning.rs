@@ -14,7 +14,8 @@
 //! - **Tariff**: the tariff and the projected rate review.
 //!
 //! *Start the day* is always in view in the tab row. It waits while a row has an edit that has not
-//! been applied, since the day would begin without it.
+//! been applied, since the day would begin without it. When the forecast is short (spec §16.4) it
+//! asks first: it opens the shortfall prompt instead of beginning the day.
 
 use application::{Command, Game};
 use bevy::prelude::*;
@@ -22,7 +23,7 @@ use bevy_egui::{EguiContexts, egui};
 use domain::session::DayPhase;
 
 use super::action::{
-    ActionSink, ButtonModel, ToggleModel, UiAction, button, dispatch, toggle_button,
+    ActionSink, ButtonModel, Prompt, ToggleModel, UiAction, button, dispatch, toggle_button,
 };
 use super::commitment::{CommitmentModel, commitment_model, draw_commitment, has_unsaved_draft};
 use super::forecast_chart::{ForecastModel, draw_forecast_chart, forecast_model};
@@ -50,7 +51,8 @@ pub enum PlanningContent {
 pub struct PlanningModel {
     /// One per tab, in order; the open one is on.
     pub tabs: Vec<ToggleModel>,
-    /// Begins the day. Disabled while an edit is unapplied.
+    /// Begins the day, or on a short forecast opens the prompt that asks first. Disabled while an
+    /// edit is unapplied.
     pub begin: ButtonModel,
     /// Why `begin` waits, when it does.
     pub begin_hint: Option<String>,
@@ -78,11 +80,8 @@ pub fn planning_model(
             tab(PlanningTab::Forecast, "forecast-title"),
             tab(PlanningTab::Tariff, "tariff-title"),
         ],
-        begin: ButtonModel::new(
-            l10n.text("start-operating"),
-            UiAction::Command(Command::BeginOperating),
-        )
-        .enabled_if(!unsaved),
+        begin: ButtonModel::new(l10n.text("start-operating"), start_the_day(game))
+            .enabled_if(!unsaved),
         begin_hint: unsaved.then(|| l10n.text("commitment-unsaved")),
         content: match ui.tab {
             PlanningTab::Commitments => PlanningContent::Commitments {
@@ -95,6 +94,19 @@ pub fn planning_model(
             PlanningTab::Tariff => PlanningContent::Tariff(tariff_model(game, l10n)),
         },
     })
+}
+
+/// What *Start the day* sends: the day itself, or, when the committed fleet falls short of the
+/// forecast (§15.5), the prompt that asks first, holding the figures the warnings strip shows.
+/// Only a shortfall asks: a minimum-generation or dry-hydro warning doesn't.
+fn start_the_day(game: &Game) -> UiAction {
+    match game.session().capacity_shortfall_check() {
+        None => UiAction::Command(Command::BeginOperating),
+        Some(warning) => UiAction::Prompt(Some(Prompt::ShortfallStart {
+            hour: warning.hour,
+            shortfall: warning.shortfall,
+        })),
+    }
 }
 
 /// The tab row and the open tab. Doesn't choose its container: the system puts it in a bottom
@@ -155,8 +167,14 @@ pub(super) fn planning_panel(
 mod tests {
     use application::InMemoryCommandLog;
 
+    use domain::region::PlantKind;
+
     use super::*;
-    use crate::hud::test_support::{eastern_game, empty_start, shipped_l10n};
+    use crate::hud::action::Prompt;
+    use crate::hud::planning_warnings::WarningKind;
+    use crate::hud::test_support::{
+        eastern_game, edited_western_game, empty_start, flat_load, shipped_game, shipped_l10n,
+    };
 
     fn build(game: &Game, ui: &UiState) -> PlanningModel {
         planning_model(game, &shipped_l10n(), ui, &CommitmentForm::default())
@@ -250,6 +268,94 @@ mod tests {
 
         ui.apply(&UiAction::DiscardCommitmentDraft);
         assert!(build(&game, &ui).begin.enabled);
+    }
+
+    #[test]
+    fn start_the_day_begins_directly_without_a_shortfall() {
+        for region in ["eastern_interconnection", "western_interconnection"] {
+            // The inherited schedule covers the forecast (spec §16.2).
+            let game = shipped_game(region, Box::new(InMemoryCommandLog::default()));
+            assert_eq!(game.session().capacity_shortfall_check(), None, "{region}");
+
+            let begin = build(&game, &UiState::default()).begin;
+
+            assert_eq!(begin.label, "Start the day", "{region}");
+            assert_eq!(
+                begin.action,
+                UiAction::Command(Command::BeginOperating),
+                "{region}"
+            );
+            assert!(begin.enabled, "{region}");
+        }
+    }
+
+    #[test]
+    fn start_the_day_asks_first_on_a_shortfall() {
+        let l10n = shipped_l10n();
+        let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        empty_start(&mut game);
+        let worst = game
+            .session()
+            .capacity_shortfall_check()
+            .expect("nothing is committed, so demand goes uncovered");
+
+        // On every tab: the button is always in view.
+        for tab in [
+            PlanningTab::Commitments,
+            PlanningTab::Forecast,
+            PlanningTab::Tariff,
+        ] {
+            let ui = UiState {
+                tab,
+                ..UiState::default()
+            };
+            let begin = planning_model(&game, &l10n, &ui, &CommitmentForm::default())
+                .expect("the game is planning")
+                .begin;
+
+            assert_eq!(begin.label, "Start the day", "{tab:?}");
+            assert_eq!(
+                begin.action,
+                UiAction::Prompt(Some(Prompt::ShortfallStart {
+                    hour: worst.hour,
+                    shortfall: worst.shortfall,
+                })),
+                "{tab:?}"
+            );
+            assert!(begin.enabled, "{tab:?}");
+        }
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    /// Only a shortfall asks (spec §16.2's anti-goal). A minimum-generation warning on its own
+    /// leaves *Start the day* beginning the day. A dry hydro plant can't happen on valid region
+    /// data (every month's river flow is positive), and the button never reads that check.
+    #[test]
+    fn min_gen_or_dry_hydro_alone_never_asks() {
+        let l10n = shipped_l10n();
+        let mut game = edited_western_game(|text| flat_load(text, 5.0));
+        let plants: Vec<_> = game
+            .session()
+            .plant_views()
+            .into_iter()
+            .filter(|plant| plant.kind == PlantKind::Ccgt)
+            .map(|plant| plant.id)
+            .collect();
+        for plant in plants {
+            game.execute(Command::StartPlant { plant }).unwrap();
+        }
+        let model = build(&game, &UiState::default());
+        let PlanningContent::Commitments { warnings, .. } = &model.content else {
+            panic!("the panel opens on the grid");
+        };
+        let kinds: Vec<WarningKind> = warnings.rows.iter().map(|row| row.kind).collect();
+        assert_eq!(kinds, [WarningKind::MinimumGeneration]);
+
+        assert_eq!(
+            model.begin.action,
+            UiAction::Command(Command::BeginOperating)
+        );
+        assert_eq!(l10n.problems(), vec![]);
     }
 
     #[test]

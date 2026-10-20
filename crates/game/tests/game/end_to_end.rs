@@ -1,7 +1,9 @@
 //! One whole month through the app, for each shipped region: a new game, which already runs the
-//! hands-off plan (the grid's own buttons have nothing left to click), the day run at 8× by the
-//! fixed-step driver, and the review continued into the next Planning. And a month with nothing
-//! committed, for the path from a domain event to a toast on screen.
+//! hands-off plan, so the player sends no planning command at all; *Start the day*, which begins
+//! it directly on a forecast with no shortfall; the day run at 8× by the fixed-step driver; and
+//! the review continued into the next Planning. And a month with nothing committed, for the path
+//! from a domain event to a toast on screen: its *Start the day* asks first, and *Start anyway*
+//! begins it.
 //!
 //! The app is headless (the core plugins and the HUD's non-egui systems, no `EguiPlugin`), so the
 //! panels never draw: each step takes the action of the button the player would click from the
@@ -22,8 +24,8 @@ use bevy::time::TimeUpdateStrategy;
 use domain::events::DomainEvent;
 use domain::session::DayPhase;
 use game::hud::{
-    ActionSink, CommitmentForm, GameOverView, ToastQueue, UiAction, UiState, commitment_model,
-    dispatch, is_commitable, planning_model, review_model, speed_model, toasts_model,
+    ActionSink, CommitmentForm, GameOverView, OpenPrompt, Prompt, ToastQueue, UiAction, UiState,
+    dispatch, is_commitable, planning_model, prompt_model, review_model, speed_model, toasts_model,
 };
 use game::l10n::{Localizer, Names, Toast};
 use game::paths::LogDir;
@@ -143,29 +145,6 @@ fn click(app: &mut App, actions: Vec<UiAction>) {
         .unwrap();
 }
 
-/// The actions of the hands-off plan, from the commitment grid: *All day* on every row not yet
-/// committed all day, and the AGC switch of every row where it is off.
-fn hands_off_clicks(app: &App) -> Vec<UiAction> {
-    let world = app.world();
-    let grid = commitment_model(
-        game(app),
-        world.resource::<Localizer>(),
-        world.resource::<UiState>(),
-        world.resource::<CommitmentForm>(),
-    );
-    let rows = grid.groups.iter().flat_map(|group| &group.rows);
-    let mut actions = Vec::new();
-    for row in rows {
-        if row.all_day.enabled {
-            actions.push(row.all_day.action.clone());
-        }
-        if !row.agc.on {
-            actions.push(row.agc.button.action.clone());
-        }
-    }
-    actions
-}
-
 fn begin_the_day(app: &App) -> UiAction {
     let world = app.world();
     let planning = planning_model(
@@ -177,6 +156,35 @@ fn begin_the_day(app: &App) -> UiAction {
     .expect("the Planning panel is up");
     assert!(planning.begin.enabled, "{:?}", planning.begin_hint);
     planning.begin.action
+}
+
+/// *Start the day* on a forecast with no shortfall: it begins the day, with no prompt.
+fn start_the_day_directly(app: &mut App) {
+    let begin = begin_the_day(app);
+    assert_eq!(
+        begin,
+        UiAction::Command(Command::BeginOperating),
+        "no shortfall, so no prompt"
+    );
+    click(app, vec![begin]);
+}
+
+/// *Start the day* on a short forecast, which opens the confirmation, then its *Start anyway*.
+fn start_the_day_anyway(app: &mut App) {
+    let begin = begin_the_day(app);
+    assert!(
+        matches!(begin, UiAction::Prompt(Some(Prompt::ShortfallStart { .. }))),
+        "a short forecast asks first: {begin:?}"
+    );
+    click(app, vec![begin]);
+    let world = app.world();
+    let open = *world.resource::<OpenPrompt>();
+    assert!(open.0.is_some(), "the prompt is open");
+    let prompt = prompt_model(open, Some(game(app)), world.resource::<Localizer>())
+        .expect("the prompt is shown");
+    assert_eq!(prompt.confirm.label, "Start anyway");
+    let start = prompt.confirm.action;
+    click(app, vec![start]);
 }
 
 fn eight_times(app: &App) -> UiAction {
@@ -212,11 +220,9 @@ fn recorded_app(logs: &TempDir) -> App {
     app
 }
 
-/// *Start the day*, then *8×*, then the fixed-step driver to the month close. Returns the fixed
-/// steps it took.
+/// Once *Start the day* was clicked (and confirmed, if it asked): *8×*, then the fixed-step
+/// driver to the month close. Returns the fixed steps it took.
 fn run_the_day_at_8x(app: &mut App, region: &str) -> usize {
-    let begin = begin_the_day(app);
-    click(app, vec![begin]);
     update_n(app, 2);
     assert_eq!(phase(app), PhaseState::Operating);
 
@@ -249,12 +255,8 @@ fn play_a_hands_off_month(region: &str) {
     assert_eq!(phase(&app), PhaseState::Planning);
     let month = game(&app).session().clock().month();
 
-    // 2. The hands-off plan: every dispatchable plant committed all day, with AGC on. A new game
-    // inherits it (spec §16.3), so the grid offers no click toward it.
-    let plan = hands_off_clicks(&app);
-    assert_eq!(plan, [], "a new game runs the hands-off plan");
-    update_n(&mut app, 1);
-    assert_eq!(hands_off_clicks(&app), [], "every row is all day with AGC");
+    // 2. No planning commands: a new game inherits the hands-off plan (spec §16.3), every
+    // dispatchable plant committed all day, with AGC on.
     let plants = game(&app).session().plant_views();
     let commitable: Vec<_> = plants.iter().filter(|plant| is_commitable(plant)).collect();
     assert!(!commitable.is_empty());
@@ -263,7 +265,8 @@ fn play_a_hands_off_month(region: &str) {
         assert!(plant.auto_follow, "{:?}", plant.id);
     }
 
-    // 3–5. Start the day, 8×, and the driver runs it to the month close.
+    // 3–5. Start the day, which begins it directly, 8×, and the driver runs it to the close.
+    start_the_day_directly(&mut app);
     let steps = run_the_day_at_8x(&mut app, region);
     let next = continue_from_review(&app);
     click(&mut app, vec![next]);
@@ -283,8 +286,9 @@ fn play_a_hands_off_month(region: &str) {
         ]
     );
 
-    // Nothing was refused.
+    // Nothing was refused, and the first command was the day's: no planning command was sent.
     assert_eq!(record.failures, []);
+    assert_eq!(record.commands.first(), Some(&Command::BeginOperating));
 
     // The driver sent the day in batches of eight, and the log grew by one line per command.
     let advances: Vec<u32> = record
@@ -330,9 +334,9 @@ fn a_hands_off_western_month_runs_through_the_app() {
     play_a_hands_off_month("western_interconnection");
 }
 
-/// Nothing committed: the inherited schedule is undone, so the start fleet stays offline, the
-/// day orders a rotating outage and the month closes with a strike. Both reach the screen as
-/// toasts, in the frame their event arrives.
+/// Nothing committed: the inherited schedule is undone, so the start fleet stays offline and
+/// *Start the day* asks first; *Start anyway* begins it. The day orders a rotating outage and the
+/// month closes with a strike. Both reach the screen as toasts, in the frame their event arrives.
 #[test]
 fn a_month_with_nothing_committed_shows_the_outage_and_strike_toasts() {
     let region = "eastern_interconnection";
@@ -349,6 +353,7 @@ fn a_month_with_nothing_committed_shows_the_outage_and_strike_toasts() {
         "nothing is committed"
     );
 
+    start_the_day_anyway(&mut app);
     run_the_day_at_8x(&mut app, region);
 
     let record = app.world().resource::<Record>();

@@ -9,6 +9,7 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy_egui::egui;
 use domain::ids::{PlantId, RegionId};
+use domain::units::Megawatts;
 
 use super::game_over::GameOverView;
 use super::map::MapLayer;
@@ -84,14 +85,18 @@ impl From<MenuScreen> for AppState {
 }
 
 /// A question the HUD asks before doing something it can't undo.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Prompt {
     /// Leaving the running game for the menu, which drops it.
     LeaveGame,
+    /// Starting a day the forecast says the committed fleet can't cover (spec §16.4). It holds
+    /// the figures the player saw when they clicked *Start the day*: the worst hour and the
+    /// shortfall then, from `capacity_shortfall_check()`.
+    ShortfallStart { hour: u8, shortfall: Megawatts },
 }
 
 /// The prompt on screen, if any. Cleared whenever a game starts or ends.
-#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Default)]
 pub struct OpenPrompt(pub Option<Prompt>);
 
 pub(super) fn close_prompt(mut prompt: ResMut<OpenPrompt>) {

@@ -132,6 +132,9 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "warnings-more",
     "warnings-less",
     "start-operating",
+    "shortfall-start-question",
+    "shortfall-start-anyway",
+    "shortfall-start-keep-planning",
     // Operating
     "speed-pause",
     "speed-1x",

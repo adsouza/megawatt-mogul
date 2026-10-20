@@ -29,7 +29,8 @@ says otherwise. Steps that need a fresh game say so; the others follow on from t
 - [ ] **1.4** Click *Back*, then *New game* again, then the Eastern Interconnection.
   **Expected:** the game opens in Planning: the top bar (date, cash, reliability, satisfaction,
   strikes `0/3`, *Milestones*, *Menu*), the map, the cell inspector, the build menu and the
-  bottom panel with *Start the day*.
+  bottom panel with *Start the day*. The commitment grid opens already filled with the previous
+  operator's schedule: every row all day, with *AGC* on.
 
 ## 2. Planning
 
@@ -49,31 +50,37 @@ says otherwise. Steps that need a fresh game say so; the others follow on from t
   **Expected:** *Length* in cells, *Capital cost* and *Build time* in months, and an enabled
   *Build line*. An invalid pair (the same point twice, or two points already joined) shows the
   reason instead, with *Build line* disabled. Click *Cancel line*.
-- [ ] **2.5** On the Nuclear row of *Commitments* (all off at the start), click hours 0–11 on and
-  then *Apply*.
+- [ ] **2.5** On the Nuclear row of *Commitments* (all day at the start), click hours 12–23 off
+  and then *Apply*.
   **Expected:** a toast says the gap *is too short* and how long the plant needs *to ramp down*
   and to start again; the row goes back to its committed pattern.
-- [ ] **2.6** Click *All day* and turn *AGC* on for every row.
+- [ ] **2.6** Look over the grid as it opened: every row *All day*, with *AGC* on.
   **Expected:** *Warnings* shows no *short by* line. (In spring and autumn a minimum-generation
   line, *committed minimum exceeds load*, can appear; otherwise it reads *No warnings: the
   commitments cover the forecast.*)
 - [ ] **2.7** Click *Off* on two of the largest rows (coal, say).
   **Expected:** warnings like *HH:MM: short by … MW. Expect a rotating outage.*, one line plus
-  *+N more* if there are several. *Show hour* tints that hour's column in the grid. Put the rows
-  back to *All day* with AGC.
-- [ ] **2.8** Open the *Forecast* and *Tariff* tabs, then back to *Commitments*.
+  *+N more* if there are several. *Show hour* tints that hour's column in the grid.
+- [ ] **2.8** With those rows still *Off*, click *Start the day*.
+  **Expected:** the day doesn't begin. A prompt asks first: *The forecast is short by … at HH:MM.
+  Expect rotating outages if you start the day now.*, with *Start anyway* and *Keep planning*. The
+  hour and the amount are the first warning's. Click *Keep planning*: the prompt closes and the
+  game is still in Planning. Click *Start the day* again, then click outside the prompt (on the
+  dimmed map): it closes the same way. Put the rows back to *All day* with AGC.
+- [ ] **2.9** Open the *Forecast* and *Tariff* tabs, then back to *Commitments*.
   **Expected:** the forecast chart (forecast range, expected solar, committed output) and the
   tariff with the projected rate review. The map doesn't move when a tab changes.
-- [ ] **2.9** Toggle one hour on a row and, without applying, look at *Start the day*.
+- [ ] **2.10** Toggle one hour on a row and, without applying, look at *Start the day*.
   **Expected:** it is disabled with *Apply or revert your changes before starting the day.*
   Click *Revert*.
 
 ## 3. Operating
 
 - [ ] **3.1** Click *Start the day*.
-  **Expected:** the speed bar (time of day, *Pause*, *1×* to *8×*, with *1×* on), the
-  frequency gauge on the right with *Normal*, the plant list, and the *Supply* and *Hydro*
-  tabs at the bottom. The clock moves one game minute per quarter second.
+  **Expected:** with no shortfall, no prompt: the day begins at once. The speed bar (time of
+  day, *Pause*, *1×* to *8×*, with *1×* on), the frequency gauge on the right with *Normal*, the
+  plant list, and the *Supply* and *Hydro* tabs at the bottom. The clock moves one game minute
+  per quarter second.
 - [ ] **3.2** Click *8×*, then *Pause*, then press Space twice.
   **Expected:** 8× moves the clock eight times as fast; *Pause* stops it; Space resumes at 8×
   and pauses again.
@@ -88,12 +95,13 @@ says otherwise. Steps that need a fresh game say so; the others follow on from t
   **Expected:** each scheduled hydro plant's level (*Hydro covers everything above …*) and the
   note that hours already played are frozen; the supply chart with demand, served, forecast and
   the system marginal cost on its right axis.
-- [ ] **3.6** Fresh game (Menu → Leave → New game, Eastern, seed 7). Click *All day* with AGC on
-  every row, then *Off* on most of them so the warnings show a large shortfall. Start the day, then
-  click *8×*.
-  **Expected:** a toast *Rotating outage ordered from HH:MM: …% of demand is cut in turn.*; the
-  gauge shows *Rotating outage: …% of demand*; the incident appears under *Incidents*. Expect no
-  blackout; if one happens, note the time.
+- [ ] **3.6** Fresh game (Menu → Leave → New game, Eastern, seed 7). Click *Off* on most rows so
+  the warnings show a large shortfall. Click *Start the day*: the prompt names the hour and the
+  shortfall of the first warning. Click *Start anyway*, then *8×*.
+  **Expected:** *Start anyway* begins the day, and the prompt is gone. Then a toast *Rotating
+  outage ordered from HH:MM: …% of demand is cut in turn.*; the gauge shows *Rotating outage: …%
+  of demand*; the incident appears under *Incidents*. Expect no blackout; if one happens, note
+  the time.
 
 ## 4. Review
 
@@ -132,8 +140,10 @@ says otherwise. Steps that need a fresh game say so; the others follow on from t
 
 ## 6. Game over
 
-- [ ] **6.1** Fresh game, Eastern, any seed. Commit nothing: click *Start the day*, then *8×*,
-  run to the close, click *Continue*, and repeat.
+- [ ] **6.1** Fresh game, Eastern, any seed. Commit nothing: click *Off* on every row (the grid
+  opens with every row all day), then *Start the day*, *Start anyway* in the prompt, then *8×*;
+  run to the close, click *Continue*, and repeat. The rows stay off from month to month, so each
+  month's *Start the day* asks again.
   **Expected:** a strike at each close (the top bar counts `1/3`, `2/3`); at the third close
   *Game over* opens instead of the review, with the reason (the license revoked), final cash,
   reliability and satisfaction, *See the month* and *Main menu*.
@@ -163,3 +173,5 @@ steps above.
 - [ ] Toasts draw above the Review modal (`Order::Tooltip`); they never cover *Continue*.
 - [ ] The Review modal stays under the Milestones window after you click it.
 - [ ] Toasts float undimmed above the leave prompt and the game-over modal.
+- [ ] The shortfall prompt's question reads cleanly at 1024×640 (one line, or a tidy wrap), with
+  both buttons under it.

@@ -21,6 +21,8 @@ mod layout;
 mod phase_change;
 #[path = "game/review_smoke.rs"]
 mod review_smoke;
+#[path = "game/shortfall_prompt.rs"]
+mod shortfall_prompt;
 #[path = "game/simulation.rs"]
 mod simulation;
 #[path = "game/states.rs"]

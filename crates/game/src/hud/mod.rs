@@ -108,7 +108,7 @@ pub use self::plant_panel::{
     SelectedPlant, TargetSlider, draw_plant_list, draw_plant_panel, plant_list_model,
     plant_panel_model,
 };
-pub use self::prompt::{PromptModel, draw_prompt, prompt_after, prompt_model};
+pub use self::prompt::{PromptModel, draw_prompt, prompt_after, prompt_in_phase, prompt_model};
 pub use self::ramp_warnings::{
     RampWarningsModel, draw_ramp_warnings, ramp_warnings_for, ramp_warnings_model,
 };
@@ -235,7 +235,7 @@ impl Plugin for HudPlugin {
                 Update,
                 (
                     toasts::collect_toasts.after(SimSet::Apply).run_if(has_l10n),
-                    prompt::close_prompt_when_over
+                    prompt::close_stale_prompt
                         .after(SimSet::Apply)
                         .run_if(in_game.clone()),
                     ui_state::settle_commit

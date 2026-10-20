@@ -307,7 +307,8 @@ Every panel is split so that its decisions are testable without a window. Each l
 
 Confirmations go through one `OpenPrompt` resource and one `prompt_overlay`: a button sends
 `UiAction::Prompt(Some(..))`, and a new prompt is a `Prompt` variant plus its case in
-`prompt_model`. A new HUD mode, like the map layer, is a `UiAction` variant and a resource that
+`prompt_model`. A prompt that belongs to one phase, like the shortfall confirmation on *Start the
+day*, also gets its case in `prompt_in_phase`, which closes it in the frame the phase changes. A new HUD mode, like the map layer, is a `UiAction` variant and a resource that
 `dispatch` writes.
 
 **Read through the sink.** `ActionSink` holds `ResMut` of every resource `dispatch` writes. A panel

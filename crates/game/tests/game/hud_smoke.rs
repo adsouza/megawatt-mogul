@@ -251,6 +251,34 @@ fn the_leave_prompt_leaves_only_on_leave() {
 }
 
 #[test]
+fn the_shortfall_prompt_starts_the_day_only_on_start_anyway() {
+    let l10n = shipped_l10n();
+    let game = empty_eastern_game();
+    let worst = game.session().capacity_shortfall_check().unwrap();
+    let open = OpenPrompt(Some(Prompt::ShortfallStart {
+        hour: worst.hour,
+        shortfall: worst.shortfall,
+    }));
+    let prompt = prompt_model(open, Some(&game), &l10n).expect("the prompt is open");
+    let harness = Harness::new();
+    let draw = |ui: &mut egui::Ui| {
+        egui::Modal::new(egui::Id::new("prompt"))
+            .show(ui.ctx(), |ui| draw_prompt(ui, &prompt))
+            .inner
+    };
+
+    assert!(shows(&harness.draw(draw), "Expect rotating outages"));
+    assert_eq!(
+        harness.click("Keep planning", draw),
+        vec![UiAction::Prompt(None)]
+    );
+    assert_eq!(
+        harness.click("Start anyway", draw),
+        vec![UiAction::Command(Command::BeginOperating)]
+    );
+}
+
+#[test]
 fn the_harness_tells_repeated_labels_apart() {
     let first = ButtonModel::new("Go".to_owned(), UiAction::Quit);
     let second = ButtonModel::new("Go".to_owned(), UiAction::ReturnToMenu);
@@ -1476,7 +1504,7 @@ fn the_agc_switch_and_the_initial_target_field_send_their_commands() {
 }
 
 #[test]
-fn a_warning_shows_its_hour_and_start_the_day_begins_it() {
+fn a_warning_shows_its_hour_and_start_the_day_asks_first() {
     let screen = PlanningScreen::new(empty_eastern_game(), Harness::new());
     let worst = screen
         .game
@@ -1498,9 +1526,13 @@ fn a_warning_shows_its_hour_and_start_the_day_begins_it() {
     assert_eq!(screen.click(&header), vec![UiAction::ShowHour(None)]);
     assert_eq!(screen.state.borrow().ui.highlight_hour, None);
 
+    // A short forecast asks before the day begins (spec §16.4).
     assert_eq!(
         screen.click("Start the day"),
-        vec![UiAction::Command(Command::BeginOperating)]
+        vec![UiAction::Prompt(Some(Prompt::ShortfallStart {
+            hour: worst.hour,
+            shortfall: worst.shortfall,
+        }))]
     );
 }
 

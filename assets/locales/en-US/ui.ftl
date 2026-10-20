@@ -186,6 +186,9 @@ warning-show-hour = Show hour
 warnings-more = +{ $count } more
 warnings-less = Hide
 start-operating = Start the day
+shortfall-start-question = The forecast is short by { $amount } at { $time }. Expect rotating outages if you start the day now.
+shortfall-start-anyway = Start anyway
+shortfall-start-keep-planning = Keep planning
 
 ## Operating
 

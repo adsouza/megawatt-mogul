@@ -52,7 +52,8 @@ pub struct WarningsModel {
     pub expanded: bool,
 }
 
-fn time_of(hour: u8) -> String {
+/// `18:00`: the start of `hour`, as a warning names it.
+pub(super) fn time_of(hour: u8) -> String {
     format::clock(u32::from(hour) * TICKS_PER_HOUR)
 }
 

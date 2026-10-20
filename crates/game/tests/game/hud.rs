@@ -475,6 +475,125 @@ fn beginning_the_day_resets_the_planning_panel_state() {
     );
 }
 
+// ---- the shortfall confirmation --------------------------------------------------------------
+
+use game::hud::{planning_model, prompt_model};
+use game::sim::{CommandFailed, PlayerCommand};
+
+use crate::hud_smoke::sent;
+use crate::support::empty_start_in;
+
+/// *Start the day*'s action, from the Planning panel's model.
+fn start_the_day(app: &App) -> UiAction {
+    let world = app.world();
+    planning_model(
+        &world.resource::<Session>().0,
+        world.resource::<Localizer>(),
+        world.resource::<UiState>(),
+        world.resource::<CommitmentForm>(),
+    )
+    .expect("the game is planning")
+    .begin
+    .action
+}
+
+/// The open prompt's model, as the overlay would build it.
+fn open_prompt_model(app: &App) -> game::hud::PromptModel {
+    let world = app.world();
+    prompt_model(
+        *world.resource::<OpenPrompt>(),
+        Some(&world.resource::<Session>().0),
+        world.resource::<Localizer>(),
+    )
+    .expect("a prompt is open")
+}
+
+/// On a short forecast, *Start the day* opens the prompt and sends nothing; *Keep planning*
+/// closes it; *Start anyway* sends one `BeginOperating`, and the prompt is closed by the frame
+/// that begins the day, before any Operating panel draws.
+#[test]
+fn the_shortfall_prompt_opens_and_confirms_through_dispatch() {
+    let logs = TempDir::new().unwrap();
+    let mut app = hud_app(&logs);
+    request(&mut app, "eastern_interconnection");
+    empty_start_in(&mut app);
+    let worst = app
+        .world()
+        .resource::<Session>()
+        .0
+        .session()
+        .capacity_shortfall_check()
+        .expect("nothing is committed");
+    let asks = Prompt::ShortfallStart {
+        hour: worst.hour,
+        shortfall: worst.shortfall,
+    };
+    let begin = start_the_day(&app);
+    assert_eq!(begin, UiAction::Prompt(Some(asks)));
+    // With fixed time standing still the message buffers don't turn over: count from here.
+    let before = sent::<PlayerCommand>(&app).len();
+
+    dispatch_in(&mut app, vec![begin.clone()]);
+    assert_eq!(
+        *app.world().resource::<OpenPrompt>(),
+        OpenPrompt(Some(asks))
+    );
+    assert_eq!(sent::<PlayerCommand>(&app)[before..], []);
+
+    // Keep planning, and a click outside, close it and send nothing.
+    let prompt = open_prompt_model(&app);
+    for close in [prompt.cancel.action.clone(), prompt.dismiss.clone()] {
+        dispatch_in(&mut app, vec![begin.clone()]);
+        dispatch_in(&mut app, vec![close]);
+        assert_eq!(*app.world().resource::<OpenPrompt>(), OpenPrompt(None));
+    }
+    assert_eq!(sent::<PlayerCommand>(&app)[before..], []);
+    update_n(&mut app, 2);
+    assert_eq!(phase(&app), PhaseState::Planning);
+
+    // Start anyway.
+    dispatch_in(&mut app, vec![begin]);
+    let start = open_prompt_model(&app).confirm.action;
+    dispatch_in(&mut app, vec![start]);
+    assert_eq!(
+        sent::<PlayerCommand>(&app)[before..],
+        [PlayerCommand(Command::BeginOperating)]
+    );
+    // The frame that applies it begins the day and closes the prompt.
+    app.update();
+    assert_eq!(
+        app.world().resource::<Session>().0.session().phase(),
+        domain::session::DayPhase::Operating
+    );
+    assert_eq!(*app.world().resource::<OpenPrompt>(), OpenPrompt(None));
+    update_n(&mut app, 2);
+    assert_eq!(phase(&app), PhaseState::Operating);
+    assert_eq!(sent::<CommandFailed>(&app), []);
+}
+
+/// The leave prompt stays open across a phase change: only the shortfall prompt is Planning's.
+#[test]
+fn beginning_the_day_leaves_the_leave_prompt_open() {
+    let logs = TempDir::new().unwrap();
+    let mut app = hud_app(&logs);
+    request(&mut app, "eastern_interconnection");
+
+    dispatch_in(
+        &mut app,
+        vec![
+            UiAction::Command(Command::BeginOperating),
+            UiAction::Prompt(Some(Prompt::LeaveGame)),
+        ],
+    );
+    update_n(&mut app, 3);
+
+    assert_eq!(phase(&app), PhaseState::Operating);
+    assert_eq!(
+        *app.world().resource::<OpenPrompt>(),
+        OpenPrompt(Some(Prompt::LeaveGame))
+    );
+}
+
 // ---- the Operating screen's state ----------------------------------------------------------
 
 use bevy::input::ButtonInput;

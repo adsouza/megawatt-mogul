@@ -2,15 +2,24 @@
 //!
 //! A button opens one with `UiAction::Prompt(Some(..))`; [`dispatch`] stores it in [`OpenPrompt`],
 //! and [`prompt_overlay`] draws whichever prompt is open as a modal. Adding a prompt means adding
-//! a [`Prompt`] variant and its case in [`prompt_model`]; nothing else.
+//! a [`Prompt`] variant and its case in [`prompt_model`] (and, if it belongs to one phase, in
+//! [`prompt_in_phase`]); nothing else.
+//!
+//! - **Leave game** (the top bar's *Menu*): *Leave* returns to the menu; *Stay* closes it.
+//! - **Shortfall start** (*Start the day* on a short forecast, spec §16.4): *Start anyway* sends
+//!   `BeginOperating`; *Keep planning* closes it. It is Planning's: the frame that begins the day
+//!   closes it, before any Operating panel draws.
+//!
+//! A click outside a prompt is its `dismiss`, which for both is backing out.
 
-use application::Game;
+use application::{Command, Game};
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
-use domain::session::SessionStatus;
+use domain::session::{DayPhase, SessionStatus};
 
 use super::action::{ActionSink, ButtonModel, OpenPrompt, Prompt, UiAction, button, dispatch};
-use crate::l10n::Localizer;
+use super::planning_warnings::time_of;
+use crate::l10n::{Localizer, format};
 use crate::sim::Session;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -25,7 +34,8 @@ pub struct PromptModel {
 }
 
 /// The prompt to show, if any. A prompt that no longer makes sense shows nothing: leaving a game
-/// needs a game, and once the game is over its own modal is the only one.
+/// needs a game, once the game is over its own modal is the only one, and the shortfall prompt
+/// shows only in Planning. The shortfall prompt names the figures it was opened with.
 pub fn prompt_model(
     open: OpenPrompt,
     game: Option<&Game>,
@@ -43,6 +53,29 @@ pub fn prompt_model(
                 dismiss: stay,
             })
         }
+        Prompt::ShortfallStart { hour, shortfall } => {
+            let session = game?.session();
+            prompt_in_phase(prompt_after(open, session.status()), session.phase()).0?;
+            let keep_planning = UiAction::Prompt(None);
+            Some(PromptModel {
+                question: l10n.args(
+                    "shortfall-start-question",
+                    &[
+                        ("amount", format::megawatts(shortfall).into()),
+                        ("time", time_of(hour).into()),
+                    ],
+                ),
+                confirm: ButtonModel::new(
+                    l10n.text("shortfall-start-anyway"),
+                    UiAction::Command(Command::BeginOperating),
+                ),
+                cancel: ButtonModel::new(
+                    l10n.text("shortfall-start-keep-planning"),
+                    keep_planning.clone(),
+                ),
+                dismiss: keep_planning,
+            })
+        }
     }
 }
 
@@ -52,6 +85,15 @@ pub fn prompt_after(open: OpenPrompt, status: SessionStatus) -> OpenPrompt {
     match status {
         SessionStatus::Active => open,
         SessionStatus::GameOver(_) => OpenPrompt(None),
+    }
+}
+
+/// What stays open in `phase`: the shortfall prompt asks about starting the day, so it closes once
+/// the day has begun. The leave prompt is for every phase.
+pub fn prompt_in_phase(open: OpenPrompt, phase: DayPhase) -> OpenPrompt {
+    match open.0 {
+        Some(Prompt::ShortfallStart { .. }) if phase != DayPhase::Planning => OpenPrompt(None),
+        _ => open,
     }
 }
 
@@ -86,9 +128,12 @@ pub(super) fn prompt_overlay(
     Ok(())
 }
 
-/// Closes the open prompt when the game ends (see [`prompt_after`]).
-pub(super) fn close_prompt_when_over(session: Res<Session>, mut open: ResMut<OpenPrompt>) {
-    let after = prompt_after(*open, session.0.session().status());
+/// Closes the open prompt once it no longer applies: when the game ends (see [`prompt_after`]),
+/// and the shortfall prompt when the day begins (see [`prompt_in_phase`]). It runs after the
+/// commands are applied, so the egui pass of the frame a phase changes already sees it closed.
+pub(super) fn close_stale_prompt(session: Res<Session>, mut open: ResMut<OpenPrompt>) {
+    let session = session.0.session();
+    let after = prompt_in_phase(prompt_after(*open, session.status()), session.phase());
     if after != *open {
         *open = after;
     }
@@ -96,13 +141,22 @@ pub(super) fn close_prompt_when_over(session: Res<Session>, mut open: ResMut<Ope
 
 #[cfg(test)]
 mod tests {
-    use application::InMemoryCommandLog;
-    use domain::session::GameOverReason;
+    use application::{Command, InMemoryCommandLog};
+    use domain::session::{DayPhase, GameOverReason};
+    use domain::units::Megawatts;
 
     use super::*;
-    use crate::hud::test_support::{eastern_game, shipped_l10n};
+    use crate::hud::test_support::{eastern_game, empty_start, shipped_l10n};
+    use crate::l10n::format;
 
     const LEAVE: OpenPrompt = OpenPrompt(Some(Prompt::LeaveGame));
+
+    fn short_by(hour: u8, mw: f64) -> OpenPrompt {
+        OpenPrompt(Some(Prompt::ShortfallStart {
+            hour,
+            shortfall: Megawatts::new(mw),
+        }))
+    }
 
     #[test]
     fn menu_asks_before_leaving() {
@@ -131,10 +185,108 @@ mod tests {
     }
 
     #[test]
+    fn the_shortfall_prompt_offers_start_anyway_and_keep_planning() {
+        let l10n = shipped_l10n();
+        let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        empty_start(&mut game);
+        let worst = game
+            .session()
+            .capacity_shortfall_check()
+            .expect("nothing is committed");
+        let open = OpenPrompt(Some(Prompt::ShortfallStart {
+            hour: worst.hour,
+            shortfall: worst.shortfall,
+        }));
+
+        let prompt = prompt_model(open, Some(&game), &l10n).expect("the prompt is shown");
+
+        // The figures the warnings strip shows, worded as likely rather than certain.
+        assert_eq!(
+            prompt.question,
+            format!(
+                "The forecast is short by {} at {}. Expect rotating outages if you start the \
+                 day now.",
+                format::megawatts(worst.shortfall),
+                format::clock(u32::from(worst.hour) * 60),
+            )
+        );
+        // Start anyway begins the day; Keep planning, or a click outside, only closes the prompt.
+        assert_eq!(prompt.confirm.label, "Start anyway");
+        assert_eq!(
+            prompt.confirm.action,
+            UiAction::Command(Command::BeginOperating)
+        );
+        assert!(prompt.confirm.enabled);
+        assert_eq!(prompt.cancel.label, "Keep planning");
+        assert_eq!(prompt.cancel.action, UiAction::Prompt(None));
+        assert!(prompt.cancel.enabled);
+        assert_eq!(prompt.dismiss, UiAction::Prompt(None));
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    /// The prompt shows the figures it was opened with, not the forecast now.
+    #[test]
+    fn the_shortfall_prompt_names_the_hour_and_amount_it_holds() {
+        let l10n = shipped_l10n();
+        let game = eastern_game(Box::new(InMemoryCommandLog::default()));
+
+        let prompt =
+            prompt_model(short_by(18, 12_000.0), Some(&game), &l10n).expect("the prompt is shown");
+
+        assert_eq!(
+            prompt.question,
+            "The forecast is short by 12.0 GW at 18:00. Expect rotating outages if you start the \
+             day now."
+        );
+        let early = prompt_model(short_by(7, 450.0), Some(&game), &l10n).unwrap();
+        assert_eq!(
+            early.question,
+            "The forecast is short by 450 MW at 07:00. Expect rotating outages if you start the \
+             day now."
+        );
+        assert_eq!(prompt_model(short_by(18, 12_000.0), None, &l10n), None);
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    /// The shortfall prompt asks about starting the day, so it never shows outside Planning
+    /// (spec §16.2). The leave prompt is for every phase.
+    #[test]
+    fn the_shortfall_prompt_is_planning_only() {
+        let l10n = shipped_l10n();
+        let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        game.execute(Command::BeginOperating).unwrap();
+
+        assert_eq!(prompt_model(short_by(18, 900.0), Some(&game), &l10n), None);
+        assert!(prompt_model(LEAVE, Some(&game), &l10n).is_some());
+
+        for phase in [DayPhase::Operating, DayPhase::Review] {
+            assert_eq!(
+                prompt_in_phase(short_by(18, 900.0), phase),
+                OpenPrompt(None),
+                "{phase:?}"
+            );
+            assert_eq!(prompt_in_phase(LEAVE, phase), LEAVE, "{phase:?}");
+        }
+        assert_eq!(
+            prompt_in_phase(short_by(18, 900.0), DayPhase::Planning),
+            short_by(18, 900.0)
+        );
+        assert_eq!(prompt_in_phase(LEAVE, DayPhase::Planning), LEAVE);
+        assert_eq!(
+            prompt_in_phase(OpenPrompt(None), DayPhase::Operating),
+            OpenPrompt(None)
+        );
+    }
+
+    #[test]
     fn a_finished_game_closes_the_leave_prompt() {
         for reason in [GameOverReason::Bankrupt, GameOverReason::LicenseRevoked] {
             assert_eq!(
                 prompt_after(LEAVE, SessionStatus::GameOver(reason)),
+                OpenPrompt(None)
+            );
+            assert_eq!(
+                prompt_after(short_by(18, 900.0), SessionStatus::GameOver(reason)),
                 OpenPrompt(None)
             );
         }
