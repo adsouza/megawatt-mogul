@@ -9,6 +9,8 @@
 mod cli;
 #[path = "game/hud.rs"]
 mod hud;
+#[path = "game/hud_smoke.rs"]
+mod hud_smoke;
 #[path = "game/l10n_coverage.rs"]
 mod l10n_coverage;
 #[path = "game/layout.rs"]

@@ -44,6 +44,7 @@ ui-continue = Continue
 ui-close = Close
 menu-new-game = New game
 menu-seed = Seed
+menu-seed-invalid = The seed must be a whole number, such as 42.
 region-select-title = Choose your region
 region-select-empty = No regions were found. Check that the game's assets folder is complete.
 region-select-unavailable = Unavailable

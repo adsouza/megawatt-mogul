@@ -22,7 +22,9 @@ pub trait Localize {
 }
 
 /// Text for a typed value that mentions plants, cities or lines by id: `names` turns the ids into
-/// names. [`Localize::localize`] on these types is the same text with every id shown bare.
+/// names. These types (`CommandError`, `DomainError`, `IncidentKind`) deliberately have no
+/// [`Localize`] impl, so a toast can't show "Plant #7" by forgetting the names. Text with no
+/// session passes [`Names::empty`] and says so.
 pub trait LocalizeWith {
     fn localize_with(&self, l10n: &Localizer, names: &Names) -> String;
 }
@@ -53,12 +55,6 @@ impl LocalizeWith for CommandError {
             Self::Region(error) => error.localize(l10n),
             Self::Log(error) => error.localize(l10n),
         }
-    }
-}
-
-impl Localize for CommandError {
-    fn localize(&self, l10n: &Localizer) -> String {
-        self.localize_with(l10n, &Names::empty(l10n))
     }
 }
 
@@ -174,12 +170,6 @@ impl LocalizeWith for DomainError {
                 ],
             ),
         }
-    }
-}
-
-impl Localize for DomainError {
-    fn localize(&self, l10n: &Localizer) -> String {
-        self.localize_with(l10n, &Names::empty(l10n))
     }
 }
 
@@ -387,12 +377,6 @@ impl LocalizeWith for IncidentKind {
                 &[("share", format::percent(*share).into())],
             ),
         }
-    }
-}
-
-impl Localize for IncidentKind {
-    fn localize(&self, l10n: &Localizer) -> String {
-        self.localize_with(l10n, &Names::empty(l10n))
     }
 }
 

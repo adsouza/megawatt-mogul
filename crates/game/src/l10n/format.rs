@@ -74,6 +74,11 @@ pub fn percent(share: Ratio) -> String {
     format!("{:.1}%", share.value() * 100.0)
 }
 
+/// A 0–100 score such as satisfaction, to the nearest whole point: `72`.
+pub fn score(value: f64) -> String {
+    format!("{:.0}", value.clamp(0.0, 100.0))
+}
+
 /// `$45.00/MWh`.
 pub fn price(price: Price) -> String {
     let cents = (price.value().abs() * 100.0).round() as u64;
@@ -189,6 +194,21 @@ mod tests {
         for &(value, expected) in cases {
             assert_eq!(format(value), expected);
         }
+    }
+
+    #[test]
+    fn scores_are_whole_points_within_zero_to_a_hundred() {
+        check(
+            score,
+            &[
+                (0.0, "0"),
+                (72.4, "72"),
+                (72.6, "73"),
+                (100.0, "100"),
+                (100.2, "100"),
+                (-0.3, "0"),
+            ],
+        );
     }
 
     #[test]

@@ -19,6 +19,7 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "ui-close",
     "menu-new-game",
     "menu-seed",
+    "menu-seed-invalid",
     "region-select-title",
     "region-select-empty",
     "region-select-unavailable",

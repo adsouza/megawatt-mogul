@@ -58,8 +58,18 @@ fn assert_covers_every_variant<T>(
 }
 
 fn assert_translates<T: Localize>(l10n: &Localizer, values: &[T]) {
-    for value in values {
-        let text = value.localize(l10n);
+    assert_texts(values.iter().map(|value| value.localize(l10n)));
+}
+
+/// For the types that name plants and cities, which have no bare `Localize`. With no session the
+/// ids are shown as numbers, which must still read as copy.
+fn assert_translates_with<T: LocalizeWith>(l10n: &Localizer, values: &[T]) {
+    let names = Names::empty(l10n);
+    assert_texts(values.iter().map(|value| value.localize_with(l10n, &names)));
+}
+
+fn assert_texts(texts: impl Iterator<Item = String>) {
+    for text in texts {
         assert!(!text.is_empty());
         assert!(
             !looks_like_a_bare_key(&text),
@@ -587,10 +597,10 @@ fn ui_keys_have_no_duplicates() {
 fn every_error_and_lesson_variant_translates_without_falling_back() {
     let l10n = shipped();
 
-    assert_translates(&l10n, &domain_errors());
+    assert_translates_with(&l10n, &domain_errors());
     assert_translates(&l10n, &region_errors());
     assert_translates(&l10n, &region_load_errors());
-    assert_translates(&l10n, &command_errors());
+    assert_translates_with(&l10n, &command_errors());
     assert_translates(&l10n, &site_errors());
     assert_translates(&l10n, &lessons());
     assert_translates(
@@ -611,7 +621,7 @@ fn every_error_and_lesson_variant_translates_without_falling_back() {
 fn every_typed_value_translates_without_falling_back() {
     let l10n = shipped();
 
-    assert_translates(&l10n, &incidents());
+    assert_translates_with(&l10n, &incidents());
     assert_translates(&l10n, &milestones());
     assert_translates(&l10n, &PlantKind::ALL);
     assert_translates(
