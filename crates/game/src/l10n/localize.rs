@@ -8,10 +8,11 @@ use application::projections::{Lesson, MilestoneKind, RampWarning};
 use application::{CommandError, CommandLogError, RegionLoadError};
 use domain::error::DomainError;
 use domain::events::DomainEvent;
+use domain::generation::PlantStatus;
 use domain::region::{PlantKind, RegionError, SiteError};
 use domain::regulation::StrikeReason;
 use domain::session::{DayPhase, GameOverReason, IncidentKind};
-use domain::time::{Season, TICKS_PER_HOUR};
+use domain::time::{Season, SimDuration, TICKS_PER_HOUR};
 
 use super::{FluentArg, Localizer, Names, format};
 use crate::state::PhaseState;
@@ -294,6 +295,27 @@ impl Localize for PlantKind {
             Self::Solar => "plant-kind-solar",
             Self::Hydro => "plant-kind-hydro",
         })
+    }
+}
+
+impl Localize for PlantStatus {
+    fn localize(&self, l10n: &Localizer) -> String {
+        match self {
+            Self::UnderConstruction { months_left } => l10n.args(
+                "plant-status-under-construction",
+                &[("months", (*months_left).into())],
+            ),
+            Self::Offline => l10n.text("plant-status-offline"),
+            Self::Starting { ticks_left } => l10n.args(
+                "plant-status-starting",
+                &[(
+                    "time",
+                    format::duration(SimDuration::from_ticks(*ticks_left)).into(),
+                )],
+            ),
+            Self::Online { .. } => l10n.text("plant-status-online"),
+            Self::Stopping { .. } => l10n.text("plant-status-stopping"),
+        }
     }
 }
 

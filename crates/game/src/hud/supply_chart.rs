@@ -1,0 +1,339 @@
+//! The supply chart (spec §8.4): the day so far, minute by minute, as supply stacked by kind in
+//! merit order (cheapest at the bottom) against actual demand and the load served, with the day's
+//! forecast and the system marginal cost (the dearest plant producing, Task 2's timeline field)
+//! on a secondary axis.
+
+use application::Game;
+use application::projections::TimelinePoint;
+use bevy_egui::egui;
+use domain::region::PlantKind;
+use domain::time::TICKS_PER_HOUR;
+use egui_plot::{AxisHints, FilledArea, HPlacement, Legend, Line, LineStyle, Plot, VLine};
+
+use super::action::UiAction;
+use super::map::{Rgb, kind_color};
+use super::plant_list::kinds_in_merit_order;
+use crate::l10n::{Localize, Localizer};
+
+/// One kind's band of the stack: from `low` (the kinds below it) to `high`, at each point.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SupplyStack {
+    pub kind: PlantKind,
+    pub name: String,
+    pub color: Rgb,
+    pub low: Vec<f64>,
+    pub high: Vec<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SupplyModel {
+    pub hour_axis: String,
+    pub power_axis: String,
+    pub cost_axis: String,
+    pub demand_label: String,
+    pub served_label: String,
+    pub forecast_label: String,
+    pub cost_label: String,
+    /// The day's ticks so far, in hours: `0.0, 0.0167, ...`. The supply series are sampled here.
+    pub x: Vec<f64>,
+    /// The kinds that produced today, in merit order.
+    pub stacks: Vec<SupplyStack>,
+    /// Actual demand, in megawatts.
+    pub demand: Vec<f64>,
+    /// The load served: demand less the rotating outage and protection's shed.
+    pub served: Vec<f64>,
+    /// The forecast at the middle of each hour, `(hour + 0.5, MW)`.
+    pub forecast: Vec<[f64; 2]>,
+    /// `(hour, $/MWh)` for each tick some plant produced in.
+    pub marginal_cost: Vec<[f64; 2]>,
+    /// The time of day now, in hours.
+    pub now: f64,
+}
+
+/// The timeline points of the day being played: the projection keeps the last 1,440 ticks, so
+/// before the day ends it still holds the end of the last one. Today's are the run of ticks
+/// before `now` that ends the timeline, oldest first.
+pub fn todays_points<'a>(
+    points: impl Iterator<Item = &'a TimelinePoint>,
+    now: u32,
+) -> Vec<&'a TimelinePoint> {
+    let all: Vec<&TimelinePoint> = points.collect();
+    let mut today = Vec::new();
+    let mut later = now;
+    for point in all.into_iter().rev() {
+        if point.tick >= later {
+            break;
+        }
+        later = point.tick;
+        today.push(point);
+    }
+    today.reverse();
+    today
+}
+
+pub fn supply_model(game: &Game, l10n: &Localizer) -> SupplyModel {
+    let session = game.session();
+    let now = session.clock().tick();
+    let points = todays_points(game.projections().timeline.points(), now);
+    let hours = |tick: u32| f64::from(tick) / f64::from(TICKS_PER_HOUR);
+    let output = |point: &TimelinePoint, kind: PlantKind| {
+        point.by_kind.get(&kind).map_or(0.0, |mw| mw.value())
+    };
+    let mut below = vec![0.0; points.len()];
+    let stacks = kinds_in_merit_order(session.region())
+        .into_iter()
+        .filter(|kind| points.iter().any(|point| output(point, *kind) > 0.0))
+        .map(|kind| {
+            let low = below.clone();
+            for (total, point) in below.iter_mut().zip(&points) {
+                *total += output(point, kind);
+            }
+            SupplyStack {
+                kind,
+                name: kind.localize(l10n),
+                color: kind_color(kind),
+                low,
+                high: below.clone(),
+            }
+        })
+        .collect();
+    let forecast = session.hourly_forecast();
+    SupplyModel {
+        hour_axis: l10n.text("forecast-axis-hour"),
+        power_axis: l10n.text("forecast-axis-power"),
+        cost_axis: l10n.text("supply-chart-axis-cost"),
+        demand_label: l10n.text("supply-chart-demand"),
+        served_label: l10n.text("supply-chart-served"),
+        forecast_label: l10n.text("supply-chart-forecast"),
+        cost_label: l10n.text("supply-chart-marginal-cost"),
+        x: points.iter().map(|point| hours(point.tick)).collect(),
+        stacks,
+        demand: points.iter().map(|point| point.demand.value()).collect(),
+        served: points.iter().map(|point| point.served.value()).collect(),
+        forecast: forecast
+            .iter()
+            .enumerate()
+            .map(|(hour, point)| [hour as f64 + 0.5, point.mean.value()])
+            .collect(),
+        marginal_cost: points
+            .iter()
+            .filter_map(|point| Some([hours(point.tick), point.marginal_cost?.value()]))
+            .collect(),
+        now: hours(now),
+    }
+}
+
+fn color32([r, g, b]: Rgb) -> egui::Color32 {
+    egui::Color32::from_rgb(r, g, b)
+}
+
+/// The chart, filling the space it is given. It asks for nothing: the plot is not interactive.
+pub fn draw_supply_chart(ui: &mut egui::Ui, model: &SupplyModel) -> Vec<UiAction> {
+    let line_color = ui.visuals().strong_text_color();
+    let now_color = ui.visuals().weak_text_color();
+    // The marginal cost shares the power axis's space: the highest cost reaches the top of the
+    // power data, and the right-hand axis reads it back in $/MWh.
+    let top = model
+        .demand
+        .iter()
+        .chain(model.stacks.iter().flat_map(|stack| stack.high.iter()))
+        .chain(model.forecast.iter().map(|[_, mw]| mw))
+        .fold(1.0_f64, |top, mw| top.max(*mw));
+    let dearest = model
+        .marginal_cost
+        .iter()
+        .fold(0.0_f64, |top, [_, cost]| top.max(*cost));
+    let scale = if dearest > 0.0 { top / dearest } else { 1.0 };
+    let points =
+        |ys: &[f64]| -> Vec<[f64; 2]> { model.x.iter().zip(ys).map(|(x, y)| [*x, *y]).collect() };
+    let cost_axis = AxisHints::new_y()
+        .label(model.cost_axis.as_str())
+        .placement(HPlacement::Right)
+        .formatter(move |mark, _| format!("{:.0}", mark.value / scale));
+    Plot::new("operating_supply")
+        .height(ui.available_height())
+        .legend(Legend::default())
+        .allow_zoom(false)
+        .allow_drag(false)
+        .allow_scroll(false)
+        .allow_boxed_zoom(false)
+        .allow_double_click_reset(false)
+        .show_crosshair(false)
+        .include_x(0.0)
+        .include_x(24.0)
+        .include_y(0.0)
+        .x_axis_label(model.hour_axis.as_str())
+        .custom_y_axes(vec![
+            AxisHints::new_y().label(model.power_axis.as_str()),
+            cost_axis,
+        ])
+        .show(ui, |plot| {
+            for stack in &model.stacks {
+                plot.add(
+                    FilledArea::new(stack.name.as_str(), &model.x, &stack.low, &stack.high)
+                        .fill_color(color32(stack.color).gamma_multiply(0.8)),
+                );
+            }
+            plot.line(
+                Line::new(model.demand_label.as_str(), points(&model.demand))
+                    .color(line_color)
+                    .width(2.0),
+            );
+            plot.line(
+                Line::new(model.served_label.as_str(), points(&model.served))
+                    .color(egui::Color32::from_rgb(220, 70, 60))
+                    .width(1.5),
+            );
+            plot.line(
+                Line::new(model.forecast_label.as_str(), model.forecast.clone())
+                    .color(line_color)
+                    .style(LineStyle::dashed_loose())
+                    .width(1.0),
+            );
+            let cost: Vec<[f64; 2]> = model
+                .marginal_cost
+                .iter()
+                .map(|[x, cost]| [*x, cost * scale])
+                .collect();
+            plot.line(
+                Line::new(model.cost_label.as_str(), cost)
+                    .color(egui::Color32::from_rgb(240, 190, 60))
+                    .width(1.5),
+            );
+            plot.vline(VLine::new("", model.now).color(now_color).width(1.0));
+        });
+    Vec::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use application::{Command, InMemoryCommandLog};
+    use domain::units::{Hertz, Megawatts};
+
+    use super::*;
+    use crate::hud::test_support::{eastern_game, shipped_l10n};
+
+    /// A game one hour into the day, with every commitable plant committed all day.
+    fn an_hour_in() -> Game {
+        let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        for plant in game.session().plant_views() {
+            if crate::hud::is_commitable(&plant) {
+                game.execute(Command::StartPlant { plant: plant.id })
+                    .unwrap();
+            }
+        }
+        game.execute(Command::BeginOperating).unwrap();
+        game.execute(Command::AdvanceTicks { n: TICKS_PER_HOUR })
+            .unwrap();
+        game
+    }
+
+    #[test]
+    fn supply_series_stack_in_merit_order() {
+        let l10n = shipped_l10n();
+        let game = an_hour_in();
+        let session = game.session();
+        let region = session.region();
+        let points: Vec<&TimelinePoint> = game.projections().timeline.points().collect();
+        assert_eq!(points.len(), 60, "an hour of ticks");
+
+        let model = supply_model(&game, &l10n);
+
+        // One sample per tick, in hours.
+        assert_eq!(model.x.len(), 60);
+        assert_eq!(model.x[0], 0.0);
+        assert_eq!(model.x[30], 0.5);
+        assert_eq!(model.now, 1.0);
+        // The kinds that produced, cheapest at the bottom.
+        let kinds: Vec<PlantKind> = model.stacks.iter().map(|stack| stack.kind).collect();
+        let order = kinds_in_merit_order(region);
+        let expected: Vec<PlantKind> = order
+            .iter()
+            .copied()
+            .filter(|kind| {
+                points
+                    .iter()
+                    .any(|p| p.by_kind.get(kind).is_some_and(|mw| *mw > Megawatts::ZERO))
+            })
+            .collect();
+        assert!(expected.len() >= 2, "{expected:?}");
+        assert_eq!(kinds, expected);
+        // Each band starts where the one below ends, and is as thick as its kind's output.
+        for (i, point) in points.iter().enumerate() {
+            let mut below = 0.0;
+            for stack in &model.stacks {
+                let mw = point.by_kind.get(&stack.kind).map_or(0.0, |mw| mw.value());
+                assert_eq!(stack.low[i], below, "{:?} at {i}", stack.kind);
+                assert_eq!(stack.high[i], below + mw, "{:?} at {i}", stack.kind);
+                below += mw;
+            }
+            assert_eq!(model.demand[i], point.demand.value());
+            assert_eq!(model.served[i], point.served.value());
+        }
+        assert_eq!(model.stacks[0].name, model.stacks[0].kind.localize(&l10n));
+        assert_eq!(model.stacks[0].color, kind_color(model.stacks[0].kind));
+        // The forecast for the whole day, and the cost whenever something produced.
+        let forecast = session.hourly_forecast();
+        assert_eq!(model.forecast.len(), 24);
+        for (hour, [x, mw]) in model.forecast.iter().enumerate() {
+            assert_eq!(*x, hour as f64 + 0.5);
+            assert_eq!(*mw, forecast[hour].mean.value());
+        }
+        let costs: Vec<[f64; 2]> = points
+            .iter()
+            .filter_map(|p| Some([f64::from(p.tick) / 60.0, p.marginal_cost?.value()]))
+            .collect();
+        assert_eq!(model.marginal_cost, costs);
+        assert!(!costs.is_empty());
+        assert_eq!(model.cost_label, "System marginal cost");
+        assert_eq!(model.cost_axis, "Marginal cost ($/MWh)");
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    fn point(tick: u32) -> TimelinePoint {
+        TimelinePoint {
+            tick,
+            demand: Megawatts::new(100.0),
+            served: Megawatts::new(100.0),
+            frequency: Hertz::new(60.0),
+            by_kind: BTreeMap::new(),
+            marginal_cost: None,
+        }
+    }
+
+    #[test]
+    fn only_todays_ticks_are_drawn() {
+        // The end of yesterday, then today's first three ticks.
+        let timeline: Vec<TimelinePoint> = [1_437, 1_438, 1_439, 0, 1, 2]
+            .into_iter()
+            .map(point)
+            .collect();
+        let ticks = |now| -> Vec<u32> {
+            todays_points(timeline.iter(), now)
+                .iter()
+                .map(|p| p.tick)
+                .collect()
+        };
+
+        assert_eq!(ticks(3), [0, 1, 2]);
+        // Before the first tick of the day, nothing of yesterday shows.
+        assert_eq!(ticks(0), Vec::<u32>::new());
+        let yesterday: Vec<TimelinePoint> = [1_438, 1_439].into_iter().map(point).collect();
+        assert_eq!(todays_points(yesterday.iter(), 0).len(), 0);
+    }
+
+    #[test]
+    fn before_the_first_tick_the_chart_holds_only_the_forecast() {
+        let l10n = shipped_l10n();
+        let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        game.execute(Command::BeginOperating).unwrap();
+
+        let model = supply_model(&game, &l10n);
+
+        assert!(model.x.is_empty() && model.stacks.is_empty() && model.demand.is_empty());
+        assert_eq!(model.forecast.len(), 24);
+        assert_eq!(model.now, 0.0);
+    }
+}

@@ -22,6 +22,15 @@ plant-kind-peaker = Gas peaker
 plant-kind-solar = Solar farm
 plant-kind-hydro = Hydro plant
 
+plant-status-under-construction = { $months ->
+    [one] Under construction: 1 month left
+   *[other] Under construction: { $months } months left
+}
+plant-status-offline = Off
+plant-status-starting = Starting: { $time } left
+plant-status-online = Online
+plant-status-stopping = Stopping
+
 game-over-bankrupt = Your company went bankrupt: cash stayed negative at too many month-ends.
 game-over-license-revoked = The regulator revoked your operating license after too many strikes.
 
@@ -189,26 +198,39 @@ outage-rotating = Rotating outage: { $share } of demand
 outage-target = ordered: { $share }
 shed-share = Protection has shed { $share } of the load
 plant-list-title = Plants
+plant-list-agc = AGC
+plant-select-hint = Select a plant in the list or on the map.
 plant-output = Output
 plant-target = Target
+plant-target-slider = Set target
+plant-target-none = none
 plant-ramp = Ramp rate
 plant-marginal-cost = Marginal cost
 plant-energy-today = Energy so far
 plant-revenue-today = Revenue so far
+plant-hydro-budget = Water left today
 plant-agc = Automatic generation control (AGC)
 plant-start = Start
 plant-stop = Stop
+operating-tab-supply = Supply
 supply-chart-title = Supply and demand
 supply-chart-demand = Demand
 supply-chart-served = Served
 supply-chart-forecast = Forecast
 supply-chart-marginal-cost = System marginal cost
+supply-chart-axis-cost = Marginal cost ($/MWh)
 ramp-warnings-title = Ramp warnings
+ramp-warnings-none = No ramp warnings.
+ramp-warning-row = { $time }: { $warning }
 hydro-title = Hydro
 hydro-level = Hydro covers everything above { $level }
 hydro-no-level = Hydro has no water to spare today
 hydro-frozen = Hours already played are frozen
+hydro-none = No hydro plant is scheduled today.
+hydro-row = { $plant }: { $level }
 incidents-title = Incidents
+incidents-none = No incidents today.
+incident-row = { $time }: { $incident }
 
 ## Review
 

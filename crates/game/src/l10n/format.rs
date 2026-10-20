@@ -4,7 +4,7 @@
 //! here and passed to messages as ready-made text (`FluentArg::Text`).
 
 use domain::time::{SimDuration, SimMonth, TICKS_PER_HOUR};
-use domain::units::{Hertz, MegawattHours, Megawatts, Money, Price, Ratio};
+use domain::units::{Hertz, MegawattHours, Megawatts, Money, Price, RampRate, Ratio};
 
 /// U+2212, the typographic minus: it lines up with the plus sign and cannot be mistaken for a
 /// hyphen.
@@ -54,6 +54,11 @@ pub fn megawatts(power: Megawatts) -> String {
 /// `1,234 MWh`, or `12.3 GWh` from 10,000 MWh.
 pub fn megawatt_hours(energy: MegawattHours) -> String {
     scaled(energy.value(), "MWh", "GWh")
+}
+
+/// `12 MW/min`: how fast a plant can change its output, per game minute.
+pub fn ramp_rate(rate: RampRate) -> String {
+    scaled(rate.value(), "MW/min", "GW/min")
 }
 
 /// `+0.12 Hz`: always signed, so a deviation reads as a deviation. Zero has no sign.
@@ -218,6 +223,18 @@ mod tests {
         for &(value, expected) in cases {
             assert_eq!(format(value), expected);
         }
+    }
+
+    #[test]
+    fn ramp_rates_are_per_game_minute() {
+        check(
+            |mw| ramp_rate(RampRate::mw_per_minute(mw)),
+            &[
+                (5.0, "5.0 MW/min"),
+                (12.0, "12 MW/min"),
+                (1_250.0, "1,250 MW/min"),
+            ],
+        );
     }
 
     #[test]

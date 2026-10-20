@@ -146,6 +146,55 @@ impl Harness {
         self.press_and_release(at, draw)
     }
 
+    /// Drags with the primary button: presses at `from`, moves through `path` one frame per point,
+    /// and releases at the last point. Draws once first, with no input. The actions of each frame
+    /// in order: the press, each move, then the release.
+    pub fn drag(
+        &self,
+        from: Pos2,
+        path: &[Pos2],
+        mut draw: impl FnMut(&mut egui::Ui) -> Vec<UiAction>,
+    ) -> Vec<Vec<UiAction>> {
+        self.draw(&mut draw);
+        let button = |pos, pressed| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        let mut frames = vec![
+            self.frame(
+                vec![Event::PointerMoved(from), button(from, true)],
+                &mut draw,
+            )
+            .0,
+        ];
+        for at in path {
+            frames.push(self.frame(vec![Event::PointerMoved(*at)], &mut draw).0);
+        }
+        let end = path.last().copied().unwrap_or(from);
+        frames.push(self.frame(vec![button(end, false)], &mut draw).0);
+        frames
+    }
+
+    /// Presses and releases `key`, with nothing else happening: the actions of that frame.
+    pub fn press_key(
+        &self,
+        key: egui::Key,
+        mut draw: impl FnMut(&mut egui::Ui) -> Vec<UiAction>,
+    ) -> Vec<UiAction> {
+        let event = |pressed| Event::Key {
+            key,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        let mut actions = self.frame(vec![event(true)], &mut draw).0;
+        actions.extend(self.frame(vec![event(false)], &mut draw).0);
+        actions
+    }
+
     /// Presses and releases the primary pointer button at `at`: the actions of those two frames.
     fn press_and_release(
         &self,

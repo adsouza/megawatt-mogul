@@ -409,3 +409,239 @@ fn beginning_the_day_resets_the_planning_panel_state() {
         CommitmentForm::default()
     );
 }
+
+// ---- the Operating screen's state ----------------------------------------------------------
+
+use bevy::input::ButtonInput;
+use game::hud::{LastSpeed, OperatingTab, PlantPanelForm};
+use game::sim::SimSpeed;
+use game::state::PhaseState;
+
+/// A game in Operating, with the coal fleet committed all day and no tick run (fixed time stands
+/// still), and a keyboard to press.
+fn operating_app(logs: &TempDir) -> App {
+    let mut app = hud_app(logs);
+    request(&mut app, "eastern_interconnection");
+    let coal: Vec<_> = app
+        .world()
+        .resource::<Session>()
+        .0
+        .session()
+        .plant_views()
+        .into_iter()
+        .filter(|plant| plant.kind == PlantKind::Coal)
+        .map(|plant| plant.id)
+        .collect();
+    let mut actions: Vec<UiAction> = coal
+        .into_iter()
+        .map(|plant| UiAction::Command(Command::StartPlant { plant }))
+        .collect();
+    actions.push(UiAction::Command(Command::BeginOperating));
+    dispatch_in(&mut app, actions);
+    app.init_resource::<ButtonInput<KeyCode>>();
+    update_n(&mut app, 3);
+    assert_eq!(phase(&app), PhaseState::Operating);
+    assert_eq!(speed(&app), SimSpeed::X1, "the day starts at 1×");
+    app
+}
+
+fn phase(app: &App) -> PhaseState {
+    *app.world().resource::<State<PhaseState>>().get()
+}
+
+fn speed(app: &App) -> SimSpeed {
+    *app.world().resource::<SimSpeed>()
+}
+
+/// Presses and releases Space over one frame, as `InputPlugin` would report it.
+fn press_space(app: &mut App) {
+    app.world_mut()
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .press(KeyCode::Space);
+    app.update();
+    let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+    keys.release(KeyCode::Space);
+    keys.clear();
+}
+
+#[test]
+fn space_toggles_pause() {
+    let logs = TempDir::new().unwrap();
+    let mut app = operating_app(&logs);
+
+    press_space(&mut app);
+    assert_eq!(speed(&app), SimSpeed::Paused);
+    press_space(&mut app);
+    assert_eq!(speed(&app), SimSpeed::X1, "1× when no speed was picked");
+
+    // After a speed button, Space resumes that speed.
+    dispatch_in(&mut app, vec![UiAction::SetSpeed(SimSpeed::X4)]);
+    press_space(&mut app);
+    assert_eq!(speed(&app), SimSpeed::Paused);
+    press_space(&mut app);
+    assert_eq!(speed(&app), SimSpeed::X4);
+
+    // Holding Space down is one press.
+    app.world_mut()
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .press(KeyCode::Space);
+    app.update();
+    app.world_mut()
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .clear();
+    app.update();
+    assert_eq!(speed(&app), SimSpeed::Paused, "toggled once, not twice");
+}
+
+#[test]
+fn space_is_ignored_while_a_prompt_is_open() {
+    let logs = TempDir::new().unwrap();
+    let mut app = operating_app(&logs);
+    *app.world_mut().resource_mut::<OpenPrompt>() = OpenPrompt(Some(Prompt::LeaveGame));
+
+    press_space(&mut app);
+
+    assert_eq!(speed(&app), SimSpeed::X1);
+    // And once it closes, Space works again.
+    *app.world_mut().resource_mut::<OpenPrompt>() = OpenPrompt(None);
+    press_space(&mut app);
+    assert_eq!(speed(&app), SimSpeed::Paused);
+}
+
+#[test]
+fn dispatch_remembers_the_last_running_speed_for_space() {
+    let logs = TempDir::new().unwrap();
+    let mut app = operating_app(&logs);
+    assert_eq!(
+        *app.world().resource::<LastSpeed>(),
+        LastSpeed(SimSpeed::X1)
+    );
+
+    dispatch_in(&mut app, vec![UiAction::SetSpeed(SimSpeed::X8)]);
+    assert_eq!(speed(&app), SimSpeed::X8);
+    dispatch_in(&mut app, vec![UiAction::SetSpeed(SimSpeed::Paused)]);
+
+    assert_eq!(speed(&app), SimSpeed::Paused);
+    assert_eq!(
+        *app.world().resource::<LastSpeed>(),
+        LastSpeed(SimSpeed::X8),
+        "pausing is not a speed to resume"
+    );
+}
+
+/// The Operating panel's clicks reach the game through `dispatch`: selecting a plant, its AGC,
+/// stop and start, and a target.
+#[test]
+fn operating_clicks_reach_the_game_through_dispatch() {
+    let logs = TempDir::new().unwrap();
+    let mut app = operating_app(&logs);
+    let coal = plant_of(&app, PlantKind::Coal);
+    let view = |app: &App| {
+        app.world()
+            .resource::<Session>()
+            .0
+            .session()
+            .plant_views()
+            .into_iter()
+            .find(|plant| plant.id == coal)
+            .unwrap()
+    };
+    let spec = app
+        .world()
+        .resource::<Session>()
+        .0
+        .session()
+        .region()
+        .spec(PlantKind::Coal)
+        .clone();
+    let target = spec.min_output() + domain::units::Megawatts::new(10.0);
+
+    dispatch_in(
+        &mut app,
+        vec![
+            UiAction::Select(Selection::Plant(coal)),
+            UiAction::Command(Command::SetDispatchTarget {
+                plant: coal,
+                mw: target,
+            }),
+        ],
+    );
+    assert_eq!(*app.world().resource::<Selection>(), Selection::Plant(coal));
+    app.update();
+    assert!(matches!(
+        view(&app).status,
+        domain::generation::PlantStatus::Online { target: t, .. } if t == target
+    ));
+
+    dispatch_in(
+        &mut app,
+        vec![UiAction::Command(Command::SetAutoFollow {
+            plant: coal,
+            on: true,
+        })],
+    );
+    app.update();
+    assert!(view(&app).auto_follow);
+
+    dispatch_in(
+        &mut app,
+        vec![UiAction::Command(Command::StopPlant { plant: coal })],
+    );
+    app.update();
+    assert!(matches!(
+        view(&app).status,
+        domain::generation::PlantStatus::Stopping { .. }
+    ));
+}
+
+#[test]
+fn dispatch_opens_the_operating_tab_and_a_new_game_starts_on_supply() {
+    let logs = TempDir::new().unwrap();
+    let mut app = operating_app(&logs);
+
+    dispatch_in(
+        &mut app,
+        vec![UiAction::SetOperatingTab(OperatingTab::Hydro)],
+    );
+    assert_eq!(*app.world().resource::<OperatingTab>(), OperatingTab::Hydro);
+
+    app.world_mut().write_message(ReturnToMenu);
+    update_n(&mut app, 2);
+    request(&mut app, "eastern_interconnection");
+    assert_eq!(
+        *app.world().resource::<OperatingTab>(),
+        OperatingTab::Supply
+    );
+}
+
+#[test]
+fn leaving_a_game_resets_the_operating_state() {
+    let logs = TempDir::new().unwrap();
+    let mut app = operating_app(&logs);
+    let coal = plant_of(&app, PlantKind::Coal);
+    dispatch_in(
+        &mut app,
+        vec![
+            UiAction::SetSpeed(SimSpeed::X8),
+            UiAction::SetOperatingTab(OperatingTab::Hydro),
+        ],
+    );
+    *app.world_mut().resource_mut::<PlantPanelForm>() = PlantPanelForm {
+        plant: Some(coal),
+        value: 500.0,
+        held: true,
+    };
+
+    app.world_mut().write_message(ReturnToMenu);
+    update_n(&mut app, 2);
+
+    assert_eq!(state(&app), AppState::MainMenu);
+    let world = app.world();
+    assert_eq!(*world.resource::<LastSpeed>(), LastSpeed::default());
+    assert_eq!(*world.resource::<OperatingTab>(), OperatingTab::default());
+    assert_eq!(
+        *world.resource::<PlantPanelForm>(),
+        PlantPanelForm::default()
+    );
+    assert_eq!(*world.resource::<SimSpeed>(), SimSpeed::Paused);
+}

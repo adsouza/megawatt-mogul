@@ -239,6 +239,34 @@ fn the_grid_snapshot_shows_hour_zeros_outage_before_the_first_tick() {
 }
 
 #[test]
+fn the_days_incidents_are_visible_while_operating_and_start_empty_each_day() {
+    // City 3 carries 3,000 MW: hour 0 starts in a rotating outage, which is
+    // the day's first incident, at tick 0.
+    let mut parts = crate::region::fixtures::tiny_region_parts();
+    parts.start.connected_cities.push(CityId(3));
+    let city = parts.cities.iter_mut().find(|c| c.id == CityId(3)).unwrap();
+    city.base_load = Megawatts::new(3_000.0);
+    let region = crate::region::RegionDefinition::try_from(parts).unwrap();
+    let mut s = GameSession::new(Arc::new(region), 1, GameSettings::default());
+    assert_eq!(s.incidents_today(), &[]);
+
+    s.begin_operating().unwrap();
+
+    let incidents = s.incidents_today();
+    assert_eq!(incidents.len(), 1, "{incidents:?}");
+    assert_eq!(incidents[0].tick, 0);
+    assert!(matches!(
+        incidents[0].kind,
+        IncidentKind::RotatingOutage { share } if share == s.grid_snapshot().outage
+    ));
+
+    // The day's close publishes them in the report and the next day starts clean.
+    run_ticks(&mut s, TICKS_PER_DAY);
+    assert_eq!(s.phase(), DayPhase::Review);
+    assert_eq!(s.incidents_today(), &[]);
+}
+
+#[test]
 fn full_day_moves_to_review() {
     let mut s = session();
     s.begin_operating().unwrap();

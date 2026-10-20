@@ -6,7 +6,7 @@
 
 use application::Game;
 use domain::generation::PlantStatus;
-use domain::region::PlantKind;
+use domain::region::{PlantKind, RegionDefinition};
 use domain::session::PlantView;
 
 /// The commissioned plants of one kind, by id.
@@ -22,23 +22,25 @@ pub fn is_commitable(plant: &PlantView) -> bool {
     plant.kind.is_dispatchable() && !matches!(plant.status, PlantStatus::UnderConstruction { .. })
 }
 
-/// Every commissioned dispatchable plant, grouped by kind in merit order: ascending marginal
-/// cost, a tie going to the kind that comes first in [`PlantKind::ALL`]. Kinds with no plant are
-/// left out.
-pub fn plants_by_kind(game: &Game) -> Vec<KindPlants> {
-    let session = game.session();
-    let region = session.region();
-    let views = session.plant_views();
-    let mut kinds: Vec<PlantKind> = PlantKind::ALL
-        .into_iter()
-        .filter(|kind| kind.is_dispatchable())
-        .collect();
+/// Every plant kind in merit order: ascending marginal cost, a tie going to the kind that comes
+/// first in [`PlantKind::ALL`]. The one ordering every panel stacks or lists kinds in.
+pub fn kinds_in_merit_order(region: &RegionDefinition) -> Vec<PlantKind> {
+    let mut kinds = PlantKind::ALL.to_vec();
     kinds.sort_by(|a, b| {
         let cost = |kind: PlantKind| region.spec(kind).marginal_cost.value();
         cost(*a).total_cmp(&cost(*b)).then(a.cmp(b))
     });
     kinds
+}
+
+/// Every commissioned dispatchable plant, grouped by kind in merit order (see
+/// [`kinds_in_merit_order`]). Kinds with no plant are left out.
+pub fn plants_by_kind(game: &Game) -> Vec<KindPlants> {
+    let session = game.session();
+    let views = session.plant_views();
+    kinds_in_merit_order(session.region())
         .into_iter()
+        .filter(|kind| kind.is_dispatchable())
         .filter_map(|kind| {
             let plants: Vec<PlantView> = views
                 .iter()
@@ -91,6 +93,32 @@ mod tests {
             let ids: Vec<u32> = group.plants.iter().map(|plant| plant.id.0).collect();
             assert!(ids.windows(2).all(|pair| pair[0] < pair[1]), "{ids:?}");
         }
+    }
+
+    #[test]
+    fn every_kind_has_a_place_in_the_merit_order_cheapest_first() {
+        let game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let region = game.session().region();
+
+        let kinds = kinds_in_merit_order(region);
+
+        let mut sorted = kinds.clone();
+        sorted.sort();
+        assert_eq!(sorted, PlantKind::ALL, "each kind once");
+        let costs: Vec<f64> = kinds
+            .iter()
+            .map(|kind| region.spec(*kind).marginal_cost.value())
+            .collect();
+        assert!(costs.windows(2).all(|pair| pair[0] <= pair[1]), "{costs:?}");
+        let dispatchable: Vec<PlantKind> = plants_by_kind(&game)
+            .iter()
+            .map(|group| group.kind)
+            .collect();
+        let filtered: Vec<PlantKind> = kinds
+            .into_iter()
+            .filter(|kind| dispatchable.contains(kind))
+            .collect();
+        assert_eq!(filtered, dispatchable, "the grid's order is the same one");
     }
 
     #[test]

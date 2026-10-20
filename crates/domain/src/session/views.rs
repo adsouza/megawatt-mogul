@@ -1,6 +1,6 @@
 //! Read-only views of the session for projections and display.
 
-use super::{DayPhase, GameSession};
+use super::{DayPhase, GameSession, Incident};
 use crate::company::CapitalChange;
 use crate::demand::{ForecastPoint, hourly_forecast};
 use crate::generation::{Plant, PlantStatus};
@@ -221,6 +221,14 @@ impl GameSession {
     /// [`crate::grid::PowerSystem::hydro_schedule`]).
     pub fn hydro_schedule(&self) -> HydroScheduleView {
         self.power.hydro_schedule()
+    }
+
+    /// The played day's incidents so far, oldest first, each with its tick
+    /// (spec §8.4: the Operating HUD's incident ticker). The day starts empty
+    /// at `BeginOperating`, and the month close publishes them in the report
+    /// and starts empty again.
+    pub fn incidents_today(&self) -> &[Incident] {
+        self.month_to_date.incidents()
     }
 
     pub fn grid_snapshot(&self) -> GridSnapshot {

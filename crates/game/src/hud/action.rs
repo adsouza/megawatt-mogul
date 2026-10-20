@@ -11,7 +11,9 @@ use bevy_egui::egui;
 use domain::ids::{PlantId, RegionId};
 
 use super::map::MapLayer;
+use super::operating::OperatingTab;
 use super::selection::Selection;
+use super::speed::LastSpeed;
 use super::ui_state::{PlanningTab, UiState};
 use crate::sim::{NewGameRequest, PlayerCommand, ReturnToMenu, SimSpeed};
 use crate::state::AppState;
@@ -34,6 +36,8 @@ pub enum UiAction {
     SetLayer(MapLayer),
     /// Open another tab of the Planning panel.
     SetPlanningTab(PlanningTab),
+    /// Open another tab of the Operating panel.
+    SetOperatingTab(OperatingTab),
     /// Tint an hour's column in the commitment grid (a warning's *show hour*), or clear it.
     ShowHour(Option<u8>),
     /// Open or close the list of the planning warnings past the first.
@@ -156,6 +160,8 @@ pub struct ActionSink<'w> {
     to_menu: MessageWriter<'w, ReturnToMenu>,
     exit: MessageWriter<'w, AppExit>,
     speed: ResMut<'w, SimSpeed>,
+    last_speed: ResMut<'w, LastSpeed>,
+    operating_tab: ResMut<'w, OperatingTab>,
     selection: ResMut<'w, Selection>,
     layer: ResMut<'w, MapLayer>,
     prompt: ResMut<'w, OpenPrompt>,
@@ -168,6 +174,21 @@ impl ActionSink<'_> {
     /// a second `Res` of the same resource beside it would conflict (Bevy error B0002).
     pub fn selection(&self) -> Selection {
         *self.selection
+    }
+
+    /// How fast the day runs now.
+    pub fn speed(&self) -> SimSpeed {
+        *self.speed
+    }
+
+    /// The last running speed, which Space resumes.
+    pub fn last_speed(&self) -> LastSpeed {
+        *self.last_speed
+    }
+
+    /// The Operating panel's open tab.
+    pub fn operating_tab(&self) -> OperatingTab {
+        *self.operating_tab
     }
 
     /// The map layer now shown.
@@ -201,7 +222,13 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             UiAction::ReturnToMenu => {
                 sink.to_menu.write(ReturnToMenu);
             }
-            UiAction::SetSpeed(speed) => *sink.speed = speed,
+            UiAction::SetSpeed(speed) => {
+                *sink.speed = speed;
+                if speed != SimSpeed::Paused {
+                    *sink.last_speed = LastSpeed(speed);
+                }
+            }
+            UiAction::SetOperatingTab(tab) => *sink.operating_tab = tab,
             UiAction::Select(selection) => *sink.selection = selection,
             UiAction::SetLayer(layer) => *sink.layer = layer,
             // Written by `UiState::apply`, above.

@@ -14,16 +14,24 @@ mod action;
 mod build;
 mod commitment;
 mod forecast_chart;
+mod frequency;
 mod game_over;
+mod hydro_panel;
+mod incidents;
 mod inspector;
 mod layout;
 mod map;
 mod menu;
+mod operating;
 mod planning;
 mod planning_warnings;
 mod plant_list;
+mod plant_panel;
 mod prompt;
+mod ramp_warnings;
 mod selection;
+mod speed;
+mod supply_chart;
 mod tariff;
 mod toasts;
 mod top_bar;
@@ -47,7 +55,17 @@ pub use self::commitment::{
 pub use self::forecast_chart::{
     ForecastModel, StackModel, draw_forecast_chart, forecast_model, stacked_committed_capacity,
 };
+pub use self::frequency::{
+    DialModel, DialZone, FrequencyModel, HIGH_COLOR, LOW_COLOR, NORMAL_COLOR, OutageModel,
+    SHEDDING_COLOR, band_color, draw_frequency, frequency_model, frequency_model_for,
+};
 pub use self::game_over::{GameOverModel, draw_game_over, game_over_model, game_over_model_for};
+pub use self::hydro_panel::{
+    HYDRO_TEXT_WIDTH, HydroModel, HydroRow, draw_hydro, hydro_model, hydro_model_for, hydro_shade,
+};
+pub use self::incidents::{
+    IncidentsModel, MAX_INCIDENTS, draw_incidents, incidents_for, incidents_model,
+};
 pub use self::inspector::{
     CellInspector, INSPECTOR_PANEL_WIDTH, InspectorModel, SuitabilityRow, draw_inspector,
     inspector_model, suitability_row,
@@ -64,15 +82,33 @@ pub use self::menu::{
     RegionSelectModel, boot_error_model, draw_boot_error, draw_main_menu, draw_region_select,
     main_menu_model, new_game_action, region_select_model,
 };
+pub use self::operating::{
+    FREQUENCY_GAUGE_HEIGHT, OPERATING_LOG_WIDTH, OPERATING_PANEL_HEIGHT, OPERATING_SIDE_WIDTH,
+    OperatingContent, OperatingPanelModel, OperatingSideModel, OperatingTab, draw_operating_panel,
+    draw_operating_side, operating_panel_model, operating_side_model,
+};
 pub use self::planning::{
     PLANNING_PANEL_HEIGHT, PlanningContent, PlanningModel, draw_planning, planning_model,
 };
 pub use self::planning_warnings::{
     WarningKind, WarningRow, WarningsModel, draw_warnings, warnings_for, warnings_model,
 };
-pub use self::plant_list::{KindPlants, is_commitable, plants_by_kind};
+pub use self::plant_list::{KindPlants, is_commitable, kinds_in_merit_order, plants_by_kind};
+pub use self::plant_panel::{
+    PLANT_LIST_HEIGHT, PlantListModel, PlantListRow, PlantPanelForm, PlantPanelModel,
+    SelectedPlant, TargetSlider, draw_plant_list, draw_plant_panel, plant_list_model,
+    plant_panel_model,
+};
 pub use self::prompt::{PromptModel, draw_prompt, prompt_after, prompt_model};
+pub use self::ramp_warnings::{
+    MAX_RAMP_WARNINGS, RampWarningsModel, draw_ramp_warnings, ramp_warnings_for,
+    ramp_warnings_model,
+};
 pub use self::selection::Selection;
+pub use self::speed::{LastSpeed, SpeedModel, draw_speed, space_action, speed_model};
+pub use self::supply_chart::{
+    SupplyModel, SupplyStack, draw_supply_chart, supply_model, todays_points,
+};
 pub use self::tariff::{TariffModel, draw_tariff, months_until_review, tariff_model};
 pub use self::toasts::{
     MAX_TOASTS, TOAST_SECONDS, ToastQueue, ToastsModel, draw_toasts, toasts_model,
@@ -89,7 +125,7 @@ use crate::state::{AppState, BootError, PhaseState};
 pub enum HudSet {
     /// Resets the shared [`HudArea`].
     Begin,
-    /// Full-width bars: the top bar.
+    /// Full-width bars: the top bar, then (Operating) the speed controls.
     Bars,
     /// Side panels, then central panels and whole screens.
     Panels,
@@ -97,9 +133,11 @@ pub enum HudSet {
     Overlays,
 }
 
-/// The egui panels: the shell screens, the top bar, toasts, prompts and the game-over modal, and
-/// the planning screen's map, cell inspector, build menu and bottom panel (commitment grid,
-/// forecast chart, tariff).
+/// The egui panels: the shell screens, the top bar, toasts, prompts and the game-over modal; the
+/// planning screen's map, cell inspector, build menu and bottom panel (commitment grid, forecast
+/// chart, tariff); and the operating screen's speed controls, side panel (frequency gauge, plant
+/// list, selected plant) and bottom panel (supply chart, hydro schedule, ramp warnings,
+/// incidents).
 pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
@@ -122,6 +160,9 @@ impl Plugin for HudPlugin {
             .init_resource::<OpenPrompt>()
             .init_resource::<UiState>()
             .init_resource::<CommitmentForm>()
+            .init_resource::<LastSpeed>()
+            .init_resource::<OperatingTab>()
+            .init_resource::<PlantPanelForm>()
             .init_resource::<ToastQueue>()
             .init_resource::<HudArea>()
             .insert_resource(MenuForm::new(default_seed()))
@@ -147,6 +188,9 @@ impl Plugin for HudPlugin {
                     map::reset_cache,
                     action::close_prompt,
                     ui_state::reset_ui_state,
+                    speed::reset_last_speed,
+                    operating::reset_operating_tab,
+                    plant_panel::reset_plant_form,
                 ),
             )
             .add_systems(
@@ -158,6 +202,9 @@ impl Plugin for HudPlugin {
                     map::reset_cache,
                     action::close_prompt,
                     ui_state::reset_ui_state,
+                    speed::reset_last_speed,
+                    operating::reset_operating_tab,
+                    plant_panel::reset_plant_form,
                 ),
             )
             // A highlighted hour or an unapplied edit belongs to the month being planned.
@@ -172,6 +219,13 @@ impl Plugin for HudPlugin {
                     ui_state::settle_commit
                         .after(SimSet::Apply)
                         .run_if(in_game.clone()),
+                    // The driver reads the speed at the next fixed step.
+                    speed::pause_on_space.run_if(
+                        in_game
+                            .clone()
+                            .and_then(in_state(PhaseState::Operating))
+                            .and_then(resource_exists::<ButtonInput<KeyCode>>),
+                    ),
                 ),
             )
             .add_systems(
@@ -195,6 +249,15 @@ impl Plugin for HudPlugin {
                     top_bar::top_bar_panel
                         .in_set(HudSet::Bars)
                         .run_if(in_game.clone().and_then(has_l10n)),
+                    speed::speed_bar
+                        .in_set(HudSet::Bars)
+                        .after(top_bar::top_bar_panel)
+                        .run_if(
+                            in_game
+                                .clone()
+                                .and_then(has_l10n)
+                                .and_then(in_state(PhaseState::Operating)),
+                        ),
                     game_over::game_over_modal
                         .in_set(HudSet::Overlays)
                         .run_if(in_game.and_then(has_l10n)),
@@ -206,11 +269,13 @@ impl Plugin for HudPlugin {
                         .run_if(has_l10n),
                 ),
             )
-            // The planning screen: the bottom panel (commitments, forecast, tariff) claims the
-            // full width first, then the side panels claim their share, then the map fills what
-            // is left. The map shows while planning and operating. The panels are for planning
-            // only: they hold fixed sizes there, so the map doesn't move when the selection
-            // changes or a tab opens, and in operating the map gets the whole screen.
+            // The planning and operating screens: each phase's bottom panel claims the full width
+            // first, then its side panels claim their share, then the map fills what is left.
+            // Planning has the commitments, forecast and tariff along the bottom and the
+            // inspector and build menu at the sides; Operating has the supply chart, hydro
+            // schedule, ramp warnings and incidents along the bottom and the frequency gauge and
+            // plants on the right. Every panel holds a fixed size, so the map doesn't move when
+            // the selection changes or a tab opens.
             .add_systems(
                 EguiPrimaryContextPass,
                 (
@@ -220,6 +285,10 @@ impl Plugin for HudPlugin {
                         .run_if(in_state(PhaseState::Planning).and_then(on_the_map.clone())),
                     build::build_panel
                         .run_if(in_state(PhaseState::Planning).and_then(on_the_map.clone())),
+                    operating::operating_panel
+                        .run_if(in_state(PhaseState::Operating).and_then(on_the_map.clone())),
+                    operating::operating_side
+                        .run_if(in_state(PhaseState::Operating).and_then(on_the_map.clone())),
                     map::map_panel.run_if(on_the_map),
                 )
                     .chain()

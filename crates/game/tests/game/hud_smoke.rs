@@ -17,13 +17,17 @@ use domain::ids::{CellCoord, RegionId};
 use domain::session::{GameOverReason, GameSettings};
 use game::hud::{
     ActionSink, BUILD_PANEL_WIDTH, ButtonModel, CommitmentForm, HudArea, INSPECTOR_PANEL_WIDTH,
-    InspectorModel, LinePreview, LineSection, MapCache, MapLayer, MapLayout, MenuForm, MenuScreen,
-    OpenPrompt, PLANNING_PANEL_HEIGHT, PlanningTab, PlantSection, Prompt, RegionListings,
-    Selection, ToastQueue, UiAction, UiState, boot_error_model, build_model, button, dispatch,
-    draw_boot_error, draw_build, draw_game_over, draw_inspector, draw_main_menu, draw_map,
-    draw_planning, draw_prompt, draw_region_select, draw_toasts, draw_top_bar, draw_warnings,
-    game_over_model_for, hit_test, inspector_model, main_menu_model, map_model, planning_model,
-    plant_half_size, prompt_model, region_select_model, toasts_model, top_bar_model, warnings_for,
+    InspectorModel, LastSpeed, LinePreview, LineSection, MapCache, MapLayer, MapLayout, MenuForm,
+    MenuScreen, OPERATING_LOG_WIDTH, OPERATING_PANEL_HEIGHT, OPERATING_SIDE_WIDTH, OpenPrompt,
+    OperatingTab, PLANNING_PANEL_HEIGHT, PlanningTab, PlantPanelForm, PlantPanelModel,
+    PlantSection, Prompt, RegionListings, Selection, ToastQueue, UiAction, UiState,
+    boot_error_model, build_model, button, dispatch, draw_boot_error, draw_build, draw_game_over,
+    draw_inspector, draw_main_menu, draw_map, draw_operating_panel, draw_operating_side,
+    draw_planning, draw_plant_panel, draw_prompt, draw_region_select, draw_speed, draw_toasts,
+    draw_top_bar, draw_warnings, game_over_model_for, hit_test, inspector_model, is_commitable,
+    main_menu_model, map_model, operating_panel_model, operating_side_model, planning_model,
+    plant_half_size, plant_panel_model, prompt_model, region_select_model, speed_model,
+    toasts_model, top_bar_model, warnings_for,
 };
 use game::l10n::Localize;
 use game::sim::{NewGameRequest, PlayerCommand, ReturnToMenu, SimSpeed};
@@ -1493,6 +1497,473 @@ fn hydro_rows_show_the_days_water_in_the_western_grid() {
     );
 }
 
+// ---- the operating screen -------------------------------------------------------------------
+
+/// A game an hour into its first day, with every plant that can be committed committed all day.
+fn operating_game(region: &str) -> Game {
+    let mut game = game_in(region);
+    for plant in game.session().plant_views() {
+        if is_commitable(&plant) {
+            game.execute(Command::StartPlant { plant: plant.id })
+                .unwrap();
+        }
+        // Hydro is scheduled (spec §12.3) only under AGC.
+        if is_commitable(&plant) && plant.kind == domain::region::PlantKind::Hydro {
+            game.execute(Command::SetAutoFollow {
+                plant: plant.id,
+                on: true,
+            })
+            .unwrap();
+        }
+    }
+    game.execute(Command::BeginOperating).unwrap();
+    game.execute(Command::AdvanceTicks { n: 60 }).unwrap();
+    game
+}
+
+/// The first online plant of `kind`, as the player would find it in the list.
+fn online_plant(game: &Game, kind: domain::region::PlantKind) -> domain::session::PlantView {
+    game.session()
+        .plant_views()
+        .into_iter()
+        .find(|plant| {
+            plant.kind == kind
+                && matches!(plant.status, domain::generation::PlantStatus::Online { .. })
+        })
+        .unwrap_or_else(|| panic!("an online {kind:?} plant"))
+}
+
+/// What the Operating screen remembers between frames, as the game's resources do. A test applies
+/// the actions a click returns, as `dispatch` does.
+#[derive(Default)]
+struct OperatingState {
+    selection: Selection,
+    tab: OperatingTab,
+    speed: SimSpeed,
+    form: PlantPanelForm,
+}
+
+impl OperatingState {
+    fn apply(&mut self, actions: &[UiAction]) {
+        for action in actions {
+            match action {
+                UiAction::Select(selection) => self.selection = *selection,
+                UiAction::SetOperatingTab(tab) => self.tab = *tab,
+                UiAction::SetSpeed(speed) => self.speed = *speed,
+                _ => {}
+            }
+        }
+    }
+}
+
+/// The operating screen as its systems lay it out: the top bar and the speed bar, then the
+/// Operating panel along the bottom, the side panel on the right, and the map filling the rest.
+fn operating_screen(
+    ui: &mut egui::Ui,
+    game: &Game,
+    cache: &mut MapCache,
+    state: &mut OperatingState,
+) -> Vec<UiAction> {
+    let l10n = shipped_l10n();
+    let bar = top_bar_model(game, &l10n);
+    let speed = speed_model(game, &l10n, state.speed);
+    let panel = operating_panel_model(game, &l10n, state.tab).unwrap();
+    let side = operating_side_model(game, &l10n, state.selection).unwrap();
+    let map = map_model(game, &l10n, MapLayer::Terrain, state.selection);
+    let ctx = ui.ctx().clone();
+    let mut area = HudArea::default();
+    let mut actions = Vec::new();
+    let mut root = area.root_ui(&ctx, "top_bar");
+    actions.extend(
+        egui::Panel::top("top_bar")
+            .show(&mut root, |ui| draw_top_bar(ui, &bar))
+            .inner,
+    );
+    area.claim(&root);
+    let mut root = area.root_ui(&ctx, "speed");
+    actions.extend(
+        egui::Panel::top("speed")
+            .resizable(false)
+            .show(&mut root, |ui| draw_speed(ui, &speed))
+            .inner,
+    );
+    area.claim(&root);
+    let mut root = area.root_ui(&ctx, "operating");
+    actions.extend(
+        egui::Panel::bottom("operating")
+            .resizable(false)
+            .exact_size(OPERATING_PANEL_HEIGHT)
+            .show(&mut root, |ui| draw_operating_panel(ui, &panel))
+            .inner,
+    );
+    area.claim(&root);
+    let mut root = area.root_ui(&ctx, "operating_side");
+    actions.extend(
+        egui::Panel::right("operating_side")
+            .resizable(false)
+            .exact_size(OPERATING_SIDE_WIDTH)
+            .show(&mut root, |ui| {
+                draw_operating_side(ui, &side, &mut state.form)
+            })
+            .inner,
+    );
+    area.claim(&root);
+    let mut root = area.root_ui(&ctx, "map");
+    actions.extend(
+        egui::CentralPanel::default()
+            .show(&mut root, |ui| draw_map(ui, &map, cache))
+            .inner,
+    );
+    actions
+}
+
+/// An operating screen of one game, drawn by one harness so egui's remembered sizes carry over.
+struct OperatingScreen {
+    game: Game,
+    harness: Harness,
+    cache: RefCell<MapCache>,
+    state: RefCell<OperatingState>,
+}
+
+impl OperatingScreen {
+    fn new(game: Game, harness: Harness) -> Self {
+        Self {
+            game,
+            harness,
+            cache: RefCell::default(),
+            state: RefCell::default(),
+        }
+    }
+
+    fn draw_fn(&self) -> impl FnMut(&mut egui::Ui) -> Vec<UiAction> + '_ {
+        |ui| {
+            operating_screen(
+                ui,
+                &self.game,
+                &mut self.cache.borrow_mut(),
+                &mut self.state.borrow_mut(),
+            )
+        }
+    }
+
+    /// Draws until the layout settles (egui sizes some widgets from the previous frame).
+    fn widgets(&self) -> Vec<crate::support::egui_harness::Widget> {
+        self.harness.draw(self.draw_fn());
+        self.harness.draw(self.draw_fn())
+    }
+
+    /// Clicks the button labelled `label`, then applies the actions as `dispatch` would.
+    fn click(&self, label: &str) -> Vec<UiAction> {
+        let actions = self.harness.click(label, self.draw_fn());
+        self.state.borrow_mut().apply(&actions);
+        actions
+    }
+
+    fn apply(&self, actions: &[UiAction]) {
+        self.state.borrow_mut().apply(actions);
+    }
+}
+
+/// The one slider labelled `label`.
+fn slider<'a>(
+    widgets: &'a [crate::support::egui_harness::Widget],
+    label: &str,
+) -> &'a crate::support::egui_harness::Widget {
+    let mut found = widgets
+        .iter()
+        .filter(|w| w.role == egui::accesskit::Role::Slider && w.text == label);
+    match (found.next(), found.next()) {
+        (Some(only), None) => only,
+        _ => panic!("not exactly one slider {label:?} among {widgets:#?}"),
+    }
+}
+
+#[test]
+fn speed_buttons_emit_set_speed() {
+    let l10n = shipped_l10n();
+    let game = operating_game(EASTERN);
+    let model = speed_model(&game, &l10n, SimSpeed::X1);
+    let harness = Harness::new();
+    let draw = |ui: &mut egui::Ui| {
+        egui::Panel::top("speed")
+            .show(ui, |ui| draw_speed(ui, &model))
+            .inner
+    };
+
+    assert!(shows(&harness.draw(draw), "01:00"), "the time of day");
+    for (label, speed) in [
+        ("Pause", SimSpeed::Paused),
+        ("1×", SimSpeed::X1),
+        ("2×", SimSpeed::X2),
+        ("4×", SimSpeed::X4),
+        ("8×", SimSpeed::X8),
+    ] {
+        assert_eq!(
+            harness.click(label, draw),
+            vec![UiAction::SetSpeed(speed)],
+            "{label}"
+        );
+    }
+}
+
+#[test]
+fn target_slider_sends_once_on_release_within_bounds() {
+    let l10n = shipped_l10n();
+    let game = operating_game(EASTERN);
+    let gas = online_plant(&game, domain::region::PlantKind::Ccgt);
+    assert!(!gas.auto_follow);
+    let spec = game.session().region().spec(gas.kind).clone();
+    let model = plant_panel_model(&game, &l10n, Selection::Plant(gas.id));
+    let PlantPanelModel::Plant(plant) = &model else {
+        panic!("{model:?}");
+    };
+    assert!(plant.slider.enabled);
+    let form = RefCell::new(PlantPanelForm::default());
+    let harness = Harness::with_screen(1024.0, 640.0);
+    let draw = |ui: &mut egui::Ui| {
+        egui::Panel::right("operating_side")
+            .exact_size(OPERATING_SIDE_WIDTH)
+            .show(ui, |ui| {
+                draw_plant_panel(ui, &model, &mut form.borrow_mut())
+            })
+            .inner
+    };
+    let rail = slider(&harness.draw(draw), "Set target").rect;
+    let target = |mw: f64| {
+        UiAction::Command(Command::SetDispatchTarget {
+            plant: gas.id,
+            mw: domain::units::Megawatts::new(mw),
+        })
+    };
+
+    // Dragged past the right end: nothing goes while the pointer moves, and the release sends
+    // the capacity once.
+    let right = rail.right_center() + egui::vec2(80.0, 0.0);
+    let frames = harness.drag(
+        rail.center(),
+        &[rail.center() + egui::vec2(10.0, 0.0), right, right],
+        draw,
+    );
+    assert_eq!(frames.len(), 5);
+    let (release, during) = frames.split_last().unwrap();
+    assert!(
+        during.iter().all(Vec::is_empty),
+        "sent mid-drag: {during:?}"
+    );
+    assert_eq!(release, &vec![target(spec.capacity.value())]);
+
+    // And past the left end, the minimum stable output.
+    let left = rail.left_center() - egui::vec2(80.0, 0.0);
+    let frames = harness.drag(rail.center(), &[left, left], draw);
+    let sent: Vec<UiAction> = frames.into_iter().flatten().collect();
+    assert_eq!(sent, vec![target(spec.min_output().value())]);
+
+    // From the keyboard: Tab past AGC and Stop (Start is disabled) to the slider, where an arrow
+    // key is one committed step, sent at once.
+    for _ in 0..3 {
+        assert_eq!(harness.press_key(egui::Key::Tab, draw), vec![]);
+    }
+    let stepped = harness.press_key(egui::Key::ArrowRight, draw);
+    let [UiAction::Command(Command::SetDispatchTarget { plant, mw })] = stepped.as_slice() else {
+        panic!("one target per key press: {stepped:?}");
+    };
+    assert_eq!(*plant, gas.id);
+    assert!(
+        *mw > spec.min_output() && *mw <= spec.capacity,
+        "a step up from the minimum: {mw:?}"
+    );
+}
+
+#[test]
+fn the_operating_screen_draws_every_panel_an_hour_in() {
+    for region in [EASTERN, WESTERN] {
+        let screen = OperatingScreen::new(operating_game(region), Harness::new());
+        let widgets = screen.widgets();
+        for text in [
+            "01:00",
+            "Frequency",
+            "Imbalance",
+            "Plants",
+            "Select a plant in the list or on the map.",
+            "Ramp warnings",
+            "Incidents",
+            "Map",
+        ] {
+            assert!(shows(&widgets, text), "{region}: {text} is not shown");
+        }
+        assert!(!find_button(&widgets, "Supply").disabled);
+
+        // A row of the list selects its plant, and the panel shows it.
+        let l10n = shipped_l10n();
+        let names = game::l10n::Names::new(&l10n, screen.game.session());
+        let coal_or_gas = screen
+            .game
+            .session()
+            .plant_views()
+            .into_iter()
+            .find(|plant| matches!(plant.status, domain::generation::PlantStatus::Online { .. }))
+            .expect("something is online");
+        let name = names.plant(coal_or_gas.id);
+        assert_eq!(
+            screen.click(&name),
+            vec![UiAction::Select(Selection::Plant(coal_or_gas.id))]
+        );
+        let widgets = screen.widgets();
+        assert!(shows(&widgets, "Set target"), "{region}");
+        assert!(!find_button(&widgets, "Automatic generation control (AGC)").disabled);
+        assert!(!find_button(&widgets, "Stop").disabled);
+        assert!(find_button(&widgets, "Start").disabled);
+        assert!(shows(&widgets, "Marginal cost"), "{region}");
+
+        // The hydro tab.
+        assert_eq!(
+            screen.click("Hydro"),
+            vec![UiAction::SetOperatingTab(OperatingTab::Hydro)]
+        );
+        let widgets = screen.widgets();
+        if region == WESTERN {
+            assert!(shows(&widgets, "Hours already played are frozen"));
+            assert!(
+                shows(&widgets, "Hydro covers everything above")
+                    || shows(&widgets, "Hydro has no water to spare today"),
+                "{region}"
+            );
+        } else {
+            assert!(shows(&widgets, "No hydro plant is scheduled today."));
+        }
+        assert_eq!(
+            screen.click("Supply"),
+            vec![UiAction::SetOperatingTab(OperatingTab::Supply)]
+        );
+        assert_eq!(screen.click("8×"), vec![UiAction::SetSpeed(SimSpeed::X8)]);
+    }
+}
+
+/// The smallest window the game allows is 1024×640. Every Operating control must be on screen
+/// and inside its own panel there, clear of the map and of each other, with no horizontal scroll.
+#[test]
+fn at_the_smallest_window_the_operating_controls_fit_without_overlap() {
+    for region in [EASTERN, WESTERN] {
+        for tab in [OperatingTab::Supply, OperatingTab::Hydro] {
+            let screen =
+                OperatingScreen::new(operating_game(region), Harness::with_screen(1024.0, 640.0));
+            let plant = online_plant(&screen.game, domain::region::PlantKind::Ccgt);
+            screen.apply(&[
+                UiAction::Select(Selection::Plant(plant.id)),
+                UiAction::SetOperatingTab(tab),
+            ]);
+            let screen_rect = screen.harness.screen_rect();
+
+            let widgets = screen.widgets();
+
+            let map = widget(&widgets, "Map").rect;
+            let menu = find_button(&widgets, "Menu").rect;
+            let speeds = ["Pause", "1×", "2×", "4×", "8×"].map(|l| find_button(&widgets, l).rect);
+            let agc = find_button(&widgets, "Automatic generation control (AGC)").rect;
+            let start = find_button(&widgets, "Start").rect;
+            let stop = find_button(&widgets, "Stop").rect;
+            let target = slider(&widgets, "Set target").rect;
+            let tabs = ["Supply", "Hydro"].map(|l| find_button(&widgets, l).rect);
+            let label = format!("{region} {tab:?}");
+
+            let bottom_top = 640.0 - OPERATING_PANEL_HEIGHT;
+            let side = egui::Rect::from_min_max(
+                egui::pos2(1024.0 - OPERATING_SIDE_WIDTH, menu.bottom()),
+                egui::pos2(1024.0, bottom_top),
+            );
+            let bottom = egui::Rect::from_min_max(
+                egui::pos2(0.0, bottom_top),
+                egui::pos2(1024.0 - OPERATING_LOG_WIDTH, 640.0),
+            );
+            for (name, rect) in speeds.iter().map(|r| ("speed", r)) {
+                assert!(screen_rect.contains_rect(*rect), "{label}: {name} {rect:?}");
+                assert!(
+                    rect.top() >= menu.bottom() && rect.bottom() <= map.top(),
+                    "{label}: the {name} button {rect:?} is in its bar, under the top bar"
+                );
+            }
+            for (name, rect) in [
+                ("agc", agc),
+                ("start", start),
+                ("stop", stop),
+                ("slider", target),
+            ] {
+                assert!(
+                    side.contains_rect(rect),
+                    "{label}: {name} {rect:?} is not inside the side panel {side:?}"
+                );
+            }
+            for rect in tabs {
+                assert!(
+                    bottom.contains_rect(rect),
+                    "{label}: a tab {rect:?} is not inside the bottom panel"
+                );
+            }
+            assert!(
+                map.width() >= 500.0 && map.height() >= 250.0,
+                "{label}: the map is {map:?}"
+            );
+            assert!(
+                map.right() <= side.left() + 0.5,
+                "{label}: the map is left of the side panel"
+            );
+            assert!(
+                map.bottom() <= bottom_top + 0.5,
+                "{label}: the map is above the panel"
+            );
+
+            let mut all: Vec<(&str, egui::Rect)> = vec![
+                ("map", map),
+                ("menu", menu),
+                ("agc", agc),
+                ("start", start),
+                ("stop", stop),
+                ("slider", target),
+            ];
+            all.extend(speeds.iter().map(|rect| ("speed", *rect)));
+            all.extend(tabs.iter().map(|rect| ("tab", *rect)));
+            for (i, (a_name, a)) in all.iter().enumerate() {
+                for (b_name, b) in &all[i + 1..] {
+                    assert!(
+                        !a.intersects(*b),
+                        "{label}: {a_name} {a:?} overlaps {b_name} {b:?}"
+                    );
+                }
+            }
+            // No horizontal scroll: nothing reaches past the window's right edge.
+            for w in &widgets {
+                assert!(
+                    w.rect.right() <= 1024.5,
+                    "{label}: {:?} {:?} runs off the right edge",
+                    w.text,
+                    w.rect
+                );
+            }
+        }
+    }
+}
+
+/// The map's place is set by the bars and the fixed panels: selecting a plant or opening a tab
+/// must not move it.
+#[test]
+fn the_map_does_not_move_when_the_operating_panels_change() {
+    let screen = OperatingScreen::new(operating_game(WESTERN), Harness::with_screen(1024.0, 640.0));
+    let before = widget(&screen.widgets(), "Map").rect;
+    let plant = online_plant(&screen.game, domain::region::PlantKind::Ccgt);
+    let states = [
+        vec![UiAction::Select(Selection::Plant(plant.id))],
+        vec![UiAction::SetOperatingTab(OperatingTab::Hydro)],
+        vec![UiAction::Select(Selection::None)],
+        vec![UiAction::SetOperatingTab(OperatingTab::Supply)],
+        vec![UiAction::SetSpeed(SimSpeed::Paused)],
+    ];
+    for actions in states {
+        screen.apply(&actions);
+        let map = widget(&screen.widgets(), "Map").rect;
+        assert_eq!(map, before, "after {actions:?}");
+    }
+}
+
 // ---- dispatch -------------------------------------------------------------------------------
 
 fn sent<M: Message + Clone>(app: &App) -> Vec<M> {
@@ -1516,7 +1987,9 @@ fn dispatch_is_the_one_mapping_from_actions_to_messages() {
     app.init_resource::<Selection>()
         .init_resource::<MapLayer>()
         .init_resource::<OpenPrompt>()
-        .init_resource::<UiState>();
+        .init_resource::<UiState>()
+        .init_resource::<LastSpeed>()
+        .init_resource::<OperatingTab>();
     update_n(&mut app, 3);
     let region = RegionId::new(EASTERN);
     let cell = CellCoord { x: 1, y: 2 };
@@ -1533,6 +2006,7 @@ fn dispatch_is_the_one_mapping_from_actions_to_messages() {
             UiAction::SetSpeed(SimSpeed::X4),
             UiAction::Select(Selection::Cell(cell)),
             UiAction::SetLayer(MapLayer::Irradiance),
+            UiAction::SetOperatingTab(OperatingTab::Hydro),
             UiAction::Prompt(Some(Prompt::LeaveGame)),
             UiAction::Quit,
         ],
@@ -1551,6 +2025,12 @@ fn dispatch_is_the_one_mapping_from_actions_to_messages() {
     assert_eq!(*app.world().resource::<SimSpeed>(), SimSpeed::X4);
     assert_eq!(*app.world().resource::<Selection>(), Selection::Cell(cell));
     assert_eq!(*app.world().resource::<MapLayer>(), MapLayer::Irradiance);
+    assert_eq!(*app.world().resource::<OperatingTab>(), OperatingTab::Hydro);
+    assert_eq!(
+        *app.world().resource::<LastSpeed>(),
+        LastSpeed(SimSpeed::X4),
+        "a running speed is remembered for Space"
+    );
     assert_eq!(
         *app.world().resource::<OpenPrompt>(),
         OpenPrompt(Some(Prompt::LeaveGame))
@@ -1564,7 +2044,9 @@ fn navigating_moves_between_the_menu_screens() {
     app.init_resource::<Selection>()
         .init_resource::<MapLayer>()
         .init_resource::<OpenPrompt>()
-        .init_resource::<UiState>();
+        .init_resource::<UiState>()
+        .init_resource::<LastSpeed>()
+        .init_resource::<OperatingTab>();
     update_n(&mut app, 3);
     let state = |app: &App| *app.world().resource::<State<AppState>>().get();
     assert_eq!(state(&app), AppState::MainMenu);

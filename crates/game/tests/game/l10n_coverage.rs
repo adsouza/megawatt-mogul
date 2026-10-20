@@ -9,6 +9,7 @@ use bevy::prelude::*;
 use domain::company::{AssetRef, LedgerCategory, LedgerEntry};
 use domain::error::DomainError;
 use domain::events::DomainEvent;
+use domain::generation::PlantStatus;
 use domain::grid::{FrequencyBand, GridMode, TickSummary};
 use domain::ids::{CellCoord, CityId, LineId, NodeId, PlantId, RegionId};
 use domain::region::{PlantKind, RegionError, SiteError};
@@ -269,6 +270,22 @@ fn incidents() -> Vec<IncidentKind> {
         IncidentKind::BlackoutRestored,
         IncidentKind::OverFrequencyTrip { plant: PLANT },
         IncidentKind::RotatingOutage { share: ratio(0.1) },
+    ]
+}
+
+fn plant_statuses() -> Vec<PlantStatus> {
+    vec![
+        PlantStatus::UnderConstruction { months_left: 1 },
+        PlantStatus::UnderConstruction { months_left: 9 },
+        PlantStatus::Offline,
+        PlantStatus::Starting { ticks_left: 90 },
+        PlantStatus::Online {
+            output: megawatts(300.0),
+            target: megawatts(320.0),
+        },
+        PlantStatus::Stopping {
+            output: megawatts(120.0),
+        },
     ]
 }
 
@@ -533,6 +550,13 @@ fn the_variant_tables_cover_every_variant() {
         IncidentKind::OverFrequencyTrip { .. } => 3,
         IncidentKind::RotatingOutage { .. } => 4,
     });
+    assert_covers_every_variant("PlantStatus", &plant_statuses(), 5, |s| match s {
+        PlantStatus::UnderConstruction { .. } => 0,
+        PlantStatus::Offline => 1,
+        PlantStatus::Starting { .. } => 2,
+        PlantStatus::Online { .. } => 3,
+        PlantStatus::Stopping { .. } => 4,
+    });
     assert_covers_every_variant("MilestoneKind", &milestones(), 3, |m| match m {
         MilestoneKind::ServePeak { .. } => 0,
         MilestoneKind::FullSeasonWithoutStrike => 1,
@@ -623,6 +647,7 @@ fn every_typed_value_translates_without_falling_back() {
 
     assert_translates_with(&l10n, &incidents());
     assert_translates(&l10n, &milestones());
+    assert_translates(&l10n, &plant_statuses());
     assert_translates(&l10n, &PlantKind::ALL);
     assert_translates(
         &l10n,
@@ -710,6 +735,29 @@ fn rotating_outage_orders_read_differently_when_lifted() {
         "{ordered}"
     );
     assert!(lifted.contains("lifted"), "{lifted}");
+}
+
+#[test]
+fn plant_statuses_read_as_copy() {
+    let l10n = shipped();
+
+    let texts: Vec<String> = plant_statuses()
+        .iter()
+        .map(|status| status.localize(&l10n))
+        .collect();
+
+    assert_eq!(
+        texts,
+        [
+            "Under construction: 1 month left",
+            "Under construction: 9 months left",
+            "Off",
+            "Starting: 1 h 30 min left",
+            "Online",
+            "Stopping",
+        ]
+    );
+    assert_eq!(l10n.problems(), vec![]);
 }
 
 #[test]
