@@ -33,7 +33,8 @@ fn selection(app: &App) -> Selection {
     *app.world().resource::<Selection>()
 }
 
-/// The map's layout and the legend's rect on the settled screen.
+/// The map's layout and the legend's rect on the settled screen: `Rect::NOTHING` when the legend
+/// is collapsed.
 fn map(app: &App, widgets: &[Widget]) -> (MapLayout, egui::Rect) {
     let terrain = session(app).region().terrain();
     let layout = MapLayout::fit(
@@ -41,7 +42,11 @@ fn map(app: &App, widgets: &[Widget]) -> (MapLayout, egui::Rect) {
         terrain.width(),
         terrain.height(),
     );
-    (layout, widget(widgets, "Map legend").rect)
+    let legend = widgets
+        .iter()
+        .find(|w| w.text == "Map legend")
+        .map_or(egui::Rect::NOTHING, |w| w.rect);
+    (layout, legend)
 }
 
 /// A cell a peaker can be built on whose centre a click reaches: nothing is drawn there yet, and

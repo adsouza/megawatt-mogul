@@ -50,6 +50,7 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "map-layer-hydro-potential",
     "map-layer-suitability",
     "legend-label",
+    "legend-toggle",
     "legend-city-connected",
     "legend-city-unconnected",
     "legend-plant-under-construction",

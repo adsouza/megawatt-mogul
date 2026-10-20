@@ -91,6 +91,8 @@ map-layer-cooling-water = Cooling water
 map-layer-hydro-potential = Hydro potential
 map-layer-suitability = Suitability: { $kind }
 legend-label = Map legend
+# The layer-button row's toggle that shows or hides the map legend.
+legend-toggle = Legend
 legend-city-connected = Connected city
 legend-city-unconnected = Unconnected city
 legend-plant-under-construction = Plant under construction

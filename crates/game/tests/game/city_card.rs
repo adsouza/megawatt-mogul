@@ -34,7 +34,7 @@ fn city_name(app: &App, city: CityId) -> String {
 }
 
 /// Where the city's marker is drawn on the settled screen, if a click there picks the city: not
-/// under a plant's square, nor under the legend that floats over the map.
+/// under a plant's square, nor under the legend when it floats over the map.
 fn marker(app: &App, widgets: &[Widget], city: &CityView) -> Option<egui::Pos2> {
     let game = &app.world().resource::<Session>().0;
     let terrain = game.session().region().terrain();
@@ -43,9 +43,11 @@ fn marker(app: &App, widgets: &[Widget], city: &CityView) -> Option<egui::Pos2> 
         terrain.width(),
         terrain.height(),
     );
-    let legend = widget(widgets, "Map legend").rect;
+    let legend = widgets.iter().find(|w| w.text == "Map legend");
     let at = layout.cell_center(city.cell);
-    (hit_test(&layout, at, game) == Selection::City(city.id) && !legend.contains(at)).then_some(at)
+    (hit_test(&layout, at, game) == Selection::City(city.id)
+        && !legend.is_some_and(|legend| legend.rect.contains(at)))
+    .then_some(at)
 }
 
 /// The first city with `connected` whose marker a click can reach, and where it is.

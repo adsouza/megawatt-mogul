@@ -17,7 +17,7 @@ use domain::ids::{CellCoord, CityId, NodeId, PlantId, RegionId};
 use domain::region::{PlantKind, RegionDefinition};
 use egui::{Color32, Pos2, Rect, Stroke, StrokeKind, vec2};
 
-use super::action::{ActionSink, ButtonModel, UiAction, button, dispatch};
+use super::action::{ActionSink, ButtonModel, ToggleModel, UiAction, button, dispatch};
 use super::layout::HudArea;
 use super::selection::Selection;
 use crate::l10n::{Localize, Localizer};
@@ -51,6 +51,16 @@ impl MapLayer {
 
 pub(super) fn reset_layer(mut layer: ResMut<MapLayer>) {
     *layer = MapLayer::default();
+}
+
+/// Whether the player has chosen to show the map legend: `None` until they click its toggle, and
+/// then the map's size decides ([`legend_open`]). It lasts the whole game, through every phase
+/// (unlike `UiState`, which a month's planning owns), and a new game starts undecided.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LegendChoice(pub Option<bool>);
+
+pub(super) fn reset_legend(mut choice: ResMut<LegendChoice>) {
+    *choice = LegendChoice::default();
 }
 
 // ---- layout and hit-testing: pure -----------------------------------------------------------
@@ -599,6 +609,48 @@ fn legend_entries(l10n: &Localizer) -> Vec<LegendEntry> {
         .collect()
 }
 
+/// Whether the legend shows on a map laid out as `layout`: the player's choice once they have
+/// made one. Until then it is open only on a map big enough to letter its plants
+/// ([`glyph_font_size`]): on a smaller map it would hide cities (at 1024×640, several), and a
+/// click on it selects nothing.
+pub fn legend_open(choice: LegendChoice, layout: &MapLayout) -> bool {
+    choice
+        .0
+        .unwrap_or_else(|| glyph_font_size(layout).is_some())
+}
+
+/// The legend's toggle in the layer-button row: on while the legend shows, and a click asks for
+/// the other state.
+pub fn legend_toggle(label: &str, open: bool) -> ToggleModel {
+    ToggleModel {
+        button: ButtonModel::new(label.to_owned(), UiAction::ShowLegend(!open)),
+        on: open,
+    }
+}
+
+/// The most columns the legend is laid out in.
+pub const LEGEND_COLUMNS: usize = 3;
+
+/// How many columns, at most [`LEGEND_COLUMNS`], the legend's entries fit in within `max_width`:
+/// `widths` are the entries' widths in order, laid out row by row, with `gap` between columns.
+/// One column if even that is too wide.
+pub fn legend_columns(widths: &[f32], gap: f32, max_width: f32) -> usize {
+    let grid_width = |columns: usize| {
+        let widest = |column: usize| {
+            widths
+                .iter()
+                .skip(column)
+                .step_by(columns)
+                .fold(0.0_f32, |widest, width| widest.max(*width))
+        };
+        (0..columns).map(widest).sum::<f32>() + gap * (columns - 1) as f32
+    };
+    (2..=LEGEND_COLUMNS.min(widths.len()))
+        .rev()
+        .find(|columns| grid_width(*columns) <= max_width)
+        .unwrap_or(1)
+}
+
 // ---- model, presenter, draw, system ---------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq)]
@@ -615,10 +667,15 @@ pub struct MapModel {
     pub glyphs: Vec<(PlantKind, String)>,
     /// The months left of each plant and line under construction, labelled beside it.
     pub months_left: Vec<MonthsLeftLabel>,
-    /// What each kind of mark on the map is. Always shown, in a corner of the map.
+    /// What each kind of mark on the map is, in the map's top right corner when it shows.
     pub legend: Vec<LegendEntry>,
     /// The legend's accessible name.
     pub legend_label: String,
+    /// Whether the player chose to show the legend; the draw function settles the default by the
+    /// map's size ([`legend_open`]).
+    pub legend_choice: LegendChoice,
+    /// The label of the legend's toggle in the layer-button row.
+    pub legend_toggle: String,
     pub selection: Selection,
 }
 
@@ -645,7 +702,13 @@ fn layer_label(layer: MapLayer, l10n: &Localizer) -> String {
     }
 }
 
-pub fn map_model(game: &Game, l10n: &Localizer, layer: MapLayer, selection: Selection) -> MapModel {
+pub fn map_model(
+    game: &Game,
+    l10n: &Localizer,
+    layer: MapLayer,
+    legend: LegendChoice,
+    selection: Selection,
+) -> MapModel {
     let objects = MapObjects::of(game);
     MapModel {
         label: l10n.text("map-label"),
@@ -665,16 +728,23 @@ pub fn map_model(game: &Game, l10n: &Localizer, layer: MapLayer, selection: Sele
             .collect(),
         legend: legend_entries(l10n),
         legend_label: l10n.text("legend-label"),
+        legend_choice: legend,
+        legend_toggle: l10n.text("legend-toggle"),
         selection,
     }
 }
 
 pub fn draw_map(ui: &mut egui::Ui, model: &MapModel, cache: &mut MapCache) -> Vec<UiAction> {
     let mut actions = Vec::new();
+    // The legend's toggle ends the row, but whether it is on depends on the map's size, known
+    // only once the row is laid out: its place is kept here and it is drawn into it below.
+    let mut toggle_slot = Rect::NOTHING;
     ui.horizontal_wrapped(|ui| {
         for layer in &model.layers {
             button(ui, layer, &mut actions);
         }
+        let size = button_size(ui, &model.legend_toggle);
+        toggle_slot = ui.allocate_space(size).1;
     });
     let (response, painter) = ui.allocate_painter(ui.available_size(), egui::Sense::click());
     response.widget_info(|| {
@@ -690,36 +760,82 @@ pub fn draw_map(ui: &mut egui::Ui, model: &MapModel, cache: &mut MapCache) -> Ve
         Color32::WHITE,
     );
     paint_objects(&painter, &layout, model);
+    let open = legend_open(model.legend_choice, &layout);
+    let toggle = legend_toggle(&model.legend_toggle, open);
+    let clicked = ui.put(
+        toggle_slot,
+        egui::Button::new(toggle.button.label.as_str()).selected(toggle.on),
+    );
+    if clicked.clicked() {
+        actions.push(toggle.button.action.clone());
+    }
     // The legend floats over the map and is not part of it: a click on it picks nothing.
-    let legend = draw_legend(ui.ctx(), response.rect, model);
+    let legend = open.then(|| draw_legend(ui.ctx(), response.rect, model));
     if let Some(pos) = response
         .interact_pointer_pos()
-        .filter(|pos| response.clicked() && !legend.contains(*pos))
+        .filter(|pos| response.clicked() && !legend.is_some_and(|legend| legend.contains(*pos)))
     {
         actions.push(UiAction::Select(pick(&layout, pos, &model.objects)));
     }
     actions
 }
 
-/// The legend, in the top right corner of `map`: an overlay that takes no clicks itself. Returns
-/// the rectangle it covers, which the map's own clicks must leave out.
+/// The size of a button labelled `label`: its text and the button padding, at least the height of
+/// an interactive widget.
+fn button_size(ui: &egui::Ui, label: &str) -> egui::Vec2 {
+    let text = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::TextStyle::Button.resolve(ui.style()),
+        Color32::PLACEHOLDER,
+    );
+    let size = text.size() + 2.0 * ui.spacing().button_padding;
+    vec2(size.x, size.y.max(ui.spacing().interact_size.y))
+}
+
+/// How far the legend sits in from the map's edges, in points.
+const LEGEND_INSET: f32 = 8.0;
+/// The space between the legend's columns and between its rows, in points.
+const LEGEND_SPACING: egui::Vec2 = vec2(12.0, 2.0);
+/// A legend swatch's side, in points.
+const SWATCH: f32 = 12.0;
+
+/// The legend, in the top right corner of `map`: an overlay that takes no clicks itself. It takes
+/// as many columns, up to three, as fit inside the map. Returns the rectangle it covers, which the
+/// map's own clicks must leave out.
 fn draw_legend(ctx: &egui::Context, map: Rect, model: &MapModel) -> Rect {
     let shown = egui::Area::new(egui::Id::new("map_legend"))
         .order(egui::Order::Middle)
         .pivot(egui::Align2::RIGHT_TOP)
-        .fixed_pos(map.right_top() + vec2(-8.0, 8.0))
+        .fixed_pos(map.right_top() + vec2(-LEGEND_INSET, LEGEND_INSET))
         .interactable(false)
         .show(ctx, |ui| {
-            egui::Frame::popup(ui.style()).show(ui, |ui| {
+            let frame = egui::Frame::popup(ui.style());
+            let font = egui::TextStyle::Small.resolve(ui.style());
+            let gap = ui.spacing().item_spacing.x;
+            let widths: Vec<f32> = model
+                .legend
+                .iter()
+                .map(|entry| {
+                    let text = ui.painter().layout_no_wrap(
+                        entry.label.clone(),
+                        font.clone(),
+                        Color32::PLACEHOLDER,
+                    );
+                    SWATCH + gap + text.size().x
+                })
+                .collect();
+            let room = map.width() - 2.0 * LEGEND_INSET - frame.total_margin().sum().x;
+            let columns = legend_columns(&widths, LEGEND_SPACING.x, room);
+            frame.show(ui, |ui| {
                 egui::Grid::new("map_legend_entries")
-                    .spacing(vec2(12.0, 2.0))
+                    .spacing(LEGEND_SPACING)
                     .show(ui, |ui| {
                         for (i, entry) in model.legend.iter().enumerate() {
                             ui.horizontal(|ui| {
                                 paint_swatch(ui, entry.swatch);
                                 ui.small(entry.label.as_str());
                             });
-                            if (i + 1) % 3 == 0 {
+                            if (i + 1) % columns == 0 {
                                 ui.end_row();
                             }
                         }
@@ -732,9 +848,9 @@ fn draw_legend(ctx: &egui::Context, map: Rect, model: &MapModel) -> Rect {
     shown.response.rect
 }
 
-/// A 12 pt swatch drawn the way the mark is on the map.
+/// A [`SWATCH`]-sized swatch drawn the way the mark is on the map.
 fn paint_swatch(ui: &mut egui::Ui, swatch: LegendSwatch) {
-    let (rect, _) = ui.allocate_exact_size(vec2(12.0, 12.0), egui::Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(vec2(SWATCH, SWATCH), egui::Sense::hover());
     let painter = ui.painter();
     let centre = rect.center();
     match swatch {
@@ -911,7 +1027,13 @@ pub(super) fn map_panel(
     mut cache: ResMut<MapCache>,
     mut sink: ActionSink,
 ) -> Result {
-    let model = map_model(&session.0, &l10n, sink.layer(), sink.selection());
+    let model = map_model(
+        &session.0,
+        &l10n,
+        sink.layer(),
+        sink.legend_choice(),
+        sink.selection(),
+    );
     let mut ui = area.root_ui(contexts.ctx_mut()?, "map");
     let actions = egui::CentralPanel::default()
         .show(&mut ui, |ui| draw_map(ui, &model, &mut cache))
@@ -1378,7 +1500,13 @@ mod tests {
         let l10n = shipped_l10n();
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
 
-        let model = map_model(&game, &l10n, MapLayer::Terrain, Selection::None);
+        let model = map_model(
+            &game,
+            &l10n,
+            MapLayer::Terrain,
+            LegendChoice::default(),
+            Selection::None,
+        );
 
         let layers: Vec<MapLayer> = MapLayer::all().collect();
         assert_eq!(model.layers.len(), layers.len());
@@ -1407,6 +1535,7 @@ mod tests {
             &game,
             &l10n,
             MapLayer::Suitability(PlantKind::Solar),
+            LegendChoice::default(),
             Selection::None,
         );
         let disabled: Vec<&str> = model
@@ -1423,7 +1552,13 @@ mod tests {
         let l10n = shipped_l10n();
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
 
-        let model = map_model(&game, &l10n, MapLayer::Terrain, Selection::None);
+        let model = map_model(
+            &game,
+            &l10n,
+            MapLayer::Terrain,
+            LegendChoice::default(),
+            Selection::None,
+        );
 
         let mut glyphs: Vec<&str> = PlantKind::ALL.iter().map(|k| model.glyph(*k)).collect();
         assert!(glyphs.iter().all(|g| g.chars().count() == 1), "{glyphs:?}");
@@ -1552,7 +1687,13 @@ mod tests {
         let l10n = shipped_l10n();
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
 
-        let model = map_model(&game, &l10n, MapLayer::Terrain, Selection::None);
+        let model = map_model(
+            &game,
+            &l10n,
+            MapLayer::Terrain,
+            LegendChoice::default(),
+            Selection::None,
+        );
 
         let swatches: Vec<LegendSwatch> = model.legend.iter().map(|e| e.swatch).collect();
         for kind in PlantKind::ALL {
@@ -1603,7 +1744,13 @@ mod tests {
         let session = game.session();
         let peaker = session.region().spec(PlantKind::Peaker).build_months;
 
-        let model = map_model(&game, &l10n, MapLayer::Terrain, Selection::None);
+        let model = map_model(
+            &game,
+            &l10n,
+            MapLayer::Terrain,
+            LegendChoice::default(),
+            Selection::None,
+        );
 
         let marker = model.objects.plants.iter().find(|p| p.id == plant).unwrap();
         assert_eq!(marker.months_left, Some(peaker));
@@ -1635,7 +1782,14 @@ mod tests {
         // The start fleet and network are built: no labels.
         let fresh = eastern_game(Box::new(InMemoryCommandLog::default()));
         assert_eq!(
-            map_model(&fresh, &l10n, MapLayer::Terrain, Selection::None).months_left,
+            map_model(
+                &fresh,
+                &l10n,
+                MapLayer::Terrain,
+                LegendChoice::default(),
+                Selection::None
+            )
+            .months_left,
             []
         );
         assert_eq!(l10n.problems(), vec![]);
@@ -1645,7 +1799,13 @@ mod tests {
     fn the_months_left_labels_are_drawn_only_at_9_pt_or_more() {
         let l10n = shipped_l10n();
         let (game, _, _) = building();
-        let model = map_model(&game, &l10n, MapLayer::Terrain, Selection::None);
+        let model = map_model(
+            &game,
+            &l10n,
+            MapLayer::Terrain,
+            LegendChoice::default(),
+            Selection::None,
+        );
         let layout_at =
             |cell: f32| MapLayout::fit(area(0.0, 0.0, cell * 100.0, cell * 60.0), 100, 60);
 
@@ -1692,7 +1852,13 @@ mod tests {
     fn a_months_left_label_takes_no_click() {
         let l10n = shipped_l10n();
         let (game, plant, _) = building();
-        let model = map_model(&game, &l10n, MapLayer::Terrain, Selection::None);
+        let model = map_model(
+            &game,
+            &l10n,
+            MapLayer::Terrain,
+            LegendChoice::default(),
+            Selection::None,
+        );
         let layout = MapLayout::fit(area(0.0, 0.0, 2000.0, 1200.0), 100, 60);
         let placed = months_left_labels(&layout, &model.months_left);
         assert_eq!(placed.len(), 2);
@@ -1707,6 +1873,73 @@ mod tests {
         if !covered {
             assert_eq!(hit, Selection::Cell(layout.cell_at(on_text).unwrap()));
         }
+    }
+
+    #[test]
+    fn the_legend_opens_by_default_only_on_a_map_big_enough_to_letter_its_plants() {
+        let layout_at =
+            |cell: f32| MapLayout::fit(area(0.0, 0.0, cell * 100.0, cell * 60.0), 100, 60);
+        let undecided = LegendChoice::default();
+        assert_eq!(undecided, LegendChoice(None));
+
+        // The smallest window's Eastern map, about 4.5 pt cells: collapsed. A big map: open.
+        assert!(!legend_open(undecided, &layout_at(4.48)));
+        assert!(legend_open(undecided, &layout_at(20.0)));
+        for step in 4..160 {
+            let cell = step as f32 * 0.25;
+            let layout = layout_at(cell);
+            assert_eq!(
+                legend_open(undecided, &layout),
+                glyph_font_size(&layout).is_some(),
+                "{cell} pt cells"
+            );
+            // The player's choice wins either way.
+            assert!(legend_open(LegendChoice(Some(true)), &layout), "{cell}");
+            assert!(!legend_open(LegendChoice(Some(false)), &layout), "{cell}");
+        }
+    }
+
+    #[test]
+    fn the_legend_toggle_shows_whether_it_is_open_and_asks_for_the_other_state() {
+        let l10n = shipped_l10n();
+        let game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let model = map_model(
+            &game,
+            &l10n,
+            MapLayer::Terrain,
+            LegendChoice(Some(false)),
+            Selection::None,
+        );
+        assert_eq!(model.legend_toggle, "Legend");
+        assert_eq!(model.legend_choice, LegendChoice(Some(false)));
+
+        for open in [true, false] {
+            let toggle = legend_toggle(&model.legend_toggle, open);
+            assert_eq!(toggle.on, open);
+            assert_eq!(
+                toggle.button,
+                ButtonModel::new("Legend".to_owned(), UiAction::ShowLegend(!open))
+            );
+        }
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    #[test]
+    fn the_legend_drops_columns_until_it_fits_the_width() {
+        // Row by row: three columns are 80 + 90 + 70 wide, two are 90 + 80, one is 90.
+        let widths = [50.0, 60.0, 70.0, 80.0, 90.0, 40.0, 30.0];
+        let gap = 12.0;
+        assert_eq!(legend_columns(&widths, gap, 1000.0), LEGEND_COLUMNS);
+        assert_eq!(legend_columns(&widths, gap, 264.0), 3);
+        assert_eq!(legend_columns(&widths, gap, 263.9), 2);
+        assert_eq!(legend_columns(&widths, gap, 182.0), 2);
+        assert_eq!(legend_columns(&widths, gap, 181.9), 1);
+        assert_eq!(legend_columns(&widths, gap, 90.0), 1);
+        // Too narrow for even one column: one column, the narrowest it gets.
+        assert_eq!(legend_columns(&widths, gap, 10.0), 1);
+        // Fewer entries than columns: no empty column counts.
+        assert_eq!(legend_columns(&[50.0, 60.0], gap, 122.0), 2);
+        assert_eq!(legend_columns(&[], gap, 0.0), 1);
     }
 
     #[test]

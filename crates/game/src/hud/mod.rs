@@ -88,10 +88,11 @@ pub use self::layout::{
     panel_max,
 };
 pub use self::map::{
-    CityMarker, GLYPH_MIN_FONT, LabelAnchor, LegendEntry, LegendSwatch, LineMarker, MapCache,
-    MapLayer, MapLayout, MapModel, MapObjects, MonthsLeftLabel, PlacedLabel, PlantMarker, Rgb,
-    SUITABLE, TerrainKey, UNSUITABLE, WATER, cell_color, city_radius, draw_map, glyph_font_size,
-    hit_test, kind_color, map_model, months_left_labels, pick, plant_half_size, terrain_image,
+    CityMarker, GLYPH_MIN_FONT, LEGEND_COLUMNS, LabelAnchor, LegendChoice, LegendEntry,
+    LegendSwatch, LineMarker, MapCache, MapLayer, MapLayout, MapModel, MapObjects, MonthsLeftLabel,
+    PlacedLabel, PlantMarker, Rgb, SUITABLE, TerrainKey, UNSUITABLE, WATER, cell_color,
+    city_radius, draw_map, glyph_font_size, hit_test, kind_color, legend_columns, legend_open,
+    legend_toggle, map_model, months_left_labels, pick, plant_half_size, terrain_image,
 };
 pub use self::menu::{
     BootErrorModel, MainMenuModel, MenuForm, RegionChoice, RegionListings, RegionProblem,
@@ -181,6 +182,7 @@ impl Plugin for HudPlugin {
         let on_the_map = in_game.clone().and_then(has_l10n);
         app.init_resource::<Selection>()
             .init_resource::<MapLayer>()
+            .init_resource::<LegendChoice>()
             .init_resource::<MapCache>()
             .init_resource::<OpenPrompt>()
             .init_resource::<MilestonesOpen>()
@@ -213,6 +215,7 @@ impl Plugin for HudPlugin {
                 (
                     selection::reset_selection,
                     map::reset_layer,
+                    map::reset_legend,
                     map::reset_cache,
                     action::close_prompt,
                     milestones::close_milestones,
@@ -230,6 +233,7 @@ impl Plugin for HudPlugin {
                     menu::reseed_menu,
                     selection::reset_selection,
                     map::reset_layer,
+                    map::reset_legend,
                     map::reset_cache,
                     action::close_prompt,
                     milestones::close_milestones,

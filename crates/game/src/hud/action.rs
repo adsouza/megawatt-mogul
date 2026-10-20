@@ -12,7 +12,7 @@ use domain::ids::{PlantId, RegionId};
 use domain::units::Megawatts;
 
 use super::game_over::GameOverView;
-use super::map::MapLayer;
+use super::map::{LegendChoice, MapLayer};
 use super::milestones::MilestonesOpen;
 use super::operating::OperatingTab;
 use super::selection::Selection;
@@ -37,6 +37,8 @@ pub enum UiAction {
     Select(Selection),
     /// Colour the map by another layer.
     SetLayer(MapLayer),
+    /// Show the map legend, or hide it: the player's choice, for the rest of the game.
+    ShowLegend(bool),
     /// Open another tab of the Planning panel.
     SetPlanningTab(PlanningTab),
     /// Open another tab of the Operating panel.
@@ -177,6 +179,7 @@ pub struct ActionSink<'w> {
     operating_tab: ResMut<'w, OperatingTab>,
     selection: ResMut<'w, Selection>,
     layer: ResMut<'w, MapLayer>,
+    legend: ResMut<'w, LegendChoice>,
     prompt: ResMut<'w, OpenPrompt>,
     milestones: ResMut<'w, MilestonesOpen>,
     game_over_view: ResMut<'w, GameOverView>,
@@ -209,6 +212,11 @@ impl ActionSink<'_> {
     /// The map layer now shown.
     pub fn layer(&self) -> MapLayer {
         *self.layer
+    }
+
+    /// Whether the player chose to show the map legend.
+    pub fn legend_choice(&self) -> LegendChoice {
+        *self.legend
     }
 
     /// The prompt now open, if any.
@@ -251,6 +259,7 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             UiAction::SetOperatingTab(tab) => *sink.operating_tab = tab,
             UiAction::Select(selection) => *sink.selection = selection,
             UiAction::SetLayer(layer) => *sink.layer = layer,
+            UiAction::ShowLegend(open) => *sink.legend = LegendChoice(Some(open)),
             // Written by `UiState::apply`, above.
             UiAction::SetPlanningTab(_)
             | UiAction::ShowHour(_)

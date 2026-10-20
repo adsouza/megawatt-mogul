@@ -27,7 +27,7 @@ fn the_egui_pass_schedule_exists_without_any_panels() {
 use application::{CommandError, RegionLoadError};
 use domain::ids::{CellCoord, RegionId};
 use game::hud::{
-    ActionSink, CommitmentForm, MapLayer, MenuForm, OpenPrompt, PlanningTab, Prompt,
+    ActionSink, CommitmentForm, LegendChoice, MapLayer, MenuForm, OpenPrompt, PlanningTab, Prompt,
     RegionListings, Selection, ToastQueue, UiAction, UiState, dispatch, toasts_model,
 };
 use game::l10n::{LocalizeWith, Localizer, Names};
@@ -96,6 +96,7 @@ fn leaving_a_game_resets_the_selection_the_prompt_and_the_seed() {
     let world = app.world_mut();
     *world.resource_mut::<Selection>() = Selection::Cell(CellCoord { x: 3, y: 4 });
     *world.resource_mut::<MapLayer>() = MapLayer::Irradiance;
+    *world.resource_mut::<LegendChoice>() = LegendChoice(Some(true));
     *world.resource_mut::<OpenPrompt>() = OpenPrompt(Some(Prompt::LeaveGame));
     world.resource_mut::<MenuForm>().seed = "the old seed".to_owned();
     world.write_message(ReturnToMenu);
@@ -105,6 +106,7 @@ fn leaving_a_game_resets_the_selection_the_prompt_and_the_seed() {
     let world = app.world();
     assert_eq!(*world.resource::<Selection>(), Selection::None);
     assert_eq!(*world.resource::<MapLayer>(), MapLayer::Terrain);
+    assert_eq!(*world.resource::<LegendChoice>(), LegendChoice(None));
     assert_eq!(*world.resource::<OpenPrompt>(), OpenPrompt(None));
     let form = world.resource::<MenuForm>();
     assert!(form.parsed_seed().is_some(), "re-seeded: {:?}", form.seed);
@@ -117,6 +119,7 @@ fn entering_a_game_starts_with_nothing_selected_and_no_prompt() {
     // Left over from the menu, which shouldn't happen but mustn't leak into the game.
     *app.world_mut().resource_mut::<Selection>() = Selection::Cell(CellCoord { x: 1, y: 1 });
     *app.world_mut().resource_mut::<MapLayer>() = MapLayer::HydroPotential;
+    *app.world_mut().resource_mut::<LegendChoice>() = LegendChoice(Some(false));
     *app.world_mut().resource_mut::<OpenPrompt>() = OpenPrompt(Some(Prompt::LeaveGame));
 
     request(&mut app, "eastern_interconnection");
@@ -124,6 +127,7 @@ fn entering_a_game_starts_with_nothing_selected_and_no_prompt() {
     assert_eq!(state(&app), AppState::InGame);
     assert_eq!(*app.world().resource::<Selection>(), Selection::None);
     assert_eq!(*app.world().resource::<MapLayer>(), MapLayer::Terrain);
+    assert_eq!(*app.world().resource::<LegendChoice>(), LegendChoice(None));
     assert_eq!(*app.world().resource::<OpenPrompt>(), OpenPrompt(None));
 }
 

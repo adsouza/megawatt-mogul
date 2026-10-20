@@ -20,15 +20,15 @@ use domain::ids::{CellCoord, RegionId};
 use domain::session::{GameOverReason, GameSettings};
 use game::hud::{
     ActionSink, BUILD_PANEL_WIDTH, ButtonModel, CommitmentForm, GameOverView, HudArea,
-    INSPECTOR_PANEL_WIDTH, InspectorModel, LastSpeed, LinePreview, LineSection, MapCache, MapLayer,
-    MapLayout, MenuForm, MenuScreen, MilestonesOpen, OPERATING_LOG_WIDTH, OPERATING_PANEL_HEIGHT,
-    OPERATING_SIDE_WIDTH, OpenPrompt, OperatingTab, PLANNING_PANEL_HEIGHT, PlanningTab,
-    PlantPanelForm, PlantPanelModel, PlantSection, Prompt, RegionListings, Selection, ToastQueue,
-    UiAction, UiState, boot_error_model, build_model, button, dispatch, draw_boot_error,
-    draw_build, draw_game_over, draw_inspector, draw_main_menu, draw_map, draw_planning,
-    draw_plant_panel, draw_prompt, draw_region_select, draw_speed, draw_toasts, draw_top_bar,
-    draw_warnings, game_over_model_for, hit_test, inspector_model, is_commitable, main_menu_model,
-    map_model, planning_model, plant_half_size, plant_panel_model, prompt_model,
+    INSPECTOR_PANEL_WIDTH, InspectorModel, LastSpeed, LegendChoice, LinePreview, LineSection,
+    MapCache, MapLayer, MapLayout, MenuForm, MenuScreen, MilestonesOpen, OPERATING_LOG_WIDTH,
+    OPERATING_PANEL_HEIGHT, OPERATING_SIDE_WIDTH, OpenPrompt, OperatingTab, PLANNING_PANEL_HEIGHT,
+    PlanningTab, PlantPanelForm, PlantPanelModel, PlantSection, Prompt, RegionListings, Selection,
+    ToastQueue, UiAction, UiState, boot_error_model, build_model, button, dispatch,
+    draw_boot_error, draw_build, draw_game_over, draw_inspector, draw_main_menu, draw_map,
+    draw_planning, draw_plant_panel, draw_prompt, draw_region_select, draw_speed, draw_toasts,
+    draw_top_bar, draw_warnings, game_over_model_for, hit_test, inspector_model, is_commitable,
+    main_menu_model, map_model, planning_model, plant_half_size, plant_panel_model, prompt_model,
     region_select_model, speed_model, toasts_model, top_bar_model, warnings_for,
 };
 use game::l10n::Localize;
@@ -386,7 +386,13 @@ fn the_map_draws_both_shipped_regions_and_selects_what_is_clicked() {
         let game = game_in(region);
         let session = game.session();
         let terrain = session.region().terrain();
-        let model = map_model(&game, &l10n, MapLayer::Terrain, Selection::None);
+        let model = map_model(
+            &game,
+            &l10n,
+            MapLayer::Terrain,
+            LegendChoice(Some(true)),
+            Selection::None,
+        );
         let harness = Harness::new();
         let cache = RefCell::new(MapCache::default());
         let draw =
@@ -484,12 +490,17 @@ fn the_map_draws_both_shipped_regions_and_selects_what_is_clicked() {
             );
         }
 
-        // A layer button asks for its layer; the current layer's button does nothing.
+        // A layer button asks for its layer; the current layer's button does nothing. The
+        // legend's toggle, at the end of the row, asks to hide the open legend.
         assert_eq!(
             harness.click("Sunshine", draw),
             vec![UiAction::SetLayer(MapLayer::Irradiance)]
         );
         assert_eq!(harness.click("Terrain", draw), vec![]);
+        assert_eq!(
+            harness.click("Legend", draw),
+            vec![UiAction::ShowLegend(false)]
+        );
     }
     assert_eq!(l10n.problems(), vec![]);
 }
@@ -499,7 +510,13 @@ fn the_legend_names_every_mark_and_takes_no_map_clicks() {
     let l10n = shipped_l10n();
     for region in [EASTERN, WESTERN] {
         let game = game_in(region);
-        let model = map_model(&game, &l10n, MapLayer::Terrain, Selection::None);
+        let model = map_model(
+            &game,
+            &l10n,
+            MapLayer::Terrain,
+            LegendChoice(Some(true)),
+            Selection::None,
+        );
         let harness = Harness::new();
         let cache = RefCell::new(MapCache::default());
         let draw =
@@ -565,6 +582,7 @@ fn every_map_layer_draws() {
             &game,
             &l10n,
             layer,
+            LegendChoice::default(),
             Selection::Cell(domain::ids::CellCoord { x: 3, y: 3 }),
         );
         let widgets =
@@ -798,7 +816,13 @@ fn planning_screen(
     let panel = planning_model(game, &l10n, &planning.ui, &planning.form).unwrap();
     let inspector = inspector_model(game, &l10n, selection).unwrap();
     let build = build_model(game, &l10n, selection).unwrap();
-    let map = map_model(game, &l10n, MapLayer::Terrain, selection);
+    let map = map_model(
+        game,
+        &l10n,
+        MapLayer::Terrain,
+        LegendChoice::default(),
+        selection,
+    );
     let ctx = ui.ctx().clone();
     let mut area = HudArea::default();
     let mut actions = Vec::new();
@@ -2147,6 +2171,7 @@ fn dispatch_is_the_one_mapping_from_actions_to_messages() {
     let mut app = headless_app(&shipped_assets(), logs.path());
     app.init_resource::<Selection>()
         .init_resource::<MapLayer>()
+        .init_resource::<LegendChoice>()
         .init_resource::<OpenPrompt>()
         .init_resource::<MilestonesOpen>()
         .init_resource::<GameOverView>()
@@ -2169,6 +2194,7 @@ fn dispatch_is_the_one_mapping_from_actions_to_messages() {
             UiAction::SetSpeed(SimSpeed::X4),
             UiAction::Select(Selection::Cell(cell)),
             UiAction::SetLayer(MapLayer::Irradiance),
+            UiAction::ShowLegend(true),
             UiAction::SetOperatingTab(OperatingTab::Hydro),
             UiAction::Prompt(Some(Prompt::LeaveGame)),
             UiAction::ToggleMilestones,
@@ -2189,6 +2215,16 @@ fn dispatch_is_the_one_mapping_from_actions_to_messages() {
     assert_eq!(*app.world().resource::<SimSpeed>(), SimSpeed::X4);
     assert_eq!(*app.world().resource::<Selection>(), Selection::Cell(cell));
     assert_eq!(*app.world().resource::<MapLayer>(), MapLayer::Irradiance);
+    assert_eq!(
+        *app.world().resource::<LegendChoice>(),
+        LegendChoice(Some(true))
+    );
+    dispatch_in(&mut app, vec![UiAction::ShowLegend(false)]);
+    assert_eq!(
+        *app.world().resource::<LegendChoice>(),
+        LegendChoice(Some(false)),
+        "the player's choice either way"
+    );
     assert_eq!(*app.world().resource::<OperatingTab>(), OperatingTab::Hydro);
     assert_eq!(
         *app.world().resource::<LastSpeed>(),
@@ -2231,6 +2267,7 @@ fn navigating_moves_between_the_menu_screens() {
     let mut app = headless_app(&shipped_assets(), logs.path());
     app.init_resource::<Selection>()
         .init_resource::<MapLayer>()
+        .init_resource::<LegendChoice>()
         .init_resource::<OpenPrompt>()
         .init_resource::<MilestonesOpen>()
         .init_resource::<GameOverView>()

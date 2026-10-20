@@ -1555,6 +1555,12 @@ be in service. The commissioning toasts arrive with no warning.
     faded marker or dashed line. Like the plant letters, the label is drawn only at 9 pt or more
     (§8, Plan 2 ruling N1).
   - The map legend gains the two under-construction marks.
+  - The legend can be collapsed (playtest, final fix wave): a *Legend* toggle ends the
+    layer-button row. Until the player uses it, the legend is open only on a map big enough to
+    letter its plants (`glyph_font_size` is `Some`), so at 1024×640 it hides no city. The player's
+    choice lasts the rest of the game, through every phase, and a new game starts undecided. An
+    open legend drops to fewer columns to stay inside the drawn map, and a click on it still
+    selects nothing.
 - **Selecting a plant under construction.** Plants under construction stay out of the plant list
   and the commitment grid, as today. In Planning, the inspector shows a construction card: kind,
   capacity, months left of the total, and the month it enters service. In Operating, the
