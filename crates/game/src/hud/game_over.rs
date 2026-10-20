@@ -22,6 +22,20 @@ pub enum GameOverView {
     FinalMonth,
 }
 
+/// The [`GameOverView`] as it was when this egui pass began. The game-over and Review modals both
+/// read it, never `GameOverView` itself: `dispatch` writes that partway through the pass, and the
+/// modal drawn second would otherwise see the new value and draw too, two modals in one frame.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct GameOverViewShown(pub GameOverView);
+
+/// Starts each egui pass by taking the snapshot the two modals decide by.
+pub(super) fn snapshot_game_over_view(
+    view: Res<GameOverView>,
+    mut shown: ResMut<GameOverViewShown>,
+) {
+    shown.0 = *view;
+}
+
 pub(super) fn reset_game_over_view(mut view: ResMut<GameOverView>) {
     *view = GameOverView::Summary;
 }
@@ -44,6 +58,8 @@ pub fn game_over_model(game: &Game, l10n: &Localizer) -> Option<GameOverModel> {
     match session.status() {
         SessionStatus::Active => None,
         SessionStatus::GameOver(reason) => {
+            // Every game ends at a month close, so a report always exists; the guard keeps the
+            // screen from going blank, with neither modal, should that invariant ever break.
             let has_report = game.projections().monthly_reports.latest().is_some();
             Some(game_over_model_for(
                 reason,
@@ -118,10 +134,11 @@ pub(super) fn game_over_modal(
     mut contexts: EguiContexts,
     session: Res<Session>,
     l10n: Res<Localizer>,
+    shown: Res<GameOverViewShown>,
     mut sink: ActionSink,
 ) -> Result {
     // The final month's review stands in for the modal until *Back*.
-    if sink.game_over_view() == GameOverView::FinalMonth {
+    if shown.0 == GameOverView::FinalMonth {
         return Ok(());
     }
     let Some(model) = game_over_model(&session.0, &l10n) else {

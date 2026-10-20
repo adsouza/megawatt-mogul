@@ -18,7 +18,7 @@ use domain::session::{DayPhase, MonthlyReport, SessionStatus};
 use domain::units::MegawattHours;
 
 use super::action::{ActionSink, ButtonModel, UiAction, button, dispatch};
-use super::game_over::GameOverView;
+use super::game_over::{GameOverView, GameOverViewShown};
 use super::layout::HudArea;
 use super::top_bar::Stat;
 use crate::l10n::{Localize, LocalizeWith, Localizer, Names, Toast, format};
@@ -245,8 +245,8 @@ pub fn review_rect(behind: egui::Rect) -> egui::Rect {
     )
 }
 
-/// The heading, the sections in a vertical scroll area, and its footer button pinned below it. Fills the
-/// height it is given, so the system sets that.
+/// The heading, the sections in a vertical scroll area, and its footer button pinned below it.
+/// Fills the height it is given, so the system sets that.
 pub fn draw_review(ui: &mut egui::Ui, model: &ReviewModel) -> Vec<UiAction> {
     let mut actions = Vec::new();
     ui.horizontal(|ui| {
@@ -335,16 +335,18 @@ fn draw_sections(ui: &mut egui::Ui, model: &ReviewModel) {
 }
 
 /// Dims the map under the top bar (a backdrop that takes clicks and does nothing with them, so
-/// only the footer button leaves Review) and draws the modal over it, in one layer under the floating
-/// windows.
+/// only the footer button leaves Review) and draws the modal over it, in one layer under the
+/// floating windows.
 pub(super) fn review_modal(
     mut contexts: EguiContexts,
     area: Res<HudArea>,
     session: Res<Session>,
     l10n: Res<Localizer>,
+    shown: Res<GameOverViewShown>,
     mut sink: ActionSink,
 ) -> Result {
-    let Some(model) = review_model(&session.0, sink.game_over_view(), &l10n) else {
+    // The pass's snapshot, not the live view: see `GameOverViewShown`.
+    let Some(model) = review_model(&session.0, shown.0, &l10n) else {
         return Ok(());
     };
     let ctx = contexts.ctx_mut()?;

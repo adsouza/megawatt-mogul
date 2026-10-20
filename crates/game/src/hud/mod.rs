@@ -62,7 +62,8 @@ pub use self::frequency::{
     SHEDDING_COLOR, band_color, draw_frequency, frequency_model, frequency_model_for,
 };
 pub use self::game_over::{
-    GameOverModel, GameOverView, draw_game_over, game_over_model, game_over_model_for,
+    GameOverModel, GameOverView, GameOverViewShown, draw_game_over, game_over_model,
+    game_over_model_for,
 };
 pub use self::hydro_panel::{
     HYDRO_TEXT_WIDTH, HydroModel, HydroRow, draw_hydro, hydro_model, hydro_model_for, hydro_shade,
@@ -172,6 +173,7 @@ impl Plugin for HudPlugin {
             .init_resource::<OpenPrompt>()
             .init_resource::<MilestonesOpen>()
             .init_resource::<GameOverView>()
+            .init_resource::<GameOverViewShown>()
             .init_resource::<UiState>()
             .init_resource::<CommitmentForm>()
             .init_resource::<LastSpeed>()
@@ -252,6 +254,7 @@ impl Plugin for HudPlugin {
                 EguiPrimaryContextPass,
                 (
                     layout::reset_hud_area.in_set(HudSet::Begin),
+                    game_over::snapshot_game_over_view.in_set(HudSet::Begin),
                     menu::boot_error_screen
                         .in_set(HudSet::Panels)
                         .run_if(in_state(AppState::Boot).and_then(resource_exists::<BootError>)),

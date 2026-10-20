@@ -467,3 +467,51 @@ fn see_the_month_shows_the_final_review_and_back_returns_to_game_over() {
     update_n(&mut app, 2);
     assert_eq!(phase(&app), PhaseState::Review, "no phase change either");
 }
+
+/// One end-of-game modal at a time, in every egui pass: `dispatch` writes the view partway through
+/// a pass, and neither modal may react to it until the next one. The press and the release run as
+/// separate passes, with nothing settled between, so a pass that draws both is seen.
+#[test]
+fn the_game_over_and_review_modals_never_draw_in_the_same_pass() {
+    let (width, height) = (1024.0, 640.0);
+    let logs = TempDir::new().unwrap();
+    let mut app = game_over_app(&logs);
+    let pass = EguiPass::attach(&mut app);
+    let one_modal = |widgets: &[crate::support::egui_harness::Widget], step: &str| {
+        let (over, review) = (has(widgets, "Game over"), has(widgets, "Month in review"));
+        assert!(over != review, "{step}: game over {over}, review {review}");
+    };
+    let click = |app: &mut App, button: &str, widgets: &[_]| {
+        let at = find_button(widgets, button).rect.center();
+        let press = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let moved_and_pressed = vec![egui::Event::PointerMoved(at), press(true)];
+        one_modal(
+            &pass.run_with(app, width, height, moved_and_pressed),
+            &format!("{button}: press"),
+        );
+        one_modal(
+            &pass.run_with(app, width, height, vec![press(false)]),
+            &format!("{button}: release"),
+        );
+    };
+    let widgets = pass.settled(&mut app, width, height);
+    one_modal(&widgets, "game over");
+
+    click(&mut app, "See the month", &widgets);
+    // The modal's first pass sizes it: run it on its own, then settle for the button's place.
+    one_modal(&pass.run(&mut app, width, height), "after See the month");
+    let widgets = pass.settled(&mut app, width, height);
+    one_modal(&widgets, "review settled");
+    assert!(has(&widgets, "Month in review"));
+
+    click(&mut app, "Back", &widgets);
+    one_modal(&pass.run(&mut app, width, height), "after Back");
+    let widgets = pass.settled(&mut app, width, height);
+    one_modal(&widgets, "game over settled");
+    assert!(has(&widgets, "Game over"));
+}

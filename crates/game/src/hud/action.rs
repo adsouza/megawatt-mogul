@@ -216,11 +216,6 @@ impl ActionSink<'_> {
         *self.milestones
     }
 
-    /// Whether a finished game shows its game-over modal or its final month's review.
-    pub fn game_over_view(&self) -> GameOverView {
-        *self.game_over_view
-    }
-
     /// The Planning panel's state: the tab, the highlighted hour and the commitment draft.
     pub fn ui_state(&self) -> &UiState {
         &self.ui
