@@ -12,7 +12,7 @@ use domain::session::DayPhase;
 use game::hud::{
     BUILD_PANEL_WIDTH, Edge, HudArea, INSPECTOR_PANEL_WIDTH, MAP_MIN_SIZE, OPERATING_PANEL_HEIGHT,
     OPERATING_SIDE_WIDTH, OperatingTab, PLANNING_PANEL_HEIGHT, PlanningTab, Selection, UiAction,
-    panel_max,
+    operating_side_min_height, panel_max,
 };
 use game::sim::Session;
 use tempfile::TempDir;
@@ -154,6 +154,14 @@ impl Screen {
                 below_bars - egui::vec2(self.size(INSPECTOR), 0.0),
                 0.0,
             ),
+            // The side panel above it keeps its minimum height, beyond the map's.
+            "operating" => panel_max(
+                panel.edge,
+                panel.size,
+                screen,
+                below_bars,
+                (operating_side_min_height(self.pass.ctx()) - MAP_MIN_SIZE.y).max(0.0),
+            ),
             _ => panel_max(panel.edge, panel.size, screen, below_bars, 0.0),
         }
     }
@@ -209,8 +217,11 @@ fn resize_each_way(screen: &mut Screen, panel: Resizable, side: Resizable, what:
     let max = screen.expected_max(panel, side);
 
     // Outward: the panel grows by the drag and the map shrinks by as much. 150 where the
-    // maximum leaves room for it; at 1024×640 no panel has 150 to spare, so half its room.
-    let by = 150.0_f32.min(((max - panel.size) / 2.0).floor());
+    // maximum leaves room for it; at 1024×640 no panel has 150 to spare, so half its room, but at
+    // least 10 (egui takes a move of under 6 for a click) and never more than all of it. The
+    // Operating bottom panel has only 10 there: the side panel above it keeps its minimum.
+    let room = (max - panel.size).floor();
+    let by = 150.0_f32.min((room / 2.0).floor().max(room.min(10.0)));
     assert!(by > 0.0, "{what}: there is room to grow");
     if screen.width >= LARGE.0 {
         assert_eq!(by, 150.0, "{what}");

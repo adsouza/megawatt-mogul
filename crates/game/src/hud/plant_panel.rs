@@ -288,20 +288,36 @@ pub const PLANT_LIST_MIN_ROWS: usize = 3;
 /// The list's row spacing: compact, so more of the fleet is in view.
 const PLANT_ROW_SPACING: egui::Vec2 = egui::vec2(6.0, 2.0);
 
+/// A label's row: the body text's height, rounded up to whole points as egui lays it out.
+fn text_row(ctx: &egui::Context) -> f32 {
+    let font = egui::TextStyle::Body.resolve(&ctx.global_style());
+    ctx.fonts_mut(|fonts| fonts.row_height(&font)).ceil()
+}
+
 /// The height of the selected plant's block: what its content needs for the plant with the most
 /// figures ([`MOST_PLANT_STATS`]), with no room to spare. It is the same whatever is selected (or
 /// nothing), so the list under it never moves when the selection changes.
-pub fn plant_details_height(ui: &egui::Ui) -> f32 {
-    let spacing = ui.spacing();
-    // A label's row is its text's height, rounded up to whole points as egui lays it out.
-    let text = ui.text_style_height(&egui::TextStyle::Body).ceil();
+pub fn plant_details_height(ctx: &egui::Context) -> f32 {
+    let spacing = ctx.global_style().spacing.clone();
     let rows = MOST_PLANT_STATS as f32;
     // The name row, the controls and the slider (each a widget's height), then the figures'
     // grid, each a gap apart.
     3.0 * spacing.interact_size.y
         + 3.0 * spacing.item_spacing.y
-        + rows * text
+        + rows * text_row(ctx)
         + (rows - 1.0) * STATS_ROW_SPACING
+}
+
+/// One row of the plant list: a row's button and the space under it.
+fn list_row(ctx: &egui::Context) -> f32 {
+    ctx.global_style().spacing.interact_size.y + PLANT_ROW_SPACING.y
+}
+
+/// The least height the plant list takes: its title, then [`PLANT_LIST_MIN_ROWS`] rows.
+pub fn plant_list_min_height(ctx: &egui::Context) -> f32 {
+    text_row(ctx)
+        + ctx.global_style().spacing.item_spacing.y
+        + PLANT_LIST_MIN_ROWS as f32 * list_row(ctx)
 }
 
 /// The space between two of the selected plant's figures.
@@ -323,11 +339,11 @@ pub(super) fn named_region(response: &egui::Response, name: &str) {
 
 fn draw_plant_rows(ui: &mut egui::Ui, model: &PlantListModel, actions: &mut Vec<UiAction>) {
     ui.strong(model.title.as_str());
-    let row_height = ui.spacing().interact_size.y + PLANT_ROW_SPACING.y;
+    let rows = PLANT_LIST_MIN_ROWS as f32 * list_row(ui.ctx());
     egui::ScrollArea::vertical()
         .id_salt("operating_plant_list")
         .auto_shrink([false, false])
-        .min_scrolled_height(PLANT_LIST_MIN_ROWS as f32 * row_height)
+        .min_scrolled_height(rows)
         .show(ui, |ui| {
             egui::Grid::new("operating_plant_rows")
                 .num_columns(4)

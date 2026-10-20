@@ -21,6 +21,8 @@ use crate::support::shipped_l10n;
 
 const SMALL: (f32, f32) = (1024.0, 640.0);
 const LARGE: (f32, f32) = (2560.0, 1440.0);
+/// Pixel rounding: egui snaps widgets to whole points, and a panel's edge can fall between them.
+const ROUNDING: f32 = 1.0;
 
 /// The placeholder's text when no plant is selected.
 const HINT: &str = "Select a plant in the list or on the map.";
@@ -178,7 +180,7 @@ fn the_details_sit_above_a_plant_list_that_fills_the_side_panel() {
                             &w.text == *name
                                 && w.role != egui::accesskit::Role::Label
                                 && w.role != egui::accesskit::Role::Unknown
-                                && b.list.contains_rect(w.rect)
+                                && b.list.expand(ROUNDING).contains_rect(w.rect)
                         })
                     })
                     .count();
@@ -235,6 +237,89 @@ fn the_list_does_not_move_when_the_selection_changes() {
             let now = blocks(&mut app, &pass, selection, SMALL);
             assert_eq!(now.list, start.list, "{region_id}: {selection:?}");
             assert_eq!(now.details, start.details, "{region_id}: {selection:?}");
+        }
+    }
+}
+
+/// Drags the inner edge of the outer panel `id` as far out as it goes.
+fn drag_to_maximum(app: &mut App, pass: &EguiPass, id: &str, size: (f32, f32)) {
+    let rect = egui::PanelState::load(pass.ctx(), egui::Id::new(id))
+        .unwrap_or_else(|| panic!("{id} is drawn"))
+        .outer_rect;
+    let (from, to) = if id == "operating" {
+        let from = egui::pos2(rect.center().x, rect.top());
+        (from, egui::pos2(from.x, 1.0))
+    } else {
+        let from = egui::pos2(rect.left(), rect.center().y);
+        (from, egui::pos2(1.0, from.y))
+    };
+    pass.drag(app, size.0, size.1, from, to);
+    pass.settled(app, size.0, size.1);
+}
+
+/// However far the bottom panel is dragged, the side panel keeps room for the gauge, every figure
+/// of the plant with the most of them, and three rows of the list (spec §16.7): the bottom panel's
+/// maximum leaves it that much.
+#[test]
+fn a_bottom_panel_at_its_maximum_leaves_the_details_and_the_list_in_view() {
+    for region_id in [EASTERN, WESTERN] {
+        for size in [SMALL, (1280.0, 800.0)] {
+            let logs = TempDir::new().unwrap();
+            let mut app = operating_hour_app(&logs, region_id);
+            let pass = EguiPass::attach(&mut app);
+            // The plant with the most figures: a hydro plant, which the Eastern start fleet
+            // doesn't have, so a CCGT there.
+            let views = app.world().resource::<Session>().0.session().plant_views();
+            let plant = views
+                .iter()
+                .find(|plant| plant.kind == PlantKind::Hydro)
+                .or_else(|| views.iter().find(|plant| plant.kind == PlantKind::Ccgt))
+                .expect("a hydro or CCGT plant")
+                .clone();
+            let figures: Vec<&str> = if plant.kind == PlantKind::Hydro {
+                FIGURES.into_iter().chain(["Water left today"]).collect()
+            } else {
+                FIGURES.to_vec()
+            };
+            blocks(&mut app, &pass, Selection::Plant(plant.id), size);
+            drag_to_maximum(&mut app, &pass, "operating_side", size);
+            drag_to_maximum(&mut app, &pass, "operating", size);
+            let b = blocks(&mut app, &pass, Selection::Plant(plant.id), size);
+            let what = format!("{region_id} at {size:?}");
+            let bottom = egui::PanelState::load(pass.ctx(), egui::Id::new("operating"))
+                .unwrap()
+                .outer_rect;
+            assert!(
+                bottom.height() >= 200.0,
+                "{what}: the bottom panel is at least its opening height: {bottom:?}"
+            );
+
+            for figure in figures {
+                let row = label(&b.widgets, figure);
+                assert!(
+                    b.panel.contains_rect(row),
+                    "{what}: {figure} {row:?} is outside the side panel {:?}",
+                    b.panel
+                );
+            }
+            let visible = row_names(&app)
+                .iter()
+                .filter(|name| {
+                    b.widgets.iter().any(|w| {
+                        &w.text == *name
+                            && w.role != egui::accesskit::Role::Label
+                            && w.role != egui::accesskit::Role::Unknown
+                            && b.list.expand(ROUNDING).contains_rect(w.rect)
+                            && b.panel.expand(ROUNDING).contains_rect(w.rect)
+                    })
+                })
+                .count();
+            assert!(
+                visible >= 3,
+                "{what}: {visible} rows in view, the list {:?} in the panel {:?}",
+                b.list,
+                b.panel
+            );
         }
     }
 }

@@ -1475,7 +1475,15 @@ the commitment grid, the charts or the plant list more space.
   - Operating's side panel (right) and bottom panel.
 
   Each panel opens at its current size. That size is also its minimum, so everything that fits at
-  1024×640 still fits. Each panel also has a maximum, so the map always keeps a usable area.
+  1024×640 still fits. Each panel also has a maximum, so the map always keeps a usable area:
+  - a side panel takes at most 40% of the window's width, and a bottom panel at most half its
+    height;
+  - the map's **area**, the space the panels leave it, never drops below 320×200. The map drawn in
+    it is a little smaller: it sits inside that area's margins and under the layer buttons;
+  - the Operating bottom panel also leaves the side panel above it its minimum height: the gauge,
+    the selected plant's details and three rows of the plant list. At about 1024×640 it barely
+    grows.
+
   Content that already fills the available width or height, such as charts, the plant list and
   scroll areas, uses the extra room.
 - **The map still never moves on its own.** Only a drag changes a panel's size. A selection

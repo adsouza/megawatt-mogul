@@ -187,6 +187,11 @@ first. Steps that need a fresh game say so; the others follow on from the step b
   you left it. The charts, the commitment grid and the plant list use the extra room: a taller
   window, or a shorter bottom panel, gives the *Plants* list more rows while the plant's details
   keep their height.
+- [ ] **7.5** At 1024×640 in Operating, select a hydro plant (Western) and drag the bottom panel's
+  edge up as far as it goes.
+  **Expected:** it stops after only a few pixels. The side panel still shows the gauge, every
+  figure of the plant down to *Water left today*, and at least three rows of the *Plants* list.
+  In a taller window the bottom panel can grow further, and the side panel keeps that minimum.
 
 ## Known visual risks to eyeball
 

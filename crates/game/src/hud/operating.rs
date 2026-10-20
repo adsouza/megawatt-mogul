@@ -20,10 +20,10 @@ use super::action::{ActionSink, ButtonModel, ToggleModel, UiAction, dispatch, to
 use super::frequency::{FrequencyModel, draw_frequency, frequency_model};
 use super::hydro_panel::{HydroModel, draw_hydro, hydro_model};
 use super::incidents::{IncidentsModel, draw_incidents, incidents_model};
-use super::layout::{Edge, HudArea, OuterPanel};
+use super::layout::{Edge, HudArea, MAP_MIN_SIZE, OuterPanel};
 use super::plant_panel::{
     PlantListModel, PlantPanelForm, PlantPanelModel, draw_plant_list, draw_plant_panel,
-    named_region, plant_details_height, plant_list_model, plant_panel_model,
+    named_region, plant_details_height, plant_list_min_height, plant_list_model, plant_panel_model,
 };
 use super::ramp_warnings::{RampWarningsModel, draw_ramp_warnings, ramp_warnings_model};
 use super::selection::Selection;
@@ -166,6 +166,25 @@ pub fn operating_side_model(
     })
 }
 
+/// The space each of the side panel's separators takes.
+const SIDE_SEPARATOR_SPACING: f32 = 6.0;
+
+/// The least height the side panel needs, frame included: the gauge, the details block, the
+/// list's title and its fewest rows, with the separators and gaps between them. The bottom panel
+/// is never dragged so tall that the side panel has less (spec §16.7).
+pub fn operating_side_min_height(ctx: &egui::Context) -> f32 {
+    let style = ctx.global_style();
+    let gap = style.spacing.item_spacing.y;
+    let frame = egui::Frame::side_top_panel(&style).total_margin().sum().y;
+    // Five blocks, top to bottom: the gauge, a separator, the details, a separator, the list.
+    FREQUENCY_GAUGE_HEIGHT
+        + plant_details_height(ctx)
+        + plant_list_min_height(ctx)
+        + 2.0 * SIDE_SEPARATOR_SPACING
+        + 4.0 * gap
+        + frame
+}
+
 /// From the top: the gauge, then the selected plant's details in a block of fixed height (the
 /// same with nothing selected, so the list never moves), then the plant list, which takes all
 /// the height left.
@@ -180,14 +199,14 @@ pub fn draw_operating_side(
         ui.set_min_size(egui::vec2(width, FREQUENCY_GAUGE_HEIGHT));
         actions.extend(draw_frequency(ui, &model.frequency));
     });
-    ui.separator();
-    let details = egui::vec2(width, plant_details_height(ui));
+    ui.add(egui::Separator::default().spacing(SIDE_SEPARATOR_SPACING));
+    let details = egui::vec2(width, plant_details_height(ui.ctx()));
     let block = ui.allocate_ui(details, |ui| {
         ui.set_min_size(details);
         actions.extend(draw_plant_panel(ui, &model.selected, form));
     });
     named_region(&block.response, model.selected.name());
-    ui.separator();
+    ui.add(egui::Separator::default().spacing(SIDE_SEPARATOR_SPACING));
     actions.extend(draw_plant_list(ui, &model.plants));
     actions
 }
@@ -202,7 +221,11 @@ pub(super) fn operating_panel(
     let Some(model) = operating_panel_model(&session.0, &l10n, sink.operating_tab()) else {
         return Ok(());
     };
-    let actions = area.show_panel(contexts.ctx_mut()?, OPERATING_PANEL, 0.0, |ui| {
+    let ctx = contexts.ctx_mut()?;
+    // The side panel shares the height above this panel with the map. The map's own minimum is
+    // already left; reserve what the side panel's minimum needs beyond it.
+    let reserved = (operating_side_min_height(ctx) - MAP_MIN_SIZE.y).max(0.0);
+    let actions = area.show_panel(ctx, OPERATING_PANEL, reserved, |ui| {
         draw_operating_panel(ui, &model)
     });
     dispatch(actions, &mut sink);

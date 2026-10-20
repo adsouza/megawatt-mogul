@@ -97,7 +97,7 @@ pub use self::milestones::{
 pub use self::operating::{
     FREQUENCY_GAUGE_HEIGHT, OPERATING_LOG_WIDTH, OPERATING_PANEL_HEIGHT, OPERATING_SIDE_WIDTH,
     OperatingContent, OperatingPanelModel, OperatingSideModel, OperatingTab, draw_operating_panel,
-    draw_operating_side, operating_panel_model, operating_side_model,
+    draw_operating_side, operating_panel_model, operating_side_min_height, operating_side_model,
 };
 pub use self::planning::{
     PLANNING_PANEL_HEIGHT, PlanningContent, PlanningModel, draw_planning, planning_model,
@@ -109,7 +109,7 @@ pub use self::plant_list::{KindPlants, is_commitable, kinds_in_merit_order, plan
 pub use self::plant_panel::{
     MOST_PLANT_STATS, PLANT_LIST_MIN_ROWS, PlantListModel, PlantListRow, PlantPanelForm,
     PlantPanelModel, SelectedPlant, TargetSlider, draw_plant_list, draw_plant_panel,
-    plant_details_height, plant_list_model, plant_panel_model,
+    plant_details_height, plant_list_min_height, plant_list_model, plant_panel_model,
 };
 pub use self::prompt::{PromptModel, draw_prompt, prompt_after, prompt_in_phase, prompt_model};
 pub use self::ramp_warnings::{

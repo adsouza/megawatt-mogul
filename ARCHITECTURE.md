@@ -338,7 +338,9 @@ panel system makes its own root `Ui`, and the `HudArea` resource keeps them from
   that opens at its fixed size, which is also its minimum, and grows by a drag of its inner edge
   up to `panel_max`: 40% of the screen's width for a side panel, half its height for a bottom one,
   and never so far that the map's area drops below `MAP_MIN_SIZE` (320×200). The inspector, shown
-  before the build menu, reserves the build menu's current width. egui keeps each size in its
+  before the build menu, reserves the build menu's current width. The Operating bottom panel
+  reserves what the side panel's minimum height (`operating_side_min_height`: the gauge, the
+  details block and three list rows, from the style) needs beyond the map's own 200. egui keeps each size in its
   memory for the run. The content is laid out over exactly the panel's space, so content can
   neither grow the panel nor shrink it back after a drag: only a drag moves the map.
 - Menus are whole-screen central panels. Overlays (windows, toasts, prompts, the Review and
