@@ -1,11 +1,13 @@
-//! Where the game reads assets and writes logs. Paths always reach the game as arguments or
-//! resources; only `main.rs` reads the process's command line.
+//! The command line: where the game reads assets and writes logs, and the launch smoke's frame
+//! limit. Paths always reach the game as arguments or resources; only `main.rs` reads the
+//! process's command line.
 
 use std::ffi::OsString;
 use std::fmt;
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
-use bevy::prelude::Resource;
+use bevy::prelude::*;
 
 /// The directory holding `regions/` and `locales/`.
 #[derive(Resource, Debug, Clone, PartialEq, Eq)]
@@ -35,11 +37,13 @@ pub fn resolve_asset_root(arg: Option<PathBuf>) -> PathBuf {
         .unwrap_or(working_dir)
 }
 
-/// The command-line flags: `--assets <dir>` and `--log-dir <dir>`.
+/// The command-line flags: `--assets <dir>` and `--log-dir <dir>`, plus the hidden developer flag
+/// `--exit-after-frames <n>` (see [`ExitAfterFrames`]).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CliArgs {
     pub assets: Option<PathBuf>,
     pub log_dir: Option<PathBuf>,
+    pub exit_after_frames: Option<NonZeroU32>,
 }
 
 impl CliArgs {
@@ -48,12 +52,22 @@ impl CliArgs {
         let mut parsed = Self::default();
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
-            let (flag, slot) = match arg.to_str() {
-                Some("--assets") => ("--assets", &mut parsed.assets),
-                Some("--log-dir") => ("--log-dir", &mut parsed.log_dir),
+            let flag = match arg.to_str() {
+                Some("--assets") => "--assets",
+                Some("--log-dir") => "--log-dir",
+                Some("--exit-after-frames") => "--exit-after-frames",
                 _ => return Err(CliError::Unknown(arg)),
             };
-            *slot = Some(args.next().ok_or(CliError::MissingValue(flag))?.into());
+            let value = args.next().ok_or(CliError::MissingValue(flag))?;
+            match flag {
+                "--assets" => parsed.assets = Some(value.into()),
+                "--log-dir" => parsed.log_dir = Some(value.into()),
+                _ => {
+                    let count = value.to_str().and_then(|text| text.parse().ok());
+                    let count = count.ok_or(CliError::NotACount { flag, value })?;
+                    parsed.exit_after_frames = Some(count);
+                }
+            }
         }
         Ok(parsed)
     }
@@ -71,6 +85,8 @@ impl CliArgs {
 pub enum CliError {
     /// The flag was last, with no value after it.
     MissingValue(&'static str),
+    /// The flag needs a whole number of at least 1.
+    NotACount { flag: &'static str, value: OsString },
     /// An argument that is not a known flag.
     Unknown(OsString),
 }
@@ -82,10 +98,39 @@ impl CliError {
 impl fmt::Display for CliError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingValue(flag) => write!(f, "{flag} needs a directory"),
+            Self::MissingValue(flag) => write!(f, "{flag} needs a value"),
+            Self::NotACount { flag, value } => write!(
+                f,
+                "{flag} needs a whole number of at least 1, not {}",
+                value.to_string_lossy()
+            ),
             Self::Unknown(arg) => write!(f, "unknown argument {}", arg.to_string_lossy()),
         }
     }
 }
 
 impl std::error::Error for CliError {}
+
+/// The launch smoke (`--exit-after-frames <n>`): the app exits cleanly, with `AppExit::Success`,
+/// at the end of its `n`th frame. In a window each frame is rendered, so a run that gets there
+/// has opened the window, initialised the egui pass and drawn the menu.
+///
+/// A developer flag, left out of [`CliError::USAGE`]. It can't run under nextest: winit needs the
+/// main thread on macOS, and CI has no display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExitAfterFrames(pub NonZeroU32);
+
+impl Plugin for ExitAfterFrames {
+    fn build(&self, app: &mut App) {
+        let limit = self.0.get();
+        app.add_systems(
+            Last,
+            move |mut frames: Local<u32>, mut exit: MessageWriter<AppExit>| {
+                *frames += 1;
+                if *frames == limit {
+                    exit.write(AppExit::Success);
+                }
+            },
+        );
+    }
+}

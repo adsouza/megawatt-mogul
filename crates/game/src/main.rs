@@ -2,7 +2,7 @@
 
 use bevy::prelude::*;
 use game::GamePlugins;
-use game::paths::{AssetRoot, CliArgs, CliError, LogDir, resolve_asset_root};
+use game::paths::{AssetRoot, CliArgs, CliError, ExitAfterFrames, LogDir, resolve_asset_root};
 
 /// The smallest window the HUD is laid out for.
 const MIN_WINDOW_WIDTH: f32 = 1024.0;
@@ -18,10 +18,11 @@ fn main() -> AppExit {
     };
 
     let log_dir = LogDir(args.log_dir());
+    let exit_after_frames = args.exit_after_frames;
     let asset_root = AssetRoot(resolve_asset_root(args.assets));
 
-    App::new()
-        .insert_resource(asset_root)
+    let mut app = App::new();
+    app.insert_resource(asset_root)
         .insert_resource(log_dir)
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
@@ -37,8 +38,11 @@ fn main() -> AppExit {
             ..default()
         }))
         .add_plugins(GamePlugins)
-        .add_systems(Startup, spawn_ui_camera)
-        .run()
+        .add_systems(Startup, spawn_ui_camera);
+    if let Some(frames) = exit_after_frames {
+        app.add_plugins(ExitAfterFrames(frames));
+    }
+    app.run()
 }
 
 /// egui draws through the first camera spawned. Plan 3's `CameraPlugin` replaces this with the
