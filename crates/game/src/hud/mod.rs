@@ -203,6 +203,7 @@ impl Plugin for HudPlugin {
                     speed::reset_last_speed,
                     operating::reset_operating_tab,
                     plant_panel::reset_plant_form,
+                    toasts::clear_toasts,
                 ),
             )
             .add_systems(
@@ -218,6 +219,7 @@ impl Plugin for HudPlugin {
                     speed::reset_last_speed,
                     operating::reset_operating_tab,
                     plant_panel::reset_plant_form,
+                    toasts::clear_toasts,
                 ),
             )
             // A highlighted hour or an unapplied edit belongs to the month being planned.

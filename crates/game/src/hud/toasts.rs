@@ -99,6 +99,12 @@ pub fn draw_toasts(ui: &mut egui::Ui, model: &ToastsModel) -> Vec<UiAction> {
     Vec::new()
 }
 
+/// Takes every toast down: a toast belongs to the game (or the menu) it was raised in. Run on
+/// entering and on leaving a game.
+pub(super) fn clear_toasts(mut queue: ResMut<ToastQueue>) {
+    *queue = ToastQueue::default();
+}
+
 /// Turns this frame's refusals and toast-worthy events into toasts, and retires old ones. Runs in
 /// every state: a new game that fails to start is refused from the menu.
 pub(super) fn collect_toasts(

@@ -785,3 +785,36 @@ fn the_milestones_panel_starts_closed_in_each_game() {
         MilestonesOpen(false)
     );
 }
+
+/// A toast belongs to its game: one game's refusal is not on screen in the menu after it, nor in
+/// the next game, though its real-time seconds are not up.
+#[test]
+fn toasts_from_one_game_do_not_follow_into_the_next() {
+    let logs = TempDir::new().unwrap();
+    let mut app = hud_app(&logs);
+    request(&mut app, "eastern_interconnection");
+    // Refused in Planning: there is no review to finish.
+    dispatch_in(
+        &mut app,
+        vec![UiAction::Command(application::Command::FinishReview)],
+    );
+    update_n(&mut app, 1);
+    let refusal = toasts(&app);
+    assert_eq!(refusal.len(), 1, "{refusal:?}");
+
+    app.world_mut().write_message(ReturnToMenu);
+    update_n(&mut app, 2);
+    assert_eq!(state(&app), AppState::MainMenu);
+    assert_eq!(toasts(&app), Vec::<String>::new(), "gone in the menu");
+
+    // A refusal in the menu, then a game: the menu's toast stays behind too.
+    request(&mut app, "no_such_region");
+    assert_eq!(toasts(&app).len(), 1);
+    request(&mut app, "western_interconnection");
+    assert_eq!(state(&app), AppState::InGame);
+    assert_eq!(
+        toasts(&app),
+        Vec::<String>::new(),
+        "the new game starts clean"
+    );
+}
