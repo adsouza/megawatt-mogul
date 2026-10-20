@@ -365,11 +365,13 @@ mod tests {
     use domain::region::PlantKind;
 
     use super::*;
-    use crate::hud::test_support::{eastern_game, shipped_game, shipped_l10n};
+    use crate::hud::test_support::{eastern_game, empty_start, shipped_game, shipped_l10n};
 
-    /// A game a few minutes into the day, with the eastern coal fleet committed all day.
+    /// A game a few minutes into the day, with the eastern coal fleet alone committed all day,
+    /// under manual control.
     fn operating() -> Game {
         let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        empty_start(&mut game);
         for plant in game.session().plant_views() {
             if plant.kind == PlantKind::Coal {
                 game.execute(Command::StartPlant { plant: plant.id })

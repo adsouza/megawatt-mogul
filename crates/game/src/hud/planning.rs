@@ -156,7 +156,7 @@ mod tests {
     use application::InMemoryCommandLog;
 
     use super::*;
-    use crate::hud::test_support::{eastern_game, shipped_l10n};
+    use crate::hud::test_support::{eastern_game, empty_start, shipped_l10n};
 
     fn build(game: &Game, ui: &UiState) -> PlanningModel {
         planning_model(game, &shipped_l10n(), ui, &CommitmentForm::default())
@@ -225,7 +225,8 @@ mod tests {
 
     #[test]
     fn the_day_waits_for_an_unapplied_edit() {
-        let game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        empty_start(&mut game);
         let mut ui = UiState::default();
         let plant = game.session().plant_views()[0].id;
 

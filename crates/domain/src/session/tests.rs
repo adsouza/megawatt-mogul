@@ -12,6 +12,14 @@ fn session() -> GameSession {
     GameSession::new(Arc::new(tiny_region()), 1, GameSettings::default())
 }
 
+/// A new game with the inherited schedule undone: nothing committed and no
+/// plant on AGC, the start the crafted fleets below build on.
+fn empty_session() -> GameSession {
+    let mut s = session();
+    s.empty_start();
+    s
+}
+
 fn plant_of(s: &GameSession, kind: PlantKind) -> PlantId {
     s.plant_views()
         .iter()
@@ -52,11 +60,79 @@ fn new_session_starts_active_in_the_start_month() {
     assert_eq!(s.settings(), &GameSettings::default());
     assert_eq!(s.settings().fidelity.network, NetworkModel::CopperPlate);
     assert_eq!(s.region().id().as_str(), "tiny");
-    assert!(s.plant_views().iter().all(|p| p.commitment == [false; 24]));
+    // The tiny start fleet is all dispatchable, so all of it is inherited
+    // committed all day (spec §16.3).
+    assert!(s.plant_views().iter().all(|p| p.commitment == [true; 24]));
     let snapshot = s.grid_snapshot();
     assert_eq!(snapshot.phase, DayPhase::Planning);
     assert_eq!(snapshot.frequency, Hertz::new(60.0));
     assert_eq!(snapshot.last_tick, None);
+}
+
+#[test]
+fn a_new_game_runs_the_previous_operators_schedule() {
+    // The fixture's start fleet plus a solar farm, which is not dispatchable.
+    let s = session_with(|parts| {
+        parts.start.fleet.push(crate::region::StartPlantDef {
+            kind: PlantKind::Solar,
+            cell: CellCoord { x: 5, y: 5 },
+        });
+    });
+    let views = s.plant_views();
+    assert!(views.iter().any(|p| p.kind == PlantKind::Solar));
+    assert!(views.iter().filter(|p| p.kind.is_dispatchable()).count() >= 3);
+    for plant in &views {
+        if plant.kind.is_dispatchable() {
+            assert_eq!(plant.commitment, [true; 24], "{plant:?}");
+            assert!(plant.auto_follow, "{plant:?}");
+        } else {
+            // Solar follows the sun: no pattern, no AGC.
+            assert_eq!(plant.commitment, [false; 24], "{plant:?}");
+            assert!(!plant.auto_follow, "{plant:?}");
+        }
+    }
+}
+
+#[test]
+fn the_hands_off_plan_changes_nothing_on_a_new_game() {
+    let mut s = session();
+    let before = s.state_hash();
+    let dispatchable: Vec<PlantId> = s
+        .plant_views()
+        .iter()
+        .filter(|p| p.kind.is_dispatchable())
+        .map(|p| p.id)
+        .collect();
+    assert!(!dispatchable.is_empty());
+    for plant in dispatchable {
+        s.commit_plant(plant, [true; 24]).unwrap();
+        s.set_auto_follow(plant, true).unwrap();
+    }
+    assert_eq!(s.state_hash(), before);
+}
+
+#[test]
+fn the_inherited_schedule_charges_no_boundary_start() {
+    let mut s = session();
+    s.begin_operating().unwrap();
+    // The day begins with the inherited fleet already running ...
+    for plant in s.plant_views() {
+        assert!(
+            matches!(plant.status, PlantStatus::Online { .. }),
+            "{plant:?}"
+        );
+    }
+    // ... and an established plant's all-day pattern is no boundary start.
+    assert_eq!(s.day_boundary_starts(), &BTreeMap::new());
+    let events = run_ticks(&mut s, TICKS_PER_DAY);
+    let report = events
+        .iter()
+        .find_map(|e| match e {
+            DomainEvent::MonthClosed(report) => Some(report),
+            _ => None,
+        })
+        .expect("month 1 closes");
+    assert_eq!(report.start_up, Money::ZERO, "{report:?}");
 }
 
 #[test]
@@ -143,7 +219,7 @@ fn building_is_planning_only_and_ticking_is_operating_only() {
 
 #[test]
 fn begin_operating_emits_phase_change() {
-    let mut s = session();
+    let mut s = empty_session();
     // Nothing is committed, so hour 0's forecast is wholly uncovered and the
     // day starts in a full rotating outage (spec §15.3).
     assert_eq!(
@@ -351,7 +427,7 @@ fn each_tick_advances_the_clock_once() {
 /// rotating outage sized for both. The extra CCGT trips as the day begins, a
 /// loss no forecast saw: the grid blacks out and trips the coal.
 fn session_with_tripped_coal() -> (GameSession, PlantId, Vec<DomainEvent>) {
-    let mut s = session();
+    let mut s = empty_session();
     let coal = plant_of(&s, PlantKind::Coal);
     s.start_plant(coal).unwrap();
     let extra = s.insert_commissioned_plant(PlantKind::Ccgt, CellCoord { x: 5, y: 5 });
@@ -758,12 +834,13 @@ fn hydro_schedule_is_the_power_systems_schedule() {
     assert!(off.hourly[1..].iter().all(|mw| *mw == Megawatts::ZERO));
 }
 
-/// A session with scheduled hydro, operated for the whole first day. Hydro
-/// is taken off AGC in hour 23, so the latest plan no longer allocates that
-/// hour. Returns the session, the hydro plant and each hour's allocation as
-/// it stood when the hour began.
+/// A session with scheduled hydro alone (the start fleet uncommitted),
+/// operated for the whole first day. Hydro is taken off AGC in hour 23, so
+/// the latest plan no longer allocates that hour. Returns the session, the
+/// hydro plant and each hour's allocation as it stood when the hour began.
 fn day_with_hydro(seed: u64) -> (GameSession, PlantId, [Megawatts; 24]) {
     let mut s = GameSession::new(Arc::new(tiny_region()), seed, GameSettings::default());
+    s.empty_start();
     let hydro = s.insert_commissioned_plant(PlantKind::Hydro, CellCoord { x: 10, y: 1 });
     s.start_plant(hydro).unwrap();
     s.set_auto_follow(hydro, true).unwrap();
@@ -845,7 +922,7 @@ fn commit_manual(
 
 #[test]
 fn minimum_generation_check_reports_the_worst_hour() {
-    let mut s = session();
+    let mut s = empty_session();
     let coal = plant_of(&s, PlantKind::Coal);
     let ccgt = plant_of(&s, PlantKind::Ccgt);
     let peaker = plant_of(&s, PlantKind::Peaker);
@@ -869,7 +946,7 @@ fn minimum_generation_check_reports_the_worst_hour() {
 
 #[test]
 fn minimum_generation_check_picks_the_largest_excess() {
-    let mut s = session();
+    let mut s = empty_session();
     let coal = plant_of(&s, PlantKind::Coal);
     let ccgt = plant_of(&s, PlantKind::Ccgt);
     // Coal at 600 MW over 04:00-05:59; CCGT at 500 MW over 05:00-05:59 only.
@@ -887,7 +964,7 @@ fn minimum_generation_check_picks_the_largest_excess() {
 
 #[test]
 fn minimum_generation_check_is_none_when_minimums_fit() {
-    let mut s = session();
+    let mut s = empty_session();
     // Nothing committed: no minimum at all.
     assert_eq!(s.minimum_generation_check(), None);
 
@@ -901,7 +978,7 @@ fn minimum_generation_check_is_none_when_minimums_fit() {
 
 #[test]
 fn agc_plants_contribute_their_minimum_and_manual_plants_their_target() {
-    let mut s = session();
+    let mut s = empty_session();
     let coal = plant_of(&s, PlantKind::Coal);
     commit_manual(&mut s, coal, 0..=23, 600.0);
     let manual = s
@@ -916,7 +993,7 @@ fn agc_plants_contribute_their_minimum_and_manual_plants_their_target() {
 
 #[test]
 fn minimum_generation_check_counts_only_committed_hours_and_is_pure() {
-    let mut s = session();
+    let mut s = empty_session();
     let coal = plant_of(&s, PlantKind::Coal);
     // Committed only 04:00-05:59: hour 3 has the lower net load, but coal
     // is not committed then, so it cannot be the worst hour.
@@ -940,7 +1017,7 @@ fn minimum_generation_check_counts_only_committed_hours_and_is_pure() {
 
 #[test]
 fn minimum_generation_exactly_at_net_load_is_no_warning() {
-    let mut s = session();
+    let mut s = empty_session();
     let coal = plant_of(&s, PlantKind::Coal);
     // Coal held at exactly the 03:30 net load through 03:00 only: the
     // minimum fits, with no excess to warn about.
@@ -951,12 +1028,7 @@ fn minimum_generation_exactly_at_net_load_is_no_warning() {
 
 #[test]
 fn minimum_generation_ties_go_to_the_earliest_hour() {
-    let mut s = session_with(|parts| {
-        parts.demand.winter = [0.5; 24];
-        parts.demand.summer = [0.5; 24];
-        parts.demand.shoulder = [0.5; 24];
-        parts.demand.monthly = [1.0; 12];
-    });
+    let mut s = flat_500_session();
     let coal = plant_of(&s, PlantKind::Coal);
     commit_manual(&mut s, coal, 0..=23, 600.0);
     let net = net_load_at_hour_troughs(&s);
@@ -971,16 +1043,19 @@ fn minimum_generation_ties_go_to_the_earliest_hour() {
 
 /// A flat 0.5 demand shape with one knot, hour `knot`, dropped to 0.2: with
 /// 1,000 MW of city load, a 200 MW trough on that hour's start, which the
-/// linear interpolation lifts toward 500 MW within the hour.
+/// linear interpolation lifts toward 500 MW within the hour. Nothing is
+/// committed.
 fn session_with_trough_knot(knot: usize) -> GameSession {
-    session_with(|parts| {
+    let mut s = session_with(|parts| {
         let mut shape = [0.5; 24];
         shape[knot] = 0.2;
         parts.demand.winter = shape;
         parts.demand.summer = shape;
         parts.demand.shoulder = shape;
         parts.demand.monthly = [1.0; 12];
-    })
+    });
+    s.empty_start();
+    s
 }
 
 #[test]
@@ -1026,14 +1101,17 @@ fn minimum_generation_worse_end_ties_to_minute_zero() {
 }
 
 /// A session whose cities demand a flat 500 MW all day (cities 1 and 2 total
-/// 1,000 MW at a 0.5 shape and a 1.0 monthly factor).
+/// 1,000 MW at a 0.5 shape and a 1.0 monthly factor), with nothing
+/// committed.
 fn flat_500_session() -> GameSession {
-    session_with(|parts| {
+    let mut s = session_with(|parts| {
         parts.demand.winter = [0.5; 24];
         parts.demand.summer = [0.5; 24];
         parts.demand.shoulder = [0.5; 24];
         parts.demand.monthly = [1.0; 12];
-    })
+    });
+    s.empty_start();
+    s
 }
 
 /// Commits `plant` on exactly the inclusive `(first, last)` hour blocks, on AGC or at `target`.
@@ -1121,7 +1199,7 @@ fn planned_hydro(s: &GameSession) -> [Megawatts; 24] {
 
 #[test]
 fn capacity_shortfall_check_counts_hydro_from_the_preview() {
-    let mut s = session();
+    let mut s = empty_session();
     let hydro = s.insert_commissioned_plant(PlantKind::Hydro, CellCoord { x: 10, y: 1 });
     s.start_plant(hydro).unwrap();
     s.set_auto_follow(hydro, true).unwrap();

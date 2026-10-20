@@ -41,7 +41,10 @@ use crate::support::egui_harness::{
     Harness, Widget, button as find_button, buttons, central, shows, widget,
 };
 use crate::support::egui_pass::EguiPass;
-use crate::support::{headless_app, hud_app, request, shipped_assets, shipped_l10n, update_n};
+use crate::support::{
+    empty_start, empty_start_in, headless_app, hud_app, request, shipped_assets, shipped_l10n,
+    update_n,
+};
 
 pub(crate) const EASTERN: &str = "eastern_interconnection";
 pub(crate) const WESTERN: &str = "western_interconnection";
@@ -85,6 +88,13 @@ fn game_in(region: &str) -> Game {
 
 fn eastern_game() -> Game {
     game_in(EASTERN)
+}
+
+/// [`eastern_game`] with the inherited schedule undone: nothing committed, nothing on AGC.
+fn empty_eastern_game() -> Game {
+    let mut game = eastern_game();
+    empty_start(&mut game);
+    game
 }
 
 // ---- screens --------------------------------------------------------------------------------
@@ -924,11 +934,17 @@ fn some_land(game: &Game) -> CellCoord {
 }
 
 /// The names of the grid's rows, top to bottom: the hour-0 cell of each row is `<name> at 00:00:
-/// off` (nothing is committed at the start), and AccessKit lists widgets in no promised order.
+/// off` or `<name> at 00:00: committed`, and AccessKit lists widgets in no promised order.
 fn row_names(widgets: &[crate::support::egui_harness::Widget]) -> Vec<String> {
     let mut cells: Vec<_> = widgets
         .iter()
-        .filter_map(|w| Some((w.text.strip_suffix(" at 00:00: off")?, w.rect)))
+        .filter_map(|w| {
+            let name = w
+                .text
+                .strip_suffix(" at 00:00: off")
+                .or_else(|| w.text.strip_suffix(" at 00:00: committed"))?;
+            Some((name, w.rect))
+        })
         .collect();
     cells.sort_by(|a, b| a.1.top().partial_cmp(&b.1.top()).expect("finite"));
     cells.into_iter().map(|(name, _)| name.to_owned()).collect()
@@ -1139,9 +1155,13 @@ fn at_the_smallest_window_the_map_the_panels_and_the_grid_all_fit_without_overla
         let off = buttons(&widgets, "Off")[0].rect;
         let agc = buttons(&widgets, "AGC")[0].rect;
         let set = buttons(&widgets, "Set")[0].rect;
+        // A new game opens on the inherited schedule: every row committed all day.
         let cell_prefix = row_names(&widgets).remove(0);
         let cells: Vec<_> = (0..24)
-            .map(|hour| find_button(&widgets, &format!("{cell_prefix} at {hour:02}:00: off")).rect)
+            .map(|hour| {
+                let label = format!("{cell_prefix} at {hour:02}:00: committed");
+                find_button(&widgets, &label).rect
+            })
             .collect();
         let mut on_screen: Vec<egui::Rect> =
             vec![menu, inspector, build, begin, all_day, off, agc, set];
@@ -1188,7 +1208,7 @@ fn at_the_smallest_window_the_map_the_panels_and_the_grid_all_fit_without_overla
         // waits for them), so they must fit too: inside the screen and the panel, with the row's
         // last widget (the range label) clear of the panel's right edge and its scroll bar.
         let first = row_names(&widgets).remove(0);
-        screen.click(&format!("{first} at 00:00: off"));
+        screen.click(&format!("{first} at 00:00: committed"));
         let dirty = screen.widgets();
         let apply = find_button(&dirty, "Apply").rect;
         let revert = find_button(&dirty, "Revert").rect;
@@ -1224,7 +1244,7 @@ fn at_the_smallest_window_the_map_the_panels_and_the_grid_all_fit_without_overla
 /// editing a row or tinting an hour must not move it.
 #[test]
 fn the_map_does_not_move_when_the_planning_panel_changes() {
-    let screen = PlanningScreen::new(eastern_game(), Harness::with_screen(1024.0, 640.0));
+    let screen = PlanningScreen::new(empty_eastern_game(), Harness::with_screen(1024.0, 640.0));
     let before = widget(&screen.widgets(), "Map").rect;
     let plant = plant_named(&screen.game, &row_names(&screen.widgets()).remove(0));
 
@@ -1247,7 +1267,7 @@ fn the_map_does_not_move_when_the_planning_panel_changes() {
 
 #[test]
 fn a_cell_click_edits_the_row_and_apply_sends_the_commit() {
-    let screen = PlanningScreen::new(eastern_game(), Harness::new());
+    let screen = PlanningScreen::new(empty_eastern_game(), Harness::new());
     let widgets = screen.widgets();
     let first = row_names(&widgets).remove(0);
     let plant = plant_named(&screen.game, &first);
@@ -1308,7 +1328,7 @@ fn the_grid_fills_each_rows_target_field_on_its_first_draw() {
 
 #[test]
 fn revert_drops_the_draft_and_the_row_shows_the_committed_pattern_again() {
-    let screen = PlanningScreen::new(eastern_game(), Harness::new());
+    let screen = PlanningScreen::new(empty_eastern_game(), Harness::new());
     let first = row_names(&screen.widgets()).remove(0);
     screen.click(&format!("{first} at 10:00: off"));
     assert!(shows(
@@ -1329,7 +1349,7 @@ fn revert_drops_the_draft_and_the_row_shows_the_committed_pattern_again() {
 
 #[test]
 fn editing_another_row_sends_the_row_being_left() {
-    let screen = PlanningScreen::new(eastern_game(), Harness::new());
+    let screen = PlanningScreen::new(empty_eastern_game(), Harness::new());
     let names = row_names(&screen.widgets());
     let (first, second) = (names[0].clone(), names[1].clone());
     let (a, b) = (
@@ -1361,7 +1381,7 @@ fn editing_another_row_sends_the_row_being_left() {
 
 #[test]
 fn all_day_and_off_send_start_and_stop() {
-    let mut screen = PlanningScreen::new(eastern_game(), Harness::new());
+    let mut screen = PlanningScreen::new(empty_eastern_game(), Harness::new());
     let plant = plant_named(&screen.game, &row_names(&screen.widgets()).remove(0));
     // Off is not offered while the plant is off already.
     assert!(find_button_nth_disabled(&screen.widgets(), "Off", 0));
@@ -1393,7 +1413,7 @@ fn find_button_nth_disabled(
 
 #[test]
 fn the_agc_switch_and_the_initial_target_field_send_their_commands() {
-    let screen = PlanningScreen::new(eastern_game(), Harness::new());
+    let screen = PlanningScreen::new(empty_eastern_game(), Harness::new());
     let session = screen.game.session();
     let first_plant = plant_named(&screen.game, &row_names(&screen.widgets()).remove(0));
     let first = session
@@ -1457,7 +1477,7 @@ fn the_agc_switch_and_the_initial_target_field_send_their_commands() {
 
 #[test]
 fn a_warning_shows_its_hour_and_start_the_day_begins_it() {
-    let screen = PlanningScreen::new(eastern_game(), Harness::new());
+    let screen = PlanningScreen::new(empty_eastern_game(), Harness::new());
     let worst = screen
         .game
         .session()
@@ -1550,9 +1570,11 @@ fn hydro_rows_show_the_days_water_in_the_western_grid() {
 
 // ---- the operating screen -------------------------------------------------------------------
 
-/// A game an hour into its first day, with every plant that can be committed committed all day.
+/// A game an hour into its first day, with every plant that can be committed committed all day,
+/// under manual control except hydro.
 fn operating_game(region: &str) -> Game {
     let mut game = game_in(region);
+    empty_start(&mut game);
     for plant in game.session().plant_views() {
         if is_commitable(&plant) {
             game.execute(Command::StartPlant { plant: plant.id })
@@ -1786,10 +1808,11 @@ fn the_operating_screen_draws_every_panel_an_hour_in() {
 }
 
 /// An app an hour into its first day in `region`, run through the real plugins: every plant that
-/// can be committed is committed all day, and hydro is on AGC (it is scheduled only then).
+/// can be committed is committed all day, and only hydro is on AGC (it is scheduled only then).
 pub(crate) fn operating_hour_app(logs: &TempDir, region: &str) -> App {
     let mut app = hud_app(logs.path());
     request(&mut app, region);
+    empty_start_in(&mut app);
     let mut actions = Vec::new();
     for plant in app.world().resource::<Session>().0.session().plant_views() {
         if is_commitable(&plant) {

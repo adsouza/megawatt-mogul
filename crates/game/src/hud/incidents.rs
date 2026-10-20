@@ -81,7 +81,7 @@ mod tests {
     use domain::units::{Megawatts, Ratio};
 
     use super::*;
-    use crate::hud::test_support::{eastern_game, shipped_l10n};
+    use crate::hud::test_support::{eastern_game, empty_start, shipped_l10n};
 
     #[test]
     fn incident_ticker_orders_newest_first() {
@@ -153,6 +153,7 @@ mod tests {
         let l10n = shipped_l10n();
         // Nothing committed: the day opens in a rotating outage, the first incident.
         let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        empty_start(&mut game);
         game.execute(Command::BeginOperating).unwrap();
         assert!(!game.session().incidents_today().is_empty());
 

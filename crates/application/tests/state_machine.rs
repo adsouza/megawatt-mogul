@@ -26,13 +26,18 @@ use proptest::array::uniform24;
 use proptest::prelude::*;
 use proptest::sample::select;
 use proptest_state_machine::{ReferenceStateMachine, StateMachineTest, prop_state_machine};
-use support::game_on;
+use support::{empty_start, game_on};
 
-/// What the model knows about a game: its seed, the day phase and the tick
-/// within the day, and the ids the start state hands out.
+/// What the model knows about a game: its seed, whether the game starts
+/// empty, the day phase and the tick within the day, and the ids the start
+/// state hands out.
 #[derive(Debug, Clone)]
 struct Model {
     seed: u64,
+    /// Whether the inherited schedule (spec §16.3) is undone before the
+    /// first command. An empty start reaches game over far more often, so
+    /// both starts keep the absorbing state in reach.
+    empty: bool,
     phase: DayPhase,
     tick: u32,
     plants: Vec<PlantId>,
@@ -40,7 +45,7 @@ struct Model {
 }
 
 impl Model {
-    fn new(seed: u64) -> Self {
+    fn new(seed: u64, empty: bool) -> Self {
         let (game, _) = game_on(tiny_region_parts(), seed);
         let session = game.session();
         let mut nodes = vec![session.substation()];
@@ -48,6 +53,7 @@ impl Model {
         nodes.extend(session.plant_views().iter().map(|plant| plant.node));
         Model {
             seed,
+            empty,
             phase: session.phase(),
             tick: session.clock().tick(),
             plants: session.plant_views().iter().map(|plant| plant.id).collect(),
@@ -123,7 +129,9 @@ impl ReferenceStateMachine for SessionMachine {
     type Transition = Command;
 
     fn init_state() -> BoxedStrategy<Model> {
-        any::<u64>().prop_map(Model::new).boxed()
+        (any::<u64>(), any::<bool>())
+            .prop_map(|(seed, empty)| Model::new(seed, empty))
+            .boxed()
     }
 
     fn transitions(model: &Model) -> BoxedStrategy<Command> {
@@ -193,7 +201,10 @@ impl StateMachineTest for SessionTest {
     type Reference = SessionMachine;
 
     fn init_test(model: &Model) -> Sut {
-        let (game, _) = game_on(tiny_region_parts(), model.seed);
+        let (mut game, _) = game_on(tiny_region_parts(), model.seed);
+        if model.empty {
+            empty_start(&mut game);
+        }
         Sut { game, over: false }
     }
 

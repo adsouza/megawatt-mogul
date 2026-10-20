@@ -11,6 +11,14 @@ fn session() -> GameSession {
     GameSession::new(Arc::new(tiny_region()), 1, GameSettings::default())
 }
 
+/// A new game with the inherited schedule undone: every plant offline all
+/// day, none on AGC.
+fn empty_session() -> GameSession {
+    let mut s = session();
+    s.empty_start();
+    s
+}
+
 fn plant_of(s: &GameSession, kind: PlantKind) -> PlantId {
     s.plant_views()
         .iter()
@@ -74,7 +82,7 @@ fn invalid_sites_are_rejected_with_reason() {
 
 #[test]
 fn failed_command_leaves_state_unchanged() {
-    let mut s = session();
+    let mut s = empty_session();
     let coal = plant_of(&s, PlantKind::Coal);
     let root = s.substation;
     let city1 = s.city_views()[0].node;
@@ -347,7 +355,7 @@ fn whole_cells_snaps_float_noise() {
 
 #[test]
 fn commit_plant_validates_with_the_plants_own_spec() {
-    let mut s = session();
+    let mut s = empty_session();
     let coal = plant_of(&s, PlantKind::Coal);
     let peaker = plant_of(&s, PlantKind::Peaker);
     // A one-hour gap fits the peaker (5 + 10 ticks) but not coal (100 + 480).
@@ -416,7 +424,7 @@ fn plant_view_reports_the_initial_target() {
 
 #[test]
 fn planning_target_sets_the_initial_target() {
-    let mut s = session();
+    let mut s = empty_session();
     let coal = plant_of(&s, PlantKind::Coal);
     rejected(
         &mut s,
@@ -457,7 +465,7 @@ fn planning_target_sets_the_initial_target() {
 
 #[test]
 fn auto_follow_is_set_in_planning_and_operating() {
-    let mut s = session();
+    let mut s = empty_session();
     let coal = plant_of(&s, PlantKind::Coal);
     s.set_auto_follow(coal, true).unwrap();
     assert!(s.power().plant(coal).unwrap().auto_follow());
@@ -599,7 +607,7 @@ fn planning_start_rejects_unbuilt_plants() {
 
 #[test]
 fn manual_start_beyond_midnight_is_rejected_unchanged() {
-    let mut s = session();
+    let mut s = empty_session();
     let nuclear = s.insert_commissioned_plant(PlantKind::Nuclear, cell(9, 2));
     s.begin_operating().unwrap();
     rejected(
@@ -624,7 +632,7 @@ fn manual_start_beyond_midnight_is_rejected_unchanged() {
 
 #[test]
 fn manual_start_finishing_exactly_at_midnight_is_allowed() {
-    let mut s = session();
+    let mut s = empty_session();
     let coal = plant_of(&s, PlantKind::Coal);
     s.begin_operating().unwrap();
     run_ticks(&mut s, 960);

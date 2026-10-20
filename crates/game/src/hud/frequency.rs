@@ -262,8 +262,7 @@ mod tests {
         let session = game.session();
         let params = session.region().frequency().clone();
         let nominal = params.nominal;
-        // Nothing is committed, so the day opens in a full rotating outage: start from a grid
-        // with none.
+        // Whatever outage the day opens with, start from a grid with none.
         let base = GridSnapshot {
             outage: Ratio::ZERO,
             outage_target: Ratio::ZERO,

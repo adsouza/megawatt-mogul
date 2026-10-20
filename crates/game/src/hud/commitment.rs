@@ -474,7 +474,7 @@ mod tests {
     use domain::error::DomainError;
 
     use super::*;
-    use crate::hud::test_support::{eastern_game, shipped_game, shipped_l10n};
+    use crate::hud::test_support::{eastern_game, empty_start, shipped_game, shipped_l10n};
 
     fn model(game: &Game, ui: &UiState, form: &CommitmentForm) -> CommitmentModel {
         commitment_model(game, &shipped_l10n(), ui, form)
@@ -524,23 +524,26 @@ mod tests {
         let rows = model.groups.iter().flat_map(|group| &group.rows);
         for row in rows {
             assert_eq!(row.cells.len(), 24, "{}", row.name);
+            // The grid opens on the previous operator's schedule (spec §16.3).
             assert!(
-                row.cells.iter().all(|cell| !cell.on),
-                "nothing is committed yet"
+                row.cells.iter().all(|cell| cell.on),
+                "the inherited schedule commits every row all day"
             );
+            assert!(row.agc.on, "and puts it on AGC: {}", row.name);
             assert_eq!(row.name, Names::new(&l10n, game.session()).plant(row.plant));
         }
         let nuclear = first_row(&model, PlantKind::Nuclear);
         assert_eq!(
             nuclear.cells[6].label,
-            format!("{} at 06:00: off", nuclear.name)
+            format!("{} at 06:00: committed", nuclear.name)
         );
         assert_eq!(l10n.problems(), vec![]);
     }
 
     #[test]
     fn a_toggle_edits_the_draft_and_apply_sends_it_as_commit_plant() {
-        let game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        empty_start(&mut game);
         let mut ui = UiState::default();
         let form = CommitmentForm::default();
         let plant = first_row(&model(&game, &ui, &form), PlantKind::Coal).plant;
@@ -592,6 +595,7 @@ mod tests {
     #[test]
     fn commitment_row_emits_commit_plant_on_apply() {
         let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        empty_start(&mut game);
         let mut ui = UiState::default();
         let form = CommitmentForm::default();
         let plant = first_row(&model(&game, &ui, &form), PlantKind::Nuclear).plant;
@@ -630,6 +634,7 @@ mod tests {
     #[test]
     fn infeasible_commit_reverts_the_pending_row() {
         let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        empty_start(&mut game);
         let mut ui = UiState::default();
         let form = CommitmentForm::default();
         let nuclear = first_row(&model(&game, &ui, &form), PlantKind::Nuclear).plant;
@@ -676,7 +681,8 @@ mod tests {
 
     #[test]
     fn editing_another_row_sends_the_row_being_left() {
-        let game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        empty_start(&mut game);
         let mut ui = UiState::default();
         let form = CommitmentForm::default();
         let clean = model(&game, &ui, &form);
@@ -715,7 +721,8 @@ mod tests {
 
     #[test]
     fn a_draft_equal_to_the_committed_pattern_is_not_sent_when_leaving() {
-        let game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        empty_start(&mut game);
         let mut ui = UiState::default();
         let form = CommitmentForm::default();
         let clean = model(&game, &ui, &form);
@@ -736,6 +743,7 @@ mod tests {
     #[test]
     fn all_day_and_off_are_start_and_stop() {
         let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        empty_start(&mut game);
         let ui = UiState::default();
         let form = CommitmentForm::default();
         let clean = model(&game, &ui, &form);
@@ -764,6 +772,7 @@ mod tests {
     #[test]
     fn the_agc_switch_flips_the_plants_setting() {
         let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        empty_start(&mut game);
         let ui = UiState::default();
         let form = CommitmentForm::default();
         let clean = model(&game, &ui, &form);

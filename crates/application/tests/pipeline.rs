@@ -12,7 +12,7 @@ use domain::events::DomainEvent;
 use domain::ids::{CellCoord, PlantId, RegionId};
 use domain::region::PlantKind;
 use domain::session::{DayPhase, GameSettings, SessionStatus};
-use support::{StaticCatalog, logged_commands, tiny_loaded_region};
+use support::{StaticCatalog, empty_start, logged_commands, tiny_loaded_region};
 
 fn tiny_catalog() -> StaticCatalog {
     StaticCatalog(vec![tiny_loaded_region()])
@@ -451,6 +451,7 @@ fn game_updates_projections_after_execute() {
 #[test]
 fn game_updates_forward_looking_and_lesson_projections() {
     let mut g = game();
+    empty_start(&mut g);
     assert_eq!(
         g.projections().rate_review.estimate(),
         Some(&g.session().rate_review_estimate())
@@ -496,7 +497,11 @@ fn zero_ticks_after_game_over_is_refused_and_not_logged() {
     // The start fleet sits offline every month, so strikes soon end the game.
     let log = InMemoryCommandLog::default();
     let mut g = game_with_log(log.clone());
-    while g.session().status() == SessionStatus::Active {
+    empty_start(&mut g);
+    for _ in 0..12 {
+        if g.session().status() != SessionStatus::Active {
+            break;
+        }
         if g.session().phase() == DayPhase::Review {
             g.execute(Command::FinishReview).unwrap();
         }
@@ -504,7 +509,7 @@ fn zero_ticks_after_game_over_is_refused_and_not_logged() {
         g.execute(Command::AdvanceTicks { n: 1_440 }).unwrap();
     }
     let SessionStatus::GameOver(reason) = g.session().status() else {
-        unreachable!("the loop ends only once the game is over");
+        panic!("an offline fleet keeps its licence for a year");
     };
     let logged = log.records().len();
     let hash = g.session().state_hash();

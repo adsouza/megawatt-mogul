@@ -34,7 +34,7 @@ use crate::company::{AssetProfile, AssetRef, Company};
 use crate::demand::DemandCenter;
 use crate::error::DomainError;
 use crate::events::DomainEvent;
-use crate::generation::Plant;
+use crate::generation::{CommitmentSchedule, Plant};
 use crate::grid::{LineStatus, Network, Node, NodeKind, PowerSystem, TickSummary};
 use crate::ids::{CellCoord, IdAllocator, NodeId, PlantId};
 use crate::region::{LineParams, RegionDefinition};
@@ -109,9 +109,13 @@ impl GameSession {
     /// start-connected city an in-service line from the substation. Each
     /// start-fleet plant is commissioned on the start month on its own node
     /// with an in-service line to the substation, and is treated as
-    /// established (not returning from a month offline). The start fleet and
-    /// start lines enter the rate base as legacy capital at full cost. The
-    /// game begins in `Planning` with the start cash.
+    /// established (not returning from a month offline), so month 1 charges
+    /// no boundary start. The new operator inherits the previous operator's
+    /// schedule, the hands-off plan (spec §16.3): every dispatchable
+    /// start-fleet plant is committed all day with AGC on, and solar is left
+    /// as commissioned. The start fleet and start lines enter the rate base as
+    /// legacy capital at full cost. The game begins in `Planning` with the
+    /// start cash.
     pub fn new(region: Arc<RegionDefinition>, seed: u64, settings: GameSettings) -> Self {
         let start = region.start();
         let month = start.month;
@@ -138,6 +142,12 @@ impl GameSession {
             let spec = region.spec(def.kind).clone();
             let mut plant = Plant::new_commissioned(id, node, def.cell, spec, month);
             plant.set_previous_month_offline(false);
+            if def.kind.is_dispatchable() {
+                plant.set_commitment(CommitmentSchedule::all_day());
+                plant
+                    .set_auto_follow(true)
+                    .expect("a dispatchable plant takes AGC");
+            }
             plants.insert(id, plant);
         }
 
@@ -334,6 +344,29 @@ impl GameSession {
     /// `None` once nothing is owed (or nothing was ever built).
     pub(crate) fn pending_instalments(&self, asset: AssetRef) -> Option<&VecDeque<Money>> {
         self.instalments.get(&asset)
+    }
+
+    /// Test support: undoes the inherited schedule (spec §16.3), as the
+    /// player would in Planning, with `StopPlant` (the all-off pattern) and
+    /// AGC off on every dispatchable, commissioned plant. Recreates the empty
+    /// start the tests written before A5 assumed.
+    pub(crate) fn empty_start(&mut self) {
+        let plants: Vec<PlantId> = self
+            .plant_views()
+            .iter()
+            .filter(|plant| {
+                plant.kind.is_dispatchable()
+                    && !matches!(
+                        plant.status,
+                        crate::generation::PlantStatus::UnderConstruction { .. }
+                    )
+            })
+            .map(|plant| plant.id)
+            .collect();
+        for plant in plants {
+            self.stop_plant(plant).expect("stop in Planning");
+            self.set_auto_follow(plant, false).expect("AGC off");
+        }
     }
 
     /// One-off month-boundary starts per plant for the current day.

@@ -1,7 +1,7 @@
-//! One whole month through the app, for each shipped region: a new game, the hands-off plan
-//! clicked in through the presenters' own buttons and the real `dispatch`, the day run at 8× by
-//! the fixed-step driver, and the review continued into the next Planning. And a month with
-//! nothing committed, for the path from a domain event to a toast on screen.
+//! One whole month through the app, for each shipped region: a new game, which already runs the
+//! hands-off plan (the grid's own buttons have nothing left to click), the day run at 8× by the
+//! fixed-step driver, and the review continued into the next Planning. And a month with nothing
+//! committed, for the path from a domain event to a toast on screen.
 //!
 //! The app is headless (the core plugins and the HUD's non-egui systems, no `EguiPlugin`), so the
 //! panels never draw: each step takes the action of the button the player would click from the
@@ -31,7 +31,7 @@ use game::sim::{CommandFailed, DomainEventMessage, PlayerCommand, Session, SimSp
 use game::state::PhaseState;
 use tempfile::TempDir;
 
-use crate::support::{hud_app, request, update_n};
+use crate::support::{empty_start_in, hud_app, request, update_n};
 
 /// The month's day has 1,440 ticks; 8× runs 8 per fixed step. A margin for the frames around it.
 const MAX_FIXED_STEPS: usize = 1_440 / 8 + 20;
@@ -249,10 +249,10 @@ fn play_a_hands_off_month(region: &str) {
     assert_eq!(phase(&app), PhaseState::Planning);
     let month = game(&app).session().clock().month();
 
-    // 2. The hands-off plan: every dispatchable plant committed all day, with AGC on.
+    // 2. The hands-off plan: every dispatchable plant committed all day, with AGC on. A new game
+    // inherits it (spec §16.3), so the grid offers no click toward it.
     let plan = hands_off_clicks(&app);
-    assert!(!plan.is_empty());
-    click(&mut app, plan);
+    assert_eq!(plan, [], "a new game runs the hands-off plan");
     update_n(&mut app, 1);
     assert_eq!(hands_off_clicks(&app), [], "every row is all day with AGC");
     let plants = game(&app).session().plant_views();
@@ -330,14 +330,24 @@ fn a_hands_off_western_month_runs_through_the_app() {
     play_a_hands_off_month("western_interconnection");
 }
 
-/// Nothing committed: the start fleet stays offline, so the day orders a rotating outage and the
-/// month closes with a strike. Both reach the screen as toasts, in the frame their event arrives.
+/// Nothing committed: the inherited schedule is undone, so the start fleet stays offline, the
+/// day orders a rotating outage and the month closes with a strike. Both reach the screen as
+/// toasts, in the frame their event arrives.
 #[test]
 fn a_month_with_nothing_committed_shows_the_outage_and_strike_toasts() {
     let region = "eastern_interconnection";
     let logs = TempDir::new().unwrap();
     let mut app = recorded_app(&logs);
     request(&mut app, region);
+    empty_start_in(&mut app);
+    assert!(
+        game(&app)
+            .session()
+            .plant_views()
+            .iter()
+            .all(|plant| plant.commitment == [false; 24] && !plant.auto_follow),
+        "nothing is committed"
+    );
 
     run_the_day_at_8x(&mut app, region);
 

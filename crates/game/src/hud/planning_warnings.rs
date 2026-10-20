@@ -208,7 +208,7 @@ mod tests {
 
     use super::*;
     use crate::hud::test_support::{
-        eastern_game, edited_western_game, flat_load, shipped_game, shipped_l10n,
+        eastern_game, edited_western_game, empty_start, flat_load, shipped_game, shipped_l10n,
     };
 
     fn shortfall(hour: u8) -> CapacityShortfallWarning {
@@ -312,7 +312,8 @@ mod tests {
     #[test]
     fn an_uncommitted_fleet_warns_of_a_shortfall_at_the_domains_hour() {
         let l10n = shipped_l10n();
-        let game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        empty_start(&mut game);
         let session = game.session();
         let worst = session
             .capacity_shortfall_check()

@@ -680,6 +680,7 @@ fn failing_both_tests_gives_one_unserved_strike_and_spares_the_notice() {
     let mut parts = tiny_region_parts();
     parts.regulator.frequency_band = Hertz::new(1e-9);
     let mut s = session_from(parts, 1);
+    s.empty_start();
     // One plant alone cannot carry the load: load is shed while the grid is
     // still in Normal mode, and demand noise keeps frequency off nominal.
     let coal = plant_of(&s, PlantKind::Coal);
@@ -976,9 +977,11 @@ fn the_estimate_and_the_review_read_the_same_months() {
 }
 
 /// Commits the two big plants all day on manual targets far above the load
-/// trough, so the overnight hours run a surplus with no player action.
+/// trough, so the overnight hours run a surplus with no player action. The
+/// inherited schedule is undone first: no plant is on AGC.
 fn overbuilt_session() -> GameSession {
     let mut s = session();
+    s.empty_start();
     for kind in [PlantKind::Coal, PlantKind::Ccgt] {
         let plant = plant_of(&s, kind);
         s.start_plant(plant).unwrap();

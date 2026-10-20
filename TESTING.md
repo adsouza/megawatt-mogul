@@ -38,10 +38,11 @@ cargo mutants -p domain -p application         # mutation testing
 Property tests use `proptest`; set `PROPTEST_CASES` to run more cases locally. Note that nextest does
 not run doctests; run `cargo test --doc --workspace` for those.
 
-The whole workspace runs in about 23 s in a debug build. Most of that is the two year-long
-acceptance runs in `infrastructure::shipped_regions`, `hands_off_plan_survives_year_one` and
-`shipped_regions_never_order_outages_hands_off` (about 18 s each, side by side: two regions × eight
-seeds × twelve months); every other test finishes in under 3 s.
+The whole workspace runs in about 23 s in a debug build. Most of that is the three year-long
+acceptance runs in `infrastructure::shipped_regions`, `hands_off_plan_survives_year_one`,
+`no_commands_survive_year_one` and `shipped_regions_never_order_outages_hands_off` (about 18 s
+each, side by side: two regions × eight seeds × twelve months); every other test finishes in under
+3 s.
 
 ## The game crate
 
@@ -75,12 +76,13 @@ The game's tests sit in six layers, from the cheapest to the widest. None opens 
   size, for both shipped regions, and check that panels don't overlap and that the controls a
   player needs (*Apply*, *Continue*, the figures of the selected plant) are inside their panel.
 - **The end-to-end month** (`tests/game/end_to_end.rs`), for each shipped region on seed 7: a new
-  game, the hands-off plan clicked in from the commitment grid's own buttons (*All day*, *AGC*),
-  *Start the day*, 8×, the fixed-step driver to the close, then *Continue*. It asserts the phases
+  game, which already runs the hands-off plan (spec §16.3: the grid's *All day* and *AGC* buttons
+  have nothing left to do), *Start the day*, 8×, the fixed-step driver to the close, then
+  *Continue*. It asserts the phases
   Planning → Operating → Review → Planning, no `CommandFailed`, a log that gains one line per
   command, and the month's report. It asserts nothing about the month's outcome, which the
-  `infrastructure` acceptance runs pin. A third run commits nothing, so the day orders a rotating
-  outage and the close issues a strike: both toasts must be on screen by the end of the frame
+  `infrastructure` acceptance runs pin. A third run undoes the inherited schedule first
+  (`support::empty_start_in`), so the day orders a rotating outage and the close issues a strike: both toasts must be on screen by the end of the frame
   their event arrives in, and every toast must come from an event. Each run takes about 0.2 s.
 
 `tests/game/l10n_coverage.rs` checks the translations: every literal key in `l10n::keys` exists in
@@ -198,6 +200,10 @@ The invariants the property tests must cover:
   `Active`. If it fails, retune region data, never the rules. The East passes with a thin margin:
   6 of 8 seeds draw a frequency notice in a shoulder month, and none has more than one strike
   outstanding.
+- **No-commands year** (spec §16.5): the same year with no commands at all, on the previous
+  operator's schedule a new game inherits (spec §16.3). It must pass too.
+- **No shortfall at the start** (spec §16.6): each region, on seeds 0–7, has no
+  capacity-shortfall warning on month 1 with no commands.
 - **Hydro smoke runs:** a Western January keeps every hydro unit producing through the evening peak
   on seeds 0–7, and a Western October start stays reliable with no evening cliff.
 - **No outages hands-off:** the same hands-off plan orders no rotating outage in any of the 192

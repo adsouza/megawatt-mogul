@@ -181,7 +181,7 @@ mod tests {
     use application::{Command, InMemoryCommandLog};
 
     use super::*;
-    use crate::hud::test_support::{eastern_game, shipped_l10n};
+    use crate::hud::test_support::{eastern_game, empty_start, shipped_l10n};
 
     fn stack_of(stacks: &[StackModel], kind: PlantKind) -> &StackModel {
         stacks
@@ -194,6 +194,7 @@ mod tests {
     fn stacked_committed_capacity_sums_by_hour_and_kind() {
         let l10n = shipped_l10n();
         let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        empty_start(&mut game);
         let views = game.session().plant_views();
         let of_kind = |kind| -> Vec<_> { views.iter().filter(|p| p.kind == kind).collect() };
         let (nuclear, coal, ccgt) = (
@@ -276,7 +277,8 @@ mod tests {
     #[test]
     fn a_plant_committed_in_no_hour_adds_nothing() {
         let l10n = shipped_l10n();
-        let game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        empty_start(&mut game);
 
         let stacks = stacked_committed_capacity(&game, &l10n);
 

@@ -394,10 +394,13 @@ mod tests {
         );
     }
 
+    /// One tick into the first day with the inherited schedule undone, so
+    /// the start fleet is offline and reported at 0 MW.
     fn operating_after_one_tick(
         edit: impl FnOnce(&mut crate::region::RegionDefinitionParts),
     ) -> GameSession {
         let mut s = session_with(edit);
+        s.empty_start();
         s.begin_operating().unwrap();
         s.tick().unwrap();
         assert_eq!(s.check_invariants(), Ok(()));

@@ -5,15 +5,17 @@ pub mod egui_pass;
 
 use std::path::{Path, PathBuf};
 
+use application::{Command, Game};
+use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::*;
 use bevy::state::app::StatesPlugin;
 use bevy::time::TimeUpdateStrategy;
 use domain::ids::RegionId;
 use game::CorePlugins;
-use game::hud::HudPlugin;
+use game::hud::{ActionSink, HudPlugin, UiAction, dispatch, is_commitable};
 use game::l10n::{LOCALE, Localizer};
 use game::paths::{AssetRoot, LogDir};
-use game::sim::NewGameRequest;
+use game::sim::{NewGameRequest, Session};
 use game::state::AppState;
 
 /// A windowless app with the core (headless-safe) plugins, reading assets from `assets` and
@@ -67,4 +69,44 @@ pub fn request(app: &mut App, region: &str) {
         seed: 7,
     });
     update_n(app, 2);
+}
+
+/// The commands that undo the inherited schedule (spec §16.3) as a player would in Planning:
+/// `StopPlant` (the all-off pattern) and AGC off on every plant the grid can commit.
+pub fn empty_start_commands(game: &Game) -> Vec<Command> {
+    game.session()
+        .plant_views()
+        .into_iter()
+        .filter(is_commitable)
+        .flat_map(|plant| {
+            [
+                Command::StopPlant { plant: plant.id },
+                Command::SetAutoFollow {
+                    plant: plant.id,
+                    on: false,
+                },
+            ]
+        })
+        .collect()
+}
+
+/// Recreates the empty start, nothing committed and nothing on AGC, on a bare `game`: for the
+/// tests written for a fleet left offline.
+pub fn empty_start(game: &mut Game) {
+    for command in empty_start_commands(game) {
+        game.execute(command).expect("an empty start in Planning");
+    }
+}
+
+/// Recreates the empty start in the app's game, through the real `dispatch` and the frame that
+/// applies the commands.
+pub fn empty_start_in(app: &mut App) {
+    let actions: Vec<UiAction> = empty_start_commands(&app.world().resource::<Session>().0)
+        .into_iter()
+        .map(UiAction::Command)
+        .collect();
+    app.world_mut()
+        .run_system_once(move |mut sink: ActionSink| dispatch(actions.clone(), &mut sink))
+        .unwrap();
+    update_n(app, 1);
 }

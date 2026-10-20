@@ -16,7 +16,7 @@ use tempfile::TempDir;
 use crate::hud_smoke::{EASTERN, WESTERN, WIDE, dispatch_in, operating_hour_app, sent};
 use crate::support::egui_harness::{button as find_button, buttons, has, shows, widget};
 use crate::support::egui_pass::EguiPass;
-use crate::support::{hud_app, request, shipped_l10n, update_n};
+use crate::support::{empty_start_in, hud_app, request, shipped_l10n, update_n};
 
 fn phase(app: &App) -> PhaseState {
     *app.world().resource::<State<PhaseState>>().get()
@@ -373,6 +373,7 @@ fn the_milestones_panel_opens_from_the_top_bar_in_every_phase() {
 fn game_over_app(logs: &TempDir) -> App {
     let mut app = hud_app(logs.path());
     request(&mut app, EASTERN);
+    empty_start_in(&mut app);
     let over = |app: &App| {
         matches!(
             app.world().resource::<Session>().0.session().status(),

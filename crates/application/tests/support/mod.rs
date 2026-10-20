@@ -143,11 +143,9 @@ pub fn play_month_to_close(
     (events, status)
 }
 
-/// Commits every dispatchable, commissioned plant for hours 0-23 and turns
-/// AGC on for it. Plants still under construction are skipped.
-pub fn auto_follow_all(game: &mut Game) {
-    let plants: Vec<PlantId> = game
-        .session()
+/// The dispatchable, commissioned plants: the ones the player can commit.
+fn commitable_plants(game: &Game) -> Vec<PlantId> {
+    game.session()
         .plant_views()
         .iter()
         .filter(|plant| {
@@ -155,8 +153,15 @@ pub fn auto_follow_all(game: &mut Game) {
                 && !matches!(plant.status, PlantStatus::UnderConstruction { .. })
         })
         .map(|plant| plant.id)
-        .collect();
-    for plant in plants {
+        .collect()
+}
+
+/// Commits every dispatchable, commissioned plant for hours 0-23 and turns
+/// AGC on for it. Plants still under construction are skipped. On a new game
+/// this is the inherited schedule already (spec §16.3), so it changes
+/// nothing there.
+pub fn auto_follow_all(game: &mut Game) {
+    for plant in commitable_plants(game) {
         game.execute(Command::CommitPlant {
             plant,
             hours: [true; 24],
@@ -164,6 +169,19 @@ pub fn auto_follow_all(game: &mut Game) {
         .expect("commit plant all day");
         game.execute(Command::SetAutoFollow { plant, on: true })
             .expect("turn AGC on");
+    }
+}
+
+/// Undoes the inherited schedule (spec §16.3) the way a player would in
+/// Planning: `StopPlant` (the all-off pattern) and AGC off on every
+/// dispatchable, commissioned plant. Recreates the empty start that tests
+/// of a fleet left offline were written for.
+pub fn empty_start(game: &mut Game) {
+    for plant in commitable_plants(game) {
+        game.execute(Command::StopPlant { plant })
+            .expect("stop plant in Planning");
+        game.execute(Command::SetAutoFollow { plant, on: false })
+            .expect("turn AGC off");
     }
 }
 

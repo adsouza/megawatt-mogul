@@ -387,6 +387,7 @@ fn an_infeasible_commit_reverts_the_row_and_shows_the_toast() {
     let mut app = hud_app(&logs);
     request(&mut app, "eastern_interconnection");
     let nuclear = plant_of(&app, PlantKind::Nuclear);
+    let committed = commitment_of(&app, nuclear);
     // Nuclear takes 48 hours to start, so any off-gap is too short.
     let mut infeasible = [false; 24];
     infeasible[..12].fill(true);
@@ -403,7 +404,7 @@ fn an_infeasible_commit_reverts_the_row_and_shows_the_toast() {
     assert_eq!(ui.pending, None);
     assert_eq!(
         commitment_of(&app, nuclear),
-        [false; 24],
+        committed,
         "the game is unchanged"
     );
     let toasts = toasts(&app);

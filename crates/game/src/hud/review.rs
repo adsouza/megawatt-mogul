@@ -389,7 +389,7 @@ mod tests {
     use domain::units::{Megawatts, Money, Price, Ratio};
 
     use super::*;
-    use crate::hud::test_support::{eastern_game, shipped_l10n};
+    use crate::hud::test_support::{eastern_game, empty_start, shipped_l10n};
 
     /// An eastern game with every plant that can run committed all day, its first day played
     /// through to the month's close: in Review.
@@ -414,6 +414,7 @@ mod tests {
     /// a month close: over, with its final month's report as the latest.
     fn finished_game() -> Game {
         let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        empty_start(&mut game);
         for _ in 0..3 {
             game.execute(Command::BeginOperating).unwrap();
             game.execute(Command::AdvanceTicks { n: TICKS_PER_DAY })
@@ -632,6 +633,7 @@ mod tests {
         let l10n = shipped_l10n();
         // Nothing committed: the day is one long rotating outage, and the regulator strikes.
         let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        empty_start(&mut game);
         game.execute(Command::BeginOperating).unwrap();
         game.execute(Command::AdvanceTicks { n: TICKS_PER_DAY })
             .unwrap();

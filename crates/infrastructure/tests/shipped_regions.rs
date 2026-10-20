@@ -267,16 +267,22 @@ impl RegionCatalog for StartMonthOverride {
     }
 }
 
-/// Starts a game on `id` from `catalog` with the hands-off plan in place.
-fn hands_off_game(catalog: &dyn RegionCatalog, id: &str, seed: u64) -> Game {
-    let mut game = Game::start_new(
+/// Starts a game on `id` from `catalog` and issues no commands: the start
+/// fleet runs the previous operator's schedule (spec §16.3).
+fn new_game(catalog: &dyn RegionCatalog, id: &str, seed: u64) -> Game {
+    Game::start_new(
         catalog,
         &RegionId::new(id),
         seed,
         GameSettings::default(),
         Box::new(InMemoryCommandLog::default()),
     )
-    .expect("game starts");
+    .expect("game starts")
+}
+
+/// Starts a game on `id` from `catalog` with the hands-off plan in place.
+fn hands_off_game(catalog: &dyn RegionCatalog, id: &str, seed: u64) -> Game {
+    let mut game = new_game(catalog, id, seed);
     auto_follow_all(&mut game);
     game
 }
@@ -384,14 +390,44 @@ fn west_october_smoke_run_is_reliable() {
     assert_no_evening_hydro_cliff("West October", &played);
 }
 
+/// Spec §16.2: a new game with no player commands plays its first day
+/// without a forecast shortfall, on both shipped regions at seeds 0-7.
+#[test]
+fn shipped_regions_start_without_a_shortfall() {
+    for id in [EAST, WEST] {
+        for seed in 0..8 {
+            let game = new_game(&catalog(), id, seed);
+            assert_eq!(
+                game.session().capacity_shortfall_check(),
+                None,
+                "{id} seed {seed}"
+            );
+        }
+    }
+}
+
 /// Spec §14.5 beginner acceptance: with the hands-off plan (every
 /// dispatchable plant committed all day under AGC, no other commands), each
 /// shipped region is still `Active` after twelve months on seeds 0-7.
 #[test]
 fn hands_off_plan_survives_year_one() {
+    assert_survives_year_one(hands_off_game);
+}
+
+/// Spec §16.5: the beginner acceptance check also passes with no commands at
+/// all, on the previous operator's schedule.
+#[test]
+fn no_commands_survive_year_one() {
+    assert_survives_year_one(new_game);
+}
+
+/// Plays twelve months on both regions at seeds 0-7, each game started by
+/// `start` and given no commands beyond the phase changes, and asserts the
+/// game is still `Active` at every close.
+fn assert_survives_year_one(start: fn(&dyn RegionCatalog, &str, u64) -> Game) {
     for id in [EAST, WEST] {
         for seed in 0..8 {
-            let mut game = hands_off_game(&catalog(), id, seed);
+            let mut game = start(&catalog(), id, seed);
             for month in 1..=12 {
                 let played = play_month(&mut game);
                 assert_eq!(

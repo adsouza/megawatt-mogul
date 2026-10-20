@@ -29,7 +29,7 @@ use game::state::{AppState, PhaseState};
 use infrastructure::region::RonRegionCatalog;
 use tempfile::TempDir;
 
-use crate::support::{headless_app, shipped_assets, update_n};
+use crate::support::{empty_start_commands, headless_app, shipped_assets, update_n};
 
 const EASTERN: &str = "eastern_interconnection";
 
@@ -390,8 +390,8 @@ fn the_month_close_mirrors_review_and_pauses() {
 #[test]
 fn game_over_stops_the_driver() {
     // Two routes to game over at the third month close, so the test doesn't hang on balance
-    // tuning. Committing nothing leaves the start fleet offline, and the regulator's strikes
-    // revoke the licence by the third close. And this copy of the eastern region starts deep in
+    // tuning. Undoing the inherited schedule leaves the start fleet offline, and the regulator's
+    // strikes revoke the licence by the third close. And this copy of the eastern region starts deep in
     // debt, so the third negative close is also bankruptcy (revocation, checked first, wins today).
     let root = TempDir::new().unwrap();
     let assets = copy_assets(root.path());
@@ -407,6 +407,8 @@ fn game_over_stops_the_driver() {
     let logs = root.path().join("logs");
     let mut app = sim_app(&assets, &logs);
     start_game(&mut app, EASTERN, 7);
+    let empty = empty_start_commands(game(&app));
+    send(&mut app, empty);
 
     let day = [
         Command::BeginOperating,

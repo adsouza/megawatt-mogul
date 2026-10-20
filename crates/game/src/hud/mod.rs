@@ -352,8 +352,9 @@ fn in_phase(phase: DayPhase) -> impl Fn(Option<Res<Session>>) -> bool + Clone {
 pub(crate) mod test_support {
     use std::path::{Path, PathBuf};
 
-    use application::{CommandLogError, CommandLogSink, Game, LogHeader, LogRecord};
-    use domain::ids::RegionId;
+    use application::{Command, CommandLogError, CommandLogSink, Game, LogHeader, LogRecord};
+    use domain::generation::PlantStatus;
+    use domain::ids::{PlantId, RegionId};
     use domain::session::GameSettings;
     use infrastructure::region::RonRegionCatalog;
 
@@ -426,6 +427,28 @@ pub(crate) mod test_support {
     /// A new eastern game, seed 7, in Planning, recording to `sink`.
     pub fn eastern_game(sink: Box<dyn CommandLogSink>) -> Game {
         shipped_game("eastern_interconnection", sink)
+    }
+
+    /// Undoes the inherited schedule (spec §16.3) as a player would in Planning: `StopPlant`
+    /// (the all-off pattern) and AGC off on every dispatchable, commissioned plant. Recreates the
+    /// empty start of the tests written for a fleet left offline.
+    pub fn empty_start(game: &mut Game) {
+        let plants: Vec<PlantId> = game
+            .session()
+            .plant_views()
+            .iter()
+            .filter(|plant| {
+                plant.kind.is_dispatchable()
+                    && !matches!(plant.status, PlantStatus::UnderConstruction { .. })
+            })
+            .map(|plant| plant.id)
+            .collect();
+        for plant in plants {
+            game.execute(Command::StopPlant { plant })
+                .expect("stop plant in Planning");
+            game.execute(Command::SetAutoFollow { plant, on: false })
+                .expect("turn AGC off");
+        }
     }
 
     /// A command log that takes the header and then fails every command, like a full disk.
