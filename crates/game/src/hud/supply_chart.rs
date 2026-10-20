@@ -11,14 +11,15 @@ use domain::time::TICKS_PER_HOUR;
 use egui_plot::{AxisHints, FilledArea, HPlacement, Legend, Line, LineStyle, Plot, VLine};
 
 use super::action::UiAction;
-use super::frequency::SHEDDING_COLOR;
+use super::frequency::NORMAL_COLOR;
 use super::map::{Rgb, color32, kind_color};
 use super::plant_list::kinds_in_merit_order;
 use crate::l10n::{Localize, Localizer};
 
-/// The served line: where it falls under demand, load is being cut, so it takes the gauge's
-/// load-shedding red.
-pub const SERVED_COLOR: Rgb = SHEDDING_COLOR;
+/// The served line: the load actually supplied. It takes the gauge's in-band green, which stays
+/// clear of every stack colour (the shedding red was nearly the peaker's red). Where it falls
+/// under demand, load is being cut.
+pub const SERVED_COLOR: Rgb = NORMAL_COLOR;
 /// The system marginal cost line, on the secondary axis.
 pub const MARGINAL_COST_COLOR: Rgb = [240, 190, 60];
 
@@ -217,6 +218,28 @@ mod tests {
 
     use super::*;
     use crate::hud::test_support::{eastern_game, shipped_l10n};
+
+    /// The Euclidean distance between two colours in RGB space.
+    fn rgb_distance(a: Rgb, b: Rgb) -> f64 {
+        a.iter()
+            .zip(b)
+            .map(|(&x, y)| (f64::from(x) - f64::from(y)).powi(2))
+            .sum::<f64>()
+            .sqrt()
+    }
+
+    #[test]
+    fn the_served_line_stands_apart_from_every_stack_colour() {
+        // Playtest: the served line was the shedding red, nearly the peaker's red.
+        for kind in PlantKind::ALL {
+            let distance = rgb_distance(SERVED_COLOR, kind_color(kind));
+            assert!(
+                distance > 80.0,
+                "{kind:?} is {distance:.0} from the served line"
+            );
+        }
+        assert!(rgb_distance(SERVED_COLOR, MARGINAL_COST_COLOR) > 80.0);
+    }
 
     /// A game one hour into the day, with every commitable plant committed all day.
     fn an_hour_in() -> Game {
