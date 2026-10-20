@@ -8,7 +8,10 @@ use std::cell::RefCell;
 use std::fs;
 use std::path::Path;
 
-use application::{Command, Game, InMemoryCommandLog, RegionCatalog};
+use application::{
+    Command, CommandLogError, CommandLogSink, Game, InMemoryCommandLog, LogHeader, LogRecord,
+    RegionCatalog,
+};
 use bevy::ecs::message::{Message, Messages};
 use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::*;
@@ -1919,6 +1922,103 @@ fn the_map_does_not_move_when_the_operating_panels_change() {
         dispatch_in(&mut app, actions.clone());
         let map = widget(&pass.settled(&mut app, 1024.0, 640.0), "Map").rect;
         assert_eq!(map, before, "after {actions:?}");
+    }
+}
+
+/// The error a full disk gives `FileCommandLog`, word for word: the longest reason a player sees.
+const NO_SPACE: &str = "cannot write record: No space left on device (os error 28)";
+
+/// A command log that takes the header and then fails every command as a full disk does.
+struct NoSpaceLeft;
+
+impl CommandLogSink for NoSpaceLeft {
+    fn initialize(&mut self, _: &LogHeader, _: &[u8]) -> Result<(), CommandLogError> {
+        Ok(())
+    }
+
+    fn append(&mut self, _: &LogRecord) -> Result<(), CommandLogError> {
+        Err(CommandLogError {
+            message: NO_SPACE.to_owned(),
+        })
+    }
+}
+
+/// At the smallest window the recording-stopped banner with a real error must not push Menu or
+/// Milestones off the screen: the bar stays one row, the banner gives way, and Menu still works.
+/// Drawn by the real systems.
+#[test]
+fn at_the_smallest_window_the_recording_banner_leaves_menu_and_milestones_on_screen() {
+    let (width, height) = (1024.0, 640.0);
+    for region in [EASTERN, WESTERN] {
+        let logs = TempDir::new().unwrap();
+        let mut app = hud_app(logs.path());
+        request(&mut app, region);
+        let catalog = RonRegionCatalog::new(shipped_assets().join("regions"));
+        let mut game = Game::start_new(
+            &catalog,
+            &RegionId::new(region),
+            7,
+            GameSettings::default(),
+            Box::new(NoSpaceLeft),
+        )
+        .unwrap();
+        let plant = game
+            .session()
+            .plant_views()
+            .into_iter()
+            .find(is_commitable)
+            .expect("a plant to commit");
+        // The game goes on; only its recording stops.
+        game.execute(Command::StartPlant { plant: plant.id })
+            .unwrap();
+        assert!(game.log_failure().is_some(), "{region}");
+        app.insert_resource(Session(game));
+        let pass = EguiPass::attach(&mut app);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, height));
+
+        let widgets = pass.settled(&mut app, width, height);
+
+        let banner = widgets
+            .iter()
+            .find(|w| w.text.starts_with("Recording stopped"))
+            .unwrap_or_else(|| panic!("{region}: the banner is shown"))
+            .rect;
+        let menu = find_button(&widgets, "Menu").rect;
+        let milestones = find_button(&widgets, "Milestones").rect;
+        for (name, rect) in [("Menu", menu), ("Milestones", milestones)] {
+            assert!(
+                screen.contains_rect(rect),
+                "{region}: {name} {rect:?} is off the screen"
+            );
+            assert!(
+                !rect.intersects(banner),
+                "{region}: {name} {rect:?} overlaps the banner {banner:?}"
+            );
+        }
+        assert!(
+            (menu.center().y - banner.center().y).abs() < 1.0,
+            "{region}: the bar is one row: {menu:?} {banner:?}"
+        );
+
+        // The banner is cut short to fit; the whole reason is in its tooltip.
+        pass.ctx()
+            .all_styles_mut(|style| style.interaction.tooltip_delay = 0.0);
+        let hover = vec![egui::Event::PointerMoved(banner.center())];
+        pass.run_with(&mut app, width, height, hover.clone());
+        let hovered = pass.run_with(&mut app, width, height, hover);
+        assert!(
+            hovered
+                .iter()
+                .any(|w| w.text.contains(NO_SPACE) && w.rect.top() >= banner.bottom()),
+            "{region}: a tooltip under the bar gives the whole reason"
+        );
+
+        pass.click_at(&mut app, width, height, menu.center());
+        assert_eq!(
+            *app.world().resource::<OpenPrompt>(),
+            OpenPrompt(Some(Prompt::LeaveGame)),
+            "{region}: Menu opens the leave prompt"
+        );
     }
 }
 

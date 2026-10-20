@@ -101,13 +101,23 @@ pub fn draw_top_bar(ui: &mut egui::Ui, model: &TopBarModel) -> Vec<UiAction> {
             ui.weak(stat.label.as_str());
             ui.strong(stat.value.as_str());
         }
-        if let Some(warning) = &model.recording_stopped {
-            ui.separator();
-            ui.colored_label(ui.visuals().warn_fg_color, warning.as_str());
-        }
+        // Right to left: Menu and Milestones are laid out first, so they always keep their
+        // place, and the warning takes only the space between them and the scores. It is cut
+        // short to fit, so the bar stays one row and the map doesn't move; the whole of it is in
+        // its tooltip.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             button(ui, &model.menu, &mut actions);
             button(ui, &model.milestones, &mut actions);
+            if let Some(warning) = &model.recording_stopped {
+                let text = egui::RichText::new(warning.as_str()).color(ui.visuals().warn_fg_color);
+                ui.add(
+                    egui::Label::new(text)
+                        .truncate()
+                        .show_tooltip_when_elided(false),
+                )
+                .on_hover_text(warning.as_str());
+                ui.separator();
+            }
         });
     });
     actions
