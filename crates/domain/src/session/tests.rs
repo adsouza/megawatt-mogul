@@ -477,6 +477,41 @@ fn city_views_follow_region_cities() {
 }
 
 #[test]
+fn line_views_list_every_line_in_id_order_with_its_status() {
+    let mut s = session();
+    let views = s.line_views();
+    // Two city lines and three plant lines, all in service at the start.
+    assert_eq!(views.len(), 5);
+    assert!(views.iter().all(|l| l.status == LineStatus::InService));
+    assert!(views.windows(2).all(|pair| pair[0].id < pair[1].id));
+    let city2 = s
+        .city_views()
+        .into_iter()
+        .find(|c| c.id == CityId(2))
+        .unwrap();
+    let to_city2 = views.iter().find(|l| l.to == city2.node).unwrap();
+    assert_eq!(to_city2.from, s.substation());
+
+    // A line ordered now shows up under construction, after the existing ones.
+    let (plant, _) = s
+        .build_plant(PlantKind::Peaker, CellCoord { x: 5, y: 5 })
+        .unwrap();
+    let node = s.power().plant(plant).unwrap().node();
+    let (line, _) = s.build_line(s.substation(), node).unwrap();
+    let views = s.line_views();
+    assert_eq!(views.len(), 6);
+    assert_eq!(
+        views.last(),
+        Some(&LineView {
+            id: line,
+            from: s.substation(),
+            to: node,
+            status: LineStatus::UnderConstruction { months_left: 2 },
+        })
+    );
+}
+
+#[test]
 fn invariants_detect_a_non_conserving_tick() {
     let mut s = session();
     s.begin_operating().unwrap();

@@ -71,12 +71,20 @@ game-over-main-menu = Main menu
 
 ## Planning: map, inspector, build menu
 
+map-label = Map
 map-layer-terrain = Terrain
 map-layer-irradiance = Sunshine
 map-layer-cooling-water = Cooling water
 map-layer-hydro-potential = Hydro potential
-map-layer-suitability = Suitability
-inspector-title = Cell
+map-layer-suitability = Suitability: { $kind }
+# One letter for each kind of plant on the map.
+plant-glyph-nuclear = N
+plant-glyph-coal = C
+plant-glyph-ccgt = G
+plant-glyph-peaker = P
+plant-glyph-solar = S
+plant-glyph-hydro = H
+inspector-title = Cell ({ $x }, { $y })
 inspector-land = Land
 inspector-water = Water
 inspector-height = Height
@@ -84,15 +92,32 @@ inspector-irradiance = Sunshine
 inspector-cooling-water = Cooling water
 inspector-hydro-potential = Hydro potential
 inspector-can-build = Can be built here
+inspector-site-ok = ✓
 build-title = Build
 build-plant = Build plant
-build-line = Build line
-build-line-from = Line from
-build-line-to = Line to
+build-plant-heading = Plant at ({ $x }, { $y })
+build-plant-select-cell = Select a cell on the map to build a plant there.
 build-capacity = Capacity
 build-capital = Capital cost
 build-months = Build time
+build-months-value = { $months ->
+    [one] 1 month
+   *[other] { $months } months
+}
 build-marginal-cost = Fuel cost
+build-line = Build line
+build-line-heading = Transmission line
+build-line-hint-from = Choose where the line starts.
+build-line-hint-to = Starting at { $node }. Choose where it ends.
+build-line-from = Line from { $node }
+build-line-to = Line to { $node }
+build-line-cancel = Cancel line
+build-line-cells = Length
+build-cells-value = { $cells ->
+    [one] 1 cell
+   *[other] { $cells } cells
+}
+name-substation = Substation
 
 ## Planning: tariff, commitments and forecast
 

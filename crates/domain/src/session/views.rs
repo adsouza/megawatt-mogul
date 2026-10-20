@@ -5,8 +5,8 @@ use crate::company::CapitalChange;
 use crate::demand::{ForecastPoint, hourly_forecast};
 use crate::generation::{Plant, PlantStatus};
 use crate::grid::power_system::HourEnd;
-use crate::grid::{GridMode, HydroScheduleView, TickSummary};
-use crate::ids::{CellCoord, CityId, NodeId, PlantId};
+use crate::grid::{GridMode, HydroScheduleView, LineStatus, TickSummary};
+use crate::ids::{CellCoord, CityId, LineId, NodeId, PlantId};
 use crate::region::PlantKind;
 use crate::regulation::{Licence, compute_rate_review};
 use crate::time::SimMonth;
@@ -37,6 +37,15 @@ pub struct CityView {
     pub node: NodeId,
     /// Whether the city is energised and therefore a customer.
     pub connected: bool,
+}
+
+/// One transmission line as the player sees it. Direction carries no meaning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LineView {
+    pub id: LineId,
+    pub from: NodeId,
+    pub to: NodeId,
+    pub status: LineStatus,
 }
 
 /// The grid's state at the current instant.
@@ -163,6 +172,20 @@ impl GameSession {
                 cell: city.def().cell,
                 node: city.node(),
                 connected: self.power.network().is_connected(city.node()),
+            })
+            .collect()
+    }
+
+    /// Every transmission line, in id order, built or under construction.
+    pub fn line_views(&self) -> Vec<LineView> {
+        self.power
+            .network()
+            .lines()
+            .map(|line| LineView {
+                id: line.id,
+                from: line.from,
+                to: line.to,
+                status: line.status,
             })
             .collect()
     }

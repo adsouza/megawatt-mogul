@@ -10,6 +10,7 @@ use bevy::prelude::*;
 use bevy_egui::egui;
 use domain::ids::RegionId;
 
+use super::map::MapLayer;
 use super::selection::Selection;
 use crate::sim::{NewGameRequest, PlayerCommand, ReturnToMenu, SimSpeed};
 use crate::state::AppState;
@@ -28,6 +29,8 @@ pub enum UiAction {
     ReturnToMenu,
     SetSpeed(SimSpeed),
     Select(Selection),
+    /// Colour the map by another layer.
+    SetLayer(MapLayer),
     /// Move between the menu screens. Entering the game is only ever [`UiAction::NewGame`].
     Navigate(MenuScreen),
     /// Open a confirmation prompt, or close it with `None`. The prompt's own buttons say what
@@ -116,8 +119,27 @@ pub struct ActionSink<'w> {
     exit: MessageWriter<'w, AppExit>,
     speed: ResMut<'w, SimSpeed>,
     selection: ResMut<'w, Selection>,
+    layer: ResMut<'w, MapLayer>,
     prompt: ResMut<'w, OpenPrompt>,
     next_state: ResMut<'w, NextState<AppState>>,
+}
+
+impl ActionSink<'_> {
+    /// The current selection. A panel system reads the state the sink writes through the sink:
+    /// a second `Res` of the same resource beside it would conflict (Bevy error B0002).
+    pub fn selection(&self) -> Selection {
+        *self.selection
+    }
+
+    /// The map layer now shown.
+    pub fn layer(&self) -> MapLayer {
+        *self.layer
+    }
+
+    /// The prompt now open, if any.
+    pub fn open_prompt(&self) -> OpenPrompt {
+        *self.prompt
+    }
 }
 
 /// Turns the HUD's actions into messages and state changes, in order: the single mapping from a
@@ -136,6 +158,7 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             }
             UiAction::SetSpeed(speed) => *sink.speed = speed,
             UiAction::Select(selection) => *sink.selection = selection,
+            UiAction::SetLayer(layer) => *sink.layer = layer,
             UiAction::Navigate(screen) => sink.next_state.set(screen.into()),
             UiAction::Prompt(prompt) => sink.prompt.0 = prompt,
             UiAction::Quit => {

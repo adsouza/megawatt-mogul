@@ -23,8 +23,8 @@ pub use invariants::InvariantViolation;
 pub use report::{Incident, IncidentKind, MeritOrderEntry, MonthAccumulator, MonthlyReport};
 pub use settings::{GameSettings, SimulationFidelity};
 pub use views::{
-    CapacityShortfallWarning, CityView, CompanyView, GridSnapshot, MinimumGenerationWarning,
-    PlantView, RateReviewEstimate,
+    CapacityShortfallWarning, CityView, CompanyView, GridSnapshot, LineView,
+    MinimumGenerationWarning, PlantView, RateReviewEstimate,
 };
 
 use std::collections::{BTreeMap, VecDeque};

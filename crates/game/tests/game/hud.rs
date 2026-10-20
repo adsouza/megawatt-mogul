@@ -28,7 +28,7 @@ use application::{CommandError, RegionLoadError};
 use bevy::time::TimeUpdateStrategy;
 use domain::ids::{CellCoord, RegionId};
 use game::hud::{
-    MenuForm, OpenPrompt, Prompt, RegionListings, Selection, ToastQueue, toasts_model,
+    MapLayer, MenuForm, OpenPrompt, Prompt, RegionListings, Selection, ToastQueue, toasts_model,
 };
 use game::l10n::{LocalizeWith, Localizer, Names};
 use game::sim::{NewGameRequest, ReturnToMenu};
@@ -110,6 +110,7 @@ fn leaving_a_game_resets_the_selection_the_prompt_and_the_seed() {
 
     let world = app.world_mut();
     *world.resource_mut::<Selection>() = Selection::Cell(CellCoord { x: 3, y: 4 });
+    *world.resource_mut::<MapLayer>() = MapLayer::Irradiance;
     *world.resource_mut::<OpenPrompt>() = OpenPrompt(Some(Prompt::LeaveGame));
     world.resource_mut::<MenuForm>().seed = "the old seed".to_owned();
     world.write_message(ReturnToMenu);
@@ -118,6 +119,7 @@ fn leaving_a_game_resets_the_selection_the_prompt_and_the_seed() {
     assert_eq!(state(&app), AppState::MainMenu);
     let world = app.world();
     assert_eq!(*world.resource::<Selection>(), Selection::None);
+    assert_eq!(*world.resource::<MapLayer>(), MapLayer::Terrain);
     assert_eq!(*world.resource::<OpenPrompt>(), OpenPrompt(None));
     let form = world.resource::<MenuForm>();
     assert!(form.parsed_seed().is_some(), "re-seeded: {:?}", form.seed);
@@ -129,11 +131,29 @@ fn entering_a_game_starts_with_nothing_selected_and_no_prompt() {
     let mut app = hud_app(&logs);
     // Left over from the menu, which shouldn't happen but mustn't leak into the game.
     *app.world_mut().resource_mut::<Selection>() = Selection::Cell(CellCoord { x: 1, y: 1 });
+    *app.world_mut().resource_mut::<MapLayer>() = MapLayer::HydroPotential;
     *app.world_mut().resource_mut::<OpenPrompt>() = OpenPrompt(Some(Prompt::LeaveGame));
 
     request(&mut app, "eastern_interconnection");
 
     assert_eq!(state(&app), AppState::InGame);
     assert_eq!(*app.world().resource::<Selection>(), Selection::None);
+    assert_eq!(*app.world().resource::<MapLayer>(), MapLayer::Terrain);
     assert_eq!(*app.world().resource::<OpenPrompt>(), OpenPrompt(None));
+}
+
+/// Every egui system's parameters must be disjoint. Bevy checks that when the schedule is
+/// initialised, which for the egui pass is the first frame of a real window, so without this a
+/// `Res<T>` beside an `ActionSink` (which holds `ResMut<T>`) would panic the game on launch.
+#[test]
+fn the_egui_systems_have_no_conflicting_parameters() {
+    let logs = TempDir::new().unwrap();
+    let mut app = hud_app(&logs);
+
+    app.world_mut()
+        .schedule_scope(EguiPrimaryContextPass, |world, schedule| {
+            schedule
+                .initialize(world)
+                .expect("the egui pass builds without ambiguity or cycles");
+        });
 }

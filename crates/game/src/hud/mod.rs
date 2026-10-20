@@ -11,8 +11,11 @@
 //! [`Localizer`]: crate::l10n::Localizer
 
 mod action;
+mod build;
 mod game_over;
+mod inspector;
 mod layout;
+mod map;
 mod menu;
 mod prompt;
 mod selection;
@@ -25,8 +28,19 @@ use bevy_egui::EguiPrimaryContextPass;
 pub use self::action::{
     ActionSink, ButtonModel, MenuScreen, OpenPrompt, Prompt, UiAction, button, dispatch,
 };
+pub use self::build::{
+    BuildModel, LinePreview, LineSection, LineTarget, PlantRow, PlantSection, build_model,
+    draw_build,
+};
 pub use self::game_over::{GameOverModel, draw_game_over, game_over_model, game_over_model_for};
+pub use self::inspector::{
+    InspectorModel, SuitabilityRow, draw_inspector, inspector_model, suitability_row,
+};
 pub use self::layout::HudArea;
+pub use self::map::{
+    CityMarker, LineMarker, MapLayer, MapLayout, MapModel, MapObjects, PlantMarker, Rgb, SUITABLE,
+    UNSUITABLE, WATER, cell_color, draw_map, hit_test, kind_color, map_model, marker_radius, pick,
+};
 pub use self::menu::{
     BootErrorModel, MainMenuModel, MenuForm, RegionChoice, RegionListings, RegionProblem,
     RegionSelectModel, boot_error_model, draw_boot_error, draw_main_menu, draw_region_select,
@@ -40,7 +54,7 @@ pub use self::toasts::{
 pub use self::top_bar::{Stat, TopBarModel, draw_top_bar, top_bar_model};
 use crate::l10n::Localizer;
 use crate::sim::{Catalog, Session, SimSet, default_seed};
-use crate::state::{AppState, BootError};
+use crate::state::{AppState, BootError, PhaseState};
 
 /// The order panels are laid out in each egui pass. Edge panels claim screen space in order, so
 /// the top bar comes before any side panel, and overlays (toasts, modals) come last.
@@ -56,7 +70,8 @@ pub enum HudSet {
     Overlays,
 }
 
-/// The egui panels: the shell screens, the top bar, toasts, prompts and the game-over modal.
+/// The egui panels: the shell screens, the top bar, toasts, prompts and the game-over modal, and
+/// the planning screen's map, cell inspector and build menu.
 pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
@@ -69,7 +84,12 @@ impl Plugin for HudPlugin {
 
         let has_l10n = resource_exists::<Localizer>;
         let in_game = in_state(AppState::InGame).and_then(resource_exists::<Session>);
+        let on_the_map = in_game
+            .clone()
+            .and_then(has_l10n)
+            .and_then(in_state(PhaseState::Planning).or_else(in_state(PhaseState::Operating)));
         app.init_resource::<Selection>()
+            .init_resource::<MapLayer>()
             .init_resource::<OpenPrompt>()
             .init_resource::<ToastQueue>()
             .init_resource::<HudArea>()
@@ -90,13 +110,18 @@ impl Plugin for HudPlugin {
             )
             .add_systems(
                 OnEnter(AppState::InGame),
-                (selection::reset_selection, action::close_prompt),
+                (
+                    selection::reset_selection,
+                    map::reset_layer,
+                    action::close_prompt,
+                ),
             )
             .add_systems(
                 OnExit(AppState::InGame),
                 (
                     menu::reseed_menu,
                     selection::reset_selection,
+                    map::reset_layer,
                     action::close_prompt,
                 ),
             )
@@ -140,6 +165,20 @@ impl Plugin for HudPlugin {
                         .in_set(HudSet::Overlays)
                         .run_if(has_l10n),
                 ),
+            )
+            // The planning screen: side panels claim their share, then the map fills what is
+            // left. The map and the inspector show while planning and operating; only planning
+            // orders anything, so the build menu is planning-only.
+            .add_systems(
+                EguiPrimaryContextPass,
+                (
+                    inspector::inspector_panel.run_if(on_the_map.clone()),
+                    build::build_panel
+                        .run_if(in_state(PhaseState::Planning).and_then(on_the_map.clone())),
+                    map::map_panel.run_if(on_the_map),
+                )
+                    .chain()
+                    .in_set(HudSet::Panels),
             );
     }
 }

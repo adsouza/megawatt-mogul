@@ -105,8 +105,7 @@ impl Harness {
         self.click_where(label, Some(n), draw)
     }
 
-    /// Draws once to find the button, then presses and releases the primary pointer button on
-    /// it: the actions of those two frames.
+    /// Draws once to find the button, then clicks it: the actions of the click's two frames.
     fn click_where(
         &self,
         label: &str,
@@ -118,7 +117,26 @@ impl Harness {
             None => button(&widgets, label),
             Some(n) => nth_button(&widgets, label, n),
         };
-        let at = target.rect.center();
+        self.press_and_release(target.rect.center(), draw)
+    }
+
+    /// Clicks at `at`, which need not be a button: a map cell, say. Draws once first, with no
+    /// input, so the screen is laid out where the click lands.
+    pub fn click_at(
+        &self,
+        at: Pos2,
+        mut draw: impl FnMut(&mut egui::Ui) -> Vec<UiAction>,
+    ) -> Vec<UiAction> {
+        self.draw(&mut draw);
+        self.press_and_release(at, draw)
+    }
+
+    /// Presses and releases the primary pointer button at `at`: the actions of those two frames.
+    fn press_and_release(
+        &self,
+        at: Pos2,
+        mut draw: impl FnMut(&mut egui::Ui) -> Vec<UiAction>,
+    ) -> Vec<UiAction> {
         let press = |pressed| Event::PointerButton {
             pos: at,
             button: PointerButton::Primary,
@@ -146,6 +164,16 @@ pub fn buttons<'a>(widgets: &'a [Widget], label: &str) -> Vec<&'a Widget> {
             .expect("widget rects are finite")
     });
     found
+}
+
+/// The one widget, of any role, whose text is exactly `text`.
+pub fn widget<'a>(widgets: &'a [Widget], text: &str) -> &'a Widget {
+    let mut found = widgets.iter().filter(|widget| widget.text == text);
+    match (found.next(), found.next()) {
+        (Some(only), None) => only,
+        (None, _) => panic!("no widget {text:?} among {widgets:#?}"),
+        _ => panic!("several widgets are {text:?}"),
+    }
 }
 
 /// The one button labelled `label`.

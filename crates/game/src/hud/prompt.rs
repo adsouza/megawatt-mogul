@@ -68,12 +68,12 @@ pub fn draw_prompt(ui: &mut egui::Ui, model: &PromptModel) -> Vec<UiAction> {
 
 pub(super) fn prompt_overlay(
     mut contexts: EguiContexts,
-    open: Res<OpenPrompt>,
     session: Option<Res<Session>>,
     l10n: Res<Localizer>,
     mut sink: ActionSink,
 ) -> Result {
-    let Some(model) = prompt_model(*open, session.as_deref().map(|s| &s.0), &l10n) else {
+    let Some(model) = prompt_model(sink.open_prompt(), session.as_deref().map(|s| &s.0), &l10n)
+    else {
         return Ok(());
     };
     let shown = egui::Modal::new(egui::Id::new("prompt"))
