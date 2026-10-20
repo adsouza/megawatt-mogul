@@ -108,16 +108,13 @@ Each ruling ends with what it costs if it turns out to be wrong.
 - **Recording-stopped playtest step.** The step fills a 2 MB disk image. A read-only log directory
   doesn't stop writes to a file the game already has open. If wrong: none.
 
-## Open questions
+## Questions settled by the user
 
-- **Game over hides the final month's review.** A player who loses their licence at month close
-  sees the game-over modal but never that month's lessons and regulator section, which explain the
-  loss. Options:
-  - a "See the month" button in the game-over modal;
-  - the regulator lines in the modal itself;
-  - leave it as it is.
-- **Closing the window.** The OS close button quits without asking. Only the in-game Menu
-  confirms.
+- **Game over shows the final month on request.** A player who loses at month close can open that
+  month's review, with its lessons and regulator section, from a *See the month* button on the
+  game-over modal. *Back* returns to the game-over modal.
+- **Closing the window doesn't confirm.** The OS close button quits without asking. Only the
+  in-game Menu confirms.
 
 ## Follow-ups
 
