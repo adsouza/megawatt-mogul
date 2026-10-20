@@ -79,6 +79,7 @@ game-over-title = Game over
 game-over-final-cash = Final cash
 game-over-reliability = Reliability
 game-over-satisfaction = Satisfaction
+game-over-see-month = See the month
 game-over-main-menu = Main menu
 
 ## Planning: map, inspector, build menu

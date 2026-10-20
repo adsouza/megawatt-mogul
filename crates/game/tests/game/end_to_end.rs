@@ -22,8 +22,8 @@ use bevy::time::TimeUpdateStrategy;
 use domain::events::DomainEvent;
 use domain::session::DayPhase;
 use game::hud::{
-    ActionSink, CommitmentForm, ToastQueue, UiAction, UiState, commitment_model, dispatch,
-    is_commitable, planning_model, review_model, speed_model, toasts_model,
+    ActionSink, CommitmentForm, GameOverView, ToastQueue, UiAction, UiState, commitment_model,
+    dispatch, is_commitable, planning_model, review_model, speed_model, toasts_model,
 };
 use game::l10n::{Localizer, Names, Toast};
 use game::paths::LogDir;
@@ -195,10 +195,14 @@ fn eight_times(app: &App) -> UiAction {
 }
 
 fn continue_from_review(app: &App) -> UiAction {
-    let review = review_model(game(app), app.world().resource::<Localizer>())
-        .expect("the month's review is up");
-    assert!(review.continue_button.enabled);
-    review.continue_button.action
+    let review = review_model(
+        game(app),
+        GameOverView::Summary,
+        app.world().resource::<Localizer>(),
+    )
+    .expect("the month's review is up");
+    assert!(review.footer_button.enabled);
+    review.footer_button.action
 }
 
 /// A headless HUD app in the main menu, recording into [`Record`], with logs under `logs`.

@@ -61,7 +61,9 @@ pub use self::frequency::{
     DialModel, DialZone, FrequencyModel, HIGH_COLOR, LOW_COLOR, NORMAL_COLOR, OutageModel,
     SHEDDING_COLOR, band_color, draw_frequency, frequency_model, frequency_model_for,
 };
-pub use self::game_over::{GameOverModel, draw_game_over, game_over_model, game_over_model_for};
+pub use self::game_over::{
+    GameOverModel, GameOverView, draw_game_over, game_over_model, game_over_model_for,
+};
 pub use self::hydro_panel::{
     HYDRO_TEXT_WIDTH, HydroModel, HydroRow, draw_hydro, hydro_model, hydro_model_for, hydro_shade,
 };
@@ -169,6 +171,7 @@ impl Plugin for HudPlugin {
             .init_resource::<MapCache>()
             .init_resource::<OpenPrompt>()
             .init_resource::<MilestonesOpen>()
+            .init_resource::<GameOverView>()
             .init_resource::<UiState>()
             .init_resource::<CommitmentForm>()
             .init_resource::<LastSpeed>()
@@ -199,6 +202,7 @@ impl Plugin for HudPlugin {
                     map::reset_cache,
                     action::close_prompt,
                     milestones::close_milestones,
+                    game_over::reset_game_over_view,
                     ui_state::reset_ui_state,
                     speed::reset_last_speed,
                     operating::reset_operating_tab,
@@ -215,6 +219,7 @@ impl Plugin for HudPlugin {
                     map::reset_cache,
                     action::close_prompt,
                     milestones::close_milestones,
+                    game_over::reset_game_over_view,
                     ui_state::reset_ui_state,
                     speed::reset_last_speed,
                     operating::reset_operating_tab,

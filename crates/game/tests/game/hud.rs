@@ -818,3 +818,55 @@ fn toasts_from_one_game_do_not_follow_into_the_next() {
         "the new game starts clean"
     );
 }
+
+// ---- the game-over view ---------------------------------------------------------------------
+
+use game::hud::GameOverView;
+
+fn game_over_view(app: &App) -> GameOverView {
+    *app.world().resource::<GameOverView>()
+}
+
+#[test]
+fn show_final_month_and_show_game_over_summary_write_the_view_through_dispatch() {
+    let logs = TempDir::new().unwrap();
+    let mut app = hud_app(&logs);
+    request(&mut app, "eastern_interconnection");
+    assert_eq!(game_over_view(&app), GameOverView::Summary);
+
+    dispatch_in(&mut app, vec![UiAction::ShowFinalMonth]);
+    assert_eq!(game_over_view(&app), GameOverView::FinalMonth);
+
+    dispatch_in(&mut app, vec![UiAction::ShowGameOverSummary]);
+    assert_eq!(game_over_view(&app), GameOverView::Summary);
+
+    // In order, in one batch: the last one wins.
+    dispatch_in(
+        &mut app,
+        vec![UiAction::ShowFinalMonth, UiAction::ShowGameOverSummary],
+    );
+    assert_eq!(game_over_view(&app), GameOverView::Summary);
+    dispatch_in(
+        &mut app,
+        vec![UiAction::ShowGameOverSummary, UiAction::ShowFinalMonth],
+    );
+    assert_eq!(game_over_view(&app), GameOverView::FinalMonth);
+}
+
+/// The view belongs to its game: one that ended on its final month's review does not leave the
+/// next game, or the menu after it, on that screen.
+#[test]
+fn each_game_starts_on_the_game_over_summary() {
+    let logs = TempDir::new().unwrap();
+    let mut app = hud_app(&logs);
+    // Left over from somewhere, which mustn't leak into the game.
+    *app.world_mut().resource_mut::<GameOverView>() = GameOverView::FinalMonth;
+    request(&mut app, "eastern_interconnection");
+    assert_eq!(game_over_view(&app), GameOverView::Summary);
+
+    dispatch_in(&mut app, vec![UiAction::ShowFinalMonth]);
+    app.world_mut().write_message(ReturnToMenu);
+    update_n(&mut app, 2);
+    assert_eq!(state(&app), AppState::MainMenu);
+    assert_eq!(game_over_view(&app), GameOverView::Summary);
+}

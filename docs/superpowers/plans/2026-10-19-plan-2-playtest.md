@@ -136,8 +136,14 @@ says otherwise. Steps that need a fresh game say so; the others follow on from t
   run to the close, click *Continue*, and repeat.
   **Expected:** a strike at each close (the top bar counts `1/3`, `2/3`); at the third close
   *Game over* opens instead of the review, with the reason (the license revoked), final cash,
-  reliability and satisfaction, and *Main menu*.
-- [ ] **6.2** Click *Main menu*.
+  reliability and satisfaction, *See the month* and *Main menu*.
+- [ ] **6.2** Click *See the month*.
+  **Expected:** the final month's *Month in review* opens over the dimmed map, with the lessons and
+  the *Regulator* section (strike 3 and its reason, and the revoked licence), and *Back* in place of
+  *Continue*. The top bar stays usable above it.
+- [ ] **6.3** Click *Back*.
+  **Expected:** the *Game over* modal returns, as before. *See the month* and *Back* can be repeated.
+- [ ] **6.4** Click *Main menu*.
   **Expected:** the main menu, with a new seed in the field.
 
 ## Known visual risks to eyeball

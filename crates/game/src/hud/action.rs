@@ -10,6 +10,7 @@ use bevy::prelude::*;
 use bevy_egui::egui;
 use domain::ids::{PlantId, RegionId};
 
+use super::game_over::GameOverView;
 use super::map::MapLayer;
 use super::milestones::MilestonesOpen;
 use super::operating::OperatingTab;
@@ -45,6 +46,10 @@ pub enum UiAction {
     ToggleWarnings,
     /// Open or close the Milestones panel.
     ToggleMilestones,
+    /// From the game-over modal, show the review of the month that ended the game.
+    ShowFinalMonth,
+    /// From that review, go back to the game-over modal.
+    ShowGameOverSummary,
     /// Change the commitment pattern being edited for a plant. Nothing reaches the game until the
     /// pattern is applied, as a `CommitPlant` command.
     EditCommitment {
@@ -169,6 +174,7 @@ pub struct ActionSink<'w> {
     layer: ResMut<'w, MapLayer>,
     prompt: ResMut<'w, OpenPrompt>,
     milestones: ResMut<'w, MilestonesOpen>,
+    game_over_view: ResMut<'w, GameOverView>,
     ui: ResMut<'w, UiState>,
     next_state: ResMut<'w, NextState<AppState>>,
 }
@@ -210,6 +216,11 @@ impl ActionSink<'_> {
         *self.milestones
     }
 
+    /// Whether a finished game shows its game-over modal or its final month's review.
+    pub fn game_over_view(&self) -> GameOverView {
+        *self.game_over_view
+    }
+
     /// The Planning panel's state: the tab, the highlighted hour and the commitment draft.
     pub fn ui_state(&self) -> &UiState {
         &self.ui
@@ -249,6 +260,8 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             UiAction::Navigate(screen) => sink.next_state.set(screen.into()),
             UiAction::Prompt(prompt) => sink.prompt.0 = prompt,
             UiAction::ToggleMilestones => sink.milestones.0 = !sink.milestones.0,
+            UiAction::ShowFinalMonth => *sink.game_over_view = GameOverView::FinalMonth,
+            UiAction::ShowGameOverSummary => *sink.game_over_view = GameOverView::Summary,
             UiAction::Quit => {
                 sink.exit.write(AppExit::Success);
             }

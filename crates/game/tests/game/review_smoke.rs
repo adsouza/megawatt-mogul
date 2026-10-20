@@ -5,8 +5,8 @@ use application::Command;
 use bevy::prelude::*;
 use bevy_egui::egui;
 use game::hud::{
-    MILESTONES_WIDTH, MilestonesOpen, REVIEW_MARGIN, REVIEW_WIDTH, Selection, ToastQueue, UiAction,
-    review_model, toasts_model,
+    GameOverView, MILESTONES_WIDTH, MilestonesOpen, REVIEW_MARGIN, REVIEW_WIDTH, Selection,
+    ToastQueue, UiAction, review_model, toasts_model,
 };
 use game::l10n::Localize;
 use game::sim::{PlayerCommand, Session, SimSpeed};
@@ -124,7 +124,12 @@ fn at_the_smallest_window_the_review_fits_with_continue_in_view() {
         // Every line of the modal is inside its width: nothing scrolls sideways. (The map behind
         // it may run labels off the screen's edge; it is dimmed and takes no clicks.)
         let l10n = shipped_l10n();
-        let model = review_model(&app.world().resource::<Session>().0, &l10n).unwrap();
+        let model = review_model(
+            &app.world().resource::<Session>().0,
+            GameOverView::Summary,
+            &l10n,
+        )
+        .unwrap();
         let mut texts: Vec<&String> = vec![&model.days_note];
         texts.extend(
             model
@@ -363,10 +368,9 @@ fn the_milestones_panel_opens_from_the_top_bar_in_every_phase() {
     assert_eq!(phase(&app), PhaseState::Review);
 }
 
-/// A month close that ends the game moves to Review too, but only the game-over modal shows.
-#[test]
-fn a_game_that_ends_at_the_month_close_shows_game_over_and_no_review() {
-    let logs = TempDir::new().unwrap();
+/// A fresh eastern game with nothing committed, played to its licence revocation: over, with the
+/// phase still Review.
+fn game_over_app(logs: &TempDir) -> App {
     let mut app = hud_app(logs.path());
     request(&mut app, EASTERN);
     let over = |app: &App| {
@@ -394,12 +398,72 @@ fn a_game_that_ends_at_the_month_close_shows_game_over_and_no_review() {
     }
     assert!(over(&app));
     assert_eq!(phase(&app), PhaseState::Review);
+    app
+}
+
+/// A month close that ends the game moves to Review too, but only the game-over modal shows.
+#[test]
+fn a_game_that_ends_at_the_month_close_shows_game_over_and_no_review() {
+    let logs = TempDir::new().unwrap();
+    let mut app = game_over_app(&logs);
     let pass = EguiPass::attach(&mut app);
 
     let widgets = pass.settled(&mut app, 1024.0, 640.0);
 
     assert!(has(&widgets, "Game over"));
     assert!(!find_button(&widgets, "Main menu").disabled);
+    assert!(!find_button(&widgets, "See the month").disabled);
     assert!(!has(&widgets, "Month in review"));
     assert!(buttons(&widgets, "Continue").is_empty());
+}
+
+/// *See the month* swaps the game-over modal for the final month's review, whose footer is *Back*
+/// (a strike's reason is what explains the loss); *Back* returns the game-over modal. Neither
+/// sends a command, and the review never offers *Continue*.
+#[test]
+fn see_the_month_shows_the_final_review_and_back_returns_to_game_over() {
+    let (width, height) = (1024.0, 640.0);
+    let logs = TempDir::new().unwrap();
+    let mut app = game_over_app(&logs);
+    let pass = EguiPass::attach(&mut app);
+    let widgets = pass.settled(&mut app, width, height);
+    // With fixed time standing still the message buffers don't turn over: count from here.
+    let commands = sent::<PlayerCommand>(&app).len();
+
+    pass.click_at(
+        &mut app,
+        width,
+        height,
+        find_button(&widgets, "See the month").rect.center(),
+    );
+
+    let widgets = pass.settled(&mut app, width, height);
+    assert!(has(&widgets, "Month in review"));
+    assert!(has(&widgets, "Regulator"));
+    let l10n = shipped_l10n();
+    let reason = l10n.text("strike-reason-unserved-energy");
+    assert!(shows(&widgets, &reason), "the strike's reason: {reason}");
+    assert!(!has(&widgets, "Game over"));
+    assert!(buttons(&widgets, "Continue").is_empty());
+    assert!(buttons(&widgets, "Main menu").is_empty());
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, height));
+    let back = find_button(&widgets, "Back");
+    assert!(!back.disabled);
+    assert!(screen.contains_rect(back.rect), "Back {:?}", back.rect);
+    assert!(
+        back.rect.bottom() <= height - REVIEW_MARGIN + 0.5,
+        "Back {:?} is inside the modal",
+        back.rect
+    );
+    assert_eq!(sent::<PlayerCommand>(&app)[commands..], []);
+
+    pass.click_at(&mut app, width, height, back.rect.center());
+
+    let widgets = pass.settled(&mut app, width, height);
+    assert!(has(&widgets, "Game over"));
+    assert!(!find_button(&widgets, "See the month").disabled);
+    assert!(!has(&widgets, "Month in review"));
+    assert_eq!(sent::<PlayerCommand>(&app)[commands..], []);
+    update_n(&mut app, 2);
+    assert_eq!(phase(&app), PhaseState::Review, "no phase change either");
 }

@@ -40,6 +40,7 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "game-over-final-cash",
     "game-over-reliability",
     "game-over-satisfaction",
+    "game-over-see-month",
     "game-over-main-menu",
     // Planning: map, inspector, build menu
     "map-label",

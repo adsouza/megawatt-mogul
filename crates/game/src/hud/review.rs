@@ -2,8 +2,12 @@
 //!
 //! In order: the P&L (weighted by the month's days, §2.3), the merit order used, reliability,
 //! the incidents timeline, the lessons, what the regulator did, and in December the rate review.
-//! *Continue* is the only way out: it sends `FinishReview`. The backdrop dims the map but not the
-//! top bar, so the menu and the milestones stay in reach.
+//! *Continue* is the way out: it sends `FinishReview`. The backdrop dims the map but not the top
+//! bar, so the menu and the milestones stay in reach.
+//!
+//! A game that ended at this month close shows this modal only when the player asks for it from
+//! the game-over modal (*See the month*, [`GameOverView::FinalMonth`]). Then the footer is *Back*,
+//! which returns to the game-over modal, and `FinishReview` is never sent: the game is over.
 
 use application::projections::Lesson;
 use application::{Command, Game};
@@ -14,6 +18,7 @@ use domain::session::{DayPhase, MonthlyReport, SessionStatus};
 use domain::units::MegawattHours;
 
 use super::action::{ActionSink, ButtonModel, UiAction, button, dispatch};
+use super::game_over::GameOverView;
 use super::layout::HudArea;
 use super::top_bar::Stat;
 use crate::l10n::{Localize, LocalizeWith, Localizer, Names, Toast, format};
@@ -23,7 +28,7 @@ use crate::sim::Session;
 pub const REVIEW_WIDTH: f32 = 640.0;
 /// The space kept clear between the modal and the edges of the dimmed area.
 pub const REVIEW_MARGIN: f32 = 16.0;
-/// The height of the separator above Continue, reserved under the scroll area.
+/// The height of the separator above the footer button, reserved under the scroll area.
 const FOOTER_SEPARATOR: f32 = 6.0;
 /// How much the backdrop darkens the map.
 const BACKDROP: egui::Color32 = egui::Color32::from_black_alpha(100);
@@ -70,15 +75,16 @@ pub struct ReviewModel {
     pub rate_review_heading: String,
     /// The annual review's result, in December only.
     pub rate_review: Option<String>,
-    /// Sends `FinishReview`.
-    pub continue_button: ButtonModel,
+    /// *Continue*, which sends `FinishReview`; after game over, *Back*, which returns to the
+    /// game-over modal.
+    pub footer_button: ButtonModel,
 }
 
-/// The modal while the month is in review; `None` otherwise, and once the game is over (its own
-/// modal is the only one then).
-pub fn review_model(game: &Game, l10n: &Localizer) -> Option<ReviewModel> {
+/// The modal while the month is in review; `None` otherwise. Once the game is over, its own modal
+/// is the only one, unless `view` asks for the final month.
+pub fn review_model(game: &Game, view: GameOverView, l10n: &Localizer) -> Option<ReviewModel> {
     let session = game.session();
-    if !review_applies(session.status(), session.phase()) {
+    if !review_applies(session.status(), session.phase(), view) {
         return None;
     }
     let projections = game.projections();
@@ -88,24 +94,34 @@ pub fn review_model(game: &Game, l10n: &Localizer) -> Option<ReviewModel> {
         projections.lessons.latest(),
         projections.regulatory.latest(),
         &Names::new(l10n, session),
+        session.status() != SessionStatus::Active,
         l10n,
     ))
 }
 
-/// Whether the Review modal shows for a game in `status` and `phase`: only in Review, and never
-/// over the game-over modal.
-pub fn review_applies(status: SessionStatus, phase: DayPhase) -> bool {
-    status == SessionStatus::Active && phase == DayPhase::Review
+/// Whether the Review modal shows for a game in `status` and `phase`, with `view` the finished
+/// game's screen: an active game in Review, or a finished game (which ends at a month close, in
+/// Review) whose player asked to see the final month. Never over the game-over modal.
+pub fn review_applies(status: SessionStatus, phase: DayPhase, view: GameOverView) -> bool {
+    if phase != DayPhase::Review {
+        return false;
+    }
+    match status {
+        SessionStatus::Active => true,
+        SessionStatus::GameOver(_) => view == GameOverView::FinalMonth,
+    }
 }
 
 /// The modal for `report`, its `lessons`, and the `regulatory` events of the same month close.
 /// A strike's reason comes from its `StrikeIssued` event, never from the frequency lesson's
-/// `notice` flag, which can't tell which test the month's one strike was for.
+/// `notice` flag, which can't tell which test the month's one strike was for. `game_over` is
+/// whether the game ended at this close, which changes the footer to *Back*.
 pub fn review_model_for(
     report: &MonthlyReport,
     lessons: &[Lesson],
     regulatory: &[DomainEvent],
     names: &Names,
+    game_over: bool,
     l10n: &Localizer,
 ) -> ReviewModel {
     let stat = |key: &str, value: String| Stat {
@@ -207,10 +223,14 @@ pub fn review_model_for(
                 ],
             )
         }),
-        continue_button: ButtonModel::new(
-            l10n.text("ui-continue"),
-            UiAction::Command(Command::FinishReview),
-        ),
+        footer_button: if game_over {
+            ButtonModel::new(l10n.text("ui-back"), UiAction::ShowGameOverSummary)
+        } else {
+            ButtonModel::new(
+                l10n.text("ui-continue"),
+                UiAction::Command(Command::FinishReview),
+            )
+        },
     }
 }
 
@@ -225,7 +245,7 @@ pub fn review_rect(behind: egui::Rect) -> egui::Rect {
     )
 }
 
-/// The heading, the sections in a vertical scroll area, and *Continue* pinned below it. Fills the
+/// The heading, the sections in a vertical scroll area, and its footer button pinned below it. Fills the
 /// height it is given, so the system sets that.
 pub fn draw_review(ui: &mut egui::Ui, model: &ReviewModel) -> Vec<UiAction> {
     let mut actions = Vec::new();
@@ -235,7 +255,7 @@ pub fn draw_review(ui: &mut egui::Ui, model: &ReviewModel) -> Vec<UiAction> {
     });
     ui.separator();
     let spacing = ui.spacing();
-    // The separator and Continue's row below the scroll area, with the gaps between them.
+    // The separator and the footer button's row below the scroll area, with the gaps between them.
     let footer = FOOTER_SEPARATOR + spacing.interact_size.y + 3.0 * spacing.item_spacing.y;
     egui::ScrollArea::vertical()
         .id_salt("review_sections")
@@ -244,7 +264,7 @@ pub fn draw_review(ui: &mut egui::Ui, model: &ReviewModel) -> Vec<UiAction> {
         .show(ui, |ui| draw_sections(ui, model));
     ui.add(egui::Separator::default().spacing(FOOTER_SEPARATOR));
     ui.vertical_centered(|ui| {
-        button(ui, &model.continue_button, &mut actions);
+        button(ui, &model.footer_button, &mut actions);
     });
     actions
 }
@@ -315,7 +335,7 @@ fn draw_sections(ui: &mut egui::Ui, model: &ReviewModel) {
 }
 
 /// Dims the map under the top bar (a backdrop that takes clicks and does nothing with them, so
-/// only Continue leaves Review) and draws the modal over it, in one layer under the floating
+/// only the footer button leaves Review) and draws the modal over it, in one layer under the floating
 /// windows.
 pub(super) fn review_modal(
     mut contexts: EguiContexts,
@@ -324,7 +344,7 @@ pub(super) fn review_modal(
     l10n: Res<Localizer>,
     mut sink: ActionSink,
 ) -> Result {
-    let Some(model) = review_model(&session.0, &l10n) else {
+    let Some(model) = review_model(&session.0, sink.game_over_view(), &l10n) else {
         return Ok(());
     };
     let ctx = contexts.ctx_mut()?;
@@ -388,6 +408,22 @@ mod tests {
         game
     }
 
+    /// An eastern game with nothing committed, played until the regulator revokes the licence at
+    /// a month close: over, with its final month's report as the latest.
+    fn finished_game() -> Game {
+        let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        for _ in 0..3 {
+            game.execute(Command::BeginOperating).unwrap();
+            game.execute(Command::AdvanceTicks { n: TICKS_PER_DAY })
+                .unwrap();
+            if matches!(game.session().status(), SessionStatus::GameOver(_)) {
+                return game;
+            }
+            game.execute(Command::FinishReview).unwrap();
+        }
+        panic!("the licence is revoked by the third close");
+    }
+
     /// A quiet month to vary one field at a time.
     fn report() -> MonthlyReport {
         MonthlyReport {
@@ -430,6 +466,7 @@ mod tests {
             &[Lesson::AllClear],
             regulatory,
             &Names::empty(l10n),
+            false,
             l10n,
         )
     }
@@ -440,7 +477,8 @@ mod tests {
         let game = reviewed_game();
         let report = game.projections().monthly_reports.latest().unwrap();
 
-        let model = review_model(&game, &l10n).expect("the month is in review");
+        let model =
+            review_model(&game, GameOverView::Summary, &l10n).expect("the month is in review");
 
         let lines: Vec<(&str, &str)> = model
             .pnl
@@ -546,7 +584,14 @@ mod tests {
             notice: false,
         }];
 
-        let model = review_model_for(&failed, &lessons, &[strike], &Names::empty(&l10n), &l10n);
+        let model = review_model_for(
+            &failed,
+            &lessons,
+            &[strike],
+            &Names::empty(&l10n),
+            false,
+            &l10n,
+        );
 
         assert_eq!(model.regulatory.len(), 1);
         let line = &model.regulatory[0];
@@ -600,7 +645,7 @@ mod tests {
             "{events:?}"
         );
 
-        let model = review_model(&game, &l10n).unwrap();
+        let model = review_model(&game, GameOverView::Summary, &l10n).unwrap();
 
         let names = Names::new(&l10n, game.session());
         let expected: Vec<String> = events
@@ -622,14 +667,42 @@ mod tests {
         let l10n = shipped_l10n();
         let game = reviewed_game();
 
-        let model = review_model(&game, &l10n).unwrap();
+        let model = review_model(&game, GameOverView::Summary, &l10n).unwrap();
 
-        assert_eq!(model.continue_button.label, "Continue");
+        assert_eq!(model.footer_button.label, "Continue");
         assert_eq!(
-            model.continue_button.action,
+            model.footer_button.action,
             UiAction::Command(Command::FinishReview)
         );
-        assert!(model.continue_button.enabled);
+        assert!(model.footer_button.enabled);
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    #[test]
+    fn after_game_over_the_footer_is_back_to_the_summary_never_finish_review() {
+        let l10n = shipped_l10n();
+        let lessons = [Lesson::AllClear];
+        let names = Names::empty(&l10n);
+
+        let over = review_model_for(&report(), &lessons, &[], &names, true, &l10n);
+        let running = review_model_for(&report(), &lessons, &[], &names, false, &l10n);
+
+        assert_eq!(over.footer_button.label, "Back");
+        assert_eq!(over.footer_button.action, UiAction::ShowGameOverSummary);
+        assert!(over.footer_button.enabled);
+        assert_eq!(running.footer_button.label, "Continue");
+        assert_eq!(
+            running.footer_button.action,
+            UiAction::Command(Command::FinishReview)
+        );
+        // Only the footer differs.
+        assert_eq!(
+            ReviewModel {
+                footer_button: running.footer_button.clone(),
+                ..over
+            },
+            running
+        );
         assert_eq!(l10n.problems(), vec![]);
     }
 
@@ -637,18 +710,54 @@ mod tests {
     fn the_review_shows_only_in_review_and_never_over_game_over() {
         let l10n = shipped_l10n();
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
-        assert_eq!(review_model(&game, &l10n), None, "Planning");
+        assert_eq!(
+            review_model(&game, GameOverView::Summary, &l10n),
+            None,
+            "Planning"
+        );
 
-        assert!(review_applies(SessionStatus::Active, DayPhase::Review));
-        for phase in [DayPhase::Planning, DayPhase::Operating] {
-            assert!(!review_applies(SessionStatus::Active, phase));
-        }
-        for reason in [GameOverReason::Bankrupt, GameOverReason::LicenseRevoked] {
-            assert!(!review_applies(
-                SessionStatus::GameOver(reason),
-                DayPhase::Review
+        use GameOverView::{FinalMonth, Summary};
+        // A running game: in Review only, whatever the (stale) game-over view says.
+        for view in [Summary, FinalMonth] {
+            assert!(review_applies(
+                SessionStatus::Active,
+                DayPhase::Review,
+                view
             ));
+            for phase in [DayPhase::Planning, DayPhase::Operating] {
+                assert!(!review_applies(SessionStatus::Active, phase, view));
+            }
         }
+        // A finished game: only when the player asked for the final month.
+        for reason in [GameOverReason::Bankrupt, GameOverReason::LicenseRevoked] {
+            let over = SessionStatus::GameOver(reason);
+            assert!(review_applies(over, DayPhase::Review, FinalMonth));
+            assert!(!review_applies(over, DayPhase::Review, Summary));
+        }
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    #[test]
+    fn a_finished_game_reviews_its_final_month_only_on_request() {
+        let l10n = shipped_l10n();
+        let game = finished_game();
+        let report = game.projections().monthly_reports.latest().unwrap();
+
+        assert_eq!(review_model(&game, GameOverView::Summary, &l10n), None);
+        let model =
+            review_model(&game, GameOverView::FinalMonth, &l10n).expect("the final month's review");
+
+        assert_eq!(model.month, format::month_year(report.month));
+        assert_eq!(model.footer_button.label, "Back");
+        assert_eq!(model.footer_button.action, UiAction::ShowGameOverSummary);
+        assert!(
+            model
+                .regulatory
+                .iter()
+                .any(|line| line.contains(&l10n.text("strike-reason-unserved-energy"))),
+            "{:?}",
+            model.regulatory
+        );
         assert_eq!(l10n.problems(), vec![]);
     }
 

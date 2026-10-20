@@ -19,17 +19,17 @@ use bevy_egui::egui;
 use domain::ids::{CellCoord, RegionId};
 use domain::session::{GameOverReason, GameSettings};
 use game::hud::{
-    ActionSink, BUILD_PANEL_WIDTH, ButtonModel, CommitmentForm, HudArea, INSPECTOR_PANEL_WIDTH,
-    InspectorModel, LastSpeed, LinePreview, LineSection, MapCache, MapLayer, MapLayout, MenuForm,
-    MenuScreen, MilestonesOpen, OPERATING_LOG_WIDTH, OPERATING_PANEL_HEIGHT, OPERATING_SIDE_WIDTH,
-    OpenPrompt, OperatingTab, PLANNING_PANEL_HEIGHT, PlanningTab, PlantPanelForm, PlantPanelModel,
-    PlantSection, Prompt, RegionListings, Selection, ToastQueue, UiAction, UiState,
-    boot_error_model, build_model, button, dispatch, draw_boot_error, draw_build, draw_game_over,
-    draw_inspector, draw_main_menu, draw_map, draw_planning, draw_plant_panel, draw_prompt,
-    draw_region_select, draw_speed, draw_toasts, draw_top_bar, draw_warnings, game_over_model_for,
-    hit_test, inspector_model, is_commitable, main_menu_model, map_model, planning_model,
-    plant_half_size, plant_panel_model, prompt_model, region_select_model, speed_model,
-    toasts_model, top_bar_model, warnings_for,
+    ActionSink, BUILD_PANEL_WIDTH, ButtonModel, CommitmentForm, GameOverView, HudArea,
+    INSPECTOR_PANEL_WIDTH, InspectorModel, LastSpeed, LinePreview, LineSection, MapCache, MapLayer,
+    MapLayout, MenuForm, MenuScreen, MilestonesOpen, OPERATING_LOG_WIDTH, OPERATING_PANEL_HEIGHT,
+    OPERATING_SIDE_WIDTH, OpenPrompt, OperatingTab, PLANNING_PANEL_HEIGHT, PlanningTab,
+    PlantPanelForm, PlantPanelModel, PlantSection, Prompt, RegionListings, Selection, ToastQueue,
+    UiAction, UiState, boot_error_model, build_model, button, dispatch, draw_boot_error,
+    draw_build, draw_game_over, draw_inspector, draw_main_menu, draw_map, draw_planning,
+    draw_plant_panel, draw_prompt, draw_region_select, draw_speed, draw_toasts, draw_top_bar,
+    draw_warnings, game_over_model_for, hit_test, inspector_model, is_commitable, main_menu_model,
+    map_model, planning_model, plant_half_size, plant_panel_model, prompt_model,
+    region_select_model, speed_model, toasts_model, top_bar_model, warnings_for,
 };
 use game::l10n::Localize;
 use game::sim::{NewGameRequest, PlayerCommand, ReturnToMenu, Session, SimSpeed};
@@ -268,6 +268,7 @@ fn the_game_over_modal_returns_to_the_menu() {
     let model = game_over_model_for(
         GameOverReason::Bankrupt,
         &game.session().company_view(),
+        true,
         &l10n,
     );
     let harness = Harness::new();
@@ -282,6 +283,24 @@ fn the_game_over_modal_returns_to_the_menu() {
         harness.click("Main menu", draw),
         vec![UiAction::ReturnToMenu]
     );
+    assert_eq!(
+        harness.click("See the month", draw),
+        vec![UiAction::ShowFinalMonth]
+    );
+
+    // Without a report there is nothing to see.
+    let model = game_over_model_for(
+        GameOverReason::Bankrupt,
+        &game.session().company_view(),
+        false,
+        &l10n,
+    );
+    let draw = |ui: &mut egui::Ui| {
+        egui::Modal::new(egui::Id::new("game_over"))
+            .show(ui.ctx(), |ui| draw_game_over(ui, &model))
+            .inner
+    };
+    assert!(!shows(&harness.draw(draw), "See the month"));
 }
 
 #[test]
@@ -2075,6 +2094,7 @@ fn dispatch_is_the_one_mapping_from_actions_to_messages() {
         .init_resource::<MapLayer>()
         .init_resource::<OpenPrompt>()
         .init_resource::<MilestonesOpen>()
+        .init_resource::<GameOverView>()
         .init_resource::<UiState>()
         .init_resource::<LastSpeed>()
         .init_resource::<OperatingTab>();
@@ -2134,6 +2154,20 @@ fn dispatch_is_the_one_mapping_from_actions_to_messages() {
         MilestonesOpen(false),
         "the second click closes it"
     );
+    assert_eq!(
+        *app.world().resource::<GameOverView>(),
+        GameOverView::Summary
+    );
+    dispatch_in(&mut app, vec![UiAction::ShowFinalMonth]);
+    assert_eq!(
+        *app.world().resource::<GameOverView>(),
+        GameOverView::FinalMonth
+    );
+    dispatch_in(&mut app, vec![UiAction::ShowGameOverSummary]);
+    assert_eq!(
+        *app.world().resource::<GameOverView>(),
+        GameOverView::Summary
+    );
 }
 
 #[test]
@@ -2144,6 +2178,7 @@ fn navigating_moves_between_the_menu_screens() {
         .init_resource::<MapLayer>()
         .init_resource::<OpenPrompt>()
         .init_resource::<MilestonesOpen>()
+        .init_resource::<GameOverView>()
         .init_resource::<UiState>()
         .init_resource::<LastSpeed>()
         .init_resource::<OperatingTab>();

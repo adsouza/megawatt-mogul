@@ -1,4 +1,5 @@
-//! The game-over modal: why the game ended, the final scores, and the way back to the menu.
+//! The game-over modal: why the game ended, the final scores, the way to the final month's review
+//! (*See the month*), and the way back to the menu.
 
 use application::Game;
 use bevy::prelude::*;
@@ -10,6 +11,21 @@ use super::top_bar::Stat;
 use crate::l10n::{Localize, Localizer, format};
 use crate::sim::Session;
 
+/// What a finished game shows: the game-over modal, or the final month's review (the lessons and
+/// the regulator's section that explain the loss). Written by `dispatch`, reset with each game.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GameOverView {
+    /// The game-over modal.
+    #[default]
+    Summary,
+    /// The Review modal for the month that ended the game, with *Back* in place of *Continue*.
+    FinalMonth,
+}
+
+pub(super) fn reset_game_over_view(mut view: ResMut<GameOverView>) {
+    *view = GameOverView::Summary;
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct GameOverModel {
     pub title: String,
@@ -17,6 +33,8 @@ pub struct GameOverModel {
     pub cash: Stat,
     pub reliability: Stat,
     pub satisfaction: Stat,
+    /// Opens the final month's review. `None` when there is no monthly report to show.
+    pub see_month: Option<ButtonModel>,
     pub main_menu: ButtonModel,
 }
 
@@ -26,16 +44,24 @@ pub fn game_over_model(game: &Game, l10n: &Localizer) -> Option<GameOverModel> {
     match session.status() {
         SessionStatus::Active => None,
         SessionStatus::GameOver(reason) => {
-            Some(game_over_model_for(reason, &session.company_view(), l10n))
+            let has_report = game.projections().monthly_reports.latest().is_some();
+            Some(game_over_model_for(
+                reason,
+                &session.company_view(),
+                has_report,
+                l10n,
+            ))
         }
     }
 }
 
-/// The modal for a game that ended for `reason` with the scores in `company`. Split from
+/// The modal for a game that ended for `reason` with the scores in `company`; `has_report` is
+/// whether a monthly report exists for *See the month* to open. Split from
 /// [`game_over_model`] because a finished `Game` takes months of play to reach.
 pub fn game_over_model_for(
     reason: GameOverReason,
     company: &CompanyView,
+    has_report: bool,
     l10n: &Localizer,
 ) -> GameOverModel {
     let stat = |key: &str, value: String| Stat {
@@ -54,6 +80,8 @@ pub fn game_over_model_for(
             "game-over-satisfaction",
             format::score(company.satisfaction),
         ),
+        see_month: has_report
+            .then(|| ButtonModel::new(l10n.text("game-over-see-month"), UiAction::ShowFinalMonth)),
         main_menu: ButtonModel::new(l10n.text("game-over-main-menu"), UiAction::ReturnToMenu),
     }
 }
@@ -78,6 +106,9 @@ pub fn draw_game_over(ui: &mut egui::Ui, model: &GameOverModel) -> Vec<UiAction>
         });
     ui.add_space(12.0);
     ui.vertical_centered(|ui| {
+        if let Some(see_month) = &model.see_month {
+            button(ui, see_month, &mut actions);
+        }
         button(ui, &model.main_menu, &mut actions);
     });
     actions
@@ -89,6 +120,10 @@ pub(super) fn game_over_modal(
     l10n: Res<Localizer>,
     mut sink: ActionSink,
 ) -> Result {
+    // The final month's review stands in for the modal until *Back*.
+    if sink.game_over_view() == GameOverView::FinalMonth {
+        return Ok(());
+    }
     let Some(model) = game_over_model(&session.0, &l10n) else {
         return Ok(());
     };
@@ -116,7 +151,7 @@ mod tests {
             (GameOverReason::Bankrupt, "game-over-bankrupt"),
             (GameOverReason::LicenseRevoked, "game-over-license-revoked"),
         ] {
-            let model = game_over_model_for(reason, &company, &l10n);
+            let model = game_over_model_for(reason, &company, true, &l10n);
 
             assert_eq!(model.title, l10n.text("game-over-title"));
             assert_eq!(model.reason, l10n.text(key));
@@ -133,6 +168,28 @@ mod tests {
             assert_eq!(model.main_menu.action, UiAction::ReturnToMenu);
         }
         assert_eq!(l10n.problems(), vec![]);
+    }
+
+    #[test]
+    fn see_the_month_shows_only_when_there_is_a_report_to_show() {
+        let l10n = shipped_l10n();
+        let game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let company = game.session().company_view();
+
+        let with = game_over_model_for(GameOverReason::Bankrupt, &company, true, &l10n);
+        let without = game_over_model_for(GameOverReason::Bankrupt, &company, false, &l10n);
+
+        let button = with.see_month.expect("a report exists");
+        assert_eq!(button.label, "See the month");
+        assert_eq!(button.action, UiAction::ShowFinalMonth);
+        assert!(button.enabled);
+        assert_eq!(without.see_month, None);
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    #[test]
+    fn the_view_starts_on_the_summary() {
+        assert_eq!(GameOverView::default(), GameOverView::Summary);
     }
 
     #[test]
