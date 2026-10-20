@@ -701,3 +701,95 @@ fn overbuild_idle_capacity_disallowance() {
         last_report,
     });
 }
+
+/// Each plant's revenue in its `PlantHistory` for the month that just closed: what the history
+/// gained since `before`, by plant, for every plant in the month's merit order.
+fn plant_revenue_since(game: &Game, before: &[(PlantId, Money)]) -> Vec<(PlantId, Money)> {
+    latest_report(game)
+        .merit_order
+        .iter()
+        .map(|entry| {
+            let now = game
+                .projections()
+                .plant_history
+                .get(entry.plant)
+                .map_or(Money::ZERO, |history| history.revenue);
+            let was = before
+                .iter()
+                .find(|(plant, _)| *plant == entry.plant)
+                .map_or(Money::ZERO, |(_, revenue)| *revenue);
+            (entry.plant, now - was)
+        })
+        .collect()
+}
+
+/// The plant history's revenue across the first December review, on a whole game: December's
+/// energy earns the tariff December was sold at, the one in force before the review, and
+/// January's earns the tariff the review set. The domain emits `RateReviewCompleted` before
+/// December's `MonthClosed`, and the projection relies on that order: the review's tariff is
+/// adopted only after the month it closes with is priced.
+#[test]
+fn plant_revenue_takes_the_reviewed_tariff_from_the_january_after_the_review() {
+    let mut parts = support::winter_peak();
+    let year = parts.start.month.year();
+    parts.start.month = SimMonth::new(year, 12).unwrap();
+    let (mut g, _) = game_on(parts, 5);
+    let before_review = g.session().company_view().tariff;
+
+    let december = play_month(&mut g, auto_follow_all);
+
+    let reviewed = december
+        .iter()
+        .find_map(|event| match event {
+            DomainEvent::RateReviewCompleted { tariff, .. } => Some(*tariff),
+            _ => None,
+        })
+        .expect("December closes with the rate review");
+    assert_ne!(reviewed, before_review, "the review moves the tariff");
+    assert_eq!(g.session().company_view().tariff, reviewed);
+    let report = latest_report(&g).clone();
+    assert_eq!(report.month.month(), 12);
+    let december_revenue = plant_revenue_since(&g, &[]);
+    assert!(
+        report.merit_order.iter().any(
+            |entry| before_review.cost_of(entry.energy, 1) != reviewed.cost_of(entry.energy, 1)
+        ),
+        "some plant's December revenue tells the two tariffs apart"
+    );
+    let at_old: Vec<(PlantId, Money)> = report
+        .merit_order
+        .iter()
+        .map(|entry| (entry.plant, before_review.cost_of(entry.energy, 1)))
+        .collect();
+    assert_eq!(
+        december_revenue, at_old,
+        "December is sold at the old tariff"
+    );
+
+    let after_december: Vec<(PlantId, Money)> = g
+        .session()
+        .plant_views()
+        .iter()
+        .filter_map(|plant| {
+            g.projections()
+                .plant_history
+                .get(plant.id)
+                .map(|history| (plant.id, history.revenue))
+        })
+        .collect();
+    play_month(&mut g, auto_follow_all);
+
+    let report = latest_report(&g).clone();
+    assert_eq!(report.month.month(), 1);
+    let at_new: Vec<(PlantId, Money)> = report
+        .merit_order
+        .iter()
+        .map(|entry| (entry.plant, reviewed.cost_of(entry.energy, 1)))
+        .collect();
+    assert!(at_new.iter().any(|(_, revenue)| *revenue > Money::ZERO));
+    assert_eq!(
+        plant_revenue_since(&g, &after_december),
+        at_new,
+        "January is the first month at the reviewed tariff"
+    );
+}
