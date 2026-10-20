@@ -16,12 +16,13 @@ use bevy_egui::egui;
 use domain::ids::{CellCoord, RegionId};
 use domain::session::{GameOverReason, GameSettings};
 use game::hud::{
-    ActionSink, BUILD_PANEL_WIDTH, ButtonModel, HudArea, INSPECTOR_PANEL_WIDTH, InspectorModel,
-    LinePreview, LineSection, MapCache, MapLayer, MapLayout, MenuForm, MenuScreen, OpenPrompt,
-    PlantSection, Prompt, RegionListings, Selection, ToastQueue, UiAction, boot_error_model,
-    build_model, button, dispatch, draw_boot_error, draw_build, draw_game_over, draw_inspector,
-    draw_main_menu, draw_map, draw_prompt, draw_region_select, draw_toasts, draw_top_bar,
-    game_over_model_for, hit_test, inspector_model, main_menu_model, map_model, plant_half_size,
+    ActionSink, BUILD_PANEL_WIDTH, ButtonModel, CommitmentForm, HudArea, INSPECTOR_PANEL_WIDTH,
+    InspectorModel, LinePreview, LineSection, MapCache, MapLayer, MapLayout, MenuForm, MenuScreen,
+    OpenPrompt, PLANNING_PANEL_HEIGHT, PlanningTab, PlantSection, Prompt, RegionListings,
+    Selection, ToastQueue, UiAction, UiState, boot_error_model, build_model, button, dispatch,
+    draw_boot_error, draw_build, draw_game_over, draw_inspector, draw_main_menu, draw_map,
+    draw_planning, draw_prompt, draw_region_select, draw_toasts, draw_top_bar, game_over_model_for,
+    hit_test, inspector_model, main_menu_model, map_model, planning_model, plant_half_size,
     prompt_model, region_select_model, toasts_model, top_bar_model,
 };
 use game::l10n::Localize;
@@ -703,16 +704,34 @@ fn a_plant_section_without_a_cell_asks_for_one() {
     assert!(buttons(&widgets, "Build plant").is_empty());
 }
 
-/// The planning screen as its systems lay it out: the top bar, then the inspector and the build
-/// menu claiming the sides, then the map filling what is left.
+/// What the Planning panel remembers between frames, as the game's `UiState` and
+/// `CommitmentForm` resources do. A test applies the actions a click returns, as `dispatch` does.
+#[derive(Default)]
+struct PlanningState {
+    ui: UiState,
+    form: CommitmentForm,
+}
+
+impl PlanningState {
+    fn apply(&mut self, actions: &[UiAction]) {
+        for action in actions {
+            self.ui.apply(action);
+        }
+    }
+}
+
+/// The planning screen as its systems lay it out: the top bar, then the Planning panel along the
+/// bottom, the inspector and the build menu claiming the sides, and the map filling what is left.
 fn planning_screen(
     ui: &mut egui::Ui,
     game: &Game,
     selection: Selection,
     cache: &mut MapCache,
+    planning: &mut PlanningState,
 ) -> Vec<UiAction> {
     let l10n = shipped_l10n();
     let bar = top_bar_model(game, &l10n);
+    let panel = planning_model(game, &l10n, &planning.ui, &planning.form).unwrap();
     let inspector = inspector_model(game, &l10n, selection).unwrap();
     let build = build_model(game, &l10n, selection).unwrap();
     let map = map_model(game, &l10n, MapLayer::Terrain, selection);
@@ -723,6 +742,17 @@ fn planning_screen(
     actions.extend(
         egui::Panel::top("top_bar")
             .show(&mut root, |ui| draw_top_bar(ui, &bar))
+            .inner,
+    );
+    area.claim(&root);
+    let mut root = area.root_ui(&ctx, "planning");
+    actions.extend(
+        egui::Panel::bottom("planning")
+            .resizable(false)
+            .exact_size(PLANNING_PANEL_HEIGHT)
+            .show(&mut root, |ui| {
+                draw_planning(ui, &panel, &mut planning.form)
+            })
             .inner,
     );
     area.claim(&root);
@@ -761,7 +791,16 @@ fn the_planning_screen_gives_the_map_the_space_the_panels_leave() {
     let selection = Selection::Cell(land);
     let harness = Harness::new();
     let cache = RefCell::new(MapCache::default());
-    let draw = |ui: &mut egui::Ui| planning_screen(ui, &game, selection, &mut cache.borrow_mut());
+    let state = RefCell::new(PlanningState::default());
+    let draw = |ui: &mut egui::Ui| {
+        planning_screen(
+            ui,
+            &game,
+            selection,
+            &mut cache.borrow_mut(),
+            &mut state.borrow_mut(),
+        )
+    };
 
     let widgets = harness.draw(draw);
 
@@ -823,12 +862,20 @@ fn the_map_does_not_move_when_the_selection_changes_kind() {
     // One harness throughout, so egui's remembered panel sizes carry from frame to frame.
     let harness = Harness::new();
     let cache = RefCell::new(MapCache::default());
+    let state = RefCell::new(PlanningState::default());
 
     let rects: Vec<_> = selections
         .into_iter()
         .map(|selection| {
-            let widgets =
-                harness.draw(|ui| planning_screen(ui, &game, selection, &mut cache.borrow_mut()));
+            let widgets = harness.draw(|ui| {
+                planning_screen(
+                    ui,
+                    &game,
+                    selection,
+                    &mut cache.borrow_mut(),
+                    &mut state.borrow_mut(),
+                )
+            });
             widget(&widgets, "Map").rect
         })
         .collect();
@@ -836,6 +883,493 @@ fn the_map_does_not_move_when_the_selection_changes_kind() {
     assert!(
         rects.windows(2).all(|pair| pair[0] == pair[1]),
         "the map moved: {rects:?}"
+    );
+}
+
+// ---- the planning panel ---------------------------------------------------------------------
+
+/// The first land cell, which both shipped regions have, to select on the map.
+fn some_land(game: &Game) -> CellCoord {
+    let terrain = game.session().region().terrain();
+    (0..terrain.height())
+        .flat_map(|y| (0..terrain.width()).map(move |x| CellCoord { x, y }))
+        .find(|at| terrain.get(*at).unwrap().land)
+        .expect("the region has land")
+}
+
+/// The names of the grid's rows, top to bottom: the hour-0 cell of each row is `<name> at 00:00:
+/// off` (nothing is committed at the start), and AccessKit lists widgets in no promised order.
+fn row_names(widgets: &[crate::support::egui_harness::Widget]) -> Vec<String> {
+    let mut cells: Vec<_> = widgets
+        .iter()
+        .filter_map(|w| Some((w.text.strip_suffix(" at 00:00: off")?, w.rect)))
+        .collect();
+    cells.sort_by(|a, b| a.1.top().partial_cmp(&b.1.top()).expect("finite"));
+    cells.into_iter().map(|(name, _)| name.to_owned()).collect()
+}
+
+/// The plant a row's name (as `Names` spells it) stands for.
+fn plant_named(game: &Game, name: &str) -> domain::ids::PlantId {
+    let l10n = shipped_l10n();
+    let names = game::l10n::Names::new(&l10n, game.session());
+    game.session()
+        .plant_views()
+        .iter()
+        .find(|plant| names.plant(plant.id) == name)
+        .unwrap_or_else(|| panic!("no plant is named {name:?}"))
+        .id
+}
+
+/// A planning screen of one game, drawn by one harness so egui's remembered sizes carry over.
+struct PlanningScreen {
+    game: Game,
+    harness: Harness,
+    cache: RefCell<MapCache>,
+    state: RefCell<PlanningState>,
+    selection: Selection,
+}
+
+impl PlanningScreen {
+    fn new(game: Game, harness: Harness) -> Self {
+        let selection = Selection::Cell(some_land(&game));
+        Self {
+            game,
+            harness,
+            cache: RefCell::default(),
+            state: RefCell::default(),
+            selection,
+        }
+    }
+
+    fn draw_fn(&self) -> impl FnMut(&mut egui::Ui) -> Vec<UiAction> + '_ {
+        |ui| {
+            planning_screen(
+                ui,
+                &self.game,
+                self.selection,
+                &mut self.cache.borrow_mut(),
+                &mut self.state.borrow_mut(),
+            )
+        }
+    }
+
+    /// Draws until the layout settles (egui sizes some widgets from the previous frame).
+    fn widgets(&self) -> Vec<crate::support::egui_harness::Widget> {
+        self.harness.draw(self.draw_fn());
+        self.harness.draw(self.draw_fn())
+    }
+
+    /// Clicks the `n`th button labelled `label`, then applies the actions as `dispatch` would.
+    fn click_nth(&self, label: &str, n: usize) -> Vec<UiAction> {
+        let actions = self.harness.click_nth(label, n, self.draw_fn());
+        self.state.borrow_mut().apply(&actions);
+        actions
+    }
+
+    fn click(&self, label: &str) -> Vec<UiAction> {
+        self.click_nth(label, 0)
+    }
+}
+
+/// The smallest window the game allows is 1024×640. At that size the map still has room, the
+/// grid has all 24 hours and the first row's controls on screen, and no panel's widgets sit on
+/// another's or on the map.
+#[test]
+fn at_the_smallest_window_the_map_the_panels_and_the_grid_all_fit_without_overlap() {
+    for region in [EASTERN, WESTERN] {
+        let screen = PlanningScreen::new(game_in(region), Harness::with_screen(1024.0, 640.0));
+        let screen_rect = screen.harness.screen_rect();
+
+        let widgets = screen.widgets();
+
+        let map = widget(&widgets, "Map").rect;
+        let menu = find_button(&widgets, "Menu").rect;
+        // The inspector's title heads its column; its Close button is further down, in the
+        // scrolling part, and may be out of view.
+        let inspector = widgets
+            .iter()
+            .find(|w| w.text.starts_with("Cell ("))
+            .expect("the inspector's title")
+            .rect;
+        let build = buttons(&widgets, "Build plant")[0].rect;
+        let tabs = ["Commitments", "Forecast", "Tariff"].map(|tab| find_button(&widgets, tab).rect);
+        let begin = find_button(&widgets, "Start the day").rect;
+        assert!(
+            map.width() >= 400.0 && map.height() >= 270.0,
+            "{region}: the map is {map:?}"
+        );
+        assert!(
+            map.top() >= menu.bottom(),
+            "{region}: the map is under the top bar"
+        );
+        assert!(
+            map.left() >= inspector.right(),
+            "{region}: the map is right of the inspector"
+        );
+        assert!(
+            map.right() <= build.left(),
+            "{region}: the map is left of the build menu"
+        );
+        assert!(
+            tabs.iter()
+                .chain([&begin])
+                .all(|rect| map.bottom() <= rect.top()),
+            "{region}: the map is above the Planning panel: {map:?} {tabs:?}"
+        );
+
+        // The grid: all 24 hour headers, and the first plant's 24 cells and controls.
+        let hours: Vec<_> = (0..24)
+            .map(|hour| format!("Show {hour:02}:00 in the grid"))
+            .map(|label| find_button(&widgets, &label).rect)
+            .collect();
+        let first_cell = hours[0];
+        let all_day = buttons(&widgets, "All day")[0].rect;
+        let off = buttons(&widgets, "Off")[0].rect;
+        let agc = buttons(&widgets, "AGC")[0].rect;
+        let set = buttons(&widgets, "Set")[0].rect;
+        let cell_prefix = row_names(&widgets).remove(0);
+        let cells: Vec<_> = (0..24)
+            .map(|hour| find_button(&widgets, &format!("{cell_prefix} at {hour:02}:00: off")).rect)
+            .collect();
+        let mut on_screen: Vec<egui::Rect> =
+            vec![menu, inspector, build, begin, all_day, off, agc, set];
+        on_screen.extend(tabs);
+        on_screen.extend(&hours);
+        on_screen.extend(&cells);
+        for rect in &on_screen {
+            assert!(
+                screen_rect.contains_rect(*rect),
+                "{region}: {rect:?} is off screen"
+            );
+        }
+        assert!(
+            first_cell.width() >= 12.0,
+            "{region}: an hour is {first_cell:?}"
+        );
+
+        // Nothing sits on anything else: the panel's widgets and the side panels' keep clear of
+        // the map and of each other.
+        let mut all: Vec<(&str, egui::Rect)> = vec![
+            ("map", map),
+            ("menu", menu),
+            ("inspector", inspector),
+            ("build", build),
+            ("begin", begin),
+            ("all day", all_day),
+            ("off", off),
+            ("agc", agc),
+            ("set", set),
+        ];
+        all.extend(tabs.iter().map(|rect| ("tab", *rect)));
+        all.extend(hours.iter().map(|rect| ("header", *rect)));
+        all.extend(cells.iter().map(|rect| ("cell", *rect)));
+        for (i, (a_name, a)) in all.iter().enumerate() {
+            for (b_name, b) in &all[i + 1..] {
+                assert!(
+                    !a.intersects(*b),
+                    "{region}: {a_name} {a:?} overlaps {b_name} {b:?}"
+                );
+            }
+        }
+    }
+}
+
+/// The map's place is set by the side panels and the bottom panel, all fixed: opening a tab,
+/// editing a row or tinting an hour must not move it.
+#[test]
+fn the_map_does_not_move_when_the_planning_panel_changes() {
+    let screen = PlanningScreen::new(eastern_game(), Harness::with_screen(1024.0, 640.0));
+    let before = widget(&screen.widgets(), "Map").rect;
+    let plant = plant_named(&screen.game, &row_names(&screen.widgets()).remove(0));
+
+    let states = [
+        vec![UiAction::SetPlanningTab(PlanningTab::Forecast)],
+        vec![UiAction::SetPlanningTab(PlanningTab::Tariff)],
+        vec![UiAction::SetPlanningTab(PlanningTab::Commitments)],
+        vec![UiAction::ShowHour(Some(18))],
+        vec![UiAction::EditCommitment {
+            plant,
+            hours: [true; 24],
+        }],
+    ];
+    for actions in states {
+        screen.state.borrow_mut().apply(&actions);
+        let map = widget(&screen.widgets(), "Map").rect;
+        assert_eq!(map, before, "after {actions:?}");
+    }
+}
+
+#[test]
+fn a_cell_click_edits_the_row_and_apply_sends_the_commit() {
+    let screen = PlanningScreen::new(eastern_game(), Harness::new());
+    let widgets = screen.widgets();
+    let first = row_names(&widgets).remove(0);
+    let plant = plant_named(&screen.game, &first);
+    assert_eq!(buttons(&widgets, "Apply").len(), 0, "nothing to apply yet");
+
+    // Clicking hour 6 edits the row: nothing is sent to the game.
+    let label = format!("{first} at 06:00: off");
+    let actions = screen.click(&label);
+    let mut hours = [false; 24];
+    hours[6] = true;
+    assert_eq!(actions, vec![UiAction::EditCommitment { plant, hours }]);
+
+    // The row now shows the draft, with Apply and Revert beside it.
+    let widgets = screen.widgets();
+    assert!(shows(&widgets, &format!("{first} at 06:00: committed")));
+    assert!(!find_button(&widgets, "Apply").disabled);
+    assert!(!find_button(&widgets, "Revert").disabled);
+    // And the day waits for it.
+    assert!(find_button(&widgets, "Start the day").disabled);
+    assert!(shows(&widgets, "Apply or revert your changes"));
+
+    // Apply sends the draft as CommitPlant.
+    assert_eq!(
+        screen.click("Apply"),
+        vec![UiAction::Command(Command::CommitPlant { plant, hours })]
+    );
+    assert!(screen.state.borrow().ui.pending.is_some());
+}
+
+#[test]
+fn revert_drops_the_draft_and_the_row_shows_the_committed_pattern_again() {
+    let screen = PlanningScreen::new(eastern_game(), Harness::new());
+    let first = row_names(&screen.widgets()).remove(0);
+    screen.click(&format!("{first} at 10:00: off"));
+    assert!(shows(
+        &screen.widgets(),
+        &format!("{first} at 10:00: committed")
+    ));
+
+    assert_eq!(
+        screen.click("Revert"),
+        vec![UiAction::DiscardCommitmentDraft]
+    );
+
+    let widgets = screen.widgets();
+    assert!(shows(&widgets, &format!("{first} at 10:00: off")));
+    assert!(buttons(&widgets, "Apply").is_empty());
+    assert!(!find_button(&widgets, "Start the day").disabled);
+}
+
+#[test]
+fn editing_another_row_sends_the_row_being_left() {
+    let screen = PlanningScreen::new(eastern_game(), Harness::new());
+    let names = row_names(&screen.widgets());
+    let (first, second) = (names[0].clone(), names[1].clone());
+    let (a, b) = (
+        plant_named(&screen.game, &first),
+        plant_named(&screen.game, &second),
+    );
+    screen.click(&format!("{first} at 06:00: off"));
+
+    let actions = screen.click(&format!("{second} at 07:00: off"));
+
+    let mut sent = [false; 24];
+    sent[6] = true;
+    let mut started = [false; 24];
+    started[7] = true;
+    assert_eq!(
+        actions,
+        vec![
+            UiAction::Command(Command::CommitPlant {
+                plant: a,
+                hours: sent
+            }),
+            UiAction::EditCommitment {
+                plant: b,
+                hours: started
+            },
+        ]
+    );
+}
+
+#[test]
+fn all_day_and_off_send_start_and_stop() {
+    let mut screen = PlanningScreen::new(eastern_game(), Harness::new());
+    let plant = plant_named(&screen.game, &row_names(&screen.widgets()).remove(0));
+    // Off is not offered while the plant is off already.
+    assert!(find_button_nth_disabled(&screen.widgets(), "Off", 0));
+
+    assert_eq!(
+        screen.click("All day"),
+        vec![UiAction::Command(Command::StartPlant { plant })]
+    );
+
+    screen.game.execute(Command::StartPlant { plant }).unwrap();
+    let widgets = screen.widgets();
+    assert!(
+        find_button_nth_disabled(&widgets, "All day", 0),
+        "it is all day already"
+    );
+    assert_eq!(
+        screen.click_nth("Off", 0),
+        vec![UiAction::Command(Command::StopPlant { plant })]
+    );
+}
+
+fn find_button_nth_disabled(
+    widgets: &[crate::support::egui_harness::Widget],
+    label: &str,
+    n: usize,
+) -> bool {
+    buttons(widgets, label)[n].disabled
+}
+
+#[test]
+fn the_agc_switch_and_the_initial_target_field_send_their_commands() {
+    let screen = PlanningScreen::new(eastern_game(), Harness::new());
+    let session = screen.game.session();
+    let first_plant = plant_named(&screen.game, &row_names(&screen.widgets()).remove(0));
+    let first = session
+        .plant_views()
+        .into_iter()
+        .find(|plant| plant.id == first_plant)
+        .unwrap();
+    let spec = session.region().spec(first.kind).clone();
+    let (min, capacity) = (spec.min_output().value(), spec.capacity.value());
+
+    assert_eq!(
+        screen.click_nth("AGC", 0),
+        vec![UiAction::Command(Command::SetAutoFollow {
+            plant: first.id,
+            on: true
+        })]
+    );
+
+    // An untouched field holds the current target, so there is nothing to set; the range is
+    // shown beside it.
+    let widgets = screen.widgets();
+    assert!(buttons(&widgets, "Set")[0].disabled);
+    assert!(shows(
+        &widgets,
+        &format!(
+            "{} to {}",
+            game::l10n::format::megawatts(spec.min_output()),
+            game::l10n::format::megawatts(spec.capacity)
+        )
+    ));
+
+    // A number out of range can't be sent, however the button is clicked.
+    screen
+        .state
+        .borrow_mut()
+        .form
+        .targets
+        .insert(first.id, format!("{}", capacity + 100.0));
+    let widgets = screen.widgets();
+    assert!(buttons(&widgets, "Set")[0].disabled);
+    assert_eq!(screen.click_nth("Set", 0), vec![]);
+
+    // One in range is sent, as written.
+    let target = min + 50.0;
+    screen
+        .state
+        .borrow_mut()
+        .form
+        .targets
+        .insert(first.id, format!("{target}"));
+    let widgets = screen.widgets();
+    assert!(!buttons(&widgets, "Set")[0].disabled);
+    assert_eq!(
+        screen.click_nth("Set", 0),
+        vec![UiAction::Command(Command::SetDispatchTarget {
+            plant: first.id,
+            mw: domain::units::Megawatts::new(target)
+        })]
+    );
+}
+
+#[test]
+fn a_warning_shows_its_hour_and_start_the_day_begins_it() {
+    let screen = PlanningScreen::new(eastern_game(), Harness::new());
+    let worst = screen
+        .game
+        .session()
+        .capacity_shortfall_check()
+        .expect("nothing is committed");
+    let widgets = screen.widgets();
+    assert!(shows(&widgets, "Expect a rotating outage"));
+    assert!(shows(&widgets, &format!("{:02}:00: short by", worst.hour)));
+
+    assert_eq!(
+        screen.click("Show hour"),
+        vec![UiAction::ShowHour(Some(worst.hour))]
+    );
+    assert_eq!(screen.state.borrow().ui.highlight_hour, Some(worst.hour));
+
+    // Clicking the hour's header clears the tint.
+    let header = format!("Show {:02}:00 in the grid", worst.hour);
+    assert_eq!(screen.click(&header), vec![UiAction::ShowHour(None)]);
+    assert_eq!(screen.state.borrow().ui.highlight_hour, None);
+
+    assert_eq!(
+        screen.click("Start the day"),
+        vec![UiAction::Command(Command::BeginOperating)]
+    );
+}
+
+#[test]
+fn the_forecast_and_tariff_tabs_draw_for_both_shipped_regions() {
+    for region in [EASTERN, WESTERN] {
+        let screen = PlanningScreen::new(game_in(region), Harness::with_screen(1024.0, 640.0));
+
+        assert_eq!(
+            screen.click("Forecast"),
+            vec![UiAction::SetPlanningTab(PlanningTab::Forecast)]
+        );
+        let widgets = screen.widgets();
+        assert!(find_button(&widgets, "Start the day").rect.right() <= 1024.0);
+        // The chart replaces the grid, and the map is where it was.
+        assert!(buttons(&widgets, "All day").is_empty(), "{region}");
+        // Highlight it too, which draws a marker line in the chart.
+        screen
+            .state
+            .borrow_mut()
+            .apply(&[UiAction::ShowHour(Some(12))]);
+        screen.widgets();
+
+        assert_eq!(
+            screen.click("Tariff"),
+            vec![UiAction::SetPlanningTab(PlanningTab::Tariff)]
+        );
+        let widgets = screen.widgets();
+        for text in [
+            "Current tariff",
+            "Allowed return",
+            "Projected rate review",
+            "Reserve margin",
+            "Capital held out of the rate base",
+            "The December review is 11 months away.",
+        ] {
+            assert!(shows(&widgets, text), "{region}: {text} is not shown");
+        }
+
+        assert_eq!(
+            screen.click("Commitments"),
+            vec![UiAction::SetPlanningTab(PlanningTab::Commitments)]
+        );
+        assert!(shows(&screen.widgets(), "Warnings"));
+    }
+}
+
+#[test]
+fn hydro_rows_show_the_days_water_in_the_western_grid() {
+    let screen = PlanningScreen::new(game_in(WESTERN), Harness::new());
+
+    let widgets = screen.widgets();
+
+    // Each line is a label and its text run in AccessKit's tree: count the labels.
+    let rows = widgets
+        .iter()
+        .filter(|w| {
+            w.role == egui::accesskit::Role::Label && w.text.starts_with("Water for the day:")
+        })
+        .count();
+    assert_eq!(rows, 3, "one line for each of the three hydro plants");
+    assert!(
+        !shows(&widgets, "no water to spare"),
+        "the shipped plants have water"
     );
 }
 
@@ -861,7 +1395,8 @@ fn dispatch_is_the_one_mapping_from_actions_to_messages() {
     let mut app = headless_app(&shipped_assets(), logs.path());
     app.init_resource::<Selection>()
         .init_resource::<MapLayer>()
-        .init_resource::<OpenPrompt>();
+        .init_resource::<OpenPrompt>()
+        .init_resource::<UiState>();
     update_n(&mut app, 3);
     let region = RegionId::new(EASTERN);
     let cell = CellCoord { x: 1, y: 2 };
@@ -908,7 +1443,8 @@ fn navigating_moves_between_the_menu_screens() {
     let mut app = headless_app(&shipped_assets(), logs.path());
     app.init_resource::<Selection>()
         .init_resource::<MapLayer>()
-        .init_resource::<OpenPrompt>();
+        .init_resource::<OpenPrompt>()
+        .init_resource::<UiState>();
     update_n(&mut app, 3);
     let state = |app: &App| *app.world().resource::<State<AppState>>().get();
     assert_eq!(state(&app), AppState::MainMenu);

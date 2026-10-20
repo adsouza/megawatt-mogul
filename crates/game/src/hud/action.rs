@@ -8,10 +8,11 @@ use application::Command;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy_egui::egui;
-use domain::ids::RegionId;
+use domain::ids::{PlantId, RegionId};
 
 use super::map::MapLayer;
 use super::selection::Selection;
+use super::ui_state::{PlanningTab, UiState};
 use crate::sim::{NewGameRequest, PlayerCommand, ReturnToMenu, SimSpeed};
 use crate::state::AppState;
 
@@ -31,6 +32,18 @@ pub enum UiAction {
     Select(Selection),
     /// Colour the map by another layer.
     SetLayer(MapLayer),
+    /// Open another tab of the Planning panel.
+    SetPlanningTab(PlanningTab),
+    /// Tint an hour's column in the commitment grid (a warning's *show hour*), or clear it.
+    ShowHour(Option<u8>),
+    /// Change the commitment pattern being edited for a plant. Nothing reaches the game until the
+    /// pattern is applied, as a `CommitPlant` command.
+    EditCommitment {
+        plant: PlantId,
+        hours: [bool; 24],
+    },
+    /// Drop the pattern being edited and show the plant's committed one again.
+    DiscardCommitmentDraft,
     /// Move between the menu screens. Entering the game is only ever [`UiAction::NewGame`].
     Navigate(MenuScreen),
     /// Open a confirmation prompt, or close it with `None`. The prompt's own buttons say what
@@ -97,6 +110,29 @@ impl ButtonModel {
     }
 }
 
+/// A button that is either on or off: a tab, the AGC switch.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToggleModel {
+    pub button: ButtonModel,
+    pub on: bool,
+}
+
+/// Draws `model` as a button that shows whether it is on and, when clicked, pushes its action.
+pub fn toggle_button(
+    ui: &mut egui::Ui,
+    model: &ToggleModel,
+    actions: &mut Vec<UiAction>,
+) -> egui::Response {
+    let response = ui.add_enabled(
+        model.button.enabled,
+        egui::Button::new(model.button.label.as_str()).selected(model.on),
+    );
+    if response.clicked() {
+        actions.push(model.button.action.clone());
+    }
+    response
+}
+
 /// Draws `model` as an egui button and, when it is clicked, pushes its action.
 pub fn button(
     ui: &mut egui::Ui,
@@ -121,6 +157,7 @@ pub struct ActionSink<'w> {
     selection: ResMut<'w, Selection>,
     layer: ResMut<'w, MapLayer>,
     prompt: ResMut<'w, OpenPrompt>,
+    ui: ResMut<'w, UiState>,
     next_state: ResMut<'w, NextState<AppState>>,
 }
 
@@ -140,12 +177,18 @@ impl ActionSink<'_> {
     pub fn open_prompt(&self) -> OpenPrompt {
         *self.prompt
     }
+
+    /// The Planning panel's state: the tab, the highlighted hour and the commitment draft.
+    pub fn ui_state(&self) -> &UiState {
+        &self.ui
+    }
 }
 
 /// Turns the HUD's actions into messages and state changes, in order: the single mapping from a
 /// click to the rest of the game.
 pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSink) {
     for action in actions {
+        sink.ui.apply(&action);
         match action {
             UiAction::Command(command) => {
                 sink.commands.write(PlayerCommand(command));
@@ -159,6 +202,11 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             UiAction::SetSpeed(speed) => *sink.speed = speed,
             UiAction::Select(selection) => *sink.selection = selection,
             UiAction::SetLayer(layer) => *sink.layer = layer,
+            // Written by `UiState::apply`, above.
+            UiAction::SetPlanningTab(_)
+            | UiAction::ShowHour(_)
+            | UiAction::EditCommitment { .. }
+            | UiAction::DiscardCommitmentDraft => {}
             UiAction::Navigate(screen) => sink.next_state.set(screen.into()),
             UiAction::Prompt(prompt) => sink.prompt.0 = prompt,
             UiAction::Quit => {

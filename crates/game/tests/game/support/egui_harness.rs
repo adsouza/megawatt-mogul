@@ -22,18 +22,33 @@ pub struct Widget {
 
 pub struct Harness {
     ctx: egui::Context,
+    screen: egui::Vec2,
 }
 
 impl Harness {
+    /// A 1280×800 screen.
     pub fn new() -> Self {
-        let ctx = egui::Context::default();
-        ctx.enable_accesskit();
-        Self { ctx }
+        Self::with_screen(1280.0, 800.0)
     }
 
-    fn input(events: Vec<Event>) -> RawInput {
+    /// A screen of `width`×`height` points, such as the game's smallest window.
+    pub fn with_screen(width: f32, height: f32) -> Self {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        Self {
+            ctx,
+            screen: egui::vec2(width, height),
+        }
+    }
+
+    /// The whole screen.
+    pub fn screen_rect(&self) -> Rect {
+        Rect::from_min_size(Pos2::ZERO, self.screen)
+    }
+
+    fn input(&self, events: Vec<Event>) -> RawInput {
         RawInput {
-            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(1280.0, 800.0))),
+            screen_rect: Some(self.screen_rect()),
             events,
             ..RawInput::default()
         }
@@ -48,7 +63,7 @@ impl Harness {
         let mut actions = Vec::new();
         let output = self
             .ctx
-            .run_ui(Self::input(events), |ui| actions.extend(draw(ui)));
+            .run_ui(self.input(events), |ui| actions.extend(draw(ui)));
         let widgets = output
             .platform_output
             .accesskit_update

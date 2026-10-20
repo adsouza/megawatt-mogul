@@ -12,25 +12,40 @@
 
 mod action;
 mod build;
+mod commitment;
+mod forecast_chart;
 mod game_over;
 mod inspector;
 mod layout;
 mod map;
 mod menu;
+mod planning;
+mod planning_warnings;
+mod plant_list;
 mod prompt;
 mod selection;
+mod tariff;
 mod toasts;
 mod top_bar;
+mod ui_state;
 
 use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
 
 pub use self::action::{
-    ActionSink, ButtonModel, MenuScreen, OpenPrompt, Prompt, UiAction, button, dispatch,
+    ActionSink, ButtonModel, MenuScreen, OpenPrompt, Prompt, ToggleModel, UiAction, button,
+    dispatch, toggle_button,
 };
 pub use self::build::{
     BUILD_PANEL_WIDTH, BuildModel, LinePreview, LineSection, LineTarget, PlantRow, PlantSection,
     build_model, draw_build,
+};
+pub use self::commitment::{
+    CELL_WIDTH, CommitmentModel, CommitmentRow, HourCell, HourHeader, KindGroup, NAME_WIDTH,
+    ROW_HEIGHT, TargetModel, commitment_model, draw_commitment, has_unsaved_draft,
+};
+pub use self::forecast_chart::{
+    ForecastModel, StackModel, draw_forecast_chart, forecast_model, stacked_committed_capacity,
 };
 pub use self::game_over::{GameOverModel, draw_game_over, game_over_model, game_over_model_for};
 pub use self::inspector::{
@@ -49,12 +64,21 @@ pub use self::menu::{
     RegionSelectModel, boot_error_model, draw_boot_error, draw_main_menu, draw_region_select,
     main_menu_model, new_game_action, region_select_model,
 };
+pub use self::planning::{
+    PLANNING_PANEL_HEIGHT, PlanningContent, PlanningModel, draw_planning, planning_model,
+};
+pub use self::planning_warnings::{
+    WarningKind, WarningRow, WarningsModel, draw_warnings, warnings_for, warnings_model,
+};
+pub use self::plant_list::{KindPlants, is_commitable, plants_by_kind};
 pub use self::prompt::{PromptModel, draw_prompt, prompt_after, prompt_model};
 pub use self::selection::Selection;
+pub use self::tariff::{TariffModel, draw_tariff, months_until_review, tariff_model};
 pub use self::toasts::{
     MAX_TOASTS, TOAST_SECONDS, ToastQueue, ToastsModel, draw_toasts, toasts_model,
 };
 pub use self::top_bar::{Stat, TopBarModel, draw_top_bar, top_bar_model};
+pub use self::ui_state::{CommitDraft, CommitmentForm, PendingCommit, PlanningTab, UiState};
 use crate::l10n::Localizer;
 use crate::sim::{Catalog, Session, SimSet, default_seed};
 use crate::state::{AppState, BootError, PhaseState};
@@ -74,7 +98,8 @@ pub enum HudSet {
 }
 
 /// The egui panels: the shell screens, the top bar, toasts, prompts and the game-over modal, and
-/// the planning screen's map, cell inspector and build menu.
+/// the planning screen's map, cell inspector, build menu and bottom panel (commitment grid,
+/// forecast chart, tariff).
 pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
@@ -95,6 +120,8 @@ impl Plugin for HudPlugin {
             .init_resource::<MapLayer>()
             .init_resource::<MapCache>()
             .init_resource::<OpenPrompt>()
+            .init_resource::<UiState>()
+            .init_resource::<CommitmentForm>()
             .init_resource::<ToastQueue>()
             .init_resource::<HudArea>()
             .insert_resource(MenuForm::new(default_seed()))
@@ -119,6 +146,7 @@ impl Plugin for HudPlugin {
                     map::reset_layer,
                     map::reset_cache,
                     action::close_prompt,
+                    ui_state::reset_ui_state,
                 ),
             )
             .add_systems(
@@ -129,13 +157,19 @@ impl Plugin for HudPlugin {
                     map::reset_layer,
                     map::reset_cache,
                     action::close_prompt,
+                    ui_state::reset_ui_state,
                 ),
             )
+            // A highlighted hour or an unapplied edit belongs to the month being planned.
+            .add_systems(OnExit(PhaseState::Planning), ui_state::reset_ui_state)
             .add_systems(
                 Update,
                 (
                     toasts::collect_toasts.after(SimSet::Apply).run_if(has_l10n),
                     prompt::close_prompt_when_over
+                        .after(SimSet::Apply)
+                        .run_if(in_game.clone()),
+                    ui_state::settle_commit
                         .after(SimSet::Apply)
                         .run_if(in_game.clone()),
                 ),
@@ -172,13 +206,16 @@ impl Plugin for HudPlugin {
                         .run_if(has_l10n),
                 ),
             )
-            // The planning screen: side panels claim their share, then the map fills what is
-            // left. The map shows while planning and operating. The inspector and the build menu are
-            // for planning only: they hold fixed widths there, so the map doesn't move when the
-            // selection changes, and in operating the map gets the whole width.
+            // The planning screen: the bottom panel (commitments, forecast, tariff) claims the
+            // full width first, then the side panels claim their share, then the map fills what
+            // is left. The map shows while planning and operating. The panels are for planning
+            // only: they hold fixed sizes there, so the map doesn't move when the selection
+            // changes or a tab opens, and in operating the map gets the whole screen.
             .add_systems(
                 EguiPrimaryContextPass,
                 (
+                    planning::planning_panel
+                        .run_if(in_state(PhaseState::Planning).and_then(on_the_map.clone())),
                     inspector::inspector_panel
                         .run_if(in_state(PhaseState::Planning).and_then(on_the_map.clone())),
                     build::build_panel

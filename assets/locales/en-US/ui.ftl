@@ -128,12 +128,48 @@ name-node-unknown = Grid point { $id }
 
 tariff-title = Tariff
 tariff-current = Current tariff
+tariff-allowed-return = Allowed return
+tariff-review-heading = Projected rate review
 tariff-projected-return = Projected allowed return
 tariff-reserve-margin = Reserve margin
 tariff-held-capital = Capital held out of the rate base
+tariff-capital-release = Capital released back
+tariff-capital-at-risk = Capital at risk of write-off
+tariff-review-months = { $months ->
+    [0] The review runs when this month closes.
+    [one] The December review is 1 month away.
+   *[other] The December review is { $months } months away.
+}
 commitment-title = Commitments
 commitment-forecast = Forecast demand
 commitment-committed = Committed output
+commitment-empty = No plants are ready to commit yet.
+commitment-cell = { $plant } at { $time }: { $state }
+commitment-state-on = committed
+commitment-state-off = off
+commitment-hour-header = Show { $time } in the grid
+commitment-apply = Apply
+commitment-revert = Revert
+commitment-all-day = All day
+commitment-off = Off
+commitment-agc = AGC
+commitment-agc-tip = Automatic generation control: the plant follows the load by itself.
+commitment-target = Initial target
+commitment-target-set = Set
+commitment-target-range = { $min } to { $max }
+commitment-hydro-budget = Water for the day: { $energy }
+commitment-unsaved = Apply or revert your changes before starting the day.
+forecast-title = Forecast
+forecast-band = Forecast range
+forecast-solar = Expected solar
+forecast-axis-hour = Hour of day
+forecast-axis-power = Power (MW)
+warnings-title = Warnings
+warnings-none = No warnings: the commitments cover the forecast.
+warning-shortfall = { $time }: short by { $amount }. Expect a rotating outage.
+warning-min-gen = { $time }: committed minimum exceeds load by { $amount }.
+warning-hydro-dry = { $plant } has no water to spare today.
+warning-show-hour = Show hour
 start-operating = Start the day
 
 ## Operating

@@ -74,6 +74,30 @@ pub fn percent(share: Ratio) -> String {
     format!("{:.1}%", share.value() * 100.0)
 }
 
+/// A margin that can be negative: `+18.0%`, `−5.2%`. A margin that rounds to zero shows no sign.
+pub fn signed_percent(fraction: f64) -> String {
+    let tenths = (fraction * 1000.0).round();
+    let sign = if tenths > 0.0 {
+        "+"
+    } else if tenths < 0.0 {
+        MINUS
+    } else {
+        ""
+    };
+    format!("{sign}{:.1}%", tenths.abs() / 10.0)
+}
+
+/// A power as the bare number an edit field holds: `300`, or `301.5` when it has a fraction. No
+/// unit and no separators, so what is shown can be typed back.
+pub fn plain_megawatts(power: Megawatts) -> String {
+    let value = power.value();
+    if (value - value.round()).abs() < 0.05 {
+        format!("{:.0}", value.round())
+    } else {
+        format!("{value:.1}")
+    }
+}
+
 /// A 0–100 score such as satisfaction, to the nearest whole point: `72`.
 pub fn score(value: f64) -> String {
     format!("{:.0}", value.clamp(0.0, 100.0))
@@ -308,6 +332,35 @@ mod tests {
                 (0.0, "0.00 Hz"),
                 (0.004, "0.00 Hz"),
                 (-0.004, "0.00 Hz"),
+            ],
+        );
+    }
+
+    #[test]
+    fn signed_percent_shows_the_direction() {
+        check(
+            signed_percent,
+            &[
+                (0.18, "+18.0%"),
+                (-0.052, "\u{2212}5.2%"),
+                (0.0, "0.0%"),
+                (0.0004, "0.0%"),
+                (-0.0004, "0.0%"),
+                (1.5, "+150.0%"),
+            ],
+        );
+    }
+
+    #[test]
+    fn plain_megawatts_can_be_typed_back() {
+        check(
+            |v| plain_megawatts(Megawatts::new(v)),
+            &[
+                (300.0, "300"),
+                (240.04, "240"),
+                (301.5, "301.5"),
+                (1_234.0, "1234"),
+                (0.0, "0"),
             ],
         );
     }

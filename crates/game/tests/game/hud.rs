@@ -28,7 +28,8 @@ use application::{CommandError, RegionLoadError};
 use bevy::time::TimeUpdateStrategy;
 use domain::ids::{CellCoord, RegionId};
 use game::hud::{
-    MapLayer, MenuForm, OpenPrompt, Prompt, RegionListings, Selection, ToastQueue, toasts_model,
+    CommitmentForm, MapLayer, MenuForm, OpenPrompt, PlanningTab, Prompt, RegionListings, Selection,
+    ToastQueue, UiAction, UiState, toasts_model,
 };
 use game::l10n::{LocalizeWith, Localizer, Names};
 use game::sim::{NewGameRequest, ReturnToMenu};
@@ -156,4 +157,141 @@ fn the_egui_systems_have_no_conflicting_parameters() {
                 "the egui pass initialises: its systems build, and their parameters are disjoint",
             );
         });
+}
+
+// ---- the Planning panel's state -------------------------------------------------------------
+
+use application::Command;
+use domain::region::PlantKind;
+use game::sim::{PlayerCommand, Session};
+
+/// The id of the first plant of `kind` in the running game.
+fn plant_of(app: &App, kind: PlantKind) -> domain::ids::PlantId {
+    app.world()
+        .resource::<Session>()
+        .0
+        .session()
+        .plant_views()
+        .into_iter()
+        .find(|plant| plant.kind == kind)
+        .unwrap_or_else(|| panic!("the fleet has a {kind:?} plant"))
+        .id
+}
+
+fn commitment_of(app: &App, plant: domain::ids::PlantId) -> [bool; 24] {
+    app.world()
+        .resource::<Session>()
+        .0
+        .session()
+        .plant_views()
+        .into_iter()
+        .find(|p| p.id == plant)
+        .unwrap()
+        .commitment
+}
+
+/// What the HUD does for a click on Apply: it records the draft and the pending commit
+/// (`dispatch` does this through `UiState::apply`) and sends the command.
+fn send_commit(app: &mut App, plant: domain::ids::PlantId, hours: [bool; 24]) {
+    let world = app.world_mut();
+    let commit = Command::CommitPlant { plant, hours };
+    let mut ui = world.resource_mut::<UiState>();
+    ui.apply(&UiAction::EditCommitment { plant, hours });
+    ui.apply(&UiAction::Command(commit.clone()));
+    world.write_message(PlayerCommand(commit));
+}
+
+#[test]
+fn leaving_a_game_resets_the_planning_panel_state() {
+    let logs = TempDir::new().unwrap();
+    let mut app = hud_app(&logs);
+    request(&mut app, "eastern_interconnection");
+    let plant = plant_of(&app, PlantKind::Coal);
+    {
+        let world = app.world_mut();
+        let mut ui = world.resource_mut::<UiState>();
+        ui.apply(&UiAction::SetPlanningTab(PlanningTab::Tariff));
+        ui.apply(&UiAction::ShowHour(Some(7)));
+        ui.apply(&UiAction::EditCommitment {
+            plant,
+            hours: [true; 24],
+        });
+        world
+            .resource_mut::<CommitmentForm>()
+            .targets
+            .insert(plant, "400".to_owned());
+        world.write_message(ReturnToMenu);
+    }
+    update_n(&mut app, 2);
+
+    assert_eq!(state(&app), AppState::MainMenu);
+    assert_eq!(*app.world().resource::<UiState>(), UiState::default());
+    assert_eq!(
+        *app.world().resource::<CommitmentForm>(),
+        CommitmentForm::default()
+    );
+}
+
+#[test]
+fn a_new_game_starts_on_the_commitments_tab() {
+    let logs = TempDir::new().unwrap();
+    let mut app = hud_app(&logs);
+    app.world_mut()
+        .resource_mut::<UiState>()
+        .apply(&UiAction::SetPlanningTab(PlanningTab::Forecast));
+
+    request(&mut app, "eastern_interconnection");
+
+    assert_eq!(
+        app.world().resource::<UiState>().tab,
+        PlanningTab::Commitments
+    );
+}
+
+/// A refused pattern: the game is untouched, the player is told why in one toast, and the row
+/// is back to what the domain holds.
+#[test]
+fn an_infeasible_commit_reverts_the_row_and_shows_the_toast() {
+    let logs = TempDir::new().unwrap();
+    let mut app = hud_app(&logs);
+    request(&mut app, "eastern_interconnection");
+    let nuclear = plant_of(&app, PlantKind::Nuclear);
+    // Nuclear takes 48 hours to start, so any off-gap is too short.
+    let mut infeasible = [false; 24];
+    infeasible[..12].fill(true);
+
+    send_commit(&mut app, nuclear, infeasible);
+    update_n(&mut app, 1);
+
+    let ui = app.world().resource::<UiState>();
+    assert_eq!(ui.draft, None, "the row is back to the committed pattern");
+    assert_eq!(ui.pending, None);
+    assert_eq!(
+        commitment_of(&app, nuclear),
+        [false; 24],
+        "the game is unchanged"
+    );
+    let toasts = toasts(&app);
+    assert_eq!(toasts.len(), 1, "{toasts:?}");
+    assert!(toasts[0].contains("too short"), "{}", toasts[0]);
+    assert!(toasts[0].contains("to ramp down"), "{}", toasts[0]);
+}
+
+#[test]
+fn a_feasible_commit_lands_and_clears_the_draft_without_a_toast() {
+    let logs = TempDir::new().unwrap();
+    let mut app = hud_app(&logs);
+    request(&mut app, "eastern_interconnection");
+    let peaker = plant_of(&app, PlantKind::Peaker);
+    let mut evening = [false; 24];
+    evening[16..22].fill(true);
+
+    send_commit(&mut app, peaker, evening);
+    update_n(&mut app, 1);
+
+    let ui = app.world().resource::<UiState>();
+    assert_eq!(ui.draft, None);
+    assert_eq!(ui.pending, None);
+    assert_eq!(commitment_of(&app, peaker), evening);
+    assert_eq!(toasts(&app), Vec::<String>::new());
 }

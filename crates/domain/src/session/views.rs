@@ -4,7 +4,7 @@ use super::{DayPhase, GameSession};
 use crate::company::CapitalChange;
 use crate::demand::{ForecastPoint, hourly_forecast};
 use crate::generation::{Plant, PlantStatus};
-use crate::grid::power_system::HourEnd;
+use crate::grid::power_system::{HourEnd, day_hydro_budget};
 use crate::grid::{GridMode, HydroScheduleView, LineStatus, TickSummary};
 use crate::ids::{CellCoord, CityId, LineId, NodeId, PlantId};
 use crate::region::PlantKind;
@@ -26,6 +26,15 @@ pub struct PlantView {
     pub connected: bool,
     pub commitment: [bool; 24],
     pub hydro_budget: Option<MegawattHours>,
+    /// The water a commissioned hydro plant starts the day of the current
+    /// month with (spec §2.2): what Planning shows, since until the day
+    /// begins `hydro_budget` is still the empty or leftover level. `None` for
+    /// every other plant.
+    pub hydro_day_budget: Option<MegawattHours>,
+    /// The output the plant starts the day at when it is committed in hour 0:
+    /// what Planning's `SetDispatchTarget` sets, minimum stable output until
+    /// then.
+    pub initial_target: Megawatts,
 }
 
 /// One city as the player sees it.
@@ -158,6 +167,10 @@ impl GameSession {
             connected: self.power.network().is_connected(plant.node()),
             commitment: plant.commitment().hours(),
             hydro_budget: plant.hydro_budget(),
+            hydro_day_budget: (plant.kind() == PlantKind::Hydro
+                && !matches!(plant.status(), PlantStatus::UnderConstruction { .. }))
+            .then(|| day_hydro_budget(&self.region, self.clock.month(), plant)),
+            initial_target: plant.initial_target(),
         }
     }
 

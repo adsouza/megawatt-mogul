@@ -6,7 +6,7 @@ use crate::region::PlantKind;
 use crate::region::fixtures::tiny_region;
 use crate::regulation::Licence;
 use crate::time::{SimMonth, TICKS_PER_DAY};
-use crate::units::{Hertz, Megawatts, Ratio};
+use crate::units::{Hertz, MegawattHours, Megawatts, Ratio};
 
 fn session() -> GameSession {
     GameSession::new(Arc::new(tiny_region()), 1, GameSettings::default())
@@ -1264,4 +1264,34 @@ fn capacity_shortfall_check_is_pure() {
     assert_eq!(s.capacity_shortfall_check(), first);
     assert!(s.hydro_schedule().plants.is_empty());
     assert_eq!(s.state_hash(), before);
+}
+
+#[test]
+fn plant_view_previews_the_days_hydro_budget_while_planning() {
+    let mut s = session();
+    let hydro = s.insert_commissioned_plant(PlantKind::Hydro, CellCoord { x: 10, y: 1 });
+    let view = |s: &GameSession, id| s.plant_views().into_iter().find(|p| p.id == id).unwrap();
+
+    // Planning: the remaining level is still the empty one a new plant has, but the view
+    // already shows the water the coming day starts with.
+    let planning = view(&s, hydro);
+    assert_eq!(planning.hydro_budget, Some(MegawattHours::ZERO));
+    let day_budget = planning
+        .hydro_day_budget
+        .expect("a commissioned hydro plant");
+    assert!(day_budget > MegawattHours::ZERO, "{day_budget:?}");
+    let plant = s.power().plant(hydro).unwrap();
+    assert_eq!(
+        day_budget,
+        crate::grid::power_system::day_hydro_budget(s.region(), s.clock().month(), plant)
+    );
+
+    // Beginning the day sets the remaining level to exactly that.
+    s.begin_operating().unwrap();
+    assert_eq!(view(&s, hydro).hydro_budget, Some(day_budget));
+
+    // Only a commissioned hydro plant has one.
+    for other in s.plant_views().into_iter().filter(|p| p.id != hydro) {
+        assert_eq!(other.hydro_day_budget, None, "{:?}", other.kind);
+    }
 }

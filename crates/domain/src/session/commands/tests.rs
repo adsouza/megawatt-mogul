@@ -399,6 +399,22 @@ fn commit_plant_rejects_unbuilt_unknown_and_non_dispatchable_plants() {
 }
 
 #[test]
+fn plant_view_reports_the_initial_target() {
+    let mut s = session();
+    let coal = plant_of(&s, PlantKind::Coal);
+    let view = |s: &GameSession| s.plant_views().into_iter().find(|p| p.id == coal).unwrap();
+    // The default is the plant's minimum stable output.
+    assert_eq!(view(&s).initial_target, Megawatts::new(240.0));
+
+    s.set_dispatch_target(coal, Megawatts::new(300.0)).unwrap();
+
+    assert_eq!(view(&s).initial_target, Megawatts::new(300.0));
+    // A refused target leaves it alone.
+    assert!(s.set_dispatch_target(coal, Megawatts::new(100.0)).is_err());
+    assert_eq!(view(&s).initial_target, Megawatts::new(300.0));
+}
+
+#[test]
 fn planning_target_sets_the_initial_target() {
     let mut s = session();
     let coal = plant_of(&s, PlantKind::Coal);

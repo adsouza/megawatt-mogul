@@ -22,6 +22,7 @@ domain = { workspace = true }
 application = { workspace = true }
 infrastructure = { workspace = true }
 bevy_egui = { workspace = true }
+egui_plot = { workspace = true }
 fluent-bundle = { workspace = true }
 tracing = { workspace = true }
 unic-langid = { workspace = true }

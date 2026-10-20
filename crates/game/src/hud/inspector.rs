@@ -132,12 +132,17 @@ pub fn suitability_row(
 
 pub fn draw_inspector(ui: &mut egui::Ui, model: &InspectorModel) -> Vec<UiAction> {
     let mut actions = Vec::new();
-    match model {
-        InspectorModel::Empty { hint } => {
-            ui.weak(hint.as_str());
-        }
-        InspectorModel::Cell(cell) => draw_cell(ui, cell, &mut actions),
-    }
+    // The panel is only as tall as the window leaves it below the Planning panel, which at the
+    // smallest window is less than a selected cell's readings and suitability rows.
+    egui::ScrollArea::vertical()
+        .id_salt("inspector_scroll")
+        .auto_shrink([false, false])
+        .show(ui, |ui| match model {
+            InspectorModel::Empty { hint } => {
+                ui.weak(hint.as_str());
+            }
+            InspectorModel::Cell(cell) => draw_cell(ui, cell, &mut actions),
+        });
     actions
 }
 
