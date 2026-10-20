@@ -5,7 +5,8 @@
 //!   a tab, *Supply* (the supply chart) or *Hydro* (the hydro schedule). Beside it is a column of
 //!   fixed width ([`OPERATING_LOG_WIDTH`]) holding the ramp warnings and the incident ticker.
 //! - **The side panel** on the right, opening at [`OPERATING_SIDE_WIDTH`]: the frequency
-//!   gauge, the plant list, and the selected plant's panel (or a placeholder of the same size).
+//!   gauge, the selected plant's details (or a placeholder of the same height), and the plant
+//!   list, which fills the rest.
 //!
 //! The speed controls are a bar of their own under the top bar (`speed.rs`). The map takes what is
 //! left.
@@ -21,8 +22,8 @@ use super::hydro_panel::{HydroModel, draw_hydro, hydro_model};
 use super::incidents::{IncidentsModel, draw_incidents, incidents_model};
 use super::layout::{Edge, HudArea, OuterPanel};
 use super::plant_panel::{
-    PLANT_LIST_HEIGHT, PlantListModel, PlantPanelForm, PlantPanelModel, draw_plant_list,
-    draw_plant_panel, plant_list_model, plant_panel_model,
+    PlantListModel, PlantPanelForm, PlantPanelModel, draw_plant_list, draw_plant_panel,
+    named_region, plant_details_height, plant_list_model, plant_panel_model,
 };
 use super::ramp_warnings::{RampWarningsModel, draw_ramp_warnings, ramp_warnings_model};
 use super::selection::Selection;
@@ -165,7 +166,9 @@ pub fn operating_side_model(
     })
 }
 
-/// The gauge and the list hold fixed heights, so the selected plant's panel never moves them.
+/// From the top: the gauge, then the selected plant's details in a block of fixed height (the
+/// same with nothing selected, so the list never moves), then the plant list, which takes all
+/// the height left.
 pub fn draw_operating_side(
     ui: &mut egui::Ui,
     model: &OperatingSideModel,
@@ -178,15 +181,14 @@ pub fn draw_operating_side(
         actions.extend(draw_frequency(ui, &model.frequency));
     });
     ui.separator();
-    // The title's row plus the list's own fixed height.
-    let list_height =
-        PLANT_LIST_HEIGHT + ui.spacing().interact_size.y + ui.spacing().item_spacing.y;
-    ui.allocate_ui(egui::vec2(width, list_height), |ui| {
-        ui.set_min_size(egui::vec2(width, list_height));
-        actions.extend(draw_plant_list(ui, &model.plants));
+    let details = egui::vec2(width, plant_details_height(ui));
+    let block = ui.allocate_ui(details, |ui| {
+        ui.set_min_size(details);
+        actions.extend(draw_plant_panel(ui, &model.selected, form));
     });
+    named_region(&block.response, model.selected.name());
     ui.separator();
-    actions.extend(draw_plant_panel(ui, &model.selected, form));
+    actions.extend(draw_plant_list(ui, &model.plants));
     actions
 }
 

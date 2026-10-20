@@ -79,8 +79,10 @@ first. Steps that need a fresh game say so; the others follow on from the step b
 
 - [ ] **3.1** Click *Start the day*.
   **Expected:** with no shortfall, no prompt: the day begins at once. The speed bar (time of
-  day, *Pause*, *1×* to *8×*, with *1×* on), the frequency gauge on the right with *Normal*, the
-  plant list, and the *Supply* and *Hydro* tabs at the bottom. The clock moves one game minute
+  day, *Pause*, *1×* to *8×*, with *1×* on); on the right, from the top, the frequency gauge with
+  *Normal*, the selected plant's details (*Select a plant in the list or on the map.* until one
+  is), and the *Plants* list filling the rest of the panel down to its bottom, with at least three
+  rows in view; and the *Supply* and *Hydro* tabs at the bottom. The clock moves one game minute
   per quarter second.
 - [ ] **3.2** Click *8×*, then *Pause*, then press Space twice.
   **Expected:** 8× moves the clock eight times as fast; *Pause* stops it; Space resumes at 8×
@@ -89,7 +91,10 @@ first. Steps that need a fresh game say so; the others follow on from the step b
   **Expected:** the needle stays in the green zone around nominal; the imbalance reads a few MW
   either way.
 - [ ] **3.4** Select a coal plant in the list, turn its *AGC* off, drag *Set target* and let go.
-  **Expected:** the slider is enabled only with AGC off; nothing changes while dragging; on
+  **Expected:** the plant's details fill the block above the list, every figure down to *Closed
+  months* in view without scrolling, and the list doesn't move when the selection changes (select
+  another plant, then click it again to deselect: the list stays put). The slider is enabled only
+  with AGC off; nothing changes while dragging; on
   release the plant's target moves to the value, and its output ramps toward it at the ramp rate.
   Turn AGC back on.
 - [ ] **3.5** Open *Hydro* (Western games show more), then *Supply*.
@@ -179,7 +184,9 @@ first. Steps that need a fresh game say so; the others follow on from the step b
   *Supply*/*Hydro*. Run the day to the close and click *Continue*.
   **Expected:** the map moves only while you drag. Selections, tabs and the phase changes leave
   every panel's size alone; back in Planning, and in the next day's Operating, each panel is as
-  you left it. The charts, the commitment grid and the plant panel use the extra room.
+  you left it. The charts, the commitment grid and the plant list use the extra room: a taller
+  window, or a shorter bottom panel, gives the *Plants* list more rows while the plant's details
+  keep their height.
 
 ## Known visual risks to eyeball
 

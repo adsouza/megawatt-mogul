@@ -17,6 +17,8 @@ mod hud_smoke;
 mod l10n_coverage;
 #[path = "game/layout.rs"]
 mod layout;
+#[path = "game/operating_side.rs"]
+mod operating_side;
 #[path = "game/panel_resize.rs"]
 mod panel_resize;
 #[path = "game/phase_change.rs"]

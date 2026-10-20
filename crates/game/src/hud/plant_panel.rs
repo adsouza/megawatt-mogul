@@ -1,9 +1,9 @@
 //! The plant list and the selected-plant panel (spec §8.4), Operating only.
 //!
 //! The list shows every plant, its status, output and whether AGC is on; clicking a row selects
-//! the plant, as clicking it on the map does. The panel below follows [`Selection`]: the plant's
-//! output, target, ramp rate, marginal cost, its energy today, its energy and revenue over the
-//! months closed so far, its water, and the controls (AGC, start, stop and a target slider).
+//! the plant, as clicking it on the map does. The panel above the list follows [`Selection`]: the
+//! plant's output, target, ramp rate, marginal cost, its energy today, its energy and revenue over
+//! the months closed so far, its water, and the controls (AGC, start, stop and a target slider).
 //!
 //! The slider edits [`PlantPanelForm`], not the game. Its value is sent as one
 //! `SetDispatchTarget` when a drag ends or a keyboard step lands, never while it is being dragged,
@@ -93,6 +93,16 @@ pub enum PlantPanelModel {
     Empty {
         hint: String,
     },
+}
+
+impl PlantPanelModel {
+    /// What the block is called: the plant's name, or the hint when none is selected.
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Plant(plant) => &plant.name,
+            Self::Empty { hint } => hint,
+        }
+    }
 }
 
 /// What the slider holds between frames. A `Resource`, like the menu's seed field.
@@ -271,26 +281,62 @@ pub fn plant_panel_model(game: &Game, l10n: &Localizer, selection: Selection) ->
     }))
 }
 
-/// The list's height, fixed so the panel under it doesn't move as plants change status.
-pub const PLANT_LIST_HEIGHT: f32 = 80.0;
+/// The most figures a selected plant shows: six, and a hydro plant's water left.
+pub const MOST_PLANT_STATS: usize = 7;
+/// The fewest rows the plant list keeps in view, however little height it is left.
+pub const PLANT_LIST_MIN_ROWS: usize = 3;
+/// The list's row spacing: compact, so more of the fleet is in view.
+const PLANT_ROW_SPACING: egui::Vec2 = egui::vec2(6.0, 2.0);
 
-/// The list, scrolling when the fleet is longer than [`PLANT_LIST_HEIGHT`].
+/// The height of the selected plant's block: what its content needs for the plant with the most
+/// figures ([`MOST_PLANT_STATS`]), with no room to spare. It is the same whatever is selected (or
+/// nothing), so the list under it never moves when the selection changes.
+pub fn plant_details_height(ui: &egui::Ui) -> f32 {
+    let spacing = ui.spacing();
+    // A label's row is its text's height, rounded up to whole points as egui lays it out.
+    let text = ui.text_style_height(&egui::TextStyle::Body).ceil();
+    let rows = MOST_PLANT_STATS as f32;
+    // The name row, the controls and the slider (each a widget's height), then the figures'
+    // grid, each a gap apart.
+    3.0 * spacing.interact_size.y
+        + 3.0 * spacing.item_spacing.y
+        + rows * text
+        + (rows - 1.0) * STATS_ROW_SPACING
+}
+
+/// The space between two of the selected plant's figures.
+const STATS_ROW_SPACING: f32 = 1.0;
+
+/// The list: its title, then every plant in a list that fills the height left and scrolls, never
+/// shorter than [`PLANT_LIST_MIN_ROWS`] rows.
 pub fn draw_plant_list(ui: &mut egui::Ui, model: &PlantListModel) -> Vec<UiAction> {
     let mut actions = Vec::new();
+    let block = ui.scope(|ui| draw_plant_rows(ui, model, &mut actions));
+    named_region(&block.response, &model.title);
+    actions
+}
+
+/// Names the block `response` covers for AccessKit, so a screen reader (and a test) finds it.
+pub(super) fn named_region(response: &egui::Response, name: &str) {
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, name));
+}
+
+fn draw_plant_rows(ui: &mut egui::Ui, model: &PlantListModel, actions: &mut Vec<UiAction>) {
     ui.strong(model.title.as_str());
+    let row_height = ui.spacing().interact_size.y + PLANT_ROW_SPACING.y;
     egui::ScrollArea::vertical()
         .id_salt("operating_plant_list")
         .auto_shrink([false, false])
-        .max_height(PLANT_LIST_HEIGHT)
+        .min_scrolled_height(PLANT_LIST_MIN_ROWS as f32 * row_height)
         .show(ui, |ui| {
             egui::Grid::new("operating_plant_rows")
                 .num_columns(4)
-                .spacing(egui::vec2(6.0, 2.0))
+                .spacing(PLANT_ROW_SPACING)
                 .show(ui, |ui| {
                     for row in &model.rows {
                         ui.scope(|ui| {
                             ui.spacing_mut().button_padding = egui::vec2(4.0, 0.0);
-                            toggle_button(ui, &row.select, &mut actions);
+                            toggle_button(ui, &row.select, actions);
                         });
                         ui.weak(row.status.as_str());
                         ui.label(row.output.as_str());
@@ -299,7 +345,6 @@ pub fn draw_plant_list(ui: &mut egui::Ui, model: &PlantListModel) -> Vec<UiActio
                     }
                 });
         });
-    actions
 }
 
 /// The selected plant's controls first, so they are in view at the smallest window, then its
@@ -346,7 +391,7 @@ pub fn draw_plant_panel(
             // Compact rows, so every figure is in view at the smallest window.
             egui::Grid::new("operating_plant_stats_grid")
                 .num_columns(2)
-                .spacing(egui::vec2(8.0, 1.0))
+                .spacing(egui::vec2(8.0, STATS_ROW_SPACING))
                 .min_row_height(0.0)
                 .show(ui, |ui| {
                     for stat in &plant.stats {
@@ -396,6 +441,24 @@ mod tests {
             PlantPanelModel::Plant(model) => *model,
             other => panic!("{other:?}"),
         }
+    }
+
+    /// The details block is sized for [`MOST_PLANT_STATS`] figures: no plant shows more.
+    #[test]
+    fn no_plant_shows_more_figures_than_the_details_block_holds() {
+        let l10n = shipped_l10n();
+        let mut most = 0;
+        for region in ["eastern_interconnection", "western_interconnection"] {
+            let game = shipped_game(region, Box::new(InMemoryCommandLog::default()));
+            for plant in game.session().plant_views() {
+                let count = selected(&game, plant.id).stats.len();
+                assert!(count <= MOST_PLANT_STATS, "{region}: {:?}", plant.id);
+                most = most.max(count);
+            }
+        }
+        // And the most is reached, so the block has no room to spare.
+        assert_eq!(most, MOST_PLANT_STATS);
+        assert_eq!(l10n.problems(), vec![]);
     }
 
     #[test]
