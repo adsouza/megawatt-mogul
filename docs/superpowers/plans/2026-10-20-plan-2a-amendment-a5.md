@@ -4,7 +4,8 @@
 
 **Goal:** A new game starts on the previous operator's schedule: every dispatchable start-fleet
 plant is committed all day with AGC on. Start the day asks for confirmation when the forecast shows
-a shortfall.
+a shortfall. The window opens at about 80% of the monitor, and the side and bottom panels can be
+resized.
 
 **Architecture:**
 - The inherited schedule is a domain rule in `GameSession::new`, shipped with a
@@ -14,7 +15,7 @@ a shortfall.
 
 **Tech Stack:** unchanged (Rust 1.98, Bevy 0.20, bevy_egui 0.43.1; no new crates).
 
-**Spec:** `docs/superpowers/specs/2026-10-18-megawatt-mogul-design.md` §16 (A5). It builds on §14.5
+**Spec:** `docs/superpowers/specs/2026-10-18-megawatt-mogul-design.md` §16 (A5), with §16.7 for Task 3. It builds on §14.5
 (the hands-off plan) and §15.5 (the capacity-shortfall check).
 
 ## Global Constraints
@@ -169,3 +170,65 @@ a shortfall.
 - [ ] **Step 5: Run everything.** Run: `cargo nextest run --workspace`, then clippy and the format
   check. Expected: green.
 - [ ] **Step 6: Commit**: `feat(game): confirm Start the day when the forecast is short`.
+
+---
+
+### Task 3: Window opening size and resizable panels (game)
+
+Spec §16.7. Added after playtest feedback.
+
+**Files:**
+- Modify: `crates/game/src/main.rs` (the window's opening size)
+- Modify: the panel systems in `crates/game/src/hud/{inspector,build,planning,operating}.rs`
+- Create: a small pure helper, for example `crates/game/src/window.rs`, with
+  `opening_size(monitor: Vec2) -> Option<Vec2>`, and a pure panel-limits helper
+- Test: inline unit tests, plus real-pass drag tests in a new `#[path]` module such as
+  `tests/game/panel_resize.rs`
+- Docs: the playtest checklist (a resize step); TESTING.md only if it lists the fit tests' sizes
+
+**Interfaces:**
+- Consumes:
+  - Bevy 0.20's `Monitor` and `PrimaryMonitor` (logical size = physical / scale factor);
+  - `WindowPosition::Centered(MonitorSelection::Primary)`;
+  - egui `Panel::{left,right,bottom}` with `.resizable(true)`, `.default_size`, `.min_size` and
+    `.max_size`;
+  - the existing size constants `INSPECTOR_PANEL_WIDTH`, `BUILD_PANEL_WIDTH`,
+    `PLANNING_PANEL_HEIGHT`, `OPERATING_PANEL_HEIGHT` and the Operating side width;
+  - `EguiPass::run_with`, and the `drag` helper in `support/egui_harness.rs`.
+- Produces:
+  - `opening_size`: 80% of the monitor's logical size, clamped to between 1024×640 and the
+    monitor, or `None` with no monitor;
+  - each outer panel resizable from its constant (its default and minimum) up to its maximum:
+    - side panels: at most 40% of the screen width;
+    - bottom panels: at most 50% of the screen height;
+    - the map always keeps at least 320×200.
+
+- [ ] **Step 1: Write the failing tests.**
+  - `opening_size_is_80_percent_of_the_monitor_clamped`. Use the 2560×1440, 1280×800, 1024×640
+    and 800×600 monitors, checking each is clamped up to the minimum and down to the monitor. With
+    no monitor it returns `None`.
+  - `panel_limits_keep_the_map_usable`. A pure test of the max sizes at 1024×640 and 2560×1440.
+    The maximum is never below the minimum.
+  - Real pass, at both 1024×640 and 2560×1440, for each resizable panel in Planning and Operating:
+    1. drag its inner edge outward by 150 px: the panel grows by 150 and the map shrinks by 150;
+    2. drag it inward past its minimum: it stops at its constant;
+    3. drag it far outward: it stops at its maximum, and the map keeps at least 320×200.
+  - The map never moves on its own. After a drag, a selection change, a tab change and the
+    Planning → Operating → Planning round trip each leave the panel sizes and the map rect
+    unchanged.
+  - The existing 1024×640 fit tests and map-stability tests pass unchanged at the default sizes.
+- [ ] **Step 2: Run them and see them fail.**
+- [ ] **Step 3: Implement.**
+  - Set the opening size once the primary monitor is known, because monitors appear after the
+    event loop starts. Use a system that runs until it has applied the size once, then never
+    again. A user resize afterwards always wins.
+  - Make the panels resizable with the limits above.
+  - Keep the `--exit-after-frames` launch smoke working.
+- [ ] **Step 4: Check the real window by hand.**
+  1. Run `cargo run -p game -- --exit-after-frames 120` and record that it exits cleanly.
+  2. Run the game once and resize a panel. Take a game-window capture only, never the desktop.
+- [ ] **Step 5: Update the playtest checklist.** Add the opening size on a large monitor, and
+  dragging a panel's edge with the minimum and maximum limits.
+- [ ] **Step 6: Run everything.** `cargo nextest run --workspace`, clippy and the format check.
+- [ ] **Step 7: Commit**: `feat(game): open at 80% of the monitor; resizable side and bottom panels`.
+

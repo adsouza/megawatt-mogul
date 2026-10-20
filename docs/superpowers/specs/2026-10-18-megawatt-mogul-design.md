@@ -5,8 +5,8 @@
 - **Amendments:** A1, a hydro peak-shaving schedule (§12, 2026-10-18); A2, proration of the
   partial-year rate review (§13, 2026-10-18); A3, over-frequency protection, a minimum-generation
   warning and frequency-performance strikes (§14, 2026-10-18); A4, rotating outages and staged
-  under-frequency shedding (§15, 2026-10-19); A5, the inherited schedule and the shortfall
-  confirmation (§16, 2026-10-20)
+  under-frequency shedding (§15, 2026-10-19); A5, the inherited schedule, the shortfall
+  confirmation, and window and panel sizing (§16, 2026-10-20)
 - **Engine:** Rust 1.98, Bevy 0.20, bevy_egui 0.43, bevy-inspector-egui 0.38
 
 ## 1. Vision and goals
@@ -1459,4 +1459,26 @@ should be asked before starting a day that the forecast already says will need r
   - Keep planning sends nothing and closes the prompt;
   - Start anyway begins operating;
   - the prompt fits at 1024×640.
+
+### 16.7 Window and panel sizing (playtest, presentation only)
+
+Playtesting found two sizing problems. On a large monitor the window opens at Bevy's default
+1280×720. The side and bottom panels have fixed sizes, so a player with room to spare can't give
+the commitment grid, the charts or the plant list more space.
+
+- **The opening size.** The window opens centred on the primary monitor at about 80% of its
+  logical width and height. It is clamped to at least the 1024×640 minimum window and at most the
+  monitor. If no monitor is known, it keeps the default size.
+- **Resizable panels.** The outer panels can be resized by dragging their inner edge:
+  - Planning's inspector (left), build menu (right) and bottom panel;
+  - Operating's side panel (right) and bottom panel.
+
+  Each panel opens at its current size. That size is also its minimum, so everything that fits at
+  1024×640 still fits. Each panel also has a maximum, so the map always keeps a usable area.
+  Content that already fills the available width or height, such as charts, the plant list and
+  scroll areas, uses the extra room.
+- **The map still never moves on its own.** Only a drag changes a panel's size. A selection
+  change, a tab change or a phase change leaves it alone, as before. A panel's size lasts for the
+  rest of the run. It isn't saved to disk, because there is no settings persistence yet.
+- **Out of scope:** remembering the window size between runs, and fullscreen.
 
