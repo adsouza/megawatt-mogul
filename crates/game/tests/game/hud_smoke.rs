@@ -22,10 +22,9 @@ use game::hud::{
     OperatingTab, PLANNING_PANEL_HEIGHT, PlanningTab, PlantPanelForm, PlantPanelModel,
     PlantSection, Prompt, RegionListings, Selection, ToastQueue, UiAction, UiState,
     boot_error_model, build_model, button, dispatch, draw_boot_error, draw_build, draw_game_over,
-    draw_inspector, draw_main_menu, draw_map, draw_operating_panel, draw_operating_side,
-    draw_planning, draw_plant_panel, draw_prompt, draw_region_select, draw_speed, draw_toasts,
-    draw_top_bar, draw_warnings, game_over_model_for, hit_test, inspector_model, is_commitable,
-    main_menu_model, map_model, operating_panel_model, operating_side_model, planning_model,
+    draw_inspector, draw_main_menu, draw_map, draw_planning, draw_plant_panel, draw_prompt,
+    draw_region_select, draw_speed, draw_toasts, draw_top_bar, draw_warnings, game_over_model_for,
+    hit_test, inspector_model, is_commitable, main_menu_model, map_model, planning_model,
     plant_half_size, plant_panel_model, prompt_model, region_select_model, speed_model,
     toasts_model, top_bar_model, warnings_for,
 };
@@ -36,7 +35,7 @@ use infrastructure::region::RonRegionCatalog;
 use tempfile::TempDir;
 
 use crate::support::egui_harness::{
-    Harness, button as find_button, buttons, central, shows, widget,
+    Harness, Widget, button as find_button, buttons, central, shows, widget,
 };
 use crate::support::egui_pass::EguiPass;
 use crate::support::{headless_app, hud_app, request, shipped_assets, shipped_l10n, update_n};
@@ -1534,133 +1533,6 @@ fn online_plant(game: &Game, kind: domain::region::PlantKind) -> domain::session
         .unwrap_or_else(|| panic!("an online {kind:?} plant"))
 }
 
-/// What the Operating screen remembers between frames, as the game's resources do. A test applies
-/// the actions a click returns, as `dispatch` does.
-#[derive(Default)]
-struct OperatingState {
-    selection: Selection,
-    tab: OperatingTab,
-    speed: SimSpeed,
-    form: PlantPanelForm,
-}
-
-impl OperatingState {
-    fn apply(&mut self, actions: &[UiAction]) {
-        for action in actions {
-            match action {
-                UiAction::Select(selection) => self.selection = *selection,
-                UiAction::SetOperatingTab(tab) => self.tab = *tab,
-                UiAction::SetSpeed(speed) => self.speed = *speed,
-                _ => {}
-            }
-        }
-    }
-}
-
-/// The operating screen as its systems lay it out: the top bar and the speed bar, then the
-/// Operating panel along the bottom, the side panel on the right, and the map filling the rest.
-fn operating_screen(
-    ui: &mut egui::Ui,
-    game: &Game,
-    cache: &mut MapCache,
-    state: &mut OperatingState,
-) -> Vec<UiAction> {
-    let l10n = shipped_l10n();
-    let bar = top_bar_model(game, &l10n);
-    let speed = speed_model(game, &l10n, state.speed);
-    let panel = operating_panel_model(game, &l10n, state.tab).unwrap();
-    let side = operating_side_model(game, &l10n, state.selection).unwrap();
-    let map = map_model(game, &l10n, MapLayer::Terrain, state.selection);
-    let ctx = ui.ctx().clone();
-    let mut area = HudArea::default();
-    let mut actions = Vec::new();
-    let mut root = area.root_ui(&ctx, "top_bar");
-    actions.extend(
-        egui::Panel::top("top_bar")
-            .show(&mut root, |ui| draw_top_bar(ui, &bar))
-            .inner,
-    );
-    area.claim(&root);
-    let mut root = area.root_ui(&ctx, "speed");
-    actions.extend(
-        egui::Panel::top("speed")
-            .resizable(false)
-            .show(&mut root, |ui| draw_speed(ui, &speed))
-            .inner,
-    );
-    area.claim(&root);
-    let mut root = area.root_ui(&ctx, "operating");
-    actions.extend(
-        egui::Panel::bottom("operating")
-            .resizable(false)
-            .exact_size(OPERATING_PANEL_HEIGHT)
-            .show(&mut root, |ui| draw_operating_panel(ui, &panel))
-            .inner,
-    );
-    area.claim(&root);
-    let mut root = area.root_ui(&ctx, "operating_side");
-    actions.extend(
-        egui::Panel::right("operating_side")
-            .resizable(false)
-            .exact_size(OPERATING_SIDE_WIDTH)
-            .show(&mut root, |ui| {
-                draw_operating_side(ui, &side, &mut state.form)
-            })
-            .inner,
-    );
-    area.claim(&root);
-    let mut root = area.root_ui(&ctx, "map");
-    actions.extend(
-        egui::CentralPanel::default()
-            .show(&mut root, |ui| draw_map(ui, &map, cache))
-            .inner,
-    );
-    actions
-}
-
-/// An operating screen of one game, drawn by one harness so egui's remembered sizes carry over.
-struct OperatingScreen {
-    game: Game,
-    harness: Harness,
-    cache: RefCell<MapCache>,
-    state: RefCell<OperatingState>,
-}
-
-impl OperatingScreen {
-    fn new(game: Game, harness: Harness) -> Self {
-        Self {
-            game,
-            harness,
-            cache: RefCell::default(),
-            state: RefCell::default(),
-        }
-    }
-
-    fn draw_fn(&self) -> impl FnMut(&mut egui::Ui) -> Vec<UiAction> + '_ {
-        |ui| {
-            operating_screen(
-                ui,
-                &self.game,
-                &mut self.cache.borrow_mut(),
-                &mut self.state.borrow_mut(),
-            )
-        }
-    }
-
-    /// Draws until the layout settles (egui sizes some widgets from the previous frame).
-    fn widgets(&self) -> Vec<crate::support::egui_harness::Widget> {
-        self.harness.draw(self.draw_fn());
-        self.harness.draw(self.draw_fn())
-    }
-
-    /// Clicks the button labelled `label`, then applies the actions as `dispatch` would.
-    fn click(&self, label: &str) -> Vec<UiAction> {
-        let actions = self.harness.click(label, self.draw_fn());
-        self.state.borrow_mut().apply(&actions);
-        actions
-    }
-}
-
 /// The one slider labelled `label`.
 fn slider<'a>(
     widgets: &'a [crate::support::egui_harness::Widget],
@@ -1771,11 +1643,28 @@ fn target_slider_sends_once_on_release_within_bounds() {
     );
 }
 
+/// The size [`Harness::new`] draws at, for the real pass.
+const WIDE: (f32, f32) = (1280.0, 800.0);
+
+/// Clicks the one button labelled `label` on the settled screen `widgets`, through the real pass.
+fn click_in_pass(pass: &EguiPass, app: &mut App, widgets: &[Widget], label: &str) {
+    let (width, height) = WIDE;
+    pass.click_at(
+        app,
+        width,
+        height,
+        find_button(widgets, label).rect.center(),
+    );
+}
+
 #[test]
 fn the_operating_screen_draws_every_panel_an_hour_in() {
+    let (width, height) = WIDE;
     for region in [EASTERN, WESTERN] {
-        let screen = OperatingScreen::new(operating_game(region), Harness::new());
-        let widgets = screen.widgets();
+        let logs = TempDir::new().unwrap();
+        let mut app = operating_hour_app(&logs, region);
+        let pass = EguiPass::attach(&mut app);
+        let widgets = pass.settled(&mut app, width, height);
         for text in [
             "01:00",
             "Frequency",
@@ -1792,20 +1681,28 @@ fn the_operating_screen_draws_every_panel_an_hour_in() {
 
         // A row of the list selects its plant, and the panel shows it.
         let l10n = shipped_l10n();
-        let names = game::l10n::Names::new(&l10n, screen.game.session());
-        let coal_or_gas = screen
-            .game
-            .session()
-            .plant_views()
-            .into_iter()
-            .find(|plant| matches!(plant.status, domain::generation::PlantStatus::Online { .. }))
-            .expect("something is online");
-        let name = names.plant(coal_or_gas.id);
+        let online = {
+            let game = &app.world().resource::<Session>().0;
+            let plant = game
+                .session()
+                .plant_views()
+                .into_iter()
+                .find(|plant| {
+                    matches!(plant.status, domain::generation::PlantStatus::Online { .. })
+                })
+                .expect("something is online");
+            (
+                plant.id,
+                game::l10n::Names::new(&l10n, game.session()).plant(plant.id),
+            )
+        };
+        let (plant, name) = online;
+        click_in_pass(&pass, &mut app, &widgets, &name);
         assert_eq!(
-            screen.click(&name),
-            vec![UiAction::Select(Selection::Plant(coal_or_gas.id))]
+            *app.world().resource::<Selection>(),
+            Selection::Plant(plant)
         );
-        let widgets = screen.widgets();
+        let widgets = pass.settled(&mut app, width, height);
         assert!(shows(&widgets, "Set target"), "{region}");
         assert!(!find_button(&widgets, "AGC").disabled);
         assert!(!find_button(&widgets, "Stop").disabled);
@@ -1813,11 +1710,9 @@ fn the_operating_screen_draws_every_panel_an_hour_in() {
         assert!(shows(&widgets, "Marginal cost"), "{region}");
 
         // The hydro tab.
-        assert_eq!(
-            screen.click("Hydro"),
-            vec![UiAction::SetOperatingTab(OperatingTab::Hydro)]
-        );
-        let widgets = screen.widgets();
+        click_in_pass(&pass, &mut app, &widgets, "Hydro");
+        assert_eq!(*app.world().resource::<OperatingTab>(), OperatingTab::Hydro);
+        let widgets = pass.settled(&mut app, width, height);
         if region == WESTERN {
             assert!(shows(&widgets, "Hours already played are frozen"));
             assert!(
@@ -1828,11 +1723,14 @@ fn the_operating_screen_draws_every_panel_an_hour_in() {
         } else {
             assert!(shows(&widgets, "No hydro plant is scheduled today."));
         }
+        click_in_pass(&pass, &mut app, &widgets, "Supply");
         assert_eq!(
-            screen.click("Supply"),
-            vec![UiAction::SetOperatingTab(OperatingTab::Supply)]
+            *app.world().resource::<OperatingTab>(),
+            OperatingTab::Supply
         );
-        assert_eq!(screen.click("8×"), vec![UiAction::SetSpeed(SimSpeed::X8)]);
+        let widgets = pass.settled(&mut app, width, height);
+        click_in_pass(&pass, &mut app, &widgets, "8×");
+        assert_eq!(*app.world().resource::<SimSpeed>(), SimSpeed::X8);
     }
 }
 

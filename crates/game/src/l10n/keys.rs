@@ -156,7 +156,6 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "plant-energy-today",
     "plant-revenue-today",
     "plant-hydro-budget",
-    "plant-agc",
     "plant-start",
     "plant-stop",
     "operating-tab-supply",

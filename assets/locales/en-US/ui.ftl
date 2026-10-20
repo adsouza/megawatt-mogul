@@ -209,7 +209,6 @@ plant-marginal-cost = Marginal cost
 plant-energy-today = Energy so far
 plant-revenue-today = Revenue so far
 plant-hydro-budget = Water left today
-plant-agc = Automatic generation control (AGC)
 plant-start = Start
 plant-stop = Stop
 operating-tab-supply = Supply

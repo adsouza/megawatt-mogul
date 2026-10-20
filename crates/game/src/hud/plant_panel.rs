@@ -221,7 +221,7 @@ pub fn plant_panel_model(game: &Game, l10n: &Localizer, selection: Selection) ->
             .enabled_if(operable),
             on: plant.auto_follow,
         },
-        agc_tip: l10n.text("plant-agc"),
+        agc_tip: l10n.text("commitment-agc-tip"),
         start: ButtonModel::new(
             l10n.text("plant-start"),
             UiAction::Command(Command::StartPlant { plant: plant.id }),
@@ -474,7 +474,10 @@ mod tests {
         );
         assert!(!model.agc.on && model.agc.button.enabled);
         assert_eq!(model.agc.button.label, "AGC");
-        assert_eq!(model.agc_tip, "Automatic generation control (AGC)");
+        assert_eq!(
+            model.agc_tip,
+            "Automatic generation control: the plant follows the load by itself."
+        );
         assert_eq!(
             model.start.action,
             UiAction::Command(Command::StartPlant { plant: coal.id })
