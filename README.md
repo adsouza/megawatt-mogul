@@ -28,9 +28,12 @@ balancing area:
 
 ## Status
 
-Plan 1 (headless simulation core: the `domain`, `application` and `infrastructure` crates)
-complete. Plan 2 (the Bevy client, `crates/game`) is in progress: the game opens a window but has
-no menus yet.
+Plan 1 (headless simulation core: the `domain`, `application` and `infrastructure` crates) and
+Plan 2 (the Bevy client, `crates/game`) are complete, and the game is playable. From the main menu
+you pick a region and a seed, then play month after month: plan the day's commitments on a 2D map,
+operate the grid through the day at up to 8×, and read the month's review. Plan 3 adds the 3D
+diorama. The [playtest checklist](docs/superpowers/plans/2026-10-19-plan-2-playtest.md) walks
+through every screen.
 
 ## Run
 
@@ -41,7 +44,10 @@ cargo run -p game -- --assets <dir> --log-dir <dir>
 
 - `--assets` is the directory holding `regions/` and `locales/`. Without it the game uses the
   first of `./assets`, `assets/` next to the executable, and the workspace's `assets/`.
-- `--log-dir` is where command logs are written (default `./logs`, which git ignores).
+- `--log-dir` is where command logs are written (default `./logs`, which git ignores). Each game
+  records its own log there, named for the time, region and seed.
+- `--exit-after-frames <n>` (for developers) closes the game after `n` frames: a quick check that
+  the window opens and the menu draws.
 - On Linux, install Bevy's build dependencies first; see
   [Bevy's Linux dependencies](https://github.com/bevyengine/bevy/blob/v0.20.0/docs/linux_dependencies.md)
   or the list in `.github/workflows/ci.yml`. The first build compiles Bevy and takes a few minutes.

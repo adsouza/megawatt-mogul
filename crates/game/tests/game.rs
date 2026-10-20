@@ -7,6 +7,8 @@
 
 #[path = "game/cli.rs"]
 mod cli;
+#[path = "game/end_to_end.rs"]
+mod end_to_end;
 #[path = "game/hud.rs"]
 mod hud;
 #[path = "game/hud_smoke.rs"]

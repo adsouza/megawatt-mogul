@@ -169,17 +169,24 @@ Watch items:
 ## Carry into Plan 2 (Bevy client)
 - **Batching:** advance in small batches (`speed` ticks per `FixedUpdate`) so projections stay
   timely (R22).
+  **Done (Plan 2, Task 4):** `drive_ticks` sends one `AdvanceTicks { n: speed }` (1, 2, 4 or 8)
+  per 4 Hz fixed step, with at most one batch in flight
+  (`operating_advances_speed_ticks_per_fixed_step`, `a_slow_frame_still_sends_one_batch`; the
+  end-to-end month sees 180 batches of 8).
 - **Save/load:** `replay` returns only a `GameSession`. Any future load or resume must rebuild the
   projections by feeding the replayed events through `Projections::apply_all`.
 - **Command-log failures:** these are only traced. `FileCommandLog` then silently drops later
   commands. Surface log health to the player.
   **Done (Plan 2, Task 2):** `build_pipeline` returns a `LogHealth` that keeps the first append
-  error, and `Game::log_failure()` exposes it for the HUD.
+  error, and `Game::log_failure()` exposes it for the HUD. Task 5 shows it in the top bar as
+  *Recording stopped: …* (`top_bar_shows_recording_stopped`), and the game keeps running
+  (`a_failing_log_keeps_the_game_running`).
 - **Region picker:** `RonRegionCatalog::list` fails as a whole if any one file is bad, and it fully
   rasterises every region just to list it. Return per-entry results for the picker.
   **Done (Plan 2, Task 2):** `RegionCatalog::list` returns one `RegionListing` per file, a bad
   file as an `Err` entry, and decodes the file's DTO only (no mapping or rasterisation).
-  `auto_select_region` picks only a lone, available entry.
+  `auto_select_region` picks only a lone, available entry. Task 5's picker lists a broken file
+  disabled, as *Unavailable*, next to the good ones (`a_broken_region_is_listed_disabled_next_to_a_good_one`).
 - **Spec §6.3:** asks for price in the timeline and revenue per plant. Both were dropped by the plan,
   so implement them or amend the spec.
   **Done (Plan 2, Task 2):** `TimelinePoint.marginal_cost` (the system marginal cost, recorded as

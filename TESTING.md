@@ -10,15 +10,15 @@ commit leaves `cargo nextest run --workspace`, clippy and `cargo fmt --check` gr
 | Unit | Inline `#[cfg(test)]` in `domain` and `application` | std |
 | Property-based | `domain`, `application` | `proptest`, `proptest-state-machine` |
 | Integration and scenario | `application/tests/`: command scripts against small fixture regions built in code | std, `insta` |
-| Adapter | `infrastructure/tests/` (parses both shipped region files); `game/tests/` (planned: headless `App` with `MinimalPlugins`) | std |
+| Adapter | `infrastructure/tests/` (parses both shipped region files) | std |
+| Game | Inline presenter tests in `game/src/hud/`; `game/tests/game.rs`, one binary of headless `App` tests (see [The game crate](#the-game-crate)) | std, Bevy `MinimalPlugins`, egui |
 | Mutation | `domain`, `application` | `cargo-mutants` |
 | Runner | Everything | `cargo-nextest` |
 
-Every layer above has tests except the `game` adapter (the crate does not exist yet, so its headless
-`App` tests are still planned). Beyond the inline unit and property tests, the integration suites are
+Beyond the inline unit and property tests, the integration suites are
 `application/tests/{scenarios,determinism,state_machine,pipeline,rules_version_guard}.rs`, the adapter
-suites are `infrastructure/tests/{region_catalog,shipped_regions,command_log}.rs`, and
-`domain/tests/dependency_rule.rs` enforces the dependency rule.
+suites are `infrastructure/tests/{region_catalog,shipped_regions,command_log}.rs`, the game's are the
+modules of `game/tests/game.rs`, and `domain/tests/dependency_rule.rs` enforces the dependency rule.
 
 ## Running each layer
 
@@ -27,6 +27,8 @@ cargo nextest run --workspace                  # everything
 cargo nextest run -p domain                    # domain only (never compiles Bevy)
 cargo nextest run -p application               # unit, property and scenario tests
 cargo nextest run -p infrastructure            # adapter tests
+cargo nextest run -p game                      # presenter, glue, egui-pass and end-to-end tests
+cargo nextest run -p game end_to_end           # one month through the app, per shipped region
 cargo nextest run --workspace --profile ci     # what CI runs (no retries)
 cargo insta review                             # review snapshot changes
 cargo mutants -p domain -p application         # mutation testing
@@ -35,10 +37,72 @@ cargo mutants -p domain -p application         # mutation testing
 Property tests use `proptest`; set `PROPTEST_CASES` to run more cases locally. Note that nextest does
 not run doctests; run `cargo test --doc --workspace` for those.
 
-The whole workspace runs in about 20 s in a debug build. Most of that is the two year-long
+The whole workspace runs in about 23 s in a debug build. Most of that is the two year-long
 acceptance runs in `infrastructure::shipped_regions`, `hands_off_plan_survives_year_one` and
-`shipped_regions_never_order_outages_hands_off` (about 17 s each, side by side: two regions × eight
+`shipped_regions_never_order_outages_hands_off` (about 18 s each, side by side: two regions × eight
 seeds × twelve months); every other test finishes in under 3 s.
+
+## The game crate
+
+The game's tests sit in six layers, from the cheapest to the widest. None opens a window.
+
+- **Presenter tests**, inline under `#[cfg(test)] mod tests` in each `game/src/hud/<panel>.rs`. They
+  call the pure `<panel>_model(..)` on a real `Game` (`hud::test_support`: `shipped_l10n()`,
+  `eastern_game(..)`, the shipped Eastern region on seed 7 in Planning, and the `FullDisk` sink)
+  and assert on the model's strings and on each `ButtonModel`'s action and `enabled`, comparing
+  text against `l10n::format` and `l10n.text(key)`. Each ends with
+  `assert_eq!(l10n.problems(), vec![])`, so a missing key fails.
+- **Glue tests** (`tests/game/hud.rs`, `simulation.rs`, `states.rs`) run the plugins in a headless
+  `App` (`support::headless_app` or `support::hud_app`: `MinimalPlugins`, `StatesPlugin`,
+  `CorePlugins`, and `HudPlugin` without `EguiPlugin`) on
+  `TimeUpdateStrategy::ManualDuration(ZERO)`. They drive the app with messages and `app.update()`
+  and assert on resources. HUD actions go through the real `dispatch` (`run_system_once` with an
+  `ActionSink`), never by writing the resources directly, so a broken wire fails. The fixed-step
+  driver is stepped with `TimeUpdateStrategy::FixedTimesteps(1)`: each `app.update()` then runs
+  `FixedUpdate` exactly once, and nothing depends on real time.
+- **Draw tests** (`tests/game/hud_smoke.rs`, `review_smoke.rs`) draw one panel's draw function in
+  `support/egui_harness.rs`, inside the container its system uses. Widgets are read back from
+  egui's AccessKit tree, and `click`, `click_nth`, `drag` and `press_key` are real pointer and key
+  events, so a test passes only if the button is there and clickable.
+- **The real egui pass** (`support/egui_pass.rs`). `EguiPass::attach` gives a headless app the
+  primary egui context `EguiPlugin` would attach to the window; `run` and `settled` run the
+  plugin's own systems in `EguiPrimaryContextPass` with their real run conditions, and `run_with`
+  feeds input events for clicks. It catches what the other layers can't: a phase gate that draws
+  the wrong panels, and conflicting system parameters (Bevy B0002), which are only checked when the
+  pass is first initialised (`the_egui_systems_have_no_conflicting_parameters`).
+- **The 1024×640 fit tests** (`at_the_smallest_window_…`) lay out each screen at the minimum window
+  size, for both shipped regions, and check that panels don't overlap and that the controls a
+  player needs (*Apply*, *Continue*, the figures of the selected plant) are inside their panel.
+- **The end-to-end month** (`tests/game/end_to_end.rs`), for each shipped region on seed 7: a new
+  game, the hands-off plan clicked in from the commitment grid's own buttons (*All day*, *AGC*),
+  *Start the day*, 8×, the fixed-step driver to the close, then *Continue*. It asserts the phases
+  Planning → Operating → Review → Planning, no `CommandFailed` and no toast that a domain event
+  doesn't explain, a log that gains one line per command, and the month's report. It asserts
+  nothing about the month's outcome, which the `infrastructure` acceptance runs pin. Each region
+  takes about 0.2 s.
+
+`tests/game/l10n_coverage.rs` checks the translations: every literal key in `l10n::keys` exists in
+en-US, every typed value (errors, events, lessons, kinds) translates through an exhaustive table,
+and a broken `.ftl` fails Boot visibly.
+
+**One test binary.** Every game integration test is a module of `tests/game.rs`, under
+`tests/game/` (with `#[path]` attributes), and `tests/game/layout.rs` fails if another top-level
+test file appears. Each Bevy-linked test binary costs hundreds of MB of disk and its own link step,
+so the crate has exactly two: the library's inline tests and `tests/game.rs`. Doctests (one binary
+each) are off, and `main.rs` has no tests. Add a module, not a file in `tests/`.
+
+**The manual launch smoke.** No test opens a real window: winit needs the main thread on macOS,
+which nextest doesn't give it, and CI has no display. After a change to plugins, systems or their
+parameters, run
+
+```sh
+cargo run -p game -- --exit-after-frames 120
+```
+
+It opens the window, draws the main menu for 120 frames and exits with status 0; a panic on the
+first frame (a B0002 conflict, a missing egui schedule) shows here first. It is step 0 of the
+[playtest checklist](docs/superpowers/plans/2026-10-19-plan-2-playtest.md), which covers what only a
+person can see.
 
 ## Property catalogue
 

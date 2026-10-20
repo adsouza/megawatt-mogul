@@ -8,17 +8,21 @@ equal to demand. Clean Architecture + DDD; see ARCHITECTURE.md, and the spec in 
 ## Commands
 
 - Build: `cargo build --workspace`
-- Test: `cargo nextest run --workspace` (add `-p domain` for fast feedback)
+- Test: `cargo nextest run --workspace` (add `-p domain` for fast feedback; `-p game` for the client)
 - Lint: `cargo clippy --workspace --all-targets -- -D warnings`
 - Format: `cargo fmt --all` (CI runs `cargo fmt --all --check`)
 - Mutation testing: `cargo mutants -p domain -p application` (slow; on demand)
 - Snapshots: `cargo insta review`
+- Run the game: `cargo run -p game` (`--assets <dir>`, `--log-dir <dir>`)
+- Launch smoke: `cargo run -p game -- --exit-after-frames 120` opens the window, draws 120 frames
+  and exits 0. Tests can't open a window, so run it after changing plugins or system parameters.
 - Hooks: `git config core.hooksPath .githooks`. pre-commit checks formatting; pre-push runs clippy
   and the tests. Don't bypass them with `--no-verify`: fix the failure instead.
 
 ## Architecture rules
 
-- Dependency rule: `game` -> `application` -> `domain`, and `infrastructure` -> `application` + `domain`.
+- Dependency rule: `game` -> `application` + `infrastructure` + `domain`, `application` -> `domain`,
+  and `infrastructure` -> `application` + `domain`.
   `domain` may depend only on `rand_chacha` and `thiserror`: no Bevy, serde, I/O or tracing.
 - No user-facing strings in `domain` or `application`: use typed values and `name_key` translation keys.
 - Plant tuning numbers live only in region RON data and the `test-fixtures` fixture, never as constants.
@@ -27,6 +31,23 @@ equal to demand. Clean Architecture + DDD; see ARCHITECTURE.md, and the spec in 
 - Money is `i64` cents. Nothing is priced per tick; price once per ledger entry at month close.
 - The domain never panics on player input; it returns `DomainError`. A command that returns `Err`
   leaves the session unchanged. Panics are only for invariant violations (bugs).
+
+## Game crate rules
+
+- Bevy and egui only in `game`. Its library holds every plugin and system; `main.rs` only parses
+  the command line and opens the window.
+- HUD panels follow the presenter pattern (ARCHITECTURE.md, "The game crate"): a pure
+  `<panel>_model` presenter, a draw function returning `Vec<UiAction>`, and a system that hands
+  those to `dispatch`, the only place a click becomes a message or a resource write.
+- A panel system reads what `dispatch` writes through `ActionSink`'s getters, never with a second
+  `Res` of the same resource (Bevy panics with B0002 on the first windowed frame).
+- The game changes the simulation only by sending `PlayerCommand`s; `PhaseState` only mirrors the
+  domain's phase.
+- New player-facing text goes in `assets/locales/en-US/*.ftl`; a new literal key also goes in
+  `crates/game/src/l10n/keys.rs`, which the coverage test (`tests/game/l10n_coverage.rs`) checks.
+- One test binary: game integration tests are modules of `crates/game/tests/game.rs` under
+  `tests/game/`, never a new file in `tests/` (each Bevy-linked binary costs hundreds of MB and
+  a link step). See TESTING.md for the layers.
 
 ## Workflow
 

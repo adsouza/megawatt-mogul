@@ -5,22 +5,26 @@ is a pure Rust core. Bevy is an outer adapter. The full design is in the
 [spec](docs/superpowers/specs/2026-10-18-megawatt-mogul-design.md); this page is the short version
 for people changing code.
 
-**Status:** Plan 1 (the headless simulation core: `domain`, `application` and `infrastructure`) is
-complete. The `game` crate, the Bevy client, is planned for Plans 2-3.
+**Status:** Plan 1 (the headless simulation core: `domain`, `application` and `infrastructure`) and
+Plan 2 (the `game` crate: the Bevy client with an egui HUD over a 2D map) are complete, and the game
+is playable. Plan 3 adds the 3D diorama.
 
 ## Layers and the dependency rule
 
 ```
-game (planned) ──▶ application ──▶ domain
-        └────────▶ infrastructure ─┘   (infrastructure implements application ports)
+game ──▶ application ──▶ domain
+  │            ▲            ▲
+  └──▶ infrastructure ──────┘   (infrastructure implements application ports)
 ```
+
+`game` also uses `domain` directly, for its typed values and views.
 
 | Crate | Role |
 |---|---|
 | `domain` | Model, rules and events. Pure Rust: no Bevy, no serde, no I/O. May depend only on `rand_chacha` and `thiserror`. |
 | `application` | Commands, handlers, pipeline layers, queries, projections and ports. Depends on `domain` (plus `tracing`). |
 | `infrastructure` | Adapters that implement ports: the RON region loader (DTOs plus mapping) and the command-log writer. |
-| `game` (*planned*, Plans 2-3) | The Bevy binary. Depends on all three. The only crate that may use Bevy. |
+| `game` | The Bevy binary and its library: states, localisation, the simulation bridge and the HUD. Depends on all three (`infrastructure` for the RON region catalog and the file command log). The only crate that may use Bevy. |
 
 The rule is enforced by the compiler: `domain/Cargo.toml` does not list Bevy, so an import is
 impossible, and `crates/domain/tests/dependency_rule.rs` fails if a framework or I/O crate appears
@@ -34,7 +38,7 @@ there. `cargo test -p domain` and `-p application` never compile Bevy, so feedba
 | Game rules (plants, demand, grid balancing, company, regulation, session) | A `domain` module per bounded context |
 | Use cases (commands and their handlers), pipeline layers, queries and projections, ports | `application` |
 | File formats (RON DTOs, the command-log format) and their mapping to domain types | `infrastructure` |
-| Rendering, input, UI and localised text | `game` (*planned*) |
+| Rendering, input, UI and localised text | `game` (see [The game crate](#the-game-crate)) |
 
 Region data (plant tuning numbers, cities, regulator parameters) lives in `assets/regions/*.ron`,
 never as code constants.
@@ -203,4 +207,151 @@ pub enum NetworkModel { CopperPlate }   // later: DcPowerFlow
 ## Strings
 
 `domain` and `application` contain no user-facing strings, only typed values and `name_key`
-translation keys. Localisation happens in `game` (*planned*).
+translation keys. Localisation happens in `game`, from the Fluent files in
+`assets/locales/en-US/*.ftl`.
+
+## The game crate
+
+`crates/game` is the outermost adapter. It owns no rules: it reads query views and projections, and
+it changes the game only by sending commands through the `Game` pipeline. It is a library (every
+plugin, presenter and system, so the integration tests can reach them) and a thin `main.rs` that
+parses the command line and opens the window.
+
+### Plugins and states
+
+| Plugin | Role |
+|---|---|
+| `AppStatePlugin` | `AppState` (`Boot` → `MainMenu` → `RegionSelect` → `InGame`), the `PhaseState` sub-state and the boot checklist. |
+| `LocalizationPlugin` | Loads the en-US Fluent files into the `Localizer` resource. |
+| `SimulationPlugin` | The bridge: the `Session(Game)` resource, the region `Catalog`, new games, the command funnel, the phase mirror and the fixed-step driver. |
+| `HudPlugin` | Every egui panel, toast, prompt and modal, plus its non-egui glue (listing regions, collecting toasts, resetting HUD state between games). |
+
+`CorePlugins` groups the first three. They need no window or renderer, so the tests run them on
+`MinimalPlugins` plus `StatesPlugin`. `GamePlugins` adds `EguiPlugin` and `HudPlugin`, and
+`main.rs` puts it on `DefaultPlugins` with a 1024×640 minimum window.
+
+- **Boot** waits for every `require_for_boot::<R>()` resource: `AssetRoot` and `LogDir` (from the
+  command line), `Localizer` and `Catalog`. A `BootError` keeps the app in `Boot`, which shows it.
+- **`PhaseState`** mirrors the domain's `DayPhase` one way. `mirror_phase` runs after the commands
+  are applied and is its only writer; the game never sets a phase itself. As a sub-state of
+  `InGame`, its resource is absent outside a game.
+- **`Session`** is inserted by a successful `NewGameRequest` and removed on leaving `InGame`. Each
+  new game records to its own log under `LogDir`, `<YYYYMMDD-HHMMSS>-<region>-<seed>.log`, beside
+  the archived region source.
+
+### Message flow
+
+```
+click ─▶ draw_<panel> ─▶ Vec<UiAction> ─▶ dispatch ─┬─▶ HUD resources (Selection, SimSpeed, ...)
+                                                    └─▶ PlayerCommand ◀── drive_ticks (FixedUpdate)
+                                                              │
+                                                              ▼
+                                           SimSet::Apply: Game::execute, in order
+                                                │                         │
+                                                ▼                         ▼
+                                       DomainEventMessage           CommandFailed
+                                                └────────────┬────────────┘
+                                                             ▼
+                                               collect_toasts ─▶ ToastQueue
+```
+
+- `dispatch` is the single mapping from a click to the rest of the game. It writes
+  `PlayerCommand`, `NewGameRequest`, `ReturnToMenu` and `AppExit` messages, and the HUD's own
+  resources.
+- `apply_player_commands` (in `SimSet::Apply`, in `Update`) runs every queued command in the order
+  sent. A success re-emits its events as `DomainEventMessage`s (except `TickCompleted`: the HUD
+  reads ticks from the projections). A refusal becomes one `CommandFailed`, and the session is
+  unchanged.
+- After `SimSet::Apply`: `mirror_phase` copies the phase, `collect_toasts` turns refusals and
+  toast-worthy events into toasts, and `settle_commit` clears or reverts the commitment draft that
+  was waiting for the game's answer.
+- A `CommandError` becomes text only in `collect_toasts`.
+
+### Fixed-step pacing
+
+`FixedUpdate` runs at 4 Hz (`FIXED_STEP_HZ`). Each step, `drive_ticks` sends one
+`AdvanceTicks { n: speed }`, where `SimSpeed` is `Paused` (0), `X1`, `X2`, `X4` or `X8` ticks.
+
+- It sends only while the domain's phase is `Operating`, the game is still `Active`, the speed
+  isn't paused and the previous batch has been applied (`TicksInFlight`). So a slow frame that
+  catches up several fixed steps still sends one batch, and a finished game is never asked for
+  more.
+- At 1× a 1,440-tick day takes 6 real minutes; at 8×, 45 seconds.
+- Small batches keep the projections timely (ruling R22 judges ramp warnings by a batch's end
+  state).
+- The speed goes to `X1` on entering Operating and to `Paused` on leaving it, so the month close
+  (which ends the batch it falls in) leaves the day paused in Review.
+
+### The presenter pattern
+
+Every panel is split so that its decisions are testable without a window. Each lives in
+`crates/game/src/hud/<panel>.rs`, in this order:
+
+1. **A model** (`<Panel>Model`): plain data only, with no egui types. Strings are already localised
+   and formatted. Buttons are `ButtonModel`s carrying the `UiAction` they send and whether they are
+   enabled.
+2. **A presenter** (`<panel>_model(&Game, &Localizer, ..)`): a pure function, with no `Res`, no
+   clock and no I/O (the caller passes `now` in). All decisions live here: what a button sends,
+   whether it is enabled, what a warning says. State that is hard to reach with a real `Game` (game
+   over, say) gets a pure helper over the view values, and the `&Game` wrapper stays thin.
+3. **A draw function** (`draw_<panel>(ui, &model) -> Vec<UiAction>`): it only lays out, and returns
+   what was clicked. Editable widget state (a text field, a slider) is a `Resource` passed as
+   `&mut <Panel>Form`. It doesn't choose its own container.
+4. **A system**: it builds the model, opens the container, draws, and passes the actions to
+   `dispatch` through its `ActionSink`. It writes nothing anywhere else, and it draws one panel.
+
+Confirmations go through one `OpenPrompt` resource and one `prompt_overlay`: a button sends
+`UiAction::Prompt(Some(..))`, and a new prompt is a `Prompt` variant plus its case in
+`prompt_model`. A new HUD mode, like the map layer, is a `UiAction` variant and a resource that
+`dispatch` writes.
+
+**Read through the sink.** `ActionSink` holds `ResMut` of every resource `dispatch` writes. A panel
+system must not also take `Res` of one of them: Bevy rejects the conflict (error B0002) when the
+egui schedule is first initialised, which is the first frame of a real window. Read them with the
+sink's getters (`sink.selection()`, `sink.layer()`, `sink.open_prompt()`, ...), adding one for a new
+resource.
+
+### HUD layout
+
+The HUD's systems run in bevy_egui's `EguiPrimaryContextPass`, in chained sets: `HudSet::Begin` →
+`Bars` → `Panels` → `Overlays`. egui 0.36 lays panels out inside a `Ui`, not a `Context`, so each
+panel system makes its own root `Ui`, and the `HudArea` resource keeps them from overlapping:
+
+- `Begin` resets `HudArea` to the whole screen.
+- An edge panel takes `area.root_ui(ctx, id)`, shows its `egui::Panel`, then calls
+  `area.claim(&ui)` to record what is left, so the next panel starts inside it.
+- The claiming order: the top bar, then (Operating) the speed bar, then the phase's bottom panel
+  across the full width, then its side panels (the inspector and build menu in Planning, the
+  frequency gauge and plants in Operating), and last the map, a central panel that fills the rest
+  and claims nothing. Every panel has a fixed size, so the map never moves.
+- Menus are whole-screen central panels. Overlays (windows, toasts, prompts, the Review and
+  game-over modals) take the `Context` directly and ignore `HudArea`, except the Review backdrop,
+  which reads `free_rect` to leave the top bar uncovered.
+
+### Bevy 0.20 and bevy_egui 0.43.1 notes
+
+Checked against the versions in use (Task 1 of Plan 2, and the lessons since):
+
+- **Messages:** `#[derive(Message)]`, `App::add_message::<M>()`, `MessageWriter::write` and
+  `MessageReader::read`.
+- **States:** `#[derive(States)]`, and `#[derive(SubStates)]` with
+  `#[source(AppState = AppState::InGame)]`, registered with `init_state` and `add_sub_state`. A
+  sub-state's `State<S>` resource is absent outside its source state.
+- **`StatesPlugin`** (`bevy::state::app::StatesPlugin`) is in `DefaultPlugins` but not in
+  `MinimalPlugins`, so headless apps add it.
+- **`EguiPlugin::default()`**: there is no `enable_multipass_for_primary_context` any more. UI
+  systems take `EguiContexts`; `contexts.ctx_mut()?` returns a `Result`, so they return `Result`.
+- **The primary egui context** is created on the first camera spawned, so `main.rs` spawns a
+  `Camera2d` (Plan 3's camera replaces it). A window with no camera shows no egui.
+- **Init the `EguiPrimaryContextPass` schedule.** If no system was ever added to it, the schedule
+  doesn't exist; bevy_egui's `try_run_schedule` fails and drops the egui output, and epaint panics
+  on the first frame ("Dropped TexturesDelta with 1 unapplied deltas"). `HudPlugin` calls
+  `app.init_schedule(EguiPrimaryContextPass)` so this holds even if every system becomes
+  conditional.
+- **Features:** Bevy is built with `default-features = false` and an explicit list (commented in
+  `crates/game/Cargo.toml`). In 0.20 each `bevy_input` device (`keyboard`, `mouse`) is opt-in.
+  bevy_egui's default `picking` feature expects `PickingPlugin`, so `bevy_picking` is on; it adds
+  no crates, since bevy_egui compiles them anyway.
+- **One egui:** egui 0.36.2 is the only `egui` in `Cargo.lock` (egui_plot 0.37 requires
+  `^0.36`). Check with `cargo tree -d -p game --depth 0 | grep egui`, which should print nothing.
+- `fn main() -> AppExit` works, and `App::update()` works without `finish()`.
