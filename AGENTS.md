@@ -34,8 +34,8 @@ equal to demand. Clean Architecture + DDD; see ARCHITECTURE.md, and the spec in 
 
 ## Game crate rules
 
-- Bevy and egui only in `game`. Its library holds every plugin and system; `main.rs` only parses
-  the command line and opens the window.
+- The `game` library holds every plugin and system; `main.rs` only parses the command line and
+  opens the window.
 - HUD panels follow the presenter pattern (ARCHITECTURE.md, "The game crate"): a pure
   `<panel>_model` presenter, a draw function returning `Vec<UiAction>`, and a system that hands
   those to `dispatch`, the only place a click becomes a message or a resource write.
@@ -66,5 +66,5 @@ equal to demand. Clean Architecture + DDD; see ARCHITECTURE.md, and the spec in 
 
 - Don't iterate a `HashMap` in the domain.
 - Don't `unwrap`/`expect` on player input.
-- Don't use Bevy outside the `game` crate.
+- Don't use Bevy or egui outside the `game` crate.
 - Don't add a dependency to `domain` without updating the dependency rule and its test.

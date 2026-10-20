@@ -35,8 +35,9 @@ says otherwise. Steps that need a fresh game say so; the others follow on from t
 
 - [ ] **2.1** Click each map layer button in turn: *Terrain*, *Sunshine*, *Cooling water*,
   *Hydro potential* and each *Suitability: …*.
-  **Expected:** the map recolours for each; the button of the layer on show is disabled; the
-  legend still names cities and every plant letter (N, C, G, P, S, H).
+  **Expected:** the map recolours for each, and the button of the layer on show is disabled. The
+  legend lists the six plant kinds by colour swatch, connected and unconnected cities, and the
+  substation. Plant letters (N, C, G, P, S, H) appear on the map only in a larger window.
 - [ ] **2.2** Click a water cell (on *Terrain*, a blue one).
   **Expected:** the inspector says *Water*, and under *Can be built here* the peaker has a reason,
   not ✓. In the build menu the *Gas peaker* row shows that reason, with *Build plant* disabled.
@@ -88,8 +89,8 @@ says otherwise. Steps that need a fresh game say so; the others follow on from t
   note that hours already played are frozen; the supply chart with demand, served, forecast and
   the system marginal cost on its right axis.
 - [ ] **3.6** Fresh game (Menu → Leave → New game, Eastern, seed 7). Click *All day* with AGC on
-  every row, then *Off* on most of them so the warnings show a large shortfall. Start the day at
-  8×.
+  every row, then *Off* on most of them so the warnings show a large shortfall. Start the day, then
+  click *8×*.
   **Expected:** a toast *Rotating outage ordered from HH:MM: …% of demand is cut in turn.*; the
   gauge shows *Rotating outage: …% of demand*; the incident appears under *Incidents*. Expect no
   blackout; if one happens, note the time.
@@ -118,8 +119,8 @@ says otherwise. Steps that need a fresh game say so; the others follow on from t
   ```
 
   Start a game, then fill the disk from a terminal:
-  `dd if=/dev/zero of=/Volumes/MMLogs/filler bs=64k`. Start the day at 8× and play on.
-  **Expected:** once the log's last block is full (a couple of minutes at 8×), the top bar shows
+  `dd if=/dev/zero of=/Volumes/MMLogs/filler bs=64k`. Start the day, click *8×* and play on.
+  **Expected:** once the log's last block is full (up to a few minutes at 8×), the top bar shows
   *Recording stopped: …* with the reason, and the game keeps running. Quit, then
   `hdiutil detach /Volumes/MMLogs`.
   *(A read-only log directory doesn't do it: the log is already open, and writes through an open
@@ -131,8 +132,8 @@ says otherwise. Steps that need a fresh game say so; the others follow on from t
 
 ## 6. Game over
 
-- [ ] **6.1** Fresh game, Eastern, any seed. Commit nothing: click *Start the day*, run at 8×
-  to the close, *Continue*, and repeat.
+- [ ] **6.1** Fresh game, Eastern, any seed. Commit nothing: click *Start the day*, then *8×*,
+  run to the close, click *Continue*, and repeat.
   **Expected:** a strike at each close (the top bar counts `1/3`, `2/3`); at the third close
   *Game over* opens instead of the review, with the reason (the license revoked), final cash,
   reliability and satisfaction, and *Main menu*.

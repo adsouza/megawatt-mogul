@@ -76,10 +76,11 @@ The game's tests sit in six layers, from the cheapest to the widest. None opens 
 - **The end-to-end month** (`tests/game/end_to_end.rs`), for each shipped region on seed 7: a new
   game, the hands-off plan clicked in from the commitment grid's own buttons (*All day*, *AGC*),
   *Start the day*, 8×, the fixed-step driver to the close, then *Continue*. It asserts the phases
-  Planning → Operating → Review → Planning, no `CommandFailed` and no toast that a domain event
-  doesn't explain, a log that gains one line per command, and the month's report. It asserts
-  nothing about the month's outcome, which the `infrastructure` acceptance runs pin. Each region
-  takes about 0.2 s.
+  Planning → Operating → Review → Planning, no `CommandFailed`, a log that gains one line per
+  command, and the month's report. It asserts nothing about the month's outcome, which the
+  `infrastructure` acceptance runs pin. A third run commits nothing, so the day orders a rotating
+  outage and the close issues a strike: both toasts must be on screen by the end of the frame
+  their event arrives in, and every toast must come from an event. Each run takes about 0.2 s.
 
 `tests/game/l10n_coverage.rs` checks the translations: every literal key in `l10n::keys` exists in
 en-US, every typed value (errors, events, lessons, kinds) translates through an exhaustive table,
