@@ -70,9 +70,9 @@ first. Steps that need a fresh game say so; the others follow on from the step b
   **Expected:** warnings like *HH:MM: short by … MW. Expect a rotating outage.*, one line plus
   *+N more* if there are several. *Show hour* tints that hour's column in the grid.
 - [ ] **2.8** With those rows still *Off*, click *Start the day*.
-  **Expected:** the day doesn't begin. A prompt asks first: *The forecast is short by … at HH:MM.
-  Expect rotating outages if you start the day now.*, with *Start anyway* and *Keep planning*. The
-  hour and the amount are the first warning's. Click *Keep planning*: the prompt closes and the
+  **Expected:** the day doesn't begin. A prompt asks first: *The forecast is short by up to …
+  (worst at HH:MM). Expect rotating outages if you start the day now.*, with *Start anyway* and
+  *Keep planning*. The hour and the amount are the first warning's. Click *Keep planning*: the prompt closes and the
   game is still in Planning. Click *Start the day* again, then click outside the prompt (on the
   dimmed map): it closes the same way. Put the rows back to *All day* with AGC.
 - [ ] **2.9** Open the *Forecast* and *Tariff* tabs, then back to *Commitments*.

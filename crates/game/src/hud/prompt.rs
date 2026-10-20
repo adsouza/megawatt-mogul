@@ -205,8 +205,8 @@ mod tests {
         assert_eq!(
             prompt.question,
             format!(
-                "The forecast is short by {} at {}. Expect rotating outages if you start the \
-                 day now.",
+                "The forecast is short by up to {} (worst at {}). Expect rotating outages if you \
+                 start the day now.",
                 format::megawatts(worst.shortfall),
                 format::clock(u32::from(worst.hour) * TICKS_PER_HOUR),
             )
@@ -236,14 +236,14 @@ mod tests {
 
         assert_eq!(
             prompt.question,
-            "The forecast is short by 12.0 GW at 18:00. Expect rotating outages if you start the \
-             day now."
+            "The forecast is short by up to 12.0 GW (worst at 18:00). Expect rotating outages if \
+             you start the day now."
         );
         let early = prompt_model(short_by(7, 450.0), Some(&game), &l10n).unwrap();
         assert_eq!(
             early.question,
-            "The forecast is short by 450 MW at 07:00. Expect rotating outages if you start the \
-             day now."
+            "The forecast is short by up to 450 MW (worst at 07:00). Expect rotating outages if \
+             you start the day now."
         );
         assert_eq!(prompt_model(short_by(18, 12_000.0), None, &l10n), None);
         assert_eq!(l10n.problems(), vec![]);

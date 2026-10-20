@@ -142,7 +142,7 @@ fn start_the_day_on_a_short_forecast_asks_and_each_answer_does_what_it_says() {
             .find(|w| w.text.contains(QUESTION))
             .unwrap_or_else(|| panic!("{region}: the question is shown"));
         assert!(
-            question.text.starts_with("The forecast is short by "),
+            question.text.starts_with("The forecast is short by up to "),
             "{region}: {}",
             question.text
         );
