@@ -21,7 +21,9 @@ mod top_bar;
 use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
 
-pub use self::action::{ActionSink, ButtonModel, MenuScreen, UiAction, button, dispatch};
+pub use self::action::{
+    ActionSink, ButtonModel, MenuScreen, OpenPrompt, Prompt, UiAction, button, dispatch,
+};
 pub use self::game_over::{GameOverModel, draw_game_over, game_over_model, game_over_model_for};
 pub use self::layout::HudArea;
 pub use self::menu::{
@@ -33,7 +35,9 @@ pub use self::selection::Selection;
 pub use self::toasts::{
     MAX_TOASTS, TOAST_SECONDS, ToastQueue, ToastsModel, draw_toasts, toasts_model,
 };
-pub use self::top_bar::{Stat, TopBarModel, draw_top_bar, top_bar_model};
+pub use self::top_bar::{
+    LeavePromptModel, Stat, TopBarModel, draw_leave_prompt, draw_top_bar, top_bar_model,
+};
 use crate::l10n::Localizer;
 use crate::sim::{Catalog, Session, SimSet, default_seed};
 use crate::state::{AppState, BootError};
@@ -66,6 +70,7 @@ impl Plugin for HudPlugin {
         let has_l10n = resource_exists::<Localizer>;
         let in_game = in_state(AppState::InGame).and_then(resource_exists::<Session>);
         app.init_resource::<Selection>()
+            .init_resource::<OpenPrompt>()
             .init_resource::<ToastQueue>()
             .init_resource::<HudArea>()
             .insert_resource(MenuForm::new(default_seed()))
@@ -83,8 +88,14 @@ impl Plugin for HudPlugin {
                 OnEnter(AppState::MainMenu),
                 menu::list_regions.run_if(resource_exists::<Catalog>),
             )
-            .add_systems(OnEnter(AppState::InGame), selection::reset_selection)
-            .add_systems(OnExit(AppState::InGame), menu::reseed_menu)
+            .add_systems(
+                OnEnter(AppState::InGame),
+                (selection::reset_selection, action::close_prompt),
+            )
+            .add_systems(
+                OnExit(AppState::InGame),
+                (menu::reseed_menu, action::close_prompt),
+            )
             .add_systems(
                 Update,
                 toasts::collect_toasts.after(SimSet::Apply).run_if(has_l10n),

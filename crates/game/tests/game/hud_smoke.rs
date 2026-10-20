@@ -15,10 +15,10 @@ use bevy_egui::egui::{self, Event, Modifiers, PointerButton, Pos2, RawInput, Rec
 use domain::ids::{CellCoord, RegionId};
 use domain::session::{GameOverReason, GameSettings};
 use game::hud::{
-    ActionSink, MenuForm, MenuScreen, RegionListings, Selection, ToastQueue, UiAction,
-    boot_error_model, dispatch, draw_boot_error, draw_game_over, draw_main_menu,
-    draw_region_select, draw_toasts, draw_top_bar, game_over_model_for, main_menu_model,
-    region_select_model, toasts_model, top_bar_model,
+    ActionSink, MenuForm, MenuScreen, OpenPrompt, Prompt, RegionListings, Selection, ToastQueue,
+    UiAction, boot_error_model, dispatch, draw_boot_error, draw_game_over, draw_leave_prompt,
+    draw_main_menu, draw_region_select, draw_toasts, draw_top_bar, game_over_model_for,
+    main_menu_model, region_select_model, toasts_model, top_bar_model,
 };
 use game::l10n::Localizer;
 use game::sim::{NewGameRequest, PlayerCommand, ReturnToMenu, SimSpeed};
@@ -298,10 +298,10 @@ fn an_empty_or_missing_regions_folder_offers_back() {
 }
 
 #[test]
-fn the_top_bar_draws_a_real_game_and_its_menu_button_leaves() {
+fn the_top_bar_draws_a_real_game_and_its_menu_button_asks_first() {
     let l10n = shipped_l10n();
     let game = eastern_game();
-    let model = top_bar_model(&game, &l10n);
+    let model = top_bar_model(&game, &l10n, OpenPrompt::default());
     let harness = Harness::new();
     let draw = |ui: &mut egui::Ui| {
         egui::Panel::top("top_bar")
@@ -310,10 +310,31 @@ fn the_top_bar_draws_a_real_game_and_its_menu_button_leaves() {
     };
 
     let widgets = harness.draw(draw);
-    for text in [&model.date, &model.phase, &model.cash.value] {
+    for text in [&model.date, &model.phase, &model.cash.value, "0/3"] {
         assert!(shows(&widgets, text), "{text} is not shown");
     }
-    assert_eq!(harness.click("Menu", draw), vec![UiAction::ReturnToMenu]);
+    assert_eq!(
+        harness.click("Menu", draw),
+        vec![UiAction::Prompt(Some(Prompt::LeaveGame))]
+    );
+}
+
+#[test]
+fn the_leave_prompt_leaves_only_on_leave() {
+    let l10n = shipped_l10n();
+    let game = eastern_game();
+    let model = top_bar_model(&game, &l10n, OpenPrompt(Some(Prompt::LeaveGame)));
+    let prompt = model.leave_prompt.expect("the prompt is open");
+    let harness = Harness::new();
+    let draw = |ui: &mut egui::Ui| {
+        egui::Modal::new(egui::Id::new("leave_prompt"))
+            .show(ui.ctx(), |ui| draw_leave_prompt(ui, &prompt))
+            .inner
+    };
+
+    assert!(shows(&harness.draw(draw), "can't be resumed yet"));
+    assert_eq!(harness.click("Stay", draw), vec![UiAction::Prompt(None)]);
+    assert_eq!(harness.click("Leave", draw), vec![UiAction::ReturnToMenu]);
 }
 
 #[test]
@@ -383,7 +404,8 @@ fn dispatch_in(app: &mut App, actions: Vec<UiAction>) {
 fn dispatch_is_the_one_mapping_from_actions_to_messages() {
     let logs = TempDir::new().unwrap();
     let mut app = headless_app(&shipped_assets(), logs.path());
-    app.init_resource::<Selection>();
+    app.init_resource::<Selection>()
+        .init_resource::<OpenPrompt>();
     update_n(&mut app, 3);
     let region = RegionId::new(EASTERN);
     let cell = CellCoord { x: 1, y: 2 };
@@ -399,6 +421,7 @@ fn dispatch_is_the_one_mapping_from_actions_to_messages() {
             UiAction::ReturnToMenu,
             UiAction::SetSpeed(SimSpeed::X4),
             UiAction::Select(Selection::Cell(cell)),
+            UiAction::Prompt(Some(Prompt::LeaveGame)),
             UiAction::Quit,
         ],
     );
@@ -421,7 +444,8 @@ fn dispatch_is_the_one_mapping_from_actions_to_messages() {
 fn navigating_moves_between_the_menu_screens() {
     let logs = TempDir::new().unwrap();
     let mut app = headless_app(&shipped_assets(), logs.path());
-    app.init_resource::<Selection>();
+    app.init_resource::<Selection>()
+        .init_resource::<OpenPrompt>();
     update_n(&mut app, 3);
     let state = |app: &App| *app.world().resource::<State<AppState>>().get();
     assert_eq!(state(&app), AppState::MainMenu);

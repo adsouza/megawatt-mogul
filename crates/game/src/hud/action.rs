@@ -30,6 +30,9 @@ pub enum UiAction {
     Select(Selection),
     /// Move between the menu screens. Entering the game is only ever [`UiAction::NewGame`].
     Navigate(MenuScreen),
+    /// Open a confirmation prompt, or close it with `None`. The prompt's own buttons say what
+    /// confirming does.
+    Prompt(Option<Prompt>),
     /// Close the game.
     Quit,
 }
@@ -48,6 +51,21 @@ impl From<MenuScreen> for AppState {
             MenuScreen::RegionSelect => Self::RegionSelect,
         }
     }
+}
+
+/// A question the HUD asks before doing something it can't undo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Prompt {
+    /// Leaving the running game for the menu, which drops it.
+    LeaveGame,
+}
+
+/// The prompt on screen, if any. Cleared whenever a game starts or ends.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct OpenPrompt(pub Option<Prompt>);
+
+pub(super) fn close_prompt(mut prompt: ResMut<OpenPrompt>) {
+    prompt.0 = None;
 }
 
 /// A button in a panel model: its text, what clicking it asks for, and whether it can be clicked.
@@ -98,6 +116,7 @@ pub struct ActionSink<'w> {
     exit: MessageWriter<'w, AppExit>,
     speed: ResMut<'w, SimSpeed>,
     selection: ResMut<'w, Selection>,
+    prompt: ResMut<'w, OpenPrompt>,
     next_state: ResMut<'w, NextState<AppState>>,
 }
 
@@ -118,6 +137,7 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             UiAction::SetSpeed(speed) => *sink.speed = speed,
             UiAction::Select(selection) => *sink.selection = selection,
             UiAction::Navigate(screen) => sink.next_state.set(screen.into()),
+            UiAction::Prompt(prompt) => sink.prompt.0 = prompt,
             UiAction::Quit => {
                 sink.exit.write(AppExit::Success);
             }
