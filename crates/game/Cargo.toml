@@ -18,7 +18,12 @@ path = "src/main.rs"
 test = false
 
 [dependencies]
+domain = { workspace = true }
+application = { workspace = true }
 bevy_egui = { workspace = true }
+fluent-bundle = { workspace = true }
+tracing = { workspace = true }
+unic-langid = { workspace = true }
 
 # default-features = false (set in the workspace): Bevy 0.20's defaults are the 2d/3d/ui stacks plus
 # audio. These are the Bevy 0.20 feature names (checked in bevy-0.20.0/Cargo.toml):
@@ -43,6 +48,7 @@ features = [
 # what the 3D diorama needs.
 
 [dev-dependencies]
+infrastructure = { workspace = true }
 tempfile = { workspace = true }
 
 [lints]

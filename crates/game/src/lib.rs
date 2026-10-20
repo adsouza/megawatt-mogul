@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 pub mod hud;
+pub mod l10n;
 pub mod paths;
 pub mod state;
 
@@ -12,16 +13,19 @@ use bevy::app::{PluginGroup, PluginGroupBuilder};
 use bevy_egui::EguiPlugin;
 
 use crate::hud::HudPlugin;
+use crate::l10n::LocalizationPlugin;
 use crate::state::AppStatePlugin;
 
-/// The headless-safe plugins: app states, and later localisation and the simulation.
+/// The headless-safe plugins: app states and localisation, and later the simulation.
 ///
 /// Needs no window or renderer, so tests run it on `MinimalPlugins` (plus `StatesPlugin`).
 pub struct CorePlugins;
 
 impl PluginGroup for CorePlugins {
     fn build(self) -> PluginGroupBuilder {
-        PluginGroupBuilder::start::<Self>().add(AppStatePlugin)
+        PluginGroupBuilder::start::<Self>()
+            .add(AppStatePlugin)
+            .add(LocalizationPlugin)
     }
 }
 

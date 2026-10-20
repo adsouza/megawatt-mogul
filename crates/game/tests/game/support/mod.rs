@@ -1,6 +1,6 @@
 //! Shared helpers for the game integration tests.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use bevy::prelude::*;
 use bevy::state::app::StatesPlugin;
@@ -22,4 +22,9 @@ pub fn update_n(app: &mut App, n: usize) {
     for _ in 0..n {
         app.update();
     }
+}
+
+/// The workspace's shipped `assets/` directory. Tests only read from it.
+pub fn shipped_assets() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")
 }

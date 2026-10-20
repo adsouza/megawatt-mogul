@@ -92,7 +92,7 @@ impl Plugin for AppStatePlugin {
     }
 }
 
-fn finish_boot(world: &mut World) {
+pub(crate) fn finish_boot(world: &mut World) {
     if world.contains_resource::<BootError>() {
         return;
     }

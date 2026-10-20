@@ -7,7 +7,7 @@ use game::paths::resolve_asset_root;
 use game::state::{AppState, BootError, PhaseState};
 use tempfile::TempDir;
 
-use crate::support::{headless_app, update_n};
+use crate::support::{headless_app, shipped_assets, update_n};
 
 fn app_state(app: &App) -> AppState {
     *app.world().resource::<State<AppState>>().get()
@@ -22,7 +22,7 @@ fn phase_state(app: &App) -> Option<PhaseState> {
 #[test]
 fn boot_moves_to_the_main_menu() {
     let dir = TempDir::new().unwrap();
-    let mut app = headless_app(dir.path(), dir.path());
+    let mut app = headless_app(&shipped_assets(), dir.path());
 
     update_n(&mut app, 3);
 
@@ -32,7 +32,7 @@ fn boot_moves_to_the_main_menu() {
 #[test]
 fn boot_waits_for_its_resources() {
     let dir = TempDir::new().unwrap();
-    let mut app = headless_app(dir.path(), dir.path());
+    let mut app = headless_app(&shipped_assets(), dir.path());
     app.world_mut().remove_resource::<game::paths::LogDir>();
 
     update_n(&mut app, 3);
@@ -43,7 +43,7 @@ fn boot_waits_for_its_resources() {
 #[test]
 fn a_boot_error_keeps_the_app_in_boot() {
     let dir = TempDir::new().unwrap();
-    let mut app = headless_app(dir.path(), dir.path());
+    let mut app = headless_app(&shipped_assets(), dir.path());
     app.insert_resource(BootError("regions directory missing".to_owned()));
 
     update_n(&mut app, 3);
@@ -54,7 +54,7 @@ fn a_boot_error_keeps_the_app_in_boot() {
 #[test]
 fn the_phase_substate_exists_only_in_game() {
     let dir = TempDir::new().unwrap();
-    let mut app = headless_app(dir.path(), dir.path());
+    let mut app = headless_app(&shipped_assets(), dir.path());
 
     app.update();
     assert_eq!(app_state(&app), AppState::Boot);

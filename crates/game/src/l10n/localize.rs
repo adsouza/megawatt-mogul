@@ -1,0 +1,549 @@
+//! Typed values to player-facing text.
+//!
+//! Every enum is matched exhaustively, with no `_` arm: adding a variant to the domain or the
+//! application layer breaks the build here until it has a translation. Display values (money,
+//! power, shares, times) are formatted by [`format`] and arrive in the messages as text.
+
+use application::projections::{Lesson, MilestoneKind, RampWarning};
+use application::{CommandError, CommandLogError, RegionLoadError};
+use domain::error::DomainError;
+use domain::events::DomainEvent;
+use domain::region::{PlantKind, RegionError, SiteError};
+use domain::regulation::StrikeReason;
+use domain::session::{DayPhase, GameOverReason, IncidentKind};
+use domain::time::{Season, TICKS_PER_HOUR};
+
+use super::{FluentArg, Localizer, format};
+use crate::state::PhaseState;
+
+/// Text for a typed value.
+pub trait Localize {
+    fn localize(&self, l10n: &Localizer) -> String;
+}
+
+/// Text for a domain event that deserves a toast. Most events are bookkeeping (`TickCompleted`,
+/// ledger entries, ...) and return `None`; the `match` is still exhaustive, so a new event must
+/// be classified, but only a toast-worthy one needs words.
+pub trait Toast {
+    fn toast(&self, l10n: &Localizer) -> Option<String>;
+}
+
+/// A numeric id, shown as `#7` in the copy.
+fn id(value: u32) -> FluentArg {
+    FluentArg::Text(value.to_string())
+}
+
+/// The id of a plant, city or line. The ids are tuple structs over `u32`.
+macro_rules! id_of {
+    ($value:expr) => {
+        id($value.0)
+    };
+}
+
+impl Localize for CommandError {
+    fn localize(&self, l10n: &Localizer) -> String {
+        match self {
+            Self::Domain(error) => error.localize(l10n),
+            Self::Region(error) => error.localize(l10n),
+            Self::Log(error) => error.localize(l10n),
+        }
+    }
+}
+
+impl Localize for CommandLogError {
+    fn localize(&self, l10n: &Localizer) -> String {
+        l10n.args(
+            "error-command-log",
+            &[("message", self.message.as_str().into())],
+        )
+    }
+}
+
+impl Localize for DomainError {
+    fn localize(&self, l10n: &Localizer) -> String {
+        match self {
+            Self::InvalidRatio { value: _ } => l10n.text("error-invalid-ratio"),
+            Self::InvalidMonth { month } => l10n.args(
+                "error-invalid-month",
+                &[("month", month.to_string().into())],
+            ),
+            Self::PlantNotDispatchable { plant } => {
+                l10n.args("error-plant-not-dispatchable", &[("plant", id_of!(plant))])
+            }
+            Self::PlantNotOffline { plant } => {
+                l10n.args("error-plant-not-offline", &[("plant", id_of!(plant))])
+            }
+            Self::PlantNotOnline { plant } => {
+                l10n.args("error-plant-not-online", &[("plant", id_of!(plant))])
+            }
+            Self::PlantNotRunning { plant } => {
+                l10n.args("error-plant-not-running", &[("plant", id_of!(plant))])
+            }
+            Self::NonFiniteMegawatts { plant } => {
+                l10n.args("error-non-finite-megawatts", &[("plant", id_of!(plant))])
+            }
+            Self::BelowMinimumStableOutput { plant, min } => l10n.args(
+                "error-below-minimum-stable-output",
+                &[
+                    ("plant", id_of!(plant)),
+                    ("min", format::megawatts(*min).into()),
+                ],
+            ),
+            Self::AboveCapacity { plant, max } => l10n.args(
+                "error-above-capacity",
+                &[
+                    ("plant", id_of!(plant)),
+                    ("max", format::megawatts(*max).into()),
+                ],
+            ),
+            Self::CommitmentInfeasible {
+                gap,
+                shutdown,
+                startup,
+            } => l10n.args(
+                "error-commitment-infeasible",
+                &[
+                    ("gap", format::duration(*gap).into()),
+                    ("shutdown", format::duration(*shutdown).into()),
+                    ("startup", format::duration(*startup).into()),
+                ],
+            ),
+            Self::DuplicateNode { node } => {
+                l10n.args("error-duplicate-node", &[("node", id_of!(node))])
+            }
+            Self::UnknownNode { node } => {
+                l10n.args("error-unknown-node", &[("node", id_of!(node))])
+            }
+            Self::LineToSelf { node: _ } => l10n.text("error-line-to-self"),
+            Self::DuplicateLine { from, to } => l10n.args(
+                "error-duplicate-line",
+                &[("from", id_of!(from)), ("to", id_of!(to))],
+            ),
+            Self::DuplicateLineId { line } => {
+                l10n.args("error-duplicate-line-id", &[("line", id_of!(line))])
+            }
+            Self::UnknownPlant { plant } => {
+                l10n.args("error-unknown-plant", &[("plant", id_of!(plant))])
+            }
+            Self::WrongPhase { actual } => l10n.args(
+                "error-wrong-phase",
+                &[("phase", actual.localize(l10n).into())],
+            ),
+            Self::GameOver { reason } => l10n.args(
+                "error-game-over",
+                &[("reason", reason.localize(l10n).into())],
+            ),
+            Self::InvalidSite {
+                kind,
+                cell: _,
+                reason,
+            } => l10n.args(
+                "error-invalid-site",
+                &[
+                    ("kind", kind.localize(l10n).into()),
+                    ("reason", reason.localize(l10n).into()),
+                ],
+            ),
+            Self::PlantNotCommissioned { plant } => {
+                l10n.args("error-plant-not-commissioned", &[("plant", id_of!(plant))])
+            }
+            Self::StartUpBeyondDay { remaining, startup } => l10n.args(
+                "error-start-up-beyond-day",
+                &[
+                    ("remaining", format::duration(*remaining).into()),
+                    ("startup", format::duration(*startup).into()),
+                ],
+            ),
+        }
+    }
+}
+
+impl Localize for SiteError {
+    fn localize(&self, l10n: &Localizer) -> String {
+        match self {
+            Self::OutOfBounds => l10n.text("site-out-of-bounds"),
+            Self::NotLand => l10n.text("site-not-land"),
+            Self::InsufficientCoolingWater { have, need } => l10n.args(
+                "site-insufficient-cooling-water",
+                &[
+                    ("have", format::percent(*have).into()),
+                    ("need", format::percent(*need).into()),
+                ],
+            ),
+            Self::NoHydroSite => l10n.text("site-no-hydro-site"),
+        }
+    }
+}
+
+impl Localize for RegionLoadError {
+    fn localize(&self, l10n: &Localizer) -> String {
+        match self {
+            Self::NotFound(region) => l10n.args(
+                "error-region-not-found",
+                &[("region", region.as_str().into())],
+            ),
+            Self::Io { region, message } => l10n.args(
+                "error-region-io",
+                &[
+                    ("region", region.as_str().into()),
+                    ("message", message.as_str().into()),
+                ],
+            ),
+            Self::Parse { region, message } => l10n.args(
+                "error-region-parse",
+                &[
+                    ("region", region.as_str().into()),
+                    ("message", message.as_str().into()),
+                ],
+            ),
+            Self::Invalid { region, error } => l10n.args(
+                "error-region-invalid",
+                &[
+                    ("region", region.as_str().into()),
+                    ("detail", error.localize(l10n).into()),
+                ],
+            ),
+            Self::IdMismatch { requested, found } => l10n.args(
+                "error-region-id-mismatch",
+                &[
+                    ("requested", requested.as_str().into()),
+                    ("found", found.as_str().into()),
+                ],
+            ),
+        }
+    }
+}
+
+impl Localize for RegionError {
+    fn localize(&self, l10n: &Localizer) -> String {
+        match self {
+            Self::GridSizeMismatch { expected, actual } => l10n.args(
+                "region-error-grid-size-mismatch",
+                &[
+                    ("expected", expected.to_string().into()),
+                    ("actual", actual.to_string().into()),
+                ],
+            ),
+            Self::MissingPlantSpec(kind) => l10n.args(
+                "region-error-missing-plant-spec",
+                &[("kind", kind.localize(l10n).into())],
+            ),
+            Self::DuplicatePlantSpec(kind) => l10n.args(
+                "region-error-duplicate-plant-spec",
+                &[("kind", kind.localize(l10n).into())],
+            ),
+            Self::CityOutOfBounds(city) => {
+                l10n.args("region-error-city-out-of-bounds", &[("city", id_of!(city))])
+            }
+            Self::CityNotOnLand(city) => {
+                l10n.args("region-error-city-not-on-land", &[("city", id_of!(city))])
+            }
+            Self::DuplicateCity(city) => {
+                l10n.args("region-error-duplicate-city", &[("city", id_of!(city))])
+            }
+            Self::UnknownStartCity(city) => {
+                l10n.args("region-error-unknown-start-city", &[("city", id_of!(city))])
+            }
+            Self::InvalidStartSite {
+                kind,
+                cell: _,
+                reason,
+            } => l10n.args(
+                "region-error-invalid-start-site",
+                &[
+                    ("kind", kind.localize(l10n).into()),
+                    ("reason", reason.localize(l10n).into()),
+                ],
+            ),
+            Self::SubstationNotOnLand => l10n.text("region-error-substation-not-on-land"),
+            Self::InvalidShape { field } => {
+                l10n.args("region-error-invalid-shape", &[("field", (*field).into())])
+            }
+            Self::InvalidBand { field } => {
+                l10n.args("region-error-invalid-band", &[("field", (*field).into())])
+            }
+        }
+    }
+}
+
+impl Localize for PlantKind {
+    fn localize(&self, l10n: &Localizer) -> String {
+        l10n.text(match self {
+            Self::Nuclear => "plant-kind-nuclear",
+            Self::Coal => "plant-kind-coal",
+            Self::Ccgt => "plant-kind-ccgt",
+            Self::Peaker => "plant-kind-peaker",
+            Self::Solar => "plant-kind-solar",
+            Self::Hydro => "plant-kind-hydro",
+        })
+    }
+}
+
+impl Localize for DayPhase {
+    fn localize(&self, l10n: &Localizer) -> String {
+        l10n.text(match self {
+            Self::Planning => "phase-planning",
+            Self::Operating => "phase-operating",
+            Self::Review => "phase-review",
+        })
+    }
+}
+
+impl Localize for PhaseState {
+    fn localize(&self, l10n: &Localizer) -> String {
+        l10n.text(match self {
+            Self::Planning => "phase-planning",
+            Self::Operating => "phase-operating",
+            Self::Review => "phase-review",
+        })
+    }
+}
+
+impl Localize for Season {
+    fn localize(&self, l10n: &Localizer) -> String {
+        l10n.text(match self {
+            Self::Winter => "season-winter",
+            Self::Spring => "season-spring",
+            Self::Summer => "season-summer",
+            Self::Autumn => "season-autumn",
+        })
+    }
+}
+
+impl Localize for GameOverReason {
+    fn localize(&self, l10n: &Localizer) -> String {
+        l10n.text(match self {
+            Self::Bankrupt => "game-over-bankrupt",
+            Self::LicenseRevoked => "game-over-license-revoked",
+        })
+    }
+}
+
+impl Localize for StrikeReason {
+    fn localize(&self, l10n: &Localizer) -> String {
+        l10n.text(match self {
+            Self::UnservedEnergy => "strike-reason-unserved-energy",
+            Self::FrequencyPerformance => "strike-reason-frequency-performance",
+        })
+    }
+}
+
+impl Localize for MilestoneKind {
+    fn localize(&self, l10n: &Localizer) -> String {
+        match self {
+            Self::ServePeak { gigawatts } => l10n.args(
+                "milestone-serve-peak",
+                &[("gigawatts", gigawatts.to_string().into())],
+            ),
+            Self::FullSeasonWithoutStrike => l10n.text("milestone-full-season-without-strike"),
+            Self::ConnectCities { count } => l10n.args(
+                "milestone-connect-cities",
+                &[("count", count.to_string().into())],
+            ),
+        }
+    }
+}
+
+impl Localize for IncidentKind {
+    fn localize(&self, l10n: &Localizer) -> String {
+        match self {
+            Self::LoadShed { mw } => l10n.args(
+                "incident-load-shed",
+                &[("mw", format::megawatts(*mw).into())],
+            ),
+            Self::Blackout => l10n.text("incident-blackout"),
+            Self::BlackoutRestored => l10n.text("incident-blackout-restored"),
+            Self::OverFrequencyTrip { plant } => {
+                l10n.args("incident-over-frequency-trip", &[("plant", id_of!(plant))])
+            }
+            Self::RotatingOutage { share } => l10n.args(
+                "incident-rotating-outage",
+                &[("share", format::percent(*share).into())],
+            ),
+        }
+    }
+}
+
+impl Localize for Lesson {
+    fn localize(&self, l10n: &Localizer) -> String {
+        match self {
+            Self::ExpensivePeaking {
+                energy,
+                cost,
+                alternative,
+            } => l10n.args(
+                "lesson-expensive-peaking",
+                &[
+                    ("energy", format::megawatt_hours(*energy).into()),
+                    ("cost", format::money(*cost).into()),
+                    ("alternative", format::price(*alternative).into()),
+                ],
+            ),
+            Self::RotatingOutages { energy, peak_share } => l10n.args(
+                "lesson-rotating-outages",
+                &[
+                    ("energy", format::megawatt_hours(*energy).into()),
+                    ("peak_share", format::percent(*peak_share).into()),
+                ],
+            ),
+            Self::UnservedEnergy {
+                energy,
+                first_incident_tick,
+            } => l10n.args(
+                "lesson-unserved-energy",
+                &[
+                    ("energy", format::megawatt_hours(*energy).into()),
+                    ("time", format::clock(*first_incident_tick).into()),
+                ],
+            ),
+            Self::Overgeneration { energy, trips: 0 } => l10n.args(
+                "lesson-overgeneration",
+                &[("energy", format::megawatt_hours(*energy).into())],
+            ),
+            Self::Overgeneration { energy, trips } => l10n.args(
+                "lesson-overgeneration-trips",
+                &[
+                    ("energy", format::megawatt_hours(*energy).into()),
+                    ("trips", (*trips).into()),
+                ],
+            ),
+            Self::FrequencyPerformance {
+                out_of_band,
+                notice,
+            } => l10n.args(
+                if *notice {
+                    "lesson-frequency-notice"
+                } else {
+                    "lesson-frequency-performance"
+                },
+                &[("out_of_band", format::percent(*out_of_band).into())],
+            ),
+            Self::SolarCurtailed { energy } => l10n.args(
+                "lesson-solar-curtailed",
+                &[("energy", format::megawatt_hours(*energy).into())],
+            ),
+            Self::StartUpCosts { total, share } => l10n.args(
+                "lesson-start-up-costs",
+                &[
+                    ("total", format::money(*total).into()),
+                    ("share", format::percent(*share).into()),
+                ],
+            ),
+            Self::RateReview {
+                tariff,
+                allowed_return,
+            } => l10n.args(
+                "lesson-rate-review",
+                &[
+                    ("tariff", format::price(*tariff).into()),
+                    ("allowed_return", format::percent(*allowed_return).into()),
+                ],
+            ),
+            Self::AllClear => l10n.text("lesson-all-clear"),
+        }
+    }
+}
+
+impl Localize for RampWarning {
+    fn localize(&self, l10n: &Localizer) -> String {
+        l10n.args(
+            "ramp-warning",
+            &[
+                ("change", format::megawatts(self.net_load_change).into()),
+                ("minutes", self.horizon_minutes.to_string().into()),
+                ("capability", format::megawatts(self.capability).into()),
+            ],
+        )
+    }
+}
+
+impl Toast for DomainEvent {
+    fn toast(&self, l10n: &Localizer) -> Option<String> {
+        let text = match self {
+            Self::Blackout => l10n.text("event-blackout"),
+            Self::BlackoutRestored => l10n.text("event-blackout-restored"),
+            Self::RotatingOutageOrdered { hour, share } => {
+                if share.value() > 0.0 {
+                    l10n.args(
+                        "event-rotating-outage-ordered",
+                        &[
+                            (
+                                "time",
+                                format::clock(u32::from(*hour) * TICKS_PER_HOUR).into(),
+                            ),
+                            ("share", format::percent(*share).into()),
+                        ],
+                    )
+                } else {
+                    l10n.text("event-rotating-outage-lifted")
+                }
+            }
+            Self::StrikeIssued { strikes, reason } => l10n.args(
+                "event-strike-issued",
+                &[
+                    ("strikes", strikes.to_string().into()),
+                    ("reason", reason.localize(l10n).into()),
+                ],
+            ),
+            Self::FrequencyNoticeIssued { month } => l10n.args(
+                "event-frequency-notice",
+                &[("month", format::month_year(*month).into())],
+            ),
+            Self::StrikeExpired { strikes } => l10n.args(
+                "event-strike-expired",
+                &[("strikes", u32::from(*strikes).into())],
+            ),
+            Self::LicenseRevoked => l10n.text("event-license-revoked"),
+            Self::Bankrupt => l10n.text("event-bankrupt"),
+            Self::PlantTripped { plant } => {
+                l10n.args("event-plant-tripped", &[("plant", id_of!(plant))])
+            }
+            Self::OverFrequencyTrip { plant } => {
+                l10n.args("event-over-frequency-trip", &[("plant", id_of!(plant))])
+            }
+            Self::HydroBudgetExhausted { plant } => {
+                l10n.args("event-hydro-budget-exhausted", &[("plant", id_of!(plant))])
+            }
+            Self::CityConnected { city } => {
+                l10n.args("event-city-connected", &[("city", id_of!(city))])
+            }
+            Self::PlantCommissioned { plant, kind } => l10n.args(
+                "event-plant-commissioned",
+                &[
+                    ("plant", id_of!(plant)),
+                    ("kind", kind.localize(l10n).into()),
+                ],
+            ),
+            Self::LineCommissioned { line } => {
+                l10n.args("event-line-commissioned", &[("line", id_of!(line))])
+            }
+            Self::RateReviewCompleted {
+                tariff,
+                allowed_return,
+            } => l10n.args(
+                "event-rate-review-completed",
+                &[
+                    ("tariff", format::price(*tariff).into()),
+                    ("allowed_return", format::percent(*allowed_return).into()),
+                ],
+            ),
+            // Bookkeeping, not news: no toast.
+            Self::PlantStarting { .. }
+            | Self::PlantOnline { .. }
+            | Self::PlantStopped { .. }
+            | Self::TickCompleted(_)
+            | Self::FrequencyDeviated { .. }
+            | Self::LoadShed { .. }
+            | Self::SolarCurtailed { .. }
+            | Self::LedgerEntryRecorded(_)
+            | Self::CapitalHeld { .. }
+            | Self::CapitalReleased { .. }
+            | Self::CapitalDisallowed { .. }
+            | Self::PhaseChanged { .. }
+            | Self::PlantConstructionStarted { .. }
+            | Self::LineConstructionStarted { .. }
+            | Self::MonthClosed(_) => return None,
+        };
+        Some(text)
+    }
+}
