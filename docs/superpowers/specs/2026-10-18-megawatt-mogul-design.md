@@ -5,7 +5,8 @@
 - **Amendments:** A1, a hydro peak-shaving schedule (§12, 2026-10-18); A2, proration of the
   partial-year rate review (§13, 2026-10-18); A3, over-frequency protection, a minimum-generation
   warning and frequency-performance strikes (§14, 2026-10-18); A4, rotating outages and staged
-  under-frequency shedding (§15, 2026-10-19)
+  under-frequency shedding (§15, 2026-10-19); A5, the inherited schedule and the shortfall
+  confirmation (§16, 2026-10-20)
 - **Engine:** Rust 1.98, Bevy 0.20, bevy_egui 0.43, bevy-inspector-egui 0.38
 
 ## 1. Vision and goals
@@ -1379,3 +1380,83 @@ whole grid.
   fleet runs on AGC with unlimited ramps orders no outage when the warning is `None`. Without
   hydro, the warned hour is cut.
 - **Validation.** `shed_stage_spacing` has a negative validation test.
+
+## 16. Amendment A5: The inherited schedule and the shortfall confirmation (2026-10-20)
+
+### 16.1 Why
+
+Playtesting found that a new game starts with every plant uncommitted and off AGC, so a new
+player's first day goes dark unless they commit each plant by hand. A real utility doesn't change
+hands that way: whoever takes over a going concern takes over its running fleet and the schedule
+it was operating to. The previous operator's schedule is also the spec's own beginner baseline,
+the **hands-off plan** of §14.5, which the shipped regions are tuned to survive for a year.
+
+The confirmation covers the other half. A player who has edited the schedule into a shortfall
+should be asked before starting a day that the forecast already says will need rotating outages.
+
+### 16.2 Goals, non-goals, anti-goals
+
+- **Goal:** a new game, with no player commands, plays its first day without a forecast shortfall
+  in the shipped regions. It runs the hands-off plan.
+- **Goal:** Start the day asks for confirmation when `capacity_shortfall_check()` (§15.5) reports
+  a shortfall.
+- **Non-goal:** committing newly built plants automatically. A plant the player builds still
+  commissions uncommitted, as today.
+- **Non-goal:** changing commitments between months. Patterns already persist.
+- **Anti-goal:** a confirmation that nags. It appears only on a forecast shortfall, never on a
+  minimum-generation or dry-hydro warning, and never in Operating.
+
+### 16.3 The inherited schedule (domain)
+
+- **The rule.** `GameSession::new` gives every dispatchable start-fleet plant the all-day pattern
+  (`CommitmentSchedule::all_day()`) and `auto_follow = true`. Solar is not dispatchable and is
+  unchanged.
+- **Unchanged rules:**
+  - `previous_month_offline` stays `false` for the start fleet, so month 1 charges no boundary
+    start (§6.1);
+  - the player can change any pattern or AGC flag in Planning as before;
+  - the end state is identical to the hands-off plan's commands applied to a fresh game.
+- **Read side.** `plant_views()` reports the inherited pattern and AGC, so the commitment grid
+  opens already filled.
+
+### 16.4 The shortfall confirmation (game)
+
+- **When it shows.** In Planning, Start the day checks `capacity_shortfall_check()`.
+  - If it returns `None`, the button sends `BeginOperating` directly, as today.
+  - If it returns a warning, a prompt opens instead. It names the worst hour and the shortfall,
+    using the same figures as the warnings strip, and offers two buttons:
+    - **Start anyway** sends `BeginOperating`;
+    - **Keep planning** closes the prompt.
+
+    Clicking outside the prompt counts as Keep planning.
+- **Copy.** The prompt's text must make clear that a rotating outage is expected, not certain.
+  The check is an upper bound (§15.5).
+- **What it doesn't do.** It neither blocks the player nor changes the domain. `BeginOperating`
+  stays valid with a shortfall.
+
+### 16.5 Data and versioning
+
+- **Rules version.** The same seed and commands now produce a different game, so bump
+  `SIM_RULES_VERSION` to 4 and regenerate the snapshots once, reviewing every diff.
+- **Scenario intent.** Scenarios that relied on the empty start must keep what they were written
+  to show. Where needed, a scenario issues explicit `StopPlant` (Planning) and
+  `SetAutoFollow { on: false }` commands to recreate it. The overbuild and overreach scenarios
+  must still end the way they were written to end.
+- **The beginner acceptance check (§14.5)** now also passes with no commands at all. Keep the
+  explicit hands-off variant as well.
+
+### 16.6 Properties (tests)
+
+- **Inheritance.** A new game's dispatchable start-fleet plants are committed all day with AGC
+  on. Solar is untouched. Month 1 charges no boundary start.
+- **Equivalence.** Applying the hands-off commands to a new game changes nothing: its
+  `state_hash` is the same before and after.
+- **No commands, no shortfall.** Each shipped region, at seeds 0–7, has no shortfall warning on
+  month 1 with no commands.
+- **The confirmation, through the real `dispatch` and the real egui pass:**
+  - with no shortfall, Start the day begins operating;
+  - with a shortfall, the prompt opens and no command is sent;
+  - Keep planning sends nothing and closes the prompt;
+  - Start anyway begins operating;
+  - the prompt fits at 1024×640.
+
