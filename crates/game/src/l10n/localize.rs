@@ -4,7 +4,7 @@
 //! application layer breaks the build here until it has a translation. Display values (money,
 //! power, shares, times) are formatted by [`format`] and arrive in the messages as text.
 
-use application::projections::{Lesson, MilestoneKind, RampWarning};
+use application::projections::{Lesson, MilestoneKind, MilestoneProgress, RampWarning};
 use application::{CommandError, CommandLogError, RegionLoadError};
 use domain::error::DomainError;
 use domain::events::DomainEvent;
@@ -379,6 +379,34 @@ impl Localize for MilestoneKind {
             Self::ConnectCities { count } => l10n.args(
                 "milestone-connect-cities",
                 &[("count", count.to_string().into())],
+            ),
+        }
+    }
+}
+
+impl Localize for MilestoneProgress {
+    fn localize(&self, l10n: &Localizer) -> String {
+        match self {
+            Self::Peak { best, goal } => l10n.args(
+                "milestone-progress-peak",
+                &[
+                    ("best", format::megawatts(*best).into()),
+                    ("goal", format::megawatts(*goal).into()),
+                ],
+            ),
+            Self::StrikeFreeMonths { months, needed } => l10n.args(
+                "milestone-progress-strike-free",
+                &[
+                    ("months", months.to_string().into()),
+                    ("needed", needed.to_string().into()),
+                ],
+            ),
+            Self::Cities { connected, needed } => l10n.args(
+                "milestone-progress-cities",
+                &[
+                    ("connected", connected.to_string().into()),
+                    ("needed", needed.to_string().into()),
+                ],
             ),
         }
     }

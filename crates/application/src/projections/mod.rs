@@ -10,17 +10,21 @@ mod monthly_report;
 mod plant_history;
 mod ramp_warning;
 mod rate_review;
+mod regulatory;
 mod timeline;
 
 use domain::events::DomainEvent;
 use domain::session::GameSession;
 
 pub use lessons::{Lesson, LessonsProjection, lessons_for};
-pub use milestones::{MILESTONES, MilestoneKind, MilestoneProjection};
+pub use milestones::{
+    MILESTONES, MilestoneKind, MilestoneProgress, MilestoneProjection, MilestoneStatus,
+};
 pub use monthly_report::MonthlyReportProjection;
 pub use plant_history::{PlantHistory, PlantHistoryProjection};
 pub use ramp_warning::{RampWarning, RampWarningProjection, ramp_warning};
 pub use rate_review::RateReviewProjection;
+pub use regulatory::RegulatoryProjection;
 pub use timeline::{TIMELINE_CAPACITY, TimelinePoint, TimelineProjection};
 
 /// One read model, updated one event at a time.
@@ -42,6 +46,7 @@ pub struct Projections {
     pub ramp_warnings: RampWarningProjection,
     pub rate_review: RateReviewProjection,
     pub lessons: LessonsProjection,
+    pub regulatory: RegulatoryProjection,
 }
 
 impl Projections {
@@ -55,12 +60,13 @@ impl Projections {
             ramp_warnings: RampWarningProjection::default(),
             rate_review: RateReviewProjection::new(session),
             lessons: LessonsProjection::default(),
+            regulatory: RegulatoryProjection::default(),
         }
     }
 
     /// Applies each event, in order, to each projection in a fixed order:
     /// timeline, monthly reports, plant history, milestones, ramp warnings,
-    /// rate review, lessons.
+    /// rate review, lessons, regulatory.
     pub fn apply_all(&mut self, events: &[DomainEvent], session: &GameSession) {
         for event in events {
             self.timeline.apply(event, session);
@@ -70,6 +76,7 @@ impl Projections {
             self.ramp_warnings.apply(event, session);
             self.rate_review.apply(event, session);
             self.lessons.apply(event, session);
+            self.regulatory.apply(event, session);
         }
     }
 }

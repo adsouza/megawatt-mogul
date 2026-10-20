@@ -1,5 +1,6 @@
 //! The top bar, shown in every in-game phase (spec §8.4): the date, the phase and the company's
-//! scores, the recording-stopped warning, and the way back to the menu, which asks first.
+//! scores, the recording-stopped warning, the Milestones panel's switch, and the way back to the
+//! menu, which asks first.
 
 use application::Game;
 use bevy::prelude::*;
@@ -30,6 +31,8 @@ pub struct TopBarModel {
     /// Set once the command log has failed: the game goes on, but its recording is incomplete
     /// (Review Focus 4). It stays for the rest of the game.
     pub recording_stopped: Option<String>,
+    /// Opens or closes the Milestones panel.
+    pub milestones: ButtonModel,
     /// Opens the leave prompt (see `prompt.rs`); it does not leave by itself.
     pub menu: ButtonModel,
 }
@@ -73,6 +76,7 @@ pub fn top_bar_model(game: &Game, l10n: &Localizer) -> TopBarModel {
                 &[("reason", failure.message.as_str().into())],
             )
         }),
+        milestones: ButtonModel::new(l10n.text("topbar-milestones"), UiAction::ToggleMilestones),
         menu: ButtonModel::new(
             l10n.text("topbar-menu"),
             UiAction::Prompt(Some(Prompt::LeaveGame)),
@@ -103,6 +107,7 @@ pub fn draw_top_bar(ui: &mut egui::Ui, model: &TopBarModel) -> Vec<UiAction> {
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             button(ui, &model.menu, &mut actions);
+            button(ui, &model.milestones, &mut actions);
         });
     });
     actions
@@ -200,5 +205,17 @@ mod tests {
         let model = top_bar_model(&game, &l10n);
 
         assert_eq!(model.menu.action, UiAction::Prompt(Some(Prompt::LeaveGame)));
+    }
+
+    #[test]
+    fn the_milestones_button_toggles_the_panel() {
+        let l10n = shipped_l10n();
+        let game = eastern_game(Box::new(InMemoryCommandLog::default()));
+
+        let model = top_bar_model(&game, &l10n);
+
+        assert_eq!(model.milestones.label, "Milestones");
+        assert_eq!(model.milestones.action, UiAction::ToggleMilestones);
+        assert!(model.milestones.enabled);
     }
 }

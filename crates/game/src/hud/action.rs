@@ -11,6 +11,7 @@ use bevy_egui::egui;
 use domain::ids::{PlantId, RegionId};
 
 use super::map::MapLayer;
+use super::milestones::MilestonesOpen;
 use super::operating::OperatingTab;
 use super::selection::Selection;
 use super::speed::LastSpeed;
@@ -42,6 +43,8 @@ pub enum UiAction {
     ShowHour(Option<u8>),
     /// Open or close the list of the planning warnings past the first.
     ToggleWarnings,
+    /// Open or close the Milestones panel.
+    ToggleMilestones,
     /// Change the commitment pattern being edited for a plant. Nothing reaches the game until the
     /// pattern is applied, as a `CommitPlant` command.
     EditCommitment {
@@ -165,6 +168,7 @@ pub struct ActionSink<'w> {
     selection: ResMut<'w, Selection>,
     layer: ResMut<'w, MapLayer>,
     prompt: ResMut<'w, OpenPrompt>,
+    milestones: ResMut<'w, MilestonesOpen>,
     ui: ResMut<'w, UiState>,
     next_state: ResMut<'w, NextState<AppState>>,
 }
@@ -199,6 +203,11 @@ impl ActionSink<'_> {
     /// The prompt now open, if any.
     pub fn open_prompt(&self) -> OpenPrompt {
         *self.prompt
+    }
+
+    /// Whether the Milestones panel is open.
+    pub fn milestones_open(&self) -> MilestonesOpen {
+        *self.milestones
     }
 
     /// The Planning panel's state: the tab, the highlighted hour and the commitment draft.
@@ -239,6 +248,7 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             | UiAction::DiscardCommitmentDraft => {}
             UiAction::Navigate(screen) => sink.next_state.set(screen.into()),
             UiAction::Prompt(prompt) => sink.prompt.0 = prompt,
+            UiAction::ToggleMilestones => sink.milestones.0 = !sink.milestones.0,
             UiAction::Quit => {
                 sink.exit.write(AppExit::Success);
             }

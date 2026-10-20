@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use application::projections::{Lesson, MilestoneKind, RampWarning};
+use application::projections::{Lesson, MilestoneKind, MilestoneProgress, RampWarning};
 use application::{CommandError, CommandLogError, RegionCatalog, RegionLoadError};
 use bevy::prelude::*;
 use domain::company::{AssetRef, LedgerCategory, LedgerEntry};
@@ -297,6 +297,23 @@ fn milestones() -> Vec<MilestoneKind> {
     ]
 }
 
+fn milestone_progress() -> Vec<MilestoneProgress> {
+    vec![
+        MilestoneProgress::Peak {
+            best: megawatts(31_200.0),
+            goal: megawatts(50_000.0),
+        },
+        MilestoneProgress::StrikeFreeMonths {
+            months: 1,
+            needed: 3,
+        },
+        MilestoneProgress::Cities {
+            connected: 4,
+            needed: 10,
+        },
+    ]
+}
+
 fn month_report() -> MonthlyReport {
     let zero = MegawattHours::ZERO;
     MonthlyReport {
@@ -562,6 +579,11 @@ fn the_variant_tables_cover_every_variant() {
         MilestoneKind::FullSeasonWithoutStrike => 1,
         MilestoneKind::ConnectCities { .. } => 2,
     });
+    assert_covers_every_variant("MilestoneProgress", &milestone_progress(), 3, |p| match p {
+        MilestoneProgress::Peak { .. } => 0,
+        MilestoneProgress::StrikeFreeMonths { .. } => 1,
+        MilestoneProgress::Cities { .. } => 2,
+    });
     let events: Vec<DomainEvent> = events().into_iter().map(|(event, _)| event).collect();
     assert_covers_every_variant("DomainEvent", &events, 30, |e| match e {
         DomainEvent::PlantStarting { .. } => 0,
@@ -647,6 +669,7 @@ fn every_typed_value_translates_without_falling_back() {
 
     assert_translates_with(&l10n, &incidents());
     assert_translates(&l10n, &milestones());
+    assert_translates(&l10n, &milestone_progress());
     assert_translates(&l10n, &plant_statuses());
     assert_translates(&l10n, &PlantKind::ALL);
     assert_translates(

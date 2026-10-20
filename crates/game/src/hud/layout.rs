@@ -17,7 +17,7 @@ impl HudArea {
     /// A root `Ui` over the unclaimed space (the whole screen if nothing has claimed any), on the
     /// background layer. `id` must be unique per panel system.
     pub fn root_ui(&self, ctx: &egui::Context, id: &'static str) -> egui::Ui {
-        let rect = self.free.unwrap_or_else(|| ctx.content_rect());
+        let rect = self.free_rect(ctx);
         egui::Ui::new(
             ctx.clone(),
             egui::Id::new(id),
@@ -25,6 +25,12 @@ impl HudArea {
                 .layer_id(egui::LayerId::background())
                 .max_rect(rect),
         )
+    }
+
+    /// The space no panel has claimed so far this frame: the whole screen if none has. An overlay
+    /// that must leave the bars uncovered (the Review backdrop) or sit below them reads it.
+    pub fn free_rect(&self, ctx: &egui::Context) -> egui::Rect {
+        self.free.unwrap_or_else(|| ctx.content_rect())
     }
 
     /// Records what `ui` (from [`Self::root_ui`]) still has free after its panels took their

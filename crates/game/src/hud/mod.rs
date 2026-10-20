@@ -22,6 +22,7 @@ mod inspector;
 mod layout;
 mod map;
 mod menu;
+mod milestones;
 mod operating;
 mod planning;
 mod planning_warnings;
@@ -29,6 +30,7 @@ mod plant_list;
 mod plant_panel;
 mod prompt;
 mod ramp_warnings;
+mod review;
 mod selection;
 mod speed;
 mod supply_chart;
@@ -82,6 +84,10 @@ pub use self::menu::{
     RegionSelectModel, boot_error_model, draw_boot_error, draw_main_menu, draw_region_select,
     main_menu_model, new_game_action, region_select_model,
 };
+pub use self::milestones::{
+    MILESTONES_WIDTH, MilestoneRow, MilestonesModel, MilestonesOpen, draw_milestones,
+    milestone_row, milestones_model,
+};
 pub use self::operating::{
     FREQUENCY_GAUGE_HEIGHT, OPERATING_LOG_WIDTH, OPERATING_PANEL_HEIGHT, OPERATING_SIDE_WIDTH,
     OperatingContent, OperatingPanelModel, OperatingSideModel, OperatingTab, draw_operating_panel,
@@ -102,6 +108,10 @@ pub use self::plant_panel::{
 pub use self::prompt::{PromptModel, draw_prompt, prompt_after, prompt_model};
 pub use self::ramp_warnings::{
     RampWarningsModel, draw_ramp_warnings, ramp_warnings_for, ramp_warnings_model,
+};
+pub use self::review::{
+    MeritRow, REVIEW_MARGIN, REVIEW_WIDTH, ReviewModel, draw_review, review_applies, review_model,
+    review_model_for, review_rect,
 };
 pub use self::selection::Selection;
 pub use self::speed::{LastSpeed, SpeedModel, draw_speed, space_action, speed_model};
@@ -133,11 +143,11 @@ pub enum HudSet {
     Overlays,
 }
 
-/// The egui panels: the shell screens, the top bar, toasts, prompts and the game-over modal; the
-/// planning screen's map, cell inspector, build menu and bottom panel (commitment grid, forecast
-/// chart, tariff); and the operating screen's speed controls, side panel (frequency gauge, plant
-/// list, selected plant) and bottom panel (supply chart, hydro schedule, ramp warnings,
-/// incidents).
+/// The egui panels: the shell screens, the top bar, toasts, prompts, the Milestones panel and the
+/// game-over modal; the planning screen's map, cell inspector, build menu and bottom panel
+/// (commitment grid, forecast chart, tariff); the operating screen's speed controls, side panel
+/// (frequency gauge, plant list, selected plant) and bottom panel (supply chart, hydro schedule,
+/// ramp warnings, incidents); and the Review modal over the dimmed map.
 pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
@@ -150,14 +160,17 @@ impl Plugin for HudPlugin {
 
         let has_l10n = resource_exists::<Localizer>;
         let in_game = in_state(AppState::InGame).and_then(resource_exists::<Session>);
-        let on_the_map = in_game
-            .clone()
-            .and_then(has_l10n)
-            .and_then(in_state(PhaseState::Planning).or_else(in_state(PhaseState::Operating)));
+        // The map draws in every in-game phase: in Review it is the dimmed diorama behind the modal.
+        let on_the_map = in_game.clone().and_then(has_l10n).and_then(
+            in_state(PhaseState::Planning)
+                .or_else(in_state(PhaseState::Operating))
+                .or_else(in_state(PhaseState::Review)),
+        );
         app.init_resource::<Selection>()
             .init_resource::<MapLayer>()
             .init_resource::<MapCache>()
             .init_resource::<OpenPrompt>()
+            .init_resource::<MilestonesOpen>()
             .init_resource::<UiState>()
             .init_resource::<CommitmentForm>()
             .init_resource::<LastSpeed>()
@@ -187,6 +200,7 @@ impl Plugin for HudPlugin {
                     map::reset_layer,
                     map::reset_cache,
                     action::close_prompt,
+                    milestones::close_milestones,
                     ui_state::reset_ui_state,
                     speed::reset_last_speed,
                     operating::reset_operating_tab,
@@ -201,6 +215,7 @@ impl Plugin for HudPlugin {
                     map::reset_layer,
                     map::reset_cache,
                     action::close_prompt,
+                    milestones::close_milestones,
                     ui_state::reset_ui_state,
                     speed::reset_last_speed,
                     operating::reset_operating_tab,
@@ -257,6 +272,20 @@ impl Plugin for HudPlugin {
                                 .clone()
                                 .and_then(has_l10n)
                                 .and_then(in_state(PhaseState::Operating)),
+                        ),
+                    review::review_modal.in_set(HudSet::Overlays).run_if(
+                        in_game
+                            .clone()
+                            .and_then(has_l10n)
+                            .and_then(in_state(PhaseState::Review)),
+                    ),
+                    milestones::milestones_overlay
+                        .in_set(HudSet::Overlays)
+                        .run_if(
+                            in_game
+                                .clone()
+                                .and_then(has_l10n)
+                                .and_then(|open: Res<MilestonesOpen>| open.0),
                         ),
                     game_over::game_over_modal
                         .in_set(HudSet::Overlays)

@@ -130,7 +130,8 @@ fn entering_a_game_starts_with_nothing_selected_and_no_prompt() {
 /// Every egui system's parameters must be disjoint, and every system must run. Bevy checks the
 /// parameters when the schedule is initialised, which for the egui pass is the first frame of a
 /// real window, so without this a `Res<T>` beside an `ActionSink` (which holds `ResMut<T>`) would
-/// panic the game on launch. The pass runs for real here, in the menu, Planning and Operating.
+/// panic the game on launch. The pass runs for real here, in the menu, Planning, Operating and
+/// Review, with the Milestones panel open.
 #[test]
 fn the_egui_systems_have_no_conflicting_parameters() {
     let logs = TempDir::new().unwrap();
@@ -143,6 +144,16 @@ fn the_egui_systems_have_no_conflicting_parameters() {
     dispatch_in(&mut app, vec![UiAction::Command(Command::BeginOperating)]);
     update_n(&mut app, 3);
     assert!(has(&pass.run(&mut app, 1024.0, 640.0), "Frequency"));
+    dispatch_in(
+        &mut app,
+        vec![
+            UiAction::Command(Command::AdvanceTicks { n: 1_440 }),
+            UiAction::ToggleMilestones,
+        ],
+    );
+    update_n(&mut app, 3);
+    let widgets = pass.run(&mut app, 1024.0, 640.0);
+    assert!(has(&widgets, "Month in review") && has(&widgets, "Connect 10 cities"));
 }
 
 /// Whether some widget's text is exactly `text`.
@@ -151,7 +162,7 @@ fn has(widgets: &[Widget], text: &str) -> bool {
 }
 
 /// The real systems draw each phase's panels, by their run conditions, and none of the other
-/// phase's.
+/// phases'.
 #[test]
 fn the_real_pass_draws_each_phases_panels_and_only_those() {
     let logs = TempDir::new().unwrap();
@@ -167,6 +178,7 @@ fn the_real_pass_draws_each_phases_panels_and_only_those() {
     ];
     // Operating: the speed bar, the frequency gauge, the plant list and the Supply/Hydro tabs.
     let operating_panels = ["Pause", "8×", "Frequency", "Plants", "Supply", "Hydro"];
+    let review_modal = "Month in review";
 
     let widgets = pass.settled(&mut app, 1024.0, 640.0);
     assert!(has(&widgets, "Map") && has(&widgets, "Menu"));
@@ -176,6 +188,8 @@ fn the_real_pass_draws_each_phases_panels_and_only_those() {
     for text in operating_panels {
         assert!(!has(&widgets, text), "Planning does not show {text}");
     }
+
+    assert!(!has(&widgets, review_modal), "Planning has no review");
 
     dispatch_in(&mut app, vec![UiAction::Command(Command::BeginOperating)]);
     update_n(&mut app, 3);
@@ -188,6 +202,30 @@ fn the_real_pass_draws_each_phases_panels_and_only_those() {
     for text in planning_panels {
         assert!(!has(&widgets, text), "Operating does not show {text}");
     }
+    assert!(!has(&widgets, review_modal), "Operating has no review");
+
+    // Review: the modal over the map, with the top bar, and neither phase's panels.
+    dispatch_in(
+        &mut app,
+        vec![UiAction::Command(Command::AdvanceTicks { n: 1_440 })],
+    );
+    update_n(&mut app, 3);
+    assert_eq!(phase(&app), PhaseState::Review);
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    assert!(has(&widgets, "Map"), "the map draws behind the modal");
+    assert!(has(&widgets, "Menu") && has(&widgets, "Milestones"));
+    assert!(has(&widgets, review_modal) && has(&widgets, "Continue"));
+    for text in planning_panels.iter().chain(&operating_panels) {
+        assert!(!has(&widgets, text), "Review does not show {text}");
+    }
+
+    // The next month's Planning, with a closed month on record: no review.
+    dispatch_in(&mut app, vec![UiAction::Command(Command::FinishReview)]);
+    update_n(&mut app, 3);
+    assert_eq!(phase(&app), PhaseState::Planning);
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    assert!(has(&widgets, "Start the day"));
+    assert!(!has(&widgets, review_modal), "Planning has no review");
 }
 
 // ---- the Planning panel's state -------------------------------------------------------------
@@ -712,4 +750,43 @@ fn space_is_ignored_while_egui_has_the_keyboard() {
         .unwrap();
     press_space(&mut app);
     assert_eq!(speed(&app), SimSpeed::Paused);
+}
+
+// ---- the Milestones panel ------------------------------------------------------------------
+
+use game::hud::MilestonesOpen;
+
+#[test]
+fn the_milestones_panel_starts_closed_in_each_game() {
+    let logs = TempDir::new().unwrap();
+    let mut app = hud_app(&logs);
+    // Left open from somewhere, which mustn't leak into the game.
+    *app.world_mut().resource_mut::<MilestonesOpen>() = MilestonesOpen(true);
+    request(&mut app, "eastern_interconnection");
+    assert_eq!(
+        *app.world().resource::<MilestonesOpen>(),
+        MilestonesOpen(false)
+    );
+
+    dispatch_in(&mut app, vec![UiAction::ToggleMilestones]);
+    assert_eq!(
+        *app.world().resource::<MilestonesOpen>(),
+        MilestonesOpen(true)
+    );
+    // Ending Planning resets the Planning panel's state, not this.
+    dispatch_in(&mut app, vec![UiAction::Command(Command::BeginOperating)]);
+    update_n(&mut app, 3);
+    assert_eq!(phase(&app), PhaseState::Operating);
+    assert_eq!(
+        *app.world().resource::<MilestonesOpen>(),
+        MilestonesOpen(true)
+    );
+
+    app.world_mut().write_message(ReturnToMenu);
+    update_n(&mut app, 2);
+    assert_eq!(state(&app), AppState::MainMenu);
+    assert_eq!(
+        *app.world().resource::<MilestonesOpen>(),
+        MilestonesOpen(false)
+    );
 }

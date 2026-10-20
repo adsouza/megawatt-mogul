@@ -42,6 +42,9 @@ name-line = Line { $id }
 milestone-serve-peak = Serve a monthly peak of { $gigawatts } GW
 milestone-full-season-without-strike = Get through a full season without a strike
 milestone-connect-cities = Connect { $count } cities
+milestone-progress-peak = Best monthly peak so far: { $best } of { $goal }
+milestone-progress-strike-free = { $months } of { $needed } strike-free months this season
+milestone-progress-cities = { $connected } of { $needed } cities connected
 
 ## Shell: boot, menu and region select
 
@@ -243,15 +246,22 @@ review-fixed-om = Fixed operations and maintenance
 review-construction = Construction
 review-net = Net
 review-merit-order = Merit order used
+review-merit-plant = Plant
+review-merit-kind = Type
+review-merit-cost = Marginal cost
+review-merit-energy = Energy
 review-reliability = Reliability
 review-served = Served
 review-unserved-planned = Unserved (planned rotating outages)
 review-unserved-unplanned = Unserved (protection shedding)
 review-out-of-band = Time out of frequency band
 review-incidents = Incidents
+review-incidents-none = No incidents this month.
 review-lessons = Lessons
 review-regulatory = Regulator
+review-regulatory-none = The regulator took no action this month.
 review-rate-review = Rate review
+review-rate-review-result = Your tariff is now { $tariff } and your allowed return is { $allowed_return }.
 milestones-title = Milestones
 milestones-reached = Reached
 milestones-in-progress = In progress
