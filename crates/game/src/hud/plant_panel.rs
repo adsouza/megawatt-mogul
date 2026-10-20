@@ -212,7 +212,7 @@ pub fn plant_panel_model(game: &Game, l10n: &Localizer, selection: Selection) ->
         status: plant.status.localize(l10n),
         agc: ToggleModel {
             button: ButtonModel::new(
-                l10n.text("plant-agc"),
+                l10n.text("plant-list-agc"),
                 UiAction::Command(Command::SetAutoFollow {
                     plant: plant.id,
                     on: !plant.auto_follow,
@@ -221,7 +221,7 @@ pub fn plant_panel_model(game: &Game, l10n: &Localizer, selection: Selection) ->
             .enabled_if(operable),
             on: plant.auto_follow,
         },
-        agc_tip: l10n.text("commitment-agc-tip"),
+        agc_tip: l10n.text("plant-agc"),
         start: ButtonModel::new(
             l10n.text("plant-start"),
             UiAction::Command(Command::StartPlant { plant: plant.id }),
@@ -251,7 +251,7 @@ pub fn plant_panel_model(game: &Game, l10n: &Localizer, selection: Selection) ->
 }
 
 /// The list's height, fixed so the panel under it doesn't move as plants change status.
-pub const PLANT_LIST_HEIGHT: f32 = 110.0;
+pub const PLANT_LIST_HEIGHT: f32 = 80.0;
 
 /// The list, scrolling when the fleet is longer than [`PLANT_LIST_HEIGHT`].
 pub fn draw_plant_list(ui: &mut egui::Ui, model: &PlantListModel) -> Vec<UiAction> {
@@ -300,8 +300,8 @@ pub fn draw_plant_panel(
         ui.strong(plant.name.as_str());
         ui.weak(plant.status.as_str());
     });
-    toggle_button(ui, &plant.agc, &mut actions).on_hover_text(plant.agc_tip.as_str());
     ui.horizontal(|ui| {
+        toggle_button(ui, &plant.agc, &mut actions).on_hover_text(plant.agc_tip.as_str());
         button(ui, &plant.start, &mut actions);
         button(ui, &plant.stop, &mut actions);
     });
@@ -322,8 +322,11 @@ pub fn draw_plant_panel(
         .id_salt("operating_plant_stats")
         .auto_shrink([false, false])
         .show(ui, |ui| {
+            // Compact rows, so every figure is in view at the smallest window.
             egui::Grid::new("operating_plant_stats_grid")
                 .num_columns(2)
+                .spacing(egui::vec2(8.0, 1.0))
+                .min_row_height(0.0)
                 .show(ui, |ui| {
                     for stat in &plant.stats {
                         ui.weak(stat.label.as_str());
@@ -470,7 +473,8 @@ mod tests {
             })
         );
         assert!(!model.agc.on && model.agc.button.enabled);
-        assert_eq!(model.agc.button.label, "Automatic generation control (AGC)");
+        assert_eq!(model.agc.button.label, "AGC");
+        assert_eq!(model.agc_tip, "Automatic generation control (AGC)");
         assert_eq!(
             model.start.action,
             UiAction::Command(Command::StartPlant { plant: coal.id })

@@ -25,42 +25,26 @@ fn the_egui_pass_schedule_exists_without_any_panels() {
 // regions, turning refusals into toasts, resetting HUD state between games).
 
 use application::{CommandError, RegionLoadError};
-use bevy::time::TimeUpdateStrategy;
 use domain::ids::{CellCoord, RegionId};
 use game::hud::{
     ActionSink, CommitmentForm, MapLayer, MenuForm, OpenPrompt, PlanningTab, Prompt,
     RegionListings, Selection, ToastQueue, UiAction, UiState, dispatch, toasts_model,
 };
 use game::l10n::{LocalizeWith, Localizer, Names};
-use game::sim::{NewGameRequest, ReturnToMenu};
+use game::sim::ReturnToMenu;
 use game::state::AppState;
 use tempfile::TempDir;
 
-use crate::support::{headless_app, shipped_assets, shipped_l10n, update_n};
+use crate::support::egui_harness::Widget;
+use crate::support::egui_pass::EguiPass;
+use crate::support::{request, shipped_l10n, update_n};
 
-/// A headless app with the core plugins and the HUD plugin, past boot, in the main menu. Fixed
-/// time stands still, so no ticks run while a test is in game.
 fn hud_app(logs: &TempDir) -> App {
-    let mut app = headless_app(&shipped_assets(), logs.path());
-    app.insert_resource(TimeUpdateStrategy::ManualDuration(
-        std::time::Duration::ZERO,
-    ))
-    .add_plugins(HudPlugin);
-    update_n(&mut app, 3);
-    assert_eq!(state(&app), AppState::MainMenu);
-    app
+    crate::support::hud_app(logs.path())
 }
 
 fn state(app: &App) -> AppState {
     *app.world().resource::<State<AppState>>().get()
-}
-
-fn request(app: &mut App, region: &str) {
-    app.world_mut().write_message(NewGameRequest {
-        region: RegionId::new(region),
-        seed: 7,
-    });
-    update_n(app, 2);
 }
 
 /// The toasts on screen now, as the overlay would draw them.
@@ -143,20 +127,67 @@ fn entering_a_game_starts_with_nothing_selected_and_no_prompt() {
     assert_eq!(*app.world().resource::<OpenPrompt>(), OpenPrompt(None));
 }
 
-/// Every egui system's parameters must be disjoint. Bevy checks that when the schedule is
-/// initialised, which for the egui pass is the first frame of a real window, so without this a
-/// `Res<T>` beside an `ActionSink` (which holds `ResMut<T>`) would panic the game on launch.
+/// Every egui system's parameters must be disjoint, and every system must run. Bevy checks the
+/// parameters when the schedule is initialised, which for the egui pass is the first frame of a
+/// real window, so without this a `Res<T>` beside an `ActionSink` (which holds `ResMut<T>`) would
+/// panic the game on launch. The pass runs for real here, in the menu, Planning and Operating.
 #[test]
 fn the_egui_systems_have_no_conflicting_parameters() {
     let logs = TempDir::new().unwrap();
     let mut app = hud_app(&logs);
+    let pass = EguiPass::attach(&mut app);
 
-    app.world_mut()
-        .schedule_scope(EguiPrimaryContextPass, |world, schedule| {
-            schedule.initialize(world).expect(
-                "the egui pass initialises: its systems build, and their parameters are disjoint",
-            );
-        });
+    assert!(has(&pass.run(&mut app, 1024.0, 640.0), "New game"));
+    request(&mut app, "eastern_interconnection");
+    assert!(has(&pass.run(&mut app, 1024.0, 640.0), "Start the day"));
+    dispatch_in(&mut app, vec![UiAction::Command(Command::BeginOperating)]);
+    update_n(&mut app, 3);
+    assert!(has(&pass.run(&mut app, 1024.0, 640.0), "Frequency"));
+}
+
+/// Whether some widget's text is exactly `text`.
+fn has(widgets: &[Widget], text: &str) -> bool {
+    widgets.iter().any(|widget| widget.text == text)
+}
+
+/// The real systems draw each phase's panels, by their run conditions, and none of the other
+/// phase's.
+#[test]
+fn the_real_pass_draws_each_phases_panels_and_only_those() {
+    let logs = TempDir::new().unwrap();
+    let mut app = hud_app(&logs);
+    let pass = EguiPass::attach(&mut app);
+    request(&mut app, "eastern_interconnection");
+    // Planning: the commitment grid, the inspector and the build menu, around the map.
+    let planning_panels = [
+        "Start the day",
+        "Commitments",
+        "Select a cell to see what can be built there",
+        "Select a cell on the map to build a plant there.",
+    ];
+    // Operating: the speed bar, the frequency gauge, the plant list and the Supply/Hydro tabs.
+    let operating_panels = ["Pause", "8×", "Frequency", "Plants", "Supply", "Hydro"];
+
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    assert!(has(&widgets, "Map") && has(&widgets, "Menu"));
+    for text in planning_panels {
+        assert!(has(&widgets, text), "Planning shows {text}");
+    }
+    for text in operating_panels {
+        assert!(!has(&widgets, text), "Planning does not show {text}");
+    }
+
+    dispatch_in(&mut app, vec![UiAction::Command(Command::BeginOperating)]);
+    update_n(&mut app, 3);
+    assert_eq!(phase(&app), PhaseState::Operating);
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    assert!(has(&widgets, "Map") && has(&widgets, "Menu"));
+    for text in operating_panels {
+        assert!(has(&widgets, text), "Operating shows {text}");
+    }
+    for text in planning_panels {
+        assert!(!has(&widgets, text), "Operating does not show {text}");
+    }
 }
 
 // ---- the Planning panel's state -------------------------------------------------------------
@@ -644,4 +675,41 @@ fn leaving_a_game_resets_the_operating_state() {
         PlantPanelForm::default()
     );
     assert_eq!(*world.resource::<SimSpeed>(), SimSpeed::Paused);
+}
+
+/// Space is the player's only while egui isn't taking the keyboard: with a widget focused it would
+/// also press that widget.
+#[test]
+fn space_is_ignored_while_egui_has_the_keyboard() {
+    use bevy::ecs::system::RunSystemOnce;
+    use bevy_egui::egui;
+    use bevy_egui::input::{EguiWantsInput, write_egui_wants_input_system};
+
+    let logs = TempDir::new().unwrap();
+    let mut app = operating_app(&logs);
+    let pass = EguiPass::attach(&mut app);
+    app.init_resource::<EguiWantsInput>();
+    pass.run(&mut app, 1024.0, 640.0);
+    let field = egui::Id::new("a focused text field");
+    pass.ctx().memory_mut(|memory| memory.request_focus(field));
+    app.world_mut()
+        .run_system_once(write_egui_wants_input_system)
+        .unwrap();
+    assert!(
+        app.world()
+            .resource::<EguiWantsInput>()
+            .wants_keyboard_input()
+    );
+
+    press_space(&mut app);
+    assert_eq!(speed(&app), SimSpeed::X1, "the keystroke was egui's");
+
+    // Once egui lets go of the keyboard, Space is the player's again.
+    pass.ctx()
+        .memory_mut(|memory| memory.surrender_focus(field));
+    app.world_mut()
+        .run_system_once(write_egui_wants_input_system)
+        .unwrap();
+    press_space(&mut app);
+    assert_eq!(speed(&app), SimSpeed::Paused);
 }

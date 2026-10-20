@@ -11,9 +11,16 @@ use domain::time::TICKS_PER_HOUR;
 use egui_plot::{AxisHints, FilledArea, HPlacement, Legend, Line, LineStyle, Plot, VLine};
 
 use super::action::UiAction;
+use super::frequency::SHEDDING_COLOR;
 use super::map::{Rgb, kind_color};
 use super::plant_list::kinds_in_merit_order;
 use crate::l10n::{Localize, Localizer};
+
+/// The served line: where it falls under demand, load is being cut, so it takes the gauge's
+/// load-shedding red.
+pub const SERVED_COLOR: Rgb = SHEDDING_COLOR;
+/// The system marginal cost line, on the secondary axis.
+pub const MARGINAL_COST_COLOR: Rgb = [240, 190, 60];
 
 /// One kind's band of the stack: from `low` (the kinds below it) to `high`, at each point.
 #[derive(Debug, Clone, PartialEq)]
@@ -181,7 +188,7 @@ pub fn draw_supply_chart(ui: &mut egui::Ui, model: &SupplyModel) -> Vec<UiAction
             );
             plot.line(
                 Line::new(model.served_label.as_str(), points(&model.served))
-                    .color(egui::Color32::from_rgb(220, 70, 60))
+                    .color(color32(SERVED_COLOR))
                     .width(1.5),
             );
             plot.line(
@@ -197,7 +204,7 @@ pub fn draw_supply_chart(ui: &mut egui::Ui, model: &SupplyModel) -> Vec<UiAction
                 .collect();
             plot.line(
                 Line::new(model.cost_label.as_str(), cost)
-                    .color(egui::Color32::from_rgb(240, 190, 60))
+                    .color(color32(MARGINAL_COST_COLOR))
                     .width(1.5),
             );
             plot.vline(VLine::new("", model.now).color(now_color).width(1.0));

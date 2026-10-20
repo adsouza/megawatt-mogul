@@ -10,13 +10,10 @@ use bevy_egui::egui;
 use super::action::UiAction;
 use crate::l10n::{Localize, Localizer, format};
 
-/// The most warnings the column lists.
-pub const MAX_RAMP_WARNINGS: usize = 3;
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct RampWarningsModel {
     pub title: String,
-    /// `17:00: Net load is about to rise by ...`, newest first.
+    /// `17:00: Net load is about to rise by ...`: none or the one current warning.
     pub rows: Vec<String>,
     /// Shown when there is none.
     pub empty: Option<String>,
@@ -34,10 +31,10 @@ pub fn ramp_warnings_for(
     now: u32,
     l10n: &Localizer,
 ) -> RampWarningsModel {
+    // The projection holds only the current warning, so there is at most one row.
     let rows: Vec<String> = current
         .into_iter()
         .filter(|warning| warning.at_tick < now)
-        .take(MAX_RAMP_WARNINGS)
         .map(|warning| {
             l10n.args(
                 "ramp-warning-row",

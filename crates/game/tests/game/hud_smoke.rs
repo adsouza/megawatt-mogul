@@ -30,7 +30,7 @@ use game::hud::{
     toasts_model, top_bar_model, warnings_for,
 };
 use game::l10n::Localize;
-use game::sim::{NewGameRequest, PlayerCommand, ReturnToMenu, SimSpeed};
+use game::sim::{NewGameRequest, PlayerCommand, ReturnToMenu, Session, SimSpeed};
 use game::state::{AppState, BootError};
 use infrastructure::region::RonRegionCatalog;
 use tempfile::TempDir;
@@ -38,7 +38,8 @@ use tempfile::TempDir;
 use crate::support::egui_harness::{
     Harness, button as find_button, buttons, central, shows, widget,
 };
-use crate::support::{headless_app, shipped_assets, shipped_l10n, update_n};
+use crate::support::egui_pass::EguiPass;
+use crate::support::{headless_app, hud_app, request, shipped_assets, shipped_l10n, update_n};
 
 const EASTERN: &str = "eastern_interconnection";
 const WESTERN: &str = "western_interconnection";
@@ -1658,10 +1659,6 @@ impl OperatingScreen {
         self.state.borrow_mut().apply(&actions);
         actions
     }
-
-    fn apply(&self, actions: &[UiAction]) {
-        self.state.borrow_mut().apply(actions);
-    }
 }
 
 /// The one slider labelled `label`.
@@ -1810,7 +1807,7 @@ fn the_operating_screen_draws_every_panel_an_hour_in() {
         );
         let widgets = screen.widgets();
         assert!(shows(&widgets, "Set target"), "{region}");
-        assert!(!find_button(&widgets, "Automatic generation control (AGC)").disabled);
+        assert!(!find_button(&widgets, "AGC").disabled);
         assert!(!find_button(&widgets, "Stop").disabled);
         assert!(find_button(&widgets, "Start").disabled);
         assert!(shows(&widgets, "Marginal cost"), "{region}");
@@ -1839,27 +1836,66 @@ fn the_operating_screen_draws_every_panel_an_hour_in() {
     }
 }
 
-/// The smallest window the game allows is 1024×640. Every Operating control must be on screen
-/// and inside its own panel there, clear of the map and of each other, with no horizontal scroll.
+/// An app an hour into its first day in `region`, run through the real plugins: every plant that
+/// can be committed is committed all day, and hydro is on AGC (it is scheduled only then).
+fn operating_hour_app(logs: &TempDir, region: &str) -> App {
+    let mut app = hud_app(logs.path());
+    request(&mut app, region);
+    let mut actions = Vec::new();
+    for plant in app.world().resource::<Session>().0.session().plant_views() {
+        if is_commitable(&plant) {
+            actions.push(UiAction::Command(Command::StartPlant { plant: plant.id }));
+            if plant.kind == domain::region::PlantKind::Hydro {
+                actions.push(UiAction::Command(Command::SetAutoFollow {
+                    plant: plant.id,
+                    on: true,
+                }));
+            }
+        }
+    }
+    actions.push(UiAction::Command(Command::BeginOperating));
+    actions.push(UiAction::Command(Command::AdvanceTicks { n: 60 }));
+    dispatch_in(&mut app, actions);
+    update_n(&mut app, 3);
+    assert_eq!(
+        app.world().resource::<Session>().0.session().clock().tick(),
+        60
+    );
+    app
+}
+
+/// Selects `selection` and opens `tab` through `dispatch`, as clicks would.
+fn select_and_open(app: &mut App, selection: Selection, tab: OperatingTab) {
+    dispatch_in(
+        app,
+        vec![UiAction::Select(selection), UiAction::SetOperatingTab(tab)],
+    );
+}
+
+/// The smallest window the game allows is 1024×640. Drawn by the real systems, every Operating
+/// control must be on screen and inside its own panel there, clear of the map and of each other,
+/// with no horizontal scroll, and the selected plant's figures must show without scrolling.
 #[test]
 fn at_the_smallest_window_the_operating_controls_fit_without_overlap() {
     for region in [EASTERN, WESTERN] {
         for tab in [OperatingTab::Supply, OperatingTab::Hydro] {
-            let screen =
-                OperatingScreen::new(operating_game(region), Harness::with_screen(1024.0, 640.0));
-            let plant = online_plant(&screen.game, domain::region::PlantKind::Ccgt);
-            screen.apply(&[
-                UiAction::Select(Selection::Plant(plant.id)),
-                UiAction::SetOperatingTab(tab),
-            ]);
-            let screen_rect = screen.harness.screen_rect();
+            let logs = TempDir::new().unwrap();
+            let mut app = operating_hour_app(&logs, region);
+            let pass = EguiPass::attach(&mut app);
+            let plant = online_plant(
+                &app.world().resource::<Session>().0,
+                domain::region::PlantKind::Ccgt,
+            );
+            select_and_open(&mut app, Selection::Plant(plant.id), tab);
+            let screen_rect =
+                egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1024.0, 640.0));
 
-            let widgets = screen.widgets();
+            let widgets = pass.settled(&mut app, 1024.0, 640.0);
 
             let map = widget(&widgets, "Map").rect;
             let menu = find_button(&widgets, "Menu").rect;
             let speeds = ["Pause", "1×", "2×", "4×", "8×"].map(|l| find_button(&widgets, l).rect);
-            let agc = find_button(&widgets, "Automatic generation control (AGC)").rect;
+            let agc = find_button(&widgets, "AGC").rect;
             let start = find_button(&widgets, "Start").rect;
             let stop = find_button(&widgets, "Stop").rect;
             let target = slider(&widgets, "Set target").rect;
@@ -1891,6 +1927,25 @@ fn at_the_smallest_window_the_operating_controls_fit_without_overlap() {
                 assert!(
                     side.contains_rect(rect),
                     "{label}: {name} {rect:?} is not inside the side panel {side:?}"
+                );
+            }
+            // Every figure of the selected plant, down to the last, is in view without scrolling.
+            for figure in [
+                "Output",
+                "Target",
+                "Ramp rate",
+                "Marginal cost",
+                "Energy so far",
+                "Revenue so far",
+            ] {
+                let row = widgets
+                    .iter()
+                    .find(|w| w.text == figure && w.role == egui::accesskit::Role::Label)
+                    .unwrap_or_else(|| panic!("{label}: no {figure} row"))
+                    .rect;
+                assert!(
+                    side.contains_rect(row),
+                    "{label}: the {figure} row {row:?} is below the side panel {side:?}"
                 );
             }
             for rect in tabs {
@@ -1943,13 +1998,18 @@ fn at_the_smallest_window_the_operating_controls_fit_without_overlap() {
     }
 }
 
-/// The map's place is set by the bars and the fixed panels: selecting a plant or opening a tab
-/// must not move it.
+/// The map's place is set by the bars and the fixed panels: selecting a plant, opening a tab or
+/// changing speed must not move it. Drawn by the real systems.
 #[test]
 fn the_map_does_not_move_when_the_operating_panels_change() {
-    let screen = OperatingScreen::new(operating_game(WESTERN), Harness::with_screen(1024.0, 640.0));
-    let before = widget(&screen.widgets(), "Map").rect;
-    let plant = online_plant(&screen.game, domain::region::PlantKind::Ccgt);
+    let logs = TempDir::new().unwrap();
+    let mut app = operating_hour_app(&logs, WESTERN);
+    let pass = EguiPass::attach(&mut app);
+    let before = widget(&pass.settled(&mut app, 1024.0, 640.0), "Map").rect;
+    let plant = online_plant(
+        &app.world().resource::<Session>().0,
+        domain::region::PlantKind::Ccgt,
+    );
     let states = [
         vec![UiAction::Select(Selection::Plant(plant.id))],
         vec![UiAction::SetOperatingTab(OperatingTab::Hydro)],
@@ -1958,8 +2018,8 @@ fn the_map_does_not_move_when_the_operating_panels_change() {
         vec![UiAction::SetSpeed(SimSpeed::Paused)],
     ];
     for actions in states {
-        screen.apply(&actions);
-        let map = widget(&screen.widgets(), "Map").rect;
+        dispatch_in(&mut app, actions.clone());
+        let map = widget(&pass.settled(&mut app, 1024.0, 640.0), "Map").rect;
         assert_eq!(map, before, "after {actions:?}");
     }
 }

@@ -101,13 +101,13 @@ pub use self::plant_panel::{
 };
 pub use self::prompt::{PromptModel, draw_prompt, prompt_after, prompt_model};
 pub use self::ramp_warnings::{
-    MAX_RAMP_WARNINGS, RampWarningsModel, draw_ramp_warnings, ramp_warnings_for,
-    ramp_warnings_model,
+    RampWarningsModel, draw_ramp_warnings, ramp_warnings_for, ramp_warnings_model,
 };
 pub use self::selection::Selection;
 pub use self::speed::{LastSpeed, SpeedModel, draw_speed, space_action, speed_model};
 pub use self::supply_chart::{
-    SupplyModel, SupplyStack, draw_supply_chart, supply_model, todays_points,
+    MARGINAL_COST_COLOR, SERVED_COLOR, SupplyModel, SupplyStack, draw_supply_chart, supply_model,
+    todays_points,
 };
 pub use self::tariff::{TariffModel, draw_tariff, months_until_review, tariff_model};
 pub use self::toasts::{

@@ -41,6 +41,8 @@ pub fn band_color(band: FrequencyBand) -> Rgb {
 pub struct DialZone {
     pub from: f32,
     pub to: f32,
+    /// The band this stretch of deviations is in.
+    pub band: FrequencyBand,
     pub color: Rgb,
 }
 
@@ -119,6 +121,7 @@ fn dial(deviation: Hertz, params: &FrequencyParams) -> DialModel {
             .map(|(from, to, zone)| DialZone {
                 from: at(from),
                 to: at(to),
+                band: zone,
                 color: band_color(zone),
             })
             .collect(),
@@ -317,6 +320,15 @@ mod tests {
         assert_eq!(zones.last().unwrap().to, 1.0);
         assert!(zones.windows(2).all(|pair| pair[0].to == pair[1].from));
         let colors: Vec<Rgb> = zones.iter().map(|zone| zone.color).collect();
+        // Each zone is where protection's own rule puts that band: if `band()` moves a
+        // threshold, the dial must move with it.
+        let span = dial_span(&params);
+        for zone in zones {
+            let middle = f64::from(zone.from + zone.to) / 2.0;
+            let hz = Hertz::new((middle * 2.0 - 1.0) * span);
+            assert_eq!(band(hz, &params), zone.band, "the middle of {zone:?}");
+            assert_eq!(zone.color, band_color(zone.band));
+        }
         assert_eq!(
             colors,
             [SHEDDING_COLOR, LOW_COLOR, NORMAL_COLOR, HIGH_COLOR]

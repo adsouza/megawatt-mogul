@@ -64,30 +64,7 @@ impl Harness {
         let output = self
             .ctx
             .run_ui(self.input(events), |ui| actions.extend(draw(ui)));
-        let widgets = output
-            .platform_output
-            .accesskit_update
-            .as_ref()
-            .map(|update| {
-                update
-                    .nodes
-                    .iter()
-                    .filter_map(|(_, node)| {
-                        let bounds = node.bounds()?;
-                        let text = node.label().or(node.value())?.to_owned();
-                        Some(Widget {
-                            role: node.role(),
-                            text,
-                            rect: Rect::from_min_max(
-                                Pos2::new(bounds.x0 as f32, bounds.y0 as f32),
-                                Pos2::new(bounds.x1 as f32, bounds.y1 as f32),
-                            ),
-                            disabled: node.is_disabled(),
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let widgets = widgets_of(&output);
         // There is no renderer to take the font texture.
         output.drop_without_applying_deltas();
         (actions, widgets)
@@ -213,6 +190,35 @@ impl Harness {
         actions.extend(self.frame(vec![press(false)], &mut draw).0);
         actions
     }
+}
+
+/// Every widget of a finished egui pass that AccessKit gives a place and a text, in no promised
+/// order. The context must have AccessKit enabled.
+pub fn widgets_of(output: &egui::FullOutput) -> Vec<Widget> {
+    output
+        .platform_output
+        .accesskit_update
+        .as_ref()
+        .map(|update| {
+            update
+                .nodes
+                .iter()
+                .filter_map(|(_, node)| {
+                    let bounds = node.bounds()?;
+                    let text = node.label().or(node.value())?.to_owned();
+                    Some(Widget {
+                        role: node.role(),
+                        text,
+                        rect: Rect::from_min_max(
+                            Pos2::new(bounds.x0 as f32, bounds.y0 as f32),
+                            Pos2::new(bounds.x1 as f32, bounds.y1 as f32),
+                        ),
+                        disabled: node.is_disabled(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The buttons labelled `label`, in drawing order.
