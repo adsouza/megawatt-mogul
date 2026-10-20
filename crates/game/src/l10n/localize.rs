@@ -13,7 +13,7 @@ use domain::regulation::StrikeReason;
 use domain::session::{DayPhase, GameOverReason, IncidentKind};
 use domain::time::{Season, TICKS_PER_HOUR};
 
-use super::{FluentArg, Localizer, format};
+use super::{FluentArg, Localizer, Names, format};
 use crate::state::PhaseState;
 
 /// Text for a typed value.
@@ -21,11 +21,17 @@ pub trait Localize {
     fn localize(&self, l10n: &Localizer) -> String;
 }
 
+/// Text for a typed value that mentions plants, cities or lines by id: `names` turns the ids into
+/// names. [`Localize::localize`] on these types is the same text with every id shown bare.
+pub trait LocalizeWith {
+    fn localize_with(&self, l10n: &Localizer, names: &Names) -> String;
+}
+
 /// Text for a domain event that deserves a toast. Most events are bookkeeping (`TickCompleted`,
 /// ledger entries, ...) and return `None`; the `match` is still exhaustive, so a new event must
 /// be classified, but only a toast-worthy one needs words.
 pub trait Toast {
-    fn toast(&self, l10n: &Localizer) -> Option<String>;
+    fn toast(&self, l10n: &Localizer, names: &Names) -> Option<String>;
 }
 
 /// A numeric id, shown as `#7` in the copy.
@@ -40,13 +46,19 @@ macro_rules! id_of {
     };
 }
 
-impl Localize for CommandError {
-    fn localize(&self, l10n: &Localizer) -> String {
+impl LocalizeWith for CommandError {
+    fn localize_with(&self, l10n: &Localizer, names: &Names) -> String {
         match self {
-            Self::Domain(error) => error.localize(l10n),
+            Self::Domain(error) => error.localize_with(l10n, names),
             Self::Region(error) => error.localize(l10n),
             Self::Log(error) => error.localize(l10n),
         }
+    }
+}
+
+impl Localize for CommandError {
+    fn localize(&self, l10n: &Localizer) -> String {
+        self.localize_with(l10n, &Names::empty(l10n))
     }
 }
 
@@ -59,40 +71,45 @@ impl Localize for CommandLogError {
     }
 }
 
-impl Localize for DomainError {
-    fn localize(&self, l10n: &Localizer) -> String {
+impl LocalizeWith for DomainError {
+    fn localize_with(&self, l10n: &Localizer, names: &Names) -> String {
         match self {
             Self::InvalidRatio { value: _ } => l10n.text("error-invalid-ratio"),
             Self::InvalidMonth { month } => l10n.args(
                 "error-invalid-month",
                 &[("month", month.to_string().into())],
             ),
-            Self::PlantNotDispatchable { plant } => {
-                l10n.args("error-plant-not-dispatchable", &[("plant", id_of!(plant))])
-            }
-            Self::PlantNotOffline { plant } => {
-                l10n.args("error-plant-not-offline", &[("plant", id_of!(plant))])
-            }
-            Self::PlantNotOnline { plant } => {
-                l10n.args("error-plant-not-online", &[("plant", id_of!(plant))])
-            }
-            Self::PlantNotRunning { plant } => {
-                l10n.args("error-plant-not-running", &[("plant", id_of!(plant))])
-            }
-            Self::NonFiniteMegawatts { plant } => {
-                l10n.args("error-non-finite-megawatts", &[("plant", id_of!(plant))])
-            }
+            Self::PlantNotDispatchable { plant } => l10n.args(
+                "error-plant-not-dispatchable",
+                &[("plant", names.plant(*plant).into())],
+            ),
+            Self::PlantNotOffline { plant } => l10n.args(
+                "error-plant-not-offline",
+                &[("plant", names.plant(*plant).into())],
+            ),
+            Self::PlantNotOnline { plant } => l10n.args(
+                "error-plant-not-online",
+                &[("plant", names.plant(*plant).into())],
+            ),
+            Self::PlantNotRunning { plant } => l10n.args(
+                "error-plant-not-running",
+                &[("plant", names.plant(*plant).into())],
+            ),
+            Self::NonFiniteMegawatts { plant } => l10n.args(
+                "error-non-finite-megawatts",
+                &[("plant", names.plant(*plant).into())],
+            ),
             Self::BelowMinimumStableOutput { plant, min } => l10n.args(
                 "error-below-minimum-stable-output",
                 &[
-                    ("plant", id_of!(plant)),
+                    ("plant", names.plant(*plant).into()),
                     ("min", format::megawatts(*min).into()),
                 ],
             ),
             Self::AboveCapacity { plant, max } => l10n.args(
                 "error-above-capacity",
                 &[
-                    ("plant", id_of!(plant)),
+                    ("plant", names.plant(*plant).into()),
                     ("max", format::megawatts(*max).into()),
                 ],
             ),
@@ -119,9 +136,10 @@ impl Localize for DomainError {
                 "error-duplicate-line",
                 &[("from", id_of!(from)), ("to", id_of!(to))],
             ),
-            Self::DuplicateLineId { line } => {
-                l10n.args("error-duplicate-line-id", &[("line", id_of!(line))])
-            }
+            Self::DuplicateLineId { line } => l10n.args(
+                "error-duplicate-line-id",
+                &[("line", names.line(*line).into())],
+            ),
             Self::UnknownPlant { plant } => {
                 l10n.args("error-unknown-plant", &[("plant", id_of!(plant))])
             }
@@ -144,9 +162,10 @@ impl Localize for DomainError {
                     ("reason", reason.localize(l10n).into()),
                 ],
             ),
-            Self::PlantNotCommissioned { plant } => {
-                l10n.args("error-plant-not-commissioned", &[("plant", id_of!(plant))])
-            }
+            Self::PlantNotCommissioned { plant } => l10n.args(
+                "error-plant-not-commissioned",
+                &[("plant", names.plant(*plant).into())],
+            ),
             Self::StartUpBeyondDay { remaining, startup } => l10n.args(
                 "error-start-up-beyond-day",
                 &[
@@ -155,6 +174,12 @@ impl Localize for DomainError {
                 ],
             ),
         }
+    }
+}
+
+impl Localize for DomainError {
+    fn localize(&self, l10n: &Localizer) -> String {
+        self.localize_with(l10n, &Names::empty(l10n))
     }
 }
 
@@ -344,8 +369,8 @@ impl Localize for MilestoneKind {
     }
 }
 
-impl Localize for IncidentKind {
-    fn localize(&self, l10n: &Localizer) -> String {
+impl LocalizeWith for IncidentKind {
+    fn localize_with(&self, l10n: &Localizer, names: &Names) -> String {
         match self {
             Self::LoadShed { mw } => l10n.args(
                 "incident-load-shed",
@@ -353,14 +378,21 @@ impl Localize for IncidentKind {
             ),
             Self::Blackout => l10n.text("incident-blackout"),
             Self::BlackoutRestored => l10n.text("incident-blackout-restored"),
-            Self::OverFrequencyTrip { plant } => {
-                l10n.args("incident-over-frequency-trip", &[("plant", id_of!(plant))])
-            }
+            Self::OverFrequencyTrip { plant } => l10n.args(
+                "incident-over-frequency-trip",
+                &[("plant", names.plant(*plant).into())],
+            ),
             Self::RotatingOutage { share } => l10n.args(
                 "incident-rotating-outage",
                 &[("share", format::percent(*share).into())],
             ),
         }
+    }
+}
+
+impl Localize for IncidentKind {
+    fn localize(&self, l10n: &Localizer) -> String {
+        self.localize_with(l10n, &Names::empty(l10n))
     }
 }
 
@@ -458,7 +490,7 @@ impl Localize for RampWarning {
 }
 
 impl Toast for DomainEvent {
-    fn toast(&self, l10n: &Localizer) -> Option<String> {
+    fn toast(&self, l10n: &Localizer, names: &Names) -> Option<String> {
         let text = match self {
             Self::Blackout => l10n.text("event-blackout"),
             Self::BlackoutRestored => l10n.text("event-blackout-restored"),
@@ -495,28 +527,30 @@ impl Toast for DomainEvent {
             ),
             Self::LicenseRevoked => l10n.text("event-license-revoked"),
             Self::Bankrupt => l10n.text("event-bankrupt"),
-            Self::PlantTripped { plant } => {
-                l10n.args("event-plant-tripped", &[("plant", id_of!(plant))])
-            }
-            Self::OverFrequencyTrip { plant } => {
-                l10n.args("event-over-frequency-trip", &[("plant", id_of!(plant))])
-            }
-            Self::HydroBudgetExhausted { plant } => {
-                l10n.args("event-hydro-budget-exhausted", &[("plant", id_of!(plant))])
-            }
-            Self::CityConnected { city } => {
-                l10n.args("event-city-connected", &[("city", id_of!(city))])
-            }
+            Self::PlantTripped { plant } => l10n.args(
+                "event-plant-tripped",
+                &[("plant", names.plant(*plant).into())],
+            ),
+            Self::OverFrequencyTrip { plant } => l10n.args(
+                "event-over-frequency-trip",
+                &[("plant", names.plant(*plant).into())],
+            ),
+            Self::HydroBudgetExhausted { plant } => l10n.args(
+                "event-hydro-budget-exhausted",
+                &[("plant", names.plant(*plant).into())],
+            ),
+            Self::CityConnected { city } => l10n.args(
+                "event-city-connected",
+                &[("city", names.city(*city).into())],
+            ),
             Self::PlantCommissioned { plant, kind } => l10n.args(
                 "event-plant-commissioned",
-                &[
-                    ("plant", id_of!(plant)),
-                    ("kind", kind.localize(l10n).into()),
-                ],
+                &[("plant", names.plant_as(*plant, *kind).into())],
             ),
-            Self::LineCommissioned { line } => {
-                l10n.args("event-line-commissioned", &[("line", id_of!(line))])
-            }
+            Self::LineCommissioned { line } => l10n.args(
+                "event-line-commissioned",
+                &[("line", names.line(*line).into())],
+            ),
             Self::RateReviewCompleted {
                 tariff,
                 allowed_return,

@@ -25,6 +25,11 @@ plant-kind-hydro = Hydro plant
 game-over-bankrupt = Your company went bankrupt: cash stayed negative at too many month-ends.
 game-over-license-revoked = The regulator revoked your operating license after too many strikes.
 
+name-plant = { $kind } { $id }
+name-plant-unknown = Plant #{ $id }
+name-city-unknown = City #{ $id }
+name-line = Line { $id }
+
 milestone-serve-peak = Serve a monthly peak of { $gigawatts } GW
 milestone-full-season-without-strike = Get through a full season without a strike
 milestone-connect-cities = Connect { $count } cities

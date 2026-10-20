@@ -8,6 +8,7 @@
 pub mod format;
 pub mod keys;
 mod localize;
+mod names;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -20,7 +21,8 @@ use fluent_bundle::concurrent::FluentBundle;
 use fluent_bundle::{FluentArgs, FluentError, FluentResource};
 use unic_langid::LanguageIdentifier;
 
-pub use self::localize::{Localize, Toast};
+pub use self::localize::{Localize, LocalizeWith, Toast};
+pub use self::names::Names;
 use crate::paths::AssetRoot;
 use crate::state::{BootChecklistAppExt, BootError, finish_boot};
 

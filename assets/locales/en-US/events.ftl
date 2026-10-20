@@ -17,12 +17,12 @@ event-strike-expired =
     }.
 event-license-revoked = The regulator has revoked your operating license.
 event-bankrupt = Bankrupt: cash stayed negative at too many month-ends.
-event-plant-tripped = Plant #{ $plant } tripped offline. Other plants must cover its output until it is restarted.
-event-over-frequency-trip = Plant #{ $plant } was tripped by over-frequency protection: generation outran demand.
-event-hydro-budget-exhausted = Plant #{ $plant } has used up its water for the day and stops generating.
-event-city-connected = City #{ $city } is now connected and buying power.
-event-plant-commissioned = { $kind } #{ $plant } finished construction and is ready to start.
-event-line-commissioned = Transmission line #{ $line } is in service.
+event-plant-tripped = { $plant } tripped offline. Other plants must cover its output until it is restarted.
+event-over-frequency-trip = { $plant } was tripped by over-frequency protection: generation outran demand.
+event-hydro-budget-exhausted = { $plant } has used up its water for the day and stops generating.
+event-city-connected = { $city } is now connected and buying power.
+event-plant-commissioned = { $plant } finished construction and is ready to start.
+event-line-commissioned = { $line } is in service.
 event-rate-review-completed = Rate review complete: your tariff is now { $tariff } and your allowed return is { $allowed_return }.
 
 ## Strike reasons
@@ -35,7 +35,7 @@ strike-reason-frequency-performance = Frequency stayed out of its band too often
 incident-load-shed = Protection shed { $mw } of load to hold the frequency up.
 incident-blackout = Blackout: protection tripped every plant.
 incident-blackout-restored = Power restored after the blackout.
-incident-over-frequency-trip = Over-frequency protection tripped plant #{ $plant }.
+incident-over-frequency-trip = Over-frequency protection tripped { $plant }.
 incident-rotating-outage = Rotating outage ordered: { $share } of demand cut in turn.
 
 ## Warnings

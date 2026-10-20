@@ -13,11 +13,13 @@ use domain::grid::{FrequencyBand, GridMode, TickSummary};
 use domain::ids::{CellCoord, CityId, LineId, NodeId, PlantId, RegionId};
 use domain::region::{PlantKind, RegionError, SiteError};
 use domain::regulation::StrikeReason;
-use domain::session::{DayPhase, GameOverReason, IncidentKind, MonthlyReport};
+use domain::session::{
+    DayPhase, GameOverReason, GameSession, GameSettings, IncidentKind, MonthlyReport,
+};
 use domain::time::{Season, SimDuration, SimMonth};
 use domain::units::{Hertz, MegawattHours, Megawatts, Money, Price, Ratio};
 use game::l10n::keys::ALL_UI_KEYS;
-use game::l10n::{Localize, Localizer, Toast};
+use game::l10n::{Localize, LocalizeWith, Localizer, Names, Toast};
 use game::state::{AppState, BootError};
 use infrastructure::region::RonRegionCatalog;
 use tempfile::TempDir;
@@ -664,9 +666,10 @@ fn every_typed_value_translates_without_falling_back() {
 #[test]
 fn toast_worthy_events_have_text_and_the_rest_have_none() {
     let l10n = shipped();
+    let names = Names::empty(&l10n);
 
     for (event, worthy) in events() {
-        match (event.toast(&l10n), worthy) {
+        match (event.toast(&l10n, &names), worthy) {
             (Some(text), true) => {
                 assert!(!looks_like_a_bare_key(&text), "{event:?} fell back: {text}");
                 assert!(!text.contains('{'), "{event:?}: {text}");
@@ -686,10 +689,11 @@ fn toast_worthy_events_have_text_and_the_rest_have_none() {
 #[test]
 fn rotating_outage_orders_read_differently_when_lifted() {
     let l10n = shipped();
+    let names = Names::empty(&l10n);
     let order = |share| DomainEvent::RotatingOutageOrdered { hour: 18, share };
 
-    let ordered = order(ratio(0.08)).toast(&l10n).unwrap();
-    let lifted = order(Ratio::ZERO).toast(&l10n).unwrap();
+    let ordered = order(ratio(0.08)).toast(&l10n, &names).unwrap();
+    let lifted = order(Ratio::ZERO).toast(&l10n, &names).unwrap();
 
     assert!(
         ordered.contains("18:00") && ordered.contains("8.0%"),
@@ -701,7 +705,12 @@ fn rotating_outage_orders_read_differently_when_lifted() {
 #[test]
 fn strike_expiry_pluralises() {
     let l10n = shipped();
-    let expired = |strikes| DomainEvent::StrikeExpired { strikes }.toast(&l10n).unwrap();
+    let names = Names::empty(&l10n);
+    let expired = |strikes| {
+        DomainEvent::StrikeExpired { strikes }
+            .toast(&l10n, &names)
+            .unwrap()
+    };
 
     assert!(expired(0).contains("no strikes"));
     assert!(expired(1).contains("one strike."));
@@ -775,6 +784,97 @@ fn ftl_files_parse_without_errors() {
             "{file}.ftl is missing"
         );
     }
+}
+
+// ---- Names --------------------------------------------------------------------------------
+
+fn shipped_session() -> GameSession {
+    let catalog = RonRegionCatalog::new(shipped_assets().join("regions"));
+    let region = catalog
+        .load(&RegionId::new("eastern_interconnection"))
+        .unwrap()
+        .definition;
+    GameSession::new(region, 1, GameSettings::default())
+}
+
+#[test]
+fn a_city_toast_uses_the_localised_city_name() {
+    let l10n = shipped();
+    let session = shipped_session();
+    let names = Names::new(&l10n, &session);
+    let city = session.city_views().remove(0);
+
+    let toast = DomainEvent::CityConnected { city: city.id }
+        .toast(&l10n, &names)
+        .unwrap();
+
+    let name = l10n.text(&city.name_key);
+    assert_ne!(name, city.name_key, "the city name must be translated");
+    assert!(toast.contains(&name), "{toast}");
+    assert!(!toast.contains('#'), "{toast}");
+}
+
+#[test]
+fn a_plant_toast_uses_the_plant_kind() {
+    let l10n = shipped();
+    let session = shipped_session();
+    let names = Names::new(&l10n, &session);
+    let plants = session.plant_views();
+    assert!(!plants.is_empty(), "the shipped region starts with a fleet");
+
+    for plant in plants {
+        let kind = plant.kind.localize(&l10n);
+        let expected = format!("{kind} {}", plant.id.0);
+        let toast = DomainEvent::PlantTripped { plant: plant.id }
+            .toast(&l10n, &names)
+            .unwrap();
+        assert!(toast.starts_with(&expected), "{toast}");
+        let error = DomainError::PlantNotOnline { plant: plant.id }.localize_with(&l10n, &names);
+        assert!(error.starts_with(&expected), "{error}");
+        let incident =
+            IncidentKind::OverFrequencyTrip { plant: plant.id }.localize_with(&l10n, &names);
+        assert!(incident.contains(&expected), "{incident}");
+    }
+}
+
+#[test]
+fn a_commissioned_plant_is_named_by_its_event_kind_even_when_unknown() {
+    let l10n = shipped();
+    let names = Names::empty(&l10n);
+
+    let toast = DomainEvent::PlantCommissioned {
+        plant: PlantId(9),
+        kind: PlantKind::Coal,
+    }
+    .toast(&l10n, &names)
+    .unwrap();
+
+    assert!(toast.starts_with("Coal plant 9"), "{toast}");
+}
+
+#[test]
+fn an_unknown_id_falls_back_to_its_number_without_panicking() {
+    let l10n = shipped();
+    let session = shipped_session();
+    let names = Names::new(&l10n, &session);
+
+    assert_eq!(names.plant(PlantId(999_999)), "Plant #999999");
+    assert_eq!(names.city(CityId(999_999)), "City #999999");
+    assert_eq!(names.line(LineId(4)), "Line 4");
+    let toast = DomainEvent::PlantTripped {
+        plant: PlantId(999_999),
+    }
+    .toast(&l10n, &names)
+    .unwrap();
+    assert!(toast.contains("#999999"), "{toast}");
+    let empty = Names::empty(&l10n);
+    assert!(
+        DomainEvent::CityConnected { city: CityId(3) }
+            .toast(&l10n, &empty)
+            .unwrap()
+            .contains("#3")
+    );
+    assert_eq!(l10n.problems(), vec![]);
 }
 
 // ---- Boot ---------------------------------------------------------------------------------
