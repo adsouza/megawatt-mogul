@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use super::{DayPhase, GameSession, Incident};
+use super::{DayPhase, GameSession, Incident, whole_cells};
 use crate::company::CapitalChange;
 use crate::demand::{ForecastPoint, hourly_forecast};
 use crate::generation::{Plant, PlantStatus};
@@ -223,7 +223,7 @@ impl GameSession {
 
     /// One city's demand figures (spec §16.8), or `None` for an id the
     /// session doesn't know. Pure: no randomness, no state change.
-    pub fn city_view(&self, id: CityId) -> Option<CityDetail> {
+    pub fn city_detail(&self, id: CityId) -> Option<CityDetail> {
         let city = self.power.cities().get(&id)?;
         let network = self.power.network();
         let connected = network.is_connected(city.node());
@@ -274,6 +274,15 @@ impl GameSession {
                 status: line.status,
             })
             .collect()
+    }
+
+    /// The months `line` takes to build in all: what its quote said when it was ordered, by the
+    /// rule [`GameSession::build_line`] charges, so a line under construction can show its total
+    /// beside its months left (spec §16.9). It reads the line's stored length, as the month close
+    /// does when it books the line. Pure. `None` for a line the network doesn't have.
+    pub fn line_build_months(&self, line: LineId) -> Option<u32> {
+        let line = self.power.network().line(line)?;
+        Some(self.line_months(whole_cells(line.length_cells)))
     }
 
     /// The noise-free demand forecast of connected cities for each hour of

@@ -71,7 +71,7 @@ fn click_city(app: &mut App, pass: &EguiPass, at: egui::Pos2) -> Vec<Widget> {
 
 fn base_load(app: &App, city: CityId) -> String {
     let session = app.world().resource::<Session>().0.session();
-    format::megawatts(session.city_view(city).unwrap().base_load)
+    format::megawatts(session.city_detail(city).unwrap().base_load)
 }
 
 /// A label reading `text` inside `rect`.

@@ -39,7 +39,7 @@ pub struct CityCardModel {
 /// The card for `city`; `None` for an id the session doesn't know.
 pub fn city_card_model(game: &Game, l10n: &Localizer, city: CityId) -> Option<CityCardModel> {
     let session = game.session();
-    let detail = session.city_view(city)?;
+    let detail = session.city_detail(city)?;
     let stat = |key: &str, value: String| Stat {
         label: l10n.text(key),
         value,
@@ -177,7 +177,7 @@ mod tests {
     }
 
     fn detail(game: &Game, city: CityId) -> CityDetail {
-        game.session().city_view(city).unwrap()
+        game.session().city_detail(city).unwrap()
     }
 
     fn city(game: &Game, connected: bool) -> CityId {

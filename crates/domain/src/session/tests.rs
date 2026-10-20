@@ -655,7 +655,7 @@ fn a_city_view_scales_the_system_by_base_load() {
     let mut s = session_in_an_outage();
     let ids: Vec<CityId> = s.city_views().iter().map(|c| c.id).collect();
     let details = |s: &GameSession| -> Vec<CityDetail> {
-        ids.iter().map(|id| s.city_view(*id).unwrap()).collect()
+        ids.iter().map(|id| s.city_detail(*id).unwrap()).collect()
     };
 
     // Planning: shares of the 4,000 MW connected, the forecast's peak, and
@@ -730,7 +730,7 @@ fn an_unconnected_city_shows_what_it_would_add() {
     let mut s = session();
     let (peak, hour) = peak_of(&s, 300.0);
     let expect = |s: &GameSession| {
-        let city = s.city_view(CityId(3)).unwrap();
+        let city = s.city_detail(CityId(3)).unwrap();
         assert_eq!(city.id, CityId(3));
         assert_eq!(city.name_key, "city-tiny-3");
         assert!(!city.connected);
@@ -748,7 +748,7 @@ fn an_unconnected_city_shows_what_it_would_add() {
     // The connected cities' shares still add up to one without it.
     let shares: f64 = [CityId(1), CityId(2)]
         .iter()
-        .map(|id| s.city_view(*id).unwrap().share.value())
+        .map(|id| s.city_detail(*id).unwrap().share.value())
         .sum();
     assert!(close_relative(shares, 1.0));
 }
@@ -756,7 +756,7 @@ fn an_unconnected_city_shows_what_it_would_add() {
 #[test]
 fn a_city_view_of_an_unknown_id_is_none() {
     let s = session();
-    assert_eq!(s.city_view(CityId(99)), None);
+    assert_eq!(s.city_detail(CityId(99)), None);
 }
 
 #[test]

@@ -1505,7 +1505,7 @@ Playtesting found that selecting a city on the map shows neither its name nor an
 demand. Planning's inspector only describes cells, and Operating's side panel only describes
 plants.
 
-- **A read-only domain query.** `GameSession::city_view(id) -> Option<CityDetail>` returns the
+- **A read-only domain query.** `GameSession::city_detail(id) -> Option<CityDetail>` returns the
   following figures for the coming day, or for the day being played:
   - the city's `base_load`;
   - whether it is connected;
