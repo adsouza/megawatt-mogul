@@ -125,6 +125,8 @@ pub use self::toasts::{
 };
 pub use self::top_bar::{Stat, TopBarModel, draw_top_bar, top_bar_model};
 pub use self::ui_state::{CommitDraft, CommitmentForm, PendingCommit, PlanningTab, UiState};
+use domain::session::DayPhase;
+
 use crate::l10n::Localizer;
 use crate::sim::{Catalog, Session, SimSet, default_seed};
 use crate::state::{AppState, BootError, PhaseState};
@@ -161,11 +163,7 @@ impl Plugin for HudPlugin {
         let has_l10n = resource_exists::<Localizer>;
         let in_game = in_state(AppState::InGame).and_then(resource_exists::<Session>);
         // The map draws in every in-game phase: in Review it is the dimmed diorama behind the modal.
-        let on_the_map = in_game.clone().and_then(has_l10n).and_then(
-            in_state(PhaseState::Planning)
-                .or_else(in_state(PhaseState::Operating))
-                .or_else(in_state(PhaseState::Review)),
-        );
+        let on_the_map = in_game.clone().and_then(has_l10n);
         app.init_resource::<Selection>()
             .init_resource::<MapLayer>()
             .init_resource::<MapCache>()
@@ -271,13 +269,13 @@ impl Plugin for HudPlugin {
                             in_game
                                 .clone()
                                 .and_then(has_l10n)
-                                .and_then(in_state(PhaseState::Operating)),
+                                .and_then(in_phase(DayPhase::Operating)),
                         ),
                     review::review_modal.in_set(HudSet::Overlays).run_if(
                         in_game
                             .clone()
                             .and_then(has_l10n)
-                            .and_then(in_state(PhaseState::Review)),
+                            .and_then(in_phase(DayPhase::Review)),
                     ),
                     milestones::milestones_overlay
                         .in_set(HudSet::Overlays)
@@ -309,20 +307,33 @@ impl Plugin for HudPlugin {
                 EguiPrimaryContextPass,
                 (
                     planning::planning_panel
-                        .run_if(in_state(PhaseState::Planning).and_then(on_the_map.clone())),
+                        .run_if(in_phase(DayPhase::Planning).and_then(on_the_map.clone())),
                     inspector::inspector_panel
-                        .run_if(in_state(PhaseState::Planning).and_then(on_the_map.clone())),
+                        .run_if(in_phase(DayPhase::Planning).and_then(on_the_map.clone())),
                     build::build_panel
-                        .run_if(in_state(PhaseState::Planning).and_then(on_the_map.clone())),
+                        .run_if(in_phase(DayPhase::Planning).and_then(on_the_map.clone())),
                     operating::operating_panel
-                        .run_if(in_state(PhaseState::Operating).and_then(on_the_map.clone())),
+                        .run_if(in_phase(DayPhase::Operating).and_then(on_the_map.clone())),
                     operating::operating_side
-                        .run_if(in_state(PhaseState::Operating).and_then(on_the_map.clone())),
+                        .run_if(in_phase(DayPhase::Operating).and_then(on_the_map.clone())),
                     map::map_panel.run_if(on_the_map),
                 )
                     .chain()
                     .in_set(HudSet::Panels),
             );
+    }
+}
+
+/// Whether the running game's day is in `phase`: the domain's phase, not [`PhaseState`].
+///
+/// The egui panels gate on this. The domain's phase changes in `Update`, as the command runs, and
+/// the presenters read it; [`PhaseState`] mirrors it only at the next frame's state transition.
+/// Gating the panels on the mirror would leave one egui pass in which the systems of the old
+/// phase run but their presenters already see the new one and draw nothing. `PhaseState` stays
+/// for what belongs to entering and leaving a phase (`OnEnter`/`OnExit` hooks).
+fn in_phase(phase: DayPhase) -> impl Fn(Option<Res<Session>>) -> bool + Clone {
+    move |session: Option<Res<Session>>| {
+        session.is_some_and(|session| session.0.session().phase() == phase)
     }
 }
 

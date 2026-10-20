@@ -234,7 +234,10 @@ parses the command line and opens the window.
   command line), `Localizer` and `Catalog`. A `BootError` keeps the app in `Boot`, which shows it.
 - **`PhaseState`** mirrors the domain's `DayPhase` one way. `mirror_phase` runs after the commands
   are applied and is its only writer; the game never sets a phase itself. As a sub-state of
-  `InGame`, its resource is absent outside a game.
+  `InGame`, its resource is absent outside a game. It changes at the next frame's state
+  transition, a frame after the domain, so it drives the `OnEnter`/`OnExit` hooks while the egui
+  panels gate on the domain's phase itself (`in_phase` in `hud/mod.rs`), as their presenters do:
+  the frame a phase changes draws the new phase's panels, not none.
 - **`Session`** is inserted by a successful `NewGameRequest` and removed on leaving `InGame`. Each
   new game records to its own log under `LogDir`, `<YYYYMMDD-HHMMSS>-<region>-<seed>.log`, beside
   the archived region source.
