@@ -111,8 +111,9 @@ impl UiState {
     }
 }
 
-/// What the player has typed into the rows' initial-target fields, by plant. A field that was
-/// never touched is not here: it shows the plant's current target.
+/// The text of the rows' initial-target fields, by plant. The grid's first draw of a row puts the
+/// plant's current target here, and the player's typing edits it from then on; the presenter reads
+/// a plant that is not here yet (before that first draw, or after a reset) as its current target.
 #[derive(Resource, Debug, Clone, PartialEq, Eq, Default)]
 pub struct CommitmentForm {
     pub targets: BTreeMap<PlantId, String>,

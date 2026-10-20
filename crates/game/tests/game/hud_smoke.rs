@@ -1258,6 +1258,35 @@ fn a_cell_click_edits_the_row_and_apply_sends_the_commit() {
     assert!(screen.state.borrow().ui.pending.is_some());
 }
 
+/// `CommitmentForm` holds a field from the grid's first draw of its row, typed in or not: an
+/// untouched field holds the plant's current target.
+#[test]
+fn the_grid_fills_each_rows_target_field_on_its_first_draw() {
+    let screen = PlanningScreen::new(eastern_game(), Harness::new());
+    assert_eq!(screen.state.borrow().form.targets, Default::default());
+
+    screen.widgets();
+
+    let state = screen.state.borrow();
+    let targets = &state.form.targets;
+    let commitable: Vec<_> = screen
+        .game
+        .session()
+        .plant_views()
+        .into_iter()
+        .filter(is_commitable)
+        .collect();
+    assert_eq!(targets.len(), commitable.len(), "{targets:?}");
+    for plant in commitable {
+        assert_eq!(
+            targets.get(&plant.id),
+            Some(&game::l10n::format::plain_megawatts(plant.initial_target)),
+            "{:?}",
+            plant.id
+        );
+    }
+}
+
 #[test]
 fn revert_drops_the_draft_and_the_row_shows_the_committed_pattern_again() {
     let screen = PlanningScreen::new(eastern_game(), Harness::new());
