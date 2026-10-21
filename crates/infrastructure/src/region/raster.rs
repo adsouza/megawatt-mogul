@@ -73,7 +73,7 @@ fn cell_centre(file: &RegionFile, x: u16, y: u16) -> (f64, f64) {
 }
 
 /// Even-odd ray casting against an implicitly closed ring.
-fn contains(ring: &[(f64, f64)], px: f64, py: f64) -> bool {
+pub(super) fn contains(ring: &[(f64, f64)], px: f64, py: f64) -> bool {
     let mut inside = false;
     let mut prev = match ring.last() {
         Some(&p) => p,

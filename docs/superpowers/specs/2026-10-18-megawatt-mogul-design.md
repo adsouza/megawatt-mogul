@@ -180,6 +180,13 @@ in US$. The two regions play differently:
 **The region picker is skipped automatically when exactly one region exists.** With two regions it
 is shown.
 
+The picker shows a North America overview with each available region coloured from its region
+file's geographic outline. Hovering a region highlights it and its labelled card; clicking the
+region starts a game with the entered seed. Excluded areas and ocean are not selectable. Each
+card also offers a keyboard-accessible start button, a short regional description and the home
+city. Map labels follow the UI's 4.5:1 text-contrast floor. Custom regions without a geographic
+preview remain selectable through their cards; broken entries retain their disabled/error state.
+
 ## 3. Milestone 1 scope
 
 ### 3.1 In scope
@@ -624,7 +631,9 @@ is shed). Lines show only an "energised" pulse. It shows no per-line loading unt
   The commitment grid is the primary planning tool.
 - **Operating:** speed controls; a frequency gauge with the current imbalance; a selected-plant panel
   (output, target, ramp, cost, AGC toggle, start/stop); a merit-order stacked supply chart against
-  actual and forecast demand; predictive ramp warnings.
+  actual and forecast demand; predictive ramp warnings. Ramp warnings and Incidents share a
+  column opening at 480 pixels, with a draggable divider. The column keeps at least 300 pixels
+  and leaves at least 420 pixels for the Supply/Hydro content.
 - **Review:** a modal over the dimmed diorama showing P&L, the merit order used, an incidents
   timeline and the lessons.
 - **Errors:** a `CommandError` becomes a localised toast. This is the only place errors are mapped

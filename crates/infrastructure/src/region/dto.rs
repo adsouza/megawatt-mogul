@@ -33,7 +33,7 @@ pub struct RegionFile {
 }
 
 /// Geographic extent of the grid in degrees.
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Bounds {
     pub west: f64,

@@ -21,6 +21,12 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "menu-seed",
     "menu-seed-invalid",
     "region-select-title",
+    "region-select-subtitle",
+    "region-select-map-title",
+    "region-select-map-note",
+    "region-select-home",
+    "region-select-east-description",
+    "region-select-west-description",
     "region-select-empty",
     "region-select-unavailable",
     // Shell: top bar, toasts and game over

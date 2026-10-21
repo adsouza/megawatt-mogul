@@ -40,7 +40,7 @@ impl RonRegionCatalog {
 /// declares the id the caller asked for. No mapping and no rasterisation: the
 /// cheap first half of loading, which listing also uses. `region` gives errors
 /// their context.
-fn parse_region_file(
+pub(super) fn parse_region_file(
     source_bytes: &[u8],
     region: &RegionId,
 ) -> Result<RegionFile, RegionLoadError> {

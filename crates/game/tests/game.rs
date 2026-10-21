@@ -31,6 +31,8 @@ mod operating_side;
 mod panel_resize;
 #[path = "game/phase_change.rs"]
 mod phase_change;
+#[path = "game/region_picker.rs"]
+mod region_picker;
 #[path = "game/review_smoke.rs"]
 mod review_smoke;
 #[path = "game/shortfall_prompt.rs"]

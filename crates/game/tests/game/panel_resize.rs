@@ -443,3 +443,49 @@ fn first_land(app: &App) -> CellCoord {
         .find(|cell| terrain.get(*cell).is_some_and(|tile| tile.land))
         .expect("a land cell")
 }
+
+#[test]
+fn incidents_have_a_wider_column_and_a_draggable_divider() {
+    fn drag_log(screen: &mut Screen, log: Resizable, by: f32) {
+        let rect = screen.rect(log);
+        let edge = egui::pos2(rect.left(), rect.center().y);
+        let to = egui::pos2((edge.x - by).clamp(1.0, screen.width - 1.0), edge.y);
+        screen.pass.drag(
+            &mut screen.app,
+            screen.width,
+            screen.height,
+            edge + egui::vec2(2.0, 0.0),
+            to,
+        );
+    }
+    let log = Resizable {
+        id: "operating_log",
+        edge: Edge::Right,
+        size: 480.0,
+    };
+    for size in [SMALL, LARGE] {
+        let mut screen = Screen::operating(EASTERN, size);
+        let original_map = screen.map();
+        assert_near(screen.size(log), 480.0, "incidents open wider");
+        drag_log(&mut screen, log, 100.0);
+        screen.map();
+        assert_near(screen.size(log), 580.0, "incidents can grow");
+        assert_eq!(
+            screen.map(),
+            original_map,
+            "the inner divider keeps the map still"
+        );
+        drag_log(&mut screen, log, 10_000.0);
+        screen.map();
+        assert!(
+            screen.rect(log).left() >= 420.0,
+            "the chart keeps usable width"
+        );
+        drag_log(&mut screen, log, -10_000.0);
+        screen.map();
+        assert!(
+            screen.size(log) >= 300.0,
+            "the incident column keeps its minimum"
+        );
+    }
+}

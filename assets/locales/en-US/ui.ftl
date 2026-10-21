@@ -303,3 +303,11 @@ review-rate-review-result = Your tariff is now { $tariff } and your allowed retu
 milestones-title = Milestones
 milestones-reached = Reached
 milestones-in-progress = In progress
+
+# Region overview: map and accessible region cards share the same start action.
+region-select-subtitle = Choose a grid. Build your power company. Keep the lights on.
+region-select-map-title = North America
+region-select-map-note = Hover to explore · Click a coloured region to begin
+region-select-home = Start in { $city } · { $cities } cities to serve
+region-select-east-description = Dense cities, big demand, and a legacy coal and nuclear fleet. Keep the industrial heartland humming.
+region-select-west-description = Mountain crossings, desert sunshine, and Pacific Northwest hydro. Master the evening demand surge.

@@ -2,8 +2,9 @@
 //! when the player drags a panel's edge (both are resizable from their opening sizes, §16.7):
 //!
 //! - **The bottom panel**, full width, opening at [`OPERATING_PANEL_HEIGHT`]. Its body is
-//!   a tab, *Supply* (the supply chart) or *Hydro* (the hydro schedule). Beside it is a column of
-//!   fixed width ([`OPERATING_LOG_WIDTH`]) holding the ramp warnings and the incident ticker.
+//!   a tab, *Supply* (the supply chart) or *Hydro* (the hydro schedule). Beside it is a column
+//!   opening at [`OPERATING_LOG_WIDTH`], with a draggable divider, holding the ramp warnings
+//!   and the incident ticker.
 //! - **The side panel** on the right, opening at [`OPERATING_SIDE_WIDTH`]: the frequency
 //!   gauge, the selected plant's details, city's card or construction card (or a placeholder of
 //!   the same height), and the plant list, which fills the rest.
@@ -35,8 +36,11 @@ use crate::sim::Session;
 
 /// The bottom panel's height, including its margins.
 pub const OPERATING_PANEL_HEIGHT: f32 = 200.0;
-/// The width of the ramp warnings and incidents column inside the bottom panel.
-pub const OPERATING_LOG_WIDTH: f32 = 300.0;
+/// The opening width of the ramp warnings and incidents column inside the bottom panel.
+pub const OPERATING_LOG_WIDTH: f32 = 480.0;
+/// Resizing the log leaves room for the active chart or hydro schedule.
+const OPERATING_CONTENT_MIN_WIDTH: f32 = 420.0;
+const OPERATING_LOG_MIN_WIDTH: f32 = 300.0;
 /// The right side panel's width.
 pub const OPERATING_SIDE_WIDTH: f32 = 300.0;
 /// The bottom panel as an outer panel, resizable from [`OPERATING_PANEL_HEIGHT`].
@@ -115,8 +119,13 @@ pub fn operating_panel_model(
 pub fn draw_operating_panel(ui: &mut egui::Ui, model: &OperatingPanelModel) -> Vec<UiAction> {
     let mut actions = Vec::new();
     egui::Panel::right("operating_log")
-        .resizable(false)
-        .exact_size(OPERATING_LOG_WIDTH)
+        .resizable(true)
+        .default_size(OPERATING_LOG_WIDTH)
+        .size_range(
+            OPERATING_LOG_MIN_WIDTH
+                ..=(ui.available_width() - OPERATING_CONTENT_MIN_WIDTH)
+                    .max(OPERATING_LOG_MIN_WIDTH),
+        )
         .show(ui, |ui| {
             ui.allocate_ui(
                 egui::vec2(ui.available_width(), RAMP_WARNINGS_HEIGHT),

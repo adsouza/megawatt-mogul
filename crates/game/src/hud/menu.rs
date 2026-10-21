@@ -6,6 +6,7 @@ use bevy_egui::{EguiContexts, egui};
 
 use super::action::{ActionSink, ButtonModel, MenuScreen, UiAction, button, dispatch};
 use super::layout::HudArea;
+use super::region_atlas::{self, RegionAtlas};
 use crate::l10n::{Localize, Localizer};
 use crate::sim::{Catalog, default_seed};
 use crate::state::BootError;
@@ -182,7 +183,9 @@ pub(super) fn main_menu_screen(
 }
 
 pub(super) fn list_regions(mut commands: Commands, catalog: Res<Catalog>) {
-    commands.insert_resource(RegionListings(catalog.0.list()));
+    let listings = RegionListings(catalog.0.list());
+    commands.insert_resource(RegionAtlas::load(&catalog.0, &listings));
+    commands.insert_resource(listings);
 }
 
 pub(super) fn reseed_menu(mut form: ResMut<MenuForm>) {
@@ -194,6 +197,9 @@ pub(super) fn reseed_menu(mut form: ResMut<MenuForm>) {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RegionChoice {
     pub button: ButtonModel,
+    pub description: Option<String>,
+    pub detail: Option<String>,
+    pub(super) artwork: Option<std::sync::Arc<region_atlas::Artwork>>,
     /// Why the region can't be played, when it can't: a status word and the localised error.
     pub problem: Option<RegionProblem>,
 }
@@ -207,6 +213,9 @@ pub struct RegionProblem {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RegionSelectModel {
     pub title: String,
+    pub subtitle: String,
+    pub map_title: String,
+    pub map_note: String,
     pub regions: Vec<RegionChoice>,
     /// Shown instead of the list when there is nothing to pick from.
     pub empty: Option<String>,
@@ -236,6 +245,9 @@ pub fn region_select_model(
     let empty = regions.is_empty().then(|| l10n.text("region-select-empty"));
     RegionSelectModel {
         title: l10n.text("region-select-title"),
+        subtitle: l10n.text("region-select-subtitle"),
+        map_title: l10n.text("region-select-map-title"),
+        map_note: l10n.text("region-select-map-note"),
         regions,
         empty,
         folder_error,
@@ -249,6 +261,13 @@ pub fn region_select_model(
 fn region_choice(listing: &RegionListing, seed: Option<u64>, l10n: &Localizer) -> RegionChoice {
     match &listing.entry {
         Ok(summary) => RegionChoice {
+            description: match summary.id.as_str() {
+                "eastern_interconnection" => Some(l10n.text("region-select-east-description")),
+                "western_interconnection" => Some(l10n.text("region-select-west-description")),
+                _ => None,
+            },
+            detail: None,
+            artwork: None,
             button: ButtonModel::new(
                 l10n.text(&summary.name_key),
                 UiAction::NewGame {
@@ -260,6 +279,9 @@ fn region_choice(listing: &RegionListing, seed: Option<u64>, l10n: &Localizer) -
             problem: None,
         },
         Err(error) => RegionChoice {
+            description: None,
+            detail: None,
+            artwork: None,
             // A broken file has no name to translate: its id (the file name) is all there is.
             button: ButtonModel::new(
                 listing.id.as_str().to_owned(),
@@ -279,27 +301,127 @@ fn region_choice(listing: &RegionListing, seed: Option<u64>, l10n: &Localizer) -
 
 pub fn draw_region_select(ui: &mut egui::Ui, model: &RegionSelectModel) -> Vec<UiAction> {
     let mut actions = Vec::new();
-    ui.vertical_centered(|ui| {
-        ui.add_space(ui.available_height() * 0.2);
-        ui.heading(model.title.as_str());
-        ui.add_space(24.0);
-        for choice in &model.regions {
-            button(ui, &choice.button, &mut actions);
-            if let Some(problem) = &choice.problem {
-                ui.colored_label(ui.visuals().warn_fg_color, problem.status.as_str());
-                ui.weak(problem.detail.as_str());
+    ui.add_space(18.0);
+    ui.label(egui::RichText::new(&model.title).size(30.0).strong());
+    ui.label(&model.subtitle);
+    ui.add_space(18.0);
+    let content_height = (ui.available_height() - 50.0).max(80.0);
+    egui::ScrollArea::vertical()
+        .max_height(content_height)
+        .show(ui, |ui| {
+            let has_map = model.regions.iter().any(|choice| choice.artwork.is_some());
+            let wide = has_map && ui.available_width() >= 800.0;
+            let cards = |ui: &mut egui::Ui, actions: &mut Vec<UiAction>| {
+                let mut hovered = None;
+                let mut rects = Vec::new();
+                for (index, choice) in model.regions.iter().enumerate() {
+                    let frame = egui::Frame::new()
+                        .fill(egui::Color32::from_gray(32))
+                        .corner_radius(10.0)
+                        .inner_margin(14.0)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                let (rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(6.0, 28.0),
+                                    egui::Sense::hover(),
+                                );
+                                ui.painter()
+                                    .rect_filled(rect, 3.0, region_atlas::colour(index));
+                                let response = ui.add_enabled(
+                                    choice.button.enabled,
+                                    egui::Button::new(
+                                        egui::RichText::new(&choice.button.label)
+                                            .size(18.0)
+                                            .strong(),
+                                    )
+                                    .min_size(egui::vec2(ui.available_width(), 48.0))
+                                    .wrap(),
+                                );
+                                if response.hovered() || response.has_focus() {
+                                    hovered = Some(index);
+                                }
+                                if response.clicked() {
+                                    actions.push(choice.button.action.clone());
+                                }
+                            });
+                            if let Some(description) = &choice.description {
+                                ui.add_space(10.0);
+                                ui.label(description);
+                            }
+                            if let Some(detail) = &choice.detail {
+                                ui.add_space(10.0);
+                                ui.weak(detail);
+                            }
+                            if let Some(problem) = &choice.problem {
+                                ui.colored_label(
+                                    ui.visuals().warn_fg_color,
+                                    problem.status.as_str(),
+                                );
+                                ui.weak(problem.detail.as_str());
+                            }
+                        });
+                    if frame.response.hovered() && choice.button.enabled {
+                        hovered = Some(index);
+                    }
+                    rects.push(frame.response.rect);
+                    ui.add_space(14.0);
+                }
+                (hovered, rects)
+            };
+            if wide {
+                let width = ui.available_width();
+                let map_width = (width * 0.66).min(content_height * 1.6);
+                ui.horizontal_top(|ui| {
+                    let map_rect = egui::Rect::from_min_size(
+                        ui.cursor().min,
+                        egui::vec2(map_width, map_width / 1.6),
+                    );
+                    // Draw the cards first so either a card or its map area can highlight both.
+                    let right = egui::Rect::from_min_max(
+                        map_rect.right_top() + egui::vec2(20.0, 0.0),
+                        egui::pos2(ui.max_rect().right(), ui.max_rect().bottom()),
+                    );
+                    let (hovered, rects) = ui
+                        .scope_builder(
+                            egui::UiBuilder::new()
+                                .max_rect(right)
+                                .layout(egui::Layout::top_down(egui::Align::Min)),
+                            |ui| cards(ui, &mut actions),
+                        )
+                        .inner;
+                    let active = ui
+                        .scope_builder(
+                            egui::UiBuilder::new()
+                                .max_rect(map_rect)
+                                .layout(egui::Layout::top_down(egui::Align::Min)),
+                            |ui| region_atlas::draw_map(ui, model, hovered, &mut actions),
+                        )
+                        .inner;
+                    if let Some(index) = active {
+                        ui.painter().rect_stroke(
+                            rects[index],
+                            10.0,
+                            egui::Stroke::new(2.0, region_atlas::colour(index)),
+                            egui::StrokeKind::Inside,
+                        );
+                    }
+                });
+            } else {
+                if has_map {
+                    region_atlas::draw_map(ui, model, None, &mut actions);
+                    ui.add_space(14.0);
+                }
+                cards(ui, &mut actions);
             }
-            ui.add_space(8.0);
-        }
-        if let Some(empty) = &model.empty {
-            ui.label(empty.as_str());
-        }
-        if let Some(error) = &model.folder_error {
-            ui.weak(error.as_str());
-        }
-        ui.add_space(12.0);
-        button(ui, &model.back, &mut actions);
-    });
+            if let Some(empty) = &model.empty {
+                ui.label(empty.as_str());
+            }
+            if let Some(error) = &model.folder_error {
+                ui.weak(error.as_str());
+            }
+        });
+    ui.add_space(16.0);
+    button(ui, &model.back, &mut actions);
     actions
 }
 
@@ -308,10 +430,14 @@ pub(super) fn region_select_screen(
     area: Res<HudArea>,
     l10n: Res<Localizer>,
     listings: Res<RegionListings>,
+    atlas: Option<Res<RegionAtlas>>,
     form: Res<MenuForm>,
     mut sink: ActionSink,
 ) -> Result {
-    let model = region_select_model(&listings, form.parsed_seed(), &l10n);
+    let mut model = region_select_model(&listings, form.parsed_seed(), &l10n);
+    if let Some(atlas) = atlas {
+        model = model.with_atlas(&atlas, &l10n);
+    }
     let mut ui = area.root_ui(contexts.ctx_mut()?, "region_select");
     let actions = egui::CentralPanel::default()
         .show(&mut ui, |ui| draw_region_select(ui, &model))
