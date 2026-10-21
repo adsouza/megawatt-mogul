@@ -41,5 +41,7 @@ mod shortfall_prompt;
 mod simulation;
 #[path = "game/states.rs"]
 mod states;
+#[path = "game/supply_chart.rs"]
+mod supply_chart;
 #[path = "game/support/mod.rs"]
 mod support;

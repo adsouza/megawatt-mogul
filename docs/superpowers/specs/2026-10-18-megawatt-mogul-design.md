@@ -7,7 +7,7 @@
   warning and frequency-performance strikes (§14, 2026-10-18); A4, rotating outages and staged
   under-frequency shedding (§15, 2026-10-19); A5, the inherited schedule, the shortfall
   confirmation, window and panel sizing, the city card and
-  construction progress (§16, 2026-10-20)
+  construction progress (§16, 2026-10-20); A6, save/resume before Plan 3 (§17, 2026-10-20)
 - **Engine:** Rust 1.98, Bevy 0.20, bevy_egui 0.43, bevy-inspector-egui 0.38
 
 ## 1. Vision and goals
@@ -199,8 +199,8 @@ preview remain selectable through their cards; broken entries retain their disab
 - Demand centres with daily, seasonal and noise profiles, plus forecasts.
 - The full day cycle (one representative day per month), frequency model, protection, economics, regulator, scoring and failure.
 - An egui HUD for every phase, and dev tools behind a `dev` feature.
-- Command logging with versioned replay inputs and an archived region file as the basis for future
-  replays and saves (§7).
+- Command logging with versioned replay inputs and an archived region file (§7).
+- Player-facing manual saves, month-close autosaves and resume, implemented before Plan 3 (§17).
 - Localisation scaffolding with en-US only.
 
 ### 3.2 Plant types (initial tuning values, stored as region data and not in code)
@@ -234,7 +234,7 @@ preview remain selectable through their cards; broken entries retain their disab
 - Weather events.
 - Competitors and markets.
 - Loans.
-- Save/load (the command log is recorded but not yet loadable).
+- Fast-load aggregate snapshots, cross-platform replay and migration of incompatible saves.
 - Audio.
 - A tutorial campaign.
 - More regions.
@@ -271,7 +271,8 @@ game ──▶ application ──▶ domain
 - `domain` depends on nothing but small, pure crates (`rand_chacha`, `thiserror`). Its `Cargo.toml`
   does not list Bevy, so an import is impossible rather than merely discouraged.
 - `application` depends on `domain` (plus `tracing` for the pipeline layer).
-- `infrastructure` depends on `application` and `domain` (plus `serde`, `ron`, `tempfile` in tests).
+- `infrastructure` depends on `application` and `domain` (plus `serde`, `ron`, and `tempfile`
+  for atomic save-file publication as well as tests).
   SHA-256 region fingerprinting also lives in infrastructure (`sha2`), never in domain.
 - `game` depends on all three, plus Bevy, bevy_egui, egui_plot and, optionally, bevy-inspector-egui.
 - `cargo test -p domain` and `cargo test -p application` never compile Bevy, so feedback takes
@@ -292,7 +293,7 @@ game ──▶ application ──▶ domain
 | fluent-bundle | 0.16 | game |
 | proptest / proptest-state-machine | 1.12 / 0.9 | dev-dependencies |
 | insta | 1.49 | dev-dependencies |
-| tempfile | 3.27 | dev-dependencies |
+| tempfile | 3.27 | infrastructure, dev-dependencies |
 | cargo-mutants / cargo-nextest | 27 / 0.9 | dev tooling (installed binaries) |
 
 ## 5. Domain model (`crates/domain`)
@@ -555,7 +556,7 @@ The presentation layer never reads aggregate internals.
   domain definition, source bytes and opaque fingerprint from the same read (§7.1).
 - `CommandLogSink`: `initialize(&LogHeader, region_source: &[u8])` archives the source and records
   the header; `append(&LogRecord)` records subsequent commands. Both return typed errors.
-- (Later) `SnapshotStore`.
+- `SaveStore` for self-contained command checkpoints (§17); aggregate `SnapshotStore` comes later.
 
 ## 7. Infrastructure (`crates/infrastructure`)
 
@@ -591,8 +592,8 @@ The presentation layer never reads aggregate internals.
 - Replay normally uses the archived region file, so retuning shipped data does not break recovery.
   Explicitly supplying a different region file still performs the fingerprint check. A region
   archive does not migrate old simulation rules: replay after a rules change requires a matching
-  engine version or a future explicit migration. The Milestone 1 test harness verifies replay;
-  player-facing save/load remains out of scope.
+  engine version or a future explicit migration. Player-facing save/resume (§17) packages these
+  inputs into atomic checkpoints and adds build/platform and end-state verification.
 
 ## 8. Presentation (`crates/game`)
 
@@ -633,7 +634,9 @@ is shed). Lines show only an "energised" pulse. It shows no per-line loading unt
   (output, target, ramp, cost, AGC toggle, start/stop); a merit-order stacked supply chart against
   actual and forecast demand; predictive ramp warnings. Ramp warnings and Incidents share a
   column opening at 480 pixels, with a draggable divider. The column keeps at least 300 pixels
-  and leaves at least 420 pixels for the Supply/Hydro content.
+  and leaves at least 420 pixels for the Supply/Hydro content. The supply key wraps above the
+  plot, outside its data area, so it never obscures the daily curve. Key entries retain click and
+  keyboard show/hide controls, matching fill/line swatches and hover highlighting.
 - **Review:** a modal over the dimmed diorama showing P&L, the merit order used, an incidents
   timeline and the lessons.
 - **Errors:** a `CommandError` becomes a localised toast. This is the only place errors are mapped
@@ -653,7 +656,7 @@ is shed). Lines show only an "energised" pulse. It shows no per-line loading unt
 | Concern | Approach |
 |---|---|
 | Observability | A `TracingLayer` span per command (command, outcome, emitted events); `#[tracing::instrument]` on handlers; Bevy's Tracy feature for frame profiling. The domain stays free of logging. |
-| Persistence | Command sourcing with a versioned header, settings, seed, region fingerprint and adjacent source archive (§7.1). `CommandLogLayer` records commands through `CommandLogSink`; aggregates are persistence-ignorant. Snapshots and player-facing save/load come later. |
+| Persistence | Command sourcing with versioned replay inputs (§7.1). A complete in-memory command journal supplies atomic, self-contained saves through `SaveStore` (§17); `CommandLogSink` remains the diagnostic recording adapter. Aggregates remain persistence-ignorant. Fast-load snapshots come later. |
 | Error handling | Typed `Result`s at every layer (`DomainError` → `CommandError` with `thiserror`). The domain never panics on player input; `panic!` and `debug_assert!` are only for bugs. Errors are mapped for display once, at the Bevy boundary. |
 | Data integrity | Types first: newtypes, validating constructors and state enums. Debug and test builds run `InvariantCheckLayer` after each command or tick (on the post-protection `TickSummary`: generation = Σ by_plant = Σ by_kind = served + imbalance, 0 ≤ served ≤ demand, curtailed ≥ 0, and generation matches the connected plants' outputs; cash change = ledger sum; plant bounds). |
 | Localisation | The domain never produces user-facing text, only typed events, errors and lessons with parameters. Fluent `.ftl` files live under `assets/locales/en-US/`, and region data refers to translation keys. Milestone 1 ships en-US only. |
@@ -738,7 +741,7 @@ Test-driven development throughout: failing test → minimal code → refactor.
 |---|---|
 | Transmission congestion | A new `NetworkModel::DcPowerFlow` variant; a settings toggle once it exists |
 | Equipment ageing and maintenance | `Plant::commissioned_on`; a new field in `SimulationFidelity` |
-| Save/load and replays | Versioned command log, settings, seed, region fingerprint and archived region bytes; a `SnapshotStore` port |
+| Fast-load snapshots and save migrations | The verified command checkpoints of §17; a future `SnapshotStore` and explicit migration path |
 | More regions | A new `.ron` file; the picker already appears for two or more regions |
 | More plant types (wind, storage) | `PlantSpec` is data-driven; new behaviour goes in the `generation` module |
 | More languages | New `assets/locales/<lang>/` folder |
@@ -1618,3 +1621,211 @@ be in service. The commissioning toasts arrive with no warning.
   - No new domain state. A read-only query is added only if the in-service month can't be derived
     from public views.
 
+## 17. Amendment A6: Save/resume before Plan 3 (2026-10-20)
+
+### 17.1 Scope and player experience
+
+Save/resume is [**Plan 2b**](../plans/2026-10-20-plan-2b-save-resume.md), delivered before the 3D
+diorama work of Plan 3. It changes persistence and presentation, not simulation rules. The initial
+release includes manual save slots and a
+separate autosave at each month close, as selected by the user.
+
+- **Save** is available in Planning, Operating and Review, including the final game-over Review.
+  Its dialog creates a named slot or overwrites a selected manual slot after confirmation. Names
+  are trimmed, contain 1–80 Unicode scalar values and no control characters. Names are display
+  metadata, never file paths. Autosave slots cannot be selected for manual overwrite.
+- **Load game** on the main menu lists manual saves and autosaves, newest first, with name,
+  region, calendar month, phase, game minute, saved-at time and game-over status. Ties sort by
+  opaque slot ID. An empty list says so. A bad slot remains visible with a localised reason and
+  does not hide good slots; if its metadata cannot be decoded, show its file ID and use filesystem
+  modification time only for list ordering. Failure to read the directory is a separate, retryable
+  error; a nonexistent directory is an empty list. Loading is offered from the menu, not as an
+  in-game session replacement in this release.
+- **Resume** restores the exact accepted-command boundary: all simulation state, including RNG
+  progression, construction, plant overrides and hydro water remaining, plus every projection.
+  An Operating save at 14:37 returns to Operating at 14:37. A Review save returns to that Review;
+  a finished game remains finished and can show its final report. Every load enters **paused**,
+  including after the `OnEnter(Operating)` hook, until the player explicitly chooses a speed.
+- **Month-close autosave** captures immediately after the successful command that emits
+  `MonthClosed`, after its projections have been applied and before a later `FinishReview`.
+  Thus it preserves the completed report and any game-over outcome. Each new game or successful
+  resume gets a new recording-run ID and its own automatic slot. Later months replace that run's
+  autosave; they never overwrite a manual slot or the source of a resumed branch.
+- **Menu** offers *Save and return to menu*, *Leave without saving*, and *Stay*. A failed save
+  keeps the session and the dialog available for Retry or Cancel; it never performs the leave.
+  The game-over modal exposes Save too. **The OS close button still quits without confirmation**
+  (the earlier user ruling); it does not promise an exit autosave. Main-menu Quit is unchanged.
+- Saving and loading show progress and disable conflicting actions. Opening the save/leave
+  dialog freezes new ticks and simulation input. Cancel restores the preceding speed only if
+  the game is still active in Operating; successful manual saving leaves it paused. An autosave
+  error is visible and retryable, but the player may acknowledge it and continue without saving.
+  That dismisses the error barrier; moving on from Review still uses the normal Continue action.
+  Last-saved status changes only on a confirmed successful write, and says what boundary it saved.
+- Saves contain applied game state. Unapplied commitment drafts, selection, map view, panel sizes,
+  tabs, prompts, toast queues and speed are not saved; resume resets them to normal entry defaults.
+  Replay does not re-emit historical toasts or milestone notifications.
+
+A save failure never changes simulation state or deletes another save. The old manual slot remains
+unchanged on a failure **before publication**; the post-publication durability case is specified in
+§17.5. Disk-recording failure is distinct from save failure: the existing recording warning remains,
+but a complete manual save can still succeed (§17.2).
+
+### 17.2 Authoritative capture and complete history
+
+A save is a **self-contained command checkpoint**, not a serialised aggregate or a reference to a
+live log. `Game` retains the original `LogHeader`, the exact region source bytes loaded at creation,
+and an in-memory `Vec<Command>` containing every successfully executed command, in order. Append
+once after the handler succeeds, regardless of the disk sink's health, and update projections in
+the same command call. Rejected commands are absent. Preserve original `AdvanceTicks` batches,
+including successful zero-tick commands; never merge, split or reinterpret them when saving.
+
+`Game::checkpoint()` captures those inputs, the accepted-command count, the current
+`GameSession::state_hash()` and a summary derived from public queries. It has no I/O and neither
+executes a command nor reads installed region files. Capture uses one boundary, never a mixture
+of a pre-tick clock, a post-tick RNG and an earlier report. Memory is retained for the current run;
+history compaction and aggregate snapshots are deferred, not approximated by dropping commands.
+
+The bridge establishes a barrier: stop command producers, drain commands already admitted to the
+session, and capture after `SimSet::Apply`. A queued `AdvanceTicks` is applied and its in-flight
+flag cleared before manual capture, not discarded or applied again on resume. Autosave captures
+at the individual closing-command boundary inside that funnel; later admitted commands must not
+leak into its immutable checkpoint. Hold any remaining commands while a save dialog/write barrier
+is active, and release them once on cancellation/continuation. They cannot cross a session change.
+If draining reaches month close while a manual save/leave request is waiting, finish that autosave
+(or acknowledge its error) first, then service the queued manual intent for the same session. An
+autosave receipt cannot fulfil a separate Save-and-menu request.
+
+Saving encodes an immutable capture on a worker, outside the frame/tick path. The active session
+remains available and frozen until a manual save completes or is cancelled. Autosave capture is
+already in paused Review. File logging continues as diagnostic command recording; its append
+failure cannot make the retained history incomplete. No attempt to copy an unflushed or partially
+written live `.log` is used as a save.
+
+### 17.3 Save contents, identity and compatibility
+
+Each `<opaque-slot-id>.mgsave` is one independent file. It includes:
+
+- `SAVE_FORMAT_VERSION`, initially 1, distinct from `LOG_FORMAT_VERSION`;
+- a replay compatibility identity: simulation-build fingerprint and target platform;
+- the original `LogHeader` (rules/log versions, settings, seed and region fingerprint);
+- a byte-exact embedded copy of the original region RON, and the complete command prefix;
+- command count, expected end-state hash, phase/date/minute/status summary;
+- slot ID, manual/automatic kind, recording-run ID, display name and saved-at UTC time.
+
+Use a small version envelope around a checksummed payload. Infrastructure hashes the exact payload
+bytes with SHA-256 and verifies length/checksum before decoding its command DTOs. Unsupported save
+versions fail before decoding version-specific payloads. IDs are adapter-generated opaque values;
+clock times and IDs are injected metadata, never simulation inputs. A slot revision is the SHA-256
+of its committed file bytes, used to confirm the specific revision being overwritten.
+
+The current deterministic guarantee is same simulation build/platform (§5.7). Do not assume
+`SIM_RULES_VERSION` alone makes arbitrary builds bit-identical: libm and the Debug-based
+`state_hash` can change without an outcome-rule change. Generate the simulation-build fingerprint
+from sorted, relative paths and exact bytes of `domain`/`application`/`infrastructure` sources and
+manifests, the workspace manifest/lockfile, compiler identity, target, profile, enabled simulation
+features and compilation flags. Do not include checkout location, timestamps, game rendering
+sources or assets; region content has its own fingerprint. Conservative incompatibility after a
+backend/toolchain/lockfile change is acceptable; silently treating it as compatible is not.
+
+Load checks save format/integrity, build/platform identity, log/rules versions, and the embedded
+region fingerprint before replay. Hash the embedded bytes before mapping them, then construct the
+region from those same bytes; never fall back to installed region data. After replay, verify the
+command count, end-state hash and summary before installing anything. A retuned or deleted shipped
+region therefore does not break a compatible save. Different builds/platforms fail explicitly;
+there is no migration or cross-platform portability promise in this release.
+
+The initial implementation leaves `SIM_RULES_VERSION` at 6 and `LOG_FORMAT_VERSION` at 1. Changing
+those is justified only by an independent rule or raw-log-format change. Save codec changes use
+their own version. Raw diagnostic-log import, cloud sync, deletion/rename tools, UI-state saves,
+aggregate snapshots and migration of incompatible saves are outside Plan 2b.
+
+### 17.4 Reconstruct a runnable game, then publish it
+
+`SaveStore` is an application-owned `Send + Sync` port, implemented by infrastructure. Its typed
+operations list entries with per-slot errors, read a verified bundle, and write a new slot or
+replace an expected revision. Application types contain no serde, paths or user-facing copy;
+infrastructure owns DTOs, bytes, hashing, IDs, filesystem paths and atomic publication. Game owns
+localised dialogs and request orchestration. No Bevy, I/O or persistence fields enter the domain.
+
+Restoration builds a **candidate `Game`**, not just the `GameSession` returned by today's `replay`:
+
+1. Start a fresh session from the verified region, original seed and settings, and seed
+   `Projections::new` from that initial session.
+2. Replay each stored command through the core handler. Immediately feed its entire returned event
+   batch into `Projections::apply_all` using the session after **that command**, exactly as live
+   execution does. Preserve command boundaries. Do not fold every event against the final session.
+3. Check the expected state hash, count and summary. Return an indexed typed error on a rejected
+   historical command. Check cancellation between commands. Do not send replay events to the HUD.
+4. Initialise a fresh diagnostic log and adjacent region archive for this resumed branch; seed it
+   with the complete historical prefix without re-executing it. Failure prevents installation.
+   Attach the normal command pipeline and retained journal. Future commands and future saves have
+   the whole original prefix plus new commands, exactly once, without depending on a parent file.
+5. Install the candidate only after all checks and log initialisation succeed. Reset transient HUD
+   resources and pending message/in-flight state; mirror the domain's actual phase and keep speed
+   paused after entry hooks. Historical message queues never reach this new session.
+
+The load worker never mutates the Bevy world or the live session. Each job has an operation token;
+a cancelled or superseded completion cannot install a game, trigger a save/leave, or emit toasts.
+A save's atomic publication, once started, is allowed to finish; cancelling its UI does not undo
+an already published checkpoint. Never leave the game merely because a stale job reports success.
+Only one persistence operation is active per app. Errors leave the menu/session and source file
+usable; abandoning a candidate may leave only a diagnostic partial branch log, not a changed save.
+
+### 17.5 Durable storage and failure contracts
+
+`SaveDir` is an explicitly injected resource: `--save-dir <dir>`, otherwise `./saves`. It is separate
+from `LogDir`, and a failure to access it does not prevent boot or a new game. Tests use independent
+`TempDir`s and inject time, IDs and compatibility identity; they never mutate environment or cwd.
+
+- Create a same-directory unique temporary file, encode the full bundle, flush and `sync_all` it,
+  then atomically publish it over the destination. Infrastructure may promote the existing
+  `tempfile` dependency to runtime use (`NamedTempFile::persist`); persistence alone does **not**
+  sync contents or directories. Sync new directory entries and the destination's parent directory
+  as required by each supported platform before reporting durable success. Never delete the old
+  destination first. Abandoned temporary files are ignored by listing/loading.
+- Use an OS-backed per-slot exclusive lock for revision check and publication. New-slot creation
+  requires absence; overwrite requires the revision the player confirmed. A changed revision or
+  busy lock returns a typed conflict, rather than overwriting another app's work. OS lock release
+  on process death must not leave a permanent stale-lock failure.
+- A write/flush/file-sync/rename failure before publication preserves the previous slot byte for
+  byte. If publication succeeds but directory synchronisation fails, return
+  `DurabilityUnconfirmed { slot, revision }`: the new complete file may already be visible. Do not
+  report "saved", claim the old file is unchanged, or leave the session. Re-read that revision on
+  Retry under the lock, then finish synchronisation or report conflict; do not blindly overwrite.
+- Only a confirmed receipt updates last-saved metadata or completes *Save and return to menu*.
+  A failed autosave preserves prior checkpoints under the same publication rules, shows a
+  persistent warning and offers Retry or Continue without saving. A later successful autosave
+  clears its warning. Retry uses the failed immutable boundary and its expected revision, not a
+  newly captured state or an unconditional overwrite. A newer autosave supersedes older pending
+  retries, which must never replace it. Manual saves and other runs' autosaves are never rotated
+  away.
+- Bound decoding to 64 MiB per save file and 1,000,000 commands, with checked lengths and nesting
+  limits. Oversized captures fail before publication with `SaveTooLarge`; oversized, truncated,
+  malformed or checksum-invalid files return typed errors, never a partial replay or panic.
+  Limits are storage limits, not permission to truncate history.
+
+Typed failures include `SaveFormatVersionMismatch`, `ReplayBuildMismatch`, `PlatformMismatch`,
+`ChecksumMismatch`, existing rules/log/region mismatches, `ReplayCommandFailed { index, error }`,
+`StateHashMismatch`, `SummaryMismatch`, `InvalidSaveName`, `SaveTooLarge`, `SlotChanged`,
+`SlotBusy`, `DurabilityUnconfirmed`, `Cancelled`, and stage-specific I/O/log errors. Localise them
+at the game boundary; distinguish "recording stopped" from "save failed".
+
+### 17.6 Acceptance
+
+- Save and resume Planning, mid-Operating, Review and game over; compare state hash **and every
+  public projection/view**, not only cash or phase. Apply the same subsequent commands to an
+  uninterrupted game and the resumed one; all outcomes, RNG-driven values and reports agree.
+- Round-trip a second save made after resume, delete its parent save/log and installed region,
+  and resume it again. History and historical projections appear exactly once.
+- Autosave the closing command's Review state, including December's rate review and a terminal
+  month. No autosave is triggered by replay or a refused command. Source/other slots stay intact.
+- Reproduce a disk-log append failure after play has begun, then save successfully from memory
+  and resume the exact current state. Inject a save write failure independently and retain play.
+- Fault-inject every publication stage, including post-rename directory sync and two stores
+  targeting the same revision. Assert the durable bytes and receipt/error, not just a mocked call.
+- Exercise queued ticks, entry hooks, Cancel/Retry, stale jobs and Save-and-menu failures through
+  headless Bevy integration and real egui passes. Nothing runs until explicitly unpaused after load.
+- Property tests cover arbitrary successful command prefixes and continuation, failed-command
+  exclusion, codec round trips and corruption rejection. All UI fits at 1024×640 and meets 4.5:1
+  text contrast. Run workspace tests, clippy, format checks and the native launch/playtest checks
+  in the Plan 2b implementation plan before declaring it complete.
