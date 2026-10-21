@@ -1,5 +1,6 @@
 use infrastructure::client_preferences::{
     ClientPreferences, PreferenceWindow, read_preferences, write_preferences,
+    write_preferences_with,
 };
 use tempfile::TempDir;
 #[test]
@@ -54,4 +55,28 @@ fn client_preferences_retains_the_full_egui_zoom_range() {
         write_preferences(dir.path(), &p).unwrap();
         assert_eq!(read_preferences(dir.path()).unwrap().zoom, zoom);
     }
+}
+
+#[test]
+fn client_preferences_writer_syncs_only_its_own_directory_and_the_ones_it_created() {
+    use std::{
+        cell::RefCell,
+        collections::BTreeSet,
+        path::{Path, PathBuf},
+    };
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().join("settings/client");
+    let synced = RefCell::new(BTreeSet::new());
+    let sync = |d: &Path| {
+        synced.borrow_mut().insert(d.to_path_buf());
+        Ok(())
+    };
+    let p = ClientPreferences::default();
+    write_preferences_with(&root, &p, &sync).unwrap();
+    let created: BTreeSet<PathBuf> =
+        [root.clone(), dir.path().join("settings"), dir.path().into()].into();
+    assert_eq!(synced.take(), created);
+    write_preferences_with(&root, &p, &sync).unwrap();
+    assert_eq!(synced.take(), [root.clone()].into());
+    assert_eq!(read_preferences(&root).unwrap(), p);
 }

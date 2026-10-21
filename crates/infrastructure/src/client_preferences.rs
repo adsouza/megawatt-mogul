@@ -2,7 +2,12 @@
 use crate::save::file_store::{make_directory, read_bounded, sync_directory};
 use application::SaveError;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fs, io::Write, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    io::Write,
+    path::{Path, PathBuf},
+};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -84,12 +89,26 @@ pub fn read_preferences(root: &Path) -> Result<ClientPreferences, SaveError> {
     Ok(value)
 }
 pub fn write_preferences(root: &Path, preferences: &ClientPreferences) -> Result<(), SaveError> {
+    write_preferences_with(root, preferences, &sync_directory)
+}
+/// Test seam: [`write_preferences`] with an injected directory sync, so a test can see what it
+/// synchronises.
+///
+/// Preferences are best-effort (§17.1: missing preferences mean defaults, and malformed ones don't
+/// block boot), so unlike the save store there is no pending set and no retry contract.
+#[doc(hidden)]
+pub fn write_preferences_with(
+    root: &Path,
+    preferences: &ClientPreferences,
+    sync: &dyn Fn(&Path) -> std::io::Result<()>,
+) -> Result<(), SaveError> {
     preferences.validate()?;
     let bytes = ron::to_string(preferences).map_err(|e| SaveError::Malformed(e.to_string()))?;
     if bytes.len() > 128 * 1024 {
         return Err(SaveError::SaveTooLarge);
     }
-    let dirs = make_directory(root)?;
+    let mut gained = BTreeSet::new();
+    make_directory(root, &mut gained)?;
     let mut file =
         tempfile::NamedTempFile::new_in(root).map_err(|e| io("preferences temporary file", e))?;
     file.write_all(bytes.as_bytes())
@@ -99,8 +118,11 @@ pub fn write_preferences(root: &Path, preferences: &ClientPreferences) -> Result
         .map_err(|e| io("preferences sync", e))?;
     file.persist(root.join("preferences.ron"))
         .map_err(|e| io("preferences publish", e))?;
-    for dir in dirs {
-        sync_directory(&dir).map_err(|e| io("preferences directory sync", e))?;
-    }
+    // The file's own directory, then each directory that gained an entry because this call
+    // created a directory in it.
+    std::iter::once(root)
+        .chain(gained.iter().rev().map(PathBuf::as_path))
+        .try_for_each(sync)
+        .map_err(|e| io("preferences directory sync", e))?;
     Ok(())
 }

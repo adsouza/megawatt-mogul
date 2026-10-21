@@ -143,6 +143,9 @@ person can see.
   payload checksums, explicit size/version/build/platform failures, build fingerprint inputs,
   actual disk bytes across publication faults, OS-lock contention, revisions and recovery without
   parent saves/logs/installed regions. Directory-sync uncertainty is distinct from rollback.
+  `save_store.rs` records which directories a save syncs (`with_directory_sync`): only the root
+  when it exists; each new directory's parent when the save creates them; and, on a Retry or the
+  next save, what an uncertain publication, a partial sync or a failed creation left unsynced.
 - `tests/game/save_resume.rs` covers queued ticks, generation rejection, paused load entry,
   month-close versus Save-and-menu ordering, independent storage errors, Retry and real egui
   dialogs. The normal HUD contrast checker also inspects the new modal's paint output. A failed

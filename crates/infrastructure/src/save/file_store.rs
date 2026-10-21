@@ -1,11 +1,12 @@
 use super::{MAX_SAVE_BYTES, codec::digest, decode_save, encode_save, replay_compatibility};
 use application::*;
 use std::{
+    collections::BTreeSet,
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, Mutex, MutexGuard, PoisonError,
         atomic::{AtomicU64, Ordering},
     },
     time::{SystemTime, UNIX_EPOCH},
@@ -31,6 +32,10 @@ impl PublishStage {
     ];
 }
 type Fault = Arc<dyn Fn(PublishStage) -> Result<(), SaveError> + Send + Sync>;
+/// Test seam: synchronises one directory. The store's default is [`sync_directory`]; tests inject
+/// a recorder to see which directories a write synchronises.
+#[doc(hidden)]
+pub type DirectorySync = Arc<dyn Fn(&Path) -> std::io::Result<()> + Send + Sync>;
 
 pub struct FileSaveStore {
     root: PathBuf,
@@ -38,6 +43,15 @@ pub struct FileSaveStore {
     clock: Arc<dyn Fn() -> u64 + Send + Sync>,
     ids: Arc<dyn Fn() -> SaveId + Send + Sync>,
     fault: Fault,
+    sync: DirectorySync,
+    /// Directories that gained an entry when this store created a directory, and whose sync has
+    /// not yet succeeded. A later write, Retry included, syncs them before it reports success.
+    ///
+    /// The set is per store instance and in memory: a restart loses it, and a second
+    /// `FileSaveStore` on the same root doesn't inherit it. That is enough, because an uncertain
+    /// receipt is only ever confirmed by a later sync on the same instance, and the game holds one
+    /// store per session.
+    pending: Mutex<BTreeSet<PathBuf>>,
 }
 impl FileSaveStore {
     pub fn new(root: PathBuf) -> Self {
@@ -73,10 +87,21 @@ impl FileSaveStore {
             clock,
             ids,
             fault: Arc::new(|_| Ok(())),
+            sync: Arc::new(sync_directory),
+            pending: Mutex::new(BTreeSet::new()),
         }
     }
+    /// Test seam: inject a failure at a publication stage.
+    #[doc(hidden)]
     pub fn with_fault(mut self, fault: Fault) -> Self {
         self.fault = fault;
+        self
+    }
+    /// Test seam: replace the directory sync, so a test can see which directories a write
+    /// synchronises.
+    #[doc(hidden)]
+    pub fn with_directory_sync(mut self, sync: DirectorySync) -> Self {
+        self.sync = sync;
         self
     }
     fn path(&self, id: &SaveId) -> PathBuf {
@@ -84,6 +109,20 @@ impl FileSaveStore {
     }
     fn bytes(&self, id: &SaveId) -> Result<Vec<u8>, SaveError> {
         read_bounded(&self.path(id), MAX_SAVE_BYTES)
+    }
+    fn pending(&self) -> MutexGuard<'_, BTreeSet<PathBuf>> {
+        self.pending.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+    /// Sync the destination's parent, then every pending directory, deepest first. Each pending
+    /// directory leaves the set only once its own sync succeeds.
+    fn sync_directories(&self) -> std::io::Result<()> {
+        (self.sync)(&self.root)?;
+        let pending: Vec<PathBuf> = self.pending().iter().rev().cloned().collect();
+        for dir in pending {
+            (self.sync)(&dir)?;
+            self.pending().remove(&dir);
+        }
+        Ok(())
     }
 }
 fn now_nanos() -> u128 {
@@ -110,51 +149,54 @@ pub(crate) fn read_bounded(path: &Path, limit: usize) -> Result<Vec<u8>, SaveErr
     Ok(bytes)
 }
 
-/// Synchronise a directory, including newly created ancestors. On Windows, opening a directory
-/// needs BACKUP_SEMANTICS. A failed platform operation is reported, never treated as durability.
+/// Synchronise one directory, so the entries added to it survive a crash. A failed platform
+/// operation is reported, never treated as durability.
+#[cfg(not(windows))]
 pub(crate) fn sync_directory(path: &Path) -> std::io::Result<()> {
-    #[cfg(windows)]
-    let directory = {
-        use std::os::windows::fs::OpenOptionsExt;
-        OpenOptions::new()
-            .read(true)
-            .custom_flags(0x02000000)
-            .open(path)?
-    };
-    #[cfg(not(windows))]
-    let directory = File::open(path)?;
-    directory.sync_all()
+    File::open(path)?.sync_all()
 }
-pub(crate) fn make_directory(root: &Path) -> Result<Vec<PathBuf>, SaveError> {
+/// On Windows there is no directory sync, and this opens nothing.
+///
+/// On NTFS the rename is journaled, so a crash leaves either the previous or the new complete
+/// file. The rename reaches disk when NTFS commits its log, so a receipt on Windows means the
+/// contents were flushed and publication was atomic, not that the directory entry is synced.
+/// Non-journaled volumes such as FAT32 or exFAT get neither guarantee. `FlushFileBuffers` on a
+/// directory needs `GENERIC_WRITE`, which is why this path doesn't attempt it.
+#[cfg(windows)]
+pub(crate) fn sync_directory(_path: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+/// Create `root` and any missing ancestors. Adds to `gained` the directories that gained an
+/// entry: the parent of each directory this call created. `root` itself is not added, as the
+/// caller syncs the destination's parent on every publication.
+///
+/// A failed creation can still have made some directories (`a` of `a/<a name too long>`), so
+/// those are added whatever `create_dir_all` returns: a later save must sync their parents too.
+pub(crate) fn make_directory(root: &Path, gained: &mut BTreeSet<PathBuf>) -> Result<(), SaveError> {
     let mut missing = Vec::new();
     let mut at = root;
     while !at.exists() {
-        missing.push(at.to_path_buf());
-        at = at
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or(Path::new("."));
-    }
-    fs::create_dir_all(root).map_err(|e| io("directory", e))?;
-    let mut sync = vec![root.to_path_buf()];
-    for dir in missing {
-        if let Some(parent) = dir.parent().filter(|p| !p.as_os_str().is_empty()) {
-            sync.push(parent.to_path_buf());
-        } else {
-            sync.push(PathBuf::from("."));
+        missing.push(at);
+        let parent = entry_parent(at);
+        if parent == at {
+            break;
         }
+        at = parent;
     }
-    // Retry must also sync ancestors created by a previous uncertain publication.
-    let mut parent = root.parent();
-    while let Some(dir) = parent.filter(|p| !p.as_os_str().is_empty()) {
-        sync.push(dir.to_path_buf());
-        parent = dir.parent();
-    }
-    if root.is_relative() {
-        sync.push(PathBuf::from("."));
-    }
-    sync.dedup();
-    Ok(sync)
+    let result = fs::create_dir_all(root).map_err(|e| io("directory", e));
+    gained.extend(
+        missing
+            .into_iter()
+            .filter(|dir| dir.exists())
+            .map(|dir| entry_parent(dir).to_path_buf()),
+    );
+    result
+}
+/// The directory that holds `dir`'s entry: a bare relative name lives in the current directory.
+fn entry_parent(dir: &Path) -> &Path {
+    dir.parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
 }
 
 impl SaveStore for FileSaveStore {
@@ -245,7 +287,11 @@ impl SaveStore for FileSaveStore {
             return Err(SaveError::ReplayBuildMismatch);
         }
         let bytes = encode_save(bundle)?;
-        let directories = make_directory(&self.root)?;
+        {
+            // Create under the lock, so a concurrent write on this store that finds the new
+            // directories already there still finds them pending.
+            make_directory(&self.root, &mut self.pending())?;
+        }
         let lock_path = self
             .root
             .join(format!("{}.lock", bundle.metadata.slot.as_str()));
@@ -308,12 +354,126 @@ impl SaveStore for FileSaveStore {
             revision,
         };
         (self.fault)(PublishStage::SyncDirectory).map_err(|_| unconfirmed())?;
-        for dir in directories {
-            sync_directory(&dir).map_err(|_| unconfirmed())?;
-        }
+        self.sync_directories().map_err(|_| unconfirmed())?;
         Ok(SaveReceipt {
             metadata: bundle.metadata.clone(),
             revision,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn make_directory_adds_the_parent_of_each_directory_it_created() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("a/b");
+        let mut gained = BTreeSet::new();
+        make_directory(&root, &mut gained).unwrap();
+        assert_eq!(
+            gained,
+            BTreeSet::from([dir.path().join("a"), dir.path().to_path_buf()])
+        );
+        assert!(root.is_dir());
+        let mut again = BTreeSet::new();
+        make_directory(&root, &mut again).unwrap();
+        assert!(again.is_empty(), "an existing root gains nothing");
+    }
+
+    #[test]
+    fn make_directory_adds_what_a_failed_creation_left_behind() {
+        let dir = TempDir::new().unwrap();
+        let mut gained = BTreeSet::new();
+        let root = dir.path().join("a").join("n".repeat(300));
+        assert!(make_directory(&root, &mut gained).is_err());
+        assert!(dir.path().join("a").is_dir());
+        assert_eq!(gained, BTreeSet::from([dir.path().to_path_buf()]));
+    }
+
+    #[test]
+    fn a_bare_relative_directory_has_its_entry_in_the_current_directory() {
+        assert_eq!(entry_parent(Path::new("saves")), Path::new("."));
+        assert_eq!(entry_parent(Path::new("saves/slot")), Path::new("saves"));
+        assert_eq!(entry_parent(Path::new(".")), Path::new("."));
+    }
+
+    fn bundle(store: &FileSaveStore) -> SaveBundle {
+        let catalog = crate::region::RonRegionCatalog::new(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/regions"),
+        );
+        let game = Game::start_new(
+            &catalog,
+            &domain::ids::RegionId::new("eastern_interconnection"),
+            3,
+            domain::session::GameSettings::default(),
+            Box::new(InMemoryCommandLog::default()),
+        )
+        .unwrap();
+        SaveBundle {
+            compatibility: store.compatibility(),
+            metadata: SaveMetadata {
+                slot: store.allocate_id(),
+                run: store.allocate_id(),
+                kind: SaveKind::Manual,
+                name: "Partial".into(),
+                saved_at: store.now(),
+            },
+            checkpoint: game.checkpoint(),
+        }
+    }
+
+    #[test]
+    fn a_directory_left_behind_by_a_failed_creation_stays_pending_until_a_save_syncs_it() {
+        let dir = TempDir::new().unwrap();
+        // create_dir_all makes `a`, then fails on a name longer than NAME_MAX.
+        let mut store = FileSaveStore::new(dir.path().join("a").join("n".repeat(300)));
+        let synced = Arc::new(Mutex::new(Vec::<PathBuf>::new()));
+        let record = synced.clone();
+        store = store.with_directory_sync(Arc::new(move |d: &Path| {
+            record.lock().unwrap().push(d.to_path_buf());
+            Ok(())
+        }));
+        let b = bundle(&store);
+        assert!(matches!(
+            store.write(&b, &SaveTarget::Create, &|| false),
+            Err(SaveError::Io {
+                stage: "directory",
+                ..
+            })
+        ));
+        assert!(dir.path().join("a").is_dir(), "the failure left `a` behind");
+        assert_eq!(
+            *store.pending(),
+            BTreeSet::from([dir.path().to_path_buf()]),
+            "the entry for `a` is not yet durable"
+        );
+        // A transient failure clears on the next attempt; here the store moves to a root that
+        // creates nothing new, so only the earlier failure can make the TempDir pending.
+        store.root = dir.path().join("a");
+        store.write(&b, &SaveTarget::Create, &|| false).unwrap();
+        assert_eq!(
+            *synced.lock().unwrap(),
+            vec![dir.path().join("a"), dir.path().to_path_buf()]
+        );
+        assert!(store.pending().is_empty());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn sync_directory_opens_the_directory_and_reports_a_failure() {
+        let dir = TempDir::new().unwrap();
+        sync_directory(dir.path()).unwrap();
+        assert!(sync_directory(&dir.path().join("missing")).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn sync_directory_on_windows_returns_ok_without_opening_the_directory() {
+        let dir = TempDir::new().unwrap();
+        // A missing directory can't be opened, so Ok shows that nothing was opened.
+        sync_directory(&dir.path().join("missing")).unwrap();
     }
 }

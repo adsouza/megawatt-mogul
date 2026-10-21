@@ -10,4 +10,4 @@ pub fn replay_compatibility() -> application::ReplayCompatibility {
 }
 
 pub(crate) mod file_store;
-pub use file_store::{FileSaveStore, PublishStage};
+pub use file_store::{DirectorySync, FileSaveStore, PublishStage};

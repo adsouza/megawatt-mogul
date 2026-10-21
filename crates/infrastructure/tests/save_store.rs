@@ -4,7 +4,11 @@ use infrastructure::{
     region::RonRegionCatalog,
     save::{FileSaveStore, PublishStage},
 };
-use std::{path::Path, sync::Arc};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use tempfile::TempDir;
 
 fn bundle(store: &FileSaveStore, name: &str) -> SaveBundle {
@@ -277,4 +281,205 @@ fn save_store_a_second_resume_needs_neither_parent_save_nor_logs_nor_installed_r
 }
 fn store_path(dir: &Path, id: &SaveId) -> std::path::PathBuf {
     dir.join(format!("{}.mgsave", id.as_str()))
+}
+
+/// Which directories a write synchronised, in order. `fails` picks the ones whose sync errors.
+#[derive(Clone, Default)]
+struct SyncRecord {
+    synced: Arc<std::sync::Mutex<Vec<PathBuf>>>,
+    fails: Arc<std::sync::Mutex<BTreeSet<PathBuf>>>,
+}
+impl SyncRecord {
+    fn seam(&self) -> infrastructure::save::DirectorySync {
+        let record = self.clone();
+        Arc::new(move |dir: &Path| {
+            record.synced.lock().unwrap().push(dir.to_path_buf());
+            if record.fails.lock().unwrap().contains(dir) {
+                return Err(std::io::Error::other("injected directory sync failure"));
+            }
+            Ok(())
+        })
+    }
+    /// The directories synchronised since the last call, as a set.
+    fn take(&self) -> BTreeSet<PathBuf> {
+        std::mem::take(&mut *self.synced.lock().unwrap())
+            .into_iter()
+            .collect()
+    }
+    fn fail(&self, dir: &Path) {
+        self.fails.lock().unwrap().insert(dir.to_path_buf());
+    }
+    fn recover(&self) {
+        self.fails.lock().unwrap().clear();
+    }
+}
+fn set<const N: usize>(dirs: [PathBuf; N]) -> BTreeSet<PathBuf> {
+    dirs.into_iter().collect()
+}
+
+#[test]
+fn a_save_into_an_existing_root_syncs_only_the_root() {
+    let dir = TempDir::new().unwrap();
+    let record = SyncRecord::default();
+    let store = FileSaveStore::new(dir.path().into()).with_directory_sync(record.seam());
+    let mut b = bundle(&store, "First");
+    let receipt = store.write(&b, &SaveTarget::Create, &|| false).unwrap();
+    assert_eq!(record.take(), set([dir.path().into()]));
+    b.metadata.name = "Second".into();
+    store
+        .write(&b, &SaveTarget::Replace(receipt.revision), &|| false)
+        .unwrap();
+    assert_eq!(record.take(), set([dir.path().into()]));
+}
+
+#[test]
+fn a_save_that_creates_nested_directories_syncs_each_new_directorys_parent() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().join("a/b/c");
+    let record = SyncRecord::default();
+    let store = FileSaveStore::new(root.clone()).with_directory_sync(record.seam());
+    let mut b = bundle(&store, "First");
+    let receipt = store.write(&b, &SaveTarget::Create, &|| false).unwrap();
+    // c is the destination's parent; b, a and the TempDir each gained an entry. Nothing above.
+    assert_eq!(
+        record.take(),
+        set([
+            root.clone(),
+            dir.path().join("a/b"),
+            dir.path().join("a"),
+            dir.path().into(),
+        ])
+    );
+    b.metadata.name = "Second".into();
+    store
+        .write(&b, &SaveTarget::Replace(receipt.revision), &|| false)
+        .unwrap();
+    assert_eq!(
+        record.take(),
+        set([root]),
+        "the new directories are durable"
+    );
+}
+
+#[test]
+fn a_retry_after_an_uncertain_publish_syncs_the_directories_the_first_attempt_created() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().join("new/deep");
+    let record = SyncRecord::default();
+    let fail = Arc::new(AtomicBool::new(true));
+    let flag = fail.clone();
+    let store = FileSaveStore::new(root.clone())
+        .with_directory_sync(record.seam())
+        .with_fault(Arc::new(move |at| {
+            if at == PublishStage::SyncDirectory && flag.load(Ordering::Relaxed) {
+                Err(SaveError::Io {
+                    stage: "injected",
+                    message: "sync".into(),
+                })
+            } else {
+                Ok(())
+            }
+        }));
+    let b = bundle(&store, "Uncertain");
+    let Err(SaveError::DurabilityUnconfirmed { revision, .. }) =
+        store.write(&b, &SaveTarget::Create, &|| false)
+    else {
+        panic!("the first attempt's directory sync was injected to fail")
+    };
+    assert!(record.take().is_empty(), "the fault fires before any sync");
+    fail.store(false, Ordering::Relaxed);
+    let receipt = store
+        .write(&b, &SaveTarget::ConfirmDurability(revision), &|| false)
+        .unwrap();
+    assert_eq!(receipt.revision, revision);
+    // The directories exist by now, but Retry still syncs the entries the first attempt added.
+    assert_eq!(
+        record.take(),
+        set([root.clone(), dir.path().join("new"), dir.path().into()])
+    );
+    store
+        .write(&b, &SaveTarget::ConfirmDurability(revision), &|| false)
+        .unwrap();
+    assert_eq!(
+        record.take(),
+        set([root]),
+        "confirmed once, then only the root"
+    );
+}
+
+#[test]
+fn a_retry_after_a_partial_directory_sync_syncs_what_is_still_unconfirmed() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().join("new/deep");
+    let record = SyncRecord::default();
+    record.fail(&dir.path().join("new"));
+    let store = FileSaveStore::new(root.clone()).with_directory_sync(record.seam());
+    let b = bundle(&store, "Partial");
+    let Err(SaveError::DurabilityUnconfirmed { revision, .. }) =
+        store.write(&b, &SaveTarget::Create, &|| false)
+    else {
+        panic!("the sync of new/ was injected to fail")
+    };
+    record.take();
+    record.recover();
+    store
+        .write(&b, &SaveTarget::ConfirmDurability(revision), &|| false)
+        .unwrap();
+    assert!(
+        record.take().contains(&dir.path().join("new")),
+        "the failed directory is synced on Retry"
+    );
+}
+
+#[test]
+fn a_save_after_one_that_failed_before_publication_syncs_the_directories_it_created() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().join("new/deep");
+    let record = SyncRecord::default();
+    let failing = FileSaveStore::new(root.clone())
+        .with_directory_sync(record.seam())
+        .with_fault(Arc::new(|at| {
+            if at == PublishStage::PartialWrite {
+                Err(SaveError::Cancelled)
+            } else {
+                Ok(())
+            }
+        }));
+    let b = bundle(&failing, "Second try");
+    assert!(failing.write(&b, &SaveTarget::Create, &|| false).is_err());
+    assert!(record.take().is_empty(), "nothing was published");
+    let store = failing.with_fault(Arc::new(|_| Ok(())));
+    store.write(&b, &SaveTarget::Create, &|| false).unwrap();
+    assert_eq!(
+        record.take(),
+        set([root, dir.path().join("new"), dir.path().into()])
+    );
+}
+
+#[test]
+fn a_sync_failure_on_the_root_is_still_durability_unconfirmed() {
+    let dir = TempDir::new().unwrap();
+    let record = SyncRecord::default();
+    record.fail(dir.path());
+    let store = FileSaveStore::new(dir.path().into()).with_directory_sync(record.seam());
+    let b = bundle(&store, "Visible");
+    let result = store.write(&b, &SaveTarget::Create, &|| false);
+    let Err(SaveError::DurabilityUnconfirmed { slot, revision }) = result else {
+        panic!("{result:?}")
+    };
+    assert_eq!(slot, b.metadata.slot);
+    assert_eq!(
+        store.read(&b.metadata.slot).unwrap().0,
+        b,
+        "already visible"
+    );
+    assert!(matches!(
+        store.write(&b, &SaveTarget::ConfirmDurability(revision), &|| false),
+        Err(SaveError::DurabilityUnconfirmed { .. })
+    ));
+    record.recover();
+    store
+        .write(&b, &SaveTarget::ConfirmDurability(revision), &|| false)
+        .unwrap();
 }

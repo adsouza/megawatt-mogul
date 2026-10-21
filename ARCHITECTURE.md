@@ -92,8 +92,11 @@ exactly once, and returns a runnable candidate. Refused commands never enter the
 `SaveStore` is an application-owned port. Infrastructure packages one complete prefix and region
 into a checksummed/versioned RON envelope, verifies build/platform compatibility, and owns atomic
 publication. A per-slot OS lock protects revision checks and same-directory temporary-file
-replacement. File and directory synchronisation precede a success receipt; post-publication sync
-failure returns the new revision as `DurabilityUnconfirmed`, not a claim of rollback.
+replacement. File and directory synchronisation precede a success receipt. The directories synced
+are the save root and the parent of each directory the store created, until that parent's sync
+succeeds; on Windows no directory is synced (NTFS journals the rename; see `sync_directory`).
+Post-publication sync failure returns the new revision as `DurabilityUnconfirmed`, not a claim of
+rollback.
 
 The game's persistence coordinator freezes producers, drains admitted commands and captures manual
 saves after application. Autosaves capture inside the funnel at the individual `MonthClosed`

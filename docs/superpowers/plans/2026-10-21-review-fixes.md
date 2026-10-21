@@ -167,13 +167,21 @@ No domain or application changes. `SIM_RULES_VERSION` is unchanged.
 **Ruling:**
 - Sync only:
   - the destination's parent, which is the save root;
-  - the parent of each directory that this call created.
+  - the parent of each directory that this call created, including any a failed
+    `create_dir_all` left behind.
 - A retry after `DurabilityUnconfirmed` must still sync the directories an earlier attempt created.
   Record them on the store, for example as a set of pending directories that is cleared once each
   sync succeeds, or carry them through the uncertain-revision state. Pick one and say why.
-- Windows: don't attempt a directory sync. Document in `sync_directory` that on NTFS the
-  metadata journal makes the rename durable without one. A cfg-gated unit test asserts that the
-  Windows path returns `Ok` without opening the directory.
+- Windows: don't attempt a directory sync. `FlushFileBuffers` on a directory needs
+  `GENERIC_WRITE`, which is why the path doesn't attempt it. Document in `sync_directory` what a
+  receipt does and doesn't mean there:
+  - On NTFS the rename is journaled, so a crash leaves either the previous or the new complete
+    file.
+  - The rename reaches disk when NTFS commits its log. A receipt on Windows means the contents
+    were flushed and publication was atomic, not that the directory entry is synced.
+  - Non-journaled volumes such as FAT32 or exFAT get neither guarantee.
+
+  A cfg-gated unit test asserts that the Windows path returns `Ok` without opening the directory.
 - Preferences reuse the narrowed helper.
 
 - [ ] **Step 1: Write the failing tests.** Make the set of directories synced observable to the
