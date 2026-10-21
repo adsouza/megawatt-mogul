@@ -5,7 +5,7 @@ use domain::session::{GameSession, MonthlyReport};
 
 use super::Projection;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct MonthlyReportProjection {
     reports: Vec<MonthlyReport>,
 }

@@ -17,6 +17,9 @@ pub struct AssetRoot(pub PathBuf);
 #[derive(Resource, Debug, Clone, PartialEq, Eq)]
 pub struct LogDir(pub PathBuf);
 
+#[derive(Resource, Debug, Clone, PartialEq, Eq)]
+pub struct SaveDir(pub PathBuf);
+
 /// The asset root: `arg` if given, otherwise the first existing directory of `./assets`,
 /// `<exe dir>/assets` and the workspace's `assets/` (for `cargo run`).
 ///
@@ -43,6 +46,7 @@ pub fn resolve_asset_root(arg: Option<PathBuf>) -> PathBuf {
 pub struct CliArgs {
     pub assets: Option<PathBuf>,
     pub log_dir: Option<PathBuf>,
+    pub save_dir: Option<PathBuf>,
     pub exit_after_frames: Option<NonZeroU32>,
 }
 
@@ -55,6 +59,7 @@ impl CliArgs {
             let flag = match arg.to_str() {
                 Some("--assets") => "--assets",
                 Some("--log-dir") => "--log-dir",
+                Some("--save-dir") => "--save-dir",
                 Some("--exit-after-frames") => "--exit-after-frames",
                 _ => return Err(CliError::Unknown(arg)),
             };
@@ -62,6 +67,7 @@ impl CliArgs {
             match flag {
                 "--assets" => parsed.assets = Some(value.into()),
                 "--log-dir" => parsed.log_dir = Some(value.into()),
+                "--save-dir" => parsed.save_dir = Some(value.into()),
                 _ => {
                     let count = value.to_str().and_then(|text| text.parse().ok());
                     let count = count.ok_or(CliError::NotACount { flag, value })?;
@@ -70,6 +76,12 @@ impl CliArgs {
             }
         }
         Ok(parsed)
+    }
+
+    pub fn save_dir(&self) -> PathBuf {
+        self.save_dir
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("saves"))
     }
 
     /// The log directory: `--log-dir`, or `./logs`.
@@ -92,7 +104,8 @@ pub enum CliError {
 }
 
 impl CliError {
-    pub const USAGE: &'static str = "usage: game [--assets <dir>] [--log-dir <dir>]";
+    pub const USAGE: &'static str =
+        "usage: game [--assets <dir>] [--log-dir <dir>] [--save-dir <dir>]";
 }
 
 impl fmt::Display for CliError {

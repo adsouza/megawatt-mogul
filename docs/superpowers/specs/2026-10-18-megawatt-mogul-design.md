@@ -1661,9 +1661,19 @@ separate autosave at each month close, as selected by the user.
   error is visible and retryable, but the player may acknowledge it and continue without saving.
   That dismisses the error barrier; moving on from Review still uses the normal Continue action.
   Last-saved status changes only on a confirmed successful write, and says what boundary it saved.
-- Saves contain applied game state. Unapplied commitment drafts, selection, map view, panel sizes,
-  tabs, prompts, toast queues and speed are not saved; resume resets them to normal entry defaults.
-  Replay does not re-emit historical toasts or milestone notifications.
+- Saves contain applied game state. Game-specific transient state (unapplied commitment drafts,
+  selection, map view, tabs, prompts and toast queues) is excluded and resets on resume. Window,
+  layout, zoom and chosen running speed are separate application preferences below; Operating
+  resume still starts paused. Replay does not re-emit historical toasts or milestone notifications.
+- **Application preferences** are stored separately from game checkpoints and restored on launch:
+  window size/position, UI zoom, the last chosen running speed, sidebar widths, bottom-panel
+  heights, the Incidents divider and movable tool-window positions. Observe actual resized/moved
+  state; save automatically after changes and flush pending changes on normal OS/menu exit.
+  Pausing or entering Review never overwrites the remembered running speed. New days use that
+  preference; loaded Operating games still enter paused, and unpausing uses it. Clamp restored
+  geometry to available monitors and the current HUD's minimum/maximum sizes, so a missing monitor
+  or changed zoom cannot strand the window or panels. Missing preferences use defaults; malformed
+  preferences do not block boot. Tests inject the preferences path, never mutate global settings.
 
 A save failure never changes simulation state or deletes another save. The old manual slot remains
 unchanged on a failure **before publication**; the post-publication durability case is specified in

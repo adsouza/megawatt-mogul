@@ -36,17 +36,23 @@ fn since_epoch() -> Duration {
 
 /// Starts the first `NewGameRequest` that succeeds and enters `InGame`; each one that fails
 /// becomes a `CommandFailed`, and the app stays in the menu. Requests after a success are dropped.
+#[allow(clippy::too_many_arguments)] // Independent ECS resources and message channels.
 pub(super) fn start_new_game(
     mut requests: MessageReader<NewGameRequest>,
     catalog: Res<Catalog>,
     log_dir: Res<LogDir>,
     mut commands: Commands,
+    mut generation: ResMut<super::SessionGeneration>,
+    mut persistence: ResMut<super::Persistence>,
     mut next: ResMut<NextState<AppState>>,
     mut failures: MessageWriter<CommandFailed>,
 ) {
     for request in requests.read() {
         match new_game(&catalog.0, &log_dir.0, request, since_epoch().as_secs()) {
             Ok(game) => {
+                generation.0 = generation.0.wrapping_add(1);
+                persistence.abandon();
+                persistence.enter(generation.0);
                 commands.insert_resource(Session(game));
                 next.set(AppState::InGame);
                 break;
@@ -111,7 +117,10 @@ fn log_stem(unix_secs: u64, region: &RegionId, seed: u64) -> String {
 /// Creates `<dir>/<stem>.log`, making `dir` if needed. If that name (or its region archive) is
 /// taken, tries `<stem>-2.log`, `<stem>-3.log`, …: two games started in the same second with the
 /// same region and seed both get a log.
-fn create_log(dir: &Path, stem: &str) -> Result<(PathBuf, FileCommandLog), CommandLogError> {
+pub(super) fn create_log(
+    dir: &Path,
+    stem: &str,
+) -> Result<(PathBuf, FileCommandLog), CommandLogError> {
     fs::create_dir_all(dir).map_err(|error| CommandLogError {
         message: format!("cannot create log directory {}: {error}", dir.display()),
     })?;
@@ -136,7 +145,7 @@ fn create_log(dir: &Path, stem: &str) -> Result<(PathBuf, FileCommandLog), Comma
 }
 
 /// `YYYYMMDD-HHMMSS` for a Unix time, in UTC.
-fn utc_stamp(unix_secs: u64) -> String {
+pub fn utc_stamp(unix_secs: u64) -> String {
     const SECS_PER_DAY: u64 = 86_400;
     let (year, month, day) = civil_from_days(unix_secs / SECS_PER_DAY);
     let secs = unix_secs % SECS_PER_DAY;

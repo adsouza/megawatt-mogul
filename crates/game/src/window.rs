@@ -33,7 +33,9 @@ impl Plugin for WindowSizingPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            apply_opening_size.run_if(not(resource_exists::<OpeningSizeApplied>)),
+            apply_opening_size
+                .after(crate::preferences::PreferenceSet::Load)
+                .run_if(not(resource_exists::<OpeningSizeApplied>)),
         );
     }
 }
@@ -41,17 +43,46 @@ impl Plugin for WindowSizingPlugin {
 /// Present once the opening size has been applied (or found unknowable): the sizing system never
 /// runs again, so it can't undo a resize by the player.
 #[derive(Resource, Debug)]
-struct OpeningSizeApplied;
+pub(crate) struct OpeningSizeApplied;
 
 /// Waits for the primary monitor, then sizes and centres the primary window on it, once.
 fn apply_opening_size(
     mut commands: Commands,
-    monitors: Query<&Monitor, With<PrimaryMonitor>>,
+    monitors: Query<(&Monitor, Option<&PrimaryMonitor>)>,
+    settings: Option<Res<crate::preferences::ClientSettings>>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
 ) {
-    let (Ok(monitor), Ok(mut window)) = (monitors.single(), windows.single_mut()) else {
+    if settings.as_ref().is_some_and(|s| !s.loaded) {
+        return;
+    }
+    let Ok(mut window) = windows.single_mut() else {
         return;
     };
+    let Some((primary, _)) = monitors.iter().find(|(_, p)| p.is_some()) else {
+        return;
+    };
+    if let Some(saved) = settings.as_ref().and_then(|s| s.value.window.as_ref()) {
+        let monitor = monitors
+            .iter()
+            .map(|(m, _)| m)
+            .find(|m| {
+                let at = IVec2::new(saved.x, saved.y).as_i64vec2();
+                let min = m.physical_position.as_i64vec2();
+                at.cmpge(min).all() && at.cmplt(min + m.physical_size().as_i64vec2()).all()
+            })
+            .unwrap_or(primary);
+        let restored = crate::preferences::fit_window(
+            saved,
+            monitor.physical_position,
+            monitor.physical_size(),
+            monitor.scale_factor,
+        );
+        window.resolution.set(restored.width, restored.height);
+        window.position = WindowPosition::At(IVec2::new(restored.x, restored.y));
+        commands.insert_resource(OpeningSizeApplied);
+        return;
+    }
+    let monitor = primary;
     let logical = monitor.physical_size().as_vec2() / monitor.scale_factor as f32;
     if let Some(size) = opening_size(Some(logical)) {
         window.resolution.set(size.x, size.y);

@@ -10,7 +10,7 @@ use super::Projection;
 /// It is recomputed from the session (after the command) whenever something
 /// it depends on changes: a month closing, capacity or a city arriving,
 /// a capital assessment, or the day phase moving.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct RateReviewProjection {
     estimate: Option<RateReviewEstimate>,
 }

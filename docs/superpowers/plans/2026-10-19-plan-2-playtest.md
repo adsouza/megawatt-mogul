@@ -1,5 +1,26 @@
 # Plan 2 playtest checklist
 
+**Historical scope:** the original Plan 2 instructions below predate Plan 2b. The current menu
+also has Load game and the top bar has Save game. Window/layout/speed preferences now restore on
+launch; use an empty, isolated `--save-dir` when a step needs original defaults. Menu's old leave
+prompt is superseded by Save and return / Leave without saving / Cancel. The OS close control
+still quits immediately without saving game progress.
+
+## Plan 2b additions (2026-10-21)
+
+- [ ] Save a named Planning slot, change the applied plan, and explicitly confirm overwrite.
+- [ ] Save at a non-hour Operating minute, close via the OS button, relaunch with the same save
+  directory, and resume paused with the same clock, fleet, water and historical charts.
+- [ ] Finish a month and load its automatic Review; retain December's rate review and terminal
+  reports. Resume twice and confirm source/manual slots remain intact and automatic slots fork.
+- [ ] Force a separate save-storage error: failed Save-and-menu keeps the game open; Retry/Cancel
+  remain usable. A recording warning must not disable manual saves.
+- [ ] Resize/move the native window, resize every sidebar/bottom panel and Incidents divider,
+  move Milestones, change UI zoom and choose 8×. Quit normally and relaunch: restore preferences;
+  the loaded game remains paused and Space uses 8×. Repeat after a monitor/zoom change and verify
+  that the window and panel controls remain reachable.
+
+
 Plan 2's headless tests cover the presenters, the glue around `dispatch`, the real egui pass and a
 whole month through the app. They can't watch a real window. This checklist is the part a person
 has to look at. Run each step in order and tick it when the expected result matches. If a step

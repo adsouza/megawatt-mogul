@@ -111,6 +111,7 @@ pub fn draw_milestones(ui: &mut egui::Ui, model: &MilestonesModel) -> Vec<UiActi
 pub(super) fn milestones_overlay(
     mut contexts: EguiContexts,
     area: Res<HudArea>,
+    settings: Option<Res<crate::preferences::ClientSettings>>,
     session: Res<Session>,
     l10n: Res<Localizer>,
     mut sink: ActionSink,
@@ -118,15 +119,28 @@ pub(super) fn milestones_overlay(
     let model = milestones_model(&session.0, &l10n);
     let ctx = contexts.ctx_mut()?;
     let top = area.free_rect(ctx).top();
+    let default = egui::pos2(
+        (ctx.content_rect().right() - MILESTONES_WIDTH - MILESTONES_MARGIN).max(0.0),
+        top + MILESTONES_MARGIN,
+    );
+    let position = settings
+        .as_ref()
+        .and_then(|s| s.value.tools.get("milestones"))
+        .map_or(default, |v| {
+            egui::pos2(
+                v[0].clamp(
+                    0.0,
+                    (ctx.content_rect().right() - MILESTONES_WIDTH - MILESTONES_MARGIN).max(0.0),
+                ),
+                v[1].clamp(0.0, (ctx.content_rect().bottom() - 80.0).max(0.0)),
+            )
+        });
     let actions = egui::Window::new(model.title.as_str())
         .id(egui::Id::new("milestones"))
         .order(egui::Order::Foreground)
         .collapsible(false)
         .resizable(false)
-        .anchor(
-            egui::Align2::RIGHT_TOP,
-            egui::vec2(-MILESTONES_MARGIN, top + MILESTONES_MARGIN),
-        )
+        .default_pos(position)
         .show(ctx, |ui| draw_milestones(ui, &model))
         .and_then(|shown| shown.inner)
         .unwrap_or_default();

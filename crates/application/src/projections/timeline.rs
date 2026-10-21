@@ -29,7 +29,7 @@ pub struct TimelinePoint {
 }
 
 /// The last [`TIMELINE_CAPACITY`] ticks, oldest first.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct TimelineProjection {
     points: VecDeque<TimelinePoint>,
 }

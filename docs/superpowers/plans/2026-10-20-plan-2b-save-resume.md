@@ -1,7 +1,7 @@
 # Megawatt Mogul Plan 2b: Save and resume
 
 **Date:** 2026-10-20  
-**Status:** Implementation plan; runtime work has not started.  
+**Status:** Implemented 2026-10-21; verification is recorded below.
 **Depends on:** the implemented Plan 1/2 simulation and game shell, including the current HUD fixes.  
 **Precedes:** Plan 3 (3D diorama, overlays, camera, picking and dev tools).
 
@@ -259,6 +259,19 @@ extend `tests/game/save_resume.rs` and existing HUD/l10n/contrast tests.
 - [ ] Run `cargo nextest run -p game`, clippy and formatting. Keep the existing region picker,
   incident-divider, prompt, layout, chart and panel-resize tests green.
 
+## Task 5b: Automatically retained application preferences (2026-10-21)
+
+- [ ] Persist window size/position, UI zoom, last chosen running day speed, sidebar widths,
+  bottom-panel heights, Incidents divider width and movable tool-window positions in a separate
+  versioned preferences file under the injected save directory. These are application preferences,
+  independent of manual slots and month-close autosaves.
+- [ ] Restore on launch, clamp geometry to connected monitors and current layout limits, and keep
+  malformed/missing preferences from blocking boot. Preserve the selected speed through pauses,
+  Review and menu transitions. Loaded games remain paused until explicitly unpaused.
+- [ ] Observe real drag/zoom/speed state, write automatically after changes, and flush on normal
+  OS/menu exit. Use atomic publication and do not rewrite unchanged preferences every frame.
+- [ ] Add isolated restart tests and real egui resize/zoom checks; verify normal exit persistence.
+
 ## Task 6: Cross-layer acceptance, playtest and documentation
 
 **Extend:** application/infrastructure save tests and the single game integration binary.
@@ -300,6 +313,44 @@ extend `tests/game/save_resume.rs` and existing HUD/l10n/contrast tests.
   Launch smoke is a native/manual check, not a nextest case. The separate interactive playtest
   proves save/load behaviour beyond simply drawing 120 menu frames. Review the full final diff,
   including binding spec and all reachable restore/write paths, before calling Plan 2b complete.
+
+## Implementation and verification (2026-10-21)
+
+The runtime work in Tasks 1–5b is implemented. The original checkboxes above are retained as the
+review checklist; this record describes the concrete completion evidence rather than claiming
+that every individual manual variation was exercised.
+
+- Application checkpoints retain all accepted command batches independently of disk-log health.
+  Restore verifies the boundary, rebuilds all projections and seeds a fresh branch log once.
+- File saves have a versioned/checksummed envelope, embedded region, conservative build identity,
+  bounded input, OS slot locks, revisions, atomic replacement and explicit durability uncertainty.
+  Fault and contention tests inspect actual disk bytes. A second resume survives removal of its
+  parent save, logs and installed region fixture.
+- The bridge owns capture barriers, queued commands, session generations, cancellable worker jobs,
+  exact month-close autosaves and a paused load-entry gate. Regression tests cover pending
+  Save-and-menu/Leave choices, stale completions, fresh overwrite confirmation and later autosaves
+  after an acknowledged uncertain publication. Both shipped regions are restored in fresh apps
+  and compared with uninterrupted play through month close and the following month's commands.
+- All save/load dialogs, game-over Save, error/retry/overwrite choices and literal localisation
+  keys are implemented. Real egui passes check layout and contrast at minimum and larger sizes.
+- Separate client preferences retain native window geometry, the full egui zoom range, last
+  running speed, panel/divider sizes and movable tool positions. Restart/real-drag/exit tests
+  guard the behaviour, including main-menu frames before starting a game.
+- Native macOS QA used isolated paths under `/tmp/megawatt-save-qa.ayaQZV`: Planning save, OS close,
+  relaunch/load, Operating save restored paused at 01:11, a completed-month automatic Review,
+  separate overwrite confirmation, and a permission-denied save whose old bytes were unchanged.
+  Retry succeeded after restoring permissions. Current-build startup also retained 1280×800 at
+  (100,100), 125% zoom and 8× through the main menu. Native launch smoke exits successfully.
+- Final combined gate: all 1,121 workspace tests, workspace build, Clippy with warnings denied,
+  rustfmt and whitespace checks pass.
+- Automated coverage includes December rate review, construction, terminal Review, codec
+  corruption properties, geometry reachability and complete projection equality. The extended
+  manual matrix (every phase, final outcome, monitor arrangement and destination failure) remains
+  a release playtest checklist; those manual combinations are not all claimed here.
+
+README, architecture and testing docs describe the implemented behaviour. Simulation rules remain
+version 6, raw logs remain version 1, and save files start at version 1. Plan 3 has commenced with
+CPU terrain geometry only; its 3D rendering integration remains separate.
 
 ## Review focus
 

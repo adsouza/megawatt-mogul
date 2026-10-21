@@ -96,7 +96,7 @@ fn flattened<'a>(
     }
 }
 
-fn check_paint(output: egui::FullOutput) -> usize {
+pub(crate) fn check_paint(output: egui::FullOutput) -> usize {
     let painted = output.shapes.clone();
     output.drop_without_applying_deltas();
     let mut shapes = Vec::new();

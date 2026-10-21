@@ -35,6 +35,8 @@ pub struct TopBarModel {
     pub milestones: ButtonModel,
     /// Opens the leave prompt (see `prompt.rs`); it does not leave by itself.
     pub menu: ButtonModel,
+    pub save: ButtonModel,
+    pub last_saved: Option<String>,
 }
 
 pub fn top_bar_model(game: &Game, l10n: &Localizer) -> TopBarModel {
@@ -77,6 +79,11 @@ pub fn top_bar_model(game: &Game, l10n: &Localizer) -> TopBarModel {
             )
         }),
         milestones: ButtonModel::new(l10n.text("topbar-milestones"), UiAction::ToggleMilestones),
+        last_saved: None,
+        save: ButtonModel::new(
+            l10n.text("save-title"),
+            UiAction::Persistence(crate::sim::PersistAction::OpenSave { leave: false }),
+        ),
         menu: ButtonModel::new(
             l10n.text("topbar-menu"),
             UiAction::Prompt(Some(Prompt::LeaveGame)),
@@ -107,6 +114,10 @@ pub fn draw_top_bar(ui: &mut egui::Ui, model: &TopBarModel) -> Vec<UiAction> {
         // its tooltip.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             button(ui, &model.menu, &mut actions);
+            let save = button(ui, &model.save, &mut actions);
+            if let Some(status) = &model.last_saved {
+                save.on_hover_text(status);
+            }
             button(ui, &model.milestones, &mut actions);
             if let Some(warning) = &model.recording_stopped {
                 let text = egui::RichText::new(warning.as_str()).color(ui.visuals().warn_fg_color);
@@ -130,7 +141,18 @@ pub(super) fn top_bar_panel(
     l10n: Res<Localizer>,
     mut sink: ActionSink,
 ) -> Result {
-    let model = top_bar_model(&session.0, &l10n);
+    let mut model = top_bar_model(&session.0, &l10n);
+    if let Some(summary) = &sink.persistence().last_summary {
+        model.last_saved = Some(l10n.args(
+            "save-last",
+            &[
+                ("month", format::month_year(summary.month).into()),
+                ("phase", summary.phase.localize(&l10n).into()),
+                ("time", format::clock(summary.tick).into()),
+            ],
+        ));
+        model.save.label = l10n.text("save-confirmed");
+    }
     let mut ui = area.root_ui(contexts.ctx_mut()?, "top_bar");
     let actions = egui::Panel::top("top_bar")
         .show(&mut ui, |ui| draw_top_bar(ui, &model))

@@ -320,7 +320,7 @@ fn the_game_over_modal_returns_to_the_menu() {
     assert!(shows(&harness.draw(draw), "bankrupt"));
     assert_eq!(
         harness.click("Main menu", draw),
-        vec![UiAction::ReturnToMenu]
+        vec![UiAction::Persistence(game::sim::PersistAction::OpenLeave)]
     );
     assert_eq!(
         harness.click("See the month", draw),
@@ -2296,7 +2296,10 @@ fn dispatch_is_the_one_mapping_from_actions_to_messages() {
 
     assert_eq!(
         sent::<PlayerCommand>(&app),
-        vec![PlayerCommand(Command::BeginOperating)]
+        vec![PlayerCommand(
+            Command::BeginOperating,
+            app.world().resource::<game::sim::SessionGeneration>().0
+        )]
     );
     assert_eq!(
         sent::<NewGameRequest>(&app),

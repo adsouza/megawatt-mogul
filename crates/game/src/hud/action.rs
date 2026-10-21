@@ -18,12 +18,16 @@ use super::operating::OperatingTab;
 use super::selection::Selection;
 use super::speed::LastSpeed;
 use super::ui_state::{PlanningTab, UiState};
-use crate::sim::{NewGameRequest, PlayerCommand, ReturnToMenu, SimSpeed};
+use crate::sim::{
+    NewGameRequest, PersistAction, Persistence, PlayerCommand, ReturnToMenu, SessionGeneration,
+    SimSpeed,
+};
 use crate::state::AppState;
 
 /// Something the player asked for through the HUD.
 #[derive(Debug, Clone, PartialEq)]
 pub enum UiAction {
+    Persistence(PersistAction),
     /// A command for the running game.
     Command(Command),
     /// Start a new game.
@@ -171,6 +175,9 @@ pub fn button(
 #[derive(SystemParam)]
 pub struct ActionSink<'w> {
     commands: MessageWriter<'w, PlayerCommand>,
+    persistence: ResMut<'w, Persistence>,
+    generation: Res<'w, SessionGeneration>,
+    log_dir: Option<Res<'w, crate::paths::LogDir>>,
     new_games: MessageWriter<'w, NewGameRequest>,
     to_menu: MessageWriter<'w, ReturnToMenu>,
     exit: MessageWriter<'w, AppExit>,
@@ -188,6 +195,10 @@ pub struct ActionSink<'w> {
 }
 
 impl ActionSink<'_> {
+    pub fn persistence(&self) -> &Persistence {
+        &self.persistence
+    }
+
     /// The current selection. A panel system reads the state the sink writes through the sink:
     /// a second `Res` of the same resource beside it would conflict (Bevy error B0002).
     pub fn selection(&self) -> Selection {
@@ -241,16 +252,31 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
     for action in actions {
         sink.ui.apply(&action);
         match action {
+            UiAction::Persistence(action) => {
+                let generation = sink.generation.0;
+                let dir = sink.log_dir.as_ref().map(|d| d.0.clone());
+                sink.persistence
+                    .request(action, generation, &mut sink.speed, dir);
+            }
             UiAction::Command(command) => {
-                sink.commands.write(PlayerCommand(command));
+                if !sink.persistence.frozen() {
+                    sink.commands
+                        .write(PlayerCommand(command, sink.generation.0));
+                }
             }
             UiAction::NewGame { region, seed } => {
+                if sink.persistence.frozen() {
+                    continue;
+                }
                 sink.new_games.write(NewGameRequest { region, seed });
             }
             UiAction::ReturnToMenu => {
                 sink.to_menu.write(ReturnToMenu);
             }
             UiAction::SetSpeed(speed) => {
+                if sink.persistence.frozen() {
+                    continue;
+                }
                 *sink.speed = speed;
                 if speed != SimSpeed::Paused {
                     *sink.last_speed = LastSpeed(speed);
@@ -267,6 +293,14 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             | UiAction::ToggleWarnings
             | UiAction::DiscardCommitmentDraft => {}
             UiAction::Navigate(screen) => sink.next_state.set(screen.into()),
+            UiAction::Prompt(Some(Prompt::LeaveGame)) if sink.persistence.enabled() => {
+                sink.persistence.request(
+                    PersistAction::OpenLeave,
+                    sink.generation.0,
+                    &mut sink.speed,
+                    None,
+                );
+            }
             UiAction::Prompt(prompt) => sink.prompt.0 = prompt,
             UiAction::ToggleMilestones => sink.milestones.0 = !sink.milestones.0,
             UiAction::ShowFinalMonth => *sink.game_over_view = GameOverView::FinalMonth,

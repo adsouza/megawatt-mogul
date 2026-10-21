@@ -105,6 +105,7 @@ pub struct MainMenuModel {
     /// Shown under the seed field when it holds something that isn't a seed.
     pub seed_error: Option<String>,
     pub new_game: ButtonModel,
+    pub load_game: ButtonModel,
     pub quit: ButtonModel,
 }
 
@@ -137,6 +138,10 @@ pub fn main_menu_model(
         seed_label: l10n.text("menu-seed"),
         seed_error: seed.is_none().then(|| l10n.text("menu-seed-invalid")),
         new_game: ButtonModel::new(l10n.text("menu-new-game"), new_game).enabled_if(seed.is_some()),
+        load_game: ButtonModel::new(
+            l10n.text("save-load"),
+            UiAction::Persistence(crate::sim::PersistAction::OpenBrowser),
+        ),
         quit: ButtonModel::new(l10n.text("ui-quit"), UiAction::Quit),
     }
 }
@@ -160,6 +165,7 @@ pub fn draw_main_menu(
         }
         ui.add_space(12.0);
         button(ui, &model.new_game, &mut actions);
+        button(ui, &model.load_game, &mut actions);
         button(ui, &model.quit, &mut actions);
     });
     actions

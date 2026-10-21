@@ -9,6 +9,8 @@
 
 mod driver;
 mod new_game;
+mod persistence;
+pub use persistence::{PersistAction, Persistence, SaveScreen, SessionGeneration};
 
 use application::{Command, CommandError, Game};
 use bevy::prelude::*;
@@ -19,8 +21,8 @@ use infrastructure::region::RonRegionCatalog;
 
 use self::driver::TicksInFlight;
 pub use self::driver::{FIXED_STEP_HZ, drive_ticks};
-pub use self::new_game::default_seed;
 use self::new_game::start_new_game;
+pub use self::new_game::{default_seed, utc_stamp};
 use crate::paths::AssetRoot;
 use crate::state::{AppState, BootChecklistAppExt, BootError, PhaseState, finish_boot};
 
@@ -36,7 +38,7 @@ pub struct Catalog(pub RonRegionCatalog);
 
 /// A command for the running game, from the HUD or the driver.
 #[derive(Message, Debug, Clone, PartialEq)]
-pub struct PlayerCommand(pub Command);
+pub struct PlayerCommand(pub Command, pub u64);
 
 /// A command (or a new game) that was refused. The session is unchanged.
 #[derive(Message, Debug, Clone, PartialEq)]
@@ -112,6 +114,23 @@ impl Plugin for SimulationPlugin {
             .add_message::<ReturnToMenu>()
             .init_resource::<SimSpeed>()
             .init_resource::<TicksInFlight>()
+            .init_resource::<Persistence>()
+            .init_resource::<SessionGeneration>()
+            .add_systems(
+                Update,
+                persistence::initialise_store
+                    .before(start_new_game)
+                    .before(SimSet::Apply),
+            )
+            .add_systems(
+                Update,
+                (
+                    persistence::poll_persistence,
+                    persistence::resume_cancel_speed,
+                )
+                    .chain()
+                    .after(SimSet::Apply),
+            )
             .require_for_boot::<Catalog>()
             .add_systems(
                 Update,
@@ -135,7 +154,7 @@ impl Plugin for SimulationPlugin {
             .add_systems(FixedUpdate, drive_ticks.run_if(in_game))
             .add_systems(OnEnter(AppState::InGame), enter_game)
             .add_systems(OnExit(AppState::InGame), leave_game)
-            .add_systems(OnEnter(PhaseState::Operating), set_speed(SimSpeed::X1))
+            .add_systems(OnEnter(PhaseState::Operating), begin_speed)
             .add_systems(OnExit(PhaseState::Operating), set_speed(SimSpeed::Paused));
     }
 }
@@ -153,25 +172,46 @@ pub fn apply_player_commands(
     mut in_flight: ResMut<TicksInFlight>,
     mut events: MessageWriter<DomainEventMessage>,
     mut failures: MessageWriter<CommandFailed>,
+    mut persistence: ResMut<Persistence>,
+    generation: Res<SessionGeneration>,
 ) {
-    for PlayerCommand(command) in commands.read() {
+    persistence
+        .pending
+        .extend(commands.read().filter(|m| m.1 == generation.0).cloned());
+    while !persistence.frozen() || persistence.draining {
+        let Some(PlayerCommand(command, owner)) = persistence.pending.pop_front() else {
+            break;
+        };
+        if owner != generation.0 {
+            continue;
+        }
         if matches!(command, Command::AdvanceTicks { .. }) {
             in_flight.0 = false;
         }
-        match session.0.execute(command.clone()) {
+        match session.0.execute(command) {
             Ok(emitted) => {
+                let closed = emitted
+                    .iter()
+                    .any(|event| matches!(event, DomainEvent::MonthClosed(_)));
                 events.write_batch(
                     emitted
                         .into_iter()
                         .filter(|event| !matches!(event, DomainEvent::TickCompleted(_)))
                         .map(DomainEventMessage),
                 );
+                if closed {
+                    persistence.month_closed(&session.0, generation.0);
+                    if persistence.frozen() {
+                        break;
+                    }
+                }
             }
             Err(error) => {
                 failures.write(CommandFailed(error));
             }
         }
     }
+    persistence.after_apply(&session.0, generation.0);
 }
 
 /// Copies the domain's phase into [`PhaseState`] when they differ: the only writer of
@@ -196,19 +236,43 @@ fn return_to_menu(
     }
 }
 
-fn enter_game(mut time: ResMut<Time<Fixed>>, mut in_flight: ResMut<TicksInFlight>) {
+fn enter_game(
+    mut time: ResMut<Time<Fixed>>,
+    mut in_flight: ResMut<TicksInFlight>,
+    mut persistence: ResMut<Persistence>,
+    generation: Res<SessionGeneration>,
+) {
+    persistence.enter(generation.0);
     time.set_timestep_hz(FIXED_STEP_HZ);
     in_flight.0 = false;
 }
 
 fn leave_game(
     mut commands: Commands,
+    mut persistence: ResMut<Persistence>,
+    mut generation: ResMut<SessionGeneration>,
+    mut queued: ResMut<Messages<PlayerCommand>>,
     mut speed: ResMut<SimSpeed>,
     mut in_flight: ResMut<TicksInFlight>,
 ) {
     commands.remove_resource::<Session>();
+    persistence.abandon();
+    generation.0 = generation.0.wrapping_add(1);
+    queued.clear();
     *speed = SimSpeed::Paused;
     in_flight.0 = false;
+}
+
+fn begin_speed(
+    mut speed: ResMut<SimSpeed>,
+    persistence: Res<Persistence>,
+    settings: Option<Res<crate::preferences::ClientSettings>>,
+) {
+    *speed = if persistence.resuming {
+        SimSpeed::Paused
+    } else {
+        settings.map_or(SimSpeed::X1, |s| s.speed())
+    };
 }
 
 fn set_speed(to: SimSpeed) -> impl FnMut(ResMut<SimSpeed>) {

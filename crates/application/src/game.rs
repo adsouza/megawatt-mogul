@@ -13,6 +13,7 @@ use crate::ports::{
     RegionListing,
 };
 use crate::projections::Projections;
+use crate::{CheckpointSummary, GameCheckpoint, LogRecord, RestoreError};
 
 /// One running game: the session and the pipeline every command goes through.
 pub struct Game {
@@ -20,6 +21,9 @@ pub struct Game {
     handler: Box<dyn CommandHandler>,
     log_health: LogHealth,
     projections: Projections,
+    header: LogHeader,
+    region_source: Vec<u8>,
+    journal: Vec<Command>,
 }
 
 impl Game {
@@ -51,13 +55,76 @@ impl Game {
             handler,
             log_health,
             projections,
+            header,
+            region_source: loaded.source_bytes,
+            journal: Vec::new(),
         })
     }
 
     pub fn execute(&mut self, command: Command) -> Result<Vec<DomainEvent>, CommandError> {
         let events = self.handler.handle(&mut self.session, &command)?;
         self.projections.apply_all(&events, &self.session);
+        self.journal.push(command);
         Ok(events)
+    }
+
+    pub fn checkpoint(&self) -> GameCheckpoint {
+        GameCheckpoint {
+            header: self.header.clone(),
+            region_source: self.region_source.clone(),
+            commands: self.journal.clone(),
+            command_count: self.journal.len() as u64,
+            state_hash: self.session.state_hash(),
+            summary: CheckpointSummary::of(&self.session),
+        }
+    }
+
+    /// Build and verify a candidate before recording the historical prefix in a fresh sink.
+    /// Cancellation never exposes a partially replayed game to the caller.
+    pub fn restore(
+        region: LoadedRegion,
+        checkpoint: GameCheckpoint,
+        mut sink: Box<dyn CommandLogSink>,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Self, RestoreError> {
+        validate_replay(&region, &checkpoint.header)?;
+        if region.definition.id() != &checkpoint.header.region {
+            return Err(RestoreError::RegionIdMismatch);
+        }
+        if region.source_bytes != checkpoint.region_source {
+            return Err(RestoreError::RegionSourceMismatch);
+        }
+        if checkpoint.command_count != checkpoint.commands.len() as u64 {
+            return Err(RestoreError::CommandCountMismatch);
+        }
+        let (session, projections) =
+            fold_replay(region, &checkpoint.header, &checkpoint.commands, cancelled)?;
+        if session.state_hash() != checkpoint.state_hash {
+            return Err(RestoreError::StateHashMismatch);
+        }
+        if CheckpointSummary::of(&session) != checkpoint.summary {
+            return Err(RestoreError::SummaryMismatch);
+        }
+        if cancelled() {
+            return Err(RestoreError::Cancelled);
+        }
+        sink.initialize(&checkpoint.header, &checkpoint.region_source)?;
+        for command in &checkpoint.commands {
+            if cancelled() {
+                return Err(RestoreError::Cancelled);
+            }
+            sink.append(&LogRecord::Command(command.clone()))?;
+        }
+        let (handler, log_health) = build_pipeline(sink);
+        Ok(Self {
+            session,
+            projections,
+            handler,
+            log_health,
+            header: checkpoint.header,
+            region_source: checkpoint.region_source,
+            journal: checkpoint.commands,
+        })
     }
 
     pub fn session(&self) -> &GameSession {
@@ -71,8 +138,7 @@ impl Game {
 
     /// The first time the command log failed to record a command, if ever.
     /// The game carries on regardless, but from that command on the log no
-    /// longer reproduces it, so the player should be told their save is
-    /// incomplete.
+    /// longer reproduces it. The in-memory checkpoint journal stays complete.
     pub fn log_failure(&self) -> Option<CommandLogError> {
         self.log_health.failure()
     }
@@ -86,6 +152,17 @@ pub fn replay(
     header: &LogHeader,
     commands: &[Command],
 ) -> Result<GameSession, ReplayError> {
+    validate_replay(&region, header)?;
+    fold_replay(region, header, commands, &|| false)
+        .map(|(session, _)| session)
+        .map_err(|error| match error {
+            RestoreError::ReplayCommandFailed { error, .. } => ReplayError::Command(error),
+            RestoreError::Replay(error) => error,
+            _ => unreachable!("uncancelled raw replay only validates and executes commands"),
+        })
+}
+
+fn validate_replay(region: &LoadedRegion, header: &LogHeader) -> Result<(), ReplayError> {
     if header.log_format_version != LOG_FORMAT_VERSION {
         return Err(ReplayError::LogFormatVersionMismatch {
             recorded: header.log_format_version,
@@ -104,12 +181,31 @@ pub fn replay(
             actual: region.fingerprint,
         });
     }
-    let mut session = GameSession::new(region.definition, header.seed, header.settings);
-    let mut handler = CoreHandler;
-    for command in commands {
-        handler.handle(&mut session, command)?;
+    Ok(())
+}
+
+fn fold_replay(
+    region: LoadedRegion,
+    header: &LogHeader,
+    commands: &[Command],
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(GameSession, Projections), RestoreError> {
+    if cancelled() {
+        return Err(RestoreError::Cancelled);
     }
-    Ok(session)
+    let mut session = GameSession::new(region.definition, header.seed, header.settings);
+    let mut projections = Projections::new(&session);
+    let mut handler = CoreHandler;
+    for (index, command) in commands.iter().enumerate() {
+        if cancelled() {
+            return Err(RestoreError::Cancelled);
+        }
+        let events = handler
+            .handle(&mut session, command)
+            .map_err(|error| RestoreError::ReplayCommandFailed { index, error })?;
+        projections.apply_all(&events, &session);
+    }
+    Ok((session, projections))
 }
 
 /// The region to enter without asking: only when there is exactly one

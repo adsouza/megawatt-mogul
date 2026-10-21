@@ -39,10 +39,15 @@ pub fn drive_ticks(
     speed: Res<SimSpeed>,
     mut in_flight: ResMut<TicksInFlight>,
     mut commands: MessageWriter<PlayerCommand>,
+    generation: Res<super::SessionGeneration>,
+    persistence: Res<super::Persistence>,
 ) {
+    if persistence.frozen() {
+        return;
+    }
     let game = session.0.session();
     if let Some(n) = ticks_to_request(game.phase(), game.status(), *speed, in_flight.0) {
-        commands.write(PlayerCommand(Command::AdvanceTicks { n }));
+        commands.write(PlayerCommand(Command::AdvanceTicks { n }, generation.0));
         in_flight.0 = true;
     }
 }

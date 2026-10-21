@@ -226,7 +226,10 @@ fn continue_finishes_the_review_through_the_real_pass() {
 
     assert_eq!(
         sent::<PlayerCommand>(&app)[before..],
-        [PlayerCommand(Command::FinishReview)]
+        [PlayerCommand(
+            Command::FinishReview,
+            app.world().resource::<game::sim::SessionGeneration>().0
+        )]
     );
     update_n(&mut app, 2);
     assert_eq!(phase(&app), PhaseState::Planning);

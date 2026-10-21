@@ -133,6 +133,32 @@ first frame (a B0002 conflict, a missing egui schedule) shows here first. It is 
 [playtest checklist](docs/superpowers/plans/2026-10-19-plan-2-playtest.md), which covers what only a
 person can see.
 
+## Save/resume and client preferences
+
+- `application/tests/save_resume.rs` compares full checkpoints, public views and every projection
+  after restore and continuation, including retained history after mid-run recording failure,
+  year-end regulation, construction and terminal Review. Prefix/continuation invariants use
+  property tests; rejected commands leave the capture unchanged.
+- `infrastructure/tests/save_{codec,store,compatibility}.rs` cover self-contained files, exact
+  payload checksums, explicit size/version/build/platform failures, build fingerprint inputs,
+  actual disk bytes across publication faults, OS-lock contention, revisions and recovery without
+  parent saves/logs/installed regions. Directory-sync uncertainty is distinct from rollback.
+- `tests/game/save_resume.rs` covers queued ticks, generation rejection, paused load entry,
+  month-close versus Save-and-menu ordering, independent storage errors, Retry and real egui
+  dialogs. The normal HUD contrast checker also inspects the new modal's paint output.
+- `infrastructure/tests/client_preferences.rs` and `tests/game/preferences.rs` cover isolated
+  preference files, restart, real sidebar/bottom-panel drags, zoom/speed, normal-exit flushing and
+  property-tested reachable geometry. Tests never write the player's real preferences.
+
+`tests/game/world.rs` starts Plan 3 coverage: finite indexed terrain, face winding, complete
+cell tops, water/height placement, half-open cell picking and identical geometry across resource
+colours for both shipped regions. This is CPU-only; no world rendering is integrated yet.
+
+Focused runs: `cargo nextest run -p application save_resume`,
+`cargo nextest run -p infrastructure save_`, `cargo nextest run -p game save_resume`, and
+`cargo nextest run -p game preferences`. Native checks must also exercise actual launch, OS close,
+load, pause, month close, overwrite and resizing with a separate `--save-dir` and `--log-dir`.
+
 ## Property catalogue
 
 The invariants the property tests must cover:

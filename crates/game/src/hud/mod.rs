@@ -36,7 +36,9 @@ mod ramp_warnings;
 mod region_atlas;
 mod review;
 pub use region_atlas::RegionAtlas;
+mod saves;
 mod selection;
+pub use saves::{SaveForm, SaveRowModel, SavesModel, draw_saves, save_error, saves_model};
 mod speed;
 mod supply_chart;
 mod tariff;
@@ -202,6 +204,18 @@ impl Plugin for HudPlugin {
             .init_resource::<PlantPanelForm>()
             .init_resource::<ToastQueue>()
             .init_resource::<HudArea>()
+            .init_resource::<SaveForm>()
+            .init_resource::<saves::PersistenceShown>()
+            .add_systems(
+                EguiPrimaryContextPass,
+                saves::snapshot.in_set(HudSet::Begin),
+            )
+            .add_systems(
+                EguiPrimaryContextPass,
+                saves::saves_overlay
+                    .in_set(HudSet::Overlays)
+                    .run_if(resource_exists::<Localizer>),
+            )
             .insert_resource(MenuForm::new(default_seed()))
             .configure_sets(
                 EguiPrimaryContextPass,
@@ -222,6 +236,7 @@ impl Plugin for HudPlugin {
                 OnEnter(AppState::InGame),
                 (
                     selection::reset_selection,
+                    saves::reset_form,
                     map::reset_layer,
                     map::reset_legend,
                     map::reset_cache,
@@ -240,6 +255,7 @@ impl Plugin for HudPlugin {
                 (
                     menu::reseed_menu,
                     selection::reset_selection,
+                    saves::reset_form,
                     map::reset_layer,
                     map::reset_legend,
                     map::reset_cache,
@@ -306,14 +322,18 @@ impl Plugin for HudPlugin {
                                 .and_then(has_l10n)
                                 .and_then(in_phase(DayPhase::Operating)),
                         ),
-                    review::review_modal.in_set(HudSet::Overlays).run_if(
-                        in_game
-                            .clone()
-                            .and_then(has_l10n)
-                            .and_then(in_phase(DayPhase::Review)),
-                    ),
+                    review::review_modal
+                        .in_set(HudSet::Overlays)
+                        .run_if(saves::other_overlays)
+                        .run_if(
+                            in_game
+                                .clone()
+                                .and_then(has_l10n)
+                                .and_then(in_phase(DayPhase::Review)),
+                        ),
                     milestones::milestones_overlay
                         .in_set(HudSet::Overlays)
+                        .run_if(saves::other_overlays)
                         .run_if(
                             in_game
                                 .clone()
@@ -322,9 +342,11 @@ impl Plugin for HudPlugin {
                         ),
                     game_over::game_over_modal
                         .in_set(HudSet::Overlays)
+                        .run_if(saves::other_overlays)
                         .run_if(in_game.and_then(has_l10n)),
                     prompt::prompt_overlay
                         .in_set(HudSet::Overlays)
+                        .run_if(saves::other_overlays)
                         .run_if(has_l10n.and_then(|open: Res<OpenPrompt>| open.0.is_some())),
                     toasts::toasts_overlay
                         .in_set(HudSet::Overlays)

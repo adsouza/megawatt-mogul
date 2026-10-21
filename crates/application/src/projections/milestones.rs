@@ -55,13 +55,13 @@ const SEASON_MONTHS: u32 = 3;
 const MW_PER_GW: f64 = 1_000.0;
 
 /// A run of strike-free closed months within one season.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct StrikeFreeRun {
     season: Season,
     months: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MilestoneProjection {
     /// In the order reached, each with the month it was reached in.
     reached: Vec<(MilestoneKind, SimMonth)>,

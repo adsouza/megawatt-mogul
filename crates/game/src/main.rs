@@ -2,7 +2,9 @@
 
 use bevy::prelude::*;
 use game::GamePlugins;
-use game::paths::{AssetRoot, CliArgs, CliError, ExitAfterFrames, LogDir, resolve_asset_root};
+use game::paths::{
+    AssetRoot, CliArgs, CliError, ExitAfterFrames, LogDir, SaveDir, resolve_asset_root,
+};
 use game::window::{MIN_WINDOW_SIZE, WindowSizingPlugin};
 
 fn main() -> AppExit {
@@ -15,12 +17,14 @@ fn main() -> AppExit {
     };
 
     let log_dir = LogDir(args.log_dir());
+    let save_dir = SaveDir(args.save_dir());
     let exit_after_frames = args.exit_after_frames;
     let asset_root = AssetRoot(resolve_asset_root(args.assets));
 
     let mut app = App::new();
     app.insert_resource(asset_root)
         .insert_resource(log_dir)
+        .insert_resource(save_dir)
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Megawatt Mogul".into(),

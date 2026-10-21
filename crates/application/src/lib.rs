@@ -4,13 +4,17 @@
 //! and the `Game` service), the read-side projections, and the ports that
 //! adapters implement.
 
+pub mod checkpoint;
 pub mod command;
 pub mod error;
 pub mod game;
 pub mod pipeline;
 pub mod ports;
 pub mod projections;
+pub mod save;
+pub use save::*;
 
+pub use checkpoint::{CheckpointSummary, GameCheckpoint, RestoreError};
 pub use command::{Command, CommandHandler};
 pub use error::{CommandError, ReplayError};
 pub use game::{Game, auto_select_region, replay};

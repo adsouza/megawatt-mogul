@@ -7,9 +7,11 @@
 pub mod hud;
 pub mod l10n;
 pub mod paths;
+pub mod preferences;
 pub mod sim;
 pub mod state;
 pub mod window;
+pub mod world;
 
 use bevy::app::{PluginGroup, PluginGroupBuilder};
 use bevy_egui::EguiPlugin;
@@ -42,5 +44,6 @@ impl PluginGroup for GamePlugins {
             .add_group(CorePlugins)
             .add(EguiPlugin::default())
             .add(HudPlugin)
+            .add(preferences::PreferencesPlugin)
     }
 }

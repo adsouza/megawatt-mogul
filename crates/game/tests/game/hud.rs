@@ -591,7 +591,10 @@ fn the_shortfall_prompt_opens_and_confirms_through_dispatch() {
     dispatch_in(&mut app, vec![start]);
     assert_eq!(
         sent::<PlayerCommand>(&app)[before..],
-        [PlayerCommand(Command::BeginOperating)]
+        [PlayerCommand(
+            Command::BeginOperating,
+            app.world().resource::<game::sim::SessionGeneration>().0
+        )]
     );
     // The frame that applies it begins the day and closes the prompt.
     app.update();

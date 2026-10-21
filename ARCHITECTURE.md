@@ -83,7 +83,29 @@ Replay verifies versions and fingerprints before executing commands and uses the
 shipped data changes. A rules change still needs a matching engine or a future explicit migration.
 Event sourcing would force every domain event to be a stable, versioned persistence format, which
 fights the goal of keeping the domain free to change. Commands are the smaller, more stable surface.
-Save/load and replays build on the log in a later milestone.
+`Game` also retains its original header/region bytes and every accepted command, independently of
+that best-effort recording. `checkpoint()` captures a pure boundary with count, hash and summary.
+Restoration replays the original command batches through `CoreHandler`, applying projections
+against each batch's resulting session. It verifies the boundary, seeds a fresh branch recording
+exactly once, and returns a runnable candidate. Refused commands never enter the journal.
+
+`SaveStore` is an application-owned port. Infrastructure packages one complete prefix and region
+into a checksummed/versioned RON envelope, verifies build/platform compatibility, and owns atomic
+publication. A per-slot OS lock protects revision checks and same-directory temporary-file
+replacement. File and directory synchronisation precede a success receipt; post-publication sync
+failure returns the new revision as `DurabilityUnconfirmed`, not a claim of rollback.
+
+The game's persistence coordinator freezes producers, drains admitted commands and captures manual
+saves after application. Autosaves capture inside the funnel at the individual `MonthClosed`
+command, before later queued commands. Remaining commands are retained in an owned queue with a
+session generation. Workers carry tokens/cancellation; only verified, current results can install a
+candidate or fulfil Save-and-menu. Resume stays paused until phase-entry hooks have settled. A
+resumed branch gets a fresh run ID, diagnostic log and automatic slot.
+
+`PreferencesPlugin` retains window/layout/zoom/speed independently in `preferences.ron`. It observes
+actual native/egui geometry, writes changed snapshots on a worker and flushes the latest one on
+normal exit. No preference is a simulation input. Headless tests inject paths and can omit the
+plugin; there is no ambient working-directory write from `CorePlugins`.
 
 ## Determinism rules
 
@@ -237,13 +259,15 @@ opaque backings to bar hover labels; map text uses the same backing helper. Text
 | `AppStatePlugin` | `AppState` (`Boot` → `MainMenu` → `RegionSelect` → `InGame`), the `PhaseState` sub-state and the boot checklist. |
 | `LocalizationPlugin` | Loads the en-US Fluent files into the `Localizer` resource. |
 | `SimulationPlugin` | The bridge: the `Session(Game)` resource, the region `Catalog`, new games, the command funnel, the phase mirror and the fixed-step driver. |
+| `PreferencesPlugin` | Retained window geometry, zoom, running speed and panel/tool layout; separate from game checkpoints. |
 | `HudPlugin` | Every egui panel, toast, prompt and modal, plus its non-egui glue (listing regions, collecting toasts, resetting HUD state between games). |
 
 `CorePlugins` groups the first three. They need no window or renderer, so the tests run them on
-`MinimalPlugins` plus `StatesPlugin`. `GamePlugins` adds `EguiPlugin` and `HudPlugin`, and
+`MinimalPlugins` plus `StatesPlugin`. `GamePlugins` adds `EguiPlugin`, `HudPlugin` and `PreferencesPlugin`, and
 `main.rs` puts it on `DefaultPlugins` with a 1024×640 minimum window, plus `WindowSizingPlugin`
 (`window.rs`). Bevy 0.20 spawns the `Monitor` entities only once the winit event loop runs, so
-that plugin waits for the `PrimaryMonitor`, sizes the window once to `opening_size` (80% of the
+that plugin waits for monitors and preference loading. It restores reachable saved geometry if
+available; otherwise it sizes the window once to `opening_size` (80% of the
 monitor's logical size, clamped between the minimum window and the monitor) centred on it, and
 then never runs again, so the player's own resize wins.
 
@@ -299,7 +323,7 @@ click ─▶ draw_<panel> ─▶ Vec<UiAction> ─▶ dispatch ─┬─▶ HUD 
 - At 1× a 1,440-tick day takes 6 real minutes; at 8×, 45 seconds.
 - Small batches keep the projections timely (ruling R22 judges ramp warnings by a batch's end
   state).
-- The speed goes to `X1` on entering Operating and to `Paused` on leaving it, so the month close
+- The speed uses the remembered running preference (initially `X1`) on entering Operating and to `Paused` on leaving it, so the month close
   (which ends the batch it falls in) leaves the day paused in Review.
 
 ### The presenter pattern

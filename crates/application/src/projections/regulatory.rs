@@ -11,7 +11,7 @@ use domain::session::GameSession;
 use super::Projection;
 
 /// The regulator's events of the latest closed month, in the order issued.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct RegulatoryProjection {
     latest: Vec<DomainEvent>,
     /// Issued since the last month closed: they belong to the month closing.

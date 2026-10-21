@@ -81,7 +81,9 @@ fn start_game(app: &mut App, region: &str, seed: u64) {
 
 fn send(app: &mut App, commands: impl IntoIterator<Item = Command>) {
     for command in commands {
-        app.world_mut().write_message(PlayerCommand(command));
+        let generation = app.world().resource::<game::sim::SessionGeneration>().0;
+        app.world_mut()
+            .write_message(PlayerCommand(command, generation));
     }
 }
 

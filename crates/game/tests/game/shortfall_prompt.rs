@@ -186,7 +186,10 @@ fn start_the_day_on_a_short_forecast_asks_and_each_answer_does_what_it_says() {
         click_button(&pass, &mut app, &widgets, "Start anyway");
         assert_eq!(
             sent::<PlayerCommand>(&app)[before..],
-            [PlayerCommand(Command::BeginOperating)],
+            [PlayerCommand(
+                Command::BeginOperating,
+                app.world().resource::<game::sim::SessionGeneration>().0
+            )],
             "{region}: exactly one BeginOperating"
         );
         // The frames of the change, unsettled: the domain moves first, then the mirror.

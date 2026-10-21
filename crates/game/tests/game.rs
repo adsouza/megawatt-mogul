@@ -31,10 +31,14 @@ mod operating_side;
 mod panel_resize;
 #[path = "game/phase_change.rs"]
 mod phase_change;
+#[path = "game/preferences.rs"]
+mod preferences;
 #[path = "game/region_picker.rs"]
 mod region_picker;
 #[path = "game/review_smoke.rs"]
 mod review_smoke;
+#[path = "game/save_resume.rs"]
+mod save_resume;
 #[path = "game/shortfall_prompt.rs"]
 mod shortfall_prompt;
 #[path = "game/simulation.rs"]
@@ -45,3 +49,6 @@ mod states;
 mod supply_chart;
 #[path = "game/support/mod.rs"]
 mod support;
+
+#[path = "game/world.rs"]
+mod world;

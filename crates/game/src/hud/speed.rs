@@ -35,8 +35,11 @@ impl Default for LastSpeed {
     }
 }
 
-pub(super) fn reset_last_speed(mut last: ResMut<LastSpeed>) {
-    *last = LastSpeed::default();
+pub(super) fn reset_last_speed(
+    mut last: ResMut<LastSpeed>,
+    settings: Option<Res<crate::preferences::ClientSettings>>,
+) {
+    *last = LastSpeed(settings.map_or(SimSpeed::X1, |s| s.speed()));
 }
 
 #[derive(Debug, Clone, PartialEq)]

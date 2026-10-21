@@ -180,7 +180,7 @@ fn magnitude(money: Money) -> Money {
 }
 
 /// The lessons of the latest closed month.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct LessonsProjection {
     latest: Vec<Lesson>,
 }

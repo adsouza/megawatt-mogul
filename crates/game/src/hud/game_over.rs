@@ -50,6 +50,7 @@ pub struct GameOverModel {
     /// Opens the final month's review. `None` when there is no monthly report to show.
     pub see_month: Option<ButtonModel>,
     pub main_menu: ButtonModel,
+    pub save: ButtonModel,
 }
 
 /// The modal, while the game is over; `None` while it is still running.
@@ -98,7 +99,14 @@ pub fn game_over_model_for(
         ),
         see_month: has_report
             .then(|| ButtonModel::new(l10n.text("game-over-see-month"), UiAction::ShowFinalMonth)),
-        main_menu: ButtonModel::new(l10n.text("game-over-main-menu"), UiAction::ReturnToMenu),
+        save: ButtonModel::new(
+            l10n.text("save-title"),
+            UiAction::Persistence(crate::sim::PersistAction::OpenSave { leave: false }),
+        ),
+        main_menu: ButtonModel::new(
+            l10n.text("game-over-main-menu"),
+            UiAction::Persistence(crate::sim::PersistAction::OpenLeave),
+        ),
     }
 }
 
@@ -125,6 +133,7 @@ pub fn draw_game_over(ui: &mut egui::Ui, model: &GameOverModel) -> Vec<UiAction>
         if let Some(see_month) = &model.see_month {
             button(ui, see_month, &mut actions);
         }
+        button(ui, &model.save, &mut actions);
         button(ui, &model.main_menu, &mut actions);
     });
     actions
@@ -182,7 +191,10 @@ mod tests {
                 model.satisfaction.value,
                 format::score(company.satisfaction)
             );
-            assert_eq!(model.main_menu.action, UiAction::ReturnToMenu);
+            assert_eq!(
+                model.main_menu.action,
+                UiAction::Persistence(crate::sim::PersistAction::OpenLeave)
+            );
         }
         assert_eq!(l10n.problems(), vec![]);
     }

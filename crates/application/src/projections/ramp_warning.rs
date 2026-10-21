@@ -47,7 +47,7 @@ pub fn ramp_warning(
 /// The forecast and fleet are read from the session as it stands after the
 /// command, so a command that runs many ticks at once judges the fleet by
 /// where it ended up.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct RampWarningProjection {
     current: Option<RampWarning>,
 }

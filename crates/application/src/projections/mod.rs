@@ -37,7 +37,7 @@ pub trait Projection {
 }
 
 /// Every read model of a running game.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Projections {
     pub timeline: TimelineProjection,
     pub monthly_reports: MonthlyReportProjection,

@@ -33,7 +33,7 @@ impl PlantHistory {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PlantHistoryProjection {
     plants: BTreeMap<PlantId, PlantHistory>,
     /// The tariff in force for the month about to close.
