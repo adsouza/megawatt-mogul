@@ -48,9 +48,10 @@ pub struct FileSaveStore {
     /// not yet succeeded. A later write, Retry included, syncs them before it reports success.
     ///
     /// The set is per store instance and in memory: a restart loses it, and a second
-    /// `FileSaveStore` on the same root doesn't inherit it. That is enough, because an uncertain
-    /// receipt is only ever confirmed by a later sync on the same instance, and the game holds one
-    /// store per session.
+    /// `FileSaveStore` on the same root doesn't inherit it. So directories created by an earlier
+    /// process that crashed or quit may still be unsynced when a later process reports a durable
+    /// receipt. That gap is negligible in practice, because filesystem journals commit within
+    /// seconds.
     pending: Mutex<BTreeSet<PathBuf>>,
 }
 impl FileSaveStore {

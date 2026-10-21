@@ -103,9 +103,11 @@ pub fn visuals() -> egui::Visuals {
 
 /// The look of a control that can't be used now, derived from the enabled `visuals`: a button has
 /// no fill of its own, so it shows the surface it sits on, and a thin outline in the enabled fill's
-/// colour; a slider's rail and handle, a checkbox's box, take the faint fill; text is muted. In egui 0.36 a disabled button still senses clicks, so without this it paints with
-/// the enabled idle look. Every state gets the same look, as a disabled control has none of its
-/// own. The muted text meets the minimum on every HUD surface (`contrast.rs`).
+/// colour; a selected toggle's fill is dimmed; a slider's rail and handle, a checkbox's box, take
+/// the faint fill; text is muted. In egui 0.36 a disabled button still senses clicks, so without
+/// this it paints with the enabled idle look. Every state gets the same look, as a disabled
+/// control has none of its own. The muted text meets the minimum on every HUD surface
+/// (`contrast.rs`).
 pub fn disabled_visuals(visuals: &egui::Visuals) -> egui::Visuals {
     let mut v = visuals.clone();
     let text = v.weak_text_color();
