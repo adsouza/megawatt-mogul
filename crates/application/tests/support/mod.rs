@@ -235,6 +235,8 @@ pub fn overreach() -> RegionDefinitionParts {
         .find(|city| city.id == CityId(3))
         .expect("tiny region has city 3");
     city.base_load = domain::units::Megawatts::new(2_500.0);
+    // Five whole cells from the home city: keep the scenario's three-month line build.
+    city.cell = CellCoord { x: 2, y: 2 };
     parts
 }
 

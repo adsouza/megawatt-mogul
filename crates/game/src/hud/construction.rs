@@ -33,7 +33,7 @@ pub enum Project {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConstructionRow {
     pub project: Project,
-    /// `Gas peaker 12`, or `Line 9: Pittsburgh to Substation`.
+    /// `Gas peaker 12`, or `Line 9: Pittsburgh to Columbus`.
     pub name: String,
     pub months_left: u32,
     /// The whole build time, in months.

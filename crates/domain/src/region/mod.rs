@@ -60,8 +60,8 @@ pub enum RegionError {
         cell: CellCoord,
         reason: SiteError,
     },
-    #[error("start substation is not on land")]
-    SubstationNotOnLand,
+    #[error("home city {0:?} is not a connected starting city")]
+    InvalidHomeCity(CityId),
     #[error("invalid shape for {field}")]
     InvalidShape { field: &'static str },
     #[error("invalid band for {field}")]
@@ -241,8 +241,10 @@ fn validate_start(
     cities: &[CityDef],
     start: &StartDef,
 ) -> Result<(), RegionError> {
-    if !is_land(terrain, start.substation) {
-        return Err(RegionError::SubstationNotOnLand);
+    if !cities.iter().any(|city| city.id == start.home_city)
+        || !start.connected_cities.contains(&start.home_city)
+    {
+        return Err(RegionError::InvalidHomeCity(start.home_city));
     }
     for id in &start.connected_cities {
         if !cities.iter().any(|c| c.id == *id) {
@@ -488,8 +490,8 @@ mod tests {
                 RegionError::UnknownStartCity(CityId(99)),
             ),
             (
-                |p| p.start.substation = CellCoord { x: 0, y: 0 },
-                RegionError::SubstationNotOnLand,
+                |p| p.start.home_city = CityId(99),
+                RegionError::InvalidHomeCity(CityId(99)),
             ),
             (
                 |p| p.demand.monthly[3] = 0.0,
@@ -1082,8 +1084,7 @@ mod tests {
         // catalog, then cities, then start, then shapes, then bands.
         let bad_band = |p: &mut RegionDefinitionParts| p.regulator.min_return = Ratio::ONE;
         let bad_shape = |p: &mut RegionDefinitionParts| p.demand.winter[0] = 0.0;
-        let bad_start =
-            |p: &mut RegionDefinitionParts| p.start.substation = CellCoord { x: 0, y: 0 };
+        let bad_start = |p: &mut RegionDefinitionParts| p.start.home_city = CityId(99);
         let bad_city = |p: &mut RegionDefinitionParts| p.cities[0].cell = CellCoord { x: 50, y: 4 };
         let bad_catalog = |p: &mut RegionDefinitionParts| {
             p.catalog.pop();
@@ -1105,7 +1106,7 @@ mod tests {
         );
         assert_eq!(
             err(&bad_shape, &bad_start),
-            RegionError::SubstationNotOnLand
+            RegionError::InvalidHomeCity(CityId(99))
         );
         assert_eq!(
             err(&bad_start, &bad_city),
@@ -1115,5 +1116,20 @@ mod tests {
             err(&bad_city, &bad_catalog),
             RegionError::MissingPlantSpec(PlantKind::Hydro)
         );
+    }
+    proptest::proptest! {
+        #[test]
+        fn home_city_must_exist_and_be_connected(home in 0u32..5, mask in 0u8..8) {
+            let mut parts = fixtures::tiny_region_parts();
+            parts.start.home_city = CityId(home);
+            parts.start.connected_cities = (1..=3).filter(|id| mask & (1 << (id - 1)) != 0).map(CityId).collect();
+            let expected = parts.start.connected_cities.contains(&CityId(home));
+            let result = RegionDefinition::try_from(parts);
+            if expected {
+                proptest::prop_assert!(result.is_ok());
+            } else {
+                proptest::prop_assert_eq!(result.unwrap_err(), RegionError::InvalidHomeCity(CityId(home)));
+            }
+        }
     }
 }

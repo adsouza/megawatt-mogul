@@ -443,7 +443,7 @@ mod tests {
         let node = s.power.plant(built).unwrap().node();
         s.power
             .network_mut()
-            .add_line(LineId(900), node, s.substation, LineStatus::InService)
+            .add_line(LineId(900), node, s.anchor, LineStatus::InService)
             .unwrap();
         assert_eq!(s.check_invariants(), Ok(()));
         // Commissioned (online) but unconnected: not live either.

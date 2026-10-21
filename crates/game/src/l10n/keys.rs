@@ -90,7 +90,6 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "build-line-cancel",
     "build-line-cells",
     "build-cells-value",
-    "name-substation",
     "name-node-unknown",
     // Planning: tariff, commitments and forecast
     "tariff-title",

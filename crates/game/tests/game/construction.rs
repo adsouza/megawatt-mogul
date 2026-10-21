@@ -72,9 +72,7 @@ fn clickable_site(app: &App, widgets: &[Widget]) -> CellCoord {
 /// The quickest line from a city the start leaves unconnected.
 fn short_line(app: &App) -> (NodeId, NodeId) {
     let session = session(app);
-    let nodes: Vec<NodeId> = std::iter::once(session.substation())
-        .chain(session.city_views().iter().map(|c| c.node))
-        .collect();
+    let nodes: Vec<NodeId> = session.city_views().iter().map(|c| c.node).collect();
     let (_, from, to) = session
         .city_views()
         .iter()

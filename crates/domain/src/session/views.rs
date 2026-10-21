@@ -24,7 +24,7 @@ pub struct PlantView {
     pub status: PlantStatus,
     pub output: Megawatts,
     pub auto_follow: bool,
-    /// Whether the plant's node is energised from the substation.
+    /// Whether the plant's node is energised from the home city.
     pub connected: bool,
     pub commitment: [bool; 24],
     pub hydro_budget: Option<MegawattHours>,

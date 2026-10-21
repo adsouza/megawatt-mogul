@@ -403,8 +403,8 @@
         year: 2027,
         month: 1,
         cash_usd: 3000000000,
-        // A mid-Columbia hub near the Tri-Cities, between the three cities.
-        substation: (-119.5, 46.3),
+        // Seattle anchors the starting service territory.
+        home_city: 15,
         connected_cities: [15, 16, 17],
         fleet: [
             // Hydro: Grand Coulee, Chief Joseph and John Day.

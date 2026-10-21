@@ -44,7 +44,7 @@ first. Steps that need a fresh game say so; the others follow on from the step b
   covers no city or plant, usually the top right; at 1280×720 it shows in Eastern Planning, for
   instance. Only when every corner would hide a mark is it collapsed (at 1024×640 in Planning,
   for instance). It lists the six plant kinds by colour swatch, connected and unconnected cities,
-  the substation and the two under-construction marks. A click on the legend selects
+  and the two under-construction marks. A click on the legend selects
   nothing. Click *Legend*: it closes; click again: it opens, in the clear corner or else the top
   right. Drag every panel to its maximum: the legend drops to two columns and stays inside the
   map. Start the day: the legend stays as you left it in Operating and the next month's planning.

@@ -192,14 +192,14 @@ pub struct LinesDto {
     pub book_life_months: u32,
 }
 
-/// The starting scenario. Points are (lon, lat); `mapping` snaps them to cells.
+/// The starting scenario. The home city is an id; fleet points are (lon, lat).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StartDto {
     pub year: i32,
     pub month: u8,
     pub cash_usd: i64,
-    pub substation: (f64, f64),
+    pub home_city: u32,
     pub connected_cities: Vec<u32>,
     pub fleet: Vec<(PlantKindDto, f64, f64)>,
 }

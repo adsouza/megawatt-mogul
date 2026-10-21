@@ -434,7 +434,7 @@ proptest! { #[test] fn year_has_365_or_366_days(y in 1900i32..2400) {
     `{ starting: f64, reliability_floor: Ratio, price_sensitivity: f64, smoothing: Ratio }`.
   - **`LineParams`**: `{ cost_per_cell: Money, cells_per_month: u32, book_life_months: u32 }`.
   - **`StartPlantDef { kind, cell }`** and
-    **`StartDef { month: SimMonth, cash: Money, substation: CellCoord, connected_cities: Vec<CityId>, fleet: Vec<StartPlantDef> }`**.
+    **`StartDef { month: SimMonth, cash: Money, home_city: CityId, connected_cities: Vec<CityId>, fleet: Vec<StartPlantDef> }`**.
   - **`RegionDefinitionParts`**:
     `{ id: RegionId, name_key: String, terrain, catalog: Vec<PlantSpec>, cities: Vec<CityDef>, demand, solar, hydro, frequency, regulator, satisfaction, lines, start }`.
   - **`RegionDefinition`** (private fields), with `impl TryFrom<RegionDefinitionParts, Error = RegionError>`.
@@ -444,7 +444,7 @@ proptest! { #[test] fn year_has_365_or_366_days(y in 1900i32..2400) {
   - **`enum RegionError`**: `GridSizeMismatch { expected: usize, actual: usize }`,
     `MissingPlantSpec(PlantKind)`, `DuplicatePlantSpec(PlantKind)`, `CityOutOfBounds(CityId)`,
     `CityNotOnLand(CityId)`, `DuplicateCity(CityId)`, `UnknownStartCity(CityId)`,
-    `InvalidStartSite { kind, cell, reason: SiteError }`, `SubstationNotOnLand`,
+    `InvalidStartSite { kind, cell, reason: SiteError }`, `InvalidHomeCity(CityId)`,
     `InvalidShape { field: &'static str }` (non-finite or non-positive demand, solar or hydro
     factors), `InvalidBand { field: &'static str }` (`min_return > max_return`, or `base_return`
     outside it).
@@ -460,7 +460,7 @@ proptest! { #[test] fn year_has_365_or_366_days(y in 1900i32..2400) {
     CCGT $600,000, peaker $170,000, solar $500,000, hydro $2,700,000. Siting: nuclear and coal
     `CoolingWater { min: 0.5 }`, hydro `HydroSite { min: 0.5 }`, the rest `Anywhere`.
   - Cities: id 1 at (6, 4) with 600 MW, id 2 at (8, 6) with 400 MW, id 3 at (3, 2) with 300 MW.
-  - Start: month 2027-04, cash $2,000,000,000, substation at (7, 4), connected cities [1, 2], fleet
+  - Start: month 2027-04, cash $2,000,000,000, home city 1 at (6, 4), connected cities [1, 2], fleet
     of coal at (7, 3), CCGT at (8, 4) and peaker at (6, 5).
   - Demand: `shoulder = [0.70,0.66,0.64,0.63,0.64,0.68,0.76,0.85,0.90,0.92,0.93,0.94,0.94,0.94,0.95,0.96,0.98,1.00,0.99,0.96,0.91,0.85,0.78,0.73]`.
     `summer` is `shoulder` × 1.15 for hours 10–19 (otherwise unchanged). `winter` is `shoulder` ×
@@ -492,7 +492,7 @@ proptest! { #[test] fn year_has_365_or_366_days(y in 1900i32..2400) {
         (|p| p.cities[0].cell = CellCoord { x: 0, y: 4 }, RegionError::CityNotOnLand(CityId(1))),
         (|p| p.cities[0].cell = CellCoord { x: 50, y: 4 }, RegionError::CityOutOfBounds(CityId(1))),
         (|p| p.start.connected_cities.push(CityId(99)), RegionError::UnknownStartCity(CityId(99))),
-        (|p| p.start.substation = CellCoord { x: 0, y: 0 }, RegionError::SubstationNotOnLand),
+        (|p| p.start.home_city = CityId(99), RegionError::InvalidHomeCity(CityId(99))),
         (|p| p.demand.monthly[3] = 0.0, RegionError::InvalidShape { field: "demand.monthly" }),
         (|p| p.regulator.min_return = Ratio::new(0.2).unwrap(), RegionError::InvalidBand { field: "regulator.return" }),
     ];
@@ -769,11 +769,11 @@ proptest! { #[test] fn clearness_is_clamped(seed in any::<u64>()) {
 
 **Interfaces:**
 - Produces:
-  - **`enum NodeKind { Substation, Plant(PlantId), City(CityId) }`** and **`Node { kind, cell }`**.
+  - **`enum NodeKind { Plant(PlantId), City(CityId) }`** and **`Node { kind, cell }`**.
   - **`enum LineStatus { UnderConstruction { months_left: u32 }, InService }`**.
   - **`Line { id, from: NodeId, to: NodeId, status, length_cells: f64 }`**.
   - **`Network`** (private fields), with methods:
-    - `new(root: NodeId, root_cell: CellCoord)` and `add_node(id, node)`.
+    - `new(root: NodeId, node: Node)` and `add_node(id, node)`.
     - `add_line(id, from, to, status) -> Result<(), DomainError>`.
     - `advance_construction() -> Vec<LineId>`, which returns the newly commissioned lines and
       recomputes connectivity.
@@ -1147,9 +1147,9 @@ proptest! {
     both `Default` (copper plate).
   - **`GameSession`** (`Debug`):
     - `new(region: Arc<RegionDefinition>, seed: u64, settings: GameSettings) -> GameSession`.
-      This creates a substation root node and one node per city, with an in-service line from the
-      substation to each start-connected city. Each start fleet plant is commissioned on the start
-      month with an in-service line to the substation. Phase is `Planning`, and the company starts
+      This uses the home city's existing node as root, with one node per city and an in-service
+      line from the home city to each other start-connected city. Each start fleet plant is
+      commissioned on the start month with an in-service line to the home city. Phase is `Planning`, and the company starts
       with the start cash.
     - `build_plant(&mut self, kind, cell) -> Result<(PlantId, Vec<DomainEvent>), DomainError>`
       (Planning only). It runs `site_check`, creates the plant `UnderConstruction { build_months }`
@@ -1636,7 +1636,7 @@ Expected: PASS, with 4 snapshot files committed.
     - `cities: Vec<CityDto { id: u32, name_key, lon, lat, base_load_mw }>`;
     - `demand`, `solar`, `hydro`, `frequency`, `regulator`, `satisfaction`, `lines`: mirror the
       domain params, with money as integer USD (`*_usd: i64`) and frequency as `*_hz: f64`;
-    - `start: StartDto { year: i32, month: u8, cash_usd: i64, substation: (f64, f64), connected_cities: Vec<u32>, fleet: Vec<(PlantKindDto, f64, f64)> }`.
+    - `start: StartDto { year: i32, month: u8, cash_usd: i64, home_city: u32, connected_cities: Vec<u32>, fleet: Vec<(PlantKindDto, f64, f64)> }`.
   - **`fn rasterize(file: &RegionFile) -> TerrainGrid`**.
     - The cell centre is `lon = west + (x + 0.5) / width × (east − west)` and
       `lat = north − (y + 0.5) / height × (north − south)`.

@@ -183,9 +183,8 @@ impl LineMarker {
 pub struct MapObjects {
     pub plants: Vec<PlantMarker>,
     pub cities: Vec<CityMarker>,
-    pub substation: CellCoord,
     pub lines: Vec<LineMarker>,
-    /// The cell of every network node: the substation, each city and each plant.
+    /// The cell of every network node: each city and each plant.
     pub nodes: BTreeMap<NodeId, CellCoord>,
 }
 
@@ -193,8 +192,7 @@ impl MapObjects {
     /// The markers of `game`, read through `GameSession`'s queries.
     pub fn of(game: &Game) -> Self {
         let session = game.session();
-        let substation = session.region().start().substation;
-        let mut nodes = BTreeMap::from([(session.substation(), substation)]);
+        let mut nodes = BTreeMap::new();
         let plants: Vec<PlantMarker> = session
             .plant_views()
             .into_iter()
@@ -240,7 +238,6 @@ impl MapObjects {
         Self {
             plants,
             cities,
-            substation,
             lines,
             nodes,
         }
@@ -360,7 +357,7 @@ pub fn kind_color(kind: PlantKind) -> Rgb {
     }
 }
 
-/// The ink of outlines and letters, and the fills of the city and substation marks. The legend
+/// The ink of outlines and letters, and the fills of the city marks. The legend
 /// draws the same.
 const INK: Color32 = Color32::from_rgb(20, 22, 28);
 const CITY: Color32 = Color32::from_rgb(255, 236, 160);
@@ -369,10 +366,6 @@ const IN_SERVICE_LINE: Color32 = Color32::from_rgb(255, 230, 120);
 const DASHED_LINE: Color32 = Color32::from_rgb(200, 200, 210);
 /// The legend's under-construction square: no kind in particular, faded as the map fades it.
 const UNBUILT: Color32 = Color32::from_rgb(200, 200, 210);
-/// A months-left label's text, and the backing that keeps it legible on any terrain.
-const LABEL_TEXT: Color32 = Color32::WHITE;
-const LABEL_BACKING: Color32 = Color32::from_rgba_premultiplied(0, 0, 0, 170);
-
 /// The smallest letter worth drawing, in points. Under it the square is drawn plain: kind reads by
 /// colour (see the legend), and a smaller letter would only be a smudge.
 pub const GLYPH_MIN_FONT: f32 = 9.0;
@@ -568,7 +561,6 @@ pub enum LegendSwatch {
     Plant(PlantKind),
     ConnectedCity,
     UnconnectedCity,
-    Substation,
     /// A faded plant square.
     PlantUnderConstruction,
     /// A dashed line.
@@ -581,7 +573,7 @@ pub struct LegendEntry {
     pub label: String,
 }
 
-/// The six kinds of plant, then the city marks, the substation and the under-construction marks.
+/// The six kinds of plant, then the city marks and the under-construction marks.
 fn legend_entries(l10n: &Localizer) -> Vec<LegendEntry> {
     let entry = |swatch, label: String| LegendEntry { swatch, label };
     PlantKind::ALL
@@ -596,7 +588,6 @@ fn legend_entries(l10n: &Localizer) -> Vec<LegendEntry> {
                 LegendSwatch::UnconnectedCity,
                 l10n.text("legend-city-unconnected"),
             ),
-            entry(LegendSwatch::Substation, l10n.text("name-substation")),
             entry(
                 LegendSwatch::PlantUnderConstruction,
                 l10n.text("legend-plant-under-construction"),
@@ -969,22 +960,10 @@ fn paint_swatch(ui: &mut egui::Ui, swatch: LegendSwatch) {
                 2.0,
             ));
         }
-        LegendSwatch::Substation => {
-            painter.add(egui::Shape::convex_polygon(
-                vec![
-                    centre + vec2(0.0, -6.0),
-                    centre + vec2(6.0, 0.0),
-                    centre + vec2(0.0, 6.0),
-                    centre + vec2(-6.0, 0.0),
-                ],
-                Color32::WHITE,
-                Stroke::new(1.0, INK),
-            ));
-        }
     }
 }
 
-/// Lines, then the substation, cities and plants on top, in the order a click prefers them, then
+/// Lines, then cities and plants on top, in the order a click prefers them, then
 /// the months-left labels.
 fn paint_objects(painter: &egui::Painter, layout: &MapLayout, model: &MapModel) {
     let objects = &model.objects;
@@ -1004,18 +983,6 @@ fn paint_objects(painter: &egui::Painter, layout: &MapLayout, model: &MapModel) 
         }
     }
     let ink = INK;
-    let centre = at(objects.substation);
-    let reach = half * 1.2;
-    painter.add(egui::Shape::convex_polygon(
-        vec![
-            centre + vec2(0.0, -reach),
-            centre + vec2(reach, 0.0),
-            centre + vec2(0.0, reach),
-            centre + vec2(-reach, 0.0),
-        ],
-        Color32::WHITE,
-        Stroke::new(1.5, ink),
-    ));
     for city in &objects.cities {
         let (fill, outline) = if city.connected {
             (CITY, ink)
@@ -1041,12 +1008,12 @@ fn paint_objects(painter: &egui::Painter, layout: &MapLayout, model: &MapModel) 
             StrokeKind::Inside,
         );
         if let Some(size) = glyph_font_size(layout) {
-            painter.text(
+            super::theme::paint_label(
+                painter,
                 centre,
                 egui::Align2::CENTER_CENTER,
                 model.glyph(plant.kind),
-                egui::FontId::proportional(size),
-                ink,
+                size,
             );
         }
     }
@@ -1058,14 +1025,7 @@ fn paint_objects(painter: &egui::Painter, layout: &MapLayout, model: &MapModel) 
 /// through to the mark or cell under it.
 fn paint_months_left(painter: &egui::Painter, layout: &MapLayout, model: &MapModel) {
     for label in months_left_labels(layout, &model.months_left) {
-        let galley = painter.layout_no_wrap(
-            label.text.to_owned(),
-            egui::FontId::proportional(label.size),
-            LABEL_TEXT,
-        );
-        let rect = label.align.anchor_size(label.pos, galley.size());
-        painter.rect_filled(rect.expand(1.0), egui::CornerRadius::same(2), LABEL_BACKING);
-        painter.galley(rect.min, galley, LABEL_TEXT);
+        super::theme::paint_label(painter, label.pos, label.align, label.text, label.size);
     }
 }
 
@@ -1225,7 +1185,6 @@ mod tests {
                 cell: stacked,
                 connected: false,
             }],
-            substation: cell(50, 30),
             lines: Vec::new(),
             nodes: BTreeMap::new(),
         };
@@ -1258,7 +1217,6 @@ mod tests {
         MapObjects {
             plants,
             cities,
-            substation: cell(0, 0),
             lines: Vec::new(),
             nodes: BTreeMap::new(),
         }
@@ -1486,13 +1444,23 @@ mod tests {
             objects.cities.iter().filter(|c| c.connected).count(),
             session.city_views().iter().filter(|c| c.connected).count()
         );
-        assert_eq!(objects.substation, session.region().start().substation);
+        assert_eq!(
+            objects.nodes.len(),
+            objects.cities.len() + objects.plants.len()
+        );
         let lines: Vec<LineView> = session.line_views();
         assert_eq!(objects.lines.len(), lines.len());
         assert!(objects.lines.iter().all(LineMarker::in_service));
         assert_eq!(
-            objects.nodes.get(&session.substation()),
-            Some(&objects.substation)
+            objects.nodes.get(&session.anchor_node()),
+            Some(
+                &session
+                    .city_views()
+                    .into_iter()
+                    .find(|city| city.id == session.home_city())
+                    .unwrap()
+                    .cell
+            )
         );
         // Every node a line ends on has a cell, so the line can be drawn.
         for line in lines {
@@ -1792,7 +1760,6 @@ mod tests {
             [
                 LegendSwatch::ConnectedCity,
                 LegendSwatch::UnconnectedCity,
-                LegendSwatch::Substation,
                 LegendSwatch::PlantUnderConstruction,
                 LegendSwatch::LineUnderConstruction,
             ]
@@ -1803,7 +1770,6 @@ mod tests {
             [
                 "Connected city",
                 "Unconnected city",
-                "Substation",
                 "Plant under construction",
                 "Line under construction",
             ]

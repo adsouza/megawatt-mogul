@@ -305,8 +305,11 @@ mod tests {
 
         // A second, slower line to the same city: the earliest still names the month.
         let node = node_of(&game, target);
-        let slower = std::iter::once(game.session().substation())
-            .chain(game.session().plant_views().iter().map(|p| p.node))
+        let slower = game
+            .session()
+            .plant_views()
+            .iter()
+            .map(|p| p.node)
             .chain(game.session().city_views().iter().map(|c| c.node))
             .filter_map(|to| {
                 let quote = game.session().line_quote(node, to).ok()?;

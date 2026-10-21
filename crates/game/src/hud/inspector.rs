@@ -180,7 +180,10 @@ fn draw_cell(ui: &mut egui::Ui, model: &CellInspector, actions: &mut Vec<UiActio
         ui.horizontal_wrapped(|ui| {
             ui.label(row.label.as_str());
             if row.ok {
-                ui.colored_label(egui::Color32::from_rgb(90, 190, 110), row.verdict.as_str());
+                ui.colored_label(
+                    super::theme::status_color(egui::Color32::from_rgb(90, 190, 110)),
+                    row.verdict.as_str(),
+                );
             } else {
                 ui.weak(row.verdict.as_str());
             }
@@ -348,7 +351,7 @@ mod tests {
         for selection in [
             Selection::None,
             Selection::Plant(plant),
-            Selection::LineFrom(session.substation()),
+            Selection::LineFrom(session.anchor_node()),
             Selection::Cell(outside),
         ] {
             assert_eq!(

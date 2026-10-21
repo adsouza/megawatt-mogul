@@ -82,7 +82,7 @@ pub enum DomainEvent {
     LineConstructionStarted { line: LineId },
     /// A transmission line finished construction and is in service.
     LineCommissioned { line: LineId },
-    /// A city became energised from the substation and is now a customer.
+    /// A city became energised from the home city and is now a customer.
     CityConnected { city: CityId },
     /// The played month closed; boxed because the report is large.
     MonthClosed(Box<MonthlyReport>),

@@ -75,7 +75,10 @@ stands for.
 ### 2.4 Service territory and growth
 
 The player does not start out operating an entire interconnection. Each region defines a
-**starting service territory**: a few connected cities, a starter fleet and a starting substation.
+**starting service territory**: a few connected cities and a starter fleet, with one of those
+cities designated the **home city**. Its ordinary city node anchors network connectivity. The
+home city is Columbus in the East and Seattle in the West. It remains a normal demand centre,
+with the same city marker, selection and line-building controls as other cities.
 The company grows by **building transmission lines to connect new demand centres**. Only connected
 demand counts, both as revenue and as load that must be served. Unconnected cities exist on the map
 but are not simulated. Connecting a city too early, before there is capacity to serve it, is a
@@ -148,7 +151,7 @@ ratemaking (PBR)**:
   remaining book value excluding held and written-off portions. A plant's **associated line capital**
   is every line commissioned in the same review year with an endpoint at that plant's node; it is
   allocated the plant's assessed excess fraction, while held line portions keep their own history.
-  Lines with no plant endpoint (substation-to-city, city-to-city) are never held.
+  Lines with no plant endpoint (city-to-city) are never held.
 - **Satisfaction** depends on reliability and on the tariff relative to the region's reference
   tariff. Overbuilding therefore hurts twice: through disallowance and through a higher tariff.
 
@@ -331,7 +334,7 @@ These are immutable newtypes, and no bare `f64` crosses a module boundary.
   The forecast holds an hourly mean and band; actual demand is the forecast plus AR(1) noise from
   the session's seeded RNG.
 - **`grid`**: the **`PowerSystem` aggregate root**. It owns the plants, demand centres, network
-  topology (nodes and lines; connectivity is computed from the starting substation), system
+  topology (nodes and lines; connectivity is computed from the starting home city), system
   frequency and `NetworkModel`. It is one aggregate because balancing has to see all of it in the
   same tick. It includes these domain services:
   - **`MeritOrder`**: committed plants sorted by marginal cost.
@@ -367,6 +370,15 @@ built. No placeholder exists today; `Plant::commissioned_on` is the only seam.
 - **Copper plate.** Every plant and city connected to the grid shares a single bus with unlimited
   line capacity. Lines matter only for connectivity. Unconnected plants contribute nothing, and
   unconnected cities are not customers.
+- **Home-city anchor.** Region data specifies `start.home_city: CityId`, which must identify an
+  existing city in `start.connected_cities`; otherwise loading returns
+  `RegionError::InvalidHomeCity(CityId)`. The home city's existing node is the network root and is always connected. At game creation, completed lines join it to every other
+  starter city and every starter plant. There is no extra root node, self-line or separate anchor
+  asset. Paths of completed lines connect additional cities and plants, and may pass through any
+  city or plant. The anchor establishes connectivity; generation still comes from connected plants.
+  Startup lines enter the legacy rate base once, at their actual home-city distances. The map,
+  legend and endpoint picker contain only cities and plants; the home city is listed once, first
+  among line origins unless a selected city or plant takes precedence.
 - **Frequency** is a *game-level abstraction*, tuned for readability at a 1-minute tick rather than
   for real sub-second physics:
   `Δf(t+1) = Δf(t) + k_inertia × imbalance / system_size − k_damping × Δf(t)`.
@@ -554,6 +566,8 @@ The presentation layer never reads aggregate internals.
 - The header records `log_format_version`, `SIM_RULES_VERSION`, the full `GameSettings`, seed,
   region ID for display, and `region_fingerprint`. Bump `SIM_RULES_VERSION` whenever changes to
   rules, RNG algorithms, numerical behaviour or region mapping alter outcomes.
+  The home-city topology and region schema use rules version 6: node/line identities, distances,
+  construction quotes and legacy line capital change, so older logs require their matching engine.
 - The fingerprint is SHA-256 of the **exact source bytes** of the self-contained region RON file.
   This deliberately treats formatting changes as different content too. Infrastructure computes
   it; the domain gains no I/O, serde or hashing dependency. Region files may not depend on external
@@ -615,6 +629,15 @@ is shed). Lines show only an "energised" pulse. It shows no per-line loading unt
   timeline and the lessons.
 - **Errors:** a `CommandError` becomes a localised toast. This is the only place errors are mapped
   for display.
+- **Text contrast:** every visible UI text size uses a minimum **4.5:1** contrast ratio against
+  its backing, measured with WCAG's sRGB relative-luminance formula, without rounding up. This
+  includes secondary/help text, disabled controls, semantic status text, chart axes, legends and
+  hover labels, and map glyphs and construction labels. The shared dark palette is applied before
+  every screen draws. Disabled labels retain contrast; status hues are adjusted independently of
+  the chart/marker palette. Text over terrain or data gets an opaque backing. Chart ticks appear
+  fully legible or are omitted for spacing; opacity fades never make visible labels unreadable.
+  Palette/state checks, property tests over arbitrary colour pairs and tests of actual paint
+  output guard the requirement. See [WCAG 2.2 contrast guidance](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum).
 
 ## 9. Cross-cutting concerns
 

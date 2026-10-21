@@ -124,7 +124,7 @@ pub fn draw_hydro(ui: &mut egui::Ui, model: &HydroModel) -> Vec<UiAction> {
         let mut below = [0.0; 24];
         Plot::new("operating_hydro")
             .height(height)
-            .legend(Legend::default())
+            .legend(Legend::default().background_alpha(1.0))
             .allow_zoom(false)
             .allow_drag(false)
             .allow_scroll(false)
@@ -134,8 +134,8 @@ pub fn draw_hydro(ui: &mut egui::Ui, model: &HydroModel) -> Vec<UiAction> {
             .include_x(0.0)
             .include_x(24.0)
             .include_y(0.0)
-            .x_axis_label(model.hour_axis.as_str())
-            .y_axis_label(model.power_axis.as_str())
+            .custom_x_axes(vec![super::chart_style::x_axis(&model.hour_axis)])
+            .custom_y_axes(vec![super::chart_style::y_axis(&model.power_axis)])
             .show(ui, |plot| {
                 for row in &model.rows {
                     let color = color32(row.color);
@@ -156,7 +156,9 @@ pub fn draw_hydro(ui: &mut egui::Ui, model: &HydroModel) -> Vec<UiAction> {
                     for (total, add) in below.iter_mut().zip(row.hourly) {
                         *total += add;
                     }
-                    plot.bar_chart(BarChart::new(row.name.as_str(), bars).color(color));
+                    plot.add(super::chart_style::ReadableBars(
+                        BarChart::new(row.name.as_str(), bars).color(color),
+                    ));
                 }
             });
     });

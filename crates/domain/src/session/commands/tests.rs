@@ -84,8 +84,8 @@ fn invalid_sites_are_rejected_with_reason() {
 fn failed_command_leaves_state_unchanged() {
     let mut s = empty_session();
     let coal = plant_of(&s, PlantKind::Coal);
-    let root = s.substation;
-    let city1 = s.city_views()[0].node;
+    let root = s.anchor;
+    let city1 = s.city_views()[1].node;
     rejected(
         &mut s,
         DomainError::InvalidSite {
@@ -184,10 +184,10 @@ fn build_plant_starts_construction_on_an_unconnected_node() {
 #[test]
 fn build_line_prices_whole_cells_and_schedules_months() {
     let mut s = session();
-    let (plant, _) = s.build_plant(PlantKind::Peaker, cell(5, 5)).unwrap();
+    let (plant, _) = s.build_plant(PlantKind::Peaker, cell(4, 5)).unwrap();
     let node = s.power().plant(plant).unwrap().node();
-    let root = s.substation;
-    // (7, 4) to (5, 5) is sqrt(5) cells: 3 whole cells, 2 months at 2 cells a month.
+    let root = s.anchor;
+    // (6, 4) to (4, 5) is sqrt(5) cells: 3 whole cells, 2 months at 2 cells a month.
     let (line, events) = s.build_line(root, node).unwrap();
     assert_eq!(events, vec![DomainEvent::LineConstructionStarted { line }]);
     let built = s.power().network().lines().find(|l| l.id == line).unwrap();
@@ -207,11 +207,11 @@ fn build_line_prices_whole_cells_and_schedules_months() {
 #[test]
 fn line_quote_matches_what_build_line_charges() {
     let mut s = session();
-    let (plant, _) = s.build_plant(PlantKind::Peaker, cell(5, 5)).unwrap();
+    let (plant, _) = s.build_plant(PlantKind::Peaker, cell(4, 5)).unwrap();
     let node = s.power().plant(plant).unwrap().node();
-    let root = s.substation;
+    let root = s.anchor;
 
-    // (7, 4) to (5, 5) is sqrt(5) cells: 3 whole cells, 2 months.
+    // (6, 4) to (4, 5) is sqrt(5) cells: 3 whole cells, 2 months.
     let before = s.state_hash();
     let quote = s.line_quote(root, node).unwrap();
     assert_eq!(
@@ -272,9 +272,9 @@ fn line_quote_matches_what_build_line_charges() {
 #[test]
 fn line_build_months_is_what_the_quote_said() {
     let mut s = session();
-    let root = s.substation;
-    let (far, _) = s.build_plant(PlantKind::Peaker, cell(5, 5)).unwrap();
-    let (near, _) = s.build_plant(PlantKind::Peaker, cell(7, 5)).unwrap();
+    let root = s.anchor;
+    let (far, _) = s.build_plant(PlantKind::Peaker, cell(4, 5)).unwrap();
+    let (near, _) = s.build_plant(PlantKind::Peaker, cell(6, 5)).unwrap();
     let far = s.power().plant(far).unwrap().node();
     let near = s.power().plant(near).unwrap().node();
     let far_quote = s.line_quote(root, far).unwrap();
@@ -320,11 +320,11 @@ fn line_build_months_is_what_the_quote_said() {
 #[test]
 fn line_quote_floors_a_short_line_at_one_month() {
     let mut s = session();
-    let (plant, _) = s.build_plant(PlantKind::Peaker, cell(7, 5)).unwrap();
+    let (plant, _) = s.build_plant(PlantKind::Peaker, cell(6, 5)).unwrap();
     let node = s.power().plant(plant).unwrap().node();
     // One cell: one month at 40 M.
     assert_eq!(
-        s.line_quote(s.substation, node).unwrap(),
+        s.line_quote(s.anchor, node).unwrap(),
         LineQuote {
             cells: 1,
             capital: Money::from_dollars(40_000_000),
@@ -336,8 +336,8 @@ fn line_quote_floors_a_short_line_at_one_month() {
 #[test]
 fn line_quote_returns_the_errors_build_line_would() {
     let mut s = session();
-    let root = s.substation;
-    let city1 = s.city_views()[0].node;
+    let root = s.anchor;
+    let city1 = s.city_views()[1].node;
     for (from, to, expected) in [
         (
             root,
@@ -377,9 +377,9 @@ fn line_quote_returns_the_errors_build_line_would() {
 #[test]
 fn short_line_takes_at_least_one_month() {
     let mut s = session();
-    let (plant, _) = s.build_plant(PlantKind::Peaker, cell(7, 5)).unwrap();
+    let (plant, _) = s.build_plant(PlantKind::Peaker, cell(6, 5)).unwrap();
     let node = s.power().plant(plant).unwrap().node();
-    let (line, _) = s.build_line(node, s.substation).unwrap();
+    let (line, _) = s.build_line(node, s.anchor).unwrap();
     let built = s.power().network().lines().find(|l| l.id == line).unwrap();
     assert_eq!(
         built.status,

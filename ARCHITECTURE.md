@@ -197,6 +197,12 @@ which is never generated, so it is not part of `generation`.
 
 ## Settings seams
 
+The network is anchored at `start.home_city`, an existing connected starter city. Its ordinary city
+node is the root; completed starter lines join it to the other starter cities and every starter
+plant. Region validation rejects a missing or initially unconnected home city. The home city is
+Columbus in the East and Seattle in the West. All additional connectivity follows completed paths
+through ordinary city and plant nodes.
+
 ```rust
 pub struct GameSettings { pub fidelity: SimulationFidelity }
 pub struct SimulationFidelity { pub network: NetworkModel }
@@ -220,6 +226,11 @@ plugin, presenter and system, so the integration tests can reach them) and a thi
 parses the command line and opens the window.
 
 ### Plugins and states
+
+`hud/theme.rs` owns the shared dark text palette and the 4.5:1 contrast floor. It runs before any
+HUD panel, keeps secondary and disabled labels readable, and adjusts semantic text colours without
+changing chart/marker colours. `hud/chart_style.rs` keeps chart ticks at full contrast and adds
+opaque backings to bar hover labels; map text uses the same backing helper. Text fades are disabled.
 
 | Plugin | Role |
 |---|---|

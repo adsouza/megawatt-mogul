@@ -109,7 +109,7 @@ fn first_excess_review_holds_without_writeoff() {
         month(2028, 3),
         plant_at(200.0, 1),
     );
-    // Plant-to-substation line: associated with plant 1.
+    // Plant-to-home-city line: associated with plant 1.
     rb.add(
         line(2),
         Money::from_dollars(10_000),
@@ -117,7 +117,7 @@ fn first_excess_review_holds_without_writeoff() {
         month(2028, 3),
         line_between(1, 0),
     );
-    // Substation-to-city line: no plant endpoint, never held.
+    // City-to-city line: no plant endpoint, never held.
     rb.add(
         line(3),
         Money::from_dollars(4_000),

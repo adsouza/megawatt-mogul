@@ -36,7 +36,7 @@ use crate::error::DomainError;
 use crate::events::DomainEvent;
 use crate::generation::{CommitmentSchedule, Plant};
 use crate::grid::{LineStatus, Network, Node, NodeKind, PowerSystem, TickSummary};
-use crate::ids::{CellCoord, IdAllocator, NodeId, PlantId};
+use crate::ids::{CellCoord, CityId, IdAllocator, NodeId, PlantId};
 use crate::region::{LineParams, RegionDefinition};
 use crate::regulation::Regulator;
 use crate::rng::SimRng;
@@ -86,8 +86,8 @@ pub struct GameSession {
     rng: SimRng,
     /// One counter for node, plant and line ids.
     ids: IdAllocator,
-    /// The network root: the player's home substation.
-    substation: NodeId,
+    /// The home city's existing node, which anchors network connectivity.
+    anchor: NodeId,
     power: PowerSystem,
     company: Company,
     regulator: Regulator,
@@ -105,10 +105,9 @@ pub struct GameSession {
 impl GameSession {
     /// Starts a new game in `region`'s starting scenario.
     ///
-    /// The substation is the network root. Every city gets a node, and each
-    /// start-connected city an in-service line from the substation. Each
-    /// start-fleet plant is commissioned on the start month on its own node
-    /// with an in-service line to the substation, and is treated as
+    /// The home city's node is the network root. Every other start-connected
+    /// city gets an in-service line from it. Each start-fleet plant is commissioned on the start month on its own node
+    /// with an in-service line to the home city, and is treated as
     /// established (not returning from a month offline), so month 1 charges
     /// no boundary start. The new operator inherits the previous operator's
     /// schedule, the hands-off plan (spec §16.3): every dispatchable
@@ -120,16 +119,32 @@ impl GameSession {
         let start = region.start();
         let month = start.month;
         let mut ids = IdAllocator::default();
-        let substation: NodeId = ids.next();
-        let mut network = Network::new(substation, start.substation);
+        let home = region
+            .cities()
+            .iter()
+            .find(|city| city.id == start.home_city)
+            .expect("validated home city exists");
+        let anchor: NodeId = ids.next();
+        let mut network = Network::new(
+            anchor,
+            Node {
+                kind: NodeKind::City(home.id),
+                cell: home.cell,
+            },
+        );
 
         let mut cities = BTreeMap::new();
         for def in region.cities() {
-            let node: NodeId = ids.next();
-            add_start_node(&mut network, node, NodeKind::City(def.id), def.cell);
-            if start.connected_cities.contains(&def.id) {
-                add_start_line(&mut network, &mut ids, substation, node);
-            }
+            let node = if def.id == home.id {
+                anchor
+            } else {
+                let node: NodeId = ids.next();
+                add_start_node(&mut network, node, NodeKind::City(def.id), def.cell);
+                if start.connected_cities.contains(&def.id) {
+                    add_start_line(&mut network, &mut ids, anchor, node);
+                }
+                node
+            };
             cities.insert(def.id, DemandCenter::new(def.clone(), node));
         }
 
@@ -138,7 +153,7 @@ impl GameSession {
             let id: PlantId = ids.next();
             let node: NodeId = ids.next();
             add_start_node(&mut network, node, NodeKind::Plant(id), def.cell);
-            add_start_line(&mut network, &mut ids, substation, node);
+            add_start_line(&mut network, &mut ids, anchor, node);
             let spec = region.spec(def.kind).clone();
             let mut plant = Plant::new_commissioned(id, node, def.cell, spec, month);
             plant.set_previous_month_offline(false);
@@ -189,7 +204,7 @@ impl GameSession {
             status: SessionStatus::Active,
             rng: SimRng::from_seed(seed),
             ids,
-            substation,
+            anchor,
             power,
             company,
             regulator,
@@ -312,9 +327,14 @@ impl GameSession {
         &self.settings
     }
 
-    /// The network root, where every line to the grid ultimately leads.
-    pub fn substation(&self) -> NodeId {
-        self.substation
+    /// The starter city whose node anchors the service territory.
+    pub fn home_city(&self) -> CityId {
+        self.region.start().home_city
+    }
+
+    /// The home city's existing network node, where paths to the grid lead.
+    pub fn anchor_node(&self) -> NodeId {
+        self.anchor
     }
 
     pub fn power(&self) -> &PowerSystem {
@@ -375,7 +395,7 @@ impl GameSession {
     }
 
     /// Test support: a commissioned plant of `kind` at `cell`, on its own node
-    /// joined to the substation by an in-service line.
+    /// joined to the home city by an in-service line.
     pub(crate) fn insert_commissioned_plant(
         &mut self,
         kind: crate::region::PlantKind,
@@ -387,7 +407,7 @@ impl GameSession {
         let network = self.power.network_mut();
         add_start_node(network, node, NodeKind::Plant(id), cell);
         network
-            .add_line(line, self.substation, node, LineStatus::InService)
+            .add_line(line, self.anchor, node, LineStatus::InService)
             .expect("test plant line is valid");
         let spec = self.region.spec(kind).clone();
         self.power.insert_plant(Plant::new_commissioned(
@@ -408,10 +428,10 @@ fn add_start_node(network: &mut Network, id: NodeId, kind: NodeKind, cell: CellC
         .expect("freshly allocated node id is unique");
 }
 
-/// Joins a new start node to the substation with an in-service line.
-fn add_start_line(network: &mut Network, ids: &mut IdAllocator, substation: NodeId, node: NodeId) {
+/// Joins a new start node to the home city with an in-service line.
+fn add_start_line(network: &mut Network, ids: &mut IdAllocator, anchor: NodeId, node: NodeId) {
     network
-        .add_line(ids.next(), substation, node, LineStatus::InService)
+        .add_line(ids.next(), anchor, node, LineStatus::InService)
         .expect("start line joins two distinct, existing, unjoined nodes");
 }
 

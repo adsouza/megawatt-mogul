@@ -44,23 +44,40 @@ fn start_fleet(region: &RegionDefinition) -> Vec<PlantDef> {
 /// The tiny region's cities on their own nodes (the start's connected cities
 /// joined to the root, the rest isolated), plus `defs` as plants 1, 2, ...
 fn system_with(region: &RegionDefinition, defs: &[PlantDef]) -> PowerSystem {
-    let mut network = Network::new(ROOT, region.start().substation);
+    let home = region
+        .cities()
+        .iter()
+        .find(|city| city.id == region.start().home_city)
+        .unwrap();
+    let mut network = Network::new(
+        ROOT,
+        Node {
+            kind: NodeKind::City(home.id),
+            cell: home.cell,
+        },
+    );
     let mut cities = BTreeMap::new();
     for def in region.cities() {
-        let node = NodeId(10 + def.id.0);
-        network
-            .add_node(
-                node,
-                Node {
-                    kind: NodeKind::City(def.id),
-                    cell: def.cell,
-                },
-            )
-            .unwrap();
-        if region.start().connected_cities.contains(&def.id) {
+        let node = if def.id == home.id {
+            ROOT
+        } else {
+            NodeId(10 + def.id.0)
+        };
+        if node != ROOT {
             network
-                .add_line(LineId(node.0), ROOT, node, LineStatus::InService)
+                .add_node(
+                    node,
+                    Node {
+                        kind: NodeKind::City(def.id),
+                        cell: def.cell,
+                    },
+                )
                 .unwrap();
+            if region.start().connected_cities.contains(&def.id) {
+                network
+                    .add_line(LineId(node.0), ROOT, node, LineStatus::InService)
+                    .unwrap();
+            }
         }
         cities.insert(def.id, DemandCenter::new(def.clone(), node));
     }
@@ -4228,8 +4245,9 @@ fn going_dark_disarms_over_frequency_protection() {
 fn a_grid_with_no_load_connected_holds_nominal_frequency() {
     // No city connected, a plant running: no load is energised, so there is
     // no frequency to measure (ruling I3), whatever the outage.
-    let region = region_with(|p| p.start.connected_cities.clear());
+    let region = tiny_region();
     let mut sys = committed_auto_follow(&region, &start_fleet(&region));
+    sys.cities.clear();
     let mut rng = SimRng::from_seed(4);
     sys.begin_day(&region, april(), &mut rng);
     assert_eq!(sys.outage, Ratio::ZERO);

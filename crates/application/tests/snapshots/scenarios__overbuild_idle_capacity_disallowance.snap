@@ -43,7 +43,7 @@ OverbuildOutcome {
             },
             RateReviewCompleted {
                 tariff: Price(
-                    95.97049760617624,
+                    98.13878722015085,
                 ),
                 allowed_return: Ratio(
                     0.08987483044305425,
@@ -88,7 +88,7 @@ OverbuildOutcome {
             },
             RateReviewCompleted {
                 tariff: Price(
-                    95.41475124405535,
+                    97.61463875805276,
                 ),
                 allowed_return: Ratio(
                     0.09021092583666727,
@@ -102,7 +102,7 @@ OverbuildOutcome {
             },
             PlantCommissioned {
                 plant: PlantId(
-                    15,
+                    13,
                 ),
                 kind: Ccgt,
             },
@@ -114,7 +114,7 @@ OverbuildOutcome {
             },
             PlantCommissioned {
                 plant: PlantId(
-                    18,
+                    16,
                 ),
                 kind: Ccgt,
             },
@@ -126,7 +126,7 @@ OverbuildOutcome {
             },
             PlantCommissioned {
                 plant: PlantId(
-                    21,
+                    19,
                 ),
                 kind: Ccgt,
             },
@@ -138,7 +138,7 @@ OverbuildOutcome {
             },
             PlantCommissioned {
                 plant: PlantId(
-                    24,
+                    22,
                 ),
                 kind: Ccgt,
             },
@@ -170,7 +170,7 @@ OverbuildOutcome {
             CapitalHeld {
                 asset: Plant(
                     PlantId(
-                        15,
+                        13,
                     ),
                 ),
                 amount: Money(
@@ -186,7 +186,7 @@ OverbuildOutcome {
             CapitalHeld {
                 asset: Plant(
                     PlantId(
-                        18,
+                        16,
                     ),
                 ),
                 amount: Money(
@@ -202,7 +202,7 @@ OverbuildOutcome {
             CapitalHeld {
                 asset: Plant(
                     PlantId(
-                        21,
+                        19,
                     ),
                 ),
                 amount: Money(
@@ -218,7 +218,7 @@ OverbuildOutcome {
             CapitalHeld {
                 asset: Plant(
                     PlantId(
-                        24,
+                        22,
                     ),
                 ),
                 amount: Money(
@@ -233,7 +233,7 @@ OverbuildOutcome {
             },
             RateReviewCompleted {
                 tariff: Price(
-                    107.08339857428852,
+                    109.19755847772055,
                 ),
                 allowed_return: Ratio(
                     0.0883382212623021,
@@ -260,7 +260,7 @@ OverbuildOutcome {
             CapitalReleased {
                 asset: Plant(
                     PlantId(
-                        15,
+                        13,
                     ),
                 ),
                 amount: Money(
@@ -276,7 +276,7 @@ OverbuildOutcome {
             CapitalDisallowed {
                 asset: Plant(
                     PlantId(
-                        15,
+                        13,
                     ),
                 ),
                 amount: Money(
@@ -292,7 +292,7 @@ OverbuildOutcome {
             CapitalReleased {
                 asset: Plant(
                     PlantId(
-                        18,
+                        16,
                     ),
                 ),
                 amount: Money(
@@ -308,7 +308,7 @@ OverbuildOutcome {
             CapitalDisallowed {
                 asset: Plant(
                     PlantId(
-                        18,
+                        16,
                     ),
                 ),
                 amount: Money(
@@ -324,7 +324,7 @@ OverbuildOutcome {
             CapitalReleased {
                 asset: Plant(
                     PlantId(
-                        21,
+                        19,
                     ),
                 ),
                 amount: Money(
@@ -340,7 +340,7 @@ OverbuildOutcome {
             CapitalDisallowed {
                 asset: Plant(
                     PlantId(
-                        21,
+                        19,
                     ),
                 ),
                 amount: Money(
@@ -356,7 +356,7 @@ OverbuildOutcome {
             CapitalReleased {
                 asset: Plant(
                     PlantId(
-                        24,
+                        22,
                     ),
                 ),
                 amount: Money(
@@ -372,7 +372,7 @@ OverbuildOutcome {
             CapitalDisallowed {
                 asset: Plant(
                     PlantId(
-                        24,
+                        22,
                     ),
                 ),
                 amount: Money(
@@ -387,7 +387,7 @@ OverbuildOutcome {
             },
             RateReviewCompleted {
                 tariff: Price(
-                    112.62289126675131,
+                    114.7280115253011,
                 ),
                 allowed_return: Ratio(
                     0.08903550667463007,
@@ -403,7 +403,7 @@ OverbuildOutcome {
         },
         days: 31,
         revenue: Money(
-            7729227679,
+            7881826713,
         ),
         fuel: Money(
             -2983369030,
@@ -418,7 +418,7 @@ OverbuildOutcome {
             0,
         ),
         net: Money(
-            4228858649,
+            4381457683,
         ),
         energy_by_kind: {
             Coal: MegawattHours(
@@ -434,7 +434,7 @@ OverbuildOutcome {
         merit_order: [
             MeritOrderEntry {
                 plant: PlantId(
-                    6,
+                    4,
                 ),
                 kind: Coal,
                 marginal_cost: Price(
@@ -446,7 +446,7 @@ OverbuildOutcome {
             },
             MeritOrderEntry {
                 plant: PlantId(
-                    9,
+                    7,
                 ),
                 kind: Ccgt,
                 marginal_cost: Price(
@@ -458,7 +458,7 @@ OverbuildOutcome {
             },
             MeritOrderEntry {
                 plant: PlantId(
-                    15,
+                    13,
                 ),
                 kind: Ccgt,
                 marginal_cost: Price(
@@ -470,7 +470,7 @@ OverbuildOutcome {
             },
             MeritOrderEntry {
                 plant: PlantId(
-                    18,
+                    16,
                 ),
                 kind: Ccgt,
                 marginal_cost: Price(
@@ -482,7 +482,7 @@ OverbuildOutcome {
             },
             MeritOrderEntry {
                 plant: PlantId(
-                    21,
+                    19,
                 ),
                 kind: Ccgt,
                 marginal_cost: Price(
@@ -494,7 +494,7 @@ OverbuildOutcome {
             },
             MeritOrderEntry {
                 plant: PlantId(
-                    24,
+                    22,
                 ),
                 kind: Ccgt,
                 marginal_cost: Price(
@@ -506,7 +506,7 @@ OverbuildOutcome {
             },
             MeritOrderEntry {
                 plant: PlantId(
-                    12,
+                    10,
                 ),
                 kind: Peaker,
                 marginal_cost: Price(
@@ -557,13 +557,13 @@ OverbuildOutcome {
         rate_review: Some(
             RateReviewOutcome {
                 tariff: Price(
-                    112.62289126675131,
+                    114.7280115253011,
                 ),
                 allowed_return: Ratio(
                     0.08903550667463007,
                 ),
                 revenue_requirement: Money(
-                    87458725139,
+                    89093482798,
                 ),
                 cost_per_mwh: Some(
                     49.606393622371556,

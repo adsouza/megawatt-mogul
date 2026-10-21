@@ -12,6 +12,7 @@
 
 mod action;
 mod build;
+mod chart_style;
 mod city_card;
 mod commitment;
 mod construction;
@@ -37,6 +38,7 @@ mod selection;
 mod speed;
 mod supply_chart;
 mod tariff;
+pub mod theme;
 mod toasts;
 mod top_bar;
 mod ui_state;
@@ -152,6 +154,8 @@ use crate::state::{AppState, BootError, PhaseState};
 /// the top bar comes before any side panel, and overlays (toasts, modals) come last.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HudSet {
+    /// Installs the verified text palette before any UI is created.
+    Theme,
     /// Resets the shared [`HudArea`].
     Begin,
     /// Full-width bars: the top bar, then (Operating) the speed controls.
@@ -200,6 +204,7 @@ impl Plugin for HudPlugin {
             .configure_sets(
                 EguiPrimaryContextPass,
                 (
+                    HudSet::Theme,
                     HudSet::Begin,
                     HudSet::Bars,
                     HudSet::Panels,
@@ -270,6 +275,7 @@ impl Plugin for HudPlugin {
             .add_systems(
                 EguiPrimaryContextPass,
                 (
+                    theme::apply_theme.in_set(HudSet::Theme),
                     layout::reset_hud_area.in_set(HudSet::Begin),
                     game_over::snapshot_game_over_view.in_set(HudSet::Begin),
                     menu::boot_error_screen
@@ -501,8 +507,10 @@ pub(crate) mod test_support {
     /// leaves unconnected (Planning only). Returns the line and its build time in months.
     pub fn order_line(game: &mut Game, months: u32) -> (LineId, u32) {
         let session = game.session();
-        let nodes: Vec<NodeId> = std::iter::once(session.substation())
-            .chain(session.city_views().iter().map(|c| c.node))
+        let nodes: Vec<NodeId> = session
+            .city_views()
+            .iter()
+            .map(|c| c.node)
             .chain(session.plant_views().iter().map(|p| p.node))
             .collect();
         let (took, from, to) = session

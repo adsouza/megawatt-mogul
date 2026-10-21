@@ -40,7 +40,7 @@ MonthlyReport {
     merit_order: [
         MeritOrderEntry {
             plant: PlantId(
-                6,
+                4,
             ),
             kind: Coal,
             marginal_cost: Price(
@@ -52,7 +52,7 @@ MonthlyReport {
         },
         MeritOrderEntry {
             plant: PlantId(
-                9,
+                7,
             ),
             kind: Ccgt,
             marginal_cost: Price(
@@ -64,7 +64,7 @@ MonthlyReport {
         },
         MeritOrderEntry {
             plant: PlantId(
-                12,
+                10,
             ),
             kind: Peaker,
             marginal_cost: Price(

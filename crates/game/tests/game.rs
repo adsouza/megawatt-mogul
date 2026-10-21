@@ -11,6 +11,8 @@ mod city_card;
 mod cli;
 #[path = "game/construction.rs"]
 mod construction;
+#[path = "game/contrast.rs"]
+mod contrast;
 #[path = "game/end_to_end.rs"]
 mod end_to_end;
 #[path = "game/hud.rs"]

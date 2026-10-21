@@ -140,7 +140,6 @@ build-cells-value = { $cells ->
     [one] 1 cell
    *[other] { $cells } cells
 }
-name-substation = Substation
 name-node-unknown = Grid point { $id }
 
 ## Planning: tariff, commitments and forecast

@@ -218,10 +218,16 @@ fn draw_dial(ui: &mut egui::Ui, model: &FrequencyModel) {
 pub fn draw_frequency(ui: &mut egui::Ui, model: &FrequencyModel) -> Vec<UiAction> {
     ui.horizontal(|ui| {
         ui.strong(model.title.as_str());
-        ui.colored_label(color32(model.dial.color), model.deviation.as_str());
+        ui.colored_label(
+            super::theme::status_color(color32(model.dial.color)),
+            model.deviation.as_str(),
+        );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if model.blackout {
-                ui.colored_label(color32(SHEDDING_COLOR), model.mode.as_str());
+                ui.colored_label(
+                    super::theme::status_color(color32(SHEDDING_COLOR)),
+                    model.mode.as_str(),
+                );
             } else {
                 ui.label(model.mode.as_str());
             }
@@ -241,7 +247,10 @@ pub fn draw_frequency(ui: &mut egui::Ui, model: &FrequencyModel) -> Vec<UiAction
         });
     }
     if let Some(shed) = &model.shed {
-        ui.colored_label(color32(SHEDDING_COLOR), shed.as_str());
+        ui.colored_label(
+            super::theme::status_color(color32(SHEDDING_COLOR)),
+            shed.as_str(),
+        );
     }
     Vec::new()
 }

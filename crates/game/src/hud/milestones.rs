@@ -89,7 +89,10 @@ pub fn draw_milestones(ui: &mut egui::Ui, model: &MilestonesModel) -> Vec<UiActi
         ui.strong(row.name.as_str());
         ui.horizontal_wrapped(|ui| {
             if row.reached {
-                ui.colored_label(ui.visuals().selection.bg_fill, row.status.as_str());
+                ui.colored_label(
+                    super::theme::status_color(ui.visuals().selection.bg_fill),
+                    row.status.as_str(),
+                );
             } else {
                 ui.label(row.status.as_str());
             }

@@ -174,7 +174,7 @@
         year: 2027,
         month: 4,
         cash_usd: 2000000000,
-        substation: (7.5, 3.5),
+        home_city: 1,
         connected_cities: [1, 2],
         fleet: [(Coal, 7.5, 4.5), (Ccgt, 8.5, 3.5), (Peaker, 6.5, 2.5)],
     ),

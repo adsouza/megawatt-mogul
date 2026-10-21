@@ -246,9 +246,7 @@ fn a_city_with_a_line_under_construction_says_when_it_connects() {
         let mut app = hud_app(logs.path());
         request(&mut app, region_id);
         let session = app.world().resource::<Session>().0.session();
-        let nodes: Vec<_> = std::iter::once(session.substation())
-            .chain(session.city_views().iter().map(|c| c.node))
-            .collect();
+        let nodes: Vec<_> = session.city_views().iter().map(|c| c.node).collect();
         let (_, city, from, to) = session
             .city_views()
             .into_iter()

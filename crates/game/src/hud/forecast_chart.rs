@@ -126,7 +126,7 @@ pub fn draw_forecast_chart(ui: &mut egui::Ui, model: &ForecastModel) -> Vec<UiAc
     let (x, high, low) = (model.x.to_vec(), model.high.to_vec(), model.low.to_vec());
     Plot::new("planning_forecast")
         .height(ui.available_height())
-        .legend(Legend::default())
+        .legend(Legend::default().background_alpha(1.0))
         .allow_zoom(false)
         .allow_drag(false)
         .allow_scroll(false)
@@ -136,8 +136,8 @@ pub fn draw_forecast_chart(ui: &mut egui::Ui, model: &ForecastModel) -> Vec<UiAc
         .include_x(0.0)
         .include_x(24.0)
         .include_y(0.0)
-        .x_axis_label(model.hour_axis.as_str())
-        .y_axis_label(model.power_axis.as_str())
+        .custom_x_axes(vec![super::chart_style::x_axis(&model.hour_axis)])
+        .custom_y_axes(vec![super::chart_style::y_axis(&model.power_axis)])
         .show(ui, |plot| {
             for stack in &model.stacks {
                 let bars = (0..24)
@@ -148,9 +148,9 @@ pub fn draw_forecast_chart(ui: &mut egui::Ui, model: &ForecastModel) -> Vec<UiAc
                             .fill(color32(stack.color).gamma_multiply(0.8))
                     })
                     .collect();
-                plot.bar_chart(
+                plot.add(super::chart_style::ReadableBars(
                     BarChart::new(stack.name.as_str(), bars).color(color32(stack.color)),
-                );
+                ));
             }
             plot.add(
                 FilledArea::new(model.band_label.as_str(), &x, &low, &high).fill_color(band_color),

@@ -344,7 +344,7 @@ fn map_start(file: &RegionFile) -> Result<StartDef> {
     Ok(StartDef {
         month: SimMonth::new(start.year, start.month).map_err(|_| invalid("start.month"))?,
         cash: dollars(start.cash_usd, "start.cash_usd")?,
-        substation: at(start.substation.0, start.substation.1, "start.substation")?,
+        home_city: CityId(start.home_city),
         connected_cities: start.connected_cities.iter().copied().map(CityId).collect(),
         fleet: start
             .fleet

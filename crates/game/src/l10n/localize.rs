@@ -274,7 +274,7 @@ impl Localize for RegionError {
                     ("reason", reason.localize(l10n).into()),
                 ],
             ),
-            Self::SubstationNotOnLand => l10n.text("region-error-substation-not-on-land"),
+            Self::InvalidHomeCity(_) => l10n.text("region-error-invalid-home-city"),
             Self::InvalidShape { field } => {
                 l10n.args("region-error-invalid-shape", &[("field", (*field).into())])
             }

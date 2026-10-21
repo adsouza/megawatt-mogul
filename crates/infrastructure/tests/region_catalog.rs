@@ -17,7 +17,7 @@ const MINIMAL: &str = include_str!("support/minimal_region.ron");
 
 /// SHA-256 of `support/minimal_region.ron`, computed independently with
 /// `shasum -a 256`.
-const MINIMAL_SHA256: &str = "d029ca289414351f01cd224a212860757c82ead661e40ba0623c032819973cc1";
+const MINIMAL_SHA256: &str = "dea1c76d3eab91d40ee8497fe4839f001d9972ebb7eee80eae1fd302ae798c33";
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
@@ -42,6 +42,20 @@ fn loads_a_valid_region() {
     assert_eq!(loaded.definition.id().as_str(), "minimal");
     assert_eq!(loaded.definition.terrain().width(), 12);
     assert_eq!(loaded.definition.terrain().height(), 8);
+    assert_eq!(loaded.definition.start().home_city, CityId(1));
+}
+
+#[test]
+fn home_city_must_be_known_and_connected_in_region_data() {
+    for id in [3, 99] {
+        let err = load_edited("home_city: 1", &format!("home_city: {id}")).unwrap_err();
+        assert!(
+            matches!(err, RegionLoadError::Invalid {
+            error: RegionError::InvalidHomeCity(city), ..
+        } if city == CityId(id)),
+            "{err:?}"
+        );
+    }
 }
 
 #[test]
@@ -416,13 +430,6 @@ fn points_outside_the_bounds_are_rejected_not_snapped_to_an_edge() {
     assert_eq!(
         invalid_field(load_edited("lon: 8.5, lat: 1.5,", "lon: 8.5, lat: -1.0,")),
         "cities.lat"
-    );
-    assert_eq!(
-        invalid_field(load_edited(
-            "substation: (7.5, 3.5)",
-            "substation: (75.0, 3.5)"
-        )),
-        "start.substation"
     );
     assert_eq!(
         invalid_field(load_edited("(Coal, 7.5, 4.5)", "(Coal, 7.5, 45.0)")),

@@ -173,7 +173,7 @@ fn region_errors() -> Vec<RegionError> {
             cell: CellCoord { x: 1, y: 1 },
             reason: SiteError::NoHydroSite,
         },
-        RegionError::SubstationNotOnLand,
+        RegionError::InvalidHomeCity(CityId(99)),
         RegionError::InvalidShape { field: "demand" },
         RegionError::InvalidBand { field: "frequency" },
     ]
@@ -193,7 +193,7 @@ fn region_load_errors() -> Vec<RegionLoadError> {
         },
         RegionLoadError::Invalid {
             region: region.clone(),
-            error: RegionError::SubstationNotOnLand,
+            error: RegionError::InvalidHomeCity(CityId(99)),
         },
         RegionLoadError::IdMismatch {
             requested: region,
@@ -527,7 +527,7 @@ fn the_variant_tables_cover_every_variant() {
         RegionError::DuplicateCity(_) => 5,
         RegionError::UnknownStartCity(_) => 6,
         RegionError::InvalidStartSite { .. } => 7,
-        RegionError::SubstationNotOnLand => 8,
+        RegionError::InvalidHomeCity(_) => 8,
         RegionError::InvalidShape { .. } => 9,
         RegionError::InvalidBand { .. } => 10,
     });
@@ -906,11 +906,11 @@ fn an_already_joined_line_names_both_ends_and_falls_back_to_the_grid_point() {
 
     let named = |from, to| DomainError::DuplicateLine { from, to }.localize_with(&l10n, &names);
 
-    let substation = named(session.substation(), city.node);
+    let home = named(session.anchor_node(), city.node);
     assert_eq!(
-        substation,
+        home,
         format!(
-            "Substation and {} are already connected.",
+            "Columbus and {} are already connected.",
             l10n.text(&city.name_key)
         )
     );
@@ -921,8 +921,8 @@ fn an_already_joined_line_names_both_ends_and_falls_back_to_the_grid_point() {
     );
     assert!(!plant_end.contains('#'), "{plant_end}");
     assert_eq!(
-        named(ghost, session.substation()),
-        "Grid point 99999 and Substation are already connected."
+        named(ghost, session.anchor_node()),
+        "Grid point 99999 and Columbus are already connected."
     );
     assert_eq!(l10n.problems(), vec![]);
 }

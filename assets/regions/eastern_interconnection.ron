@@ -526,8 +526,8 @@
         year: 2027,
         month: 1,
         cash_usd: 5000000000,
-        // A central-Ohio hub between the three cities.
-        substation: (-82.3, 40.05),
+        // Columbus anchors the starting service territory.
+        home_city: 19,
         connected_cities: [17, 18, 19],
         fleet: [
             // Nuclear: Beaver Valley (Ohio River) and Perry (Lake Erie).

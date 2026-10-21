@@ -8,7 +8,7 @@ use application::projections::TimelinePoint;
 use bevy_egui::egui;
 use domain::region::PlantKind;
 use domain::time::TICKS_PER_HOUR;
-use egui_plot::{AxisHints, FilledArea, HPlacement, Legend, Line, LineStyle, Plot, VLine};
+use egui_plot::{FilledArea, HPlacement, Legend, Line, LineStyle, Plot, VLine};
 
 use super::action::UiAction;
 use super::frequency::NORMAL_COLOR;
@@ -150,13 +150,12 @@ pub fn draw_supply_chart(ui: &mut egui::Ui, model: &SupplyModel) -> Vec<UiAction
     let scale = if dearest > 0.0 { top / dearest } else { 1.0 };
     let points =
         |ys: &[f64]| -> Vec<[f64; 2]> { model.x.iter().zip(ys).map(|(x, y)| [*x, *y]).collect() };
-    let cost_axis = AxisHints::new_y()
-        .label(model.cost_axis.as_str())
+    let cost_axis = super::chart_style::y_axis(&model.cost_axis)
         .placement(HPlacement::Right)
         .formatter(move |mark, _| format!("{:.0}", mark.value / scale));
     Plot::new("operating_supply")
         .height(ui.available_height())
-        .legend(Legend::default())
+        .legend(Legend::default().background_alpha(1.0))
         .allow_zoom(false)
         .allow_drag(false)
         .allow_scroll(false)
@@ -166,9 +165,9 @@ pub fn draw_supply_chart(ui: &mut egui::Ui, model: &SupplyModel) -> Vec<UiAction
         .include_x(0.0)
         .include_x(24.0)
         .include_y(0.0)
-        .x_axis_label(model.hour_axis.as_str())
+        .custom_x_axes(vec![super::chart_style::x_axis(&model.hour_axis)])
         .custom_y_axes(vec![
-            AxisHints::new_y().label(model.power_axis.as_str()),
+            super::chart_style::y_axis(&model.power_axis),
             cost_axis,
         ])
         .show(ui, |plot| {

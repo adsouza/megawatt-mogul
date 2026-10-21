@@ -45,7 +45,7 @@ OverbuildOutcome {
             },
             RateReviewCompleted {
                 tariff: Price(
-                    95.97049760617624,
+                    98.13878722015085,
                 ),
                 allowed_return: Ratio(
                     0.08987483044305425,
@@ -90,7 +90,7 @@ OverbuildOutcome {
             },
             RateReviewCompleted {
                 tariff: Price(
-                    95.41475124405535,
+                    97.61463875805276,
                 ),
                 allowed_return: Ratio(
                     0.09021092583666727,
@@ -104,7 +104,7 @@ OverbuildOutcome {
             },
             PlantCommissioned {
                 plant: PlantId(
-                    15,
+                    13,
                 ),
                 kind: Ccgt,
             },
@@ -116,7 +116,7 @@ OverbuildOutcome {
             },
             PlantCommissioned {
                 plant: PlantId(
-                    18,
+                    16,
                 ),
                 kind: Ccgt,
             },
@@ -128,7 +128,7 @@ OverbuildOutcome {
             },
             PlantCommissioned {
                 plant: PlantId(
-                    21,
+                    19,
                 ),
                 kind: Ccgt,
             },
@@ -140,7 +140,7 @@ OverbuildOutcome {
             },
             PlantCommissioned {
                 plant: PlantId(
-                    24,
+                    22,
                 ),
                 kind: Ccgt,
             },
@@ -216,7 +216,7 @@ OverbuildOutcome {
         },
         days: 31,
         revenue: Money(
-            5431251931,
+            5556475161,
         ),
         fuel: Money(
             -2186168245,
@@ -231,7 +231,7 @@ OverbuildOutcome {
             0,
         ),
         net: Money(
-            2728083686,
+            2853306916,
         ),
         energy_by_kind: {
             Coal: MegawattHours(
@@ -247,7 +247,7 @@ OverbuildOutcome {
         merit_order: [
             MeritOrderEntry {
                 plant: PlantId(
-                    6,
+                    4,
                 ),
                 kind: Coal,
                 marginal_cost: Price(
@@ -259,7 +259,7 @@ OverbuildOutcome {
             },
             MeritOrderEntry {
                 plant: PlantId(
-                    9,
+                    7,
                 ),
                 kind: Ccgt,
                 marginal_cost: Price(
@@ -271,7 +271,7 @@ OverbuildOutcome {
             },
             MeritOrderEntry {
                 plant: PlantId(
-                    15,
+                    13,
                 ),
                 kind: Ccgt,
                 marginal_cost: Price(
@@ -283,7 +283,7 @@ OverbuildOutcome {
             },
             MeritOrderEntry {
                 plant: PlantId(
-                    18,
+                    16,
                 ),
                 kind: Ccgt,
                 marginal_cost: Price(
@@ -295,7 +295,7 @@ OverbuildOutcome {
             },
             MeritOrderEntry {
                 plant: PlantId(
-                    21,
+                    19,
                 ),
                 kind: Ccgt,
                 marginal_cost: Price(
@@ -307,7 +307,7 @@ OverbuildOutcome {
             },
             MeritOrderEntry {
                 plant: PlantId(
-                    24,
+                    22,
                 ),
                 kind: Ccgt,
                 marginal_cost: Price(
@@ -319,7 +319,7 @@ OverbuildOutcome {
             },
             MeritOrderEntry {
                 plant: PlantId(
-                    12,
+                    10,
                 ),
                 kind: Peaker,
                 marginal_cost: Price(
@@ -365,7 +365,7 @@ OverbuildOutcome {
                 tick: 4,
                 kind: OverFrequencyTrip {
                     plant: PlantId(
-                        12,
+                        10,
                     ),
                 },
             },
@@ -373,7 +373,7 @@ OverbuildOutcome {
                 tick: 9,
                 kind: OverFrequencyTrip {
                     plant: PlantId(
-                        9,
+                        7,
                     ),
                 },
             },
@@ -381,7 +381,7 @@ OverbuildOutcome {
                 tick: 14,
                 kind: OverFrequencyTrip {
                     plant: PlantId(
-                        15,
+                        13,
                     ),
                 },
             },
@@ -389,7 +389,7 @@ OverbuildOutcome {
                 tick: 19,
                 kind: OverFrequencyTrip {
                     plant: PlantId(
-                        18,
+                        16,
                     ),
                 },
             },

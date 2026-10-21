@@ -12,6 +12,68 @@ fn session() -> GameSession {
     GameSession::new(Arc::new(tiny_region()), 1, GameSettings::default())
 }
 
+#[test]
+fn starting_network_uses_a_city_node_without_an_extra_anchor_asset() {
+    let s = session();
+    let cities = s.city_views();
+    let plants = s.plant_views();
+    let network = s.power().network();
+    assert_eq!(network.nodes().count(), cities.len() + plants.len());
+    let home = cities.iter().find(|city| city.id == CityId(1)).unwrap();
+    assert_eq!(
+        network.node(s.anchor_node()).unwrap().kind,
+        NodeKind::City(home.id)
+    );
+    assert_eq!(s.anchor_node(), home.node);
+    assert!(home.connected);
+    let lines: Vec<_> = network.lines().collect();
+    assert_eq!(
+        lines.len(),
+        cities.iter().filter(|city| city.connected).count() - 1 + plants.len()
+    );
+    assert!(lines.iter().all(|line| line.from != line.to));
+    assert_eq!(
+        s.company().rate_base().assets().count(),
+        plants.len() + lines.len()
+    );
+    s.check_invariants().unwrap();
+}
+
+proptest::proptest! {
+    #[test]
+    fn any_starter_city_can_anchor_the_network(
+        home in 0usize..3,
+        mask in 0u8..8,
+        reversed in proptest::bool::ANY,
+        seed in proptest::prelude::any::<u64>(),
+    ) {
+        let mut parts = crate::region::fixtures::tiny_region_parts();
+        parts.start.home_city = parts.cities[home].id;
+        parts.start.connected_cities = parts.cities.iter().enumerate()
+            .filter(|(i, _)| *i == home || mask & (1 << i) != 0)
+            .map(|(_, city)| city.id).collect();
+        if reversed { parts.cities.reverse(); }
+        let region = crate::region::RegionDefinition::try_from(parts).unwrap();
+        let s = GameSession::new(Arc::new(region), seed, GameSettings::default());
+        let cities = s.city_views();
+        let plants = s.plant_views();
+        let network = s.power().network();
+        let home = cities.iter().find(|city| city.id == s.home_city()).unwrap();
+        proptest::prop_assert_eq!(s.anchor_node(), home.node);
+        proptest::prop_assert_eq!(network.node(home.node).unwrap().kind, NodeKind::City(home.id));
+        proptest::prop_assert_eq!(network.nodes().count(), cities.len() + plants.len());
+        for city in &cities {
+            proptest::prop_assert_eq!(city.connected, s.region().start().connected_cities.contains(&city.id));
+        }
+        proptest::prop_assert!(plants.iter().all(|plant| plant.connected));
+        proptest::prop_assert!(network.lines().all(|line| line.from != line.to && line.from == home.node));
+        let line_count = s.region().start().connected_cities.len() - 1 + plants.len();
+        proptest::prop_assert_eq!(network.lines().count(), line_count);
+        proptest::prop_assert_eq!(s.company().rate_base().assets().count(), line_count + plants.len());
+        proptest::prop_assert_eq!(s.check_invariants(), Ok(()));
+    }
+}
+
 /// A new game with the inherited schedule undone: nothing committed and no
 /// plant on AGC, the start the crafted fleets below build on.
 fn empty_session() -> GameSession {
@@ -168,11 +230,11 @@ fn start_fleet_and_lines_enter_the_rate_base_as_legacy_capital() {
             node: coal_node
         }
     );
-    // Two city lines and three plant lines, all in service and legacy.
+    // One city line and three plant lines, all in service and legacy.
     let lines: Vec<_> = s.power().network().lines().collect();
-    assert_eq!(lines.len(), 5);
+    assert_eq!(lines.len(), 4);
     assert!(lines.iter().all(|l| l.status == LineStatus::InService));
-    // City 2 at (8, 6) is sqrt(5) cells from the substation at (7, 4): 3 whole cells.
+    // City 2 at (8, 6) is sqrt(8) cells from the home city at (6, 4): 3 whole cells.
     let city2 = s
         .city_views()
         .into_iter()
@@ -185,11 +247,11 @@ fn start_fleet_and_lines_enter_the_rate_base_as_legacy_capital() {
     assert_eq!(
         line_asset.profile,
         AssetProfile::Line {
-            from: s.substation,
+            from: s.anchor,
             to: city2.node
         }
     );
-    assert_eq!(rate_base.assets().count(), 8);
+    assert_eq!(rate_base.assets().count(), 7);
     assert!(rate_base.assets().all(|a| a.legacy));
     // The start fleet is established, not returning from a month offline.
     assert!(
@@ -564,7 +626,7 @@ fn game_over_rejects_every_command_before_checking_phase() {
             .unwrap_err(),
         over
     );
-    assert_eq!(s.build_line(s.substation, NodeId(999)).unwrap_err(), over);
+    assert_eq!(s.build_line(s.anchor, NodeId(999)).unwrap_err(), over);
     assert_eq!(s.commit_plant(coal, [true; 24]).unwrap_err(), over);
     assert_eq!(
         s.set_dispatch_target(coal, Megawatts::new(300.0))
@@ -763,8 +825,8 @@ fn a_city_view_of_an_unknown_id_is_none() {
 fn line_views_list_every_line_in_id_order_with_its_status() {
     let mut s = session();
     let views = s.line_views();
-    // Two city lines and three plant lines, all in service at the start.
-    assert_eq!(views.len(), 5);
+    // One city line and three plant lines, all in service at the start.
+    assert_eq!(views.len(), 4);
     assert!(views.iter().all(|l| l.status == LineStatus::InService));
     assert!(views.windows(2).all(|pair| pair[0].id < pair[1].id));
     let city2 = s
@@ -773,21 +835,21 @@ fn line_views_list_every_line_in_id_order_with_its_status() {
         .find(|c| c.id == CityId(2))
         .unwrap();
     let to_city2 = views.iter().find(|l| l.to == city2.node).unwrap();
-    assert_eq!(to_city2.from, s.substation());
+    assert_eq!(to_city2.from, s.anchor_node());
 
     // A line ordered now shows up under construction, after the existing ones.
     let (plant, _) = s
-        .build_plant(PlantKind::Peaker, CellCoord { x: 5, y: 5 })
+        .build_plant(PlantKind::Peaker, CellCoord { x: 4, y: 5 })
         .unwrap();
     let node = s.power().plant(plant).unwrap().node();
-    let (line, _) = s.build_line(s.substation(), node).unwrap();
+    let (line, _) = s.build_line(s.anchor_node(), node).unwrap();
     let views = s.line_views();
-    assert_eq!(views.len(), 6);
+    assert_eq!(views.len(), 5);
     assert_eq!(
         views.last(),
         Some(&LineView {
             id: line,
-            from: s.substation(),
+            from: s.anchor_node(),
             to: node,
             status: LineStatus::UnderConstruction { months_left: 2 },
         })
@@ -887,8 +949,12 @@ fn net_load_is_the_forecast_less_expected_solar() {
 
 #[test]
 fn rate_review_estimate_holds_new_capital_when_there_is_excess() {
-    // No connected city: no demand at all, so every megawatt of firm capacity is excess.
-    let mut s = session_with(|p| p.start.connected_cities.clear());
+    // Zero city load: no demand at all, so every megawatt of firm capacity is excess.
+    let mut s = session_with(|p| {
+        for city in &mut p.cities {
+            city.base_load = Megawatts::ZERO;
+        }
+    });
     let firm = s.power().firm_capacity();
     let asset = AssetRef::Plant(PlantId(900));
     let cost = Money::from_cents(1_000_000);
@@ -915,7 +981,11 @@ fn rate_review_estimate_holds_new_capital_when_there_is_excess() {
 
 #[test]
 fn rate_review_estimate_splits_held_capital_into_release_and_write_off() {
-    let mut s = session_with(|p| p.start.connected_cities.clear());
+    let mut s = session_with(|p| {
+        for city in &mut p.cities {
+            city.base_load = Megawatts::ZERO;
+        }
+    });
     let firm = |mw: f64, node: u32| AssetProfile::Plant {
         firm: Megawatts::new(mw),
         node: NodeId(node),

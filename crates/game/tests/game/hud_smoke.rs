@@ -791,12 +791,12 @@ fn the_build_menu_picks_a_line_start_then_prices_and_orders_the_line() {
     };
     assert!(shows(&harness.draw(draw), "Choose where the line starts."));
     assert_eq!(
-        harness.click("Line from Substation", draw),
-        vec![UiAction::Select(Selection::LineFrom(session.substation()))]
+        harness.click("Line from Columbus", draw),
+        vec![UiAction::Select(Selection::LineFrom(session.anchor_node()))]
     );
 
-    // From the substation, the nodes it already reaches are refused and can't be clicked...
-    let model = build_model(&game, &l10n, Selection::LineFrom(session.substation())).unwrap();
+    // From the anchor, the nodes it already reaches are refused and can't be clicked...
+    let model = build_model(&game, &l10n, Selection::LineFrom(session.anchor_node())).unwrap();
     let draw = |ui: &mut egui::Ui| {
         egui::Panel::right("build")
             .show(ui, |ui| draw_build(ui, &model))
@@ -806,7 +806,7 @@ fn the_build_menu_picks_a_line_start_then_prices_and_orders_the_line() {
         panic!("{model:?}");
     };
     let widgets = harness.draw(draw);
-    assert!(shows(&widgets, "Starting at Substation."));
+    assert!(shows(&widgets, "Starting at Columbus."));
     let build_buttons = buttons(&widgets, "Build line");
     assert_eq!(build_buttons.len(), targets.len());
     let mut refused = 0;
@@ -1035,7 +1035,7 @@ fn the_map_does_not_move_when_the_selection_changes_kind() {
         Selection::Cell(land),
         Selection::Plant(session.plant_views()[0].id),
         Selection::City(session.city_views()[0].id),
-        Selection::LineFrom(session.substation()),
+        Selection::LineFrom(session.anchor_node()),
         Selection::None,
         Selection::Cell(land),
     ];

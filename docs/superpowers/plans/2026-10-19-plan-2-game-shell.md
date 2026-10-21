@@ -451,7 +451,6 @@ These are the carry-overs the HUD needs (follow-ups "Carry into Plan 2"). No rul
     coloured by the active `MapLayer { Terrain, Irradiance, CoolingWater, HydroPotential, Suitability(PlantKind) }`.
     - It also draws:
       - cities as circles, filled when connected and hollow when not;
-      - the substation;
       - plants as kind glyphs;
       - lines as segments.
     - A click selects the topmost object under the pointer (plant > city > cell).
@@ -464,7 +463,7 @@ These are the carry-overs the HUD needs (follow-ups "Carry into Plan 2"). No rul
     - **Plant.** For the selected cell, one row per kind showing capacity, capital, build months
       and marginal cost, from `region().spec`. *Build* is enabled only when `site_check` passes,
       and emits `UiAction::Command(BuildPlant { kind, cell })`.
-    - **Line.** Choose a node (substation, city or plant) as `LineFrom`, then a target node.
+    - **Line.** Choose a city or plant node as `LineFrom`, then a target node.
       Preview with `line_quote`, showing cells, capital and months, or the localised error.
       *Build line* emits `BuildLine`.
     - Both are available in Planning only.

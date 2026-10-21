@@ -43,7 +43,7 @@ MonthlyReport {
     merit_order: [
         MeritOrderEntry {
             plant: PlantId(
-                15,
+                13,
             ),
             kind: Solar,
             marginal_cost: Price(
@@ -55,7 +55,7 @@ MonthlyReport {
         },
         MeritOrderEntry {
             plant: PlantId(
-                18,
+                16,
             ),
             kind: Solar,
             marginal_cost: Price(
@@ -67,7 +67,7 @@ MonthlyReport {
         },
         MeritOrderEntry {
             plant: PlantId(
-                21,
+                19,
             ),
             kind: Solar,
             marginal_cost: Price(
@@ -79,7 +79,7 @@ MonthlyReport {
         },
         MeritOrderEntry {
             plant: PlantId(
-                24,
+                22,
             ),
             kind: Solar,
             marginal_cost: Price(
@@ -91,7 +91,7 @@ MonthlyReport {
         },
         MeritOrderEntry {
             plant: PlantId(
-                27,
+                25,
             ),
             kind: Solar,
             marginal_cost: Price(
@@ -103,7 +103,7 @@ MonthlyReport {
         },
         MeritOrderEntry {
             plant: PlantId(
-                6,
+                4,
             ),
             kind: Coal,
             marginal_cost: Price(
@@ -115,7 +115,7 @@ MonthlyReport {
         },
         MeritOrderEntry {
             plant: PlantId(
-                9,
+                7,
             ),
             kind: Ccgt,
             marginal_cost: Price(
@@ -127,7 +127,7 @@ MonthlyReport {
         },
         MeritOrderEntry {
             plant: PlantId(
-                12,
+                10,
             ),
             kind: Peaker,
             marginal_cost: Price(

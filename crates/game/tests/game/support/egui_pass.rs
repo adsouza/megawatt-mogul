@@ -48,6 +48,21 @@ impl EguiPass {
         height: f32,
         events: Vec<egui::Event>,
     ) -> Vec<Widget> {
+        let output = self.paint_with(app, width, height, events);
+        let widgets = widgets_of(&output);
+        // There is no renderer to take the font texture.
+        output.drop_without_applying_deltas();
+        widgets
+    }
+
+    /// The actual paint output, for colour/contrast checks. The caller must consume texture deltas.
+    pub fn paint_with(
+        &self,
+        app: &mut App,
+        width: f32,
+        height: f32,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
         self.ctx.begin_pass(egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
@@ -57,11 +72,7 @@ impl EguiPass {
             ..egui::RawInput::default()
         });
         app.world_mut().run_schedule(EguiPrimaryContextPass);
-        let output = self.ctx.end_pass();
-        let widgets = widgets_of(&output);
-        // There is no renderer to take the font texture.
-        output.drop_without_applying_deltas();
-        widgets
+        self.ctx.end_pass()
     }
 
     /// Clicks with the primary button at `at`: a pass that presses there, then one that releases.

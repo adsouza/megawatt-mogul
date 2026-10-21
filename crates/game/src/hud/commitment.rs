@@ -342,7 +342,7 @@ fn hour_square(
                 egui::Align2::CENTER_CENTER,
                 text,
                 egui::FontId::proportional(9.0),
-                visuals.text_color(),
+                super::theme::contrasting_text(fill),
             );
         }
     }

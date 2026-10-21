@@ -161,9 +161,9 @@ fn ledger_matches_cash_after_a_month() {
 fn peaker_commissions_after_twelve_months_with_exact_instalments() {
     let mut s = session();
     robust_fleet(&mut s);
-    let (peaker, _) = s.build_plant(PlantKind::Peaker, cell(5, 5)).unwrap();
+    let (peaker, _) = s.build_plant(PlantKind::Peaker, cell(4, 5)).unwrap();
     let node = s.power().plant(peaker).unwrap().node();
-    let (line, _) = s.build_line(s.substation(), node).unwrap();
+    let (line, _) = s.build_line(s.anchor_node(), node).unwrap();
     let mut commissioned_in = Vec::new();
     let mut line_in = Vec::new();
     for month in 1..=12 {
@@ -214,7 +214,7 @@ fn peaker_commissions_after_twelve_months_with_exact_instalments() {
 }
 
 /// Flat, noise-free demand so peaks are exact: city 1 (1,000 MW) is
-/// connected, city 2 (1,000 MW) sits one line-month from the substation, and
+/// connected, city 2 (1,000 MW) sits one line-month from the home city, and
 /// the start fleet is three coal units (1,800 MW firm, credit 1). A peaker
 /// (500 MW firm) builds in one month.
 fn flat_december() -> RegionDefinitionParts {
@@ -227,7 +227,7 @@ fn flat_december() -> RegionDefinitionParts {
     demand.forecast_error = Ratio::ZERO;
     parts.cities[0].base_load = Megawatts::new(1000.0);
     parts.cities[1].base_load = Megawatts::new(1000.0);
-    parts.cities[1].cell = cell(8, 5);
+    parts.cities[1].cell = cell(7, 5);
     parts.start.connected_cities = vec![CityId(1)];
     for spec in &mut parts.catalog {
         match spec.kind {
@@ -261,7 +261,7 @@ fn december_with_new_peaker(connect_city: bool) -> (GameSession, PlantId, Vec<Do
     let (peaker, _) = s.build_plant(PlantKind::Peaker, cell(5, 5)).unwrap();
     if connect_city {
         let city2 = city_node(&s, CityId(2));
-        s.build_line(s.substation(), city2).unwrap();
+        s.build_line(s.anchor_node(), city2).unwrap();
     }
     let events = play_day(&mut s);
     (s, peaker, events)
@@ -914,7 +914,9 @@ fn december_with_held_capital(edit: impl FnOnce(&mut RegionDefinitionParts)) -> 
 fn the_rate_review_estimate_previews_exactly_what_december_does() {
     // No demand: held capital is partly released and partly written off.
     let e = assert_estimate_matches_annual_review(&december_with_held_capital(|p| {
-        p.start.connected_cities.clear()
+        for city in &mut p.cities {
+            city.base_load = Megawatts::ZERO;
+        }
     }));
     assert!(e.capital_to_release > Money::ZERO && e.capital_at_risk > Money::ZERO);
     // Real demand: the projection of next month's peak decides the excess,

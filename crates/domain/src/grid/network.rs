@@ -1,7 +1,7 @@
 //! Transmission topology: nodes, lines and which nodes are energised.
 //!
 //! A node is *connected* when a path of in-service lines links it to the
-//! root (the player's home substation). Connectivity is recomputed after every
+//! root (the player's home city). Connectivity is recomputed after every
 //! change, with ordered collections throughout so results are deterministic.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -12,7 +12,6 @@ use crate::ids::{CellCoord, CityId, LineId, NodeId, PlantId};
 /// What a network node represents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeKind {
-    Substation,
     Plant(PlantId),
     City(CityId),
 }
@@ -59,12 +58,8 @@ pub struct Network {
 }
 
 impl Network {
-    /// A network holding only its root substation, which is always connected.
-    pub fn new(root: NodeId, root_cell: CellCoord) -> Self {
-        let node = Node {
-            kind: NodeKind::Substation,
-            cell: root_cell,
-        };
+    /// A network holding only its root node, which is always connected.
+    pub fn new(root: NodeId, node: Node) -> Self {
         Self {
             root,
             nodes: BTreeMap::from([(root, node)]),
@@ -212,15 +207,15 @@ mod tests {
         CellCoord { x, y }
     }
 
-    fn sub(x: u16, y: u16) -> Node {
+    fn city_node(x: u16, y: u16) -> Node {
         Node {
-            kind: NodeKind::Substation,
+            kind: NodeKind::City(CityId(u32::from(x))),
             cell: cell(x, y),
         }
     }
 
     fn net() -> Network {
-        Network::new(NodeId(0), cell(0, 0))
+        Network::new(NodeId(0), city_node(0, 0))
     }
 
     #[test]
@@ -231,13 +226,13 @@ mod tests {
             vec![NodeId(0)]
         );
         assert!(n.is_connected(NodeId(0)));
-        assert_eq!(n.node(NodeId(0)), Some(&sub(0, 0)));
+        assert_eq!(n.node(NodeId(0)), Some(&city_node(0, 0)));
     }
 
     #[test]
     fn line_under_construction_does_not_connect() {
         let mut n = net();
-        n.add_node(NodeId(1), sub(3, 4)).unwrap();
+        n.add_node(NodeId(1), city_node(3, 4)).unwrap();
         n.add_line(
             LineId(10),
             NodeId(0),
@@ -256,8 +251,8 @@ mod tests {
     #[test]
     fn connectivity_is_transitive() {
         let mut n = net();
-        n.add_node(NodeId(1), sub(1, 0)).unwrap();
-        n.add_node(NodeId(2), sub(2, 0)).unwrap();
+        n.add_node(NodeId(1), city_node(1, 0)).unwrap();
+        n.add_node(NodeId(2), city_node(2, 0)).unwrap();
         n.add_line(LineId(10), NodeId(1), NodeId(2), LineStatus::InService)
             .unwrap();
         assert!(!n.is_connected(NodeId(2)));
@@ -269,7 +264,7 @@ mod tests {
     #[test]
     fn duplicate_reverse_line_rejected() {
         let mut n = net();
-        n.add_node(NodeId(1), sub(1, 0)).unwrap();
+        n.add_node(NodeId(1), city_node(1, 0)).unwrap();
         n.add_line(LineId(10), NodeId(0), NodeId(1), LineStatus::InService)
             .unwrap();
         let err = n
@@ -312,12 +307,12 @@ mod tests {
     fn duplicate_ids_rejected_without_mutation() {
         let mut n = net();
         assert_eq!(
-            n.add_node(NodeId(0), sub(9, 9)),
+            n.add_node(NodeId(0), city_node(9, 9)),
             Err(DomainError::DuplicateNode { node: NodeId(0) })
         );
-        assert_eq!(n.node(NodeId(0)), Some(&sub(0, 0)));
-        n.add_node(NodeId(1), sub(1, 0)).unwrap();
-        n.add_node(NodeId(2), sub(2, 0)).unwrap();
+        assert_eq!(n.node(NodeId(0)), Some(&city_node(0, 0)));
+        n.add_node(NodeId(1), city_node(1, 0)).unwrap();
+        n.add_node(NodeId(2), city_node(2, 0)).unwrap();
         n.add_line(LineId(10), NodeId(0), NodeId(1), LineStatus::InService)
             .unwrap();
         assert_eq!(
@@ -331,7 +326,7 @@ mod tests {
     #[test]
     fn line_length_is_euclidean_distance_between_endpoints() {
         let mut n = net();
-        n.add_node(NodeId(1), sub(3, 4)).unwrap();
+        n.add_node(NodeId(1), city_node(3, 4)).unwrap();
         n.add_line(LineId(10), NodeId(0), NodeId(1), LineStatus::InService)
             .unwrap();
         let line = n.lines().next().unwrap();
@@ -343,7 +338,7 @@ mod tests {
     fn lines_iterate_in_id_order() {
         let mut n = net();
         for i in 1..4 {
-            n.add_node(NodeId(i), sub(i as u16, 0)).unwrap();
+            n.add_node(NodeId(i), city_node(i as u16, 0)).unwrap();
         }
         n.add_line(LineId(30), NodeId(0), NodeId(1), LineStatus::InService)
             .unwrap();
@@ -370,7 +365,7 @@ mod tests {
         ) {
             let mut n = net();
             for i in 1..12u32 {
-                n.add_node(NodeId(i), sub(i as u16, 0)).unwrap();
+                n.add_node(NodeId(i), city_node(i as u16, 0)).unwrap();
             }
             let mut parent: Vec<usize> = (0..12).collect();
             let mut seen = std::collections::BTreeSet::new();

@@ -129,13 +129,13 @@ fn overreach_city_without_capacity() {
         .find(|city| !city.connected)
         .expect("the start leaves one city unconnected")
         .node;
-    let substation = g.session().substation();
+    let anchor = g.session().anchor_node();
 
     // Month 1: order the line (five cells at two a month: three months).
     play_month(&mut g, |g| {
         auto_follow_all(g);
         g.execute(Command::BuildLine {
-            from: substation,
+            from: anchor,
             to: city_node,
         })
         .expect("build line");
@@ -237,11 +237,11 @@ fn overreach_month_four(parts: RegionDefinitionParts, seed: u64) -> OverreachMon
         .find(|city| !city.connected)
         .expect("the start leaves one city unconnected")
         .node;
-    let substation = g.session().substation();
+    let anchor = g.session().anchor_node();
     play_month(&mut g, |g| {
         auto_follow_all(g);
         g.execute(Command::BuildLine {
-            from: substation,
+            from: anchor,
             to: city_node,
         })
         .expect("build line");
@@ -441,12 +441,12 @@ fn regulatory(event: &DomainEvent) -> bool {
 }
 
 /// Starts the overbuild game and plays month 1, which orders four CCGTs near
-/// the substation, each wired to it, while AGC runs the start fleet. The
+/// the anchor, each wired to it, while AGC runs the start fleet. The
 /// CCGTs commission at the June 2029 close into a fleet that already covers
 /// the tiny region's peak. Returns the game and the new plants.
 fn overbuild_game() -> (Game, Vec<PlantId>) {
     let (mut g, _) = game_on(overbuild(), 14);
-    let substation = g.session().substation();
+    let anchor = g.session().anchor_node();
     let mut ccgts = Vec::new();
     play_month(&mut g, |g| {
         auto_follow_all(g);
@@ -461,7 +461,7 @@ fn overbuild_game() -> (Game, Vec<PlantId>) {
             );
             let node = node_of(g, plant);
             g.execute(Command::BuildLine {
-                from: substation,
+                from: anchor,
                 to: node,
             })
             .expect("build line");

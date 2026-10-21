@@ -104,6 +104,31 @@ fn ships_exactly_two_regions() {
 }
 
 #[test]
+fn shipped_home_cities_anchor_the_existing_city_nodes() {
+    for (id, name_key) in [(EAST, "city-columbus"), (WEST, "city-seattle")] {
+        let game = new_game(&catalog(), id, 0);
+        let session = game.session();
+        let cities = session.city_views();
+        let home = cities
+            .iter()
+            .find(|city| city.id == session.home_city())
+            .unwrap();
+        assert_eq!(home.name_key, name_key);
+        assert!(home.connected);
+        assert_eq!(home.node, session.anchor_node());
+        assert_eq!(
+            session.power().network().nodes().count(),
+            cities.len() + session.plant_views().len()
+        );
+        assert_eq!(
+            session.line_views().len(),
+            session.region().start().connected_cities.len() - 1 + session.plant_views().len()
+        );
+        session.check_invariants().unwrap();
+    }
+}
+
+#[test]
 fn east_is_three_to_five_times_west() {
     let ratio = total_base_load(&region(EAST)) / total_base_load(&region(WEST));
     assert!((3.0..=5.0).contains(&ratio), "East / West load was {ratio}");

@@ -109,7 +109,8 @@ pub struct StartPlantDef {
 pub struct StartDef {
     pub month: SimMonth,
     pub cash: Money,
-    pub substation: CellCoord,
+    /// An existing city in `connected_cities`, whose node anchors the network.
+    pub home_city: CityId,
     pub connected_cities: Vec<CityId>,
     pub fleet: Vec<StartPlantDef>,
 }

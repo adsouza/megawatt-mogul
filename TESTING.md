@@ -165,6 +165,15 @@ The invariants the property tests must cover:
   view's elapsed hours stay frozen.
   A stopped/tripped hydro unit with AGC still on reserves no operating allocation while its
   commitment is suppressed; manual restarts rejoin the plan and next-month previews stay unchanged.
+- **Home-city topology:** the anchor is an existing connected starter city's node, with exactly
+  one node per city or plant and no self-line or extra anchor asset. Vary the home city, city order,
+  connected subset and seed. Reject missing or initially unconnected home cities; verify named,
+  unique line endpoints and one ordinary city marker per city.
+- **Text contrast:** an independent WCAG luminance calculation checks the HUD palette against
+  every text-bearing surface and widget state, including disabled and secondary labels, at 4.5:1
+  or better. Property tests exercise arbitrary foreground/background pairs. Inspect actual egui
+  paint output for both regions' screens and verify opaque backings behind map labels and bar
+  hover text. Run the windowed launch smoke after changing HUD theme systems.
 - **Determinism:** the same verified versions, settings, region content, seed and commands produce
   an identical state hash on the same build and platform (libm transcendentals may differ in the
   last bit between targets; see `ARCHITECTURE.md`). Test version/fingerprint mismatches before command execution, exact-byte

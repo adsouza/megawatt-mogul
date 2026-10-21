@@ -48,8 +48,7 @@ impl Model {
     fn new(seed: u64, empty: bool) -> Self {
         let (game, _) = game_on(tiny_region_parts(), seed);
         let session = game.session();
-        let mut nodes = vec![session.substation()];
-        nodes.extend(session.city_views().iter().map(|city| city.node));
+        let mut nodes: Vec<_> = session.city_views().iter().map(|city| city.node).collect();
         nodes.extend(session.plant_views().iter().map(|plant| plant.node));
         Model {
             seed,

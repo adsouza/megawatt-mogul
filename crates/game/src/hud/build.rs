@@ -103,29 +103,26 @@ struct NodeChoice {
     cell: CellCoord,
 }
 
-/// The substation, then every city, then every plant, each by name.
+/// The home city, then the other cities, then every plant.
 fn node_choices(game: &Game, l10n: &Localizer) -> Vec<NodeChoice> {
     let session = game.session();
     let names = Names::new(l10n, session);
-    let substation = NodeChoice {
-        node: session.substation(),
-        name: l10n.text("name-substation"),
-        cell: session.region().start().substation,
-    };
-    let cities = session.city_views().into_iter().map(|city| NodeChoice {
-        node: city.node,
-        name: names.city(city.id),
-        cell: city.cell,
-    });
+    let mut cities: Vec<_> = session
+        .city_views()
+        .into_iter()
+        .map(|city| NodeChoice {
+            node: city.node,
+            name: names.city(city.id),
+            cell: city.cell,
+        })
+        .collect();
+    cities.sort_by_key(|city| city.node != session.anchor_node());
     let plants = session.plant_views().into_iter().map(|plant| NodeChoice {
         node: plant.node,
         name: names.plant(plant.id),
         cell: plant.cell,
     });
-    std::iter::once(substation)
-        .chain(cities)
-        .chain(plants)
-        .collect()
+    cities.into_iter().chain(plants).collect()
 }
 
 /// The build menu for `selection`; `None` outside Planning, when nothing can be ordered.
@@ -432,6 +429,54 @@ mod tests {
     use super::*;
     use crate::hud::test_support::{eastern_game, shipped_l10n};
 
+    #[test]
+    fn each_home_city_is_one_named_line_origin() {
+        let l10n = shipped_l10n();
+        for (region, home) in [
+            ("eastern_interconnection", "Columbus"),
+            ("western_interconnection", "Seattle"),
+        ] {
+            let game = crate::hud::test_support::shipped_game(
+                region,
+                Box::new(InMemoryCommandLog::default()),
+            );
+            let session = game.session();
+            let model = build_model(&game, &l10n, Selection::None).unwrap();
+            let LineSection::Start { from, .. } = model.line else {
+                panic!("line origins")
+            };
+            assert_eq!(
+                from.len(),
+                session.city_views().len() + session.plant_views().len()
+            );
+            assert_eq!(from[0].label, format!("Line from {home}"));
+            let home_action = UiAction::Select(Selection::LineFrom(session.anchor_node()));
+            assert_eq!(
+                from.iter()
+                    .filter(|button| button.action == home_action)
+                    .count(),
+                1
+            );
+            let model =
+                build_model(&game, &l10n, Selection::LineFrom(session.anchor_node())).unwrap();
+            assert!(
+                targets(&model)
+                    .iter()
+                    .all(|target| target.node != session.anchor_node())
+            );
+            let objects = super::super::map::MapObjects::of(&game);
+            assert_eq!(
+                objects
+                    .cities
+                    .iter()
+                    .filter(|city| city.id == session.home_city())
+                    .count(),
+                1
+            );
+        }
+        assert!(l10n.problems().is_empty());
+    }
+
     fn cells(region: &RegionDefinition) -> impl Iterator<Item = CellCoord> {
         let terrain = region.terrain();
         let (w, h) = (terrain.width(), terrain.height());
@@ -558,14 +603,14 @@ mod tests {
         let l10n = shipped_l10n();
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
         let session = game.session();
-        let from = session.substation();
+        let from = session.anchor_node();
         let names = Names::new(&l10n, session);
 
         let model = build_model(&game, &l10n, Selection::LineFrom(from)).unwrap();
 
         let targets = targets(&model);
         let nodes = session.plant_views().len() + session.city_views().len();
-        assert_eq!(targets.len(), nodes, "every node but the start");
+        assert_eq!(targets.len(), nodes - 1, "every node but the start");
         let mut quoted = 0;
         let mut rejected = 0;
         for target in targets {
@@ -607,10 +652,10 @@ mod tests {
                 (quote, preview) => panic!("{quote:?} previewed as {preview:?}"),
             }
         }
-        // The start network already joins the substation to three cities and the whole fleet;
+        // The home city already joins the other two starter cities and the whole fleet;
         // the rest of the cities can be quoted.
         assert!(quoted >= 20, "{quoted} quotes");
-        assert_eq!(rejected, 3 + session.plant_views().len());
+        assert_eq!(rejected, 2 + session.plant_views().len());
         assert!(rejected > 0);
         assert_eq!(l10n.problems(), vec![]);
     }
@@ -620,7 +665,7 @@ mod tests {
         let l10n = shipped_l10n();
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
         let session = game.session();
-        let from = session.substation();
+        let from = session.anchor_node();
 
         let model = build_model(&game, &l10n, Selection::LineFrom(from)).unwrap();
 
@@ -639,7 +684,7 @@ mod tests {
                 })
                 .expect("every target is a plant or a city")
         };
-        let start = session.region().start().substation;
+        let start = cell_of(session.anchor_node());
         let refused = |t: &LineTarget| matches!(t.preview, LinePreview::Rejected(_));
         let (buildable, joined): (Vec<&LineTarget>, Vec<&LineTarget>) =
             targets(&model).iter().partition(|t| !refused(t));
@@ -668,7 +713,7 @@ mod tests {
             let who = target.name.strip_prefix("Line to ").unwrap();
             assert_eq!(
                 reason,
-                &format!("Substation and {who} are already connected.")
+                &format!("Columbus and {who} are already connected.")
             );
         }
         let names: Vec<&str> = targets(&model).iter().map(|t| t.name.as_str()).collect();
@@ -682,7 +727,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(heading, &l10n.text("build-line-heading"));
-                assert_eq!(hint, "Starting at Substation. Choose where it ends.");
+                assert_eq!(hint, "Starting at Columbus. Choose where it ends.");
                 assert_eq!(cancel.action, UiAction::Select(Selection::None));
             }
             other => panic!("{other:?}"),
@@ -708,15 +753,15 @@ mod tests {
             panic!("{model:?}");
         };
         let labels: Vec<&str> = from.iter().map(|b| b.label.as_str()).collect();
-        assert_eq!(labels[0], "Line from Substation");
+        assert_eq!(labels[0], "Line from Columbus");
         assert_eq!(
             from.len(),
-            1 + session.city_views().len() + session.plant_views().len()
+            session.city_views().len() + session.plant_views().len()
         );
         assert!(labels.contains(&"Line from Columbus"), "{labels:?}");
         assert_eq!(
             from[0].action,
-            UiAction::Select(Selection::LineFrom(session.substation()))
+            UiAction::Select(Selection::LineFrom(session.anchor_node()))
         );
         assert!(from.iter().all(|b| b.enabled));
         assert_eq!(l10n.problems(), vec![]);

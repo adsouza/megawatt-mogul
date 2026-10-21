@@ -50,7 +50,7 @@ region-error-city-not-on-land = City #{ $city } is not on land.
 region-error-duplicate-city = City #{ $city } is listed twice.
 region-error-unknown-start-city = The starting grid connects city #{ $city }, which does not exist.
 region-error-invalid-start-site = The starting plant ({ $kind }) cannot be built where the region puts it. { $reason }
-region-error-substation-not-on-land = The starting substation is not on land.
+region-error-invalid-home-city = The home city must be one of the connected starting cities.
 region-error-invalid-shape = The value for { $field } has the wrong shape.
 region-error-invalid-band = The value for { $field } has an invalid band.
 

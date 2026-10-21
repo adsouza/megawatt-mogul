@@ -26,7 +26,6 @@ pub struct Names<'a> {
 /// What a network node is.
 #[derive(Debug, Clone, Copy)]
 enum NodeThing {
-    Substation,
     Plant(PlantId),
     City(CityId),
 }
@@ -36,12 +35,9 @@ impl<'a> Names<'a> {
     pub fn new(l10n: &'a Localizer, session: &GameSession) -> Self {
         let plant_views = session.plant_views();
         let city_views = session.city_views();
-        let nodes = std::iter::once((session.substation(), NodeThing::Substation))
-            .chain(
-                city_views
-                    .iter()
-                    .map(|city| (city.node, NodeThing::City(city.id))),
-            )
+        let nodes = city_views
+            .iter()
+            .map(|city| (city.node, NodeThing::City(city.id)))
             .chain(
                 plant_views
                     .iter()
@@ -104,11 +100,10 @@ impl<'a> Names<'a> {
         }
     }
 
-    /// The name of a network node: `Substation`, a city's name or `Coal plant 7`; a node the
+    /// The name of a network node: a city's name or `Coal plant 7`; a node the
     /// session does not know is `Grid point 12`.
     pub fn node(&self, id: NodeId) -> String {
         match self.nodes.get(&id) {
-            Some(NodeThing::Substation) => self.l10n.text("name-substation"),
             Some(NodeThing::Plant(plant)) => self.plant(*plant),
             Some(NodeThing::City(city)) => self.city(*city),
             None => self
