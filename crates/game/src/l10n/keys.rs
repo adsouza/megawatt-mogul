@@ -12,6 +12,8 @@
 pub const ALL_UI_KEYS: &[&str] = &[
     "save-title",
     "save-confirmed",
+    "save-autosave-failed",
+    "save-autosave-failed-detail",
     "save-load",
     "save-leave-title",
     "save-leave-body",
@@ -87,6 +89,7 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "leave-game-stay",
     "topbar-milestones",
     "recording-stopped",
+    "topbar-warnings",
     "toast-repeated",
     "game-over-title",
     "game-over-final-cash",

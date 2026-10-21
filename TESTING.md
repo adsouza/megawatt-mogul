@@ -145,7 +145,11 @@ person can see.
   parent saves/logs/installed regions. Directory-sync uncertainty is distinct from rollback.
 - `tests/game/save_resume.rs` covers queued ticks, generation rejection, paused load entry,
   month-close versus Save-and-menu ordering, independent storage errors, Retry and real egui
-  dialogs. The normal HUD contrast checker also inspects the new modal's paint output.
+  dialogs. The normal HUD contrast checker also inspects the new modal's paint output. A failed
+  autosave's top-bar warning is checked to start with the failure (a worker panic included), to
+  outlive *Continue without saving*, to clear only on a confirmed save at that boundary or later
+  (Retry included) or on leaving the run, and, with recording stopped too, to become one counted
+  indicator that fits at 1024×640.
 - `infrastructure/tests/client_preferences.rs` and `tests/game/preferences.rs` cover isolated
   preference files, restart, real sidebar/bottom-panel drags, zoom/speed, normal-exit flushing and
   property-tested reachable geometry. Tests never write the player's real preferences.

@@ -1802,13 +1802,15 @@ from `LogDir`, and a failure to access it does not prevent boot or a new game. T
   `DurabilityUnconfirmed { slot, revision }`: the new complete file may already be visible. Do not
   report "saved", claim the old file is unchanged, or leave the session. Re-read that revision on
   Retry under the lock, then finish synchronisation or report conflict; do not blindly overwrite.
-- Only a confirmed receipt updates last-saved metadata or completes *Save and return to menu*.
-  A failed autosave preserves prior checkpoints under the same publication rules, shows a
-  persistent warning and offers Retry or Continue without saving. A later successful autosave
-  clears its warning. Retry uses the failed immutable boundary and its expected revision, not a
-  newly captured state or an unconditional overwrite. A newer autosave supersedes older pending
-  retries, which must never replace it. Manual saves and other runs' autosaves are never rotated
-  away.
+- Only a confirmed receipt updates last-saved metadata or completes *Save and return to menu*. A
+  failed autosave preserves prior checkpoints under the same publication rules, shows a persistent
+  warning and offers Retry or Continue without saving. The warning stays after Continue without
+  saving. It is cleared by any confirmed save (an autosave, Retry or a manual save) whose boundary
+  is at or after the failed one, and by leaving the run: a new game, a load or returning to the
+  menu. A failed or unconfirmed save does not clear it, and while it shows, Save never says
+  "(saved)". Retry uses the failed immutable boundary and its expected revision, not a newly
+  captured state or an unconditional overwrite. A newer autosave supersedes older pending retries,
+  which must never replace it. Manual saves and other runs' autosaves are never rotated away.
 - Bound decoding to 64 MiB per save file and 1,000,000 commands, with checked lengths and nesting
   limits. Oversized captures fail before publication with `SaveTooLarge`; oversized, truncated,
   malformed or checksum-invalid files return typed errors, never a partial replay or panic.

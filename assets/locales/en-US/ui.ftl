@@ -74,6 +74,10 @@ leave-game-leave = Leave
 leave-game-stay = Stay
 topbar-milestones = Milestones
 recording-stopped = Recording stopped: { $reason }
+topbar-warnings = { $count ->
+    [one] ⚠ { $count } warning
+   *[other] ⚠ { $count } warnings
+}
 toast-repeated = { $text } (×{ $count })
 game-over-title = Game over
 game-over-final-cash = Final cash

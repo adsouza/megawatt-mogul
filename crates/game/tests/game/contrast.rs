@@ -163,6 +163,35 @@ fn shapes_of(painted: &[egui::epaint::ClippedShape]) -> Vec<(egui::Rect, &egui::
     shapes
 }
 
+/// What a painted text whose whole string is `whole` actually shows: the glyphs egui laid out,
+/// so a label cut short to fit reads as its visible part and "…". AccessKit, and the galley's
+/// `text()`, keep the whole string. `None` if no such text was painted.
+pub(crate) fn painted_glyphs(
+    painted: &[egui::epaint::ClippedShape],
+    whole: &str,
+) -> Option<String> {
+    painted_galley(painted, whole).map(|galley| {
+        galley
+            .rows
+            .iter()
+            .flat_map(|row| row.glyphs.iter().map(|glyph| glyph.chr))
+            .collect()
+    })
+}
+
+/// The galley of the painted text whose whole string is `whole`: its font and laid-out glyphs.
+pub(crate) fn painted_galley(
+    painted: &[egui::epaint::ClippedShape],
+    whole: &str,
+) -> Option<std::sync::Arc<egui::Galley>> {
+    shapes_of(painted)
+        .into_iter()
+        .find_map(|(_, shape)| match shape {
+            egui::Shape::Text(text) if text.galley.text() == whole => Some(text.galley.clone()),
+            _ => None,
+        })
+}
+
 /// Every exposed, non-blank text section in `painted`, with the colour of what is under it.
 pub(crate) fn painted_texts(painted: &[egui::epaint::ClippedShape]) -> Vec<PaintedText> {
     let shapes = shapes_of(painted);

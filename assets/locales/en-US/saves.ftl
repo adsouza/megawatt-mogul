@@ -44,4 +44,8 @@ save-error-replay = A recorded command could not be restored.
 save-error-log = A fresh recording could not be created. Your source save is unchanged.
 save-last = Saved { $month } · { $phase } · { $time }
 save-confirmed = Save (saved)
+# The top bar's warning. It must fit whole at the smallest window, so the month is abbreviated
+# ("Sep 2027"). Its tooltip, `save-autosave-failed-detail`, names the month in full.
+save-autosave-failed = Autosave failed: { $month }
+save-autosave-failed-detail = Autosave failed for { $month }. Save to keep your progress.
 save-overwrite-specific = Replace "{ $name }" ({ $month } · { $phase } · { $time })?

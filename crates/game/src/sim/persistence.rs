@@ -78,6 +78,13 @@ enum Completion {
     Loaded(Result<Box<Game>, SaveError>),
     Failed(SaveError),
 }
+/// The boundary whose autosave failed. Boundaries of one run are ordered by their accepted-command
+/// count, so a save with at least as many commands covers it.
+#[derive(Debug, Clone)]
+struct FailedAutosave {
+    summary: CheckpointSummary,
+    command_count: u64,
+}
 struct Job {
     receiver: Mutex<Receiver<Completion>>,
     cancel: Arc<AtomicBool>,
@@ -102,6 +109,10 @@ pub struct Persistence {
     previous_speed: SimSpeed,
     dialog_generation: u64,
     task: Option<WriteTask>,
+    /// The latest month-close autosave that failed and has not been made good since (spec §17.5).
+    /// It outlives *Continue without saving*: only a confirmed save at that boundary or a later
+    /// one clears it. A new game or a load starts from a fresh `Persistence`, without it.
+    autosave_failed: Option<FailedAutosave>,
     pub(super) resuming: bool,
     pub(super) resume_phase: Option<DayPhase>,
     return_after_save: bool,
@@ -143,6 +154,45 @@ impl Persistence {
     }
     pub fn can_save(&self) -> bool {
         self.store.is_some() && self.capture.is_some() && !self.busy()
+    }
+    /// The boundary of the month-close autosave that failed, while no confirmed save covers it.
+    pub fn autosave_failure(&self) -> Option<&CheckpointSummary> {
+        self.autosave_failed.as_ref().map(|failed| &failed.summary)
+    }
+    /// A persistence state whose latest autosave failed at `summary`, for presenter tests.
+    #[cfg(test)]
+    pub(crate) fn with_failed_autosave(summary: CheckpointSummary) -> Self {
+        Self {
+            autosave_failed: Some(FailedAutosave {
+                summary,
+                command_count: 0,
+            }),
+            ..Default::default()
+        }
+    }
+    /// Remembers the boundary of the autosave that just failed, so the warning shows behind the
+    /// error dialog and outlives it. Called wherever an automatic write fails: a `SaveError`
+    /// receipt, a worker that died (`Completion::Failed`) or one that never started. Nothing
+    /// else can fail an automatic task. A newer failure replaces an older one: it is the later
+    /// boundary.
+    fn autosave_did_fail(&mut self) {
+        if let Some(task) = self.task.as_ref().filter(|task| task.automatic) {
+            self.autosave_failed = Some(FailedAutosave {
+                summary: task.bundle.checkpoint.summary.clone(),
+                command_count: task.bundle.checkpoint.command_count,
+            });
+        }
+    }
+    /// A confirmed save of `checkpoint` clears the warning when it covers the failed boundary:
+    /// the same one (a successful Retry, or a manual save there) or a later one.
+    fn save_confirmed(&mut self, checkpoint: &GameCheckpoint) {
+        if self
+            .autosave_failed
+            .as_ref()
+            .is_some_and(|failed| checkpoint.command_count >= failed.command_count)
+        {
+            self.autosave_failed = None;
+        }
     }
     pub fn automatic_error(&self) -> bool {
         self.task.as_ref().is_some_and(|t| t.automatic) && self.error.is_some()
@@ -209,7 +259,9 @@ impl Persistence {
                 self.error = Some(SaveError::Io {
                     stage: "worker",
                     message: error.to_string(),
-                })
+                });
+                // An autosave whose worker never started has failed too.
+                self.autosave_did_fail();
             }
         }
     }
@@ -372,6 +424,8 @@ impl Persistence {
                 }
             }
             PersistAction::ContinueWithoutSaving if self.automatic_error() => {
+                // The failure was recorded when it happened (`autosave_did_fail`), so the warning
+                // outlives the task cleared here.
                 self.task = None;
                 self.error = None;
                 self.screen = self.manual.map_or(SaveScreen::Closed, ManualIntent::screen);
@@ -507,6 +561,8 @@ pub(super) fn poll_persistence(
         Completion::Failed(error) => {
             warn!("persistence worker failed: {error}");
             persistence.error = Some(error);
+            // A worker that died writing an autosave is a failed autosave.
+            persistence.autosave_did_fail();
         }
         Completion::Listed(result) => match result {
             Ok(entries) => persistence.entries = entries,
@@ -525,6 +581,7 @@ pub(super) fn poll_persistence(
                 {
                     run.revision = Some(receipt.revision);
                 }
+                persistence.save_confirmed(&task.bundle.checkpoint);
                 persistence.last_summary = Some(task.bundle.checkpoint.summary);
                 persistence.last_saved = Some(receipt);
                 persistence.error = None;
@@ -549,6 +606,9 @@ pub(super) fn poll_persistence(
             Err(error) => {
                 warn!("save failed: {error}");
                 let automatic = persistence.task.as_ref().is_some_and(|task| task.automatic);
+                if automatic {
+                    persistence.autosave_did_fail();
+                }
                 if let SaveError::DurabilityUnconfirmed { revision, .. } = &error
                     && let Some(task) = &mut persistence.task
                 {

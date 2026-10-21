@@ -139,6 +139,12 @@ pub fn month_year(month: SimMonth) -> String {
     format!("{} {}", MONTH_NAMES[month.index0()], month.year())
 }
 
+/// `Mar 2027`: the month's first three letters, for labels that must fit a narrow slot.
+pub fn month_year_short(month: SimMonth) -> String {
+    let name = MONTH_NAMES[month.index0()];
+    format!("{} {}", &name[..3], month.year())
+}
+
 /// `2 h 30 min`, `48 h`, `40 min`.
 pub fn duration(span: SimDuration) -> String {
     let (hours, minutes) = (span.ticks() / TICKS_PER_HOUR, span.ticks() % TICKS_PER_HOUR);
@@ -463,6 +469,20 @@ mod tests {
                 (1_440, "24:00"),
             ],
         );
+    }
+
+    #[test]
+    fn month_year_short_abbreviates_every_month_to_three_letters() {
+        let short = |m| month_year_short(SimMonth::new(2027, m).unwrap());
+        assert_eq!(short(1), "Jan 2027");
+        assert_eq!(short(5), "May 2027");
+        assert_eq!(short(9), "Sep 2027");
+        assert_eq!(short(12), "Dec 2027");
+        for m in 1..=12 {
+            let month = SimMonth::new(2027, m).unwrap();
+            assert!(month_year(month).starts_with(&short(m)[..3]), "{m}");
+            assert_eq!(short(m).len(), "Mmm 2027".len(), "{m}");
+        }
     }
 
     #[test]

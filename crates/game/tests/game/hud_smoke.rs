@@ -33,7 +33,7 @@ use game::hud::{
     speed_model, toasts_model, top_bar_model, warnings_for,
 };
 use game::l10n::Localize;
-use game::sim::{NewGameRequest, PlayerCommand, ReturnToMenu, Session, SimSpeed};
+use game::sim::{NewGameRequest, Persistence, PlayerCommand, ReturnToMenu, Session, SimSpeed};
 use game::state::{AppState, BootError};
 use infrastructure::region::RonRegionCatalog;
 use tempfile::TempDir;
@@ -215,7 +215,7 @@ fn an_empty_or_missing_regions_folder_offers_back() {
 fn the_top_bar_draws_a_real_game_and_its_menu_button_asks_first() {
     let l10n = shipped_l10n();
     let game = eastern_game();
-    let model = top_bar_model(&game, &l10n);
+    let model = top_bar_model(&game, &Persistence::default(), &l10n);
     let harness = Harness::new();
     let draw = |ui: &mut egui::Ui| {
         egui::Panel::top("top_bar")
@@ -909,7 +909,7 @@ fn planning_screen(
     planning: &mut PlanningState,
 ) -> Vec<UiAction> {
     let l10n = shipped_l10n();
-    let bar = top_bar_model(game, &l10n);
+    let bar = top_bar_model(game, &Persistence::default(), &l10n);
     let panel = planning_model(game, &l10n, &planning.ui, &planning.form).unwrap();
     let inspector = inspector_model(game, &l10n, selection).unwrap();
     let build = build_model(game, &l10n, selection).unwrap();
@@ -2150,10 +2150,10 @@ fn the_map_does_not_move_when_the_operating_panels_change() {
 }
 
 /// The error a full disk gives `FileCommandLog`, word for word: the longest reason a player sees.
-const NO_SPACE: &str = "cannot write record: No space left on device (os error 28)";
+pub(crate) const NO_SPACE: &str = "cannot write record: No space left on device (os error 28)";
 
 /// A command log that takes the header and then fails every command as a full disk does.
-struct NoSpaceLeft;
+pub(crate) struct NoSpaceLeft;
 
 impl CommandLogSink for NoSpaceLeft {
     fn initialize(&mut self, _: &LogHeader, _: &[u8]) -> Result<(), CommandLogError> {

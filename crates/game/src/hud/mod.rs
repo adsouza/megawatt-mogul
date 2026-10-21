@@ -146,7 +146,7 @@ pub use self::tariff::{TariffModel, draw_tariff, months_until_review, tariff_mod
 pub use self::toasts::{
     MAX_TOASTS, TOAST_SECONDS, ToastQueue, ToastsModel, draw_toasts, toasts_model,
 };
-pub use self::top_bar::{Stat, TopBarModel, draw_top_bar, top_bar_model};
+pub use self::top_bar::{Stat, TopBarModel, WarningsBanner, draw_top_bar, top_bar_model};
 pub use self::ui_state::{CommitDraft, CommitmentForm, PendingCommit, PlanningTab, UiState};
 use domain::session::DayPhase;
 
