@@ -1,5 +1,5 @@
 //! Save/load presenters and the single persistence modal. No store calls from draw code.
-use super::{ActionSink, ButtonModel, UiAction, button, dispatch};
+use super::{ActionSink, ButtonModel, UiAction, add_enabled, button, dispatch};
 use crate::{
     l10n::{Localize, Localizer, format},
     sim::{PersistAction, Persistence, SaveScreen},
@@ -276,7 +276,8 @@ pub fn draw_saves(ui: &mut egui::Ui, model: &SavesModel, form: &mut SaveForm) ->
     }
     if let Some(label) = &model.name_label {
         ui.label(label);
-        ui.add_enabled(
+        add_enabled(
+            ui,
             !model.busy,
             egui::TextEdit::singleline(&mut form.name)
                 .char_limit(80)

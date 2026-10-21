@@ -17,6 +17,7 @@ use super::milestones::MilestonesOpen;
 use super::operating::OperatingTab;
 use super::selection::Selection;
 use super::speed::LastSpeed;
+use super::theme;
 use super::ui_state::{PlanningTab, UiState};
 use crate::sim::{
     NewGameRequest, PersistAction, Persistence, PlayerCommand, ReturnToMenu, SessionGeneration,
@@ -148,7 +149,8 @@ pub fn toggle_button(
     model: &ToggleModel,
     actions: &mut Vec<UiAction>,
 ) -> egui::Response {
-    let response = ui.add_enabled(
+    let response = add_enabled(
+        ui,
         model.button.enabled,
         egui::Button::new(model.button.label.as_str()).selected(model.on),
     );
@@ -164,10 +166,27 @@ pub fn button(
     model: &ButtonModel,
     actions: &mut Vec<UiAction>,
 ) -> egui::Response {
-    let response = ui.add_enabled(model.enabled, egui::Button::new(model.label.as_str()));
+    let response = add_enabled(ui, model.enabled, egui::Button::new(model.label.as_str()));
     if response.clicked() {
         actions.push(model.action.clone());
     }
+    response
+}
+
+/// Adds `widget`, usable only when `enabled` and when `ui` is; a disabled one is drawn with
+/// [`theme::disabled_visuals`], so it looks unavailable. Use this, not `Ui::add_enabled`: the
+/// theme turns egui's own disabled fade off, so that would draw it like an enabled one (clippy's
+/// `disallowed-methods`, in `clippy.toml`, says so everywhere else).
+#[allow(clippy::disallowed_methods)]
+pub fn add_enabled(ui: &mut egui::Ui, enabled: bool, widget: impl egui::Widget) -> egui::Response {
+    if enabled && ui.is_enabled() {
+        return ui.add(widget);
+    }
+    // The visuals are swapped in place rather than in a child `Ui`, so the widget keeps its id.
+    let visuals = ui.visuals().clone();
+    *ui.visuals_mut() = theme::disabled_visuals(&visuals);
+    let response = ui.add_enabled(false, widget);
+    *ui.visuals_mut() = visuals;
     response
 }
 

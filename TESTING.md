@@ -196,10 +196,12 @@ The invariants the property tests must cover:
   connected subset and seed. Reject missing or initially unconnected home cities; verify named,
   unique line endpoints and one ordinary city marker per city.
 - **Text contrast:** an independent WCAG luminance calculation checks the HUD palette against
-  every text-bearing surface and widget state, including disabled and secondary labels, at 4.5:1
-  or better. Property tests exercise arbitrary foreground/background pairs. Inspect actual egui
-  paint output for both regions' screens and verify opaque backings behind map labels and bar
-  hover text. Run the windowed launch smoke after changing HUD theme systems.
+  every text-bearing surface and widget state, including secondary labels, at 4.5:1 or better.
+  Disabled labels are checked as the HUD's helpers really paint them, on every surface, and a
+  disabled button or slider must paint unlike an enabled one, including inside a disabled `Ui`.
+  Property tests exercise arbitrary foreground/background pairs. Inspect actual egui paint output
+  for both regions' screens and verify opaque backings behind map labels and bar hover text. Run
+  the windowed launch smoke after changing HUD theme systems.
 - **Determinism:** the same verified versions, settings, region content, seed and commands produce
   an identical state hash on the same build and platform (libm transcendentals may differ in the
   last bit between targets; see `ARCHITECTURE.md`). Test version/fingerprint mismatches before command execution, exact-byte

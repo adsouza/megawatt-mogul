@@ -51,8 +51,8 @@ use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
 
 pub use self::action::{
-    ActionSink, ButtonModel, MenuScreen, OpenPrompt, Prompt, ToggleModel, UiAction, button,
-    dispatch, toggle_button,
+    ActionSink, ButtonModel, MenuScreen, OpenPrompt, Prompt, ToggleModel, UiAction, add_enabled,
+    button, dispatch, toggle_button,
 };
 pub use self::build::{
     BUILD_PANEL_WIDTH, BuildModel, LinePreview, LineSection, LineTarget, PlantRow, PlantSection,

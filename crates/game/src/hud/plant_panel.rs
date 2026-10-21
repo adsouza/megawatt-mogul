@@ -17,7 +17,7 @@ use domain::ids::PlantId;
 use domain::session::PlantView;
 use domain::units::{MegawattHours, Megawatts, Money};
 
-use super::action::{ButtonModel, ToggleModel, UiAction, button, toggle_button};
+use super::action::{ButtonModel, ToggleModel, UiAction, add_enabled, button, toggle_button};
 use super::plant_list::{is_commitable, kinds_in_merit_order};
 use super::selection::Selection;
 use super::top_bar::Stat;
@@ -396,7 +396,8 @@ pub fn draw_plant_panel(
     });
     let slider = &plant.slider;
     form.sync(slider);
-    let response = ui.add_enabled(
+    let response = add_enabled(
+        ui,
         slider.enabled,
         egui::Slider::new(&mut form.value, slider.min..=slider.max)
             .text(slider.label.as_str())

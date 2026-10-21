@@ -337,3 +337,48 @@ fn the_players_legend_choice_lasts_through_the_phases_of_a_game() {
         assert!(legend(&widgets).is_some(), "{phase:?}: still open");
     }
 }
+
+/// The layer row shows which layer is on as a selected button, not a disabled one: it looks unlike
+/// the other layers' buttons, and choosing another layer moves that look. Clicking the layer that
+/// is on changes nothing.
+#[test]
+fn the_active_map_layer_is_shown_as_selected() {
+    use crate::contrast::button_look;
+    use game::hud::MapLayer;
+    const LAYERS: [&str; 4] = ["Terrain", "Sunshine", "Cooling water", "Hydro potential"];
+    let logs = TempDir::new().unwrap();
+    let mut app = app_in(&logs, EASTERN, DayPhase::Planning);
+    let pass = EguiPass::attach(&mut app);
+    let looks = |app: &mut App| {
+        let widgets = pass.settled(app, MEDIUM.0, MEDIUM.1);
+        let output = pass.paint_with(app, MEDIUM.0, MEDIUM.1, vec![]);
+        let painted = output.shapes.clone();
+        output.drop_without_applying_deltas();
+        LAYERS.map(|label| {
+            let layer = button(&widgets, label);
+            assert!(!layer.disabled, "{label} can be clicked");
+            (layer.selected, button_look(&painted, layer.rect))
+        })
+    };
+    let shows_on = |looks: &[(bool, crate::contrast::ButtonLook); 4], on: usize| {
+        for (index, (selected, look)) in looks.iter().enumerate() {
+            assert_eq!(*selected, index == on, "{}", LAYERS[index]);
+            if index != on {
+                assert_ne!(
+                    *look, looks[on].1,
+                    "{} looks like the layer on",
+                    LAYERS[index]
+                );
+            }
+        }
+    };
+
+    assert_eq!(*app.world().resource::<MapLayer>(), MapLayer::Terrain);
+    shows_on(&looks(&mut app), 0);
+
+    for _ in 0..2 {
+        click_button(&mut app, &pass, MEDIUM, "Sunshine");
+        assert_eq!(*app.world().resource::<MapLayer>(), MapLayer::Irradiance);
+        shows_on(&looks(&mut app), 1);
+    }
+}

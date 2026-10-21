@@ -4,7 +4,7 @@ use application::{RegionCatalog, RegionListing, RegionLoadError, auto_select_reg
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 
-use super::action::{ActionSink, ButtonModel, MenuScreen, UiAction, button, dispatch};
+use super::action::{ActionSink, ButtonModel, MenuScreen, UiAction, add_enabled, button, dispatch};
 use super::layout::HudArea;
 use super::region_atlas::{self, RegionAtlas};
 use crate::l10n::{Localize, Localizer};
@@ -333,7 +333,8 @@ pub fn draw_region_select(ui: &mut egui::Ui, model: &RegionSelectModel) -> Vec<U
                                 );
                                 ui.painter()
                                     .rect_filled(rect, 3.0, region_atlas::colour(index));
-                                let response = ui.add_enabled(
+                                let response = add_enabled(
+                                    ui,
                                     choice.button.enabled,
                                     egui::Button::new(
                                         egui::RichText::new(&choice.button.label)

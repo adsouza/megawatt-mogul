@@ -252,7 +252,15 @@ parses the command line and opens the window.
 `hud/theme.rs` owns the shared dark text palette and the 4.5:1 contrast floor. It runs before any
 HUD panel, keeps secondary and disabled labels readable, and adjusts semantic text colours without
 changing chart/marker colours. `hud/chart_style.rs` keeps chart ticks at full contrast and adds
-opaque backings to bar hover labels; map text uses the same backing helper. Text fades are disabled.
+opaque backings to bar hover labels; map text uses the same backing helper. Text fades are disabled,
+egui's disabled fade (`disabled_alpha`) included, so a disabled control is drawn by
+`action::add_enabled` with `theme::disabled_visuals`: buttons without a fill of their own and with
+a thin outline, a selected toggle's fill dimmed halfway to the panel, slider rails and handles in
+the faint fill, and muted text. Panels use that helper
+(through `button` and `toggle_button`), never egui's `Ui::add_enabled`, `add_enabled_ui`,
+`disable`, `UiBuilder::disabled` or the `enabled` of `Area`, `Window` and `CollapsingHeader`:
+`clippy.toml` disallows them everywhere else. A choice that is current, like the map
+layer shown, is a selected toggle, not a disabled button.
 
 | Plugin | Role |
 |---|---|

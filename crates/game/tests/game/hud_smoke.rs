@@ -416,9 +416,10 @@ fn the_map_draws_both_shipped_regions_and_selects_what_is_clicked() {
         ] {
             assert!(!find_button(&widgets, label).disabled, "{region}: {label}");
         }
+        let terrain = find_button(&widgets, "Terrain");
         assert!(
-            find_button(&widgets, "Terrain").disabled,
-            "the current layer"
+            terrain.selected && !terrain.disabled,
+            "the current layer is selected"
         );
 
         // A plant, a city and a bare cell, clicked where the map says they are.
@@ -491,13 +492,17 @@ fn the_map_draws_both_shipped_regions_and_selects_what_is_clicked() {
             );
         }
 
-        // A layer button asks for its layer; the current layer's button does nothing. The
-        // legend's toggle, at the end of the row, asks to hide the open legend.
+        // A layer button asks for its layer; the current layer's asks for the layer already
+        // shown, which changes nothing. The legend's toggle, at the end of the row, asks to hide
+        // the open legend.
         assert_eq!(
             harness.click("Sunshine", draw),
             vec![UiAction::SetLayer(MapLayer::Irradiance)]
         );
-        assert_eq!(harness.click("Terrain", draw), vec![]);
+        assert_eq!(
+            harness.click("Terrain", draw),
+            vec![UiAction::SetLayer(MapLayer::Terrain)]
+        );
         assert_eq!(
             harness.click("Legend", draw),
             vec![UiAction::ShowLegend(false)]

@@ -18,6 +18,8 @@ pub struct Widget {
     pub text: String,
     pub rect: Rect,
     pub disabled: bool,
+    /// Whether a button that is on or off (a tab, a toggle) says it is on.
+    pub selected: bool,
 }
 
 pub struct Harness {
@@ -214,6 +216,7 @@ pub fn widgets_of(output: &egui::FullOutput) -> Vec<Widget> {
                             Pos2::new(bounds.x1 as f32, bounds.y1 as f32),
                         ),
                         disabled: node.is_disabled(),
+                        selected: node.toggled() == Some(accesskit::Toggled::True),
                     })
                 })
                 .collect()

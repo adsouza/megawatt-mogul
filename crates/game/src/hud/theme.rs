@@ -73,7 +73,9 @@ pub fn visuals() -> egui::Visuals {
     let mut v = egui::Visuals::dark();
     v.override_text_color = Some(TEXT);
     v.weak_text_color = Some(Color32::from_gray(190));
-    // Disabled controls keep readable labels; egui still uses noninteractive widget styling.
+    // egui's whole disabled look is this fade, applied to the text and to whatever it sits on, so
+    // a faded label's contrast would depend on the surface. The fade stays off and the HUD draws
+    // disabled controls with `disabled_visuals` instead (`action::add_enabled`).
     v.disabled_alpha = 1.0;
     v.panel_fill = Color32::from_gray(27);
     v.window_fill = v.panel_fill;
@@ -96,6 +98,37 @@ pub fn visuals() -> egui::Visuals {
         widget.fg_stroke.color = TEXT;
     }
     v.widgets.active.fg_stroke.color = Color32::WHITE;
+    v
+}
+
+/// The look of a control that can't be used now, derived from the enabled `visuals`: a button has
+/// no fill of its own, so it shows the surface it sits on, and a thin outline in the enabled fill's
+/// colour; a slider's rail and handle, a checkbox's box, take the faint fill; text is muted. In egui 0.36 a disabled button still senses clicks, so without this it paints with
+/// the enabled idle look. Every state gets the same look, as a disabled control has none of its
+/// own. The muted text meets the minimum on every HUD surface (`contrast.rs`).
+pub fn disabled_visuals(visuals: &egui::Visuals) -> egui::Visuals {
+    let mut v = visuals.clone();
+    let text = v.weak_text_color();
+    v.override_text_color = Some(text);
+    v.selection.stroke.color = text;
+    // A selected toggle is filled with the selection colour in every state, so dim it, halfway
+    // to the panel: it still reads as on, but not as usable. The muted text meets the minimum on
+    // it (`contrast.rs`).
+    v.selection.bg_fill = visuals
+        .selection
+        .bg_fill
+        .lerp_to_gamma(visuals.panel_fill, 0.5);
+    let enabled = visuals.widgets.inactive;
+    let look = egui::style::WidgetVisuals {
+        weak_bg_fill: Color32::TRANSPARENT,
+        bg_fill: visuals.faint_bg_color,
+        bg_stroke: egui::Stroke::new(1.0, enabled.weak_bg_fill),
+        fg_stroke: egui::Stroke::new(enabled.fg_stroke.width, text),
+        ..enabled
+    };
+    v.widgets.inactive = look;
+    v.widgets.hovered = look;
+    v.widgets.active = look;
     v
 }
 

@@ -17,7 +17,7 @@ use domain::ids::{CellCoord, CityId, NodeId, PlantId, RegionId};
 use domain::region::{PlantKind, RegionDefinition};
 use egui::{Color32, Pos2, Rect, Stroke, StrokeKind, vec2};
 
-use super::action::{ActionSink, ButtonModel, ToggleModel, UiAction, button, dispatch};
+use super::action::{ActionSink, ButtonModel, ToggleModel, UiAction, dispatch, toggle_button};
 use super::layout::HudArea;
 use super::selection::Selection;
 use crate::l10n::{Localize, Localizer};
@@ -687,8 +687,9 @@ pub fn legend_columns(widths: &[f32], gap: f32, max_width: f32) -> usize {
 pub struct MapModel {
     /// The map's accessible name.
     pub label: String,
-    /// One button per [`MapLayer`]; the current layer's is disabled.
-    pub layers: Vec<ButtonModel>,
+    /// One button per [`MapLayer`]; the current layer's is on. Clicking it again changes nothing,
+    /// so it stays clickable rather than disabled.
+    pub layers: Vec<ToggleModel>,
     pub layer: MapLayer,
     /// The terrain is read from the region while painting: it is too big to copy every frame.
     pub region: Arc<RegionDefinition>,
@@ -743,9 +744,9 @@ pub fn map_model(
     MapModel {
         label: l10n.text("map-label"),
         layers: MapLayer::all()
-            .map(|choice| {
-                ButtonModel::new(layer_label(choice, l10n), UiAction::SetLayer(choice))
-                    .enabled_if(choice != layer)
+            .map(|choice| ToggleModel {
+                button: ButtonModel::new(layer_label(choice, l10n), UiAction::SetLayer(choice)),
+                on: choice == layer,
             })
             .collect(),
         layer,
@@ -771,7 +772,7 @@ pub fn draw_map(ui: &mut egui::Ui, model: &MapModel, cache: &mut MapCache) -> Ve
     let mut toggle_slot = Rect::NOTHING;
     ui.horizontal_wrapped(|ui| {
         for layer in &model.layers {
-            button(ui, layer, &mut actions);
+            toggle_button(ui, layer, &mut actions);
         }
         let size = button_size(ui, &model.legend_toggle);
         toggle_slot = ui.allocate_space(size).1;
@@ -1547,7 +1548,7 @@ mod tests {
     }
 
     #[test]
-    fn layer_buttons_pick_a_layer_and_the_current_one_is_disabled() {
+    fn layer_buttons_pick_a_layer_and_the_current_one_is_selected() {
         let l10n = shipped_l10n();
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
 
@@ -1562,16 +1563,22 @@ mod tests {
         let layers: Vec<MapLayer> = MapLayer::all().collect();
         assert_eq!(model.layers.len(), layers.len());
         assert_eq!(layers.len(), 10);
-        for (button, layer) in model.layers.iter().zip(&layers) {
-            assert_eq!(button.action, UiAction::SetLayer(*layer));
+        for (toggle, layer) in model.layers.iter().zip(&layers) {
+            assert_eq!(toggle.button.action, UiAction::SetLayer(*layer));
+            // Clicking the current layer again is harmless, so every button stays clickable.
+            assert!(toggle.button.enabled, "{}", toggle.button.label);
             assert_eq!(
-                button.enabled,
-                *layer != MapLayer::Terrain,
+                toggle.on,
+                *layer == MapLayer::Terrain,
                 "{}",
-                button.label
+                toggle.button.label
             );
         }
-        let labels: Vec<&str> = model.layers.iter().map(|b| b.label.as_str()).collect();
+        let labels: Vec<&str> = model
+            .layers
+            .iter()
+            .map(|t| t.button.label.as_str())
+            .collect();
         assert_eq!(labels[0], l10n.text("map-layer-terrain"));
         assert_eq!(labels[1], "Sunshine");
         assert_eq!(labels[2], "Cooling water");
@@ -1581,7 +1588,7 @@ mod tests {
         assert_eq!(model.layer, MapLayer::Terrain);
         assert_eq!(l10n.problems(), vec![]);
 
-        // Choosing another layer moves the disabled button.
+        // Choosing another layer moves the selection.
         let model = map_model(
             &game,
             &l10n,
@@ -1589,13 +1596,13 @@ mod tests {
             LegendChoice::default(),
             Selection::None,
         );
-        let disabled: Vec<&str> = model
+        let selected: Vec<&str> = model
             .layers
             .iter()
-            .filter(|b| !b.enabled)
-            .map(|b| b.label.as_str())
+            .filter(|t| t.on)
+            .map(|t| t.button.label.as_str())
             .collect();
-        assert_eq!(disabled, ["Suitability: Solar farm"]);
+        assert_eq!(selected, ["Suitability: Solar farm"]);
     }
 
     #[test]
