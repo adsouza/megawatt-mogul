@@ -10,7 +10,7 @@
 use std::collections::BTreeMap;
 
 use super::PowerSystem;
-use crate::generation::{HydroFill, Plant, water_fill};
+use crate::generation::{HydroFill, Plant, PlantStatus, water_fill};
 use crate::grid::frequency::FrequencyBand;
 use crate::ids::PlantId;
 use crate::region::{PlantKind, RegionDefinition};
@@ -105,13 +105,29 @@ impl PowerSystem {
     /// Plants are filled in id order against the residual: the forecast net
     /// load, zero before `from_hour`, less each earlier plant's allocation. A
     /// plant is eligible only in the hours its commitment pattern commits it.
+    /// A stopped or tripped plant whose commitment is suppressed gets no
+    /// allocation until manually restarted; starting and online plants can
+    /// participate even while their automatic commitment remains suppressed.
     /// Plants no longer scheduled lose their plan; manual hydro is neither
     /// planned nor subtracted. Planning from hour 0 starts a new day's frozen
     /// record. Draws no random numbers.
     pub(super) fn plan_hydro(&mut self, region: &RegionDefinition, month: SimMonth, from_hour: u8) {
         let from = usize::from(from_hour);
         let fills = self.compute_hydro_plan(region, month, from_hour, |p| {
-            p.hydro_budget().unwrap_or(MegawattHours::ZERO)
+            // Today's override cannot fulfil the base pattern. Keep this
+            // check out of the shared water-fill: Planning previews next
+            // month's pattern, and unsuppressed offline plants can still
+            // have a scheduled start ahead of them today.
+            if p.is_commitment_suppressed()
+                && !matches!(
+                    p.status(),
+                    PlantStatus::Starting { .. } | PlantStatus::Online { .. }
+                )
+            {
+                MegawattHours::ZERO
+            } else {
+                p.hydro_budget().unwrap_or(MegawattHours::ZERO)
+            }
         });
         let plans = fills
             .into_iter()

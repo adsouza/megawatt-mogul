@@ -163,6 +163,8 @@ The invariants the property tests must cover:
   the residual, a foreseen fall ramps down at most one ramp per tick, no hour spends more than its
   allocation plus one tick of ramp, the emergency lift holds for the whole restoration, and the
   view's elapsed hours stay frozen.
+  A stopped/tripped hydro unit with AGC still on reserves no operating allocation while its
+  commitment is suppressed; manual restarts rejoin the plan and next-month previews stay unchanged.
 - **Determinism:** the same verified versions, settings, region content, seed and commands produce
   an identical state hash on the same build and platform (libm transcendentals may differ in the
   last bit between targets; see `ARCHITECTURE.md`). Test version/fingerprint mismatches before command execution, exact-byte

@@ -1898,6 +1898,52 @@ fn tripped_hydro_is_unplanned_until_the_next_re_plan() {
     assert!(view.hourly[2] > Megawatts::ZERO);
 }
 
+proptest! {
+    #[test]
+    fn suppressed_hydro_is_planned_only_after_a_manual_restart(
+        hour in 1u8..24,
+        seed in any::<u64>(),
+        trip in any::<bool>(),
+    ) {
+        let region = tiny_region();
+        let mut sys = west_like_fleet(&region);
+        sys.begin_day(&region, january(), &mut SimRng::from_seed(seed));
+        let preview = sys.planned_hour_ends(&region, january());
+        if trip {
+            sys.trip_plant(HYDRO);
+        } else {
+            sys.plant_mut(HYDRO).unwrap().stop().unwrap();
+        }
+        sys.plant_mut(HYDRO).unwrap().suppress_commitment_for_day();
+
+        // Neither a ramp-down nor an offline unit can fulfil its suppressed
+        // pattern. Its positive water budget must not reserve residual load.
+        sys.plan_hydro(&region, january(), hour);
+        prop_assert!(!sys.hydro_schedule().plants.contains_key(&HYDRO));
+        sys.trip_plant(HYDRO);
+        sys.plan_hydro(&region, january(), hour);
+        prop_assert!(!sys.hydro_schedule().plants.contains_key(&HYDRO));
+
+        // Next month's Planning preview ignores today's overrides and still
+        // counts the committed unit with a fresh budget.
+        prop_assert_eq!(sys.planned_hour_ends(&region, january()), preview);
+
+        // A manual restart does not clear suppression. It must nevertheless
+        // rejoin the plan when starting, and remain eligible once online.
+        sys.plant_mut(HYDRO).unwrap().start().unwrap();
+        sys.plan_hydro(&region, january(), hour);
+        prop_assert!(sys.hydro_schedule().plants.contains_key(&HYDRO));
+        let plant = sys.plant_mut(HYDRO).unwrap();
+        for _ in 0..plant.spec().startup.ticks() {
+            plant.step(plant.hydro_available());
+        }
+        prop_assert!(plant.is_online());
+        prop_assert!(plant.is_commitment_suppressed());
+        sys.plan_hydro(&region, january(), hour);
+        prop_assert!(sys.hydro_schedule().plants.contains_key(&HYDRO));
+    }
+}
+
 #[test]
 fn a_budget_tight_plan_ramps_out_of_water_without_a_cliff() {
     let region = fast_thermal_region();

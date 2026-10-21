@@ -750,6 +750,9 @@ Hydro is what grids such as the Pacific Northwest use to ride the evening ramp.
    deterministic and draws no RNG.
 2. **Plants.** Schedule every connected, commissioned hydro plant with AGC on, but only over the hours
    its commitment pattern commits it. Uncommitted hours get an allocation of 0.
+   During Operating, a stopped or tripped plant whose commitment is suppressed reserves no water
+   allocation until manually restarted (Starting or Online). Unsuppressed plants with future
+   scheduled starts still count. Planning previews ignore the previous day's physical overrides.
    Fill them **in plant-id order against the residual**. The residual starts as net load, and each
    plant's allocation is subtracted before the next plant is filled.
 3. **Fill.** A plant has remaining budget `E` (MWh), capacity `C` (MW) and remaining hours `H`. Find

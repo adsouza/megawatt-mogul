@@ -593,6 +593,78 @@ fn stopping_committed_plant_suppresses_actions_without_changing_pattern() {
 }
 
 #[test]
+fn stopped_hydro_with_agc_enabled_does_not_starve_the_running_unit() {
+    use crate::region::{RegionDefinition, StartPlantDef, fixtures::tiny_region_parts};
+    use crate::time::TICKS_PER_HOUR;
+    use crate::units::Ratio;
+
+    let mut parts = tiny_region_parts();
+    // A flat, noise-free load that either fixture hydro plant can serve alone.
+    let demand = parts.cities[0].base_load;
+    parts.start.connected_cities = vec![parts.cities[0].id];
+    parts.demand.winter = [1.0; 24];
+    parts.demand.summer = [1.0; 24];
+    parts.demand.shoulder = [1.0; 24];
+    parts.demand.monthly = [1.0; 12];
+    parts.demand.forecast_error = Ratio::ZERO;
+    parts.start.fleet = vec![
+        StartPlantDef {
+            kind: PlantKind::Hydro,
+            cell: cell(10, 1),
+        };
+        2
+    ];
+    let mut s = GameSession::new(
+        Arc::new(RegionDefinition::try_from(parts).unwrap()),
+        1,
+        GameSettings::default(),
+    );
+    let plants = s.plant_views();
+    let (idle, running) = (plants[0].id, plants[1].id);
+    // Keep the lower-id unit idle, so stopping it removes no generation.
+    s.set_auto_follow(idle, false).unwrap();
+    s.begin_operating().unwrap();
+    assert_eq!(s.power().plant(idle).unwrap().output(), Megawatts::ZERO);
+    assert_eq!(s.power().plant(running).unwrap().output(), demand);
+
+    let stop_at = 5 * TICKS_PER_HOUR + 1;
+    for tick in 0..TICKS_PER_DAY {
+        if tick == stop_at {
+            s.set_auto_follow(idle, true).unwrap();
+            s.stop_plant(idle).unwrap();
+            let plant = s.power().plant(idle).unwrap();
+            assert!(plant.auto_follow());
+            assert!(plant.is_commitment_suppressed());
+            assert_eq!(plant.commitment(), CommitmentSchedule::all_day());
+        }
+        let events = s.tick().unwrap();
+        let summary = events
+            .iter()
+            .find_map(|event| match event {
+                DomainEvent::TickCompleted(summary) => Some(summary),
+                _ => None,
+            })
+            .unwrap();
+        // In particular, the 06:00 re-plan must not give the idle unit the
+        // healthy unit's allocation and ramp the healthy unit down to zero.
+        assert_eq!(summary.generation, demand, "tick {tick}");
+        assert_eq!(summary.served, demand, "tick {tick}");
+        assert_eq!(summary.unserved, Megawatts::ZERO, "tick {tick}");
+        assert_eq!(summary.outage, Ratio::ZERO, "tick {tick}");
+        assert_eq!(summary.mode, crate::grid::GridMode::Normal, "tick {tick}");
+        assert!(!events.contains(&DomainEvent::Blackout), "tick {tick}");
+        s.check_invariants().unwrap();
+    }
+    assert_eq!(s.phase(), DayPhase::Review);
+    assert_eq!(s.company().reliability(), Ratio::ONE);
+    assert_eq!(s.regulator().strikes(), 0);
+    assert_eq!(
+        s.power().plant(idle).unwrap().status(),
+        PlantStatus::Offline
+    );
+}
+
+#[test]
 fn stopping_a_mixed_pattern_plant_suppresses_its_next_scheduled_start() {
     // On 00–09 and 20–23: the 10-hour gap fits coal's 100 + 480 ticks.
     let hours: [bool; 24] = std::array::from_fn(|h| !(10..20).contains(&h));
