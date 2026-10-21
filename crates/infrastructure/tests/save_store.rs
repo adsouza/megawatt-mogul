@@ -60,6 +60,56 @@ fn save_store_atomic_round_trip_revision_and_independent_slots() {
     assert_eq!(store.list().unwrap().len(), 1);
 }
 
+/// A store whose writes are stamped by `build` on `platform`, as an older or foreign game's are.
+fn store_built_as(root: &Path, build: &str, platform: &str) -> FileSaveStore {
+    let next = Arc::new(std::sync::atomic::AtomicU64::new(1));
+    FileSaveStore::with_sources(
+        root.into(),
+        ReplayCompatibility {
+            build: build.into(),
+            platform: platform.into(),
+        },
+        Arc::new(|| 1_800_000_000),
+        Arc::new(move || {
+            let n = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            SaveId::new(format!("{n:032x}")).unwrap()
+        }),
+    )
+}
+
+#[test]
+fn save_store_lists_and_reads_a_save_from_another_build_with_its_metadata() {
+    let dir = TempDir::new().unwrap();
+    let older = store_built_as(dir.path(), "older", "other-target");
+    let b = bundle(&older, "From an older build");
+    older.write(&b, &SaveTarget::Create, &|| false).unwrap();
+    let store = FileSaveStore::new(dir.path().into());
+    assert_ne!(store.compatibility(), older.compatibility());
+    let listing = store.list().unwrap();
+    assert_eq!(listing.len(), 1);
+    let entry = listing[0].entry.as_ref().unwrap();
+    assert_eq!(entry.metadata.name, "From an older build");
+    assert_eq!(entry.region, RegionId::new("eastern_interconnection"));
+    assert_eq!(entry.summary.month, b.checkpoint.summary.month);
+    assert_eq!(entry.compatibility, older.compatibility());
+    let (read, _) = store.read(&b.metadata.slot).unwrap();
+    assert_eq!(read.compatibility, older.compatibility());
+    assert_eq!(read, b);
+}
+
+/// A writer stamps only its own build. A bundle stamped elsewhere is a caller bug, caught in
+/// debug builds; release builds write the store's own stamp regardless.
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "stamps only its own build")]
+fn save_store_debug_builds_catch_a_bundle_stamped_by_another_build() {
+    let dir = TempDir::new().unwrap();
+    let store = FileSaveStore::new(dir.path().into());
+    let mut b = bundle(&store, "Foreign stamp");
+    b.compatibility.build = "older".into();
+    let _ = store.write(&b, &SaveTarget::Create, &|| false);
+}
+
 #[test]
 fn save_store_publication_faults_preserve_old_bytes_except_post_publish_sync() {
     for stage in PublishStage::ALL {

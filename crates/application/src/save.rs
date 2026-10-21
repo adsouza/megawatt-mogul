@@ -1,5 +1,5 @@
 //! Persistence values and port; no filesystem, codec or wall clock in the application.
-use crate::{GameCheckpoint, RestoreError};
+use crate::{CommandLogSink, Game, GameCheckpoint, LoadedRegion, RestoreError};
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -23,6 +23,8 @@ impl SaveId {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SaveRevision(pub [u8; 32]);
+/// The simulation build and target platform that wrote a save. Diagnostics only: loading accepts
+/// a save from any build or platform whose replay verifies (`SaveBundle::restore`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplayCompatibility {
     pub build: String,
@@ -57,9 +59,34 @@ impl SaveMetadata {
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct SaveBundle {
+    /// The build that wrote this save. A writer stamps its own; a decoded bundle carries the one
+    /// recorded in the file, which may be another build's or platform's.
     pub compatibility: ReplayCompatibility,
     pub metadata: SaveMetadata,
     pub checkpoint: GameCheckpoint,
+}
+impl SaveBundle {
+    /// Replays and verifies this save on the `running` build, as [`Game::restore`] does, whichever
+    /// build recorded it. A replay that doesn't reproduce the recorded boundary returns no game.
+    /// If the save came from another build or platform, that failure is
+    /// [`SaveError::OtherVersionDiverged`], so the player learns why; other failures keep their
+    /// own cause.
+    pub fn restore(
+        self,
+        region: LoadedRegion,
+        running: &ReplayCompatibility,
+        sink: Box<dyn CommandLogSink>,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Game, SaveError> {
+        let recorded = self.compatibility;
+        Game::restore(region, self.checkpoint, sink, cancelled).map_err(|error| {
+            if error.is_verification_failure() && &recorded != running {
+                SaveError::OtherVersionDiverged { recorded, error }
+            } else {
+                SaveError::Restore(error)
+            }
+        })
+    }
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct SaveEntry {
@@ -68,6 +95,8 @@ pub struct SaveEntry {
     pub metadata: SaveMetadata,
     pub summary: crate::CheckpointSummary,
     pub revision: SaveRevision,
+    /// The build and platform that wrote the save, for diagnostics.
+    pub compatibility: ReplayCompatibility,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct SaveListing {
@@ -96,10 +125,6 @@ pub enum SaveError {
     InvalidSaveName,
     #[error("save format {recorded} unsupported (supported {supported})")]
     SaveFormatVersionMismatch { recorded: u32, supported: u32 },
-    #[error("save build differs")]
-    ReplayBuildMismatch,
-    #[error("save platform differs")]
-    PlatformMismatch,
     #[error("save checksum or length differs")]
     ChecksumMismatch,
     #[error("save limit exceeded")]
@@ -124,6 +149,29 @@ pub enum SaveError {
     },
     #[error(transparent)]
     Restore(#[from] RestoreError),
+    /// A save recorded by another build or platform whose replay here failed verification:
+    /// `error` is one of [`RestoreError::is_verification_failure`]'s. Nothing was installed.
+    #[error(
+        "save from build {} on {} did not verify here: {error}",
+        recorded.build,
+        recorded.platform
+    )]
+    OtherVersionDiverged {
+        recorded: ReplayCompatibility,
+        error: RestoreError,
+    },
+    /// A save recorded by another build or platform whose payload parsed but which this build
+    /// can't decode, such as an embedded region or command in a schema this build doesn't read.
+    /// `cause` is the decoder's message. The same build's failure is `Malformed`.
+    #[error(
+        "save from build {} on {} could not be decoded here: {cause}",
+        recorded.build,
+        recorded.platform
+    )]
+    OtherVersionUnreadable {
+        recorded: ReplayCompatibility,
+        cause: String,
+    },
 }
 
 pub trait SaveStore: Send + Sync {

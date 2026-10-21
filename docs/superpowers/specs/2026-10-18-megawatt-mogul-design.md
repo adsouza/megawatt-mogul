@@ -436,7 +436,9 @@ Ticks and commands return `Vec<DomainEvent>`. Nothing is pushed through a framew
 - The same seed, settings, region content, simulation rules version and command log must produce
   an identical state hash on the same build and platform (libm transcendentals such as `ln`, `cos`,
   `sin`, `exp` and `hypot` may differ in the last bit between targets). Replay verifies these inputs
-  before executing any commands (§7).
+  before executing any commands (§7). Across builds or platforms there is no promise, so a save
+  load does not trust one: it replays and accepts the result only if it reproduces the recorded
+  end state (§17.3).
 
 ## 6. Application layer (`crates/application`)
 
@@ -593,7 +595,8 @@ The presentation layer never reads aggregate internals.
   Explicitly supplying a different region file still performs the fingerprint check. A region
   archive does not migrate old simulation rules: replay after a rules change requires a matching
   engine version or a future explicit migration. Player-facing save/resume (§17) packages these
-  inputs into atomic checkpoints and adds build/platform and end-state verification.
+  inputs into atomic checkpoints and adds end-state verification; the recording build and
+  platform are kept for diagnostics.
 
 ## 8. Presentation (`crates/game`)
 
@@ -1716,7 +1719,8 @@ written live `.log` is used as a save.
 Each `<opaque-slot-id>.mgsave` is one independent file. It includes:
 
 - `SAVE_FORMAT_VERSION`, initially 1, distinct from `LOG_FORMAT_VERSION`;
-- a replay compatibility identity: simulation-build fingerprint and target platform;
+- a replay compatibility identity: simulation-build fingerprint and target platform, recorded
+  for diagnostics only;
 - the original `LogHeader` (rules/log versions, settings, seed and region fingerprint);
 - a byte-exact embedded copy of the original region RON, and the complete command prefix;
 - command count, expected end-state hash, phase/date/minute/status summary;
@@ -1728,21 +1732,34 @@ versions fail before decoding version-specific payloads. IDs are adapter-generat
 clock times and IDs are injected metadata, never simulation inputs. A slot revision is the SHA-256
 of its committed file bytes, used to confirm the specific revision being overwritten.
 
-The current deterministic guarantee is same simulation build/platform (§5.7). Do not assume
+The deterministic guarantee is same simulation build/platform (§5.7). Do not assume
 `SIM_RULES_VERSION` alone makes arbitrary builds bit-identical: libm and the Debug-based
-`state_hash` can change without an outcome-rule change. Generate the simulation-build fingerprint
-from sorted, relative paths and exact bytes of `domain`/`application`/`infrastructure` sources and
-manifests, the workspace manifest/lockfile, compiler identity, target, profile, enabled simulation
-features and compilation flags. Do not include checkout location, timestamps, game rendering
-sources or assets; region content has its own fingerprint. Conservative incompatibility after a
-backend/toolchain/lockfile change is acceptable; silently treating it as compatible is not.
+`state_hash` can change without an outcome-rule change. So loading does not trust a build
+identity; it trusts a replay that reproduces the recorded end state. The simulation-build
+fingerprint and target platform are recorded for diagnostics: the identity is available to the
+save listing, and loading logs it next to the running one when they differ. A writer always
+stamps its own build, so a game resumed from another build's save saves as the current build.
+Generate the fingerprint from sorted, relative paths and exact bytes of
+`domain`/`application`/`infrastructure` sources and manifests, the workspace manifest/lockfile,
+compiler identity, target, profile, enabled simulation features and compilation flags. Do not
+include checkout location, timestamps, game rendering sources or assets; region content has its
+own fingerprint.
 
-Load checks save format/integrity, build/platform identity, log/rules versions, and the embedded
-region fingerprint before replay. Hash the embedded bytes before mapping them, then construct the
-region from those same bytes; never fall back to installed region data. After replay, verify the
-command count, end-state hash and summary before installing anything. A retuned or deleted shipped
-region therefore does not break a compatible save. Different builds/platforms fail explicitly;
-there is no migration or cross-platform portability promise in this release.
+Load checks save format/integrity, size limits, log/rules versions, and the embedded region
+fingerprint before replay; the rules version is a fast, clear early failure. Hash the embedded
+bytes before mapping them, then construct the region from those same bytes; never fall back to
+installed region data. Load accepts any build or platform whose replay reproduces the recorded
+command count, end-state hash and summary; verify them after replay, before installing anything.
+A retuned or deleted shipped region therefore does not break a save. A replay that doesn't
+reproduce them fails explicitly and installs nothing, leaving the running state and the save file
+unchanged. When the save came from another build or platform, the player is told that this
+version of the game doesn't reproduce it and that the file is unchanged; on the same build the
+existing state/replay copy stays. There is no migration in this release.
+
+The caveat is honest: `state_hash` hashes the session's `Debug` form, so a refactor that changes
+that form, such as adding or renaming a session field, also makes older saves fail verification
+even when no outcome changed. That is a safe failure, never a silent wrong load. A canonical state
+hash or a stored snapshot would remove it; both are future work.
 
 The initial implementation leaves `SIM_RULES_VERSION` at 6 and `LOG_FORMAT_VERSION` at 1. Changing
 those is justified only by an independent rule or raw-log-format change. Save codec changes use
@@ -1779,7 +1796,9 @@ a cancelled or superseded completion cannot install a game, trigger a save/leave
 A save's atomic publication, once started, is allowed to finish; cancelling its UI does not undo
 an already published checkpoint. Never leave the game merely because a stale job reports success.
 Only one persistence operation is active per app. Errors leave the menu/session and source file
-usable; abandoning a candidate may leave only a diagnostic partial branch log, not a changed save.
+usable. A failed restore deletes the branch log and archive it created; at worst a failed
+deletion leaves a diagnostic partial branch log. A candidate cancelled or superseded after it
+verified may keep its branch log. Neither ever changes a save.
 
 ### 17.5 Durable storage and failure contracts
 
@@ -1816,11 +1835,15 @@ from `LogDir`, and a failure to access it does not prevent boot or a new game. T
   malformed or checksum-invalid files return typed errors, never a partial replay or panic.
   Limits are storage limits, not permission to truncate history.
 
-Typed failures include `SaveFormatVersionMismatch`, `ReplayBuildMismatch`, `PlatformMismatch`,
-`ChecksumMismatch`, existing rules/log/region mismatches, `ReplayCommandFailed { index, error }`,
-`StateHashMismatch`, `SummaryMismatch`, `InvalidSaveName`, `SaveTooLarge`, `SlotChanged`,
-`SlotBusy`, `DurabilityUnconfirmed`, `Cancelled`, and stage-specific I/O/log errors. Localise them
-at the game boundary; distinguish "recording stopped" from "save failed".
+Typed failures include `SaveFormatVersionMismatch`, `ChecksumMismatch`, existing
+rules/log/region mismatches, `ReplayCommandFailed { index, error }`, `StateHashMismatch`,
+`SummaryMismatch`, `OtherVersionDiverged` (one of those verification failures, for a save another
+build or platform recorded), `OtherVersionUnreadable` (such a save this build can't decode: its
+payload no longer parses, for example after a command variant, header or settings field changed,
+or it parses but its embedded region or a command no longer converts; the recorded build is read
+from the payload's stamp alone), `InvalidSaveName`, `SaveTooLarge`, `SlotChanged`, `SlotBusy`,
+`DurabilityUnconfirmed`, `Cancelled`, and stage-specific I/O/log errors. Localise them at the game
+boundary; distinguish "recording stopped" from "save failed".
 
 ### 17.6 Acceptance
 

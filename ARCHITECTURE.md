@@ -90,11 +90,16 @@ against each batch's resulting session. It verifies the boundary, seeds a fresh 
 exactly once, and returns a runnable candidate. Refused commands never enter the journal.
 
 `SaveStore` is an application-owned port. Infrastructure packages one complete prefix and region
-into a checksummed/versioned RON envelope, verifies build/platform compatibility, and owns atomic
-publication. A per-slot OS lock protects revision checks and same-directory temporary-file
-replacement. File and directory synchronisation precede a success receipt. The directories synced
-are the save root and the parent of each directory the store created, until that parent's sync
-succeeds; on Windows no directory is synced (NTFS journals the rename; see `sync_directory`).
+into a checksummed/versioned RON envelope, stamps it with its own build fingerprint and platform,
+and owns atomic publication. The stamp is diagnostics, not a gate: decoding returns the recorded
+build, and `SaveBundle::restore` accepts a save from any build or platform whose replay reproduces
+its recorded count, hash and summary. When such a replay fails, the error is
+`OtherVersionDiverged`; when such a save no longer decodes, it is `OtherVersionUnreadable`. Either
+way the game can say that this version doesn't reproduce the save, rather than call it corrupt.
+A per-slot OS lock protects revision checks and same-directory temporary-file replacement. File
+and directory synchronisation precede a success receipt. The directories synced are the save root
+and the parent of each directory the store created, until that parent's sync succeeds; on
+Windows no directory is synced (NTFS journals the rename; see `sync_directory`).
 Post-publication sync failure returns the new revision as `DurabilityUnconfirmed`, not a claim of
 rollback.
 
@@ -113,7 +118,10 @@ plugin; there is no ambient working-directory write from `CorePlugins`.
 ## Determinism rules
 
 The same verified versions, settings, region content, seed and command log must produce an identical
-state hash. Bit-identical replay is guaranteed **for the same build on the same platform**. A few
+state hash. Bit-identical replay is guaranteed **for the same build on the same platform**. Loading
+a save doesn't rely on that: it replays on whatever build is running and verifies the end state.
+`state_hash` hashes the session's `Debug` form, so a change to that form fails older saves'
+verification even when no outcome changed: a safe failure, not a wrong load. A few
 places call the platform's libm, whose last-bit results may differ between targets: the Box-Muller
 transform in `SimRng::standard_normal` (`ln`, `cos`), the solar day curve (`sin`), line lengths
 (`hypot`) and the terrain rasteriser in `infrastructure` (`cos`, `exp`). The region fingerprint

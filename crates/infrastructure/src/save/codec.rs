@@ -40,6 +40,18 @@ struct Payload {
     phase: PhaseDto,
     status: StatusDto,
 }
+/// Only the stamp of a [`Payload`], read when the full payload doesn't parse, so a save another
+/// build wrote in DTO shapes this build doesn't know still names that build. It deliberately
+/// allows unknown fields: RON is self-describing, so serde skips every other field's value,
+/// whatever its shape, through `deserialize_ignored_any`. Only top-level keys match, so a `build`
+/// nested inside a command can't be mistaken for the stamp. Payloads are written without RON
+/// struct names; if that ever changes, this struct's name check would fail and such saves would
+/// read as `Malformed`.
+#[derive(Deserialize)]
+struct Stamp {
+    build: String,
+    platform: String,
+}
 #[derive(Serialize, Deserialize)]
 enum PhaseDto {
     Planning,
@@ -61,6 +73,15 @@ fn malformed(error: impl std::fmt::Display) -> SaveError {
 }
 
 pub fn encode_save(bundle: &SaveBundle) -> Result<Vec<u8>, SaveError> {
+    encode_save_as(bundle, &bundle.compatibility)
+}
+
+/// Encodes `bundle` stamped with `compatibility`, whatever the bundle's own stamp says: a store
+/// stamps its own build.
+pub(crate) fn encode_save_as(
+    bundle: &SaveBundle,
+    compatibility: &ReplayCompatibility,
+) -> Result<Vec<u8>, SaveError> {
     bundle.metadata.validate()?;
     let c = &bundle.checkpoint;
     if c.commands.len() > MAX_SAVE_COMMANDS || c.region_source.len() > MAX_SAVE_BYTES {
@@ -71,8 +92,8 @@ pub fn encode_save(bundle: &SaveBundle) -> Result<Vec<u8>, SaveError> {
     }
     let m = &bundle.metadata;
     let payload = Payload {
-        build: bundle.compatibility.build.clone(),
-        platform: bundle.compatibility.platform.clone(),
+        build: compatibility.build.clone(),
+        platform: compatibility.platform.clone(),
         slot: m.slot.as_str().into(),
         run: m.run.as_str().into(),
         automatic: m.kind == SaveKind::Automatic,
@@ -114,9 +135,14 @@ pub fn encode_save(bundle: &SaveBundle) -> Result<Vec<u8>, SaveError> {
     Ok(bytes)
 }
 
+/// Verifies a save's format, integrity, versions and embedded region, then decodes it. The
+/// recorded build and platform come back in the bundle, for diagnostics: they are not a gate,
+/// because replay verification (`SaveBundle::restore`) decides whether this build can reproduce
+/// the save. They name the failure, though: a save from a build other than `running` that parses
+/// but doesn't decode is `OtherVersionUnreadable`, not `Malformed`.
 pub fn decode_save(
     bytes: &[u8],
-    compatibility: &ReplayCompatibility,
+    running: &ReplayCompatibility,
 ) -> Result<(SaveBundle, LoadedRegion), SaveError> {
     if bytes.len() > MAX_SAVE_BYTES {
         return Err(SaveError::SaveTooLarge);
@@ -132,13 +158,44 @@ pub fn decode_save(
     if e.length != e.payload.len() || e.checksum != digest(e.payload.as_bytes()) {
         return Err(SaveError::ChecksumMismatch);
     }
-    let p: Payload = options.from_str(&e.payload).map_err(malformed)?;
-    if p.build != compatibility.build {
-        return Err(SaveError::ReplayBuildMismatch);
-    }
-    if p.platform != compatibility.platform {
-        return Err(SaveError::PlatformMismatch);
-    }
+    let p: Payload = match options.from_str(&e.payload) {
+        Ok(p) => p,
+        Err(error) => {
+            return Err(match options.from_str::<Stamp>(&e.payload) {
+                Ok(stamp) => {
+                    let recorded = ReplayCompatibility {
+                        build: stamp.build,
+                        platform: stamp.platform,
+                    };
+                    if &recorded == running {
+                        malformed(error)
+                    } else {
+                        SaveError::OtherVersionUnreadable {
+                            recorded,
+                            cause: error.to_string(),
+                        }
+                    }
+                }
+                Err(_) => malformed(error),
+            });
+        }
+    };
+    let recorded = ReplayCompatibility {
+        build: p.build.clone(),
+        platform: p.platform.clone(),
+    };
+    decode_payload(p, recorded.clone()).map_err(|error| match error {
+        SaveError::Malformed(cause) if &recorded != running => {
+            SaveError::OtherVersionUnreadable { recorded, cause }
+        }
+        error => error,
+    })
+}
+
+fn decode_payload(
+    p: Payload,
+    compatibility: ReplayCompatibility,
+) -> Result<(SaveBundle, LoadedRegion), SaveError> {
     if p.commands.len() > MAX_SAVE_COMMANDS {
         return Err(SaveError::SaveTooLarge);
     }
@@ -213,7 +270,7 @@ pub fn decode_save(
     };
     Ok((
         SaveBundle {
-            compatibility: compatibility.clone(),
+            compatibility,
             metadata,
             checkpoint,
         },

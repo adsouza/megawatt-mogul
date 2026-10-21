@@ -1,4 +1,8 @@
-use super::{MAX_SAVE_BYTES, codec::digest, decode_save, encode_save, replay_compatibility};
+use super::{
+    MAX_SAVE_BYTES,
+    codec::{digest, encode_save_as},
+    decode_save, replay_compatibility,
+};
 use application::*;
 use std::{
     collections::BTreeSet,
@@ -249,6 +253,7 @@ impl SaveStore for FileSaveStore {
                         metadata: bundle.metadata,
                         summary: bundle.checkpoint.summary,
                         revision: SaveRevision(digest(&bytes)),
+                        compatibility: bundle.compatibility,
                     })
                 });
             result.push(SaveListing {
@@ -284,10 +289,13 @@ impl SaveStore for FileSaveStore {
         if cancelled() {
             return Err(SaveError::Cancelled);
         }
-        if bundle.compatibility != self.compatibility {
-            return Err(SaveError::ReplayBuildMismatch);
-        }
-        let bytes = encode_save(bundle)?;
+        // A store stamps only its own build, so a game resumed from another build's save saves
+        // as this one. A bundle stamped elsewhere is a caller bug.
+        debug_assert_eq!(
+            bundle.compatibility, self.compatibility,
+            "a store stamps only its own build"
+        );
+        let bytes = encode_save_as(bundle, &self.compatibility)?;
         {
             // Create under the lock, so a concurrent write on this store that finds the new
             // directories already there still finds them pending.
@@ -424,6 +432,19 @@ mod tests {
             },
             checkpoint: game.checkpoint(),
         }
+    }
+
+    /// The stamp is structural: what a store writes carries its own build, whatever the bundle
+    /// says. (Debug builds also catch the mismatch; see `save_store.rs`.)
+    #[test]
+    fn a_store_encodes_with_its_own_stamp() {
+        let dir = TempDir::new().unwrap();
+        let store = FileSaveStore::new(dir.path().into());
+        let mut b = bundle(&store);
+        b.compatibility.build = "older".into();
+        let bytes = super::super::codec::encode_save_as(&b, &store.compatibility).unwrap();
+        let (decoded, _) = decode_save(&bytes, &store.compatibility).unwrap();
+        assert_eq!(decoded.compatibility, store.compatibility);
     }
 
     #[test]

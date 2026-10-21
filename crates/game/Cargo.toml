@@ -51,6 +51,7 @@ features = [
 
 [dev-dependencies]
 proptest = { workspace = true }
+sha2 = { workspace = true }
 tempfile = { workspace = true }
 
 [lints]

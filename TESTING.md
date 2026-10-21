@@ -140,9 +140,10 @@ person can see.
   year-end regulation, construction and terminal Review. Prefix/continuation invariants use
   property tests; rejected commands leave the capture unchanged.
 - `infrastructure/tests/save_{codec,store,compatibility}.rs` cover self-contained files, exact
-  payload checksums, explicit size/version/build/platform failures, build fingerprint inputs,
-  actual disk bytes across publication faults, OS-lock contention, revisions and recovery without
-  parent saves/logs/installed regions. Directory-sync uncertainty is distinct from rollback.
+  payload checksums, explicit size/version failures, saves from another build or platform that
+  decode and list with their metadata, build fingerprint inputs, actual disk bytes across
+  publication faults, OS-lock contention, revisions and recovery without parent saves/logs/installed
+  regions. Directory-sync uncertainty is distinct from rollback.
   `save_store.rs` records which directories a save syncs (`with_directory_sync`): only the root
   when it exists; each new directory's parent when the save creates them; and, on a Retry or the
   next save, what an uncertain publication, a partial sync or a failed creation left unsynced.
@@ -152,7 +153,9 @@ person can see.
   autosave's top-bar warning is checked to start with the failure (a worker panic included), to
   outlive *Continue without saving*, to clear only on a confirmed save at that boundary or later
   (Retry included) or on leaving the run, and, with recording stopped too, to become one counted
-  indicator that fits at 1024×640.
+  indicator that fits at 1024×640. A save another build wrote lists by name and resumes paused when
+  its replay verifies; when it doesn't, the browser shows the other-version copy at 1024×640, and
+  neither the menu nor the file changes.
 - `infrastructure/tests/client_preferences.rs` and `tests/game/preferences.rs` cover isolated
   preference files, restart, real sidebar/bottom-panel drags, zoom/speed, normal-exit flushing and
   property-tested reachable geometry. Tests never write the player's real preferences.
@@ -211,9 +214,12 @@ The invariants the property tests must cover:
   the windowed launch smoke after changing HUD theme systems.
 - **Determinism:** the same verified versions, settings, region content, seed and commands produce
   an identical state hash on the same build and platform (libm transcendentals may differ in the
-  last bit between targets; see `ARCHITECTURE.md`). Test version/fingerprint mismatches before command execution, exact-byte
-  region archival, and recovery after shipped data is retuned or removed. Missing/corrupt archives
-  never silently fall back to installed data; failed archive/header initialisation prevents new games.
+  last bit between targets; see `ARCHITECTURE.md`). A save from another build restores when its
+  replay verifies and fails as `OtherVersionDiverged`, installing nothing and leaving no branch
+  log, when it doesn't; one that no longer decodes fails as `OtherVersionUnreadable`. Test
+  version/fingerprint mismatches before command execution, exact-byte region archival, and
+  recovery after shipped data is retuned or removed. Missing/corrupt archives never silently fall
+  back to installed data; failed archive/header initialisation prevents new games.
 - **Robustness:** any random sequence of commands (state-machine test) never panics, and all
   invariants hold afterwards.
 - **Parsing:** malformed region DTOs produce typed errors, never panics.

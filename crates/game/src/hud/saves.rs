@@ -238,8 +238,6 @@ pub fn save_error(error: &SaveError, l10n: &Localizer) -> String {
         SaveError::InvalidId => "save-error-id",
         SaveError::InvalidSaveName => "save-error-name",
         SaveError::SaveFormatVersionMismatch { .. } => "save-error-version",
-        SaveError::ReplayBuildMismatch => "save-error-build",
-        SaveError::PlatformMismatch => "save-error-platform",
         SaveError::ChecksumMismatch => "save-error-checksum",
         SaveError::SaveTooLarge => "save-error-size",
         SaveError::Malformed(_) => "save-error-malformed",
@@ -259,6 +257,9 @@ pub fn save_error(error: &SaveError, l10n: &Localizer) -> String {
             application::RestoreError::Cancelled => "save-error-cancelled",
             application::RestoreError::Log(_) => "save-error-log",
         },
+        SaveError::OtherVersionDiverged { .. } | SaveError::OtherVersionUnreadable { .. } => {
+            "save-error-other-version"
+        }
     };
     l10n.text(key)
 }
@@ -326,4 +327,83 @@ pub(super) fn saves_overlay(
         .inner;
     dispatch(actions, &mut sink);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hud::test_support::shipped_l10n;
+    use application::{CommandError, ReplayCompatibility, RestoreError};
+    use domain::error::DomainError;
+
+    /// The four ways a replay fails to reproduce its recorded boundary.
+    fn verification_failures() -> Vec<RestoreError> {
+        vec![
+            RestoreError::CommandCountMismatch,
+            RestoreError::StateHashMismatch,
+            RestoreError::SummaryMismatch,
+            RestoreError::ReplayCommandFailed {
+                index: 3,
+                error: CommandError::Domain(DomainError::InvalidMonth { month: 13 }),
+            },
+        ]
+    }
+
+    #[test]
+    fn a_failed_verification_names_the_other_version_only_when_the_save_came_from_one() {
+        let l10n = shipped_l10n();
+        let older = ReplayCompatibility {
+            build: "an-older-build".into(),
+            platform: "another-target".into(),
+        };
+        for error in verification_failures() {
+            assert!(error.is_verification_failure());
+            assert_eq!(
+                save_error(
+                    &SaveError::OtherVersionDiverged {
+                        recorded: older.clone(),
+                        error: error.clone(),
+                    },
+                    &l10n
+                ),
+                "This save was made by a different version of the game, and this version \
+                 doesn't reproduce it. Your save file is unchanged.",
+                "{error:?}"
+            );
+            let same_build = if matches!(error, RestoreError::ReplayCommandFailed { .. }) {
+                "save-error-replay"
+            } else {
+                "save-error-state"
+            };
+            assert_eq!(
+                save_error(&SaveError::Restore(error), &l10n),
+                l10n.text(same_build)
+            );
+        }
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    #[test]
+    fn an_undecodable_save_names_the_other_version_only_when_the_save_came_from_one() {
+        let l10n = shipped_l10n();
+        let older = ReplayCompatibility {
+            build: "an-older-build".into(),
+            platform: "another-target".into(),
+        };
+        assert_eq!(
+            save_error(
+                &SaveError::OtherVersionUnreadable {
+                    recorded: older,
+                    cause: "unknown region field".into(),
+                },
+                &l10n
+            ),
+            l10n.text("save-error-other-version")
+        );
+        assert_eq!(
+            save_error(&SaveError::Malformed("unknown region field".into()), &l10n),
+            "This save could not be decoded."
+        );
+        assert_eq!(l10n.problems(), vec![]);
+    }
 }

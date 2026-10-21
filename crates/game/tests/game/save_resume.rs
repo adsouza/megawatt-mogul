@@ -1204,3 +1204,307 @@ fn at_the_smallest_window_two_warnings_become_one_indicator_beside_menu_mileston
         }
     }
 }
+
+/// A store stamping its writes as a different build on a different platform: what an older
+/// game, or the same game on another machine, leaves in the save directory.
+fn older_build_store(saves: &TempDir) -> infrastructure::save::FileSaveStore {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    };
+    let next = Arc::new(AtomicU64::new(1));
+    infrastructure::save::FileSaveStore::with_sources(
+        saves.path().into(),
+        application::ReplayCompatibility {
+            build: "an-older-build".into(),
+            platform: "another-target".into(),
+        },
+        Arc::new(|| 1_800_000_000),
+        Arc::new(move || {
+            let n = next.fetch_add(1, Ordering::Relaxed);
+            application::SaveId::new(format!("{n:032x}")).unwrap()
+        }),
+    )
+}
+
+/// Writes `checkpoint` through `store`, stamped with that store's build, as a manual save.
+fn write_manual(
+    store: &infrastructure::save::FileSaveStore,
+    name: &str,
+    checkpoint: application::GameCheckpoint,
+) -> application::SaveId {
+    use application::SaveStore;
+    let bundle = application::SaveBundle {
+        compatibility: store.compatibility(),
+        metadata: application::SaveMetadata {
+            slot: store.allocate_id(),
+            run: store.allocate_id(),
+            kind: application::SaveKind::Manual,
+            name: name.into(),
+            saved_at: store.now(),
+        },
+        checkpoint,
+    };
+    store
+        .write(&bundle, &application::SaveTarget::Create, &|| false)
+        .unwrap()
+        .metadata
+        .slot
+}
+
+/// A menu app on `saves` with its load browser open and listed.
+fn load_browser(logs: &TempDir, saves: &TempDir) -> App {
+    let mut app = hud_app(logs.path());
+    app.insert_resource(SaveDir(saves.path().into()));
+    update_n(&mut app, 2);
+    action(&mut app, PersistAction::OpenBrowser);
+    settle(&mut app);
+    app
+}
+
+fn browser_model(app: &App) -> game::hud::SavesModel {
+    game::hud::saves_model(
+        app.world().resource::<Persistence>(),
+        &game::hud::SaveForm::default(),
+        &crate::support::shipped_l10n(),
+    )
+}
+
+/// The build fingerprint no longer gates loading: a save from another build or platform lists by
+/// its name and loads, paused, exactly as a same-build save does, when its replay verifies here.
+/// The resumed game's own saves carry this build's stamp.
+#[test]
+fn a_save_from_another_build_lists_by_name_and_resumes_paused_when_its_replay_verifies() {
+    use application::SaveStore;
+    let logs = TempDir::new().unwrap();
+    let saves = TempDir::new().unwrap();
+    let mut app = operating(&logs, &saves);
+    app.world_mut()
+        .resource_mut::<Session>()
+        .0
+        .execute(Command::AdvanceTicks { n: 600 })
+        .unwrap();
+    let live = app.world_mut().remove_resource::<Session>().unwrap().0;
+    drop(app);
+    let older = older_build_store(&saves);
+    let slot = write_manual(&older, "From an older build", live.checkpoint());
+
+    let mut app = load_browser(&logs, &saves);
+    let model = browser_model(&app);
+    assert!(model.error.is_none(), "{:?}", model.error);
+    let [row] = model.rows.as_slice() else {
+        panic!("{:?}", model.rows)
+    };
+    assert_eq!(row.name, "From an older build");
+    assert!(row.problem.is_none(), "{:?}", row.problem);
+    assert!(row.details.contains("Western"), "{}", row.details);
+    assert_eq!(
+        row.action.as_ref().map(|b| &b.action),
+        Some(&UiAction::Persistence(PersistAction::Load(slot.clone())))
+    );
+
+    action(&mut app, PersistAction::Load(slot));
+    settle(&mut app);
+    update_n(&mut app, 6);
+    let session = &app.world().resource::<Session>().0;
+    assert_eq!(session.checkpoint(), live.checkpoint());
+    assert_eq!(session.projections(), live.projections());
+    assert_eq!(
+        session.session().phase(),
+        domain::session::DayPhase::Operating
+    );
+    assert_eq!(*app.world().resource::<SimSpeed>(), SimSpeed::Paused);
+    assert_eq!(
+        *app.world().resource::<State<game::state::AppState>>().get(),
+        game::state::AppState::InGame
+    );
+
+    // The month-close autosave of the resumed game is this build's.
+    dispatch_in(
+        &mut app,
+        vec![UiAction::Command(Command::AdvanceTicks { n: 840 })],
+    );
+    settle(&mut app);
+    let current = infrastructure::save::FileSaveStore::new(saves.path().into());
+    let autosave = current
+        .list()
+        .unwrap()
+        .into_iter()
+        .filter_map(|listing| listing.entry.ok())
+        .find(|entry| entry.metadata.kind == application::SaveKind::Automatic)
+        .expect("the month close autosaved");
+    assert_eq!(
+        autosave.compatibility,
+        infrastructure::save::replay_compatibility()
+    );
+    assert_ne!(autosave.compatibility, older.compatibility());
+}
+
+/// A save whose replay doesn't reproduce its recorded boundary fails to load, installs nothing
+/// and leaves the file as it was. From another build, the copy says the version differs.
+#[test]
+fn a_save_that_does_not_verify_names_the_other_version_and_leaves_the_game_and_file_alone() {
+    let logs = TempDir::new().unwrap();
+    let saves = TempDir::new().unwrap();
+    let app = operating(&logs, &saves);
+    let mut diverged = app.world().resource::<Session>().0.checkpoint();
+    drop(app);
+    diverged.state_hash ^= 1;
+    let older = write_manual(&older_build_store(&saves), "Older", diverged.clone());
+    let same = write_manual(
+        &infrastructure::save::FileSaveStore::new(saves.path().into()),
+        "Same build",
+        diverged,
+    );
+    let file = |slot: &application::SaveId| {
+        std::fs::read(saves.path().join(format!("{}.mgsave", slot.as_str()))).unwrap()
+    };
+    let (older_bytes, same_bytes) = (file(&older), file(&same));
+    let l10n = crate::support::shipped_l10n();
+
+    let mut app = load_browser(&logs, &saves);
+    let pass = crate::support::egui_pass::EguiPass::attach(&mut app);
+    for (slot, key) in [
+        (older.clone(), "save-error-other-version"),
+        (same.clone(), "save-error-state"),
+    ] {
+        action(&mut app, PersistAction::Load(slot));
+        settle(&mut app);
+        update_n(&mut app, 3);
+        assert!(!app.world().contains_resource::<Session>(), "{key}");
+        assert_eq!(
+            *app.world().resource::<State<game::state::AppState>>().get(),
+            game::state::AppState::MainMenu,
+            "{key}"
+        );
+        assert_eq!(browser_model(&app).error, Some(l10n.text(key)));
+        // The error and the browser's controls stay on screen at the smallest window.
+        let (width, height) = (1024.0, 640.0);
+        let widgets = pass.settled(&mut app, width, height);
+        let on_screen = |w: &&crate::support::egui_harness::Widget| {
+            w.rect.left() >= 0.0 && w.rect.right() <= width && w.rect.bottom() <= height
+        };
+        assert!(
+            widgets
+                .iter()
+                .filter(|w| w.text.starts_with(&l10n.text(key)[..20]))
+                .any(|w| on_screen(&w)),
+            "{key}"
+        );
+        for label in ["Retry", "Refresh", "Cancel"] {
+            let button = widgets.iter().find(|w| w.text == label);
+            assert!(button.is_some_and(|b| on_screen(&b)), "{key}: {label}");
+        }
+    }
+    assert!(matches!(
+        app.world().resource::<Persistence>().error,
+        Some(application::SaveError::Restore(
+            application::RestoreError::StateHashMismatch
+        ))
+    ));
+    assert_eq!(file(&older), older_bytes);
+    assert_eq!(file(&same), same_bytes);
+    assert!(l10n.problems().is_empty(), "{:?}", l10n.problems());
+}
+
+/// A checkpoint of a fresh western game whose embedded region this build can't read, though its
+/// fingerprint still matches its bytes: what a region schema change leaves an older save.
+fn unreadable_checkpoint(logs: &TempDir, saves: &TempDir) -> application::GameCheckpoint {
+    use sha2::{Digest, Sha256};
+    let app = operating(logs, saves);
+    let mut checkpoint = app.world().resource::<Session>().0.checkpoint();
+    checkpoint.region_source = b"(not: a region)".to_vec();
+    checkpoint.header.region_fingerprint =
+        application::RegionFingerprint::new(Sha256::digest(&checkpoint.region_source).into());
+    checkpoint
+}
+
+/// The file names in `dir`, or none when it doesn't exist.
+fn files_in(dir: &std::path::Path) -> std::collections::BTreeSet<std::ffi::OsString> {
+    std::fs::read_dir(dir)
+        .map(|entries| entries.map(|e| e.unwrap().file_name()).collect())
+        .unwrap_or_default()
+}
+
+/// A save another build wrote that this build can't decode reads as another version's, in the
+/// browser and on load, not as a corrupt file. The same build's undecodable save keeps the
+/// malformed copy.
+#[test]
+fn a_save_from_another_build_that_no_longer_decodes_names_its_version_not_corruption() {
+    let logs = TempDir::new().unwrap();
+    let saves = TempDir::new().unwrap();
+    let checkpoint = unreadable_checkpoint(&logs, &saves);
+    let older = write_manual(&older_build_store(&saves), "Older", checkpoint.clone());
+    let same = write_manual(
+        &infrastructure::save::FileSaveStore::new(saves.path().into()),
+        "Same build",
+        checkpoint,
+    );
+    let l10n = crate::support::shipped_l10n();
+    let mut app = load_browser(&logs, &saves);
+    let model = browser_model(&app);
+    for (slot, key) in [
+        (&older, "save-error-other-version"),
+        (&same, "save-error-malformed"),
+    ] {
+        let row = model
+            .rows
+            .iter()
+            .find(|row| row.name == slot.as_str())
+            .unwrap_or_else(|| panic!("{key}: {:?}", model.rows));
+        assert_eq!(row.problem, Some(l10n.text(key)));
+    }
+    for (slot, key) in [
+        (older, "save-error-other-version"),
+        (same, "save-error-malformed"),
+    ] {
+        action(&mut app, PersistAction::Load(slot));
+        settle(&mut app);
+        update_n(&mut app, 3);
+        assert!(!app.world().contains_resource::<Session>(), "{key}");
+        assert_eq!(browser_model(&app).error, Some(l10n.text(key)));
+    }
+    assert!(l10n.problems().is_empty(), "{:?}", l10n.problems());
+}
+
+/// A load that fails verification abandons its candidate without leaving a branch log or region
+/// archive behind, however often it is tried. A load that succeeds still records its branch.
+#[test]
+fn a_failed_load_leaves_no_new_files_in_the_log_directory() {
+    let setup = TempDir::new().unwrap();
+    let saves = TempDir::new().unwrap();
+    let app = operating(&setup, &saves);
+    let good = app.world().resource::<Session>().0.checkpoint();
+    drop(app);
+    let mut diverged = good.clone();
+    diverged.state_hash ^= 1;
+    let current = infrastructure::save::FileSaveStore::new(saves.path().into());
+    let bad = [
+        write_manual(&older_build_store(&saves), "Older", diverged.clone()),
+        write_manual(&current, "Same build", diverged),
+    ];
+    let good = write_manual(&current, "Good", good);
+
+    let logs = TempDir::new().unwrap();
+    let mut app = load_browser(&logs, &saves);
+    let before = files_in(logs.path());
+    for _ in 0..2 {
+        for slot in &bad {
+            action(&mut app, PersistAction::Load(slot.clone()));
+            settle(&mut app);
+            update_n(&mut app, 3);
+            assert!(app.world().resource::<Persistence>().error.is_some());
+            assert_eq!(files_in(logs.path()), before);
+        }
+    }
+    action(&mut app, PersistAction::Load(good));
+    settle(&mut app);
+    update_n(&mut app, 3);
+    assert!(app.world().contains_resource::<Session>());
+    assert!(
+        files_in(logs.path())
+            .difference(&before)
+            .any(|name| name.to_string_lossy().starts_with("resume-")),
+        "a successful load records its branch"
+    );
+}

@@ -3,8 +3,9 @@
 mod support;
 
 use application::{
-    Command, CommandLogError, CommandLogSink, Game, InMemoryCommandLog, LogHeader, LogRecord,
-    RestoreError,
+    Command, CommandLogError, CommandLogSink, Game, GameCheckpoint, InMemoryCommandLog, LogHeader,
+    LogRecord, ReplayCompatibility, RestoreError, SaveBundle, SaveError, SaveId, SaveKind,
+    SaveMetadata,
 };
 use domain::ids::PlantId;
 use domain::region::fixtures::tiny_region_parts;
@@ -104,7 +105,7 @@ fn save_resume_keeps_history_after_mid_run_recording_failure_and_excludes_refusa
 }
 
 #[test]
-fn save_resume_verifies_boundary_and_seeds_a_fresh_branch_once() {
+fn save_resume_seeds_a_fresh_branch_once() {
     let (mut game, _) = game_on(tiny_region_parts(), 10);
     game.execute(Command::BeginOperating).unwrap();
     game.execute(Command::AdvanceTicks { n: 61 }).unwrap();
@@ -124,23 +125,6 @@ fn save_resume_verifies_boundary_and_seeds_a_fresh_branch_once() {
         checkpoint.commands.len() + 1
     );
     same(&branch, &restore(&branch));
-    for change in 0..4 {
-        let mut bad = checkpoint.clone();
-        match change {
-            0 => bad.command_count += 1,
-            1 => bad.state_hash ^= 1,
-            2 => bad.summary.tick += 1,
-            _ => bad.commands[0] = Command::FinishReview,
-        }
-        let target = InMemoryCommandLog::default();
-        assert!(
-            Game::restore(tiny_loaded_region(), bad, Box::new(target.clone()), &|| {
-                false
-            })
-            .is_err()
-        );
-        assert!(target.records().is_empty());
-    }
     assert!(matches!(
         Game::restore(
             tiny_loaded_region(),
@@ -150,6 +134,171 @@ fn save_resume_verifies_boundary_and_seeds_a_fresh_branch_once() {
         ),
         Err(RestoreError::Cancelled)
     ));
+}
+
+fn running() -> ReplayCompatibility {
+    ReplayCompatibility {
+        build: "current".into(),
+        platform: "here".into(),
+    }
+}
+
+fn older() -> ReplayCompatibility {
+    ReplayCompatibility {
+        build: "older".into(),
+        platform: "elsewhere".into(),
+    }
+}
+
+/// A save of `checkpoint` as the build `compatibility` recorded it.
+fn stamped(compatibility: ReplayCompatibility, checkpoint: GameCheckpoint) -> SaveBundle {
+    SaveBundle {
+        compatibility,
+        metadata: SaveMetadata {
+            slot: SaveId::new("a".repeat(32)).unwrap(),
+            run: SaveId::new("b".repeat(32)).unwrap(),
+            kind: SaveKind::Manual,
+            name: "Checkpoint".into(),
+            saved_at: 0,
+        },
+        checkpoint,
+    }
+}
+
+/// The build fingerprint is diagnostics: a save from any build or platform restores when its
+/// replay reproduces the recorded boundary here.
+#[test]
+fn a_checkpoint_stamped_by_another_build_restores_when_its_replay_matches() {
+    let (mut live, _) = game_on(tiny_region_parts(), 12);
+    live.execute(Command::BeginOperating).unwrap();
+    live.execute(Command::AdvanceTicks { n: 333 }).unwrap();
+    for recorded in [
+        older(),
+        ReplayCompatibility {
+            platform: "elsewhere".into(),
+            ..running()
+        },
+    ] {
+        let log = InMemoryCommandLog::default();
+        let mut resumed = stamped(recorded, live.checkpoint())
+            .restore(
+                tiny_loaded_region(),
+                &running(),
+                Box::new(log.clone()),
+                &|| false,
+            )
+            .unwrap();
+        same(&live, &resumed);
+        assert_eq!(log.records().len(), live.checkpoint().commands.len() + 1);
+        let mut uninterrupted = restore(&live);
+        uninterrupted
+            .execute(Command::AdvanceTicks { n: 90 })
+            .unwrap();
+        resumed.execute(Command::AdvanceTicks { n: 90 }).unwrap();
+        same(&uninterrupted, &resumed);
+    }
+}
+
+/// A replay that doesn't reproduce the boundary fails explicitly and returns no game, and its
+/// fresh branch log records nothing. On another build the error says the builds differed.
+#[test]
+fn a_checkpoint_whose_replay_diverges_fails_verification_and_installs_nothing() {
+    let (mut game, _) = game_on(tiny_region_parts(), 10);
+    game.execute(Command::BeginOperating).unwrap();
+    game.execute(Command::AdvanceTicks { n: 61 }).unwrap();
+    let checkpoint = game.checkpoint();
+    for change in 0..4 {
+        let mut bad = checkpoint.clone();
+        match change {
+            0 => bad.command_count += 1,
+            1 => bad.state_hash ^= 1,
+            2 => bad.summary.tick += 1,
+            _ => bad.commands[0] = Command::FinishReview,
+        }
+        let expected = Game::restore(
+            tiny_loaded_region(),
+            bad.clone(),
+            Box::new(InMemoryCommandLog::default()),
+            &|| false,
+        )
+        .err()
+        .unwrap();
+        assert!(expected.is_verification_failure(), "{expected:?}");
+        assert!(matches!(
+            (change, &expected),
+            (0, RestoreError::CommandCountMismatch)
+                | (1, RestoreError::StateHashMismatch)
+                | (2, RestoreError::SummaryMismatch)
+                | (3, RestoreError::ReplayCommandFailed { index: 0, .. })
+        ));
+        for (recorded, error) in [
+            (running(), SaveError::Restore(expected.clone())),
+            (
+                older(),
+                SaveError::OtherVersionDiverged {
+                    recorded: older(),
+                    error: expected.clone(),
+                },
+            ),
+        ] {
+            let target = InMemoryCommandLog::default();
+            let result = stamped(recorded, bad.clone()).restore(
+                tiny_loaded_region(),
+                &running(),
+                Box::new(target.clone()),
+                &|| false,
+            );
+            assert_eq!(result.err(), Some(error));
+            assert!(target.records().is_empty());
+        }
+    }
+}
+
+/// Only a failed verification blames the other build. Other refusals keep their own cause.
+#[test]
+fn a_checkpoint_from_another_build_keeps_its_cause_when_it_fails_before_verification() {
+    let (mut game, _) = game_on(tiny_region_parts(), 3);
+    game.execute(Command::BeginOperating).unwrap();
+    // Enough commands for `FailingSink` to fail while the branch log is seeded.
+    for n in [1, 2, 3] {
+        game.execute(Command::AdvanceTicks { n }).unwrap();
+    }
+    let mut wrong = game.checkpoint();
+    wrong.header.region = domain::ids::RegionId::new("other");
+    assert_eq!(
+        stamped(older(), wrong)
+            .restore(
+                tiny_loaded_region(),
+                &running(),
+                Box::new(InMemoryCommandLog::default()),
+                &|| false,
+            )
+            .err(),
+        Some(SaveError::Restore(RestoreError::RegionIdMismatch))
+    );
+    assert_eq!(
+        stamped(older(), game.checkpoint())
+            .restore(
+                tiny_loaded_region(),
+                &running(),
+                Box::new(InMemoryCommandLog::default()),
+                &|| true,
+            )
+            .err(),
+        Some(SaveError::Restore(RestoreError::Cancelled))
+    );
+    assert_eq!(
+        stamped(older(), game.checkpoint())
+            .restore(
+                tiny_loaded_region(),
+                &running(),
+                Box::new(FailingSink { accepted: 0 }),
+                &|| false,
+            )
+            .err()
+            .map(|error| matches!(error, SaveError::Restore(RestoreError::Log(_)))),
+        Some(true)
+    );
 }
 
 proptest! {

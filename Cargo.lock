@@ -2624,6 +2624,7 @@ dependencies = [
  "fluent-bundle",
  "infrastructure",
  "proptest",
+ "sha2",
  "tempfile",
  "tracing",
  "unic-langid",

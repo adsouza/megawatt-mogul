@@ -73,12 +73,14 @@ slots. Restored geometry is constrained to the current monitor/layout. Missing o
 preferences use defaults. Preference write errors are recorded in the application log.
 
 Each `.mgsave` is self-contained and includes the original region and complete accepted command
-history. A diagnostic log failure does not disable saving. Loads verify checksums, rules, the
-simulation build, platform and reconstructed state. Keep the matching executable for older saves:
-backend/toolchain/lockfile changes can make saves incompatible; automatic migrations and
-cross-platform replay are not included. Rendering-only source edits preserve compatibility.
-Files are limited to 64 MiB and one million commands; exceeding a limit fails without truncating
-history. Corrupt or incompatible slots remain visible with their reason.
+history. A diagnostic log failure does not disable saving. Loads verify checksums and the rules
+version, then replay the history and check the reconstructed state. A save loads on any build or
+platform whose replay reproduces it. Otherwise loading fails safely, with an explanation, and the
+save file is unchanged; there are no automatic migrations. Because the state check hashes the
+session's debug representation, a code change that alters it, such as a new session field, can
+fail older saves even when no outcome changed. Files are limited to 64 MiB and one million
+commands; exceeding a limit fails without truncating history. Corrupt or incompatible slots remain
+visible with their reason.
 
 ## Build and test
 

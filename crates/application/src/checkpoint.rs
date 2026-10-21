@@ -55,3 +55,26 @@ pub enum RestoreError {
     #[error(transparent)]
     Log(#[from] CommandLogError),
 }
+
+impl RestoreError {
+    /// Whether the replay ran and failed to reproduce the recorded boundary: its command count,
+    /// end-state hash or summary differs, or a recorded command was refused. A save from another
+    /// build that fails this way is one that build can't reproduce here.
+    ///
+    /// A decoder that finds a save's recorded count differing from its command list returns
+    /// `CommandCountMismatch` before any replay: no build writes such a file (`encode_save`
+    /// refuses it), so it is a writer bug or a damaged file, and keeps the same-build copy.
+    pub fn is_verification_failure(&self) -> bool {
+        match self {
+            Self::CommandCountMismatch
+            | Self::StateHashMismatch
+            | Self::SummaryMismatch
+            | Self::ReplayCommandFailed { .. } => true,
+            Self::Replay(_)
+            | Self::RegionSourceMismatch
+            | Self::RegionIdMismatch
+            | Self::Cancelled
+            | Self::Log(_) => false,
+        }
+    }
+}

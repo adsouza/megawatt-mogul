@@ -42,8 +42,6 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "save-error-id",
     "save-error-name",
     "save-error-version",
-    "save-error-build",
-    "save-error-platform",
     "save-error-checksum",
     "save-error-size",
     "save-error-malformed",
@@ -56,6 +54,7 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "save-error-region",
     "save-error-state",
     "save-error-replay",
+    "save-error-other-version",
     "save-error-log",
     "save-last",
     // Shell: boot, menu and region select

@@ -399,20 +399,44 @@ impl Persistence {
                 self.error = None;
                 self.spawn(generation, move |cancel| {
                     Completion::Loaded((|| {
-                        let (bundle, region) = store.read(&slot)?;
+                        let running = store.compatibility();
+                        let read = store.read(&slot);
+                        // The recorded build is diagnostics: replay verification decides. Name
+                        // it next to the running one, so a failure that follows can be traced.
+                        let recorded = match &read {
+                            Ok((bundle, _)) => Some(&bundle.compatibility),
+                            Err(SaveError::OtherVersionUnreadable { recorded, .. }) => {
+                                Some(recorded)
+                            }
+                            Err(_) => None,
+                        };
+                        if let Some(recorded) = recorded.filter(|recorded| **recorded != running) {
+                            info!(
+                                "loading save {} from another build: recorded build {} on {}, \
+                                 running build {} on {}",
+                                slot.as_str(),
+                                recorded.build,
+                                recorded.platform,
+                                running.build,
+                                running.platform
+                            );
+                        }
+                        let (bundle, region) = read?;
                         if cancel.load(Ordering::Relaxed) {
                             return Err(SaveError::Cancelled);
                         }
-                        let (_, sink) = super::new_game::create_log(
+                        let (log, sink) = super::new_game::create_log(
                             &dir,
                             &format!("resume-{}", store.allocate_id().as_str()),
                         )
                         .map_err(RestoreError::Log)?;
-                        Game::restore(region, bundle.checkpoint, Box::new(sink), &|| {
-                            cancel.load(Ordering::Relaxed)
-                        })
-                        .map(Box::new)
-                        .map_err(Into::into)
+                        bundle
+                            .restore(region, &running, Box::new(sink), &|| {
+                                cancel.load(Ordering::Relaxed)
+                            })
+                            .map(Box::new)
+                            // The abandoned candidate's sink is dropped by now.
+                            .inspect_err(|_| discard_branch_log(&log))
                     })())
                 });
             }
@@ -504,6 +528,23 @@ impl Persistence {
         });
         self.screen = SaveScreen::Automatic;
         self.write(generation);
+    }
+}
+
+/// Removes the branch log, and its region archive, that a failed load created for a candidate it
+/// then abandoned, so no attempt or Retry leaves files behind. Either may not exist: the archive
+/// is written only once verification passes.
+fn discard_branch_log(log: &std::path::Path) {
+    let archive = infrastructure::command_log::region_archive_path(log);
+    for path in std::iter::once(log.to_path_buf()).chain(archive) {
+        match std::fs::remove_file(&path) {
+            Ok(()) => (),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(error) => warn!(
+                "could not remove abandoned branch log {}: {error}",
+                path.display()
+            ),
+        }
     }
 }
 
