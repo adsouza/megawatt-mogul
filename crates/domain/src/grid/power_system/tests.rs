@@ -223,6 +223,91 @@ fn an_uncommitted_fleet_starts_the_day_in_a_full_rotating_outage() {
 }
 
 #[test]
+fn a_system_wide_trip_restarts_agc_plants_immediately_and_restores_without_manual_starts() {
+    let region = region_with(|parts| {
+        noise_free(parts);
+        for spec in &mut parts.catalog {
+            spec.ramp = crate::units::RampRate::mw_per_minute(1_000.0);
+        }
+    });
+    let mut sys = auto_follow_fleet(&region);
+    let mut rng = SimRng::from_seed(7);
+    sys.begin_day(&region, april(), &mut rng);
+    // Inject a severe frequency fault while the whole AGC fleet is running.
+    sys.deviation = Hertz::new(-100.0);
+    let (summary, events) = sys.tick(&region, april(), 0, &mut rng);
+    assert_eq!(summary.mode, GridMode::Blackout);
+    assert!(events.contains(&DomainEvent::Blackout));
+    let mut starts = Vec::new();
+    for plant in sys.plants().values() {
+        assert!(events.contains(&DomainEvent::PlantTripped { plant: plant.id() }));
+        assert!(events.contains(&DomainEvent::PlantStarting { plant: plant.id() }));
+        assert_eq!(
+            plant.status(),
+            PlantStatus::Starting {
+                ticks_left: plant.spec().startup.ticks()
+            }
+        );
+        assert!(plant.auto_follow());
+        assert!(plant.is_commitment_suppressed());
+        starts.push(plant.id());
+    }
+    let recorded: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            DomainEvent::PlantStarting { plant } => Some(*plant),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        recorded, starts,
+        "restart once per tripped plant, in ID order"
+    );
+    assert!(
+        events
+            .iter()
+            .rposition(|e| matches!(e, DomainEvent::PlantTripped { .. }))
+            .unwrap()
+            < events
+                .iter()
+                .position(|e| matches!(e, DomainEvent::PlantStarting { .. }))
+                .unwrap()
+    );
+    // A player can cancel a recovery start even while AGC remains enabled.
+    let mut cancelled = sys.clone();
+    let peaker = PlantId(3);
+    cancelled.plant_mut(peaker).unwrap().stop().unwrap();
+    let mut cancelled_rng = rng.clone();
+    for tick in 1..=region.spec(PlantKind::Peaker).startup.ticks() {
+        let (_, events) = cancelled.tick(&region, april(), tick, &mut cancelled_rng);
+        assert!(!events.contains(&DomainEvent::PlantStarting { plant: peaker }));
+        assert_eq!(
+            cancelled.plant(peaker).unwrap().status(),
+            PlantStatus::Offline
+        );
+    }
+    let mut restored = false;
+    for tick in 1..TICKS_PER_DAY {
+        let (_, events) = sys.tick(&region, april(), tick, &mut rng);
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, DomainEvent::PlantStarting { .. })),
+            "duplicate start at {tick}"
+        );
+        if events.contains(&DomainEvent::BlackoutRestored) {
+            restored = true;
+            break;
+        }
+    }
+    assert!(
+        restored,
+        "AGC should recover without operator start commands"
+    );
+    assert_eq!(sys.protection().mode, GridMode::Normal);
+}
+
+#[test]
 fn losing_all_supply_leads_to_blackout_and_trips_plants() {
     let region = tiny_region();
     let mut sys = covered_fleet_with_solar(&region);
@@ -249,6 +334,138 @@ fn losing_all_supply_leads_to_blackout_and_trips_plants() {
     assert!(sys.plants().values().all(Plant::is_commitment_suppressed));
     assert_eq!(sys.protection().mode, GridMode::Blackout);
     assert_eq!(sys.deviation(), Hertz::ZERO);
+}
+
+#[test]
+fn automatic_black_start_respects_the_ending_instant_and_midnight_cutoff() {
+    let peaker_startup = tiny_region().spec(PlantKind::Peaker).startup.ticks();
+    for (kind, zero_start, instant, expected) in [
+        (
+            PlantKind::Peaker,
+            false,
+            TICKS_PER_DAY - peaker_startup,
+            true,
+        ),
+        (
+            PlantKind::Peaker,
+            false,
+            TICKS_PER_DAY - peaker_startup + 1,
+            false,
+        ),
+        (PlantKind::Peaker, true, TICKS_PER_DAY, true),
+        (PlantKind::Nuclear, false, 1, false),
+    ] {
+        let region = region_with(|parts| {
+            if zero_start {
+                parts
+                    .catalog
+                    .iter_mut()
+                    .find(|s| s.kind == kind)
+                    .unwrap()
+                    .startup = SimDuration::from_ticks(0);
+            }
+        });
+        let mut sys = system_with(&region, &[connected(kind, cell(6, 2))]);
+        let id = PlantId(1);
+        let plant = sys.plant_mut(id).unwrap();
+        plant.set_commitment(CommitmentSchedule::all_day());
+        plant.set_auto_follow(true).unwrap();
+        plant.initialise_pattern_day();
+        let available = BTreeMap::new();
+        let dispatch = Redispatch {
+            available: &available,
+            to_serve: Megawatts::ZERO,
+            withheld: Megawatts::ZERO,
+            curtailable: Megawatts::ZERO,
+            effect_tick: instant,
+        };
+        let mut events = Vec::new();
+        sys.apply_protection(
+            ProtectionOutcome::Blackout,
+            Megawatts::ZERO,
+            Megawatts::ZERO,
+            region.frequency(),
+            &dispatch,
+            &mut events,
+        );
+        assert_eq!(
+            events.contains(&DomainEvent::PlantStarting { plant: id }),
+            expected,
+            "{kind:?} at {instant}"
+        );
+        if zero_start {
+            assert_eq!(
+                events,
+                [
+                    DomainEvent::Blackout,
+                    DomainEvent::PlantTripped { plant: id },
+                    DomainEvent::PlantStarting { plant: id },
+                    DomainEvent::PlantOnline { plant: id }
+                ]
+            );
+        }
+    }
+}
+
+proptest! {
+    #[test]
+    fn automatic_black_start_only_resumes_eligible_tripped_units(
+        fleet in prop::collection::vec((any::<bool>(), any::<bool>(), 0u8..5), 1..7),
+        startup in 0u32..=TICKS_PER_DAY * 2,
+        instant in 1u32..=TICKS_PER_DAY,
+    ) {
+        let region = region_with(|parts| {
+            parts.catalog.iter_mut().find(|s| s.kind == PlantKind::Ccgt).unwrap().startup = SimDuration::from_ticks(startup);
+        });
+        let defs: Vec<_> = fleet.iter().map(|(_, connected, _)| PlantDef {
+            kind: PlantKind::Ccgt, cell: cell(6, 2), connected: *connected,
+        }).collect();
+        let mut sys = system_with(&region, &defs);
+        for (i, (auto, _, state)) in fleet.iter().enumerate() {
+            let id = PlantId(i as u32 + 1);
+            let plant = sys.plants.get_mut(&id).unwrap();
+            match state {
+                0 => {} // Already offline: no automatic start.
+                1 | 3 => {
+                    plant.set_commitment(CommitmentSchedule::all_day());
+                    plant.initialise_pattern_day();
+                    if *state == 3 { plant.stop().unwrap(); } // Already stopping.
+                }
+                2 => {
+                    plant.start().unwrap();
+                    // Interrupt an already-progressing start; recovery must begin a full start.
+                    plant.step(plant.spec().capacity);
+                }
+                _ => { *plant = Plant::new_under_construction(id, plant.node(), plant.cell(), plant.spec().clone()); }
+            }
+            plant.set_auto_follow(*auto).unwrap();
+        }
+        let before = sys.plants.clone();
+        let expected: Vec<_> = before.values().filter(|p| {
+            let (_, connected, _) = fleet[p.id().0 as usize - 1];
+            connected && p.auto_follow()
+                && matches!(p.status(), PlantStatus::Online { .. } | PlantStatus::Starting { .. })
+                && u64::from(instant) + u64::from(startup) <= u64::from(TICKS_PER_DAY)
+        }).map(Plant::id).collect();
+        let available = BTreeMap::new();
+        let redispatch = Redispatch { available: &available, to_serve: Megawatts::ZERO,
+            withheld: Megawatts::ZERO, curtailable: Megawatts::ZERO, effect_tick: instant };
+        let mut events = Vec::new();
+        sys.apply_protection(ProtectionOutcome::Blackout, Megawatts::ZERO, Megawatts::ZERO, region.frequency(), &redispatch, &mut events);
+        let starts: Vec<_> = events.iter().filter_map(|e| match e { DomainEvent::PlantStarting { plant } => Some(*plant), _ => None }).collect();
+        prop_assert_eq!(&starts, &expected);
+        for plant in sys.plants.values() {
+            prop_assert_eq!(plant.commitment(), before[&plant.id()].commitment());
+            prop_assert_eq!(plant.auto_follow(), before[&plant.id()].auto_follow());
+            prop_assert!(plant.is_commitment_suppressed());
+            if expected.contains(&plant.id()) {
+                if startup == 0 { prop_assert!(plant.is_online()); }
+                else { prop_assert_eq!(plant.status(), PlantStatus::Starting { ticks_left: startup }); }
+            } else {
+                prop_assert!(matches!(plant.status(), PlantStatus::Offline | PlantStatus::UnderConstruction { .. }), "ineligible plant must remain offline or under construction");
+            }
+        }
+    }
 }
 
 #[test]
@@ -1873,10 +2090,21 @@ fn tripped_hydro_is_unplanned_until_the_next_re_plan() {
     let hour_1 = allocation(&sys, 1);
     assert!(sys.hydro_ceilings(62).contains_key(&HYDRO));
 
+    // Keep the thermal units on manual control: this case isolates hydro's recovery.
+    let thermal: Vec<_> = sys
+        .plants
+        .keys()
+        .copied()
+        .filter(|id| *id != HYDRO)
+        .collect();
+    for id in thermal {
+        sys.set_auto_follow(id, false).unwrap();
+    }
     // A deep frequency dip blacks the grid out and trips every plant.
     sys.deviation = Hertz::new(-2.0);
     let (_, events) = sys.tick(&region, january(), 61, &mut rng);
     assert!(events.contains(&DomainEvent::PlantTripped { plant: HYDRO }));
+    assert!(events.contains(&DomainEvent::PlantStarting { plant: HYDRO }));
     assert!(!sys.hydro_ceilings(62).contains_key(&HYDRO));
     // Elapsed hours keep their record; the current and later hours are cleared.
     let view = sys.hydro_schedule().plants[&HYDRO];
@@ -1884,9 +2112,8 @@ fn tripped_hydro_is_unplanned_until_the_next_re_plan() {
     assert_eq!(view.level, None);
     assert!(view.hourly[1..].iter().all(|mw| *mw == Megawatts::ZERO));
 
-    // Restarted, hydro alone restores the night load: far above its hour-1
+    // Automatically restarted, hydro alone restores the night load: far above its hour-1
     // allocation and never pulled back to it before the 02:00 re-plan.
-    sys.plant_mut(HYDRO).unwrap().start().unwrap();
     let mut uncapped_after_restoration = 0;
     for t in 62..120 {
         let restored = sys.protection().mode == GridMode::Normal;

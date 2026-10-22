@@ -875,10 +875,7 @@ mod tests {
         );
         assert!(!model.agc.on && model.agc.button.enabled);
         assert_eq!(model.agc.button.label, "AGC");
-        assert_eq!(
-            model.agc_tip,
-            "Automatic generation control: the plant follows the load by itself."
-        );
+        assert_eq!(model.agc_tip, l10n.text("commitment-agc-tip"));
         assert_eq!(
             model.start.action,
             UiAction::Command(Command::StartPlant { plant: coal.id })

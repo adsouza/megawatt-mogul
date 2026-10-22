@@ -349,7 +349,7 @@ These are immutable newtypes, and no bare `f64` crosses a module boundary.
   - **`MeritOrder`**: committed plants sorted by marginal cost.
   - **AGC** (automatic generation control): moves auto-follow plants' targets to close the
     imbalance, raising the cheapest plant first and lowering the most expensive first, within ramp
-    limits.
+    limits. After a system-wide trip it automatically restarts eligible units (§19).
   - **`FrequencyModel`** (§5.4).
   - **`Protection`**: load shedding, curtailment and blackout.
 - **`company`**: the **`Company` aggregate**: cash, a `Ledger` of typed cash entries (fuel, start-up,
@@ -488,8 +488,9 @@ day is a recurring event and receives the daily weight.
 **Manual commands respect the horizon.** During Operating, a start with
 `current_tick + startup_ticks > 1,440` returns `StartUpBeyondDay { remaining, startup }` unchanged;
 one that finishes exactly at midnight is allowed. A manual stop or protection trip suppresses that
-plant's automatic commitment actions for the rest of the representative day, so it cannot be
-immediately auto-started again. These operating overrides do not rewrite the validated base pattern
+plant's scheduled commitment actions for the rest of the representative day. System-wide AGC
+black-start recovery (§19) can restart a unit interrupted by that trip; it never overrides a manual
+stop or an individual over-frequency trip. These operating overrides do not rewrite the validated base pattern
 or carry into the next month. During Planning, `StartPlant` selects the all-day pattern and
 `StopPlant` selects all-off; neither advances physical time. Planning target changes set the initial
 target. `BeginOperating` freezes the month's pattern and initialises its implied state.
@@ -820,7 +821,7 @@ Hydro is what grids such as the Pacific Northwest use to ride the evening ramp.
 2. **Plants.** Schedule every connected, commissioned hydro plant with AGC on, but only over the hours
    its commitment pattern commits it. Uncommitted hours get an allocation of 0.
    During Operating, a stopped or tripped plant whose commitment is suppressed reserves no water
-   allocation until manually restarted (Starting or Online). Unsuppressed plants with future
+   allocation until restarted manually or by AGC black start (Starting or Online). Unsuppressed plants with future
    scheduled starts still count. Planning previews ignore the previous day's physical overrides.
    Fill them **in plant-id order against the residual**. The residual starts as net load, and each
    plant's allocation is subtracted before the next plant is filled.
@@ -1206,7 +1207,8 @@ whole grid.
     arrested by staged shedding without a blackout, even with no help from AGC.
   - The shortfall is visible during Planning, before the day starts.
 - **Non-goals:**
-  - automatic black-start of tripped plants after a blackout (the player still restarts them);
+  - physical black-start infrastructure or cranking-power dependencies; automatic restart policy
+    is specified in §19;
   - demand response, imports, or prices that ration load;
   - an operating-reserve requirement or a "reserve margin" knob for outages;
   - choosing which city goes dark: the domain sheds proportionally across connected cities, as
@@ -1960,3 +1962,35 @@ the save/log formats unchanged. New games load the new region fingerprint. Exist
 archived command logs keep their original region definitions, costs, city loads, fleets and build
 times; they replay as before. Applying this balance to an existing run would require an explicit
 migration, which is outside this amendment. Start a new game to use the faster pacing.
+
+## 19. Amendment A8: Automatic AGC recovery after a system-wide trip (2026-10-22)
+
+After protection enters Blackout and trips the fleet, AGC immediately restarts each connected,
+commissioned dispatchable plant that had AGC enabled and was Online or Starting immediately before
+that trip. Restart candidates are captured before any unit trips, all trips happen first, and
+restarts then happen once in ascending PlantId order at the same tick's ending instant. There is
+no extra waiting tick and no repeated start attempt while a unit is already Starting.
+
+A restart uses the plant's full normal start-up duration and emits the existing PlantStarting and,
+for zero-duration starts, PlantOnline events. It does not bypass ramp limits, reset hydro water,
+or instantly restore load. The existing staged black-start restoration resumes load as output
+becomes available; solar reconnects when that restoration first re-energises the grid. A tripped
+hydro plant remains unplanned until the next normal hourly re-plan, just as after a manual restart.
+Start-up costs are counted once per actual start and receive the normal daily/month weighting.
+
+The horizon is the same as for a manual Operating start: a restart is eligible only when
+`ending_tick + startup_ticks <= 1,440`. Finishing exactly at midnight is allowed. Units that cannot
+finish within the representative day, including a 48-hour nuclear start, remain offline. No
+physical start-up state carries into the next representative month.
+
+AGC does not start previously Offline plants, units already Stopping, disconnected units, plants
+under construction, or units whose AGC was off at the trip. It does not auto-restart an individual
+over-frequency trip. A manual stop after an automatic restart cancels that start normally and is
+not retried. Scheduled commitment actions remain suppressed for the day after a protection trip;
+recovery does not rewrite the month's cyclic pattern or AGC choices.
+
+This changes simulation outcomes: advance SIM_RULES_VERSION from 6 to 7. Log and save formats stay
+the same, but older rules versions remain rejected by the existing replay compatibility checks;
+those saves/logs require their matching previous engine. Pin the rules-version outcome digest and
+cover automatic restoration, eligibility across mixed plant states and horizons, hydro scheduling,
+and once-only start-up billing with regression/property tests.

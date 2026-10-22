@@ -29,7 +29,7 @@ use crate::generation::{
 use crate::ids::{CellCoord, CityId, NodeId, PlantId};
 use crate::region::{Cell, FrequencyParams, PlantKind, RegionDefinition};
 use crate::rng::SimRng;
-use crate::time::{SimDuration, SimMonth, TICKS_PER_HOUR};
+use crate::time::{SimDuration, SimMonth, TICKS_PER_DAY, TICKS_PER_HOUR};
 use crate::units::{Hertz, MegawattHours, Megawatts, Ratio};
 
 const HOURS_PER_DAY: f64 = 24.0;
@@ -412,7 +412,8 @@ impl PowerSystem {
     ///    the load.
     /// 9. Protection on the load: load shedding as a share of the load; a
     ///    blackout that trips every plant, suppresses its commitment for the
-    ///    day, resets the deviation and the curtailment and sets the outage to
+    ///    day, immediately restarts eligible connected AGC units, resets the
+    ///    deviation and the curtailment and sets the outage to
     ///    zero, keeping its target; black-start restoration down to that
     ///    frozen target, its last step needing supply for that floor only
     ///    (see [`restoration_step`]), after which Normal mode resumes with the
@@ -877,12 +878,42 @@ impl PowerSystem {
             ProtectionOutcome::Shed => events.push(DomainEvent::LoadShed { mw: shed_mw }),
             ProtectionOutcome::Blackout => {
                 events.push(DomainEvent::Blackout);
+                // Recovery starts at this tick's ending instant, after the system-wide trip.
+                // Only resume units interrupted by it: manual/off-pattern stops stay stopped.
+                let restart: Vec<_> = self
+                    .connected_plants()
+                    .filter(|p| p.auto_follow() && p.kind().is_dispatchable())
+                    .filter(|p| {
+                        matches!(
+                            p.status(),
+                            PlantStatus::Online { .. } | PlantStatus::Starting { .. }
+                        )
+                    })
+                    .filter(|p| {
+                        redispatch
+                            .effect_tick
+                            .saturating_add(p.spec().startup.ticks())
+                            <= TICKS_PER_DAY
+                    })
+                    .map(Plant::id)
+                    .collect();
                 let ids: Vec<PlantId> = self.plants.keys().copied().collect();
                 for id in ids {
                     events.extend(self.trip_plant(id));
                     if let Some(plant) = self.plants.get_mut(&id) {
                         plant.suppress_commitment_for_day();
                     }
+                }
+                for id in restart {
+                    let plant = self
+                        .plants
+                        .get_mut(&id)
+                        .expect("restart candidate remains in the fleet");
+                    events.extend(
+                        plant
+                            .start()
+                            .expect("the system trip left a dispatchable candidate offline"),
+                    );
                 }
                 self.deviation = Hertz::ZERO;
                 self.curtailment = Megawatts::ZERO;

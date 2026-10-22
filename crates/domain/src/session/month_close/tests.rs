@@ -389,6 +389,36 @@ fn first_review_holds_second_review_disallows_if_still_excess() {
 }
 
 #[test]
+fn an_automatic_black_start_is_charged_once_with_the_daily_weight() {
+    let mut s = session();
+    let peaker = plant_of(&s, PlantKind::Peaker);
+    let month = s.clock().month();
+    s.begin_operating().unwrap();
+    // Abrupt equipment losses leave only the peaker running on AGC.
+    for kind in [PlantKind::Coal, PlantKind::Ccgt] {
+        let id = plant_of(&s, kind);
+        s.set_auto_follow(id, false).unwrap();
+        s.power.plant_mut(id).unwrap().trip();
+    }
+    let events = finish_day(&mut s);
+    assert!(events.contains(&DomainEvent::Blackout));
+    assert_eq!(starts_of(&events, peaker), 1);
+    assert!(events.contains(&DomainEvent::PlantOnline { plant: peaker }));
+    let expected = -startup_cost(PlantKind::Peaker) * i64::from(month.days_in_month());
+    assert_eq!(
+        booked(
+            &s,
+            month,
+            LedgerCategory::StartUp,
+            Some(AssetRef::Plant(peaker))
+        ),
+        expected
+    );
+    assert_eq!(report_in(&events).start_up, expected);
+    assert!(s.check_invariants().is_ok());
+}
+
+#[test]
 fn all_day_return_from_offline_costs_one_start() {
     let mut s = session();
     let returning = robust_fleet(&mut s);
