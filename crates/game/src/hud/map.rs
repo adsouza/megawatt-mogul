@@ -36,7 +36,8 @@ pub enum MapLayer {
 }
 
 impl MapLayer {
-    /// Every layer, in the order the buttons show them.
+    /// Every selectable layer, in display order. Gas and peaker siting accepts any land cell,
+    /// so their suitability maps add no useful information.
     pub fn all() -> impl Iterator<Item = Self> {
         [
             Self::Terrain,
@@ -45,7 +46,16 @@ impl MapLayer {
             Self::HydroPotential,
         ]
         .into_iter()
-        .chain(PlantKind::ALL.into_iter().map(Self::Suitability))
+        .chain(
+            [
+                PlantKind::Nuclear,
+                PlantKind::Coal,
+                PlantKind::Solar,
+                PlantKind::Hydro,
+            ]
+            .into_iter()
+            .map(Self::Suitability),
+        )
     }
 }
 
@@ -1789,7 +1799,19 @@ mod tests {
 
         let layers: Vec<MapLayer> = MapLayer::all().collect();
         assert_eq!(model.layers.len(), layers.len());
-        assert_eq!(layers.len(), 10);
+        assert_eq!(
+            layers,
+            [
+                MapLayer::Terrain,
+                MapLayer::Irradiance,
+                MapLayer::CoolingWater,
+                MapLayer::HydroPotential,
+                MapLayer::Suitability(PlantKind::Nuclear),
+                MapLayer::Suitability(PlantKind::Coal),
+                MapLayer::Suitability(PlantKind::Solar),
+                MapLayer::Suitability(PlantKind::Hydro),
+            ]
+        );
         for (toggle, layer) in model.layers.iter().zip(&layers) {
             assert_eq!(toggle.button.action, UiAction::SetLayer(*layer));
             // Clicking the current layer again is harmless, so every button stays clickable.
@@ -1811,7 +1833,9 @@ mod tests {
         assert_eq!(labels[2], "Cooling water");
         assert_eq!(labels[3], "Hydro potential");
         assert_eq!(labels[4], "Suitability: Nuclear plant");
-        assert_eq!(labels[9], "Suitability: Hydro plant");
+        assert_eq!(labels[5], "Suitability: Coal plant");
+        assert_eq!(labels[6], "Suitability: Solar farm");
+        assert_eq!(labels[7], "Suitability: Hydro plant");
         assert_eq!(model.layer, MapLayer::Terrain);
         assert_eq!(l10n.problems(), vec![]);
 

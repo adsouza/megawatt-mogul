@@ -788,6 +788,20 @@ fn world_compact_layer_selector_changes_layer_without_picking_through_its_popup(
     pass.click_at(&mut app, 819.2, 512.0, combo.rect.center());
     let widgets = pass.settled(&mut app, 819.2, 512.0);
     let sunshine = crate::support::egui_harness::button(&widgets, "Sunshine");
+    for label in ["Suitability: Gas plant (CCGT)", "Suitability: Gas peaker"] {
+        assert!(
+            !widgets.iter().any(|w| w.text == label),
+            "removed layer {label}"
+        );
+    }
+    for label in [
+        "Suitability: Nuclear plant",
+        "Suitability: Coal plant",
+        "Suitability: Solar farm",
+        "Suitability: Hydro plant",
+    ] {
+        crate::support::egui_harness::button(&widgets, label);
+    }
     pass.click_at(&mut app, 819.2, 512.0, sunshine.rect.center());
     assert_eq!(*app.world().resource::<MapLayer>(), MapLayer::Irradiance);
     assert_eq!(*app.world().resource::<Selection>(), Selection::None);

@@ -622,6 +622,10 @@ The presentation layer never reads aggregate internals.
   with a visible 0–100% solar-potential key outside the map viewport. Use the same absolute scale
   in every region. This is the site's static game resource rating, not the percentage of sunny
   days or current weather; season, sun angle and cloud cover separately affect solar output.
+- **Selectable map layers:** terrain, sunshine, cooling water, hydro potential, and suitability
+  for nuclear, coal, solar and hydro. Omit gas (CCGT) and peaker suitability overlays: those
+  plants accept any land cell, so separate overlays add no siting information. The cell inspector
+  still reports suitability for every plant kind.
 - **Operating overlay:** supply indicators over the warm, lit diorama: glowing plant output
   pillars, city lights showing supply status and energised lines. Retain terrain colours, building
   face shading and cast shadows; the overlay must not blacken the map or flatten the buildings.
