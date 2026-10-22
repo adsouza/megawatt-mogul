@@ -38,11 +38,13 @@ impl Plugin for OverlayPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<WorldControls>()
             .init_resource::<TuningConfig>()
+            .init_resource::<super::flow::FlowAnimation>()
             .add_systems(
                 PostUpdate,
                 (
                     super::render::update_visuals,
                     super::lighting::update_sunlight,
+                    super::flow::update_arrows,
                 )
                     .chain()
                     .after(EguiPostUpdateSet::EndPass)

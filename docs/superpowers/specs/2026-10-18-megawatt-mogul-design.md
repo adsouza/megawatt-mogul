@@ -673,8 +673,17 @@ The presentation layer never reads aggregate internals.
 
 The operating overlay shows **plant output** and **city supply status** (lit, or flickering when load
 is shed). Every connected city's lights show the same served fraction, dimming/flickering together;
-there is no invented geographic rotation. Lines show only an "energised" pulse. It shows no
-per-line loading until a power-flow `NetworkModel` exists.
+there is no invented geographic rotation. Energised lines retain their pulse and show moving
+chevrons along **illustrative supply routes**, labelled explicitly as such. Route each producing,
+connected plant's proportional contribution toward cities with positive served demand over
+in-service lines, using shortest paths by hop count with line-ID tie breaks. Net opposing
+transfers before choosing an arrow direction; unused or balanced lines have no arrows. These
+routes are a presentation aid, not electrical load flow or a per-line MW/loading estimate.
+Recompute directions from current output and served demand. Hide arrows outside the Operating
+control-room overlay and on unfinished/disconnected lines, during blackouts, or without supply
+or served demand. Use a steady visual travel speed, freeze during pause/save dialogs, and reuse
+render entities/assets across frames. The effects toggle controls bloom/DOF, not these indicators.
+Actual per-line loading still requires a power-flow `NetworkModel`.
 
 ### 8.4 HUD by phase
 

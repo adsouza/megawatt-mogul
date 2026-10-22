@@ -489,7 +489,10 @@ terrain/roof heights and distance limits, physical viewport rounding and zero-si
 windows, accelerated ray equivalence to the rendered terrain, object bounds, opaque label fitting,
 simulation-clock sunlight from east through south to west, monthly arc height and sunrise/sunset
 limits, paused lighting, nighttime ambient visibility and Planning's noon preview,
-and uniform copper-plate supply. Invariants use property tests.
+and uniform copper-plate supply. Flow-route tests cover generation reversals, transit cities,
+stable loop routing, opposing transfers, disconnected/unfinished routes and chain cut balances.
+Arrow tests check direction/path bounds, animation/pause, overlays, blackout hiding, asset reuse
+and checkpoint preservation. Invariants use property tests.
 
 Headless `WorldViewPlugin` tests reconcile stable IDs without a renderer, check bounded mesh/material
 counts through idle frames, rebuild on new games and free every owned asset on leave. A fixed command

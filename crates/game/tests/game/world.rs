@@ -1537,3 +1537,124 @@ fn world_operating_overlay_preserves_lit_terrain_and_building_shading() {
         }
     }
 }
+
+#[test]
+fn world_flow_arrows_animate_freeze_hide_and_leave_simulation_and_assets_unchanged() {
+    use application::Command;
+    use bevy::prelude::*;
+    use game::{
+        hud::UiAction,
+        sim::{Session, SimSpeed},
+        world::{FlowArrow, WorldAction, WorldAssets, WorldScene},
+    };
+    let logs = tempfile::TempDir::new().unwrap();
+    let mut app = diorama_app(logs.path());
+    crate::support::request(&mut app, "western_interconnection");
+    let visible = |app: &mut App| -> Vec<(Entity, Transform)> {
+        app.world_mut()
+            .query_filtered::<(Entity, &Transform, &Visibility), With<FlowArrow>>()
+            .iter(app.world())
+            .filter(|(_, _, v)| **v == Visibility::Visible)
+            .map(|(e, t, _)| (e, *t))
+            .collect()
+    };
+    assert!(visible(&mut app).is_empty(), "Planning has no arrows");
+    crate::hud_smoke::dispatch_in(
+        &mut app,
+        vec![
+            UiAction::Command(Command::BeginOperating),
+            UiAction::Command(Command::AdvanceTicks { n: 60 }),
+        ],
+    );
+    app.update();
+    let before = visible(&mut app);
+    assert!(!before.is_empty(), "generating plants supply cities");
+    for (entity, _) in &before {
+        let line = app.world().get::<FlowArrow>(*entity).unwrap().line;
+        let model = app.world().resource::<WorldScene>().model.as_ref().unwrap();
+        assert!(
+            model.lines[&line].flow.is_some()
+                && model.lines[&line].energized
+                && model.lines[&line].building.is_none()
+        );
+    }
+    let checkpoint = app.world().resource::<Session>().0.checkpoint();
+    let assets = app.world().resource::<WorldAssets>().counts();
+    // Presentation frames move arrows without requesting a simulation tick.
+    app.insert_resource(SimSpeed::X1);
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+        std::time::Duration::from_millis(100),
+    ));
+    app.update();
+    let moving = visible(&mut app);
+    assert_ne!(moving, before);
+    assert_eq!(app.world().resource::<Session>().0.checkpoint(), checkpoint);
+    app.insert_resource(SimSpeed::Paused);
+    app.update();
+    assert_eq!(visible(&mut app), moving, "pause freezes the arrows");
+    crate::hud_smoke::dispatch_in(&mut app, vec![UiAction::World(WorldAction::ToggleOverlay)]);
+    app.update();
+    assert!(visible(&mut app).is_empty());
+    crate::hud_smoke::dispatch_in(&mut app, vec![UiAction::World(WorldAction::ControlRoom)]);
+    app.update();
+    assert_eq!(visible(&mut app), moving);
+    crate::hud_smoke::dispatch_in(
+        &mut app,
+        vec![UiAction::SetLayer(game::hud::MapLayer::Terrain)],
+    );
+    app.update();
+    assert!(
+        visible(&mut app).is_empty(),
+        "resource views hide flow arrows"
+    );
+    crate::hud_smoke::dispatch_in(&mut app, vec![UiAction::World(WorldAction::ControlRoom)]);
+    app.update();
+    assert_eq!(visible(&mut app), moving);
+    assert_eq!(app.world().resource::<WorldAssets>().counts(), assets);
+    assert_eq!(app.world().resource::<Session>().0.checkpoint(), checkpoint);
+    // Remove generation using normal commands; AGC must not immediately restart it.
+    let plants: Vec<_> = app
+        .world()
+        .resource::<Session>()
+        .0
+        .session()
+        .plant_views()
+        .into_iter()
+        .filter(|p| p.output.value() > 0.0)
+        .map(|p| p.id)
+        .collect();
+    let actions = plants
+        .into_iter()
+        .flat_map(|plant| {
+            [
+                UiAction::Command(Command::SetAutoFollow { plant, on: false }),
+                UiAction::Command(Command::StopPlant { plant }),
+            ]
+        })
+        .chain([UiAction::Command(Command::AdvanceTicks { n: 60 })])
+        .collect();
+    crate::hud_smoke::dispatch_in(&mut app, actions);
+    app.update();
+    assert_eq!(
+        app.world()
+            .resource::<Session>()
+            .0
+            .session()
+            .grid_snapshot()
+            .mode,
+        domain::grid::GridMode::Blackout
+    );
+    assert!(
+        visible(&mut app).is_empty(),
+        "a blackout carries no illustrative power"
+    );
+    crate::hud_smoke::dispatch_in(&mut app, vec![UiAction::ReturnToMenu]);
+    crate::support::update_n(&mut app, 3);
+    assert_eq!(
+        app.world_mut()
+            .query_filtered::<Entity, With<FlowArrow>>()
+            .iter(app.world())
+            .count(),
+        0
+    );
+}

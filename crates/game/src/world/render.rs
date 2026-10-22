@@ -30,6 +30,7 @@ pub struct ViewSync {
     pub cities: BTreeMap<CityId, Entity>,
     pub lines: BTreeMap<LineId, Entity>,
     pillars: BTreeMap<PlantId, Entity>,
+    arrows: BTreeMap<LineId, Vec<Entity>>,
 }
 #[derive(Resource, Default)]
 pub struct WorldScene {
@@ -47,6 +48,7 @@ pub struct WorldAssets {
     city: Handle<Mesh>,
     cube: Handle<Mesh>,
     ring: Handle<Mesh>,
+    arrow: Handle<Mesh>,
     line_meshes: BTreeMap<LineId, Handle<Mesh>>,
     layer: Option<MapLayer>,
 }
@@ -67,6 +69,7 @@ const LINE: usize = 5;
 const ENERGIZED: usize = 6;
 const BEAM: usize = 7;
 const SELECTED: usize = 8;
+const FLOW: usize = 9;
 
 pub fn mesh_of(geometry: &TerrainGeometry) -> Mesh {
     Mesh::new(
@@ -166,6 +169,7 @@ fn initialise(
     assets.cube = add(Cuboid::new(1.0, 1.0, 1.0).into());
     let ring = super::selection_parts();
     assets.ring = add(parts_mesh(&ring));
+    assets.arrow = add(parts_mesh(&super::flow::arrow_parts()));
     for color in [
         Color::WHITE,
         Color::WHITE,
@@ -176,6 +180,7 @@ fn initialise(
         Color::srgb(0.1, 0.8, 1.0),
         Color::srgb(0.1, 0.7, 1.0),
         Color::srgb(1.0, 0.85, 0.15),
+        Color::srgb(1.0, 1.0, 0.6),
     ] {
         assets.materials.push(materials.add(StandardMaterial {
             base_color: color,
@@ -352,6 +357,29 @@ pub fn reconcile(
         {
             *mesh = parts_mesh(&line.parts);
         }
+        views.arrows.entry(line.id).or_insert_with(|| {
+            let length: f32 = line.parts.iter().map(|p| p.size.z).sum();
+            let count = (length / 2.0).ceil().clamp(1.0, 16.0) as u32;
+            (0..count)
+                .map(|slot| {
+                    commands
+                        .spawn((
+                            WorldEntity,
+                            super::FlowArrow {
+                                line: line.id,
+                                slot,
+                                count,
+                            },
+                            Mesh3d(assets.arrow.clone()),
+                            MeshMaterial3d(assets.materials[FLOW].clone()),
+                            Transform::default(),
+                            Visibility::Hidden,
+                            bevy::light::NotShadowCaster,
+                        ))
+                        .id()
+                })
+                .collect()
+        });
         views.lines.entry(line.id).or_insert_with(|| {
             let h = store.meshes.add(parts_mesh(&line.parts));
             assets.line_meshes.insert(line.id, h.clone());
@@ -386,6 +414,16 @@ pub fn reconcile(
             true
         } else {
             commands.entity(*e).despawn();
+            false
+        }
+    });
+    views.arrows.retain(|id, arrows| {
+        if model.lines.contains_key(id) {
+            true
+        } else {
+            for arrow in arrows {
+                commands.entity(*arrow).despawn();
+            }
             false
         }
     });
@@ -462,7 +500,7 @@ pub fn update_visuals(
     for (i, h) in store.assets.materials.iter().enumerate() {
         if let Some(mut m) = store.materials.get_mut(h) {
             // Preserve face lighting and cast shadows under the supply indicators.
-            m.unlit = i == BEAM || i == SELECTED;
+            m.unlit = i == BEAM || i == SELECTED || i == FLOW;
             m.emissive = LinearRgba::BLACK;
             match i {
                 TERRAIN => m.base_color = Color::WHITE,
@@ -489,6 +527,7 @@ pub fn update_visuals(
                     };
                     m.emissive = LinearRgba::rgb(color.x, color.y, color.z) * 2.0;
                 }
+                FLOW => m.emissive = LinearRgba::rgb(1.0, 1.0, 0.35),
                 SELECTED => m.emissive = LinearRgba::rgb(1.0, 0.8, 0.1),
                 _ => {}
             }

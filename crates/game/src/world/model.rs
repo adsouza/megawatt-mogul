@@ -182,6 +182,7 @@ pub struct WorldLine {
     pub parts: Vec<Part>,
     pub building: Option<u32>,
     pub energized: bool,
+    pub flow: Option<super::FlowDirection>,
     pub midpoint: Vec3,
 }
 #[derive(Debug, Clone)]
@@ -272,8 +273,25 @@ impl WorldModel {
             .collect();
         let energized = grid.mode == domain::grid::GridMode::Normal
             && plants.values().any(|p| p.connected && p.output > 0.0);
-        let lines = s
-            .line_views()
+        let line_views = s.line_views();
+        let sources = s
+            .plant_views()
+            .into_iter()
+            .filter(|p| p.connected && p.output.value() > 0.0)
+            .map(|p| (p.node, p.output.value()))
+            .collect();
+        let sinks = s
+            .city_views()
+            .into_iter()
+            .filter(|c| c.connected)
+            .filter_map(|c| Some((c.node, s.city_detail(c.id)?.served_now?.value())))
+            .collect();
+        let flows = if s.phase() == DayPhase::Operating && energized {
+            super::flow::route_flows(&line_views, &sources, &sinks)
+        } else {
+            BTreeMap::new()
+        };
+        let lines = line_views
             .into_iter()
             .filter_map(|l| {
                 let (from, fc) = nodes.get(&l.from)?;
@@ -330,6 +348,7 @@ impl WorldModel {
                             LineStatus::InService => None,
                         },
                         energized: *fc && *tc && energized,
+                        flow: flows.get(&l.id).copied(),
                         midpoint: (from + to) / 2.0 + Vec3::Y * 0.5,
                     },
                 ))
