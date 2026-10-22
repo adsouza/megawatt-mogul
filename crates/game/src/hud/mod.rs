@@ -41,6 +41,7 @@ mod selection;
 pub use saves::{SaveForm, SaveRowModel, SavesModel, draw_saves, save_error, saves_model};
 mod speed;
 mod supply_chart;
+mod supply_history;
 mod tariff;
 pub mod theme;
 mod toasts;
@@ -134,7 +135,7 @@ pub use self::ramp_warnings::{
     RampWarningsModel, draw_ramp_warnings, ramp_warnings_for, ramp_warnings_model,
 };
 pub use self::review::{
-    MeritRow, REVIEW_MARGIN, REVIEW_WIDTH, ReviewModel, draw_review, review_applies, review_model,
+    MeritRow, REVIEW_MARGIN, ReviewModel, draw_review, review_applies, review_model,
     review_model_for, review_rect,
 };
 pub use self::selection::Selection;
@@ -143,6 +144,7 @@ pub use self::supply_chart::{
     MARGINAL_COST_COLOR, SERVED_COLOR, SupplyModel, SupplyStack, draw_supply_chart, supply_model,
     todays_points,
 };
+pub use self::supply_history::{SupplyHistoryModel, draw_supply_history, supply_history_model};
 pub use self::tariff::{TariffModel, draw_tariff, months_until_review, tariff_model};
 pub use self::toasts::{
     MAX_TOASTS, TOAST_SECONDS, ToastQueue, ToastsModel, draw_toasts, toasts_model,

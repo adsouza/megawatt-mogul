@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use application::Command;
 use bevy::prelude::*;
 use domain::ids::PlantId;
+use domain::time::SimMonth;
 
 use super::action::UiAction;
 
@@ -27,6 +28,8 @@ pub enum PlanningTab {
     Tariff,
     /// The plants and lines under construction (spec §16.9).
     Construction,
+    /// Completed daily supply/demand curves, labelled by their represented month.
+    History,
 }
 
 /// A commitment pattern the player is editing and has not applied yet.
@@ -50,6 +53,10 @@ pub struct PendingCommit {
 #[derive(Resource, Debug, Clone, PartialEq, Eq, Default)]
 pub struct UiState {
     pub tab: PlanningTab,
+    /// The archived supply chart's month; `None` selects the latest completed month.
+    pub supply_month: Option<SimMonth>,
+    /// Whether Review is displaying the completed-day chart rather than the summary.
+    pub review_supply: bool,
     /// The hour a warning pointed at: its column is tinted in the grid and marked in the chart.
     pub highlight_hour: Option<u8>,
     /// Whether the warnings past the first are listed.
@@ -71,6 +78,11 @@ impl UiState {
     /// Takes in one action. The only writer of this state.
     pub fn apply(&mut self, action: &UiAction) {
         match action {
+            UiAction::SelectSupplyMonth(month) => self.supply_month = Some(*month),
+            UiAction::ShowReviewSupply(show) => {
+                self.review_supply = *show;
+                self.supply_month = None;
+            }
             UiAction::SetPlanningTab(tab) => self.tab = *tab,
             UiAction::ShowHour(hour) => self.highlight_hour = *hour,
             UiAction::ToggleWarnings => self.warnings_open = !self.warnings_open,

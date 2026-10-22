@@ -33,6 +33,76 @@ fn same(a: &Game, b: &Game) {
     assert_eq!(a.checkpoint(), b.checkpoint());
 }
 
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(16))]
+    #[test]
+    fn completed_supply_history_survives_later_ticks_batching_and_resume(seed in 0u64..100, first in 1u32..TICKS_PER_DAY) {
+        let (mut game, _) = game_on(tiny_region_parts(), seed);
+        let month = game.session().clock().month();
+        let forecast = game.session().hourly_forecast();
+        game.execute(Command::BeginOperating).unwrap();
+        game.execute(Command::AdvanceTicks { n: first }).unwrap();
+        prop_assert!(game.projections().timeline.completed_days().is_empty());
+        game.execute(Command::AdvanceTicks { n: TICKS_PER_DAY - first }).unwrap();
+        let archived = game.projections().timeline.completed_days()[0].clone();
+        prop_assert_eq!(archived.month, month);
+        prop_assert_eq!(archived.forecast, forecast);
+        prop_assert_eq!(archived.points.len(), TICKS_PER_DAY as usize);
+        prop_assert_eq!(archived.points.iter().map(|p| p.tick).collect::<Vec<_>>(), (0..TICKS_PER_DAY).collect::<Vec<_>>());
+        let report = game.projections().monthly_reports.latest().unwrap();
+        let energy = archived.points.iter().map(|p| p.demand.value()).sum::<f64>() / 60.0 * f64::from(month.days_in_month());
+        prop_assert!((energy - report.demand.value()).abs() < 1e-6);
+        same(&game, &restore(&game));
+        game.execute(Command::FinishReview).unwrap();
+        prop_assert_eq!(&game.projections().timeline.completed_days()[0], &archived);
+        game.execute(Command::BeginOperating).unwrap();
+        game.execute(Command::AdvanceTicks { n: first }).unwrap();
+        prop_assert_eq!(&game.projections().timeline.completed_days()[0], &archived);
+        same(&game, &restore(&game));
+        game.execute(Command::AdvanceTicks { n: TICKS_PER_DAY - first }).unwrap();
+        let history = game.projections().timeline.completed_days();
+        prop_assert_eq!(history.len(), 2);
+        prop_assert_eq!(&history[0], &archived);
+        prop_assert_eq!(history[1].month, month.next());
+        same(&game, &restore(&game));
+    }
+}
+
+#[test]
+fn completed_supply_history_keeps_the_forecast_from_before_month_close_commissioning() {
+    let mut parts = tiny_region_parts();
+    parts.lines.cells_per_month = 100;
+    let (mut game, _) = game_on(parts, 8);
+    let city = game
+        .session()
+        .city_views()
+        .into_iter()
+        .find(|c| !c.connected)
+        .unwrap();
+    game.execute(Command::BuildLine {
+        from: game.session().anchor_node(),
+        to: city.node,
+    })
+    .unwrap();
+    let forecast = game.session().hourly_forecast();
+    game.execute(Command::BeginOperating).unwrap();
+    game.execute(Command::AdvanceTicks { n: TICKS_PER_DAY })
+        .unwrap();
+    assert!(
+        game.session()
+            .city_views()
+            .iter()
+            .find(|c| c.id == city.id)
+            .unwrap()
+            .connected
+    );
+    assert_ne!(game.session().hourly_forecast(), forecast);
+    assert_eq!(
+        game.projections().timeline.completed_days()[0].forecast,
+        forecast
+    );
+}
+
 #[test]
 fn save_resume_preserves_each_phase_and_original_batches() {
     let (mut game, _) = game_on(tiny_region_parts(), 8);

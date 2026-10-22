@@ -21,11 +21,10 @@ use super::action::{ActionSink, ButtonModel, UiAction, button, dispatch};
 use super::game_over::{GameOverView, GameOverViewShown};
 use super::layout::HudArea;
 use super::top_bar::Stat;
+use super::{SupplyHistoryModel, UiState, draw_supply_history, supply_history_model};
 use crate::l10n::{Localize, LocalizeWith, Localizer, Names, Toast, format};
 use crate::sim::Session;
 
-/// The modal's width, well inside the smallest (1024-point) window.
-pub const REVIEW_WIDTH: f32 = 640.0;
 /// The space kept clear between the modal and the edges of the dimmed area.
 pub const REVIEW_MARGIN: f32 = 16.0;
 /// The height of the separator above the footer button, reserved under the scroll area.
@@ -78,25 +77,44 @@ pub struct ReviewModel {
     /// *Continue*, which sends `FinishReview`; after game over, *Back*, which returns to the
     /// game-over modal.
     pub footer_button: ButtonModel,
+    pub supply_button: ButtonModel,
+    pub supply: Option<SupplyHistoryModel>,
 }
 
 /// The modal while the month is in review; `None` otherwise. Once the game is over, its own modal
 /// is the only one, unless `view` asks for the final month.
 pub fn review_model(game: &Game, view: GameOverView, l10n: &Localizer) -> Option<ReviewModel> {
+    review_model_with_history(game, view, &UiState::default(), l10n)
+}
+
+fn review_model_with_history(
+    game: &Game,
+    view: GameOverView,
+    ui: &UiState,
+    l10n: &Localizer,
+) -> Option<ReviewModel> {
     let session = game.session();
     if !review_applies(session.status(), session.phase(), view) {
         return None;
     }
     let projections = game.projections();
     let report = projections.monthly_reports.latest()?;
-    Some(review_model_for(
+    let mut model = review_model_for(
         report,
         projections.lessons.latest(),
         projections.regulatory.latest(),
         &Names::new(l10n, session),
         session.status() != SessionStatus::Active,
         l10n,
-    ))
+    );
+    if ui.review_supply {
+        model.supply = Some(supply_history_model(game, ui.supply_month, l10n));
+        model.supply_button = ButtonModel::new(
+            l10n.text("review-summary"),
+            UiAction::ShowReviewSupply(false),
+        );
+    }
+    Some(model)
 }
 
 /// Whether the Review modal shows for a game in `status` and `phase`, with `view` the finished
@@ -231,17 +249,19 @@ pub fn review_model_for(
                 UiAction::Command(Command::FinishReview),
             )
         },
+        supply_button: ButtonModel::new(
+            l10n.text("review-supply"),
+            UiAction::ShowReviewSupply(true),
+        ),
+        supply: None,
     }
 }
 
-/// Where the modal goes in `behind`, the dimmed space under the top bar: centred, of fixed width
-/// (narrower only if the space is), and as tall as the space less the margins.
+/// Fill the available area under the top bar, leaving a small margin on every side.
 pub fn review_rect(behind: egui::Rect) -> egui::Rect {
-    let width = REVIEW_WIDTH.min(behind.width() - 2.0 * REVIEW_MARGIN);
-    let height = behind.height() - 2.0 * REVIEW_MARGIN;
     egui::Rect::from_center_size(
         behind.center(),
-        egui::vec2(width, height).max(egui::Vec2::ZERO),
+        (behind.size() - egui::Vec2::splat(2.0 * REVIEW_MARGIN)).max(egui::Vec2::ZERO),
     )
 }
 
@@ -257,13 +277,21 @@ pub fn draw_review(ui: &mut egui::Ui, model: &ReviewModel) -> Vec<UiAction> {
     let spacing = ui.spacing();
     // The separator and the footer button's row below the scroll area, with the gaps between them.
     let footer = FOOTER_SEPARATOR + spacing.interact_size.y + 3.0 * spacing.item_spacing.y;
-    egui::ScrollArea::vertical()
-        .id_salt("review_sections")
-        .auto_shrink([false, false])
-        .max_height((ui.available_height() - footer).max(0.0))
-        .show(ui, |ui| draw_sections(ui, model));
+    let content_height = (ui.available_height() - footer).max(0.0);
+    if let Some(history) = &model.supply {
+        ui.allocate_ui(egui::vec2(ui.available_width(), content_height), |ui| {
+            actions.extend(draw_supply_history(ui, history));
+        });
+    } else {
+        egui::ScrollArea::vertical()
+            .id_salt("review_sections")
+            .auto_shrink([false, false])
+            .max_height(content_height)
+            .show(ui, |ui| draw_sections(ui, model));
+    }
     ui.add(egui::Separator::default().spacing(FOOTER_SEPARATOR));
-    ui.vertical_centered(|ui| {
+    ui.horizontal(|ui| {
+        button(ui, &model.supply_button, &mut actions);
         button(ui, &model.footer_button, &mut actions);
     });
     actions
@@ -346,7 +374,7 @@ pub(super) fn review_modal(
     mut sink: ActionSink,
 ) -> Result {
     // The pass's snapshot, not the live view: see `GameOverViewShown`.
-    let Some(model) = review_model(&session.0, shown.0, &l10n) else {
+    let Some(model) = review_model_with_history(&session.0, shown.0, sink.ui_state(), &l10n) else {
         return Ok(());
     };
     let ctx = contexts.ctx_mut()?;
@@ -810,17 +838,20 @@ mod tests {
         assert_eq!(l10n.problems(), vec![]);
     }
 
-    #[test]
-    fn the_modal_is_centred_below_the_top_bar_at_a_fixed_width() {
-        let behind = egui::Rect::from_min_max(egui::pos2(0.0, 30.0), egui::pos2(1024.0, 640.0));
-
-        let modal = review_rect(behind);
-
-        assert_eq!(modal.width(), REVIEW_WIDTH);
-        assert_eq!(modal.center(), behind.center());
-        assert_eq!(modal.top(), 30.0 + REVIEW_MARGIN);
-        assert_eq!(modal.bottom(), 640.0 - REVIEW_MARGIN);
-        let narrow = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(500.0, 400.0));
-        assert_eq!(review_rect(narrow).width(), 500.0 - 2.0 * REVIEW_MARGIN);
+    proptest::proptest! {
+        #[test]
+        fn the_review_fills_available_width_below_the_top_bar(
+            width in 200u16..4000, height in 80u16..2400, top in 0u16..100,
+        ) {
+            let behind = egui::Rect::from_min_size(
+                egui::pos2(0.0, f32::from(top)),
+                egui::vec2(f32::from(width), f32::from(height)),
+            );
+            let modal = review_rect(behind);
+            proptest::prop_assert_eq!(modal.left(), behind.left() + REVIEW_MARGIN);
+            proptest::prop_assert_eq!(modal.right(), behind.right() - REVIEW_MARGIN);
+            proptest::prop_assert_eq!(modal.top(), behind.top() + REVIEW_MARGIN);
+            proptest::prop_assert_eq!(modal.bottom(), behind.bottom() - REVIEW_MARGIN);
+        }
     }
 }

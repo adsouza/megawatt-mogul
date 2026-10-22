@@ -70,6 +70,13 @@ and per-tick summaries (timeline, monthly report, plant history, milestones, rat
 ramp warnings, lessons). Milestones are read-side: they are tracked by a projection, not emitted as
 domain events.
 
+The timeline projection keeps its rolling live buffer and archives each completed day's full
+minute samples on `MonthClosed`. It captures the original hourly forecast on entering Operating,
+before month-close construction can connect more demand. Review can switch between its report
+and this chart; Planning and Operating History tabs select any completed month. These read models
+rebuild from the existing command journal on resume. Browsing changes only HUD state, leaving
+the simulation, checkpoint, rules version and save format unchanged.
+
 Ticks and commands return `Vec<DomainEvent>`. Nothing is pushed through an event framework, and
 policies (event to reaction, such as strikes or bankruptcy) run inside the domain.
 

@@ -25,7 +25,7 @@ pub use plant_history::{PlantHistory, PlantHistoryProjection};
 pub use ramp_warning::{RampWarning, RampWarningProjection, ramp_warning};
 pub use rate_review::RateReviewProjection;
 pub use regulatory::RegulatoryProjection;
-pub use timeline::{TIMELINE_CAPACITY, TimelinePoint, TimelineProjection};
+pub use timeline::{CompletedDay, TIMELINE_CAPACITY, TimelinePoint, TimelineProjection};
 
 /// One read model, updated one event at a time.
 ///

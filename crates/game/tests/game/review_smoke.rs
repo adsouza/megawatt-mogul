@@ -5,8 +5,8 @@ use application::Command;
 use bevy::prelude::*;
 use bevy_egui::egui;
 use game::hud::{
-    GameOverView, MILESTONES_WIDTH, MilestonesOpen, REVIEW_MARGIN, REVIEW_WIDTH, Selection,
-    ToastQueue, UiAction, review_model, toasts_model,
+    GameOverView, MILESTONES_WIDTH, MilestonesOpen, REVIEW_MARGIN, Selection, ToastQueue, UiAction,
+    review_model, toasts_model,
 };
 use game::l10n::Localize;
 use game::sim::{PlayerCommand, Session, SimSpeed};
@@ -32,6 +32,148 @@ fn review_app(logs: &TempDir, region: &str) -> App {
     update_n(&mut app, 3);
     assert_eq!(phase(&app), PhaseState::Review);
     app
+}
+
+#[test]
+fn the_completed_supply_curve_can_be_opened_from_review() {
+    let logs = TempDir::new().unwrap();
+    for region in [EASTERN, WESTERN] {
+        let mut app = review_app(&logs, region);
+        let pass = EguiPass::attach(&mut app);
+        let checkpoint = app.world().resource::<Session>().0.checkpoint();
+        for zoom in [1.0, 1.25] {
+            pass.ctx().set_zoom_factor(zoom);
+            for (width, height) in [(1024.0, 640.0), (1920.0, 1080.0)] {
+                let (width, height) = (width / zoom, height / zoom);
+                let widgets = pass.settled(&mut app, width, height);
+                let title = widgets
+                    .iter()
+                    .find(|w| w.text == "Month in review" && w.role == egui::accesskit::Role::Label)
+                    .unwrap();
+                assert!(
+                    title.rect.left() <= REVIEW_MARGIN + 16.0,
+                    "the report must begin at the window margin: {:?}",
+                    title.rect
+                );
+                let chart = find_button(&widgets, "Supply demand retrospective");
+                pass.click_at(&mut app, width, height, chart.rect.center());
+                let widgets = pass.settled(&mut app, width, height);
+                assert!(has(&widgets, "Demand"));
+                let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, height));
+                for name in ["Continue", "Review summary"] {
+                    assert!(
+                        screen.contains_rect(find_button(&widgets, name).rect),
+                        "{region} {zoom}: {name}"
+                    );
+                }
+                assert!(
+                    crate::contrast::check_paint(pass.paint_with(&mut app, width, height, vec![]))
+                        > 0
+                );
+                pass.click_at(
+                    &mut app,
+                    width,
+                    height,
+                    find_button(&widgets, "Review summary").rect.center(),
+                );
+                let widgets = pass.settled(&mut app, width, height);
+                assert!(has(&widgets, "Profit and loss"));
+                assert_eq!(app.world().resource::<Session>().0.checkpoint(), checkpoint);
+            }
+        }
+    }
+}
+
+#[test]
+fn past_supply_curves_remain_selectable_in_planning_and_operating() {
+    use game::hud::{OperatingTab, UiState, supply_history_model};
+    let logs = TempDir::new().unwrap();
+    let mut app = review_app(&logs, WESTERN);
+    let l10n = shipped_l10n();
+    let first = supply_history_model(&app.world().resource::<Session>().0, None, &l10n);
+    assert_eq!(first.chart.as_ref().unwrap().x.len(), 1440);
+    assert_eq!(first.chart.as_ref().unwrap().now, 24.0);
+    let first_month = first.selected.unwrap();
+    for command in [
+        Command::FinishReview,
+        Command::BeginOperating,
+        Command::AdvanceTicks { n: 1440 },
+        Command::FinishReview,
+    ] {
+        dispatch_in(&mut app, vec![UiAction::Command(command)]);
+        update_n(&mut app, 3);
+    }
+    let pass = EguiPass::attach(&mut app);
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    pass.click_at(
+        &mut app,
+        1024.0,
+        640.0,
+        find_button(&widgets, "History").rect.center(),
+    );
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    assert!(has(&widgets, "Demand"));
+    let combo = widgets
+        .iter()
+        .find(|w| w.role == egui::accesskit::Role::ComboBox)
+        .unwrap();
+    pass.click_at(&mut app, 1024.0, 640.0, combo.rect.center());
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    let old_month = widgets
+        .iter()
+        .find(|w| {
+            w.text == game::l10n::format::month_year(first_month)
+                && w.role != egui::accesskit::Role::TextRun
+        })
+        .unwrap();
+    pass.click_at(&mut app, 1024.0, 640.0, old_month.rect.center());
+    pass.settled(&mut app, 1024.0, 640.0);
+    assert_eq!(
+        app.world().resource::<UiState>().supply_month,
+        Some(first_month)
+    );
+    let selected = supply_history_model(
+        &app.world().resource::<Session>().0,
+        Some(first_month),
+        &l10n,
+    );
+    assert_eq!(selected.chart, first.chart);
+    dispatch_in(&mut app, vec![UiAction::Command(Command::BeginOperating)]);
+    update_n(&mut app, 3);
+    dispatch_in(
+        &mut app,
+        vec![UiAction::Command(Command::AdvanceTicks { n: 60 })],
+    );
+    app.update();
+    let checkpoint = app.world().resource::<Session>().0.checkpoint();
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    pass.click_at(
+        &mut app,
+        1024.0,
+        640.0,
+        find_button(&widgets, "History").rect.center(),
+    );
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    assert_eq!(
+        *app.world().resource::<OperatingTab>(),
+        OperatingTab::History
+    );
+    assert!(has(&widgets, "Demand"));
+    assert!(
+        !has(&widgets, "Incidents"),
+        "today's incidents must not appear beside an old curve"
+    );
+    assert_eq!(app.world().resource::<Session>().0.checkpoint(), checkpoint);
+    assert_eq!(
+        supply_history_model(
+            &app.world().resource::<Session>().0,
+            Some(first_month),
+            &l10n
+        )
+        .chart,
+        first.chart
+    );
+    assert!(l10n.problems().is_empty());
 }
 
 #[test]
@@ -86,7 +228,7 @@ fn the_review_modal_draws_every_section_after_a_full_day() {
 }
 
 /// The smallest window the game allows is 1024×640. There the modal sits under the top bar,
-/// centred at its fixed width, and Continue is on screen without scrolling.
+/// filling the available width, and Continue is on screen without scrolling.
 #[test]
 fn at_the_smallest_window_the_review_fits_with_continue_in_view() {
     for region in [EASTERN, WESTERN] {
@@ -104,7 +246,7 @@ fn at_the_smallest_window_the_review_fits_with_continue_in_view() {
             .expect("the modal's title")
             .rect;
         let next = find_button(&widgets, "Continue").rect;
-        let (left, right) = ((1024.0 - REVIEW_WIDTH) / 2.0, (1024.0 + REVIEW_WIDTH) / 2.0);
+        let (left, right) = (REVIEW_MARGIN, 1024.0 - REVIEW_MARGIN);
         assert!(screen.contains_rect(next), "{region}: Continue {next:?}");
         assert!(
             next.bottom() <= 640.0 - REVIEW_MARGIN + 0.5,
@@ -248,8 +390,8 @@ fn a_click_on_the_dimmed_map_does_nothing() {
     let widgets = pass.settled(&mut app, 1024.0, 640.0);
     let map = widget(&widgets, "Map").rect;
     // Left of the modal, on the map.
-    let at = egui::pos2(map.left() + 40.0, map.center().y);
-    assert!(at.x < (1024.0 - REVIEW_WIDTH) / 2.0 && map.contains(at));
+    let at = egui::pos2(map.left() + REVIEW_MARGIN / 4.0, map.center().y);
+    assert!(at.x < REVIEW_MARGIN && map.contains(at));
     let before = *app.world().resource::<Selection>();
     let commands = sent::<PlayerCommand>(&app).len();
 
@@ -359,7 +501,7 @@ fn the_milestones_panel_opens_from_the_top_bar_in_every_phase() {
         .expect("the first milestone's name")
         .rect;
     assert!(
-        name.center().x < (width + REVIEW_WIDTH) / 2.0,
+        name.center().x < width - REVIEW_MARGIN,
         "{name:?} is over the modal"
     );
     assert_eq!(

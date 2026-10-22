@@ -9,6 +9,7 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy_egui::egui;
 use domain::ids::{PlantId, RegionId};
+use domain::time::SimMonth;
 use domain::units::Megawatts;
 
 use super::game_over::GameOverView;
@@ -49,6 +50,8 @@ pub enum UiAction {
     SetPlanningTab(PlanningTab),
     /// Open another tab of the Operating panel.
     SetOperatingTab(OperatingTab),
+    SelectSupplyMonth(SimMonth),
+    ShowReviewSupply(bool),
     /// Tint an hour's column in the commitment grid (a warning's *show hour*), or clear it.
     ShowHour(Option<u8>),
     /// Open or close the list of the planning warnings past the first.
@@ -309,6 +312,7 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
                 }
             }
             UiAction::SetOperatingTab(tab) => *sink.operating_tab = tab,
+            UiAction::SelectSupplyMonth(_) | UiAction::ShowReviewSupply(_) => {}
             UiAction::Select(selection) => *sink.selection = selection,
             UiAction::SetLayer(layer) => {
                 *sink.layer = layer;

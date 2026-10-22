@@ -37,6 +37,7 @@ use super::layout::{Edge, HudArea, OuterPanel};
 use super::planning_warnings::{WarningsModel, draw_warnings, warnings_model};
 use super::tariff::{TariffModel, draw_tariff, tariff_model};
 use super::ui_state::{CommitmentForm, PlanningTab, UiState};
+use super::{SupplyHistoryModel, draw_supply_history, supply_history_model};
 use crate::l10n::Localizer;
 use crate::sim::Session;
 
@@ -59,6 +60,7 @@ pub enum PlanningContent {
     Forecast(Box<ForecastModel>),
     Tariff(TariffModel),
     Construction(ConstructionModel),
+    History(SupplyHistoryModel),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -97,6 +99,7 @@ pub fn planning_model(
                 PlanningTab::Construction,
                 construction_tab_label(game, l10n),
             ),
+            tab(PlanningTab::History, l10n.text("supply-history-title")),
         ],
         begin: ButtonModel::new(l10n.text("start-operating"), start_the_day(game))
             .enabled_if(!unsaved),
@@ -112,6 +115,9 @@ pub fn planning_model(
             PlanningTab::Tariff => PlanningContent::Tariff(tariff_model(game, l10n)),
             PlanningTab::Construction => {
                 PlanningContent::Construction(construction_model(game, l10n))
+            }
+            PlanningTab::History => {
+                PlanningContent::History(supply_history_model(game, ui.supply_month, l10n))
             }
         },
     })
@@ -159,6 +165,7 @@ pub fn draw_planning(
         PlanningContent::Forecast(chart) => actions.extend(draw_forecast_chart(ui, chart)),
         PlanningContent::Tariff(tariff) => actions.extend(draw_tariff(ui, tariff)),
         PlanningContent::Construction(construction) => draw_construction(ui, construction),
+        PlanningContent::History(history) => actions.extend(draw_supply_history(ui, history)),
     }
     actions
 }
@@ -218,6 +225,7 @@ mod tests {
                 ("Forecast", false),
                 ("Tariff", false),
                 ("Construction", false),
+                ("History", false),
             ]
         );
         assert!(matches!(model.content, PlanningContent::Commitments { .. }));
@@ -247,6 +255,7 @@ mod tests {
                 UiAction::SetPlanningTab(PlanningTab::Forecast),
                 UiAction::SetPlanningTab(PlanningTab::Tariff),
                 UiAction::SetPlanningTab(PlanningTab::Construction),
+                UiAction::SetPlanningTab(PlanningTab::History),
             ]
         );
 

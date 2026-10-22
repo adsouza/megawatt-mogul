@@ -274,6 +274,12 @@ city-served-now = Served now
 # The share of the city's demand a rotating outage or protection's shed cuts now.
 city-cut = Cut
 operating-tab-supply = Supply
+supply-history-title = History
+supply-history-month = Month
+supply-history-note = The complete played day representing this month.
+supply-history-empty = Complete a day to see its supply and demand history.
+review-supply = Supply demand retrospective
+review-summary = Review summary
 supply-chart-title = Supply and demand
 supply-chart-demand = Demand
 supply-chart-served = Served

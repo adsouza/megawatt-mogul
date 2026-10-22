@@ -473,6 +473,15 @@ had 567 mutants and missed 29, all in `domain`:
 
 ## 3D diorama (Plan 3)
 
+`application/tests/save_resume.rs` checks that completed supply curves retain all 1,440 samples,
+their original forecasts and represented months across later days and replayed saves, with
+property coverage for seeds and tick batching. A commissioning regression keeps the forecast
+from before a city connects at month close. `game/tests/game/review_smoke.rs` opens the completed
+curve through the real Review button, revisits earlier months through Planning's History selector,
+checks the full-width report/retrospective at 1024 and 1920 pixels with 1× and 1.25× UI zoom,
+and opens Operating history without changing the simulation or displaying today's incidents
+beside an old curve.
+
 `tests/game/world.rs` covers terrain winding/coverage and both shipped regions, camera fit and
 projection/ray round trips, bounded camera gestures, pointer-anchored zoom across camera angles,
 terrain/roof heights and distance limits, physical viewport rounding and zero-sized

@@ -511,7 +511,12 @@ The presentation layer never reads aggregate internals.
 - **Direct queries** (cheap snapshots): `GridSnapshot`, `PlantView`, `CityView`, `ForecastView`,
   `CompanyView`.
 - **Projections** (updated from events and per-tick summaries):
-  - `TimelineProjection`: a rolling 24 h of supply by plant type, demand, frequency and price.
+  - `TimelineProjection`: a rolling 24 h of supply by plant type, demand, frequency and price,
+    plus every completed played day's full 1,440 samples, labelled by its represented month.
+    Capture that day's hourly forecast on entering Operating, before month-close commissioning
+    can change connected demand. Archive on `MonthClosed`; later ticks never overwrite archives.
+    Both live and archived data rebuild from the command journal on save/resume, with no change
+    to the save format or simulation rules.
     *(Builder's call: under a regulated tariff the per-tick "price" the merit order teaches is the
     system marginal cost: `TimelinePoint.marginal_cost` is the highest marginal cost among the
     connected plants producing in that tick, `None` when none does.)*
@@ -683,8 +688,17 @@ per-line loading until a power-flow `NetworkModel` exists.
   near the top; longer specifications scroll without moving the surrounding panels.
   When increased UI zoom leaves less height than the Operating sidebar needs, the column itself
   scrolls so the full card and plant list remain reachable.
-- **Review:** a modal over the dimmed diorama showing P&L, the merit order used, an incidents
-  timeline and the lessons.
+- **Review:** a modal filling the available window width below the top bar, with a 16-point outer
+  margin. Both the report and retrospective use this full width. It shows P&L, the merit order
+  used, an incidents timeline and the lessons. A pinned **Supply demand retrospective** button switches the modal to the complete
+  finished-day graph; **Review summary** returns to the report. Continue (or Back after game over)
+  remains visible in either view. Viewing a graph never advances or finishes the month.
+- **Supply history:** History tabs in Planning and Operating revisit any completed month through
+  a month selector, defaulting to the latest. Show that month's complete played-day supply stack,
+  actual demand, served load, original forecast and marginal cost, using the same chart and key as
+  the live day. These are daily MW/$ per MWh curves, not month-weighted energy totals. The History
+  view in Operating uses the full bottom-panel width and omits today's incidents/ramp warnings
+  alongside historical curves. Before the first close, explain that history needs a completed day.
 - **Errors:** a `CommandError` becomes a localised toast. This is the only place errors are mapped
   for display.
 - **Text contrast:** every visible UI text size uses a minimum **4.5:1** contrast ratio against

@@ -4,10 +4,11 @@
 //! on a secondary axis.
 
 use application::Game;
-use application::projections::TimelinePoint;
+use application::projections::{CompletedDay, TimelinePoint};
 use bevy_egui::egui;
-use domain::region::PlantKind;
-use domain::time::TICKS_PER_HOUR;
+use domain::demand::ForecastPoint;
+use domain::region::{PlantKind, RegionDefinition};
+use domain::time::{TICKS_PER_DAY, TICKS_PER_HOUR};
 use egui_plot::{FilledArea, HPlacement, Line, LineStyle, Plot, PlotMemory, VLine};
 
 use super::action::UiAction;
@@ -83,12 +84,38 @@ pub fn supply_model(game: &Game, l10n: &Localizer) -> SupplyModel {
     let session = game.session();
     let now = session.clock().tick();
     let points = todays_points(game.projections().timeline.points(), now);
+    supply_model_for(
+        points,
+        &session.hourly_forecast(),
+        now,
+        session.region(),
+        l10n,
+    )
+}
+
+pub fn completed_supply_model(game: &Game, day: &CompletedDay, l10n: &Localizer) -> SupplyModel {
+    supply_model_for(
+        day.points.iter().collect(),
+        &day.forecast,
+        TICKS_PER_DAY,
+        game.session().region(),
+        l10n,
+    )
+}
+
+fn supply_model_for(
+    points: Vec<&TimelinePoint>,
+    forecast: &[ForecastPoint; 24],
+    now: u32,
+    region: &RegionDefinition,
+    l10n: &Localizer,
+) -> SupplyModel {
     let hours = |tick: u32| f64::from(tick) / f64::from(TICKS_PER_HOUR);
     let output = |point: &TimelinePoint, kind: PlantKind| {
         point.by_kind.get(&kind).map_or(0.0, |mw| mw.value())
     };
     let mut below = vec![0.0; points.len()];
-    let stacks = kinds_in_merit_order(session.region())
+    let stacks = kinds_in_merit_order(region)
         .into_iter()
         .filter(|kind| points.iter().any(|point| output(point, *kind) > 0.0))
         .map(|kind| {
@@ -105,7 +132,6 @@ pub fn supply_model(game: &Game, l10n: &Localizer) -> SupplyModel {
             }
         })
         .collect();
-    let forecast = session.hourly_forecast();
     SupplyModel {
         hour_axis: l10n.text("forecast-axis-hour"),
         power_axis: l10n.text("forecast-axis-power"),

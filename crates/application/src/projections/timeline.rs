@@ -2,10 +2,12 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
+use domain::demand::ForecastPoint;
 use domain::events::DomainEvent;
 use domain::grid::TickSummary;
 use domain::region::PlantKind;
-use domain::session::GameSession;
+use domain::session::{DayPhase, GameSession};
+use domain::time::SimMonth;
 use domain::units::{Hertz, Megawatts, Price};
 
 use super::Projection;
@@ -32,11 +34,25 @@ pub struct TimelinePoint {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct TimelineProjection {
     points: VecDeque<TimelinePoint>,
+    forecast: Option<[ForecastPoint; 24]>,
+    completed: Vec<CompletedDay>,
+}
+
+/// The played day representing a closed month, with its original demand forecast.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompletedDay {
+    pub month: SimMonth,
+    pub points: Vec<TimelinePoint>,
+    pub forecast: [ForecastPoint; 24],
 }
 
 impl TimelineProjection {
     pub fn points(&self) -> impl Iterator<Item = &TimelinePoint> {
         self.points.iter()
+    }
+
+    pub fn completed_days(&self) -> &[CompletedDay] {
+        &self.completed
     }
 }
 
@@ -54,6 +70,23 @@ fn system_marginal_cost(summary: &TickSummary, session: &GameSession) -> Option<
 
 impl Projection for TimelineProjection {
     fn apply(&mut self, event: &DomainEvent, session: &GameSession) {
+        if let DomainEvent::PhaseChanged {
+            to: DayPhase::Operating,
+            ..
+        } = event
+        {
+            // Capture before month-close commissioning or later months change the forecast.
+            self.forecast = Some(session.hourly_forecast());
+        }
+        if let DomainEvent::MonthClosed(report) = event
+            && let Some(forecast) = self.forecast.take()
+        {
+            self.completed.push(CompletedDay {
+                month: report.month,
+                points: self.points.iter().cloned().collect(),
+                forecast,
+            });
+        }
         if let DomainEvent::TickCompleted(summary) = event {
             if self.points.len() == TIMELINE_CAPACITY {
                 self.points.pop_front();

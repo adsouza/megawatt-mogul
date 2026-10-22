@@ -66,6 +66,7 @@ pub enum OperatingTab {
     #[default]
     Supply,
     Hydro,
+    History,
 }
 
 pub(super) fn reset_operating_tab(mut tab: ResMut<OperatingTab>) {
@@ -76,6 +77,7 @@ pub(super) fn reset_operating_tab(mut tab: ResMut<OperatingTab>) {
 pub enum OperatingContent {
     Supply(Box<SupplyModel>),
     Hydro(HydroModel),
+    History(super::SupplyHistoryModel),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -93,6 +95,15 @@ pub fn operating_panel_model(
     l10n: &Localizer,
     tab: OperatingTab,
 ) -> Option<OperatingPanelModel> {
+    operating_model_with_history(game, l10n, tab, None)
+}
+
+fn operating_model_with_history(
+    game: &Game,
+    l10n: &Localizer,
+    tab: OperatingTab,
+    month: Option<domain::time::SimMonth>,
+) -> Option<OperatingPanelModel> {
     if game.session().phase() != DayPhase::Operating {
         return None;
     }
@@ -104,10 +115,14 @@ pub fn operating_panel_model(
         tabs: vec![
             toggle(OperatingTab::Supply, "operating-tab-supply"),
             toggle(OperatingTab::Hydro, "hydro-title"),
+            toggle(OperatingTab::History, "supply-history-title"),
         ],
         content: match tab {
             OperatingTab::Supply => OperatingContent::Supply(Box::new(supply_model(game, l10n))),
             OperatingTab::Hydro => OperatingContent::Hydro(hydro_model(game, l10n)),
+            OperatingTab::History => {
+                OperatingContent::History(super::supply_history_model(game, month, l10n))
+            }
         },
         ramp: ramp_warnings_model(game, l10n),
         incidents: incidents_model(game, l10n),
@@ -118,29 +133,31 @@ pub fn operating_panel_model(
 /// system puts it in a bottom panel.
 pub fn draw_operating_panel(ui: &mut egui::Ui, model: &OperatingPanelModel) -> Vec<UiAction> {
     let mut actions = Vec::new();
-    egui::Panel::right("operating_log")
-        .resizable(true)
-        .default_size(OPERATING_LOG_WIDTH)
-        .size_range(
-            OPERATING_LOG_MIN_WIDTH
-                ..=(ui.available_width() - OPERATING_CONTENT_MIN_WIDTH)
-                    .max(OPERATING_LOG_MIN_WIDTH),
-        )
-        .show(ui, |ui| {
-            ui.allocate_ui(
-                egui::vec2(ui.available_width(), RAMP_WARNINGS_HEIGHT),
-                |ui| {
-                    ui.set_min_height(RAMP_WARNINGS_HEIGHT);
-                    egui::ScrollArea::vertical()
-                        .id_salt("operating_ramp_warnings")
-                        .auto_shrink([false, false])
-                        .max_height(RAMP_WARNINGS_HEIGHT)
-                        .show(ui, |ui| actions.extend(draw_ramp_warnings(ui, &model.ramp)));
-                },
-            );
-            ui.separator();
-            actions.extend(draw_incidents(ui, &model.incidents));
-        });
+    if !matches!(model.content, OperatingContent::History(_)) {
+        egui::Panel::right("operating_log")
+            .resizable(true)
+            .default_size(OPERATING_LOG_WIDTH)
+            .size_range(
+                OPERATING_LOG_MIN_WIDTH
+                    ..=(ui.available_width() - OPERATING_CONTENT_MIN_WIDTH)
+                        .max(OPERATING_LOG_MIN_WIDTH),
+            )
+            .show(ui, |ui| {
+                ui.allocate_ui(
+                    egui::vec2(ui.available_width(), RAMP_WARNINGS_HEIGHT),
+                    |ui| {
+                        ui.set_min_height(RAMP_WARNINGS_HEIGHT);
+                        egui::ScrollArea::vertical()
+                            .id_salt("operating_ramp_warnings")
+                            .auto_shrink([false, false])
+                            .max_height(RAMP_WARNINGS_HEIGHT)
+                            .show(ui, |ui| actions.extend(draw_ramp_warnings(ui, &model.ramp)));
+                    },
+                );
+                ui.separator();
+                actions.extend(draw_incidents(ui, &model.incidents));
+            });
+    }
     ui.horizontal(|ui| {
         for tab in &model.tabs {
             toggle_button(ui, tab, &mut actions);
@@ -150,6 +167,9 @@ pub fn draw_operating_panel(ui: &mut egui::Ui, model: &OperatingPanelModel) -> V
     match &model.content {
         OperatingContent::Supply(chart) => actions.extend(draw_supply_chart(ui, chart)),
         OperatingContent::Hydro(hydro) => actions.extend(draw_hydro(ui, hydro)),
+        OperatingContent::History(history) => {
+            actions.extend(super::draw_supply_history(ui, history))
+        }
     }
     actions
 }
@@ -303,7 +323,12 @@ pub(super) fn operating_panel(
     l10n: Res<Localizer>,
     mut sink: ActionSink,
 ) -> Result {
-    let Some(model) = operating_panel_model(&session.0, &l10n, sink.operating_tab()) else {
+    let Some(model) = operating_model_with_history(
+        &session.0,
+        &l10n,
+        sink.operating_tab(),
+        sink.ui_state().supply_month,
+    ) else {
         return Ok(());
     };
     let ctx = contexts.ctx_mut()?;
@@ -434,6 +459,11 @@ mod tests {
                 (
                     "Hydro",
                     &UiAction::SetOperatingTab(OperatingTab::Hydro),
+                    false
+                ),
+                (
+                    "History",
+                    &UiAction::SetOperatingTab(OperatingTab::History),
                     false
                 ),
             ]
