@@ -1,4 +1,4 @@
-//! The cell inspector: what a selected map cell is like, and which plants could be built on it.
+//! The Planning inspector: selected cells, cities, plant specifications and construction progress.
 
 use application::Game;
 use bevy::prelude::*;
@@ -12,6 +12,7 @@ use super::build::BUILD_PANEL;
 use super::city_card::{CityCardModel, city_card_model, draw_city_card};
 use super::construction::{ConstructionCardModel, construction_card_model, draw_construction_card};
 use super::layout::{Edge, HudArea, OuterPanel};
+use super::plant_panel::{PlantCardModel, draw_plant_card, plant_card_model};
 use super::selection::Selection;
 use super::top_bar::Stat;
 use crate::l10n::{Localize, Localizer, format};
@@ -62,13 +63,14 @@ pub enum InspectorModel {
     City(CityCardModel),
     /// A plant under construction is selected (spec §16.9).
     Construction(ConstructionCardModel),
-    /// Nothing, or something that is neither a map cell, a city nor a plant under construction,
-    /// is selected. The panel keeps its place, so the map beside it does not move.
+    /// A commissioned plant's connection and specifications.
+    Plant(PlantCardModel),
+    /// Nothing or an unknown object is selected. The panel keeps its place, so the map does not move.
     Empty { hint: String },
 }
 
-/// The inspector (Planning only, spec §8.4): the selected cell or city (§16.8), the selected
-/// plant under construction (§16.9), or a hint to select a cell. `None` outside Planning.
+/// The inspector (Planning only, spec §8.4): the selected cell, city or plant, or a hint to select
+/// a cell. `None` outside Planning.
 pub fn inspector_model(
     game: &Game,
     l10n: &Localizer,
@@ -80,10 +82,9 @@ pub fn inspector_model(
     let model = match selection {
         Selection::Cell(at) => cell_inspector(game, l10n, at).map(InspectorModel::Cell),
         Selection::City(city) => city_card_model(game, l10n, city).map(InspectorModel::City),
-        // A built plant has its details in Operating; one being built shows its progress here.
-        Selection::Plant(plant) => {
-            construction_card_model(game, l10n, plant).map(InspectorModel::Construction)
-        }
+        Selection::Plant(plant) => construction_card_model(game, l10n, plant)
+            .map(InspectorModel::Construction)
+            .or_else(|| plant_card_model(game, l10n, plant).map(InspectorModel::Plant)),
         _ => None,
     };
     Some(model.unwrap_or_else(|| InspectorModel::Empty {
@@ -150,7 +151,14 @@ pub fn draw_inspector(ui: &mut egui::Ui, model: &InspectorModel) -> Vec<UiAction
     // The panel is only as tall as the window leaves it below the Planning panel, which at the
     // smallest window is less than a selected cell's readings and suitability rows.
     egui::ScrollArea::vertical()
-        .id_salt("inspector_scroll")
+        .id_salt((
+            "inspector_scroll",
+            match model {
+                InspectorModel::Plant(card) => Some(card.plant.0),
+                InspectorModel::Construction(card) => Some(card.plant.0),
+                _ => None,
+            },
+        ))
         .auto_shrink([false, false])
         .show(ui, |ui| match model {
             InspectorModel::Empty { hint } => {
@@ -159,6 +167,7 @@ pub fn draw_inspector(ui: &mut egui::Ui, model: &InspectorModel) -> Vec<UiAction
             InspectorModel::Cell(cell) => draw_cell(ui, cell, &mut actions),
             InspectorModel::City(city) => draw_city_card(ui, city),
             InspectorModel::Construction(card) => draw_construction_card(ui, card),
+            InspectorModel::Plant(card) => draw_plant_card(ui, card),
         });
     actions
 }
@@ -341,16 +350,15 @@ mod tests {
     }
 
     #[test]
-    fn anything_but_a_cell_on_the_map_keeps_the_panel_with_a_hint() {
+    fn unknown_or_no_selection_keeps_the_panel_with_a_hint() {
         let l10n = shipped_l10n();
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
         let session = game.session();
-        let plant = session.plant_views()[0].id;
         let outside = CellCoord { x: 5000, y: 5000 };
 
         for selection in [
             Selection::None,
-            Selection::Plant(plant),
+            Selection::Plant(domain::ids::PlantId(u32::MAX)),
             Selection::LineFrom(session.anchor_node()),
             Selection::Cell(outside),
         ] {
@@ -365,8 +373,7 @@ mod tests {
         assert_eq!(l10n.problems(), vec![]);
     }
 
-    /// A selected plant under construction shows its construction card; a built plant keeps the
-    /// hint (spec §16.9).
+    /// A selected plant shows either its construction progress or its specifications.
     #[test]
     fn a_selected_plant_under_construction_shows_its_card() {
         let l10n = shipped_l10n();
@@ -382,7 +389,7 @@ mod tests {
         );
         assert!(matches!(
             inspector_model(&game, &l10n, Selection::Plant(built)),
-            Some(InspectorModel::Empty { .. })
+            Some(InspectorModel::Plant(_))
         ));
         assert_eq!(l10n.problems(), vec![]);
     }

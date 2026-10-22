@@ -30,8 +30,9 @@ const ROUNDING: f32 = 1.0;
 /// The placeholder's text when no plant is selected.
 pub(crate) const HINT: &str = "Select a plant in the list or on the map.";
 /// The selected plant's figures that must show without scrolling, down to the last.
-const FIGURES: [&str; 6] = [
-    "Output",
+const FIGURES: [&str; 7] = [
+    "Grid connection",
+    "Output / capacity",
     "Target",
     "Ramp rate",
     "Marginal cost",
@@ -125,6 +126,43 @@ fn blocks(app: &mut App, pass: &EguiPass, selection: Selection, size: (f32, f32)
         panel: side_panel(pass),
         widgets,
     }
+}
+
+#[test]
+fn at_increased_zoom_the_full_plant_card_and_list_remain_reachable() {
+    let logs = TempDir::new().unwrap();
+    let mut app = operating_hour_app(&logs, WESTERN);
+    let hydro = online(&app, PlantKind::Hydro);
+    dispatch_in(&mut app, vec![UiAction::Select(Selection::Plant(hydro.id))]);
+    let pass = EguiPass::attach(&mut app);
+    pass.ctx().set_zoom_factor(1.25);
+    let (width, height) = (SMALL.0 / 1.25, SMALL.1 / 1.25);
+    let widgets = pass.settled(&mut app, width, height);
+    let side = side_panel(&pass);
+    assert!(side.contains_rect(label(&widgets, "Grid connection")));
+    // Scroll the outer column from its gauge, away from the nested card/list scroll areas.
+    let at = egui::pos2(side.center().x, side.top() + 10.0);
+    pass.run_with(
+        &mut app,
+        width,
+        height,
+        vec![
+            egui::Event::PointerMoved(at),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                phase: egui::TouchPhase::Move,
+                delta: egui::vec2(0.0, -400.0),
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    let widgets = pass.settled(&mut app, width, height);
+    let list = region(&widgets, "Plants");
+    assert!(
+        side.expand(ROUNDING).contains_rect(list),
+        "plant list {list:?} outside {side:?}"
+    );
+    assert!(widgets.iter().any(|w| w.text == "Specifications"));
 }
 
 #[test]

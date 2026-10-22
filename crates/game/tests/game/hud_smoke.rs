@@ -689,6 +689,51 @@ fn every_map_layer_draws() {
 }
 
 #[test]
+fn selected_plant_cards_show_grid_connection_in_planning_and_operating() {
+    let l10n = shipped_l10n();
+    for region in [EASTERN, WESTERN] {
+        let mut game = game_in(region);
+        let plant = game.session().plant_views()[0].id;
+        for operating in [false, true] {
+            if operating {
+                game.execute(Command::BeginOperating).unwrap();
+            }
+            let harness = Harness::with_screen(1024.0, 640.0);
+            let selection = Selection::Plant(plant);
+            let widgets = if operating {
+                let model = plant_panel_model(&game, &l10n, selection);
+                let mut form = PlantPanelForm::default();
+                let mut draw =
+                    |ui: &mut egui::Ui| central(ui, |ui| draw_plant_panel(ui, &model, &mut form));
+                harness.draw(&mut draw);
+                assert!(harness.click("Specifications", &mut draw).is_empty());
+                let widgets = harness.draw(&mut draw);
+                assert!(shows(&widgets, "Start-up time"));
+                assert!(shows(&widgets, "Start-up cost"));
+                assert!(shows(&widgets, "Fixed O&M / month"));
+                widgets
+            } else {
+                let model = inspector_model(&game, &l10n, selection).unwrap();
+                harness.draw(|ui| central(ui, |ui| draw_inspector(ui, &model)))
+            };
+            assert!(
+                shows(&widgets, "Grid connection"),
+                "{region}, operating={operating}"
+            );
+            assert!(shows(&widgets, "Connected"));
+            assert!(shows(
+                &widgets,
+                if operating {
+                    "Output / capacity"
+                } else {
+                    "Capacity"
+                }
+            ));
+        }
+    }
+}
+
+#[test]
 fn the_inspector_lists_what_can_be_built_on_the_selected_cell() {
     let l10n = shipped_l10n();
     let game = eastern_game();
@@ -2064,7 +2109,8 @@ fn at_the_smallest_window_the_operating_controls_fit_without_overlap() {
             }
             // Every figure of the selected plant, down to the last, is in view without scrolling.
             for figure in [
-                "Output",
+                "Grid connection",
+                "Output / capacity",
                 "Target",
                 "Ramp rate",
                 "Marginal cost",

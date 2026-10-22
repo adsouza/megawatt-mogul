@@ -234,6 +234,34 @@ pub fn draw_operating_side(
     model: &OperatingSideModel,
     form: &mut PlantPanelForm,
 ) -> Vec<UiAction> {
+    let frame = egui::Frame::side_top_panel(ui.style())
+        .total_margin()
+        .sum()
+        .y;
+    let minimum = operating_side_min_height(ui.ctx()) - frame;
+    if ui.available_height() + 0.5 < minimum {
+        // Increased UI zoom can leave less room than the column's minimum, even with the
+        // bottom bar at its smallest. Keep every block reachable instead of clipping the list.
+        return egui::ScrollArea::vertical()
+            .id_salt("operating_side_compact")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.allocate_ui(egui::vec2(ui.available_width(), minimum), |ui| {
+                    ui.set_min_height(minimum);
+                    draw_operating_side_contents(ui, model, form)
+                })
+                .inner
+            })
+            .inner;
+    }
+    draw_operating_side_contents(ui, model, form)
+}
+
+fn draw_operating_side_contents(
+    ui: &mut egui::Ui,
+    model: &OperatingSideModel,
+    form: &mut PlantPanelForm,
+) -> Vec<UiAction> {
     let mut actions = Vec::new();
     let width = ui.available_width();
     ui.allocate_ui(egui::vec2(width, FREQUENCY_GAUGE_HEIGHT), |ui| {

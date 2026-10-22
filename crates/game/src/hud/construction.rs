@@ -196,7 +196,7 @@ pub struct ConstructionCardModel {
     pub name: String,
     /// `Under construction`.
     pub status: String,
-    /// Its capacity.
+    /// Capacity, actual grid connection, capital cost and approximate monthly payment.
     pub stats: Vec<Stat>,
     /// `3 of 12 months left`.
     pub months: String,
@@ -221,10 +221,24 @@ pub fn construction_card_model(
         plant,
         name: Names::new(l10n, session).plant(plant),
         status: l10n.text("construction-card-status"),
-        stats: vec![Stat {
-            label: l10n.text("build-capacity"),
-            value: format::megawatts(session.region().spec(view.kind).capacity),
-        }],
+        stats: vec![
+            Stat {
+                label: l10n.text("build-capacity"),
+                value: format::megawatts(session.region().spec(view.kind).capacity),
+            },
+            super::plant_panel::grid_connection_stat(l10n, view.connected),
+            Stat {
+                label: l10n.text("build-capital"),
+                value: format::money(session.region().spec(view.kind).capital_cost),
+            },
+            Stat {
+                label: l10n.text("build-monthly-payment"),
+                value: super::build::monthly_payment(
+                    session.region().spec(view.kind).capital_cost,
+                    session.region().spec(view.kind).build_months,
+                ),
+            },
+        ],
         months: progress.months(l10n),
         progress: progress.share(),
         in_service: progress.in_service(l10n),
@@ -571,10 +585,27 @@ mod tests {
         assert_eq!(card.status, "Under construction");
         assert_eq!(
             card.stats,
-            [Stat {
-                label: "Capacity".to_owned(),
-                value: format::megawatts(spec.capacity),
-            }]
+            [
+                Stat {
+                    label: "Capacity".to_owned(),
+                    value: format::megawatts(spec.capacity),
+                },
+                Stat {
+                    label: "Grid connection".to_owned(),
+                    value: "Not connected".to_owned(),
+                },
+                Stat {
+                    label: "Capital cost".to_owned(),
+                    value: format::money(spec.capital_cost),
+                },
+                Stat {
+                    label: "Per month (approx.)".to_owned(),
+                    value: super::super::build::monthly_payment(
+                        spec.capital_cost,
+                        spec.build_months
+                    ),
+                }
+            ]
         );
         assert_eq!(card.months, format!("{total} of {total} months left"));
         assert_eq!(card.progress, 0.0);

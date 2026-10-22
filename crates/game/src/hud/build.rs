@@ -146,7 +146,7 @@ fn months_value(l10n: &Localizer, months: u32) -> String {
 
 /// Construction is paid at month close. Quotes are approximate because the final payment
 /// includes any remaining cents; the ledger uses `Money::split_even`.
-fn monthly_payment(capital: Money, months: u32) -> String {
+pub(super) fn monthly_payment(capital: Money, months: u32) -> String {
     format::money(Money::from_cents(capital.cents() / i64::from(months)))
 }
 

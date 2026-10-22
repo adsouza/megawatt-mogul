@@ -645,16 +645,28 @@ per-line loading until a power-flow `NetworkModel` exists.
 ### 8.4 HUD by phase
 
 - **All phases:** a top bar with month and year, season, phase, cash, reliability and satisfaction.
-- **Planning:** a build menu (plants and lines), a cell inspector (resources and suitability), a
+- **Planning:** a build menu (plants and lines), a selected-object inspector, a
   tariff panel (current tariff, projected rate review, reserve margin), and a commitment grid with the coming month's forecast band and stacked committed baseload.
-  The commitment grid is the primary planning tool.
+  The commitment grid is the primary planning tool. The inspector shows cell resources and
+  suitability, city details, construction progress, or a commissioned plant's operating status,
+  grid connection, capacity, minimum output, initial target, ramp rate, start-up time and cost,
+  marginal cost and fixed monthly O&M. Solar sites show their solar potential; hydro plants show
+  the month's daily water budget. Omit dispatch-only figures for solar.
 - **Operating:** speed controls; a frequency gauge with the current imbalance; a selected-plant panel
-  (output, target, ramp, cost, AGC toggle, start/stop); a merit-order stacked supply chart against
+  (grid connection, output/capacity, target, ramp, cost, energy and revenue, hydro water, AGC toggle,
+  start/stop, and expandable specifications); a merit-order stacked supply chart against
   actual and forecast demand; predictive ramp warnings. Ramp warnings and Incidents share a
   column opening at 480 pixels, with a draggable divider. The column keeps at least 300 pixels
   and leaves at least 420 pixels for the Supply/Hydro content. The supply key wraps above the
   plot, outside its data area, so it never obscures the daily curve. Key entries retain click and
   keyboard show/hide controls, matching fill/line swatches and hover highlighting.
+- **Plant connection:** every plant card, including construction cards, explicitly shows
+  `Connected` or `Not connected` from `PlantView.connected`. This is independent of operating
+  status and commissioning: an idle plant can be connected, a completed plant can be isolated,
+  and an ordered line does not connect it before that line enters service. Connection appears
+  near the top; longer specifications scroll without moving the surrounding panels.
+  When increased UI zoom leaves less height than the Operating sidebar needs, the column itself
+  scrolls so the full card and plant list remain reachable.
 - **Review:** a modal over the dimmed diorama showing P&L, the merit order used, an incidents
   timeline and the lessons.
 - **Errors:** a `CommandError` becomes a localised toast. This is the only place errors are mapped
@@ -1627,7 +1639,8 @@ be in service. The commissioning toasts arrive with no warning.
 - **Selecting a plant under construction.** Plants under construction stay out of the commitment
   grid, as today. Operating's plant list shows them, as it always has, with their status (*Under
   construction*, with the months left). In Planning, the inspector shows a construction card:
-  kind, capacity, months left of the total, and the month it enters service. In Operating,
+  kind, capacity, grid connection, capital cost, approximate monthly payment, months left of the
+  total, and the month it enters service. In Operating,
   selecting one, in the list or on the map, shows the same card in the selected-object block.
 - **Data and arithmetic.**
   - Months left come from `PlantStatus::UnderConstruction { months_left }` and

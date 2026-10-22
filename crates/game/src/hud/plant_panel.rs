@@ -1,4 +1,4 @@
-//! The plant list and the selected-plant panel (spec §8.4), Operating only.
+//! The Operating plant controls and the read-only Planning plant card (spec §8.4).
 //!
 //! The list shows every plant, its status, output and whether AGC is on; clicking a row selects
 //! the plant, as clicking it on the map does. The panel above the list follows [`Selection`]: the
@@ -81,9 +81,93 @@ pub struct SelectedPlant {
     pub start: ButtonModel,
     pub stop: ButtonModel,
     pub slider: TargetSlider,
-    /// Output, target, ramp rate, marginal cost, energy today, energy and revenue over the closed
-    /// months, and the water left for a hydro plant.
+    /// Grid connection, output/capacity, target, ramp, cost, energy and history, plus hydro water.
     pub stats: Vec<Stat>,
+    pub specifications_heading: String,
+    pub specifications: Vec<Stat>,
+}
+
+/// Read-only Planning details for a commissioned plant.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlantCardModel {
+    pub plant: PlantId,
+    pub name: String,
+    pub status: String,
+    pub stats: Vec<Stat>,
+}
+
+pub(super) fn grid_connection_stat(l10n: &Localizer, connected: bool) -> Stat {
+    Stat {
+        label: l10n.text("plant-grid-connection"),
+        value: l10n.text(if connected {
+            "plant-grid-connected"
+        } else {
+            "plant-grid-disconnected"
+        }),
+    }
+}
+
+pub fn plant_card_model(game: &Game, l10n: &Localizer, id: PlantId) -> Option<PlantCardModel> {
+    let session = game.session();
+    let plant = session.plant_views().into_iter().find(|p| p.id == id)?;
+    if matches!(plant.status, PlantStatus::UnderConstruction { .. }) {
+        return None;
+    }
+    let spec = session.region().spec(plant.kind);
+    let stat = |key: &str, value| Stat {
+        label: l10n.text(key),
+        value,
+    };
+    let mut stats = vec![
+        grid_connection_stat(l10n, plant.connected),
+        stat("build-capacity", format::megawatts(spec.capacity)),
+    ];
+    if plant.kind.is_dispatchable() {
+        stats.extend([
+            stat("plant-min-output", format::megawatts(spec.min_output())),
+            stat(
+                "plant-initial-target",
+                format::megawatts(plant.initial_target),
+            ),
+            stat("plant-ramp", format::ramp_rate(spec.ramp)),
+            stat("plant-startup-time", format::duration(spec.startup)),
+            stat("plant-startup-cost", format::money(spec.startup_cost)),
+        ]);
+    }
+    stats.extend([
+        stat("plant-marginal-cost", format::price(spec.marginal_cost)),
+        stat("plant-fixed-om", format::money(spec.fixed_om_per_month)),
+    ]);
+    if let Some(water) = plant.hydro_day_budget {
+        stats.push(stat("plant-hydro-available", format::megawatt_hours(water)));
+    }
+    if plant.kind == domain::region::PlantKind::Solar
+        && let Some(cell) = session.region().terrain().get(plant.cell)
+    {
+        stats.push(stat("map-solar-scale", format::percent(cell.irradiance)));
+    }
+    Some(PlantCardModel {
+        plant: id,
+        name: Names::new(l10n, session).plant(id),
+        status: plant.status.localize(l10n),
+        stats,
+    })
+}
+
+pub fn draw_plant_card(ui: &mut egui::Ui, model: &PlantCardModel) {
+    ui.heading(&model.name);
+    ui.weak(&model.status);
+    egui::Grid::new("plant_card_stats")
+        .num_columns(2)
+        .spacing(egui::vec2(8.0, 1.0))
+        .min_row_height(0.0)
+        .show(ui, |ui| {
+            for stat in &model.stats {
+                ui.weak(&stat.label);
+                ui.label(&stat.value);
+                ui.end_row();
+            }
+        });
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -197,7 +281,17 @@ pub fn plant_panel_model(game: &Game, l10n: &Localizer, selection: Selection) ->
         value,
     };
     let mut stats = vec![
-        stat("plant-output", format::megawatts(plant.output)),
+        grid_connection_stat(l10n, plant.connected),
+        stat(
+            "plant-output-capacity",
+            l10n.args(
+                "plant-output-capacity-value",
+                &[
+                    ("output", format::megawatts(plant.output).into()),
+                    ("capacity", format::megawatts(spec.capacity).into()),
+                ],
+            ),
+        ),
         stat(
             "plant-target",
             target.map_or_else(|| l10n.text("plant-target-none"), format::megawatts),
@@ -278,11 +372,15 @@ pub fn plant_panel_model(game: &Game, l10n: &Localizer, selection: Selection) ->
             enabled: operable && target.is_some() && !plant.auto_follow,
         },
         stats,
+        specifications_heading: l10n.text("plant-specifications"),
+        specifications: plant_card_model(game, l10n, plant.id)
+            .map_or_else(Vec::new, |card| card.stats),
     }))
 }
 
-/// The most figures a selected plant shows: six, and a hydro plant's water left.
-pub const MOST_PLANT_STATS: usize = 7;
+/// The most primary figures a selected plant shows: seven, and a hydro plant's water left.
+/// Additional specifications expand inside the same scrolling block.
+pub const MOST_PLANT_STATS: usize = 8;
 /// The fewest rows the plant list keeps in view, however little height it is left.
 pub const PLANT_LIST_MIN_ROWS: usize = 3;
 /// The list's row spacing: compact, so more of the fleet is in view.
@@ -328,7 +426,7 @@ pub fn plant_list_min_height(ctx: &egui::Context) -> f32 {
 }
 
 /// The space between two of the selected plant's figures.
-const STATS_ROW_SPACING: f32 = 1.0;
+const STATS_ROW_SPACING: f32 = 0.0;
 
 /// The list: its title, then every plant in a list that fills the height left and scrolls, never
 /// shorter than [`PLANT_LIST_MIN_ROWS`] rows.
@@ -409,7 +507,7 @@ pub fn draw_plant_panel(
     }
     form.held = response.dragged();
     egui::ScrollArea::vertical()
-        .id_salt("operating_plant_stats")
+        .id_salt(("operating_plant_stats", plant.plant.0))
         .auto_shrink([false, false])
         .show(ui, |ui| {
             // Compact rows, so every figure is in view at the smallest window.
@@ -424,6 +522,19 @@ pub fn draw_plant_panel(
                         ui.end_row();
                     }
                 });
+            ui.collapsing(&plant.specifications_heading, |ui| {
+                egui::Grid::new(("operating_plant_specifications", plant.plant.0))
+                    .num_columns(2)
+                    .spacing(egui::vec2(8.0, 1.0))
+                    .min_row_height(0.0)
+                    .show(ui, |ui| {
+                        for stat in &plant.specifications {
+                            ui.weak(&stat.label);
+                            ui.label(&stat.value);
+                            ui.end_row();
+                        }
+                    });
+            });
         });
     actions
 }
@@ -467,7 +578,185 @@ mod tests {
         }
     }
 
-    /// The details block is sized for [`MOST_PLANT_STATS`] figures: no plant shows more.
+    /// A disconnected plant stays disconnected after commissioning, until a line enters service.
+    #[test]
+    fn plant_cards_follow_commissioning_and_grid_connection_independently_of_running_status() {
+        use domain::{ids::CellCoord, region::PlantKind, time::TICKS_PER_DAY};
+        let l10n = shipped_l10n();
+        for region in ["eastern_interconnection", "western_interconnection"] {
+            let mut game = shipped_game(region, Box::new(InMemoryCommandLog::default()));
+            let session = game.session();
+            let anchor = session.anchor_node();
+            let cities = session.city_views();
+            let home = cities.iter().find(|c| c.node == anchor).unwrap().cell;
+            let taken: Vec<_> = session
+                .plant_views()
+                .iter()
+                .map(|p| p.cell)
+                .chain(cities.iter().map(|c| c.cell))
+                .collect();
+            let terrain = session.region().terrain();
+            let cell = (0..terrain.height())
+                .flat_map(|y| (0..terrain.width()).map(move |x| CellCoord { x, y }))
+                .filter(|at| {
+                    !taken.contains(at)
+                        && session.region().site_check(PlantKind::Peaker, *at).is_ok()
+                })
+                .min_by_key(|at| at.x.abs_diff(home.x).pow(2) + at.y.abs_diff(home.y).pow(2))
+                .unwrap();
+            game.execute(Command::BuildPlant {
+                kind: PlantKind::Peaker,
+                cell,
+            })
+            .unwrap();
+            let plant = game
+                .session()
+                .plant_views()
+                .into_iter()
+                .find(|p| p.cell == cell)
+                .unwrap();
+            let build_months = game.session().region().spec(plant.kind).build_months;
+            let check = |game: &Game, connected| {
+                let view = game
+                    .session()
+                    .plant_views()
+                    .into_iter()
+                    .find(|p| p.id == plant.id)
+                    .unwrap();
+                assert_eq!(view.connected, connected);
+                let expected = if connected {
+                    "Connected"
+                } else {
+                    "Not connected"
+                };
+                let operating = selected(game, plant.id);
+                assert_eq!(
+                    operating
+                        .stats
+                        .iter()
+                        .find(|s| s.label == "Grid connection")
+                        .unwrap()
+                        .value,
+                    expected
+                );
+                let stats =
+                    super::super::construction::construction_card_model(game, &l10n, plant.id)
+                        .map(|card| card.stats)
+                        .unwrap_or_else(|| plant_card_model(game, &l10n, plant.id).unwrap().stats);
+                assert_eq!(
+                    stats
+                        .iter()
+                        .find(|s| s.label == "Grid connection")
+                        .unwrap()
+                        .value,
+                    expected
+                );
+            };
+            for _ in 0..build_months {
+                check(&game, false);
+                game.execute(Command::BeginOperating).unwrap();
+                check(&game, false);
+                game.execute(Command::AdvanceTicks { n: TICKS_PER_DAY })
+                    .unwrap();
+                game.execute(Command::FinishReview).unwrap();
+            }
+            check(&game, false);
+            assert_eq!(
+                game.session()
+                    .plant_views()
+                    .into_iter()
+                    .find(|p| p.id == plant.id)
+                    .unwrap()
+                    .status,
+                PlantStatus::Offline
+            );
+            let quote = game.session().line_quote(anchor, plant.node).unwrap();
+            game.execute(Command::BuildLine {
+                from: anchor,
+                to: plant.node,
+            })
+            .unwrap();
+            // Ordering a line is not the same as entering service.
+            check(&game, false);
+            for _ in 0..quote.months {
+                game.execute(Command::BeginOperating).unwrap();
+                check(&game, false);
+                game.execute(Command::AdvanceTicks { n: TICKS_PER_DAY })
+                    .unwrap();
+                game.execute(Command::FinishReview).unwrap();
+            }
+            check(&game, true);
+            // An idle plant can be connected; connection is not its operating status.
+            assert_eq!(
+                game.session()
+                    .plant_views()
+                    .into_iter()
+                    .find(|p| p.id == plant.id)
+                    .unwrap()
+                    .status,
+                PlantStatus::Offline
+            );
+            game.execute(Command::BeginOperating).unwrap();
+            check(&game, true);
+        }
+        assert!(l10n.problems().is_empty());
+    }
+
+    #[test]
+    fn planning_cards_show_specs_and_resources_from_the_loaded_region() {
+        let l10n = shipped_l10n();
+        let mut game = shipped_game(
+            "western_interconnection",
+            Box::new(InMemoryCommandLog::default()),
+        );
+        let solar = crate::hud::test_support::order_plant(&mut game, PlantKind::Solar, 0);
+        for _ in 0..game.session().region().spec(PlantKind::Solar).build_months {
+            game.execute(Command::BeginOperating).unwrap();
+            game.execute(Command::AdvanceTicks {
+                n: domain::time::TICKS_PER_DAY,
+            })
+            .unwrap();
+            game.execute(Command::FinishReview).unwrap();
+        }
+        for view in game.session().plant_views() {
+            let spec = game.session().region().spec(view.kind);
+            let card = plant_card_model(&game, &l10n, view.id).unwrap();
+            let stat = |label| &card.stats.iter().find(|s| s.label == label).unwrap().value;
+            assert_eq!(stat("Capacity"), &format::megawatts(spec.capacity));
+            assert_eq!(
+                stat("Fixed O&M / month"),
+                &format::money(spec.fixed_om_per_month)
+            );
+            assert_eq!(stat("Marginal cost"), &format::price(spec.marginal_cost));
+            if view.kind.is_dispatchable() {
+                assert_eq!(stat("Start-up time"), &format::duration(spec.startup));
+                assert_eq!(stat("Start-up cost"), &format::money(spec.startup_cost));
+                assert_eq!(
+                    stat("Minimum output"),
+                    &format::megawatts(spec.min_output())
+                );
+                assert_eq!(
+                    stat("Initial target"),
+                    &format::megawatts(view.initial_target)
+                );
+                assert_eq!(stat("Ramp rate"), &format::ramp_rate(spec.ramp));
+            } else {
+                assert_eq!(view.id, solar);
+                assert!(!card.stats.iter().any(|s| s.label == "Start-up time"));
+                let site = game.session().region().terrain().get(view.cell).unwrap();
+                assert_eq!(stat("Solar potential"), &format::percent(site.irradiance));
+            }
+            if let Some(water) = view.hydro_day_budget {
+                assert_eq!(
+                    stat("Water available today"),
+                    &format::megawatt_hours(water)
+                );
+            }
+        }
+        assert_eq!(plant_card_model(&game, &l10n, PlantId(u32::MAX)), None);
+        assert!(l10n.problems().is_empty());
+    }
+
     #[test]
     fn no_plant_shows_more_figures_than_the_details_block_holds() {
         let l10n = shipped_l10n();
@@ -624,7 +913,16 @@ mod tests {
         assert_eq!(
             stats,
             [
-                ("Output", format::megawatts(coal.output).as_str()),
+                ("Grid connection", "Connected"),
+                (
+                    "Output / capacity",
+                    format!(
+                        "{} / {}",
+                        format::megawatts(coal.output),
+                        format::megawatts(spec.capacity)
+                    )
+                    .as_str()
+                ),
                 ("Target", format::megawatts(target).as_str()),
                 ("Ramp rate", format::ramp_rate(spec.ramp).as_str()),
                 ("Marginal cost", format::price(spec.marginal_cost).as_str()),
