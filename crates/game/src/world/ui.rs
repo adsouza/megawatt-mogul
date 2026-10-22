@@ -241,12 +241,10 @@ pub fn finish_surface(
     let allowed = !surface.blocked && !blocked(&session, &sink);
     let mut actions = Vec::new();
     if allowed && owns {
-        if response.dragged_by(egui::PointerButton::Primary) {
-            let d = response.drag_delta();
-            actions.push(UiAction::World(WorldAction::Orbit(Vec2::new(d.x, d.y))));
-        }
+        let primary_drag = response.dragged_by(egui::PointerButton::Primary);
         if response.dragged_by(egui::PointerButton::Secondary)
             || response.dragged_by(egui::PointerButton::Middle)
+            || (primary_drag && ctx.input(|input| input.modifiers.shift))
         {
             let d = response.drag_delta();
             actions.push(UiAction::World(WorldAction::Pan(
@@ -254,6 +252,9 @@ pub fn finish_surface(
                 model.size(),
                 rect.height(),
             )));
+        } else if primary_drag {
+            let d = response.drag_delta();
+            actions.push(UiAction::World(WorldAction::Orbit(Vec2::new(d.x, d.y))));
         }
         // Smoothed scroll outlives its original widget: moving from a panel to the map must
         // not turn the panel's leftover inertia into camera zoom. Use only this frame's wheel
@@ -283,7 +284,27 @@ pub fn finish_surface(
                 .sum::<f32>()
         });
         if scroll != 0.0 {
-            actions.push(UiAction::World(WorldAction::Zoom(scroll)));
+            // Apply any same-frame drag first so the picking ray and zoom use one camera pose.
+            dispatch(actions.drain(..), &mut sink);
+            let aspect = rect.width() / rect.height();
+            let anchor = pointer
+                .and_then(|p| {
+                    sink.world()
+                        .orbit
+                        .pose(model.size(), aspect)
+                        .ray(screen_ndc(rect, p))
+                })
+                .and_then(|ray| {
+                    presented_hit(ray, model, sink.world(), &tuning)
+                        .map(|hit| ray.get_point(hit.distance))
+                });
+            let action = anchor.map_or(WorldAction::Zoom(scroll), |anchor| WorldAction::ZoomAt {
+                delta: scroll,
+                anchor,
+                size: model.size(),
+                aspect,
+            });
+            actions.push(UiAction::World(action));
         }
         if !ctx.egui_wants_keyboard_input() {
             if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::R)) {

@@ -52,6 +52,36 @@ impl OrbitCamera {
                 (self.zoom * (-delta.clamp(-2000.0, 2000.0) * 0.002).exp()).clamp(0.08, 3.0);
         }
     }
+    /// Keep the visible surface point at the same screen position while changing distance.
+    /// At the pan boundary the target is constrained just as it is for a manual pan.
+    pub fn zoom_at(&mut self, delta: f32, anchor: Vec3, size: Vec2, aspect: f32) {
+        let before = self.pose(size, aspect);
+        self.zoom(delta);
+        let after = self.pose(size, aspect);
+        if before.eye == after.eye {
+            return;
+        }
+        let Some(ndc) = before.project(anchor) else {
+            return;
+        };
+        let Some(ray) = after.ray(ndc.truncate()) else {
+            return;
+        };
+        // Intersect the new pointer ray with the anchor's horizontal plane. Moving the
+        // target in X/Z by the difference restores that exact point, including roof height.
+        if ray.direction.y.abs() < 1e-4 {
+            return;
+        }
+        let distance = (anchor.y - ray.origin.y) / ray.direction.y;
+        if !distance.is_finite() || distance < 0.0 {
+            return;
+        }
+        let correction = anchor - ray.get_point(distance);
+        let target = self.target + Vec2::new(correction.x, correction.z);
+        if target.is_finite() {
+            self.target = target.clamp(-size * 0.55, size * 0.55);
+        }
+    }
     pub fn pan(&mut self, delta: Vec2, size: Vec2, pixels: f32) {
         if !delta.is_finite() || !pixels.is_finite() || pixels <= 0.0 {
             return;

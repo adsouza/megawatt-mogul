@@ -637,9 +637,13 @@ The presentation layer never reads aggregate internals.
 - **Operating overlay:** supply indicators over the warm, lit diorama: glowing plant output
   pillars, city lights showing supply status and energised lines. Retain terrain colours, building
   face shading and cast shadows; the overlay must not blacken the map or flatten the buildings.
-- Click selects; left drag orbits, right/middle drag pans and scroll zooms. Reset view/R fits the
-  region. O hides/restores the overlay; map shortcuts operate while pointing at the map without
-  taking keyboard focus from text entry. HUD panels, legends and modals capture their own input.
+- Click selects; left drag orbits; Shift + left drag or right/middle drag pans without orbiting
+  or selecting. Scroll zooms about the visible terrain or object beneath the pointer, keeping that
+  point fixed on screen within the camera's pan bounds. Scrolling over empty background zooms
+  about the camera target. Zoom limits must not cause extra panning. Reset view/R fits the region.
+  O hides/restores the overlay; map shortcuts
+  operate while pointing at the map without taking keyboard focus from text entry. HUD panels,
+  legends and modals capture their own input.
 - Each phase restores its default overlay. Choosing a resource layer in Operating shows resource
   colours; Control room restores its hologram. Pillar height represents output/capacity. Effects off
   disables bloom/DOF; unsupported depth-texture platforms skip DOF. HUD and backed labels remain

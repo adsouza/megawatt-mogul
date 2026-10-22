@@ -190,6 +190,56 @@ fn world_camera_can_zoom_close_enough_to_inspect_cell_sized_models() {
     assert!(close.eye.distance(close.target) < before.eye.distance(before.target) / 3.0);
 }
 
+proptest! {
+    #[test]
+    fn world_pointer_zoom_preserves_projection_until_the_pan_boundary(
+        yaw in 0f32..std::f32::consts::TAU, elevation in 0.3f32..1.42,
+        zoom in 0.08f32..3.0, delta in -2000f32..2000.0, aspect in 0.5f32..3.0,
+        x in -45f32..45.0, z in -25f32..25.0, height in 0f32..6.0,
+    ) {
+        use bevy::math::Vec2;
+        let size = Vec2::new(100.0, 60.0);
+        let anchor = Vec3::new(x, height, z);
+        let mut camera = game::world::OrbitCamera { yaw, elevation, zoom, ..Default::default() };
+        let projected = camera.pose(size, aspect).project(anchor);
+        prop_assume!(projected.is_some());
+        let before = projected.unwrap();
+        prop_assume!(before.x.abs() <= 1.0 && before.y.abs() <= 1.0);
+        camera.zoom_at(delta, anchor, size, aspect);
+        let pose = camera.pose(size, aspect);
+        prop_assert!(pose.eye.is_finite() && camera.target.is_finite());
+        prop_assert!(camera.target.abs().cmple(size * 0.55).all());
+        prop_assert!((0.08..=3.0).contains(&camera.zoom));
+        if camera.target.abs().cmplt(size * 0.55 - Vec2::splat(0.001)).all() {
+            let after = pose.project(anchor).unwrap();
+            prop_assert!((after.truncate() - before.truncate()).length() < 0.0002, "{before:?} -> {after:?}");
+        }
+        // More wheel events at a distance limit must not slowly pan the camera.
+        camera.zoom_at(2000.0, anchor, size, aspect);
+        let at_limit = camera;
+        camera.zoom_at(2000.0, anchor, size, aspect);
+        prop_assert_eq!(camera, at_limit);
+    }
+}
+
+#[test]
+fn world_pointer_zoom_handles_invalid_anchors_and_extreme_input() {
+    use bevy::math::Vec2;
+    let size = Vec2::new(100.0, 60.0);
+    for anchor in [Vec3::NAN, Vec3::splat(f32::INFINITY)] {
+        let mut camera = game::world::OrbitCamera::default();
+        let mut centred = camera;
+        centred.zoom(200.0);
+        camera.zoom_at(200.0, anchor, size, 1.6);
+        assert_eq!(camera, centred);
+    }
+    for delta in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        let mut camera = game::world::OrbitCamera::default();
+        camera.zoom_at(delta, Vec3::new(25.0, 2.0, 10.0), size, 1.6);
+        assert_eq!(camera, game::world::OrbitCamera::default());
+    }
+}
+
 #[test]
 fn world_city_and_plant_models_leave_a_margin_inside_their_cell() {
     use domain::{ids::RegionId, region::PlantKind, session::GameSettings};
@@ -442,6 +492,174 @@ fn world_reconciliation_reuses_assets_and_destroys_everything_on_leave_and_reloa
 }
 
 #[test]
+fn world_wheel_keeps_the_point_under_the_pointer_fixed_for_cities_and_plants() {
+    use bevy_egui::egui;
+    use game::{
+        hud::{Selection, UiAction},
+        sim::Session,
+        world::{MapSurface, TuningConfig, WorldAction, WorldControls, WorldScene, presented_hit},
+    };
+    let logs = tempfile::TempDir::new().unwrap();
+    for region in ["eastern_interconnection", "western_interconnection"] {
+        let mut app = diorama_app(&logs.path().join(region));
+        crate::support::request(&mut app, region);
+        let pass = crate::support::egui_pass::EguiPass::attach(&mut app);
+        for operating in [false, true] {
+            if operating {
+                crate::hud_smoke::dispatch_in(
+                    &mut app,
+                    vec![UiAction::Command(application::Command::BeginOperating)],
+                );
+                app.update();
+            }
+            for city in [true, false] {
+                crate::hud_smoke::dispatch_in(&mut app, vec![UiAction::World(WorldAction::Reset)]);
+                pass.settled(&mut app, 1280.0, 800.0);
+                let surface = app.world().resource::<MapSurface>();
+                let rect = surface.rect.unwrap();
+                let pose = surface.pose.unwrap();
+                let model = app.world().resource::<WorldScene>().model.as_ref().unwrap();
+                let controls = app.world().resource::<WorldControls>();
+                let tuning = app.world().resource::<TuningConfig>();
+                let candidates: Vec<_> = if city {
+                    model
+                        .cities
+                        .values()
+                        .flat_map(|c| {
+                            game::world::city_parts().into_iter().map(move |part| {
+                                (
+                                    Selection::City(c.id),
+                                    c.at + (part.center
+                                        + part.rotation * (Vec3::Y * part.size.y / 2.0))
+                                        * c.scale,
+                                )
+                            })
+                        })
+                        .collect()
+                } else {
+                    model
+                        .plants
+                        .values()
+                        .flat_map(|p| {
+                            game::world::plant_parts(p.kind)
+                                .into_iter()
+                                .map(move |part| {
+                                    (
+                                        Selection::Plant(p.id),
+                                        p.at + part.center
+                                            + part.rotation * (Vec3::Y * part.size.y / 2.0),
+                                    )
+                                })
+                        })
+                        .collect()
+                };
+                let (ndc, anchor) = candidates
+                    .into_iter()
+                    .find_map(|(selection, at)| {
+                        let ndc = pose.project(at)?.truncate();
+                        if ndc.x.abs() > 0.9 || ndc.y.abs() > 0.9 || ndc.length() < 0.1 {
+                            return None;
+                        }
+                        let ray = pose.ray(ndc)?;
+                        let hit = presented_hit(ray, model, controls, tuning)?;
+                        (hit.selection == selection).then_some((ndc, ray.get_point(hit.distance)))
+                    })
+                    .expect("an off-centre visible city/plant");
+                let pointer = egui::pos2(
+                    rect.left() + (ndc.x + 1.0) * 0.5 * rect.width(),
+                    rect.top() + (1.0 - ndc.y) * 0.5 * rect.height(),
+                );
+                let checkpoint = app.world().resource::<Session>().0.checkpoint();
+                let before = controls.orbit;
+                for delta in [200.0, -200.0] {
+                    pass.run_with(
+                        &mut app,
+                        1280.0,
+                        800.0,
+                        vec![
+                            egui::Event::PointerMoved(pointer),
+                            egui::Event::MouseWheel {
+                                unit: egui::MouseWheelUnit::Point,
+                                phase: egui::TouchPhase::Move,
+                                delta: egui::vec2(0.0, delta),
+                                modifiers: egui::Modifiers::NONE,
+                            },
+                        ],
+                    );
+                    if delta > 0.0 {
+                        assert!(app.world().resource::<WorldControls>().orbit.zoom < before.zoom);
+                    }
+                    let surface = app.world().resource::<MapSurface>();
+                    let after = surface.pose.unwrap().project(anchor).unwrap().truncate();
+                    let pixel_drift =
+                        (after - ndc) * bevy::math::Vec2::new(rect.width(), rect.height()) / 2.0;
+                    assert!(
+                        pixel_drift.length() < 0.05,
+                        "{region}, city={city}, operating={operating}: drift {pixel_drift:?}"
+                    );
+                }
+                let after = app.world().resource::<WorldControls>().orbit;
+                assert!((after.zoom - before.zoom).abs() < 1e-5);
+                assert!((after.target - before.target).length() < 0.002);
+                assert_eq!(*app.world().resource::<Selection>(), Selection::None);
+                assert_eq!(app.world().resource::<Session>().0.checkpoint(), checkpoint);
+            }
+        }
+    }
+}
+
+#[test]
+fn world_wheel_over_empty_background_zooms_without_panning() {
+    use bevy_egui::egui;
+    use game::world::{MapSurface, TuningConfig, WorldControls, WorldScene, presented_hit};
+    let logs = tempfile::TempDir::new().unwrap();
+    let mut app = diorama_app(logs.path());
+    crate::support::request(&mut app, "western_interconnection");
+    let pass = crate::support::egui_pass::EguiPass::attach(&mut app);
+    pass.settled(&mut app, 1280.0, 800.0);
+    let surface = app.world().resource::<MapSurface>();
+    let rect = surface.rect.unwrap();
+    let pose = surface.pose.unwrap();
+    let controls = app.world().resource::<WorldControls>();
+    let scene = app.world().resource::<WorldScene>();
+    let tuning = app.world().resource::<TuningConfig>();
+    let ndc = [(-0.95, 0.95), (0.95, 0.95), (-0.95, -0.95), (0.95, -0.95)]
+        .into_iter()
+        .map(|(x, y)| bevy::math::Vec2::new(x, y))
+        .find(|ndc| {
+            presented_hit(
+                pose.ray(*ndc).unwrap(),
+                scene.model.as_ref().unwrap(),
+                controls,
+                tuning,
+            )
+            .is_none()
+        })
+        .expect("empty background around the diorama");
+    let pointer = egui::pos2(
+        rect.left() + (ndc.x + 1.0) * rect.width() / 2.0,
+        rect.top() + (1.0 - ndc.y) * rect.height() / 2.0,
+    );
+    let mut expected = controls.orbit;
+    expected.zoom(100.0);
+    pass.run_with(
+        &mut app,
+        1280.0,
+        800.0,
+        vec![
+            egui::Event::PointerMoved(pointer),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                phase: egui::TouchPhase::Move,
+                delta: egui::vec2(0.0, 100.0),
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    assert_eq!(app.world().resource::<WorldControls>().orbit, expected);
+}
+
+#[test]
 fn world_real_pass_projects_selection_blocks_dialogs_and_drags_without_selecting() {
     use bevy::prelude::*;
     use bevy_egui::egui;
@@ -493,6 +711,12 @@ fn world_real_pass_projects_selection_blocks_dialogs_and_drags_without_selecting
     crate::hud_smoke::dispatch_in(&mut app, vec![UiAction::Prompt(Some(Prompt::LeaveGame))]);
     pass.settled(&mut app, 1280.0, 800.0);
     let before = app.world().resource::<WorldControls>().orbit;
+    pass.run_with(
+        &mut app,
+        1280.0,
+        800.0,
+        vec![egui::Event::ModifiersChanged(egui::Modifiers::SHIFT)],
+    );
     pass.drag(&mut app, 1280.0, 800.0, at, at + egui::vec2(20.0, 10.0));
     assert_eq!(app.world().resource::<WorldControls>().orbit, before);
 }
@@ -776,6 +1000,12 @@ fn world_real_pass_blocks_legends_panels_and_review_and_checks_all_layers_contra
                 let selected = *app.world().resource::<Selection>();
                 pass.click_at(&mut app, width, height, legend.center());
                 assert_eq!(*app.world().resource::<Selection>(), selected);
+                pass.run_with(
+                    &mut app,
+                    width,
+                    height,
+                    vec![egui::Event::ModifiersChanged(egui::Modifiers::SHIFT)],
+                );
                 pass.drag(
                     &mut app,
                     width,
@@ -786,7 +1016,13 @@ fn world_real_pass_blocks_legends_panels_and_review_and_checks_all_layers_contra
                 assert_eq!(
                     app.world().resource::<WorldControls>().orbit,
                     before,
-                    "legend drag"
+                    "Shift + legend drag"
+                );
+                pass.run_with(
+                    &mut app,
+                    width,
+                    height,
+                    vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE)],
                 );
                 let output = pass.paint_with(&mut app, width, height, vec![]);
                 assert!(crate::contrast::check_paint(output) > 0);
@@ -994,10 +1230,11 @@ fn world_compact_layer_selector_changes_layer_without_picking_through_its_popup(
 }
 
 #[test]
-fn world_secondary_and_middle_drags_pan_without_selecting() {
+fn world_secondary_middle_and_shift_drags_pan_without_orbiting_or_selecting() {
     use bevy_egui::egui;
     use game::{
         hud::Selection,
+        sim::Session,
         world::{MapSurface, WorldControls},
     };
     let logs = tempfile::TempDir::new().unwrap();
@@ -1005,48 +1242,66 @@ fn world_secondary_and_middle_drags_pan_without_selecting() {
     crate::support::request(&mut app, "eastern_interconnection");
     let pass = crate::support::egui_pass::EguiPass::attach(&mut app);
     pass.settled(&mut app, 1280.0, 800.0);
-    for button in [egui::PointerButton::Secondary, egui::PointerButton::Middle] {
+    for (button, modifiers) in [
+        (egui::PointerButton::Secondary, egui::Modifiers::NONE),
+        (egui::PointerButton::Middle, egui::Modifiers::NONE),
+        (egui::PointerButton::Primary, egui::Modifiers::SHIFT),
+    ] {
+        let run = |app: &mut bevy::prelude::App, mut events: Vec<egui::Event>| {
+            events.insert(0, egui::Event::ModifiersChanged(modifiers));
+            pass.run_with(app, 1280.0, 800.0, events);
+        };
         let at = app.world().resource::<MapSurface>().rect.unwrap().center();
         let end = at + egui::vec2(40.0, 20.0);
-        let before = app.world().resource::<WorldControls>().orbit.target;
-        pass.run_with(
+        let before = app.world().resource::<WorldControls>().orbit;
+        let checkpoint = app.world().resource::<Session>().0.checkpoint();
+        run(
             &mut app,
-            1280.0,
-            800.0,
             vec![
                 egui::Event::PointerMoved(at),
                 egui::Event::PointerButton {
                     pos: at,
                     button,
                     pressed: true,
-                    modifiers: egui::Modifiers::NONE,
+                    modifiers,
                 },
             ],
         );
-        pass.run_with(
+        run(&mut app, vec![egui::Event::PointerMoved(end)]);
+        run(
             &mut app,
-            1280.0,
-            800.0,
-            vec![egui::Event::PointerMoved(end)],
-        );
-        pass.run_with(
-            &mut app,
-            1280.0,
-            800.0,
             vec![egui::Event::PointerButton {
                 pos: end,
                 button,
                 pressed: false,
-                modifiers: egui::Modifiers::NONE,
+                modifiers,
             }],
         );
+        let after = app.world().resource::<WorldControls>().orbit;
         assert_ne!(
-            app.world().resource::<WorldControls>().orbit.target,
-            before,
-            "{button:?} drag pans"
+            after.target, before.target,
+            "{button:?}, {modifiers:?} drag pans"
+        );
+        assert_eq!(
+            (after.yaw, after.elevation, after.zoom),
+            (before.yaw, before.elevation, before.zoom)
         );
         assert_eq!(*app.world().resource::<Selection>(), Selection::None);
+        assert_eq!(app.world().resource::<Session>().0.checkpoint(), checkpoint);
     }
+    // Releasing Shift restores the ordinary primary-drag orbit gesture.
+    pass.run_with(
+        &mut app,
+        1280.0,
+        800.0,
+        vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE)],
+    );
+    let at = app.world().resource::<MapSurface>().rect.unwrap().center();
+    let before = app.world().resource::<WorldControls>().orbit;
+    pass.drag(&mut app, 1280.0, 800.0, at, at + egui::vec2(30.0, 20.0));
+    let after = app.world().resource::<WorldControls>().orbit;
+    assert_eq!(after.target, before.target);
+    assert_ne!((after.yaw, after.elevation), (before.yaw, before.elevation));
 }
 
 #[test]

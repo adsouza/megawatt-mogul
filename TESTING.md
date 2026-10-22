@@ -474,7 +474,8 @@ had 567 mutants and missed 29, all in `domain`:
 ## 3D diorama (Plan 3)
 
 `tests/game/world.rs` covers terrain winding/coverage and both shipped regions, camera fit and
-projection/ray round trips, bounded camera gestures, physical viewport rounding and zero-sized
+projection/ray round trips, bounded camera gestures, pointer-anchored zoom across camera angles,
+terrain/roof heights and distance limits, physical viewport rounding and zero-sized
 windows, accelerated ray equivalence to the rendered terrain, object bounds, opaque label fitting,
 and uniform copper-plate supply. Invariants use property tests.
 
@@ -483,10 +484,13 @@ counts through idle frames, rebuild on new games and free every owned asset on l
 script compares checkpoints and monthly reports with a client lacking the world plugin. Construction
 state and identity stay visible. Mid-day save/resume tests include world reconciliation and paused
 entry in both regions. Real egui passes exercise projected selection, click/drag separation, dialogs,
-Review, legend/panel capture, all resource layers and text contrast at 1024×640 / 1280×800 and 1× / 1.25×
+Review, legend/panel capture, Shift + left-drag and right/middle-drag panning without orbiting or
+selecting, all resource layers and text contrast at 1024×640 / 1280×800 and 1× / 1.25×
 zoom (the input rectangle is in logical points, as bevy_egui supplies it). The compact layer
 selector is clicked through its real popup to guard against map click-through. The opened legend
-scrolls inside narrow maps, and panel scroll inertia cannot zoom the camera. A camera configuration
+scrolls inside narrow maps, and panel scroll inertia cannot zoom the camera. Real wheel events
+keep city and plant surfaces under the pointer in both regions and Planning/Operating phases,
+without selecting or changing the simulation. A camera configuration
 regression checks the transparent full-window primary context and separate HDR camera. Actual compositing and shaders still require the native playtest.
 
 ```sh
