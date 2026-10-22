@@ -618,7 +618,10 @@ The presentation layer never reads aggregate internals.
 
 - **Base view:** a warm, toy-like tabletop diorama (low-poly, soft shadows, tilt-shift).
 - **Planning overlay:** a grounded terrain and resource view (irradiance, cooling water, hydro
-  sites, siting suitability).
+  sites, siting suitability). Sunshine uses a sequential purple/blue → teal/green → yellow scale
+  with a visible 0–100% solar-potential key outside the map viewport. Use the same absolute scale
+  in every region. This is the site's static game resource rating, not the percentage of sunny
+  days or current weather; season, sun angle and cloud cover separately affect solar output.
 - **Operating overlay:** supply indicators over the warm, lit diorama: glowing plant output
   pillars, city lights showing supply status and energised lines. Retain terrain colours, building
   face shading and cast shadows; the overlay must not blacken the map or flatten the buildings.

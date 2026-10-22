@@ -791,6 +791,30 @@ fn world_compact_layer_selector_changes_layer_without_picking_through_its_popup(
     pass.click_at(&mut app, 819.2, 512.0, sunshine.rect.center());
     assert_eq!(*app.world().resource::<MapLayer>(), MapLayer::Irradiance);
     assert_eq!(*app.world().resource::<Selection>(), Selection::None);
+    let widgets = pass.settled(&mut app, 819.2, 512.0);
+    assert!(widgets.iter().any(|w| w.text == "Solar potential"));
+    let viewport = app
+        .world()
+        .resource::<game::world::MapSurface>()
+        .rect
+        .unwrap();
+    assert!(viewport.height() > 100.0);
+    let scale = widgets
+        .iter()
+        .find(|w| w.text == "Solar potential")
+        .unwrap();
+    assert!(
+        scale.rect.bottom() <= viewport.top(),
+        "key stays outside the map"
+    );
+    crate::hud_smoke::dispatch_in(
+        &mut app,
+        vec![game::hud::UiAction::World(
+            game::world::WorldAction::ToggleOverlay,
+        )],
+    );
+    let widgets = pass.settled(&mut app, 819.2, 512.0);
+    assert!(!widgets.iter().any(|w| w.text == "Solar potential"));
 }
 
 #[test]

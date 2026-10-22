@@ -25,6 +25,7 @@ impl MapSurface {
 }
 #[derive(Debug, Clone)]
 pub struct ToolbarModel {
+    pub resources_visible: bool,
     pub reset: ButtonModel,
     pub overlay: ButtonModel,
     pub effects: ButtonModel,
@@ -42,6 +43,7 @@ pub fn toolbar_model(
     operating: bool,
 ) -> ToolbarModel {
     ToolbarModel {
+        resources_visible: overlay && !holo,
         reset: ButtonModel::new(
             l10n.text("world-reset"),
             UiAction::World(WorldAction::Reset),
@@ -144,6 +146,11 @@ pub fn draw_surface(
             .show(ui, |ui| {
                 ui.small(&toolbar.supply);
             });
+    }
+    if toolbar.resources_visible
+        && let Some(scale) = &model.resource_scale
+    {
+        crate::hud::map::draw_resource_scale(ui, scale);
     }
     let response = ui.allocate_response(
         ui.available_size().max(egui::vec2(1.0, 1.0)),

@@ -307,7 +307,6 @@ pub const UNSUITABLE: Rgb = [120, 55, 55];
 const LOWLAND: Rgb = [64, 128, 70];
 const HIGHLAND: Rgb = [150, 130, 100];
 const DARK: Rgb = [38, 40, 46];
-const SUN: Rgb = [255, 214, 64];
 const COOL: Rgb = [70, 170, 255];
 const HYDRO: Rgb = [60, 220, 190];
 
@@ -319,6 +318,22 @@ fn lerp(from: Rgb, to: Rgb, t: f64) -> Rgb {
         mix(from[1], to[1]),
         mix(from[2], to[2]),
     ]
+}
+
+fn solar_color(value: f64) -> Rgb {
+    // A fixed 0–1 sequential scale shared by both regions, never stretched to a region's
+    // local minimum/maximum. Viridis anchors distinguish cloudy blue/teal from sunny yellow
+    // while retaining increasing luminance, including for red/green colour blindness.
+    const STOPS: [Rgb; 5] = [
+        [68, 1, 84],
+        [59, 82, 139],
+        [33, 145, 140],
+        [94, 201, 98],
+        [253, 231, 37],
+    ];
+    let position = value.clamp(0.0, 1.0) * (STOPS.len() - 1) as f64;
+    let index = (position.floor() as usize).min(STOPS.len() - 2);
+    lerp(STOPS[index], STOPS[index + 1], position - index as f64)
 }
 
 /// The colour of `at` on `layer`. A cell off the map is black.
@@ -336,7 +351,8 @@ pub fn cell_color(layer: MapLayer, region: &RegionDefinition, at: CellCoord) -> 
     match layer {
         MapLayer::Terrain if cell.land => lerp(LOWLAND, HIGHLAND, cell.height.value()),
         MapLayer::Terrain => WATER,
-        MapLayer::Irradiance => land_shaded(cell.irradiance.value(), SUN),
+        MapLayer::Irradiance if cell.land => solar_color(cell.irradiance.value()),
+        MapLayer::Irradiance => WATER,
         MapLayer::CoolingWater => lerp(DARK, COOL, cell.cooling_water.value()),
         MapLayer::HydroPotential => land_shaded(cell.hydro_potential.value(), HYDRO),
         MapLayer::Suitability(_) if !cell.land => WATER,
@@ -684,6 +700,13 @@ pub fn legend_columns(widths: &[f32], gap: f32, max_width: f32) -> usize {
 // ---- model, presenter, draw, system ---------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ResourceScaleModel {
+    pub label: String,
+    pub ticks: [String; 3],
+    pub help: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct MapModel {
     /// The map's accessible name.
     pub label: String,
@@ -691,6 +714,7 @@ pub struct MapModel {
     /// so it stays clickable rather than disabled.
     pub layers: Vec<ToggleModel>,
     pub layer: MapLayer,
+    pub resource_scale: Option<ResourceScaleModel>,
     /// The terrain is read from the region while painting: it is too big to copy every frame.
     pub region: Arc<RegionDefinition>,
     pub objects: MapObjects,
@@ -750,6 +774,15 @@ pub fn map_model(
             })
             .collect(),
         layer,
+        resource_scale: (layer == MapLayer::Irradiance).then(|| ResourceScaleModel {
+            label: l10n.text("map-solar-scale"),
+            ticks: [
+                l10n.text("map-solar-low"),
+                l10n.text("map-solar-mid"),
+                l10n.text("map-solar-high"),
+            ],
+            help: l10n.text("map-solar-help"),
+        }),
         region: Arc::clone(game.session().region()),
         months_left: months_left_of(&objects, l10n),
         objects,
@@ -777,6 +810,9 @@ pub fn draw_map(ui: &mut egui::Ui, model: &MapModel, cache: &mut MapCache) -> Ve
         let size = button_size(ui, &model.legend_toggle);
         toggle_slot = ui.allocate_space(size).1;
     });
+    if let Some(scale) = &model.resource_scale {
+        draw_resource_scale(ui, scale);
+    }
     let (response, painter) = ui.allocate_painter(ui.available_size(), egui::Sense::click());
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Other, true, model.label.as_str())
@@ -815,6 +851,43 @@ pub fn draw_map(ui: &mut egui::Ui, model: &MapModel, cache: &mut MapCache) -> Ve
         actions.push(UiAction::Select(pick(&layout, pos, &model.objects)));
     }
     actions
+}
+
+/// Outside the map viewport: the colour key cannot cover a plant or intercept a map click.
+pub(crate) fn draw_resource_scale(ui: &mut egui::Ui, model: &ResourceScaleModel) {
+    ui.horizontal(|ui| {
+        ui.small(&model.label).on_hover_text(&model.help);
+        let (rect, response) = ui.allocate_exact_size(
+            vec2(ui.available_width().clamp(1.0, 240.0), 28.0),
+            egui::Sense::hover(),
+        );
+        let bar = Rect::from_min_size(rect.min, vec2(rect.width(), 10.0));
+        for i in 0..64 {
+            let left = bar.left() + bar.width() * i as f32 / 64.0;
+            let right = bar.left() + bar.width() * (i + 1) as f32 / 64.0;
+            ui.painter().rect_filled(
+                Rect::from_min_max(egui::pos2(left, bar.top()), egui::pos2(right, bar.bottom())),
+                0.0,
+                color32(solar_color(f64::from(i) / 63.0)),
+            );
+        }
+        for (label, anchor, x) in [
+            (&model.ticks[0], egui::Align2::LEFT_TOP, rect.left()),
+            (&model.ticks[1], egui::Align2::CENTER_TOP, rect.center().x),
+            (&model.ticks[2], egui::Align2::RIGHT_TOP, rect.right()),
+        ] {
+            ui.painter().text(
+                egui::pos2(x, bar.bottom() + 2.0),
+                anchor,
+                label,
+                egui::TextStyle::Small.resolve(ui.style()),
+                ui.visuals().text_color(),
+            );
+        }
+        response
+            .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, &model.help));
+        response.on_hover_text(&model.help);
+    });
 }
 
 /// The size of a button labelled `label`: its text and the button padding, at least the height of
@@ -1577,6 +1650,91 @@ mod tests {
             seen_unsuitable[0] && seen_unsuitable[5],
             "{seen_unsuitable:?}"
         );
+    }
+
+    #[test]
+    fn sunshine_uses_distinct_hues_for_low_medium_and_high_resource() {
+        let colour = solar_color;
+        let low = colour(0.25);
+        let medium = colour(0.5);
+        let high = colour(0.8);
+        assert!(low[2] > low[1] && low[2] > low[0], "low: {low:?}");
+        assert!(
+            medium[1] > medium[0] && medium[2] > medium[0],
+            "medium: {medium:?}"
+        );
+        assert!(high[1] > high[0] && high[0] > high[2], "high: {high:?}");
+    }
+
+    #[test]
+    fn sunshine_distinguishes_sunny_and_cloudier_sites_in_both_shipped_regions() {
+        for (id, lower, higher) in [
+            ("western_interconnection", "city-seattle", "city-phoenix"),
+            ("eastern_interconnection", "city-cleveland", "city-miami"),
+        ] {
+            let game = shipped_game(id, Box::new(InMemoryCommandLog::default()));
+            let region = game.session().region();
+            let at = |name| {
+                region
+                    .cities()
+                    .iter()
+                    .find(|c| c.name_key == name)
+                    .unwrap()
+                    .cell
+            };
+            let low = at(lower);
+            let high = at(higher);
+            let low_value = region.terrain().get(low).unwrap().irradiance.value();
+            let high_value = region.terrain().get(high).unwrap().irradiance.value();
+            assert!(
+                high_value > low_value + 0.2,
+                "{id}: {low_value} → {high_value}"
+            );
+            let low_color = cell_color(MapLayer::Irradiance, region, low);
+            let high_color = cell_color(MapLayer::Irradiance, region, high);
+            assert!(low_color[2] > low_color[0], "{lower}: {low_color:?}");
+            assert!(
+                high_color[1] > high_color[2] + 30,
+                "{higher}: {high_color:?}"
+            );
+            // Exact cell values and the key use one absolute scale, including across regions.
+            assert_eq!(low_color, solar_color(low_value));
+            assert_eq!(high_color, solar_color(high_value));
+            for y in 0..region.terrain().height() {
+                for x in 0..region.terrain().width() {
+                    let at = cell(x, y);
+                    if !region.terrain().get(at).unwrap().land {
+                        assert_eq!(cell_color(MapLayer::Irradiance, region, at), WATER);
+                    }
+                }
+            }
+            let model = map_model(
+                &game,
+                &shipped_l10n(),
+                MapLayer::Irradiance,
+                LegendChoice::default(),
+                Selection::None,
+            );
+            let scale = model.resource_scale.unwrap();
+            assert_eq!(scale.label, "Solar potential");
+            assert_eq!(scale.ticks, ["0%", "50%", "100%"]);
+            assert!(scale.help.contains("not today's weather"));
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn sunshine_brightness_increases_across_the_absolute_scale(a in 0.0f64..=1.0, b in 0.0f64..=1.0) {
+            let luminance = |value| {
+                let [r, g, b] = solar_color(value).map(|c| {
+                    let c = f64::from(c) / 255.0;
+                    if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+                });
+                0.2126 * r + 0.7152 * g + 0.0722 * b
+            };
+            // Permit sub-byte quantisation differences, not a reversal of the sequence.
+            prop_assert!(luminance(a.min(b)) <= luminance(a.max(b)) + 0.004);
+        }
     }
 
     #[test]
