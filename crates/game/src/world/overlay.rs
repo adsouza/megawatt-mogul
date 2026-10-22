@@ -88,7 +88,8 @@ fn finite(value: f32, fallback: f32, min: f32, max: f32) -> f32 {
 }
 impl TuningConfig {
     pub fn scale(&self) -> f32 {
-        finite(self.model_scale, 1.0, 0.4, 2.0)
+        // Models are already fitted to their cell; tuning may shrink, but never overflow it.
+        finite(self.model_scale, 1.0, 0.4, 1.0)
     }
     pub fn pillar_height(&self) -> f32 {
         finite(self.pillar_height, 6.0, 0.5, 15.0)
@@ -115,7 +116,12 @@ pub fn pillar_part(plant: &super::WorldPlant, tuning: &TuningConfig) -> Option<s
     let height = plant.output * tuning.pillar_height();
     (plant.connected && height > 0.01).then(|| {
         super::Part::block(
-            plant.at + Vec3::Y * (3.0 * tuning.scale() + height / 2.0),
+            plant.at
+                + Vec3::Y
+                    * (super::model::parts_height(&super::plant_parts(plant.kind))
+                        * tuning.scale()
+                        + 0.1
+                        + height / 2.0),
             Vec3::new(0.4, height, 0.4),
             [1.0; 4],
         )

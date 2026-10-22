@@ -618,6 +618,13 @@ The presentation layer never reads aggregate internals.
 ### 8.2 Art direction
 
 - **Base view:** a warm, toy-like tabletop diorama (low-poly, soft shadows, tilt-shift).
+  A terrain cell is one world unit. Fit each city cluster and plant model, including its base,
+  inside a centred 0.8 × 0.8-cell footprint; scale all three axes together to preserve silhouettes.
+  Demand may shrink a city's model relative to the largest city, but never enlarge it beyond this
+  footprint. Visual tuning may shrink models (40–100%) and cannot expand them outside their cell.
+  Selection outlines occupy at most 0.9 × 0.9 of a cell and sit just above the terrain. Rendering
+  and picking use the same fitted geometry; labels and output pillars follow its actual roof height.
+  Keep the default whole-region framing and allow close zoom to inspect individual cell-sized sites.
 - **Planning overlay:** a grounded terrain and resource view (irradiance, cooling water, hydro
   sites, siting suitability). Sunshine uses a sequential purple/blue → teal/green → yellow scale
   with a visible 0–100% solar-potential key outside the map viewport. Use the same absolute scale

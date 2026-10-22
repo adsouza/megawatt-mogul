@@ -326,7 +326,9 @@ pub fn finish_surface(
     let selection = sink.selection();
     let mut labels = Vec::new();
     for p in model.plants.values() {
-        let at = p.at + Vec3::Y * 2.8 * tuning.scale();
+        let at = p.at
+            + Vec3::Y
+                * (super::model::parts_height(&super::plant_parts(p.kind)) * tuning.scale() + 0.15);
         let title = if let Some(months) = p.building {
             l10n.args("map-months-left", &[("months", months.into())])
         } else if selection == crate::hud::Selection::Plant(p.id)
@@ -348,7 +350,9 @@ pub fn finish_surface(
     }
     for c in model.cities.values() {
         labels.push((
-            c.at + Vec3::Y * 1.4 * c.scale * tuning.scale(),
+            c.at + Vec3::Y
+                * (super::model::parts_height(&super::city_parts()) * c.scale * tuning.scale()
+                    + 0.15),
             l10n.text(&c.name_key),
         ));
     }

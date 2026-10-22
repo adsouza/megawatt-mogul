@@ -172,7 +172,92 @@ proptest! {
         let pose = orbit.pose(Vec2::new(100.0,60.0),1.0);
         prop_assert!(pose.eye.is_finite() && pose.target.is_finite());
         prop_assert!(pose.eye.y > 3.0);
-        prop_assert!(orbit.zoom >= 0.35 && orbit.zoom <= 3.0);
+        prop_assert!(orbit.zoom >= 0.08 && orbit.zoom <= 3.0);
+    }
+}
+
+#[test]
+fn world_camera_can_zoom_close_enough_to_inspect_cell_sized_models() {
+    let size = bevy::math::Vec2::new(100.0, 60.0);
+    let mut camera = game::world::OrbitCamera {
+        zoom: 0.35,
+        ..Default::default()
+    };
+    let before = camera.pose(size, 1.0);
+    camera.zoom(2000.0);
+    assert_eq!(camera.zoom, 0.08);
+    let close = camera.pose(size, 1.0);
+    assert!(close.eye.distance(close.target) < before.eye.distance(before.target) / 3.0);
+}
+
+#[test]
+fn world_city_and_plant_models_leave_a_margin_inside_their_cell() {
+    use domain::{ids::RegionId, region::PlantKind, session::GameSettings};
+    use game::world::{TuningConfig, WorldModel, city_parts, plant_parts};
+    let fits = |parts: &[game::world::Part], scale: f32| {
+        for part in parts {
+            for x in [-0.5, 0.5] {
+                for y in [-0.5, 0.5] {
+                    for z in [-0.5, 0.5] {
+                        let corner = (part.center
+                            + part.rotation * (part.size * Vec3::new(x, y, z)))
+                            * scale;
+                        assert!(
+                            corner.x.abs() <= 0.40001 && corner.z.abs() <= 0.40001,
+                            "model crosses the cell margin: {corner:?}"
+                        );
+                    }
+                }
+            }
+        }
+    };
+    // Check defaults and the largest allowed developer scale, including invalid input fallback.
+    for raw in [1.0, 2.0, 100.0, f32::NAN, f32::INFINITY] {
+        let tuning = TuningConfig {
+            model_scale: raw,
+            ..Default::default()
+        };
+        for kind in PlantKind::ALL {
+            fits(&plant_parts(kind), tuning.scale());
+        }
+    }
+    let catalog = infrastructure::region::RonRegionCatalog::new(
+        crate::support::shipped_assets().join("regions"),
+    );
+    for id in ["eastern_interconnection", "western_interconnection"] {
+        let game = application::Game::start_new(
+            &catalog,
+            &RegionId::new(id),
+            7,
+            GameSettings::default(),
+            Box::new(application::InMemoryCommandLog::default()),
+        )
+        .unwrap();
+        let checkpoint = game.checkpoint();
+        let model = WorldModel::of(&game);
+        for city in model.cities.values() {
+            fits(&city_parts(), city.scale);
+        }
+        assert_eq!(game.checkpoint(), checkpoint);
+    }
+}
+
+proptest! {
+    #[test]
+    fn world_model_footprints_stay_bounded_at_any_visual_scale(requested in any::<f32>(), city_size in 0.6f32..=1.0) {
+        use game::world::{TuningConfig, city_parts, plant_parts, selection_parts};
+        let scale = TuningConfig { model_scale: requested, ..Default::default() }.scale();
+        for (parts, factor, radius) in domain::region::PlantKind::ALL.into_iter()
+            .map(|kind| (plant_parts(kind), scale, 0.4))
+            .chain([(city_parts(), city_size * scale, 0.4), (selection_parts().to_vec(), scale, 0.45)]) {
+            for part in parts {
+                for x in [-0.5, 0.5] { for y in [-0.5, 0.5] { for z in [-0.5, 0.5] {
+                    let corner = (part.center + part.rotation * (part.size * Vec3::new(x, y, z))) * factor;
+                    prop_assert!(corner.is_finite());
+                    prop_assert!(corner.x.abs() <= radius + 1e-5 && corner.z.abs() <= radius + 1e-5);
+                } } }
+            }
+        }
     }
 }
 
@@ -234,6 +319,80 @@ fn diorama_app(logs: &std::path::Path) -> bevy::prelude::App {
     let mut app = crate::support::hud_app(logs);
     app.add_plugins(game::world::WorldViewPlugin);
     app
+}
+
+#[test]
+fn world_rendered_meshes_and_picking_share_the_fitted_footprints() {
+    use bevy::prelude::*;
+    use game::{
+        hud::Selection,
+        sim::Session,
+        world::{TuningConfig, ViewSync, WorldControls, WorldScene, presented_hit},
+    };
+    let logs = tempfile::TempDir::new().unwrap();
+    for region in ["eastern_interconnection", "western_interconnection"] {
+        let mut app = diorama_app(&logs.path().join(region));
+        crate::support::request(&mut app, region);
+        let checkpoint = app.world().resource::<Session>().0.checkpoint();
+        for requested in [0.4, 1.0, 2.0] {
+            app.world_mut().resource_mut::<TuningConfig>().model_scale = requested;
+            app.update();
+            let world = app.world();
+            let model = world.resource::<WorldScene>().model.as_ref().unwrap();
+            let views = world.resource::<ViewSync>();
+            for (entity, at) in views
+                .plants
+                .iter()
+                .map(|(id, entity)| (entity, model.plants[id].at))
+                .chain(
+                    views
+                        .cities
+                        .iter()
+                        .map(|(id, entity)| (entity, model.cities[id].at)),
+                )
+            {
+                let transform = world.get::<Transform>(*entity).unwrap();
+                let mesh = world
+                    .resource::<Assets<Mesh>>()
+                    .get(&world.get::<Mesh3d>(*entity).unwrap().0)
+                    .unwrap();
+                for position in mesh
+                    .attribute(Mesh::ATTRIBUTE_POSITION)
+                    .unwrap()
+                    .as_float3()
+                    .unwrap()
+                {
+                    let relative = transform.transform_point(Vec3::from_array(*position)) - at;
+                    assert!(
+                        relative.x.abs() <= 0.40001 && relative.z.abs() <= 0.40001,
+                        "rendered vertex crosses cell margin: {relative:?}"
+                    );
+                }
+            }
+            // The old oversized hit boxes must not intercept clicks in the clear cell margin.
+            let mut isolated = model.clone();
+            isolated.cities.clear();
+            isolated.lines.clear();
+            let plant = isolated.plants.values().next().unwrap().clone();
+            isolated.plants.retain(|id, _| *id == plant.id);
+            for kind in domain::region::PlantKind::ALL {
+                isolated.plants.get_mut(&plant.id).unwrap().kind = kind;
+                let ray = Ray3d::new(plant.at + Vec3::new(0.45, 10.0, 0.0), Dir3::NEG_Y);
+                assert_eq!(
+                    presented_hit(
+                        ray,
+                        &isolated,
+                        &WorldControls::default(),
+                        world.resource::<TuningConfig>()
+                    )
+                    .unwrap()
+                    .selection,
+                    Selection::Cell(plant.cell)
+                );
+            }
+            assert_eq!(world.resource::<Session>().0.checkpoint(), checkpoint);
+        }
+    }
 }
 
 #[test]
@@ -305,11 +464,14 @@ fn world_real_pass_projects_selection_blocks_dialogs_and_drags_without_selecting
         .values()
         .filter(|c| c.connected)
         .find_map(|c| {
-            let ndc = pose.project(c.at + Vec3::new(0.05, 1.3, -0.5) * c.scale)?;
-            let ray = pose.ray(ndc.truncate())?;
-            (game::world::pick_world(ray, world, scene.geometry.as_ref().unwrap(), 1.0)
-                == Selection::City(c.id))
-            .then_some((c.id, ndc))
+            game::world::city_parts().iter().find_map(|part| {
+                let roof = part.center + part.rotation * (Vec3::Y * part.size.y / 2.0);
+                let ndc = pose.project(c.at + roof * c.scale)?;
+                let ray = pose.ray(ndc.truncate())?;
+                (game::world::pick_world(ray, world, scene.geometry.as_ref().unwrap(), 1.0)
+                    == Selection::City(c.id))
+                .then_some((c.id, ndc))
+            })
         })
         .expect("a connected city's visible roof");
     let at = egui::pos2(

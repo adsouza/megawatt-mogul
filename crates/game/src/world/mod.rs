@@ -24,7 +24,9 @@ pub use camera::{CameraPose, OrbitCamera, physical_viewport};
 mod model;
 mod overlay;
 mod picking;
-pub use model::{Part, WorldCity, WorldLine, WorldModel, WorldPlant, city_parts, plant_parts};
+pub use model::{
+    Part, WorldCity, WorldLine, WorldModel, WorldPlant, city_parts, plant_parts, selection_parts,
+};
 pub use overlay::{TuningConfig, WorldAction, WorldControls, pillar_part, supply_fraction};
 pub use picking::{WorldHit, hit_world, pick_world, presented_hit, terrain_grid_hit, terrain_hit};
 

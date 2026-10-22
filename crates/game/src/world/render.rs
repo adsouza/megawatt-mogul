@@ -164,28 +164,7 @@ fn initialise(
     }
     assets.city = add(parts_mesh(&city_parts()));
     assets.cube = add(Cuboid::new(1.0, 1.0, 1.0).into());
-    let ring = [
-        Part::block(
-            Vec3::new(0.0, 0.0, -1.55),
-            Vec3::new(3.2, 0.10, 0.10),
-            [1.; 4],
-        ),
-        Part::block(
-            Vec3::new(0.0, 0.0, 1.55),
-            Vec3::new(3.2, 0.10, 0.10),
-            [1.; 4],
-        ),
-        Part::block(
-            Vec3::new(-1.55, 0.0, 0.0),
-            Vec3::new(0.10, 0.10, 3.2),
-            [1.; 4],
-        ),
-        Part::block(
-            Vec3::new(1.55, 0.0, 0.0),
-            Vec3::new(0.10, 0.10, 3.2),
-            [1.; 4],
-        ),
-    ];
+    let ring = super::selection_parts();
     assets.ring = add(parts_mesh(&ring));
     for color in [
         Color::WHITE,
@@ -580,14 +559,11 @@ pub fn update_visuals(
     for (mut t, mut v) in &mut marker {
         if let Some(at) = selected {
             let size = match *selection {
-                Selection::Cell(_) => 0.32,
-                Selection::City(id) => model
-                    .cities
-                    .get(&id)
-                    .map_or(scale, |c| c.scale * scale * 0.7),
+                Selection::Cell(_) => 1.0,
+                Selection::City(id) => model.cities.get(&id).map_or(scale, |c| c.scale * scale),
                 _ => scale,
             };
-            *t = Transform::from_translation(at + Vec3::Y * 0.25).with_scale(Vec3::splat(size));
+            *t = Transform::from_translation(at + Vec3::Y * 0.03).with_scale(Vec3::splat(size));
             *v = Visibility::Visible;
         } else {
             *v = Visibility::Hidden;

@@ -49,7 +49,7 @@ impl OrbitCamera {
     pub fn zoom(&mut self, delta: f32) {
         if delta.is_finite() {
             self.zoom =
-                (self.zoom * (-delta.clamp(-2000.0, 2000.0) * 0.002).exp()).clamp(0.35, 3.0);
+                (self.zoom * (-delta.clamp(-2000.0, 2000.0) * 0.002).exp()).clamp(0.08, 3.0);
         }
     }
     pub fn pan(&mut self, delta: Vec2, size: Vec2, pixels: f32) {

@@ -28,6 +28,67 @@ impl Part {
             color,
         }
     }
+    /// Exact axis-aligned bounds, including rotation, shared by model fitting and annotations.
+    pub fn bounds(&self) -> (Vec3, Vec3) {
+        let half = ((self.rotation * Vec3::X).abs() * self.size.x
+            + (self.rotation * Vec3::Y).abs() * self.size.y
+            + (self.rotation * Vec3::Z).abs() * self.size.z)
+            / 2.0;
+        (self.center - half, self.center + half)
+    }
+}
+
+/// One grid cell is one world unit. Leave a tenth of a cell clear on each side.
+const MODEL_WIDTH: f32 = 0.8;
+
+fn fit_to_cell(mut parts: Vec<Part>) -> Vec<Part> {
+    let radius = parts.iter().fold(0.0_f32, |radius, part| {
+        let (min, max) = part.bounds();
+        radius
+            .max(min.x.abs())
+            .max(max.x.abs())
+            .max(min.z.abs())
+            .max(max.z.abs())
+    });
+    if radius > 0.0 {
+        let scale = MODEL_WIDTH / (2.0 * radius);
+        for part in &mut parts {
+            part.center *= scale;
+            part.size *= scale;
+        }
+    }
+    parts
+}
+
+pub(super) fn parts_height(parts: &[Part]) -> f32 {
+    parts.iter().map(|p| p.bounds().1.y).fold(0.0, f32::max)
+}
+
+/// The selection outline also stays inside the selected cell.
+pub fn selection_parts() -> [Part; 4] {
+    let width = MODEL_WIDTH + 0.1;
+    let thickness = 0.03;
+    let edge = (width - thickness) / 2.0;
+    let horizontal = |z| {
+        Part::block(
+            Vec3::new(0.0, 0.0, z),
+            Vec3::new(width, 0.025, thickness),
+            [1.0; 4],
+        )
+    };
+    let vertical = |x| {
+        Part::block(
+            Vec3::new(x, 0.0, 0.0),
+            Vec3::new(thickness, 0.025, width),
+            [1.0; 4],
+        )
+    };
+    [
+        horizontal(-edge),
+        horizontal(edge),
+        vertical(-edge),
+        vertical(edge),
+    ]
 }
 /// Each kind has a distinct silhouette, composed of hard-edged low-poly blocks.
 pub fn plant_parts(kind: PlantKind) -> Vec<Part> {
@@ -75,21 +136,23 @@ pub fn plant_parts(kind: PlantKind) -> Vec<Part> {
             }
         }
     }
-    parts
+    fit_to_cell(parts)
 }
 pub fn city_parts() -> Vec<Part> {
     let color = [0.65, 0.53, 0.32, 1.0];
-    [
-        (-0.55, -0.45, 0.7),
-        (0.05, -0.5, 1.3),
-        (0.6, -0.35, 0.85),
-        (-0.5, 0.35, 1.0),
-        (0.2, 0.4, 0.65),
-        (0.7, 0.45, 0.45),
-    ]
-    .into_iter()
-    .map(|(x, z, h)| Part::block(Vec3::new(x, h / 2.0, z), Vec3::new(0.42, h, 0.48), color))
-    .collect()
+    fit_to_cell(
+        [
+            (-0.55, -0.45, 0.7),
+            (0.05, -0.5, 1.3),
+            (0.6, -0.35, 0.85),
+            (-0.5, 0.35, 1.0),
+            (0.2, 0.4, 0.65),
+            (0.7, 0.45, 0.45),
+        ]
+        .into_iter()
+        .map(|(x, z, h)| Part::block(Vec3::new(x, h / 2.0, z), Vec3::new(0.42, h, 0.48), color))
+        .collect(),
+    )
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorldPlant {
@@ -180,8 +243,8 @@ impl WorldModel {
                         cell: c.cell,
                         at: coordinates.cell_center(terrain, c.cell)?,
                         scale: (s.city_detail(c.id)?.base_load.value() / max_load).sqrt() as f32
-                            * 1.4
-                            + 0.7,
+                            * 0.4
+                            + 0.6,
                         connected: c.connected,
                         name_key: c.name_key,
                     },
