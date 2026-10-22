@@ -9,7 +9,7 @@ use domain::demand::ForecastPoint;
 use domain::region::PlantKind;
 use domain::time::TICKS_PER_HOUR;
 use domain::units::Megawatts;
-use egui_plot::{Bar, BarChart, FilledArea, Legend, Line, Plot, VLine};
+use egui_plot::{Bar, BarChart, FilledArea, Line, Plot, VLine};
 
 use super::action::UiAction;
 use super::map::{Rgb, color32, kind_color};
@@ -124,9 +124,21 @@ pub fn draw_forecast_chart(ui: &mut egui::Ui, model: &ForecastModel) -> Vec<UiAc
         model.x.iter().zip(ys).map(|(x, y)| [*x, *y]).collect()
     };
     let (x, high, low) = (model.x.to_vec(), model.high.to_vec(), model.low.to_vec());
+    use super::chart_style::KeyMark;
+    let id = ui.make_persistent_id(egui::Id::new("planning_forecast"));
+    let entries = model
+        .stacks
+        .iter()
+        .map(|stack| (stack.name.as_str(), color32(stack.color), KeyMark::Band))
+        .chain([
+            (model.forecast_label.as_str(), line_color, KeyMark::Line),
+            (model.band_label.as_str(), band_color, KeyMark::Band),
+            (model.solar_label.as_str(), solar_color, KeyMark::Line),
+        ]);
+    let hovered = super::chart_style::draw_key(ui, id, entries);
     Plot::new("planning_forecast")
+        .id(id)
         .height(ui.available_height())
-        .legend(Legend::default().background_alpha(1.0))
         .allow_zoom(false)
         .allow_drag(false)
         .allow_scroll(false)
@@ -136,7 +148,19 @@ pub fn draw_forecast_chart(ui: &mut egui::Ui, model: &ForecastModel) -> Vec<UiAc
         .include_x(0.0)
         .include_x(24.0)
         .include_y(0.0)
-        .custom_x_axes(vec![super::chart_style::x_axis(&model.hour_axis)])
+        // Every commitment hour needs its own label, at full contrast, even in a narrow HUD.
+        .x_grid_spacer(|_| {
+            (0..=24)
+                .map(|hour| egui_plot::GridMark {
+                    value: f64::from(hour),
+                    step_size: 1.0,
+                })
+                .collect()
+        })
+        .custom_x_axes(vec![
+            super::chart_style::x_axis(&model.hour_axis)
+                .label_spacing(egui::emath::Rangef::new(0.0, 0.0)),
+        ])
         .custom_y_axes(vec![super::chart_style::y_axis(&model.power_axis)])
         .show(ui, |plot| {
             for stack in &model.stacks {
@@ -149,19 +173,25 @@ pub fn draw_forecast_chart(ui: &mut egui::Ui, model: &ForecastModel) -> Vec<UiAc
                     })
                     .collect();
                 plot.add(super::chart_style::ReadableBars(
-                    BarChart::new(stack.name.as_str(), bars).color(color32(stack.color)),
+                    BarChart::new(stack.name.as_str(), bars)
+                        .color(color32(stack.color))
+                        .highlight(hovered == Some(egui::Id::new(&stack.name))),
                 ));
             }
             plot.add(
-                FilledArea::new(model.band_label.as_str(), &x, &low, &high).fill_color(band_color),
+                FilledArea::new(model.band_label.as_str(), &x, &low, &high)
+                    .fill_color(band_color)
+                    .highlight(hovered == Some(egui::Id::new(&model.band_label))),
             );
             plot.line(
                 Line::new(model.forecast_label.as_str(), points(&model.mean))
+                    .highlight(hovered == Some(egui::Id::new(&model.forecast_label)))
                     .color(line_color)
                     .width(2.0),
             );
             plot.line(
                 Line::new(model.solar_label.as_str(), points(&model.solar))
+                    .highlight(hovered == Some(egui::Id::new(&model.solar_label)))
                     .color(solar_color)
                     .width(2.0),
             );
@@ -182,6 +212,189 @@ mod tests {
 
     use super::*;
     use crate::hud::test_support::{eastern_game, empty_start, shipped_l10n};
+
+    #[test]
+    fn forecast_key_has_its_own_space_and_preserves_series_toggles() {
+        let game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let mut model = forecast_model(&game, &shipped_l10n(), &Default::default());
+        let l10n = shipped_l10n();
+        model.stacks = PlantKind::ALL
+            .into_iter()
+            .map(|kind| StackModel {
+                kind,
+                name: kind.localize(&l10n),
+                color: kind_color(kind),
+                mw: [100.0; 24],
+                base: [0.0; 24],
+            })
+            .collect();
+        for width in [1024.0 / 1.25, 1024.0, 1920.0] {
+            let ctx = egui::Context::default();
+            let mut id = egui::Id::NULL;
+            let mut key_at = None;
+            for _ in 0..3 {
+                let output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 240.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        id = ui.make_persistent_id(egui::Id::new("planning_forecast"));
+                        draw_forecast_chart(ui, &model);
+                    },
+                );
+                if ctx.cumulative_frame_nr() == 3 {
+                    let memory = egui_plot::PlotMemory::load(&ctx, id).unwrap();
+                    let frame = *memory.transform().frame();
+                    assert!(frame.height() >= 80.0);
+                    fn find(shape: &egui::Shape, name: &str) -> Option<egui::Rect> {
+                        match shape {
+                            egui::Shape::Vec(children) => {
+                                children.iter().find_map(|s| find(s, name))
+                            }
+                            egui::Shape::Text(text) if text.galley.text() == name => {
+                                Some(text.visual_bounding_rect())
+                            }
+                            _ => None,
+                        }
+                    }
+                    for name in model.stacks.iter().map(|s| s.name.as_str()).chain([
+                        model.forecast_label.as_str(),
+                        model.band_label.as_str(),
+                        model.solar_label.as_str(),
+                    ]) {
+                        let rect = output
+                            .shapes
+                            .iter()
+                            .find_map(|s| find(&s.shape, name))
+                            .expect(name);
+                        assert!(
+                            rect.bottom() <= frame.top(),
+                            "{name} covers the plot at width {width}: {rect:?}, plot {frame:?}"
+                        );
+                        if name == model.forecast_label {
+                            key_at = Some(rect.center());
+                        }
+                    }
+                }
+                output.drop_without_applying_deltas();
+            }
+            let at = key_at.unwrap();
+            for hidden in [true, false] {
+                for pressed in [true, false] {
+                    let output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(width, 240.0),
+                            )),
+                            events: vec![
+                                egui::Event::PointerMoved(at),
+                                egui::Event::PointerButton {
+                                    pos: at,
+                                    button: egui::PointerButton::Primary,
+                                    pressed,
+                                    modifiers: egui::Modifiers::NONE,
+                                },
+                            ],
+                            ..Default::default()
+                        },
+                        |ui| {
+                            draw_forecast_chart(ui, &model);
+                        },
+                    );
+                    output.drop_without_applying_deltas();
+                }
+                assert_eq!(
+                    egui_plot::PlotMemory::load(&ctx, id)
+                        .unwrap()
+                        .hidden_items
+                        .contains(&egui::Id::new(&model.forecast_label)),
+                    hidden
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn forecast_renders_every_hour_at_minimum_window_and_enlarged_ui_zoom() {
+        let game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let model = forecast_model(&game, &shipped_l10n(), &Default::default());
+        for zoom in [1.0, 1.25] {
+            let ctx = egui::Context::default();
+            ctx.set_visuals(super::super::theme::visuals());
+            for _ in 0..3 {
+                let input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1024.0 / zoom, 240.0),
+                    )),
+                    ..Default::default()
+                };
+                let output = ctx.run_ui(input, |ui| {
+                    draw_forecast_chart(ui, &model);
+                });
+                fn texts(shape: &egui::Shape, out: &mut Vec<(String, egui::Rect, egui::Color32)>) {
+                    match shape {
+                        egui::Shape::Vec(children) => {
+                            for shape in children {
+                                texts(shape, out);
+                            }
+                        }
+                        egui::Shape::Text(text) => out.push((
+                            text.galley.text().to_owned(),
+                            text.visual_bounding_rect(),
+                            text.fallback_color,
+                        )),
+                        _ => {}
+                    }
+                }
+                let mut labels = Vec::new();
+                for shape in &output.shapes {
+                    texts(&shape.shape, &mut labels);
+                }
+                output.drop_without_applying_deltas();
+                if ctx.cumulative_frame_nr() < 3 {
+                    continue;
+                }
+                let bottom = labels
+                    .iter()
+                    .filter(|(text, _, _)| text.parse::<u8>().is_ok())
+                    .map(|(_, rect, _)| rect.center().y)
+                    .fold(0.0, f32::max);
+                let hours: Vec<_> = labels
+                    .iter()
+                    .filter(|(text, rect, _)| {
+                        text.parse::<u8>().is_ok() && (rect.center().y - bottom).abs() < 1.0
+                    })
+                    .collect();
+                for hour in 0..=24 {
+                    assert!(
+                        hours.iter().any(|(text, _, _)| *text == hour.to_string()),
+                        "missing hour {hour} at zoom {zoom}: {hours:?}"
+                    );
+                }
+                let screen =
+                    egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1024.0 / zoom, 240.0));
+                for (_, rect, color) in &hours {
+                    assert_eq!(*color, super::super::theme::TEXT);
+                    assert!(
+                        screen.contains_rect(*rect),
+                        "hour label is clipped at zoom {zoom}"
+                    );
+                }
+                for pair in hours.windows(2) {
+                    assert!(
+                        !pair[0].1.intersects(pair[1].1),
+                        "hour labels overlap at zoom {zoom}"
+                    );
+                }
+            }
+        }
+    }
 
     fn stack_of(stacks: &[StackModel], kind: PlantKind) -> &StackModel {
         stacks

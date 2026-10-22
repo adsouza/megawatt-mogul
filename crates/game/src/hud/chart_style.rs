@@ -5,7 +5,7 @@ use std::ops::RangeInclusive;
 use bevy_egui::egui::{self, Color32, Pos2, Shape, Ui};
 use egui_plot::{
     AxisHints, BarChart, ClosestElem, Cursor, LabelFormatterFn, PlotBounds, PlotConfig,
-    PlotGeometry, PlotItem, PlotItemBase, PlotTransform,
+    PlotGeometry, PlotItem, PlotItemBase, PlotMemory, PlotTransform,
 };
 
 use super::theme::{LABEL_BACKING, LABEL_TEXT, TEXT};
@@ -22,6 +22,119 @@ pub(super) fn y_axis(label: &str) -> AxisHints<'static> {
         .label(label.to_owned())
         .tick_label_color(TEXT)
         .label_spacing(egui::emath::Rangef::new(20.0, 20.0))
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum KeyMark {
+    Band,
+    Line,
+    Dashed,
+}
+
+/// Reserve layout space above the plot while retaining its series visibility and hover state.
+pub(super) fn draw_key<'a>(
+    ui: &mut Ui,
+    plot_id: egui::Id,
+    entries: impl IntoIterator<Item = (&'a str, Color32, KeyMark)>,
+) -> Option<egui::Id> {
+    let mut memory = PlotMemory::load(ui.ctx(), plot_id);
+    let mut hovered = None;
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(8.0, 2.0);
+        ui.horizontal_wrapped(|ui| {
+            for (name, colour, mark) in entries {
+                let id = egui::Id::new(name);
+                let mut visible = !memory
+                    .as_ref()
+                    .is_some_and(|m| m.hidden_items.contains(&id));
+                let response = key_entry(ui, name, colour, mark, &mut visible);
+                if response.hovered() {
+                    hovered = Some(id);
+                }
+                if let Some(memory) = &mut memory {
+                    if visible {
+                        memory.hidden_items.remove(&id);
+                    } else {
+                        memory.hidden_items.insert(id);
+                    }
+                }
+            }
+        });
+    });
+    if let Some(mut memory) = memory {
+        // egui_plot's legend-hover handling hides axes; highlight our hovered item directly.
+        memory.hovered_legend_item = None;
+        memory.store(ui.ctx(), plot_id);
+    }
+    hovered
+}
+
+fn key_entry(
+    ui: &mut egui::Ui,
+    name: &str,
+    colour: egui::Color32,
+    mark: KeyMark,
+    visible: &mut bool,
+) -> egui::Response {
+    let text = ui.painter().layout_no_wrap(
+        name.to_owned(),
+        egui::FontId::proportional(12.0),
+        ui.visuals().text_color(),
+    );
+    let size = egui::vec2(text.size().x + 22.0, text.size().y.max(16.0));
+    let (rect, mut response) = ui.allocate_exact_size(size, egui::Sense::click());
+    if response.clicked() {
+        *visible = !*visible;
+        response.mark_changed();
+    }
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), *visible, name)
+    });
+    let painter = ui.painter();
+    if response.hovered() || response.has_focus() {
+        painter.rect_stroke(
+            rect,
+            2.0,
+            ui.visuals().widgets.hovered.fg_stroke,
+            egui::StrokeKind::Inside,
+        );
+    }
+    let swatch = egui::Rect::from_center_size(
+        egui::pos2(rect.left() + 8.0, rect.center().y),
+        egui::vec2(16.0, 8.0),
+    );
+    if !*visible {
+        painter.rect_stroke(
+            swatch,
+            0.0,
+            egui::Stroke::new(1.0, ui.visuals().weak_text_color()),
+            egui::StrokeKind::Inside,
+        );
+    } else {
+        match mark {
+            KeyMark::Band => {
+                painter.rect_filled(swatch, 1.0, colour);
+            }
+            KeyMark::Line => {
+                painter.line_segment(
+                    [swatch.left_center(), swatch.right_center()],
+                    egui::Stroke::new(2.0, colour),
+                );
+            }
+            KeyMark::Dashed => painter.extend(egui::Shape::dashed_line(
+                &[swatch.left_center(), swatch.right_center()],
+                egui::Stroke::new(1.0, colour),
+                3.0,
+                2.0,
+            )),
+        }
+    }
+    painter.galley(
+        egui::pos2(rect.left() + 22.0, rect.center().y - text.size().y * 0.5),
+        text,
+        ui.visuals().text_color(),
+    );
+    response
 }
 
 pub(super) struct ReadableBars(pub BarChart);

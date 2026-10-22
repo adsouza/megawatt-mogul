@@ -44,7 +44,8 @@ modelled as the domain state machine `DayPhase`:
    hour, queue construction and build lines to connect cities. The current regulated tariff and a
    projection of the next rate review are shown, but the player does not set them (§2.5).
 2. **Operating** (runs). The 24 game hours run as 1,440 ticks (1 tick = 1 game minute) at a
-   selectable speed: pause, 1×, 2×, 4× or 8×. At 1× a day takes about 6 real minutes. The player
+   selectable speed: pause, 1×, 2×, 4×, 8×, 16× or 32×. At 1× a day takes about 6 real minutes
+   (about 23 seconds at 16× and 11 seconds at 32×). The player
    adjusts plant targets, starts and stops plants, and toggles automatic load-following (AGC) on
    individual plants. Predictive warnings flag trouble ahead.
 3. **Review** (paused). P&L, the merit order that actually ran, a timeline of reliability incidents,

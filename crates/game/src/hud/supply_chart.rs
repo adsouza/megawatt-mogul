@@ -9,7 +9,7 @@ use bevy_egui::egui;
 use domain::demand::ForecastPoint;
 use domain::region::{PlantKind, RegionDefinition};
 use domain::time::{TICKS_PER_DAY, TICKS_PER_HOUR};
-use egui_plot::{FilledArea, HPlacement, Line, LineStyle, Plot, PlotMemory, VLine};
+use egui_plot::{FilledArea, HPlacement, Line, LineStyle, Plot, VLine};
 
 use super::action::UiAction;
 use super::frequency::NORMAL_COLOR;
@@ -164,7 +164,27 @@ pub fn draw_supply_chart(ui: &mut egui::Ui, model: &SupplyModel) -> Vec<UiAction
     let now_color = ui.visuals().weak_text_color();
     // Keep the existing plot ID/visibility choices while giving its key real layout space.
     let id = ui.make_persistent_id(egui::Id::new("operating_supply"));
-    let hovered = draw_supply_key(ui, model, id);
+    use super::chart_style::KeyMark;
+    let colour = ui.visuals().strong_text_color();
+    let entries = model
+        .stacks
+        .iter()
+        .map(|stack| (stack.name.as_str(), color32(stack.color), KeyMark::Band))
+        .chain([
+            (model.demand_label.as_str(), colour, KeyMark::Line),
+            (
+                model.served_label.as_str(),
+                color32(SERVED_COLOR),
+                KeyMark::Line,
+            ),
+            (model.forecast_label.as_str(), colour, KeyMark::Dashed),
+            (
+                model.cost_label.as_str(),
+                color32(MARGINAL_COST_COLOR),
+                KeyMark::Line,
+            ),
+        ]);
+    let hovered = super::chart_style::draw_key(ui, id, entries);
     // The marginal cost shares the power axis's space: the highest cost reaches the top of the
     // power data, and the right-hand axis reads it back in $/MWh.
     let top = model
@@ -241,133 +261,6 @@ pub fn draw_supply_chart(ui: &mut egui::Ui, model: &SupplyModel) -> Vec<UiAction
             plot.vline(VLine::new("", model.now).color(now_color).width(1.0));
         });
     Vec::new()
-}
-
-#[derive(Clone, Copy)]
-enum KeyMark {
-    Band,
-    Line,
-    Dashed,
-}
-
-/// A wrapping key above the data, with the same hide/show state as egui_plot's overlay legend.
-/// Keeping hover highlighting separate avoids egui_plot hiding its axes on legend hover.
-fn draw_supply_key(ui: &mut egui::Ui, model: &SupplyModel, plot_id: egui::Id) -> Option<egui::Id> {
-    let mut memory = PlotMemory::load(ui.ctx(), plot_id);
-    let mut hovered = None;
-    ui.scope(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(8.0, 2.0);
-        ui.horizontal_wrapped(|ui| {
-            let mut entry = |ui: &mut egui::Ui, name: &str, colour: egui::Color32, mark| {
-                let id = egui::Id::new(name);
-                let mut visible = !memory
-                    .as_ref()
-                    .is_some_and(|m| m.hidden_items.contains(&id));
-                let response = key_entry(ui, name, colour, mark, &mut visible);
-                if response.hovered() {
-                    hovered = Some(id);
-                }
-                if let Some(memory) = &mut memory {
-                    if visible {
-                        memory.hidden_items.remove(&id);
-                    } else {
-                        memory.hidden_items.insert(id);
-                    }
-                }
-            };
-            for stack in &model.stacks {
-                entry(ui, &stack.name, color32(stack.color), KeyMark::Band);
-            }
-            let colour = ui.visuals().strong_text_color();
-            entry(ui, &model.demand_label, colour, KeyMark::Line);
-            entry(
-                ui,
-                &model.served_label,
-                color32(SERVED_COLOR),
-                KeyMark::Line,
-            );
-            entry(ui, &model.forecast_label, colour, KeyMark::Dashed);
-            entry(
-                ui,
-                &model.cost_label,
-                color32(MARGINAL_COST_COLOR),
-                KeyMark::Line,
-            );
-        });
-    });
-    if let Some(mut memory) = memory {
-        memory.hovered_legend_item = None;
-        memory.store(ui.ctx(), plot_id);
-    }
-    hovered
-}
-
-fn key_entry(
-    ui: &mut egui::Ui,
-    name: &str,
-    colour: egui::Color32,
-    mark: KeyMark,
-    visible: &mut bool,
-) -> egui::Response {
-    let text = ui.painter().layout_no_wrap(
-        name.to_owned(),
-        egui::FontId::proportional(12.0),
-        ui.visuals().text_color(),
-    );
-    let size = egui::vec2(text.size().x + 22.0, text.size().y.max(16.0));
-    let (rect, mut response) = ui.allocate_exact_size(size, egui::Sense::click());
-    if response.clicked() {
-        *visible = !*visible;
-        response.mark_changed();
-    }
-    response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), *visible, name)
-    });
-    let painter = ui.painter();
-    if response.hovered() || response.has_focus() {
-        painter.rect_stroke(
-            rect,
-            2.0,
-            ui.visuals().widgets.hovered.fg_stroke,
-            egui::StrokeKind::Inside,
-        );
-    }
-    let swatch = egui::Rect::from_center_size(
-        egui::pos2(rect.left() + 8.0, rect.center().y),
-        egui::vec2(16.0, 8.0),
-    );
-    if !*visible {
-        painter.rect_stroke(
-            swatch,
-            0.0,
-            egui::Stroke::new(1.0, ui.visuals().weak_text_color()),
-            egui::StrokeKind::Inside,
-        );
-    } else {
-        match mark {
-            KeyMark::Band => {
-                painter.rect_filled(swatch, 1.0, colour);
-            }
-            KeyMark::Line => {
-                painter.line_segment(
-                    [swatch.left_center(), swatch.right_center()],
-                    egui::Stroke::new(2.0, colour),
-                );
-            }
-            KeyMark::Dashed => painter.extend(egui::Shape::dashed_line(
-                &[swatch.left_center(), swatch.right_center()],
-                egui::Stroke::new(1.0, colour),
-                3.0,
-                2.0,
-            )),
-        }
-    }
-    painter.galley(
-        egui::pos2(rect.left() + 22.0, rect.center().y - text.size().y * 0.5),
-        text,
-        ui.visuals().text_color(),
-    );
-    response
 }
 
 #[cfg(test)]

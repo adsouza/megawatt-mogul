@@ -1,4 +1,4 @@
-//! The speed controls (spec §8.4), Operating only: the time of day, pause and 1× to 8×, and Space
+//! The speed controls (spec §8.4), Operating only: the time of day, pause and 1× to 32×, and Space
 //! to toggle pause.
 //!
 //! Space switches between `Paused` and the last speed the day ran at, [`LastSpeed`], which
@@ -17,12 +17,14 @@ use crate::l10n::{Localizer, format};
 use crate::sim::{Session, SimSpeed};
 
 /// The speeds the controls offer, in order, with their labels.
-const SPEEDS: [(SimSpeed, &str); 5] = [
+const SPEEDS: [(SimSpeed, &str); 7] = [
     (SimSpeed::Paused, "speed-pause"),
     (SimSpeed::X1, "speed-1x"),
     (SimSpeed::X2, "speed-2x"),
     (SimSpeed::X4, "speed-4x"),
     (SimSpeed::X8, "speed-8x"),
+    (SimSpeed::X16, "speed-16x"),
+    (SimSpeed::X32, "speed-32x"),
 ];
 
 /// The last running speed: what Space resumes. `X1` until the player picks another this game.
@@ -154,6 +156,8 @@ mod tests {
                 ("2×", &UiAction::SetSpeed(SimSpeed::X2), false),
                 ("4×", &UiAction::SetSpeed(SimSpeed::X4), true),
                 ("8×", &UiAction::SetSpeed(SimSpeed::X8), false),
+                ("16×", &UiAction::SetSpeed(SimSpeed::X16), false),
+                ("32×", &UiAction::SetSpeed(SimSpeed::X32), false),
             ]
         );
         assert!(model.speeds.iter().all(|speed| speed.button.enabled));
@@ -163,10 +167,21 @@ mod tests {
     #[test]
     fn space_pauses_a_running_day_and_resumes_the_last_speed() {
         let last = LastSpeed(SimSpeed::X4);
-        for running in [SimSpeed::X1, SimSpeed::X2, SimSpeed::X4, SimSpeed::X8] {
+        for running in [
+            SimSpeed::X1,
+            SimSpeed::X2,
+            SimSpeed::X4,
+            SimSpeed::X8,
+            SimSpeed::X16,
+            SimSpeed::X32,
+        ] {
             assert_eq!(
-                space_action(running, last, false),
+                space_action(running, LastSpeed(running), false),
                 Some(UiAction::SetSpeed(SimSpeed::Paused))
+            );
+            assert_eq!(
+                space_action(SimSpeed::Paused, LastSpeed(running), false),
+                Some(UiAction::SetSpeed(running))
             );
         }
         assert_eq!(

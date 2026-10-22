@@ -111,6 +111,51 @@ fn preferences_restore_window_and_clamp_a_missing_monitor() {
 }
 
 #[test]
+fn preferences_accelerated_day_speeds_survive_pause_and_restart() {
+    use game::{
+        hud::{LastSpeed, UiAction},
+        sim::SimSpeed,
+    };
+    for speed in [SimSpeed::X16, SimSpeed::X32] {
+        let root = TempDir::new().unwrap();
+        let logs = TempDir::new().unwrap();
+        let make_app = || {
+            let mut app = hud_app(logs.path());
+            app.insert_resource(SaveDir(root.path().into()))
+                .add_plugins(PreferencesPlugin);
+            update_n(&mut app, 2);
+            app
+        };
+        let mut app = make_app();
+        request(&mut app, "western_interconnection");
+        let pass = EguiPass::attach(&mut app);
+        pass.settled(&mut app, 1024.0, 640.0);
+        crate::hud_smoke::dispatch_in(
+            &mut app,
+            vec![
+                UiAction::SetSpeed(speed),
+                UiAction::SetSpeed(SimSpeed::Paused),
+            ],
+        );
+        pass.run(&mut app, 1024.0, 640.0);
+        app.world_mut().write_message(AppExit::Success);
+        app.update();
+        assert_eq!(read_preferences(root.path()).unwrap().speed, speed.ticks());
+        drop(app);
+        let mut fresh = make_app();
+        request(&mut fresh, "western_interconnection");
+        assert_eq!(fresh.world().resource::<ClientSettings>().speed(), speed);
+        assert_eq!(fresh.world().resource::<LastSpeed>().0, speed);
+        crate::hud_smoke::dispatch_in(
+            &mut fresh,
+            vec![UiAction::Command(application::Command::BeginOperating)],
+        );
+        update_n(&mut fresh, 2);
+        assert_eq!(*fresh.world().resource::<SimSpeed>(), speed);
+    }
+}
+
+#[test]
 fn preferences_real_egui_pass_restores_and_retains_panels_zoom_and_day_speed_on_exit() {
     let root = TempDir::new().unwrap();
     let logs = TempDir::new().unwrap();

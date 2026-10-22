@@ -309,23 +309,23 @@ fn commands_queued_across_a_phase_change_are_rejected_cleanly() {
 
 #[test]
 fn operating_advances_speed_ticks_per_fixed_step() {
-    let logs = TempDir::new().unwrap();
-    let mut app = planning_app(logs.path());
-    begin_operating(&mut app);
-    assert_eq!(
-        app.world().resource::<Time<Fixed>>().timestep(),
-        Duration::from_millis(250),
-        "4 Hz fixed steps"
-    );
-    set_speed(&mut app, SimSpeed::X4);
-    run_fixed_steps(&mut app);
-    let start = tick(&app);
-
-    update_n(&mut app, 5);
-
-    assert_eq!(tick(&app), start + 4 * 5);
-    assert_eq!(advance_requests(&app), [4; 5]);
-    assert_eq!(failures(&app), []);
+    for speed in [SimSpeed::X4, SimSpeed::X16, SimSpeed::X32] {
+        let logs = TempDir::new().unwrap();
+        let mut app = planning_app(logs.path());
+        begin_operating(&mut app);
+        assert_eq!(
+            app.world().resource::<Time<Fixed>>().timestep(),
+            Duration::from_millis(250),
+            "4 Hz fixed steps"
+        );
+        set_speed(&mut app, speed);
+        run_fixed_steps(&mut app);
+        let start = tick(&app);
+        update_n(&mut app, 5);
+        assert_eq!(tick(&app), start + speed.ticks() * 5);
+        assert_eq!(advance_requests(&app), [speed.ticks(); 5]);
+        assert_eq!(failures(&app), []);
+    }
 }
 
 #[test]
@@ -371,16 +371,16 @@ fn the_month_close_mirrors_review_and_pauses() {
     begin_operating(&mut app);
     send(&mut app, [Command::AdvanceTicks { n: 1436 }]);
     app.update();
-    set_speed(&mut app, SimSpeed::X8);
+    set_speed(&mut app, SimSpeed::X32);
     run_fixed_steps(&mut app);
 
-    // Eight ticks asked for, four left: the batch stops at the month close.
+    // Thirty-two ticks asked for, four left: the batch stops at the month close.
     update_n(&mut app, 6);
 
     assert_eq!(game(&app).session().phase(), DayPhase::Review);
     assert_eq!(phase_state(&app), Some(PhaseState::Review));
     assert_eq!(*app.world().resource::<SimSpeed>(), SimSpeed::Paused);
-    assert_eq!(advance_requests(&app), [1436, 8]);
+    assert_eq!(advance_requests(&app), [1436, 32]);
     assert_eq!(failures(&app), []);
     assert!(
         events(&app)

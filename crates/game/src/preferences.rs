@@ -42,6 +42,8 @@ impl ClientSettings {
             2 => SimSpeed::X2,
             4 => SimSpeed::X4,
             8 => SimSpeed::X8,
+            16 => SimSpeed::X16,
+            32 => SimSpeed::X32,
             _ => SimSpeed::X1,
         }
     }

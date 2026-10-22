@@ -49,7 +49,7 @@ impl ClientPreferences {
         let finite = |v: &f32| v.is_finite() && v.abs() <= 100_000.0;
         if self.version != 1
             || !(0.2..=5.0).contains(&self.zoom)
-            || ![1, 2, 4, 8].contains(&self.speed)
+            || ![1, 2, 4, 8, 16, 32].contains(&self.speed)
             || self.panels.len() > 32
             || self.tools.len() > 32
             || self

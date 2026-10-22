@@ -1839,12 +1839,17 @@ fn speed_buttons_emit_set_speed() {
     };
 
     assert!(shows(&harness.draw(draw), "01:00"), "the time of day");
+    let widgets = harness.draw(draw);
+    assert!(shows(&widgets, "16×"));
+    assert!(shows(&widgets, "32×"));
     for (label, speed) in [
         ("Pause", SimSpeed::Paused),
         ("1×", SimSpeed::X1),
         ("2×", SimSpeed::X2),
         ("4×", SimSpeed::X4),
         ("8×", SimSpeed::X8),
+        ("16×", SimSpeed::X16),
+        ("32×", SimSpeed::X32),
     ] {
         assert_eq!(
             harness.click(label, draw),
@@ -2007,9 +2012,15 @@ fn the_operating_screen_draws_every_panel_an_hour_in() {
             *app.world().resource::<OperatingTab>(),
             OperatingTab::Supply
         );
-        let widgets = pass.settled(&mut app, width, height);
-        click_in_pass(&pass, &mut app, &widgets, "8×");
-        assert_eq!(*app.world().resource::<SimSpeed>(), SimSpeed::X8);
+        for (label, speed) in [
+            ("8×", SimSpeed::X8),
+            ("16×", SimSpeed::X16),
+            ("32×", SimSpeed::X32),
+        ] {
+            let widgets = pass.settled(&mut app, width, height);
+            click_in_pass(&pass, &mut app, &widgets, label);
+            assert_eq!(*app.world().resource::<SimSpeed>(), speed);
+        }
     }
 }
 
@@ -2072,7 +2083,8 @@ fn at_the_smallest_window_the_operating_controls_fit_without_overlap() {
 
             let map = widget(&widgets, "Map").rect;
             let menu = find_button(&widgets, "Menu").rect;
-            let speeds = ["Pause", "1×", "2×", "4×", "8×"].map(|l| find_button(&widgets, l).rect);
+            let speeds = ["Pause", "1×", "2×", "4×", "8×", "16×", "32×"]
+                .map(|l| find_button(&widgets, l).rect);
             let agc = find_button(&widgets, "AGC").rect;
             let start = find_button(&widgets, "Start").rect;
             let stop = find_button(&widgets, "Stop").rect;

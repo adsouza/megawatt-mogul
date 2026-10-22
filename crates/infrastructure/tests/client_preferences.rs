@@ -32,6 +32,19 @@ fn client_preferences_restart_retains_window_zoom_speed_and_panel_geometry() {
     assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
 }
 #[test]
+fn client_preferences_retains_accelerated_day_speeds() {
+    let dir = TempDir::new().unwrap();
+    for speed in [16, 32] {
+        let p = ClientPreferences {
+            speed,
+            ..Default::default()
+        };
+        write_preferences(dir.path(), &p).unwrap();
+        assert_eq!(read_preferences(dir.path()).unwrap().speed, speed);
+    }
+}
+
+#[test]
 fn client_preferences_invalid_values_do_not_replace_the_previous_file() {
     let dir = TempDir::new().unwrap();
     let p = ClientPreferences::default();

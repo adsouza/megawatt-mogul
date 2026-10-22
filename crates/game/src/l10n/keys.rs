@@ -228,6 +228,8 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "speed-2x",
     "speed-4x",
     "speed-8x",
+    "speed-16x",
+    "speed-32x",
     "frequency-title",
     "frequency-imbalance",
     "grid-mode-normal",

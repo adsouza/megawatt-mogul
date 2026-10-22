@@ -69,6 +69,8 @@ pub enum SimSpeed {
     X2,
     X4,
     X8,
+    X16,
+    X32,
 }
 
 impl SimSpeed {
@@ -80,6 +82,8 @@ impl SimSpeed {
             Self::X2 => 2,
             Self::X4 => 4,
             Self::X8 => 8,
+            Self::X16 => 16,
+            Self::X32 => 32,
         }
     }
 }
@@ -291,9 +295,11 @@ mod tests {
             SimSpeed::X2,
             SimSpeed::X4,
             SimSpeed::X8,
+            SimSpeed::X16,
+            SimSpeed::X32,
         ]
         .map(SimSpeed::ticks);
-        assert_eq!(ticks, [0, 1, 2, 4, 8]);
+        assert_eq!(ticks, [0, 1, 2, 4, 8, 16, 32]);
         assert_eq!(SimSpeed::default(), SimSpeed::Paused);
     }
 

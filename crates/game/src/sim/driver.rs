@@ -62,7 +62,14 @@ mod tests {
 
     #[test]
     fn operating_at_speed_asks_for_the_speed_in_ticks() {
-        for speed in [SimSpeed::X1, SimSpeed::X2, SimSpeed::X4, SimSpeed::X8] {
+        for speed in [
+            SimSpeed::X1,
+            SimSpeed::X2,
+            SimSpeed::X4,
+            SimSpeed::X8,
+            SimSpeed::X16,
+            SimSpeed::X32,
+        ] {
             assert_eq!(
                 ticks_to_request(DayPhase::Operating, ACTIVE, speed, false),
                 Some(speed.ticks())

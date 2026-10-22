@@ -161,7 +161,7 @@ person can see.
   its replay verifies; when it doesn't, the browser shows the other-version copy at 1024×640, and
   neither the menu nor the file changes.
 - `infrastructure/tests/client_preferences.rs` and `tests/game/preferences.rs` cover isolated
-  preference files, restart, real sidebar/bottom-panel drags, zoom/speed, effects toggled through
+  preference files, restart, real sidebar/bottom-panel drags, zoom/speed (including 16×/32× across pause and restart), effects toggled through
   real buttons and retained across new games/restarts, legacy effects defaults, normal-exit flushing and
   property-tested reachable geometry. Tests never write the player's real preferences.
 
