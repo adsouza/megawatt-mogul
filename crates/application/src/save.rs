@@ -180,6 +180,15 @@ pub trait SaveStore: Send + Sync {
     fn now(&self) -> u64;
     fn list(&self) -> Result<Vec<SaveListing>, SaveError>;
     fn read(&self, id: &SaveId) -> Result<(SaveBundle, crate::LoadedRegion), SaveError>;
+    /// Change only the display name, preserving the recorded game, stamp and saved-at time.
+    /// Reject a stale revision; publication has the same guarantees as `write`.
+    fn rename(
+        &self,
+        id: &SaveId,
+        revision: SaveRevision,
+        name: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<SaveReceipt, SaveError>;
     fn write(
         &self,
         bundle: &SaveBundle,

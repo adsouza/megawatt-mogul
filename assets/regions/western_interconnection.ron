@@ -200,6 +200,7 @@
     // level: 30%, the emissions-compliant turndown of a modern F- or H-class
     // plant (a 2x1 block can run on one gas turbine), rather than 40%. Fixed
     // O&M is per month; book life in months.
+    // Capital costs and lead times are tuned for tycoon pacing, not literal project forecasts.
     catalog: [
         (
             kind: Nuclear,
@@ -210,8 +211,8 @@
             startup_cost_usd: 1000000,
             marginal_cost_usd_per_mwh: 10.0,
             fixed_om_usd_per_month: 11000000,
-            capital_cost_usd: 6000000000,
-            build_months: 84,
+            capital_cost_usd: 2400000000,
+            build_months: 18,
             capacity_credit: 0.95,
             book_life_months: 480,
             siting: CoolingWater(0.5),
@@ -225,8 +226,8 @@
             startup_cost_usd: 150000,
             marginal_cost_usd_per_mwh: 30.0,
             fixed_om_usd_per_month: 2000000,
-            capital_cost_usd: 2000000000,
-            build_months: 48,
+            capital_cost_usd: 700000000,
+            build_months: 8,
             capacity_credit: 0.95,
             book_life_months: 480,
             siting: CoolingWater(0.5),
@@ -240,8 +241,8 @@
             startup_cost_usd: 40000,
             marginal_cost_usd_per_mwh: 45.0,
             fixed_om_usd_per_month: 600000,
-            capital_cost_usd: 600000000,
-            build_months: 30,
+            capital_cost_usd: 300000000,
+            build_months: 4,
             capacity_credit: 0.95,
             book_life_months: 360,
             siting: Anywhere,
@@ -255,8 +256,8 @@
             startup_cost_usd: 5000,
             marginal_cost_usd_per_mwh: 150.0,
             fixed_om_usd_per_month: 170000,
-            capital_cost_usd: 200000000,
-            build_months: 12,
+            capital_cost_usd: 100000000,
+            build_months: 2,
             capacity_credit: 0.95,
             book_life_months: 360,
             siting: Anywhere,
@@ -270,8 +271,8 @@
             startup_cost_usd: 0,
             marginal_cost_usd_per_mwh: 0.0,
             fixed_om_usd_per_month: 500000,
-            capital_cost_usd: 400000000,
-            build_months: 12,
+            capital_cost_usd: 150000000,
+            build_months: 2,
             capacity_credit: 0.3,
             book_life_months: 300,
             siting: Anywhere,
@@ -285,8 +286,8 @@
             startup_cost_usd: 1000,
             marginal_cost_usd_per_mwh: 0.0,
             fixed_om_usd_per_month: 2700000,
-            capital_cost_usd: 3000000000,
-            build_months: 72,
+            capital_cost_usd: 1200000000,
+            build_months: 12,
             capacity_credit: 0.8,
             book_life_months: 600,
             siting: HydroSite(0.5),
@@ -296,31 +297,32 @@
     // anchors; base loads are proportional to that demand at the game's
     // scale (the same scale as the East, whose anchors also absorb its much
     // larger load outside the big metros).
+    // Demand is scaled for expansion in a few plant-sized steps; locations and relative sizes stay intact.
     cities: [
-        (id: 1, name_key: "city-los-angeles", lon: -118.244, lat: 34.052, base_load_mw: 2900.0),
-        (id: 2, name_key: "city-riverside", lon: -117.396, lat: 33.953, base_load_mw: 1300.0),
+        (id: 1, name_key: "city-los-angeles", lon: -118.244, lat: 34.052, base_load_mw: 1450.0),
+        (id: 2, name_key: "city-riverside", lon: -117.396, lat: 33.953, base_load_mw: 650.0),
         // North of downtown, so that it does not share Tijuana's cell.
-        (id: 3, name_key: "city-san-diego", lon: -117.150, lat: 32.830, base_load_mw: 800.0),
-        (id: 4, name_key: "city-san-francisco", lon: -122.419, lat: 37.775, base_load_mw: 1300.0),
-        (id: 5, name_key: "city-san-jose", lon: -121.886, lat: 37.338, base_load_mw: 700.0),
-        (id: 6, name_key: "city-sacramento", lon: -121.494, lat: 38.582, base_load_mw: 700.0),
-        (id: 7, name_key: "city-fresno", lon: -119.787, lat: 36.738, base_load_mw: 800.0),
-        (id: 8, name_key: "city-phoenix", lon: -112.074, lat: 33.448, base_load_mw: 1600.0),
-        (id: 9, name_key: "city-tucson", lon: -110.975, lat: 32.222, base_load_mw: 400.0),
-        (id: 10, name_key: "city-las-vegas", lon: -115.140, lat: 36.170, base_load_mw: 1000.0),
-        (id: 11, name_key: "city-salt-lake-city", lon: -111.891, lat: 40.761, base_load_mw: 1000.0),
-        (id: 12, name_key: "city-denver", lon: -104.990, lat: 39.739, base_load_mw: 1400.0),
-        (id: 13, name_key: "city-albuquerque", lon: -106.650, lat: 35.084, base_load_mw: 400.0),
-        (id: 14, name_key: "city-el-paso", lon: -106.442, lat: 31.759, base_load_mw: 300.0),
-        (id: 15, name_key: "city-seattle", lon: -122.332, lat: 47.606, base_load_mw: 1400.0),
-        (id: 16, name_key: "city-portland", lon: -122.676, lat: 45.515, base_load_mw: 1000.0),
-        (id: 17, name_key: "city-spokane", lon: -117.426, lat: 47.659, base_load_mw: 400.0),
-        (id: 18, name_key: "city-boise", lon: -116.202, lat: 43.615, base_load_mw: 500.0),
-        (id: 19, name_key: "city-vancouver", lon: -123.121, lat: 49.283, base_load_mw: 1600.0),
-        (id: 20, name_key: "city-calgary", lon: -114.071, lat: 51.045, base_load_mw: 1400.0),
-        (id: 21, name_key: "city-edmonton", lon: -113.494, lat: 53.546, base_load_mw: 1600.0),
-        (id: 22, name_key: "city-tijuana", lon: -117.038, lat: 32.514, base_load_mw: 300.0),
-        (id: 23, name_key: "city-mexicali", lon: -115.453, lat: 32.624, base_load_mw: 300.0),
+        (id: 3, name_key: "city-san-diego", lon: -117.150, lat: 32.830, base_load_mw: 400.0),
+        (id: 4, name_key: "city-san-francisco", lon: -122.419, lat: 37.775, base_load_mw: 650.0),
+        (id: 5, name_key: "city-san-jose", lon: -121.886, lat: 37.338, base_load_mw: 350.0),
+        (id: 6, name_key: "city-sacramento", lon: -121.494, lat: 38.582, base_load_mw: 350.0),
+        (id: 7, name_key: "city-fresno", lon: -119.787, lat: 36.738, base_load_mw: 400.0),
+        (id: 8, name_key: "city-phoenix", lon: -112.074, lat: 33.448, base_load_mw: 800.0),
+        (id: 9, name_key: "city-tucson", lon: -110.975, lat: 32.222, base_load_mw: 200.0),
+        (id: 10, name_key: "city-las-vegas", lon: -115.140, lat: 36.170, base_load_mw: 500.0),
+        (id: 11, name_key: "city-salt-lake-city", lon: -111.891, lat: 40.761, base_load_mw: 500.0),
+        (id: 12, name_key: "city-denver", lon: -104.990, lat: 39.739, base_load_mw: 700.0),
+        (id: 13, name_key: "city-albuquerque", lon: -106.650, lat: 35.084, base_load_mw: 200.0),
+        (id: 14, name_key: "city-el-paso", lon: -106.442, lat: 31.759, base_load_mw: 150.0),
+        (id: 15, name_key: "city-seattle", lon: -122.332, lat: 47.606, base_load_mw: 700.0),
+        (id: 16, name_key: "city-portland", lon: -122.676, lat: 45.515, base_load_mw: 500.0),
+        (id: 17, name_key: "city-spokane", lon: -117.426, lat: 47.659, base_load_mw: 200.0),
+        (id: 18, name_key: "city-boise", lon: -116.202, lat: 43.615, base_load_mw: 250.0),
+        (id: 19, name_key: "city-vancouver", lon: -123.121, lat: 49.283, base_load_mw: 800.0),
+        (id: 20, name_key: "city-calgary", lon: -114.071, lat: 51.045, base_load_mw: 700.0),
+        (id: 21, name_key: "city-edmonton", lon: -113.494, lat: 53.546, base_load_mw: 800.0),
+        (id: 22, name_key: "city-tijuana", lon: -117.038, lat: 32.514, base_load_mw: 150.0),
+        (id: 23, name_key: "city-mexicali", lon: -115.453, lat: 32.624, base_load_mw: 150.0),
     ],
     // A summer peak late in the afternoon, and a steep evening ramp in every
     // season: as solar fades from about 15:00 to 19:00, net load climbs
@@ -396,7 +398,7 @@
         price_sensitivity: 2.0,
         smoothing: 0.2,
     ),
-    lines: (cost_per_cell_usd: 40000000, cells_per_month: 2, book_life_months: 600),
+    lines: (cost_per_cell_usd: 20000000, cells_per_month: 4, book_life_months: 600),
     // The Pacific Northwest: Seattle, Portland and Spokane, served by
     // Columbia River hydro, combined cycle and peakers.
     start: (
@@ -407,17 +409,12 @@
         home_city: 15,
         connected_cities: [15, 16, 17],
         fleet: [
-            // Hydro: Grand Coulee, Chief Joseph and John Day.
+            // Grand Coulee anchors a compact, hydro-led starting fleet.
             (Hydro, -118.98, 47.95),
-            (Hydro, -119.63, 47.99),
-            (Hydro, -120.69, 45.72),
-            // Combined cycle: Port Westward, Chehalis, Hermiston and Coyote
-            // Springs.
+            // Combined cycle: Port Westward and Chehalis.
             (Ccgt, -123.05, 46.18),
             (Ccgt, -122.93, 46.66),
-            (Ccgt, -119.29, 45.84),
-            (Ccgt, -119.81, 45.85),
-            // Peakers near Seattle, Portland and Spokane.
+            // Peakers near Seattle, Portland and Spokane cover seasonal peaks.
             (Peaker, -122.20, 47.30),
             (Peaker, -121.80, 47.50),
             (Peaker, -122.90, 45.30),

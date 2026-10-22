@@ -1703,7 +1703,15 @@ fn the_forecast_and_tariff_tabs_draw_for_both_shipped_regions() {
 
 #[test]
 fn hydro_rows_show_the_days_water_in_the_western_grid() {
-    let screen = PlanningScreen::new(game_in(WESTERN), Harness::new());
+    let game = game_in(WESTERN);
+    let hydro_count = game
+        .session()
+        .plant_views()
+        .iter()
+        .filter(|plant| plant.kind == domain::region::PlantKind::Hydro)
+        .count();
+    assert!(hydro_count > 0);
+    let screen = PlanningScreen::new(game, Harness::new());
 
     let widgets = screen.widgets();
 
@@ -1714,7 +1722,7 @@ fn hydro_rows_show_the_days_water_in_the_western_grid() {
             w.role == egui::accesskit::Role::Label && w.text.starts_with("Water for the day:")
         })
         .count();
-    assert_eq!(rows, 3, "one line for each of the three hydro plants");
+    assert_eq!(rows, hydro_count, "one water-budget line per hydro plant");
     assert!(
         !shows(&widgets, "no water to spare"),
         "the shipped plants have water"
@@ -2266,7 +2274,8 @@ pub(crate) fn dispatch_in(app: &mut App, actions: Vec<UiAction>) {
 fn dispatch_is_the_one_mapping_from_actions_to_messages() {
     let logs = TempDir::new().unwrap();
     let mut app = headless_app(&shipped_assets(), logs.path());
-    app.init_resource::<Selection>()
+    app.init_resource::<game::world::WorldControls>()
+        .init_resource::<Selection>()
         .init_resource::<MapLayer>()
         .init_resource::<LegendChoice>()
         .init_resource::<OpenPrompt>()
@@ -2365,7 +2374,8 @@ fn dispatch_is_the_one_mapping_from_actions_to_messages() {
 fn navigating_moves_between_the_menu_screens() {
     let logs = TempDir::new().unwrap();
     let mut app = headless_app(&shipped_assets(), logs.path());
-    app.init_resource::<Selection>()
+    app.init_resource::<game::world::WorldControls>()
+        .init_resource::<Selection>()
         .init_resource::<MapLayer>()
         .init_resource::<LegendChoice>()
         .init_resource::<OpenPrompt>()

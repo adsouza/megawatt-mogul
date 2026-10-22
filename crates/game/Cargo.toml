@@ -17,7 +17,12 @@ name = "game"
 path = "src/main.rs"
 test = false
 
+[features]
+default = []
+dev = ["dep:bevy-inspector-egui"]
+
 [dependencies]
+bevy-inspector-egui = { version = "0.38.0", optional = true, default-features = false, features = ["bevy_render"] }
 domain = { workspace = true }
 application = { workspace = true }
 infrastructure = { workspace = true }
@@ -44,10 +49,13 @@ features = [
     "mouse",              # mouse input
     "x11",                # Linux X11 backend for winit
     "wayland",            # Linux Wayland backend for winit
+    "bevy_pbr",
+    "bevy_light",
+    "bevy_post_process",
     "bevy_picking",       # PickingPlugin, which bevy_egui's default `picking` feature expects
 ]
-# No audio (out of scope, spec §3.3), no bevy_pbr/sprite/ui/text/gltf/scene/gilrs yet: Plan 3 adds
-# what the 3D diorama needs.
+# PBR/light/post-process implement the procedural diorama; no glTF/scene assets or audio.
+# The inspector is opt-in and shares Bevy 0.20 / egui 0.36 with the normal client.
 
 [dev-dependencies]
 proptest = { workspace = true }

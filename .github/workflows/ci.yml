@@ -35,3 +35,7 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo nextest run --workspace --profile ci
+      - name: Clippy (development tools)
+        run: cargo clippy -p game --all-targets --features dev -- -D warnings
+      - name: Test (development tools)
+        run: cargo nextest run -p game --features dev --profile ci

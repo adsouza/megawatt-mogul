@@ -1069,6 +1069,7 @@ pub(super) fn map_panel(
     session: Res<Session>,
     l10n: Res<Localizer>,
     mut cache: ResMut<MapCache>,
+    mut surface: Option<ResMut<crate::world::MapSurface>>,
     mut sink: ActionSink,
 ) -> Result {
     let model = map_model(
@@ -1079,11 +1080,75 @@ pub(super) fn map_panel(
         sink.selection(),
     );
     let mut ui = area.root_ui(contexts.ctx_mut()?, "map");
-    let actions = egui::CentralPanel::default()
-        .show(&mut ui, |ui| draw_map(ui, &model, &mut cache))
-        .inner;
+    let actions = if let Some(surface) = surface.as_mut() {
+        crate::world::mark_blocked(&session, &sink, surface);
+        let toolbar = crate::world::toolbar_model(
+            &l10n,
+            sink.world().overlay,
+            sink.world().effects,
+            sink.world().hologram(),
+            session.0.session().phase() == domain::session::DayPhase::Operating,
+        );
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(&mut ui, |ui| {
+                crate::world::draw_surface(ui, &model, &toolbar, surface)
+            })
+            .inner
+    } else {
+        // Pure 2D reference adapter for HUD-only/headless consumers. The windowed game always
+        // installs WorldViewPlugin and takes the transparent diorama branch above.
+        egui::CentralPanel::default()
+            .show(&mut ui, |ui| draw_map(ui, &model, &mut cache))
+            .inner
+    };
     dispatch(actions, &mut sink);
     Ok(())
+}
+
+/// Compact, explicitly opened 3D legend. Perspective changes make a permanently clear corner impossible.
+pub(crate) fn draw_world_legend(ctx: &egui::Context, rect: Rect, model: &MapModel) -> Rect {
+    let measure = egui::Ui::new(
+        ctx.clone(),
+        egui::Id::new("world_legend_measure"),
+        egui::UiBuilder::new().max_rect(rect),
+    );
+    let layout = measure_legend(&measure, rect, model);
+    let frame = egui::Frame::popup(measure.style());
+    let margin = frame.total_margin().sum();
+    let height = (rect.height() - 2.0 * LEGEND_INSET - margin.y).max(1.0);
+    let width = (rect.width() - 2.0 * LEGEND_INSET - margin.x).max(1.0);
+    let shown = egui::Area::new(egui::Id::new("map_legend"))
+        .order(egui::Order::Middle)
+        .pivot(egui::Align2::RIGHT_TOP)
+        .fixed_pos(rect.shrink(LEGEND_INSET).right_top())
+        .show(ctx, |ui| {
+            frame.show(ui, |ui| {
+                ui.set_max_width(width);
+                egui::ScrollArea::vertical()
+                    .max_height(height)
+                    .min_scrolled_height(0.0)
+                    .show(ui, |ui| {
+                        egui::Grid::new("world_legend_entries")
+                            .spacing(LEGEND_SPACING)
+                            .show(ui, |ui| {
+                                for (i, entry) in model.legend.iter().enumerate() {
+                                    ui.horizontal(|ui| {
+                                        paint_swatch(ui, entry.swatch);
+                                        ui.small(&entry.label);
+                                    });
+                                    if (i + 1) % layout.columns == 0 {
+                                        ui.end_row();
+                                    }
+                                }
+                            });
+                    });
+            });
+        });
+    shown.response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Other, true, &model.legend_label)
+    });
+    shown.response.rect
 }
 
 #[cfg(test)]
@@ -1417,7 +1482,11 @@ mod tests {
                 checked += 1;
             }
         }
-        assert!(checked > 100, "{checked} neighbouring cells checked");
+        assert!(
+            checked >= objects.plants.len() * 4,
+            "{checked} neighbouring cells checked around {} plants",
+            objects.plants.len()
+        );
         // The corner of a plant's own cell, outside its square, is the cell too.
         let plant = &objects.plants[0];
         let corner = layout.cell_rect(plant.cell).max - vec2(0.1, 0.1);

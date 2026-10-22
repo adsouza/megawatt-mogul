@@ -25,6 +25,7 @@ fn save_resume_mid_day_restores_a_paused_runnable_game_with_all_projections() {
         let logs = TempDir::new().unwrap();
         let saves = TempDir::new().unwrap();
         let mut app = hud_app(logs.path());
+        app.add_plugins(game::world::WorldViewPlugin);
         app.insert_resource(SaveDir(saves.path().into()));
         request(&mut app, region);
         dispatch_in(&mut app, vec![UiAction::Command(Command::BeginOperating)]);
@@ -61,6 +62,7 @@ fn save_resume_mid_day_restores_a_paused_runnable_game_with_all_projections() {
         let mut uninterrupted = app.world_mut().remove_resource::<Session>().unwrap().0;
         drop(app);
         let mut app = hud_app(logs.path());
+        app.add_plugins(game::world::WorldViewPlugin);
         app.insert_resource(SaveDir(saves.path().into()));
         update_n(&mut app, 2);
         dispatch_in(
@@ -80,6 +82,24 @@ fn save_resume_mid_day_restores_a_paused_runnable_game_with_all_projections() {
             &projections
         );
         assert_eq!(*app.world().resource::<SimSpeed>(), SimSpeed::Paused);
+        assert_eq!(
+            app.world().resource::<game::world::ViewSync>().plants.len(),
+            app.world()
+                .resource::<Session>()
+                .0
+                .session()
+                .plant_views()
+                .len()
+        );
+        assert_eq!(
+            app.world()
+                .resource::<game::world::WorldScene>()
+                .model
+                .as_ref()
+                .unwrap()
+                .phase,
+            domain::session::DayPhase::Operating
+        );
         uninterrupted
             .execute(Command::AdvanceTicks { n: 1440 })
             .unwrap();
@@ -121,6 +141,7 @@ fn action(app: &mut App, action: PersistAction) {
 }
 fn operating(logs: &TempDir, saves: &TempDir) -> App {
     let mut app = hud_app(logs.path());
+    app.add_plugins(game::world::WorldViewPlugin);
     app.insert_resource(SaveDir(saves.path().into()));
     request(&mut app, "western_interconnection");
     dispatch_in(&mut app, vec![UiAction::Command(Command::BeginOperating)]);
@@ -1507,4 +1528,233 @@ fn a_failed_load_leaves_no_new_files_in_the_log_directory() {
             .any(|name| name.to_string_lossy().starts_with("resume-")),
         "a successful load records its branch"
     );
+}
+
+#[test]
+fn save_rename_browser_prefills_name_cancels_and_renames_without_loading_the_game() {
+    use crate::support::egui_pass::EguiPass;
+    use application::SaveStore;
+    let logs = TempDir::new().unwrap();
+    let saves = TempDir::new().unwrap();
+    let older = older_build_store(&saves);
+    let game = application::Game::start_new(
+        &infrastructure::region::RonRegionCatalog::new(
+            crate::support::shipped_assets().join("regions"),
+        ),
+        &domain::ids::RegionId::new("eastern_interconnection"),
+        7,
+        domain::session::GameSettings::default(),
+        Box::new(application::InMemoryCommandLog::default()),
+    )
+    .unwrap();
+    let slot = write_manual(&older, "Original name", game.checkpoint());
+    let before = older.read(&slot).unwrap().0;
+    let mut app = load_browser(&logs, &saves);
+    let pass = EguiPass::attach(&mut app);
+    for (width, height) in [(1024.0, 640.0), (1280.0, 800.0)] {
+        let widgets = pass.settled(&mut app, width, height);
+        let rename = widgets.iter().find(|w| w.text == "Rename").unwrap();
+        pass.click_at(&mut app, width, height, rename.rect.center());
+        pass.settled(&mut app, width, height);
+        assert_eq!(
+            app.world().resource::<Persistence>().screen,
+            game::sim::SaveScreen::Rename
+        );
+        assert_eq!(
+            app.world().resource::<game::hud::SaveForm>().rename_name,
+            "Original name"
+        );
+        action(&mut app, PersistAction::Cancel);
+        settle(&mut app);
+        assert_eq!(
+            app.world().resource::<Persistence>().screen,
+            game::sim::SaveScreen::Browser
+        );
+        assert_eq!(older.read(&slot).unwrap().0, before);
+    }
+    action(&mut app, PersistAction::BeginRename(slot.clone()));
+    pass.settled(&mut app, 1024.0, 640.0);
+    app.world_mut()
+        .resource_mut::<game::hud::SaveForm>()
+        .rename_name = "  Renamed game  ".into();
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    let rename = widgets.iter().find(|w| w.text == "Rename").unwrap();
+    pass.click_at(&mut app, 1024.0, 640.0, rename.rect.center());
+    settle(&mut app);
+    let mut expected = before;
+    expected.metadata.name = "Renamed game".into();
+    assert_eq!(older.read(&slot).unwrap().0, expected);
+    assert!(!app.world().contains_resource::<Session>());
+    assert_eq!(
+        app.world().resource::<Persistence>().screen,
+        game::sim::SaveScreen::Browser
+    );
+    assert_eq!(browser_model(&app).rows[0].name, "Renamed game");
+    assert!(
+        std::fs::read_dir(logs.path()).unwrap().next().is_none(),
+        "Rename must not start a replay branch"
+    );
+}
+
+#[test]
+fn save_rename_preserves_the_active_autosave_name_and_revision_at_the_next_month_close() {
+    use application::{SaveKind, SaveStore};
+    let logs = TempDir::new().unwrap();
+    let saves = TempDir::new().unwrap();
+    let mut app = operating(&logs, &saves);
+    dispatch_in(
+        &mut app,
+        vec![UiAction::Command(Command::AdvanceTicks { n: 1440 })],
+    );
+    settle(&mut app);
+    let original = app
+        .world()
+        .resource::<Persistence>()
+        .last_saved()
+        .unwrap()
+        .clone();
+    assert_eq!(original.metadata.kind, SaveKind::Automatic);
+    action(&mut app, PersistAction::OpenSave { leave: false });
+    settle(&mut app);
+    let checkpoint = app.world().resource::<Session>().0.checkpoint();
+    let summary = app.world().resource::<Persistence>().last_summary.clone();
+    action(
+        &mut app,
+        PersistAction::BeginRename(original.metadata.slot.clone()),
+    );
+    action(
+        &mut app,
+        PersistAction::Rename("My monthly checkpoint".into()),
+    );
+    settle(&mut app);
+    assert_eq!(app.world().resource::<Session>().0.checkpoint(), checkpoint);
+    assert_eq!(app.world().resource::<Persistence>().last_summary, summary);
+    assert_eq!(
+        app.world().resource::<Persistence>().screen,
+        game::sim::SaveScreen::Save
+    );
+    assert_eq!(browser_model(&app).rows[0].name, "My monthly checkpoint");
+    action(&mut app, PersistAction::Cancel);
+    for command in [
+        Command::FinishReview,
+        Command::BeginOperating,
+        Command::AdvanceTicks { n: 1440 },
+    ] {
+        dispatch_in(&mut app, vec![UiAction::Command(command)]);
+        settle(&mut app);
+    }
+    let p = app.world().resource::<Persistence>();
+    assert!(p.error.is_none(), "{:?}", p.error);
+    let next = p.last_saved().unwrap();
+    assert_eq!(next.metadata.slot, original.metadata.slot);
+    assert_eq!(next.metadata.name, "My monthly checkpoint");
+    let store = infrastructure::save::FileSaveStore::new(saves.path().into());
+    assert_eq!(store.list().unwrap().len(), 1);
+    assert_eq!(
+        store.read(&next.metadata.slot).unwrap().0.checkpoint,
+        app.world().resource::<Session>().0.checkpoint()
+    );
+}
+
+#[test]
+fn save_rename_retry_recovers_pre_and_post_publication_errors_without_saving_the_current_game() {
+    use application::SaveStore;
+    use infrastructure::save::{FileSaveStore, PublishStage};
+    for stage in [PublishStage::Publish, PublishStage::SyncDirectory] {
+        let logs = TempDir::new().unwrap();
+        let saves = TempDir::new().unwrap();
+        let (fail, persistence) = faulty_store_at(&saves, stage, Injected::Error);
+        let mut app = hud_app(logs.path());
+        app.insert_resource(persistence);
+        request(&mut app, "western_interconnection");
+        action(&mut app, PersistAction::OpenSave { leave: false });
+        settle(&mut app);
+        action(&mut app, PersistAction::SaveNew("Before".into()));
+        settle(&mut app);
+        let original = app
+            .world()
+            .resource::<Persistence>()
+            .last_saved()
+            .unwrap()
+            .clone();
+        let checkpoint = app.world().resource::<Session>().0.checkpoint();
+        let summary = app.world().resource::<Persistence>().last_summary.clone();
+        action(&mut app, PersistAction::OpenSave { leave: false });
+        settle(&mut app);
+        action(
+            &mut app,
+            PersistAction::BeginRename(original.metadata.slot.clone()),
+        );
+        set(&fail, true);
+        action(&mut app, PersistAction::Rename("After".into()));
+        settle(&mut app);
+        assert!(app.world().resource::<Persistence>().error.is_some());
+        assert_eq!(
+            app.world().resource::<Persistence>().screen,
+            game::sim::SaveScreen::Rename
+        );
+        assert_eq!(
+            app.world().resource::<Persistence>().last_saved(),
+            Some(&original)
+        );
+        let store = FileSaveStore::new(saves.path().into());
+        assert_eq!(
+            store.read(&original.metadata.slot).unwrap().0.metadata.name,
+            if stage == PublishStage::Publish {
+                "Before"
+            } else {
+                "After"
+            }
+        );
+        set(&fail, false);
+        action(&mut app, PersistAction::Retry);
+        settle(&mut app);
+        assert!(app.world().resource::<Persistence>().error.is_none());
+        assert_eq!(
+            app.world().resource::<Persistence>().screen,
+            game::sim::SaveScreen::Save
+        );
+        assert_eq!(
+            store.read(&original.metadata.slot).unwrap().0.metadata.name,
+            "After"
+        );
+        assert_eq!(app.world().resource::<Session>().0.checkpoint(), checkpoint);
+        assert_eq!(app.world().resource::<Persistence>().last_summary, summary);
+    }
+}
+
+#[test]
+fn save_rename_conflict_keeps_the_other_windows_change_and_cancel_refreshes_the_list() {
+    use application::SaveStore;
+    let logs = TempDir::new().unwrap();
+    let saves = TempDir::new().unwrap();
+    let store = older_build_store(&saves);
+    let source_logs = TempDir::new().unwrap();
+    let mut source = hud_app(source_logs.path());
+    request(&mut source, "eastern_interconnection");
+    let slot = write_manual(
+        &store,
+        "Original",
+        source.world().resource::<Session>().0.checkpoint(),
+    );
+    let mut app = load_browser(&logs, &saves);
+    let revision = app.world().resource::<Persistence>().entries[0]
+        .entry
+        .as_ref()
+        .unwrap()
+        .revision;
+    store
+        .rename(&slot, revision, "Other window", &|| false)
+        .unwrap();
+    action(&mut app, PersistAction::BeginRename(slot.clone()));
+    action(&mut app, PersistAction::Rename("Stale edit".into()));
+    settle(&mut app);
+    assert_eq!(
+        app.world().resource::<Persistence>().error,
+        Some(application::SaveError::SlotChanged)
+    );
+    assert_eq!(store.read(&slot).unwrap().0.metadata.name, "Other window");
+    action(&mut app, PersistAction::Cancel);
+    settle(&mut app);
+    assert_eq!(browser_model(&app).rows[0].name, "Other window");
 }

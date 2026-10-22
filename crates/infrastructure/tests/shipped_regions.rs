@@ -520,3 +520,219 @@ fn shipped_regions_never_order_outages_hands_off() {
         outages.join("\n")
     );
 }
+
+/// Gameplay pacing is a contract: basic builds finish within a few played days,
+/// while nuclear and hydro remain longer-term investments, within two played years.
+#[test]
+fn shipped_projects_fit_tycoon_pacing() {
+    for id in [EAST, WEST] {
+        let region = region(id);
+        for (kind, longest) in [
+            (PlantKind::Peaker, 3),
+            (PlantKind::Solar, 3),
+            (PlantKind::Ccgt, 6),
+            (PlantKind::Coal, 12),
+            (PlantKind::Hydro, 18),
+            (PlantKind::Nuclear, 24),
+        ] {
+            assert!(
+                region.spec(kind).build_months <= longest,
+                "{id}: {kind:?} takes {} played months",
+                region.spec(kind).build_months
+            );
+        }
+    }
+}
+
+fn assert_first_expansion(id: &str, seed: u64) {
+    use domain::{grid::LineStatus, units::Money};
+    use std::collections::BTreeSet;
+    let mut game = new_game(&catalog(), id, seed);
+    let region = Arc::clone(game.session().region());
+    let starting_cash = game.session().company().cash();
+    let city_key = if id == EAST {
+        "city-cleveland"
+    } else {
+        "city-vancouver"
+    };
+    let target = game
+        .session()
+        .city_views()
+        .into_iter()
+        .find(|city| city.name_key == city_key)
+        .unwrap();
+    assert!(!target.connected);
+    let future_base: f64 = region
+        .cities()
+        .iter()
+        .filter(|city| region.start().connected_cities.contains(&city.id) || city.id == target.id)
+        .map(|city| city.base_load.value())
+        .sum();
+    let firm: f64 = region
+        .start()
+        .fleet
+        .iter()
+        .map(|plant| {
+            let spec = region.spec(plant.kind);
+            spec.capacity_credit.of(spec.capacity).value()
+        })
+        .sum();
+    let gas = region.spec(PlantKind::Ccgt);
+    // Cover the entire year's peak plus 10% operating headroom, using the same capacity
+    // credits as the starting-fleet acceptance check. This includes existing spare capacity.
+    let count = ((future_base * max_shape_factor(&region) * 1.10 - firm)
+        / gas.capacity_credit.of(gas.capacity).value())
+    .ceil()
+    .max(1.0) as usize;
+    assert!(
+        count <= 3,
+        "{id}: first expansion needs {count} new gas plants"
+    );
+    let anchor = game.session().anchor_node();
+    let home = region
+        .cities()
+        .iter()
+        .find(|city| city.id == region.start().home_city)
+        .unwrap()
+        .cell;
+    let occupied: BTreeSet<_> = game
+        .session()
+        .plant_views()
+        .iter()
+        .map(|plant| plant.cell)
+        .chain(game.session().city_views().iter().map(|city| city.cell))
+        .collect();
+    let mut sites: Vec<_> = (0..region.terrain().height())
+        .flat_map(|y| (0..region.terrain().width()).map(move |x| domain::ids::CellCoord { x, y }))
+        .filter(|cell| {
+            !occupied.contains(cell) && region.site_check(PlantKind::Ccgt, *cell).is_ok()
+        })
+        .collect();
+    sites.sort_by_key(|cell| {
+        (
+            i32::from(cell.x).abs_diff(i32::from(home.x)).pow(2)
+                + i32::from(cell.y).abs_diff(i32::from(home.y)).pow(2),
+            *cell,
+        )
+    });
+    let mut lines = Vec::new();
+    let mut total = Money::ZERO;
+    for cell in sites.into_iter().take(count) {
+        let events = game
+            .execute(Command::BuildPlant {
+                kind: PlantKind::Ccgt,
+                cell,
+            })
+            .unwrap();
+        let plant = events
+            .iter()
+            .find_map(|event| match event {
+                DomainEvent::PlantConstructionStarted { plant, .. } => Some(*plant),
+                _ => None,
+            })
+            .unwrap();
+        let node = game
+            .session()
+            .plant_views()
+            .iter()
+            .find(|view| view.id == plant)
+            .unwrap()
+            .node;
+        let quote = game.session().line_quote(anchor, node).unwrap();
+        total += gas.capital_cost + quote.capital;
+        lines.push((anchor, node, quote));
+    }
+    let (from, quote) = game
+        .session()
+        .city_views()
+        .into_iter()
+        .filter(|city| city.connected)
+        .map(|city| {
+            (
+                city.node,
+                game.session().line_quote(city.node, target.node).unwrap(),
+            )
+        })
+        .min_by_key(|(node, quote)| (quote.cells, *node))
+        .unwrap();
+    total += quote.capital;
+    lines.push((from, target.node, quote));
+    assert!(
+        total.cents() <= starting_cash.cents() / 2,
+        "{id}: expansion costs {total:?} against {starting_cash:?}"
+    );
+    let ready = lines
+        .iter()
+        .map(|(_, _, quote)| quote.months)
+        .max()
+        .unwrap()
+        .max(gas.build_months);
+    assert!(
+        ready <= 12,
+        "{id}: first expansion waits {ready} played months"
+    );
+    for month in 0..12 {
+        for (from, to, quote) in &lines {
+            if month + quote.months == ready {
+                game.execute(Command::BuildLine {
+                    from: *from,
+                    to: *to,
+                })
+                .unwrap();
+            }
+        }
+        auto_follow_all(&mut game);
+        assert_eq!(
+            game.session().capacity_shortfall_check(),
+            None,
+            "{id} seed {seed} month {month}"
+        );
+        let played = play_month(&mut game);
+        assert_eq!(
+            game.session().status(),
+            SessionStatus::Active,
+            "{id} seed {seed} month {month}: {:?}",
+            played.report
+        );
+        assert!(
+            played.report.reliability.value() >= 0.999,
+            "{id} seed {seed} month {month}: reliability {:?}",
+            played.report.reliability
+        );
+        assert!(
+            game.session().company().cash().cents() >= starting_cash.cents() / 3,
+            "{id}: cash buffer exhausted at month {month}"
+        );
+        let connected = game
+            .session()
+            .city_views()
+            .iter()
+            .find(|city| city.id == target.id)
+            .unwrap()
+            .connected;
+        assert_eq!(
+            connected,
+            month + 1 >= ready,
+            "city must connect when its generation is ready"
+        );
+        if month + 1 >= ready {
+            assert!(
+                game.session()
+                    .line_views()
+                    .iter()
+                    .all(|line| !matches!(line.status, LineStatus::UnderConstruction { .. }))
+            );
+        }
+        game.execute(Command::FinishReview).unwrap();
+    }
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config { cases: 4, failure_persistence: None, ..Default::default() })]
+    #[test]
+    fn shipped_first_city_expansion_is_affordable_and_reliable(seed in proptest::prelude::any::<u64>()) {
+        for id in [EAST, WEST] {
+            assert_first_expansion(id, seed);
+        }
+    }
+}

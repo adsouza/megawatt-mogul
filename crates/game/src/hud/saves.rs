@@ -11,6 +11,8 @@ use bevy_egui::{EguiContexts, egui};
 #[derive(Resource, Default)]
 pub struct SaveForm {
     pub name: String,
+    pub rename_name: String,
+    rename_slot: Option<application::SaveId>,
 }
 pub(super) fn reset_form(mut form: ResMut<SaveForm>) {
     *form = SaveForm::default();
@@ -31,6 +33,7 @@ pub struct SaveRowModel {
     pub details: String,
     pub problem: Option<String>,
     pub action: Option<ButtonModel>,
+    pub rename: Option<ButtonModel>,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct SavesModel {
@@ -39,14 +42,25 @@ pub struct SavesModel {
     pub busy: bool,
     pub error: Option<String>,
     pub name_label: Option<String>,
+    pub renaming: bool,
     pub rows: Vec<SaveRowModel>,
     pub buttons: Vec<ButtonModel>,
 }
 
+fn display_name(metadata: &application::SaveMetadata, l10n: &Localizer) -> String {
+    if metadata.kind == SaveKind::Automatic && metadata.name == "save-autosave" {
+        l10n.text("save-autosave")
+    } else {
+        metadata.name.clone()
+    }
+}
+
 pub fn saves_model(p: &Persistence, form: &SaveForm, l10n: &Localizer) -> SavesModel {
     let saving = p.screen == SaveScreen::Save;
+    let renaming = p.screen == SaveScreen::Rename;
     let title = match p.screen {
         SaveScreen::Browser => "save-load",
+        SaveScreen::Rename => "save-rename-title",
         SaveScreen::Leave => "save-leave-title",
         SaveScreen::ConfirmOverwrite => "save-overwrite-title",
         SaveScreen::Automatic => "save-autosave",
@@ -76,7 +90,16 @@ pub fn saves_model(p: &Persistence, form: &SaveForm, l10n: &Localizer) -> SavesM
             ],
         );
     }
-    if let Some(summary) = p.checkpoint_summary() {
+    if renaming
+        && !p.busy()
+        && let Some(entry) = p.rename_entry()
+    {
+        body = l10n.args(
+            "save-rename-body",
+            &[("name", display_name(&entry.metadata, l10n).into())],
+        );
+    }
+    if let Some(summary) = p.checkpoint_summary().filter(|_| !renaming) {
         body.push('\n');
         body.push_str(&l10n.args(
             "save-boundary",
@@ -93,11 +116,7 @@ pub fn saves_model(p: &Persistence, form: &SaveForm, l10n: &Localizer) -> SavesM
             .map(|listing| match &listing.entry {
                 Ok(entry) => {
                     let automatic = entry.metadata.kind == SaveKind::Automatic;
-                    let name = if automatic {
-                        l10n.text("save-autosave")
-                    } else {
-                        entry.metadata.name.clone()
-                    };
+                    let name = display_name(&entry.metadata, l10n);
                     let details = l10n.args(
                         "save-details",
                         &[
@@ -161,6 +180,15 @@ pub fn saves_model(p: &Persistence, form: &SaveForm, l10n: &Localizer) -> SavesM
                         details,
                         problem: None,
                         action,
+                        rename: Some(
+                            ButtonModel::new(
+                                l10n.text("save-rename"),
+                                UiAction::Persistence(PersistAction::BeginRename(
+                                    entry.metadata.slot.clone(),
+                                )),
+                            )
+                            .enabled_if(!p.busy()),
+                        ),
                     }
                 }
                 Err(error) => SaveRowModel {
@@ -168,6 +196,7 @@ pub fn saves_model(p: &Persistence, form: &SaveForm, l10n: &Localizer) -> SavesM
                     details: String::new(),
                     problem: Some(save_error(error, l10n)),
                     action: None,
+                    rename: None,
                 },
             })
             .collect()
@@ -200,6 +229,13 @@ pub fn saves_model(p: &Persistence, form: &SaveForm, l10n: &Localizer) -> SavesM
                     );
                     buttons.push(action("save-refresh", PersistAction::Refresh));
                 }
+                SaveScreen::Rename => buttons.push(
+                    action(
+                        "save-rename",
+                        PersistAction::Rename(form.rename_name.clone()),
+                    )
+                    .enabled_if(!form.rename_name.trim().is_empty()),
+                ),
                 SaveScreen::Browser => buttons.push(action("save-refresh", PersistAction::Refresh)),
                 SaveScreen::Leave => {
                     buttons.push(action(
@@ -219,14 +255,16 @@ pub fn saves_model(p: &Persistence, form: &SaveForm, l10n: &Localizer) -> SavesM
         }
     }
     if p.screen != SaveScreen::Automatic {
-        buttons.push(action("save-cancel", PersistAction::Cancel));
+        buttons
+            .push(action("save-cancel", PersistAction::Cancel).enabled_if(!renaming || !p.busy()));
     }
     SavesModel {
         title: l10n.text(title),
         body,
         busy: p.busy(),
         error: p.error.as_ref().map(|e| save_error(e, l10n)),
-        name_label: saving.then(|| l10n.text("save-name")),
+        name_label: (saving || renaming).then(|| l10n.text("save-name")),
+        renaming,
         rows,
         buttons,
     }
@@ -280,9 +318,18 @@ pub fn draw_saves(ui: &mut egui::Ui, model: &SavesModel, form: &mut SaveForm) ->
         add_enabled(
             ui,
             !model.busy,
-            egui::TextEdit::singleline(&mut form.name)
-                .char_limit(80)
-                .desired_width(f32::INFINITY),
+            egui::TextEdit::singleline(if model.renaming {
+                &mut form.rename_name
+            } else {
+                &mut form.name
+            })
+            .id_salt(if model.renaming {
+                "rename_name"
+            } else {
+                "save_name"
+            })
+            .char_limit(80)
+            .desired_width(f32::INFINITY),
         );
     }
     let height = (ui.ctx().content_rect().height() * 0.35).clamp(80.0, 260.0);
@@ -297,9 +344,11 @@ pub fn draw_saves(ui: &mut egui::Ui, model: &SavesModel, form: &mut SaveForm) ->
                 if let Some(problem) = &row.problem {
                     ui.colored_label(ui.visuals().error_fg_color, problem);
                 }
-                if let Some(action) = &row.action {
-                    button(ui, action, &mut actions);
-                }
+                ui.horizontal_wrapped(|ui| {
+                    for action in row.action.iter().chain(row.rename.iter()) {
+                        button(ui, action, &mut actions);
+                    }
+                });
             }
         });
     ui.separator();
@@ -320,6 +369,14 @@ pub(super) fn saves_overlay(
 ) -> Result {
     if !shown.0 {
         return Ok(());
+    }
+    if let Some(entry) = sink.persistence().rename_entry() {
+        if form.rename_slot.as_ref() != Some(&entry.metadata.slot) {
+            form.rename_name = display_name(&entry.metadata, &l10n);
+            form.rename_slot = Some(entry.metadata.slot.clone());
+        }
+    } else {
+        form.rename_slot = None;
     }
     let model = saves_model(sink.persistence(), &form, &l10n);
     let actions = egui::Modal::new(egui::Id::new("saves"))

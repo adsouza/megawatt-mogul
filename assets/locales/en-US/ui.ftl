@@ -315,3 +315,28 @@ region-select-map-note = Hover to explore · Click a coloured region to begin
 region-select-home = Start in { $city } · { $cities } cities to serve
 region-select-east-description = Dense cities, big demand, and a legacy coal and nuclear fleet. Keep the industrial heartland humming.
 region-select-west-description = Mountain crossings, desert sunshine, and Pacific Northwest hydro. Master the evening demand surge.
+
+# Tabletop diorama
+world-reset = Reset view (R)
+world-overlay-hide = Hide overlay (O)
+world-overlay-show = Show overlay (O)
+world-effects-off = Effects off
+world-effects-on = Effects on
+world-help = Drag to orbit · Right/middle drag to pan · Scroll to zoom · R resets · O toggles overlay. Keyboard shortcuts work while pointing at the map.
+world-copper-plate = Pillars: output / capacity · Shared city supply · Lines: energisation only
+world-dev-title = Diorama inspector
+world-dev-boundary = Visual tuning only. Simulation tuning lives in region data and applies to new games.
+world-dev-entities = Render entities
+
+world-help-label = Controls
+world-control-room = Control room
+
+world-layer-label = Map layer
+
+# Saved-game names
+save-rename = Rename
+save-rename-title = Rename saved game
+save-rename-body = Rename “{ $name }”. Saved progress and the save date stay the same.
+
+# Construction is paid in monthly instalments, not upfront.
+build-monthly-payment = Per month (approx.)

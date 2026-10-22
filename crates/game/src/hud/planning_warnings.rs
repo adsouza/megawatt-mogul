@@ -395,10 +395,14 @@ mod tests {
     #[test]
     fn only_a_hydro_plant_with_no_water_for_the_day_is_dry() {
         let l10n = shipped_l10n();
-        let game = shipped_game(
-            "western_interconnection",
-            Box::new(InMemoryCommandLog::default()),
-        );
+        // This presenter case needs three distinct water budgets, independently of
+        // how many hydro units the current starting fleet contains.
+        let game = crate::hud::test_support::edited_western_game(|text| {
+            text.replace(
+            "fleet: [",
+            "fleet: [\n            (Hydro, -119.63, 47.99),\n            (Hydro, -120.69, 45.72),",
+        )
+        });
         let names = Names::new(&l10n, game.session());
         let mut views = game.session().plant_views();
         let hydro: Vec<usize> = (0..views.len())

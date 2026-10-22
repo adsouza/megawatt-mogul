@@ -74,8 +74,8 @@ mod tests {
             costs.windows(2).all(|pair| pair[0] <= pair[1]),
             "merit order: {costs:?}"
         );
-        // The shipped eastern fleet: 2 nuclear, 4 coal, 9 combined cycle, 9 peakers. No solar,
-        // which nobody commits, and no hydro.
+        // All four starting kinds appear in merit order, with exactly the counts
+        // specified by the region, independent of the presenter grouping.
         let counts: Vec<(PlantKind, usize)> = groups
             .iter()
             .map(|group| (group.kind, group.plants.len()))
@@ -83,11 +83,20 @@ mod tests {
         assert_eq!(
             counts,
             [
-                (PlantKind::Nuclear, 2),
-                (PlantKind::Coal, 4),
-                (PlantKind::Ccgt, 9),
-                (PlantKind::Peaker, 9),
+                PlantKind::Nuclear,
+                PlantKind::Coal,
+                PlantKind::Ccgt,
+                PlantKind::Peaker,
             ]
+            .map(|kind| (
+                kind,
+                region
+                    .start()
+                    .fleet
+                    .iter()
+                    .filter(|plant| plant.kind == kind)
+                    .count()
+            ))
         );
         for group in &groups {
             let ids: Vec<u32> = group.plants.iter().map(|plant| plant.id.0).collect();

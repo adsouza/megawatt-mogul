@@ -5,7 +5,8 @@ use domain::{ids::CellCoord, region::TerrainGrid};
 
 const LAND_LIFT: f32 = 0.12;
 const RELIEF: f32 = 2.0;
-const BASE: f32 = -0.25;
+pub(super) const BASE: f32 = -0.25;
+pub(super) const MAX_HEIGHT: f32 = LAND_LIFT + RELIEF;
 const MAX_CELLS: usize = 1_000_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -7,7 +7,8 @@
   warning and frequency-performance strikes (§14, 2026-10-18); A4, rotating outages and staged
   under-frequency shedding (§15, 2026-10-19); A5, the inherited schedule, the shortfall
   confirmation, window and panel sizing, the city card and
-  construction progress (§16, 2026-10-20); A6, save/resume before Plan 3 (§17, 2026-10-20)
+  construction progress (§16, 2026-10-20); A6, save/resume before Plan 3 (§17, 2026-10-20);
+  A7, faster expansion pacing (§18, 2026-10-22)
 - **Engine:** Rust 1.98, Bevy 0.20, bevy_egui 0.43, bevy-inspector-egui 0.38
 
 ## 1. Vision and goals
@@ -68,8 +69,8 @@ stands for.
   construction, company and regulator state still advances by calendar month.
 - **Seasons change visibly every few played days.** Months drive the demand shape, solar
   irradiance and hydro water budgets, so seasonal swings become central to play.
-- **Build times are counted in months** (= played days, §3.2), so they read naturally and keep
-  their real-world proportions. Building nuclear is a long-term bet.
+- **Build times are counted in months** (= played days, §3.2). They are compressed for tycoon
+  pacing (§18), while nuclear and hydro remain longer-term bets than gas or solar.
 - One game year takes about 72 minutes of operating at 1×.
 
 ### 2.4 Service territory and growth
@@ -203,16 +204,16 @@ preview remain selectable through their cards; broken entries retain their disab
 - Player-facing manual saves, month-close autosaves and resume, implemented before Plan 3 (§17).
 - Localisation scaffolding with en-US only.
 
-### 3.2 Plant types (initial tuning values, stored as region data and not in code)
+### 3.2 Plant types (shipped-region tuning, stored as region data and not in code)
 
 | Type | Unit size | Min stable | Ramp | Start-up | Start-up cost | Marginal cost | Capital cost | Build (months) | Lesson |
 |---|---|---|---|---|---|---|---|---|---|
-| Nuclear | 1,100 MW | 70% | 5 MW/min | 48 h | $1.0M | $10/MWh | $6.0B | 84 | Commitment is a promise |
-| Coal | 600 MW | 40% | 6 MW/min | 8 h | $150k | $30/MWh | $2.0B | 48 | Cheap baseload, start-up costs |
-| Combined-cycle gas (CCGT) | 500 MW | 40% (30% in the shipped regions, §14.5) | 25 MW/min | 2 h | $40k | $45/MWh | $0.6B | 30 | The flexible middle |
-| Gas peaker | 200 MW | 20% | 40 MW/min | 10 min | $5k | $150/MWh | $0.2B | 12 | Pay dearly for agility |
-| Solar | 300 MW | 0% | n/a (weather) | n/a | n/a | $0/MWh | $0.4B | 12 | The duck curve |
-| Hydro | 800 MW | 0% | 100 MW/min | 5 min | $1k | $0/MWh | $3.0B | 72 | Energy-limited dispatch |
+| Nuclear | 1,100 MW | 70% | 5 MW/min | 48 h | $1.0M | $10/MWh | $2.4B | 18 | Commitment is a promise |
+| Coal | 600 MW | 40% | 6 MW/min | 8 h | $150k | $30/MWh | $0.7B | 8 | Cheap baseload, start-up costs |
+| Combined-cycle gas (CCGT) | 500 MW | 30% (40% in the test fixture) | 25 MW/min | 2 h | $40k | $45/MWh | $0.3B | 4 | The flexible middle |
+| Gas peaker | 200 MW | 20% | 40 MW/min | 10 min | $5k | $150/MWh | $0.1B | 2 | Pay dearly for agility |
+| Solar | 300 MW | 0% | n/a (weather) | n/a | n/a | $0/MWh | $0.15B | 2 | The duck curve |
+| Hydro | 800 MW | 0% | 100 MW/min | 5 min | $1k | $0/MWh | $1.2B | 12 | Energy-limited dispatch |
 
 - **Hydro** has a **daily water budget** (MWh per day, varying by month and site). Output stops when
   the budget runs out, and unused water does not carry over to the next month in milestone 1. Under
@@ -606,26 +607,37 @@ The presentation layer never reads aggregate internals.
 |---|---|
 | `AppStatePlugin` | `AppState { Boot, MainMenu, RegionSelect, InGame }`. The `DayPhase` sub-state inside `InGame` **mirrors** the domain one way (domain → Bevy). |
 | `SimulationPlugin` | The `Session` resource; applies `PlayerCommand` messages through the pipeline; `FixedUpdate` runs `AdvanceTicks { n: speed }`; re-emits domain events as Bevy messages; holds the projections. |
-| `WorldViewPlugin` | The terrain mesh, generated from cells (low-poly, vertex-coloured, with height); procedural low-poly plant models; city block clusters sized by demand; `ViewSync` keeps a `PlantId/CityId/LineId → Entity` mapping driven by events. |
+| `WorldViewPlugin` | The terrain mesh, generated from cells (low-poly, vertex-coloured, with height); procedural low-poly plant models; city block clusters sized by demand; `ViewSync` keeps a `PlantId/CityId/LineId → Entity` mapping reconciled from query snapshots after commands and session loads. |
 | `OverlayPlugin` | `OnEnter(Planning)` turns on the terrain/resource overlay; `OnEnter(Operating)` turns on the control-room overlay; a hotkey hides the overlay. |
 | `CameraPlugin` | Orbit, pan and zoom, plus a tilt-shift depth-of-field effect. |
 | `HudPlugin` | The egui panels (§8.4). They read only query views and projections, and they write only by sending `PlayerCommand`s. |
 | `LocalizationPlugin` | Fluent bundles; translates typed events, errors and lessons into display text. |
-| `DevToolsPlugin` (`dev` feature) | The bevy-inspector-egui world inspector, plus a reflected `TuningConfig` resource for live balancing. |
+| `DevToolsPlugin` (`dev` feature) | A bevy-inspector-egui inspector filtered to render entities, plus reflected visual `TuningConfig` scales/colours. Simulation tuning remains region data for a new session. |
 
 ### 8.2 Art direction
 
 - **Base view:** a warm, toy-like tabletop diorama (low-poly, soft shadows, tilt-shift).
 - **Planning overlay:** a grounded terrain and resource view (irradiance, cooling water, hydro
   sites, siting suitability).
-- **Operating overlay:** a dark control-room hologram (glowing plant output pillars, city lights
-  showing supply status, energised lines).
+- **Operating overlay:** supply indicators over the warm, lit diorama: glowing plant output
+  pillars, city lights showing supply status and energised lines. Retain terrain colours, building
+  face shading and cast shadows; the overlay must not blacken the map or flatten the buildings.
+- Click selects; left drag orbits, right/middle drag pans and scroll zooms. Reset view/R fits the
+  region. O hides/restores the overlay; map shortcuts operate while pointing at the map without
+  taking keyboard focus from text entry. HUD panels, legends and modals capture their own input.
+- Each phase restores its default overlay. Choosing a resource layer in Operating shows resource
+  colours; Control room restores its hologram. Pillar height represents output/capacity. Effects off
+  disables bloom/DOF; unsupported depth-texture platforms skip DOF. HUD and backed labels remain
+  outside post-processing. The perspective legend starts collapsed and can be opened explicitly;
+  it scrolls within narrow maps. Narrow map areas use a compact resource-layer dropdown, leaving
+  room for the terrain at increased UI zoom.
 
 ### 8.3 Honesty under copper plate
 
 The operating overlay shows **plant output** and **city supply status** (lit, or flickering when load
-is shed). Lines show only an "energised" pulse. It shows no per-line loading until a power-flow
-`NetworkModel` exists.
+is shed). Every connected city's lights show the same served fraction, dimming/flickering together;
+there is no invented geographic rotation. Lines show only an "energised" pulse. It shows no
+per-line loading until a power-flow `NetworkModel` exists.
 
 ### 8.4 HUD by phase
 
@@ -1082,12 +1094,12 @@ The builder's calls below keep protection from tripping the grid into a deficit:
     rules, as in A1 §12.5.
   - Test scripts that deliberately exercise failure paths, such as the overbuild scenario, may still
     end in game over.
-  - *(Builder's call: the check passes on both regions, but the East's margin is thin. 6 of 8 seeds
+  - *(Historical tuning before A7 (§18): the check passed on both regions, but the East's margin was thin. 6 of 8 seeds
     draw a frequency notice in a shoulder month, and none has more than one strike outstanding,
     because the April and October committed minimum sits about 50 MW above the 02:30 net load.)*
   - *(Builder's call: the CCGT minimum stable level is 30% in both shipped catalogs, the turndown of
     a modern plant, which supersedes §3.2's 40%. The test fixture keeps 40%.)*
-  - *(Builder's call: the Eastern start fleet retires four coal plants that closed by 2022 and adds
+  - *(Historical tuning before A7 (§18): the Eastern start fleet retired four coal plants that closed by 2022 and adds
     four CCGTs built since 2020 in the same footprint, leaving four coal and nine CCGT units.)*
   - *(Builder's call: the overbuild scenario is split in two.*
     - *`overbuild_overcommitment_loses_licence` commits the four new CCGTs. The licence is revoked
@@ -1179,7 +1191,8 @@ whole grid.
   - demand response, imports, or prices that ration load;
   - an operating-reserve requirement or a "reserve margin" knob for outages;
   - choosing which city goes dark: the domain sheds proportionally across connected cities, as
-    UFLS does, and showing the rotation is a presentation concern (Plan 3).
+    UFLS does. The presentation shows that shared fraction; it does not assign outages to specific
+    cities or invent a geographic rotation.
 - **Anti-goals:**
   - outages that cut more than the hour's worst forecast minute requires;
   - staged shedding that over-sheds a step deficit by more than three shed steps;
@@ -1644,6 +1657,14 @@ separate autosave at each month close, as selected by the user.
   modification time only for list ordering. Failure to read the directory is a separate, retryable
   error; a nonexistent directory is an empty list. Loading is offered from the menu, not as an
   in-game session replacement in this release.
+- **Rename** is available beside each readable manual save or autosave in both save lists. Its
+  dialog starts with the existing display name and uses the same name validation as saving.
+  Confirming changes only the name: slot/run IDs, kind, saved-at time, build/platform stamp,
+  embedded region and all saved progress stay intact. It does not load or replay the save, save
+  the current game, or change its last-saved boundary. Cancel returns to the list. Publish through
+  the same atomic replacement, OS lock and revision check as a save; conflicts never overwrite
+  another writer's change. Errors remain visible with Retry, including unconfirmed directory
+  durability. A renamed active run's autosave retains its chosen name at later month closes.
 - **Resume** restores the exact accepted-command boundary: all simulation state, including RNG
   progression, construction, plant overrides and hydro water remaining, plus every projection.
   An Operating save at 14:37 returns to Operating at 14:37. A Review save returns to that Review;
@@ -1864,3 +1885,58 @@ boundary; distinguish "recording stopped" from "save failed".
   exclusion, codec round trips and corruption rejection. All UI fits at 1024×640 and meets 4.5:1
   text contrast. Run workspace tests, clippy, format checks and the native launch/playtest checks
   in the Plan 2b implementation plan before declaring it complete.
+
+
+## 18. Amendment A7: Faster expansion pacing (2026-10-22)
+
+Playtesting found that whole-city demand jumps, 12–84 played months of construction and large
+capital commitments delayed the first expansion too long. The selected direction is faster tycoon
+pacing with smaller expansion steps and shorter build times. This supersedes the earlier shipped
+capital/build tuning and starting-fleet counts; simulation physics and accounting rules are unchanged.
+
+### 18.1 Demand and starting fleets
+
+Every shipped city's base demand is halved. City identities, positions, relative sizes, load shapes,
+weather, the three starting cities and the home-city anchors stay the same. Connections still serve
+the whole city; no districts, service tiers, imports or borrowing are introduced.
+
+Reduce the starting fleet alongside demand so the existing territory stays balanced rather than
+inheriting excessive spare supply. Sites are a compact selection of the existing legacy locations:
+
+| Region | Starting fleet | Nameplate | Starting base demand | Starting cash |
+|---|---|---:|---:|---:|
+| East | 1 nuclear, 1 coal, 5 CCGT, 7 peakers | 5,600 MW | 3,400 MW | $5B |
+| West | 1 hydro, 2 CCGT, 4 peakers | 2,600 MW | 1,400 MW | $3B |
+
+The inherited daily plan remains the default. Both regions must still pass the existing no-command
+and hands-off year-one acceptance runs on seeds 0–7, including no planned rotating outages.
+
+### 18.2 Construction and affordability
+
+The authoritative shipped costs and lead times are in §3.2: peakers and solar take 2 played months,
+CCGT 4, coal 8, hydro 12 and nuclear 18. Capital costs are tuned with these durations; shortening a
+build alone would increase its monthly instalment. Unit capacities, operating costs, start-up times,
+ramping, capacity credits and book lives are unchanged.
+
+Transmission costs $20M per whole grid cell and builds at 4 cells per played month, with a minimum
+of one month. All construction remains paid in equal monthly instalments, with any rounding cents
+in the last payment. Plant and line build quotes show total capital, approximate monthly payment
+and build duration so the player can distinguish project cost from immediate cash requirements.
+
+### 18.3 Acceptance and compatibility
+
+For both regions, test an early expansion to a nearby city (Cleveland in the East, Vancouver in the
+West), including the new generation's connections and the city line. Count the existing fleet's
+spare capacity against the expanded territory's highest forecast demand over all seasons, with
+10% operating headroom using capacity credits. It must require no more than three new CCGTs,
+finish within 12 played months and commit at most half the starting cash in total project capital.
+Schedule the lines to finish with the new generation, then commit the commissioned plants under
+AGC. Across a full year, including the new city's seasonal peak, reliability must stay at least
+99.9%, cash must stay above one third of the starting amount and the game must remain Active.
+Exercise this with property-generated simulation seeds, in addition to the existing start checks.
+
+This is region-data tuning, not a new simulation rule or save schema. Keep `SIM_RULES_VERSION` and
+the save/log formats unchanged. New games load the new region fingerprint. Existing saves and
+archived command logs keep their original region definitions, costs, city loads, fleets and build
+times; they replay as before. Applying this balance to an existing run would require an explicit
+migration, which is outside this amendment. Start a new game to use the faster pacing.

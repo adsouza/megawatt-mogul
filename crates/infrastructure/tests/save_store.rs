@@ -201,6 +201,15 @@ fn save_store_os_lock_and_revision_allow_only_one_writer_of_a_confirmed_slot() {
     });
     entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
     let result = store.write(&b, &SaveTarget::Replace(receipt.revision), &|| false);
+    assert!(matches!(
+        store.rename(
+            &b.metadata.slot,
+            receipt.revision,
+            "Rename while writing",
+            &|| false
+        ),
+        Err(SaveError::SlotBusy)
+    ));
     release_tx.send(()).unwrap();
     assert!(matches!(result, Err(SaveError::SlotBusy)));
     worker.join().unwrap().unwrap();
@@ -532,4 +541,137 @@ fn a_sync_failure_on_the_root_is_still_durability_unconfirmed() {
     store
         .write(&b, &SaveTarget::ConfirmDurability(revision), &|| false)
         .unwrap();
+}
+
+#[test]
+fn save_store_rename_preserves_the_game_stamp_date_and_slot_and_rejects_stale_writers() {
+    let dir = TempDir::new().unwrap();
+    let older = store_built_as(dir.path(), "older", "other-target");
+    for kind in [SaveKind::Manual, SaveKind::Automatic] {
+        let mut b = bundle(&older, "Before");
+        b.metadata.kind = kind;
+        let original = older.write(&b, &SaveTarget::Create, &|| false).unwrap();
+        let store = FileSaveStore::new(dir.path().into());
+        let renamed = store
+            .rename(&b.metadata.slot, original.revision, "After", &|| false)
+            .unwrap();
+        b.metadata.name = "After".into();
+        assert_eq!(store.read(&b.metadata.slot).unwrap().0, b);
+        assert_eq!(renamed.metadata, b.metadata);
+        assert_ne!(renamed.revision, original.revision);
+        assert_eq!(
+            store
+                .list()
+                .unwrap()
+                .iter()
+                .find(|row| row.id.as_ref() == Some(&b.metadata.slot))
+                .unwrap()
+                .entry
+                .as_ref()
+                .unwrap()
+                .metadata
+                .name,
+            "After"
+        );
+        assert!(matches!(
+            store.rename(&b.metadata.slot, original.revision, "Stale", &|| false),
+            Err(SaveError::SlotChanged)
+        ));
+        assert!(matches!(
+            store.rename(&b.metadata.slot, renamed.revision, "", &|| false),
+            Err(SaveError::InvalidSaveName)
+        ));
+        assert!(matches!(
+            store.rename(&b.metadata.slot, renamed.revision, "Cancelled", &|| true),
+            Err(SaveError::Cancelled)
+        ));
+        assert_eq!(store.read(&b.metadata.slot).unwrap().0, b);
+    }
+}
+
+#[test]
+fn save_store_rename_publication_failures_preserve_the_old_save_and_retry_durability() {
+    for stage in PublishStage::ALL {
+        let dir = TempDir::new().unwrap();
+        let store = FileSaveStore::new(dir.path().into());
+        let b = bundle(&store, "Before");
+        let receipt = store.write(&b, &SaveTarget::Create, &|| false).unwrap();
+        let path = dir
+            .path()
+            .join(format!("{}.mgsave", b.metadata.slot.as_str()));
+        let original = std::fs::read(&path).unwrap();
+        let failing = FileSaveStore::new(dir.path().into()).with_fault(Arc::new(move |at| {
+            if at == stage {
+                Err(SaveError::Io {
+                    stage: "rename test",
+                    message: "fault".into(),
+                })
+            } else {
+                Ok(())
+            }
+        }));
+        let result = failing.rename(&b.metadata.slot, receipt.revision, "After", &|| false);
+        if stage == PublishStage::SyncDirectory {
+            let Err(SaveError::DurabilityUnconfirmed { revision, .. }) = result else {
+                panic!("{result:?}")
+            };
+            store
+                .rename(&b.metadata.slot, revision, "After", &|| false)
+                .unwrap();
+            assert_eq!(
+                store.read(&b.metadata.slot).unwrap().0.metadata.name,
+                "After"
+            );
+        } else {
+            assert!(result.is_err(), "{stage:?}");
+            assert_eq!(std::fs::read(path).unwrap(), original, "{stage:?}");
+        }
+    }
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(16))]
+    #[test]
+    fn save_store_rename_changes_only_the_name_across_unicode_names(
+        names in proptest::collection::vec("[a-zA-Z0-9é💡]{1,32}", 1..5)
+    ) {
+        let dir = TempDir::new().unwrap();
+        let store = FileSaveStore::new(dir.path().into());
+        let mut expected = bundle(&store, "Initial");
+        let mut receipt = store.write(&expected, &SaveTarget::Create, &|| false).unwrap();
+        for name in names {
+            receipt = store.rename(&expected.metadata.slot, receipt.revision, &name, &|| false).unwrap();
+            expected.metadata.name = name;
+            proptest::prop_assert_eq!(store.read(&expected.metadata.slot).unwrap().0, expected.clone());
+        }
+    }
+}
+
+#[test]
+fn save_store_rename_leaves_corrupt_files_and_invalid_names_untouched() {
+    let dir = TempDir::new().unwrap();
+    let store = FileSaveStore::new(dir.path().into());
+    let b = bundle(&store, "Original");
+    let receipt = store.write(&b, &SaveTarget::Create, &|| false).unwrap();
+    let path = dir
+        .path()
+        .join(format!("{}.mgsave", b.metadata.slot.as_str()));
+    let bytes = std::fs::read(&path).unwrap();
+    for invalid in [" ".into(), "Bad\nname".into(), "x".repeat(81)] {
+        assert!(matches!(
+            store.rename(&b.metadata.slot, receipt.revision, &invalid, &|| false),
+            Err(SaveError::InvalidSaveName)
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    }
+    std::fs::write(&path, b"corrupt").unwrap();
+    // Even if the caller has the exact current revision, corrupted contents cannot be renamed.
+    use sha2::{Digest, Sha256};
+    let revision = SaveRevision(Sha256::digest(b"corrupt").into());
+    assert!(
+        store
+            .rename(&b.metadata.slot, revision, "New name", &|| false)
+            .is_err()
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), b"corrupt");
 }

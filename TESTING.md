@@ -143,14 +143,18 @@ person can see.
   payload checksums, explicit size/version failures, saves from another build or platform that
   decode and list with their metadata, build fingerprint inputs, actual disk bytes across
   publication faults, OS-lock contention, revisions and recovery without parent saves/logs/installed
-  regions. Directory-sync uncertainty is distinct from rollback.
+  regions. Rename tests preserve the checkpoint, stamp and date across Unicode names, reject stale
+  writers and corrupt saves, and exercise every publication fault and durability retry.
+  Directory-sync uncertainty is distinct from rollback.
   `save_store.rs` records which directories a save syncs (`with_directory_sync`): only the root
   when it exists; each new directory's parent when the save creates them; and, on a Retry or the
   next save, what an uncertain publication, a partial sync or a failed creation left unsynced.
 - `tests/game/save_resume.rs` covers queued ticks, generation rejection, paused load entry,
   month-close versus Save-and-menu ordering, independent storage errors, Retry and real egui
-  dialogs. The normal HUD contrast checker also inspects the new modal's paint output. A failed
-  autosave's top-bar warning is checked to start with the failure (a worker panic included), to
+  dialogs. Rename tests click through the real browser/modal, prefill and cancel edits, preserve the
+  running checkpoint, retain a renamed autosave through the next month close and recover from
+  conflicts and pre/post-publication failures. The normal HUD contrast checker also inspects the
+  save modal's paint output. A failed autosave's top-bar warning is checked to start with the failure (a worker panic included), to
   outlive *Continue without saving*, to clear only on a confirmed save at that boundary or later
   (Retry included) or on leaving the run, and, with recording stopped too, to become one counted
   indicator that fits at 1024×640. A save another build wrote lists by name and resumes paused when
@@ -160,9 +164,8 @@ person can see.
   preference files, restart, real sidebar/bottom-panel drags, zoom/speed, normal-exit flushing and
   property-tested reachable geometry. Tests never write the player's real preferences.
 
-`tests/game/world.rs` starts Plan 3 coverage: finite indexed terrain, face winding, complete
-cell tops, water/height placement, half-open cell picking and identical geometry across resource
-colours for both shipped regions. This is CPU-only; no world rendering is integrated yet.
+`tests/game/world.rs` covers the integrated diorama through CPU geometry, headless lifecycle and
+real egui input tests; see [3D diorama](#3d-diorama-plan-3) for the rendering and native boundaries.
 
 Focused runs: `cargo nextest run -p application save_resume`,
 `cargo nextest run -p infrastructure save_`, `cargo nextest run -p game save_resume`, and
@@ -467,3 +470,46 @@ had 567 mutants and missed 29, all in `domain`:
 - [ ] A change that alters outcomes for the same inputs changes the rules-version guard snapshot
       (`application/tests/snapshots/rules_version_guard__*.snap`): either it is a bug, or
       `domain::SIM_RULES_VERSION` is bumped in the same commit.
+
+## 3D diorama (Plan 3)
+
+`tests/game/world.rs` covers terrain winding/coverage and both shipped regions, camera fit and
+projection/ray round trips, bounded camera gestures, physical viewport rounding and zero-sized
+windows, accelerated ray equivalence to the rendered terrain, object bounds, opaque label fitting,
+and uniform copper-plate supply. Invariants use property tests.
+
+Headless `WorldViewPlugin` tests reconcile stable IDs without a renderer, check bounded mesh/material
+counts through idle frames, rebuild on new games and free every owned asset on leave. A fixed command
+script compares checkpoints and monthly reports with a client lacking the world plugin. Construction
+state and identity stay visible. Mid-day save/resume tests include world reconciliation and paused
+entry in both regions. Real egui passes exercise projected selection, click/drag separation, dialogs,
+Review, legend/panel capture, all resource layers and text contrast at 1024×640 / 1280×800 and 1× / 1.25×
+zoom (the input rectangle is in logical points, as bevy_egui supplies it). The compact layer
+selector is clicked through its real popup to guard against map click-through. The opened legend
+scrolls inside narrow maps, and panel scroll inertia cannot zoom the camera. A camera configuration
+regression checks the transparent full-window primary context and separate HDR camera. Actual compositing and shaders still require the native playtest.
+
+```sh
+cargo nextest run -p game world_
+cargo build --workspace --features game/dev
+cargo nextest run --workspace --features game/dev
+cargo clippy --workspace --all-targets --features game/dev -- -D warnings
+```
+
+Native acceptance covers both regions/phases, camera gestures, picking/building, effects off,
+resource/Control-room toggles, Review/menu/load transitions and F12's filtered inspector. Use isolated
+`--log-dir` and `--save-dir` paths and retain an existing unsaved player session.
+
+
+## Expansion balance (A7)
+
+`infrastructure/tests/shipped_regions.rs` keeps the existing hands-off year-one checks and adds
+bounds for tycoon build pacing. A property test plans a first expansion to Cleveland/Vancouver from
+the public region/session queries, adds up to three CCGTs and their transmission, schedules the city
+connection with commissioning, and plays a full year. It checks total capital versus starting cash,
+monthly cash reserves, seasonal reliability, forecasts, connection timing and active status. The
+scenario reads tuning from shipped data instead of copying plant numbers into test constants.
+
+Build presenter tests compare both total and approximate monthly payments to the actual instalment
+split, including singular one-month line quotes. UI fixtures that need several hydro budgets provide
+those units explicitly; generic fleet tests derive expected counts from the region.

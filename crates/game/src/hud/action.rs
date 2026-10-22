@@ -28,6 +28,7 @@ use crate::state::AppState;
 /// Something the player asked for through the HUD.
 #[derive(Debug, Clone, PartialEq)]
 pub enum UiAction {
+    World(crate::world::WorldAction),
     Persistence(PersistAction),
     /// A command for the running game.
     Command(Command),
@@ -193,6 +194,7 @@ pub fn add_enabled(ui: &mut egui::Ui, enabled: bool, widget: impl egui::Widget) 
 /// Everything [`dispatch`] can write to. A panel system takes it as a parameter and passes it on.
 #[derive(SystemParam)]
 pub struct ActionSink<'w> {
+    world: ResMut<'w, crate::world::WorldControls>,
     commands: MessageWriter<'w, PlayerCommand>,
     persistence: ResMut<'w, Persistence>,
     generation: Res<'w, SessionGeneration>,
@@ -214,6 +216,10 @@ pub struct ActionSink<'w> {
 }
 
 impl ActionSink<'_> {
+    pub fn world(&self) -> &crate::world::WorldControls {
+        &self.world
+    }
+
     pub fn persistence(&self) -> &Persistence {
         &self.persistence
     }
@@ -271,6 +277,7 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
     for action in actions {
         sink.ui.apply(&action);
         match action {
+            UiAction::World(action) => sink.world.apply(action),
             UiAction::Persistence(action) => {
                 let generation = sink.generation.0;
                 let dir = sink.log_dir.as_ref().map(|d| d.0.clone());
@@ -303,7 +310,11 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             }
             UiAction::SetOperatingTab(tab) => *sink.operating_tab = tab,
             UiAction::Select(selection) => *sink.selection = selection,
-            UiAction::SetLayer(layer) => *sink.layer = layer,
+            UiAction::SetLayer(layer) => {
+                *sink.layer = layer;
+                sink.world.resource_mode = true;
+                sink.world.overlay = true;
+            }
             UiAction::ShowLegend(open) => *sink.legend = LegendChoice(Some(open)),
             // Written by `UiState::apply`, above.
             UiAction::SetPlanningTab(_)

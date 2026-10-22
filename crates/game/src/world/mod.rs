@@ -1,4 +1,4 @@
-//! Plan 3's CPU-side world geometry. Rendering/camera integration follows separately.
+//! Interactive tabletop diorama. Read-only presentation over simulation queries.
 mod terrain;
 pub use terrain::{GridTransform, TerrainGeometry, TerrainGeometryError, surface_height};
 
@@ -17,3 +17,27 @@ pub fn region_terrain(
         .collect();
     TerrainGeometry::build(grid, &palette)
 }
+
+mod camera;
+pub use camera::{CameraPose, OrbitCamera, physical_viewport};
+
+mod model;
+mod overlay;
+mod picking;
+pub use model::{Part, WorldCity, WorldLine, WorldModel, WorldPlant, city_parts, plant_parts};
+pub use overlay::{TuningConfig, WorldAction, WorldControls, pillar_part, supply_fraction};
+pub use picking::{WorldHit, hit_world, pick_world, presented_hit, terrain_grid_hit, terrain_hit};
+
+mod plugins;
+mod render;
+mod ui;
+pub use plugins::{CameraPlugin, DioramaCamera, OverlayPlugin, WorldViewPlugin};
+pub use render::{ViewSync, WorldAssets, WorldEntity, WorldScene};
+pub use ui::{
+    MapSurface, ToolbarModel, draw_surface, label_rect, mark_blocked, screen_ndc, toolbar_model,
+};
+
+#[cfg(feature = "dev")]
+mod dev;
+#[cfg(feature = "dev")]
+pub use dev::DevToolsPlugin;

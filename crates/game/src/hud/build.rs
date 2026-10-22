@@ -9,6 +9,7 @@ use domain::grid::distance_cells;
 use domain::ids::{CellCoord, NodeId};
 use domain::region::PlantKind;
 use domain::session::DayPhase;
+use domain::units::Money;
 
 use super::action::{ActionSink, ButtonModel, UiAction, button, dispatch};
 use super::layout::{Edge, HudArea, OuterPanel};
@@ -143,6 +144,12 @@ fn months_value(l10n: &Localizer, months: u32) -> String {
     l10n.args("build-months-value", &[("months", months.into())])
 }
 
+/// Construction is paid at month close. Quotes are approximate because the final payment
+/// includes any remaining cents; the ledger uses `Money::split_even`.
+fn monthly_payment(capital: Money, months: u32) -> String {
+    format::money(Money::from_cents(capital.cents() / i64::from(months)))
+}
+
 fn plant_section(game: &Game, l10n: &Localizer, selection: Selection) -> PlantSection {
     let region = game.session().region();
     let cell = match selection {
@@ -168,6 +175,10 @@ fn plant_section(game: &Game, l10n: &Localizer, selection: Selection) -> PlantSe
                 stats: vec![
                     stat("build-capacity", format::megawatts(spec.capacity)),
                     stat("build-capital", format::money(spec.capital_cost)),
+                    stat(
+                        "build-monthly-payment",
+                        monthly_payment(spec.capital_cost, spec.build_months),
+                    ),
                     stat("build-months", months_value(l10n, spec.build_months)),
                     stat("build-marginal-cost", format::price(spec.marginal_cost)),
                 ],
@@ -290,6 +301,10 @@ fn line_end_section(
                         l10n.args("build-cells-value", &[("cells", quote.cells.into())]),
                     ),
                     stat("build-capital", format::money(quote.capital)),
+                    stat(
+                        "build-monthly-payment",
+                        monthly_payment(quote.capital, quote.months),
+                    ),
                     stat("build-months", months_value(l10n, quote.months)),
                 ]),
                 Err(error) => LinePreview::Rejected(error.localize_with(l10n, &names)),
@@ -583,6 +598,10 @@ mod tests {
             [
                 ("Capacity", format::megawatts(spec.capacity)),
                 ("Capital cost", format::money(spec.capital_cost)),
+                (
+                    "Per month (approx.)",
+                    format::money(spec.capital_cost.split_even(spec.build_months)[0])
+                ),
                 ("Build time", format!("{} months", spec.build_months)),
                 ("Fuel cost", format::price(spec.marginal_cost)),
             ]
@@ -640,7 +659,19 @@ mod tests {
                         [
                             ("Length", format!("{} cells", quote.cells).as_str()),
                             ("Capital cost", format::money(quote.capital).as_str()),
-                            ("Build time", format!("{} months", quote.months).as_str()),
+                            (
+                                "Per month (approx.)",
+                                format::money(quote.capital.split_even(quote.months)[0]).as_str()
+                            ),
+                            (
+                                "Build time",
+                                format!(
+                                    "{} {}",
+                                    quote.months,
+                                    if quote.months == 1 { "month" } else { "months" }
+                                )
+                                .as_str()
+                            ),
                         ]
                     );
                 }

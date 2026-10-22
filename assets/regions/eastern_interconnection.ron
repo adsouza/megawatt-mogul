@@ -330,6 +330,7 @@
     // level: 30%, the emissions-compliant turndown of a modern F- or H-class
     // plant (a 2x1 block can run on one gas turbine), rather than 40%. Fixed
     // O&M is per month; book life in months.
+    // Capital costs and lead times are tuned for tycoon pacing, not literal project forecasts.
     catalog: [
         (
             kind: Nuclear,
@@ -340,8 +341,8 @@
             startup_cost_usd: 1000000,
             marginal_cost_usd_per_mwh: 10.0,
             fixed_om_usd_per_month: 11000000,
-            capital_cost_usd: 6000000000,
-            build_months: 84,
+            capital_cost_usd: 2400000000,
+            build_months: 18,
             capacity_credit: 0.95,
             book_life_months: 480,
             siting: CoolingWater(0.5),
@@ -355,8 +356,8 @@
             startup_cost_usd: 150000,
             marginal_cost_usd_per_mwh: 30.0,
             fixed_om_usd_per_month: 2000000,
-            capital_cost_usd: 2000000000,
-            build_months: 48,
+            capital_cost_usd: 700000000,
+            build_months: 8,
             capacity_credit: 0.95,
             book_life_months: 480,
             siting: CoolingWater(0.5),
@@ -370,8 +371,8 @@
             startup_cost_usd: 40000,
             marginal_cost_usd_per_mwh: 45.0,
             fixed_om_usd_per_month: 600000,
-            capital_cost_usd: 600000000,
-            build_months: 30,
+            capital_cost_usd: 300000000,
+            build_months: 4,
             capacity_credit: 0.95,
             book_life_months: 360,
             siting: Anywhere,
@@ -385,8 +386,8 @@
             startup_cost_usd: 5000,
             marginal_cost_usd_per_mwh: 150.0,
             fixed_om_usd_per_month: 170000,
-            capital_cost_usd: 200000000,
-            build_months: 12,
+            capital_cost_usd: 100000000,
+            build_months: 2,
             capacity_credit: 0.95,
             book_life_months: 360,
             siting: Anywhere,
@@ -400,8 +401,8 @@
             startup_cost_usd: 0,
             marginal_cost_usd_per_mwh: 0.0,
             fixed_om_usd_per_month: 500000,
-            capital_cost_usd: 400000000,
-            build_months: 12,
+            capital_cost_usd: 150000000,
+            build_months: 2,
             capacity_credit: 0.3,
             book_life_months: 300,
             siting: Anywhere,
@@ -415,8 +416,8 @@
             startup_cost_usd: 1000,
             marginal_cost_usd_per_mwh: 0.0,
             fixed_om_usd_per_month: 2700000,
-            capital_cost_usd: 3000000000,
-            build_months: 72,
+            capital_cost_usd: 1200000000,
+            build_months: 12,
             capacity_credit: 0.8,
             book_life_months: 600,
             siting: HydroSite(0.5),
@@ -426,32 +427,33 @@
     // anchors; base loads are proportional to that demand at the game's
     // scale. The East has far more load outside its largest metros than the
     // West, so its anchors carry proportionally more.
+    // Demand is scaled for expansion in a few plant-sized steps; locations and relative sizes stay intact.
     cities: [
-        (id: 1, name_key: "city-new-york", lon: -74.006, lat: 40.713, base_load_mw: 6700.0),
-        (id: 2, name_key: "city-chicago", lon: -87.630, lat: 41.878, base_load_mw: 6000.0),
-        (id: 3, name_key: "city-atlanta", lon: -84.388, lat: 33.749, base_load_mw: 5600.0),
-        (id: 4, name_key: "city-washington", lon: -77.037, lat: 38.907, base_load_mw: 4600.0),
-        (id: 5, name_key: "city-philadelphia", lon: -75.165, lat: 39.953, base_load_mw: 4300.0),
-        (id: 6, name_key: "city-toronto", lon: -79.383, lat: 43.653, base_load_mw: 4300.0),
-        (id: 7, name_key: "city-miami", lon: -80.192, lat: 25.762, base_load_mw: 4300.0),
-        (id: 8, name_key: "city-charlotte", lon: -80.843, lat: 35.227, base_load_mw: 4300.0),
-        (id: 9, name_key: "city-nashville", lon: -86.781, lat: 36.163, base_load_mw: 4100.0),
-        (id: 10, name_key: "city-tampa", lon: -82.458, lat: 27.951, base_load_mw: 3800.0),
-        (id: 11, name_key: "city-boston", lon: -71.059, lat: 42.360, base_load_mw: 3600.0),
-        (id: 12, name_key: "city-detroit", lon: -83.046, lat: 42.331, base_load_mw: 3600.0),
-        (id: 13, name_key: "city-new-orleans", lon: -90.072, lat: 29.951, base_load_mw: 3100.0),
-        (id: 14, name_key: "city-st-louis", lon: -90.199, lat: 38.627, base_load_mw: 2900.0),
-        (id: 15, name_key: "city-minneapolis", lon: -93.265, lat: 44.978, base_load_mw: 2900.0),
-        (id: 16, name_key: "city-kansas-city", lon: -94.578, lat: 39.100, base_load_mw: 2400.0),
-        (id: 17, name_key: "city-pittsburgh", lon: -79.996, lat: 40.441, base_load_mw: 2400.0),
-        (id: 18, name_key: "city-cincinnati", lon: -84.512, lat: 39.103, base_load_mw: 2200.0),
-        (id: 19, name_key: "city-columbus", lon: -82.999, lat: 39.961, base_load_mw: 2200.0),
-        (id: 20, name_key: "city-cleveland", lon: -81.694, lat: 41.499, base_load_mw: 1900.0),
-        (id: 21, name_key: "city-oklahoma-city", lon: -97.516, lat: 35.468, base_load_mw: 1900.0),
-        (id: 22, name_key: "city-halifax", lon: -63.575, lat: 44.649, base_load_mw: 1200.0),
-        (id: 23, name_key: "city-winnipeg", lon: -97.138, lat: 49.895, base_load_mw: 1200.0),
-        (id: 24, name_key: "city-regina", lon: -104.619, lat: 50.445, base_load_mw: 1200.0),
-        (id: 25, name_key: "city-amarillo", lon: -101.831, lat: 35.222, base_load_mw: 1000.0),
+        (id: 1, name_key: "city-new-york", lon: -74.006, lat: 40.713, base_load_mw: 3350.0),
+        (id: 2, name_key: "city-chicago", lon: -87.630, lat: 41.878, base_load_mw: 3000.0),
+        (id: 3, name_key: "city-atlanta", lon: -84.388, lat: 33.749, base_load_mw: 2800.0),
+        (id: 4, name_key: "city-washington", lon: -77.037, lat: 38.907, base_load_mw: 2300.0),
+        (id: 5, name_key: "city-philadelphia", lon: -75.165, lat: 39.953, base_load_mw: 2150.0),
+        (id: 6, name_key: "city-toronto", lon: -79.383, lat: 43.653, base_load_mw: 2150.0),
+        (id: 7, name_key: "city-miami", lon: -80.192, lat: 25.762, base_load_mw: 2150.0),
+        (id: 8, name_key: "city-charlotte", lon: -80.843, lat: 35.227, base_load_mw: 2150.0),
+        (id: 9, name_key: "city-nashville", lon: -86.781, lat: 36.163, base_load_mw: 2050.0),
+        (id: 10, name_key: "city-tampa", lon: -82.458, lat: 27.951, base_load_mw: 1900.0),
+        (id: 11, name_key: "city-boston", lon: -71.059, lat: 42.360, base_load_mw: 1800.0),
+        (id: 12, name_key: "city-detroit", lon: -83.046, lat: 42.331, base_load_mw: 1800.0),
+        (id: 13, name_key: "city-new-orleans", lon: -90.072, lat: 29.951, base_load_mw: 1550.0),
+        (id: 14, name_key: "city-st-louis", lon: -90.199, lat: 38.627, base_load_mw: 1450.0),
+        (id: 15, name_key: "city-minneapolis", lon: -93.265, lat: 44.978, base_load_mw: 1450.0),
+        (id: 16, name_key: "city-kansas-city", lon: -94.578, lat: 39.100, base_load_mw: 1200.0),
+        (id: 17, name_key: "city-pittsburgh", lon: -79.996, lat: 40.441, base_load_mw: 1200.0),
+        (id: 18, name_key: "city-cincinnati", lon: -84.512, lat: 39.103, base_load_mw: 1100.0),
+        (id: 19, name_key: "city-columbus", lon: -82.999, lat: 39.961, base_load_mw: 1100.0),
+        (id: 20, name_key: "city-cleveland", lon: -81.694, lat: 41.499, base_load_mw: 950.0),
+        (id: 21, name_key: "city-oklahoma-city", lon: -97.516, lat: 35.468, base_load_mw: 950.0),
+        (id: 22, name_key: "city-halifax", lon: -63.575, lat: 44.649, base_load_mw: 600.0),
+        (id: 23, name_key: "city-winnipeg", lon: -97.138, lat: 49.895, base_load_mw: 600.0),
+        (id: 24, name_key: "city-regina", lon: -104.619, lat: 50.445, base_load_mw: 600.0),
+        (id: 25, name_key: "city-amarillo", lon: -101.831, lat: 35.222, base_load_mw: 500.0),
     ],
     // Summer and winter peaks: an afternoon air-conditioning peak in July and
     // August, and a morning-and-evening heating peak in January.
@@ -519,7 +521,7 @@
         price_sensitivity: 2.0,
         smoothing: 0.2,
     ),
-    lines: (cost_per_cell_usd: 40000000, cells_per_month: 2, book_life_months: 600),
+    lines: (cost_per_cell_usd: 20000000, cells_per_month: 4, book_life_months: 600),
     // The Ohio Valley: Columbus, Cincinnati and Pittsburgh, served by a legacy
     // fleet on the Ohio River and the Lake Erie shore.
     start: (
@@ -530,30 +532,18 @@
         home_city: 19,
         connected_cities: [17, 18, 19],
         fleet: [
-            // Nuclear: Beaver Valley (Ohio River) and Perry (Lake Erie).
+            // A compact Ohio Valley legacy fleet, balanced for the game's city loads.
+            // Nuclear: Beaver Valley; coal: Mitchell.
             (Nuclear, -80.43, 40.62),
-            (Nuclear, -81.14, 41.80),
-            // Coal still running on the Ohio River in 2027: Mitchell,
-            // Pleasants, Mountaineer and Gavin. Cheswick, Avon Lake, Zimmer
-            // (all 2022) and Stuart (2018) have retired.
             (Coal, -80.82, 39.83),
-            (Coal, -81.29, 39.37),
-            (Coal, -81.93, 38.98),
-            (Coal, -82.12, 38.94),
-            // Combined cycle: Lordstown, Carroll County, Washington (Ohio),
-            // Hanging Rock and Middletown, and the shale-gas plants that
-            // replaced the retired coal: Hickory Run (2020), South Field and
-            // Long Ridge (2021) and Guernsey (2022).
+            // Combined cycle: Lordstown, Carroll County, Washington,
+            // Hanging Rock and Middletown.
             (Ccgt, -80.86, 41.15),
             (Ccgt, -81.03, 40.55),
             (Ccgt, -81.68, 39.53),
             (Ccgt, -82.66, 38.57),
             (Ccgt, -84.40, 39.50),
-            (Ccgt, -80.37, 40.90),
-            (Ccgt, -80.62, 40.60),
-            (Ccgt, -80.87, 39.66),
-            (Ccgt, -81.54, 39.97),
-            // Peakers around the three cities.
+            // Flexible peakers around the starting cities keep overnight minimums low.
             (Peaker, -82.80, 40.20),
             (Peaker, -83.30, 39.70),
             (Peaker, -84.75, 39.45),
@@ -561,8 +551,6 @@
             (Peaker, -79.60, 40.20),
             (Peaker, -80.20, 40.15),
             (Peaker, -79.60, 40.90),
-            (Peaker, -81.90, 40.40),
-            (Peaker, -82.40, 39.50),
         ],
     ),
 )

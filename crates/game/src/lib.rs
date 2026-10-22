@@ -40,10 +40,15 @@ pub struct GamePlugins;
 
 impl PluginGroup for GamePlugins {
     fn build(self) -> PluginGroupBuilder {
-        PluginGroupBuilder::start::<Self>()
+        let plugins = PluginGroupBuilder::start::<Self>()
             .add_group(CorePlugins)
             .add(EguiPlugin::default())
             .add(HudPlugin)
-            .add(preferences::PreferencesPlugin)
+            .add(world::WorldViewPlugin)
+            .add(world::CameraPlugin)
+            .add(preferences::PreferencesPlugin);
+        #[cfg(feature = "dev")]
+        let plugins = plugins.add(world::DevToolsPlugin);
+        plugins
     }
 }

@@ -944,9 +944,18 @@ mod tests {
                 assert_eq!(row.budget, None, "{}", row.name);
             }
         }
+        assert!(
+            hydro_rows > 0,
+            "the hydro-led region must exercise budget rows"
+        );
         assert_eq!(
-            hydro_rows, 3,
-            "the shipped western fleet has three hydro plants"
+            hydro_rows,
+            game.session()
+                .plant_views()
+                .iter()
+                .filter(|plant| plant.kind == PlantKind::Hydro)
+                .count(),
+            "every hydro plant has a water-budget row"
         );
         assert_eq!(l10n.problems(), vec![]);
     }

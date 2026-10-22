@@ -6,8 +6,8 @@ is a pure Rust core. Bevy is an outer adapter. The full design is in the
 for people changing code.
 
 **Status:** Plan 1 (the headless simulation core: `domain`, `application` and `infrastructure`) and
-Plan 2 (the `game` crate: the Bevy client with an egui HUD over a 2D map) are complete, and the game
-is playable. Plan 3 adds the 3D diorama.
+Plan 2 (the playable client), Plan 2b (save/resume) and Plan 3 (interactive 3D diorama) are
+implemented.
 
 ## Layers and the dependency rule
 
@@ -101,7 +101,10 @@ and directory synchronisation precede a success receipt. The directories synced 
 and the parent of each directory the store created, until that parent's sync succeeds; on
 Windows no directory is synced (NTFS journals the rename; see `sync_directory`).
 Post-publication sync failure returns the new revision as `DurabilityUnconfirmed`, not a claim of
-rollback.
+rollback. `SaveStore::rename` changes display metadata through that same publication path, keeping
+its recorded build/platform stamp, saved-at time and checkpoint. It checks the selected revision
+again under the OS lock. The game refreshes the list after completion; renaming an active autosave
+also updates its expected revision/name for later month closes, without saving the live session.
 
 The game's persistence coordinator freezes producers, drains admitted commands and captures manual
 saves after application. Autosaves capture inside the funnel at the individual `MonthClosed`
@@ -330,6 +333,43 @@ click ─▶ draw_<panel> ─▶ Vec<UiAction> ─▶ dispatch ─┬─▶ HUD 
   was waiting for the game's answer.
 - A `CommandError` becomes text only in `collect_toasts`.
 
+### The 3D presentation boundary
+
+`WorldViewPlugin` owns session-scoped meshes/materials and ordered `ViewSync` maps for plant,
+city and line IDs. After `SimSet::Apply`, a changed `Session` produces an immutable `WorldModel`
+from public queries. New/load session generations and region Arc identity invalidate terrain,
+even for the same region ID. Reconciliation adds/removes stable entities; construction completion
+updates existing visuals. Leaving removes all entities and owned assets. Terrain layer changes
+replace only the existing mesh's colour attribute. Common silhouettes and materials are reused.
+The small 2D draw adapter remains for HUD-only consumers/tests; `GamePlugins` always installs the
+diorama and uses its transparent interaction surface.
+
+`CameraPlugin` creates an HDR 3D camera restricted to this pass's map rectangle, rounded inward
+using egui's actual pixels per point. The full-window 2D camera clears its own texture to transparent
+and explicitly alpha-composites the HUD; retaining its previous texture would cover the world with
+the previous menu. World viewport/pose updates run after egui and before camera calculations and
+transform propagation. The same pose and rounded rectangle project labels and generate picking rays.
+
+Map controls use the normal presenter/action funnel. Selection, orbit, pan, zoom and toggles pass
+through `UiAction`/`dispatch`; systems read those resources through `ActionSink`. Map gestures are
+processed after all floating windows register their current layers. The response must own the
+pointer, avoid the legend and have no modal/persistence/Review/game-over gate. A drag never becomes
+a click. Rays test procedural block bounds and the exact terraced terrain surface using a
+front-to-back grid traversal; a property test compares it against the rendered triangles. Ties
+follow ordered IDs. Annotation backing rectangles flip/clamp and omit overlapping/occluded labels.
+
+`OverlayPlugin` follows the domain phase, including the frame before Bevy's phase mirror catches up.
+Each phase restores its default overlay; resource selection in Operating can override the hologram
+until Control room is selected. The supply overlay preserves terrain colours, directional lighting
+and building shadows; only beams and the selection marker are unlit. Presentation time animates
+shared city shedding and energisation
+pulses only. Copper-plate supply is one common fraction; there is no spatial outage rotation or
+per-line flow. Bloom/DOF affect only the world camera and can be disabled.
+
+The optional `DevToolsPlugin` (`dev`) uses bevy-inspector-egui 0.38 with the pinned Bevy/egui stack.
+F12 opens a filtered inspector over `WorldEntity` and reflected `TuningConfig` (visual scales,
+illumination and beam colour). It exposes no aggregate, command handler or simulation tuning.
+
 ### Fixed-step pacing
 
 `FixedUpdate` runs at 4 Hz (`FIXED_STEP_HZ`). Each step, `drive_ticks` sends one
@@ -418,8 +458,9 @@ Checked against the versions in use (Task 1 of Plan 2, and the lessons since):
   `MinimalPlugins`, so headless apps add it.
 - **`EguiPlugin::default()`**: there is no `enable_multipass_for_primary_context` any more. UI
   systems take `EguiContexts`; `contexts.ctx_mut()?` returns a `Result`, so they return `Result`.
-- **The primary egui context** is created on the first camera spawned, so `main.rs` spawns a
-  `Camera2d` (Plan 3's camera replaces it). A window with no camera shows no egui.
+- **The primary egui context** is explicit on the library's full-window `Camera2d`. Automatic
+  context creation is disabled. The separate `Camera3d` has no egui context. A window with no
+  primary camera shows no HUD.
 - **Init the `EguiPrimaryContextPass` schedule.** If no system was ever added to it, the schedule
   doesn't exist; bevy_egui's `try_run_schedule` fails and drops the egui output, and epaint panics
   on the first frame ("Dropped TexturesDelta with 1 unapplied deltas"). `HudPlugin` calls

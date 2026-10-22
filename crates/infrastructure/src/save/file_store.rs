@@ -115,6 +115,86 @@ impl FileSaveStore {
     fn bytes(&self, id: &SaveId) -> Result<Vec<u8>, SaveError> {
         read_bounded(&self.path(id), MAX_SAVE_BYTES)
     }
+    fn publish(
+        &self,
+        bundle: &SaveBundle,
+        bytes: &[u8],
+        target: &SaveTarget,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<SaveReceipt, SaveError> {
+        {
+            // Create under the lock, so a concurrent write on this store that finds the new
+            // directories already there still finds them pending.
+            make_directory(&self.root, &mut self.pending())?;
+        }
+        let lock_path = self
+            .root
+            .join(format!("{}.lock", bundle.metadata.slot.as_str()));
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(lock_path)
+            .map_err(|e| io("lock", e))?;
+        lock.try_lock().map_err(|error| match error {
+            std::fs::TryLockError::WouldBlock => SaveError::SlotBusy,
+            std::fs::TryLockError::Error(error) => io("lock", error),
+        })?;
+        // The OS releases this lock even on process death. Keep its inode for future writers.
+        let path = self.path(&bundle.metadata.slot);
+        let current = match File::open(&path) {
+            Ok(file) => {
+                let mut data = Vec::new();
+                file.take(MAX_SAVE_BYTES as u64 + 1)
+                    .read_to_end(&mut data)
+                    .map_err(|e| io("revision", e))?;
+                Some(SaveRevision(digest(&data)))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(io("revision", e)),
+        };
+        match target {
+            SaveTarget::Create if current.is_none() => (),
+            SaveTarget::Replace(expected) | SaveTarget::ConfirmDurability(expected)
+                if Some(*expected) == current => {}
+            _ => return Err(SaveError::SlotChanged),
+        }
+        let revision = if let SaveTarget::ConfirmDurability(revision) = target {
+            if digest(bytes) != revision.0 {
+                return Err(SaveError::SlotChanged);
+            }
+            *revision
+        } else {
+            (self.fault)(PublishStage::CreateTemp)?;
+            let mut temp =
+                tempfile::NamedTempFile::new_in(&self.root).map_err(|e| io("temporary file", e))?;
+            let half = bytes.len() / 2;
+            temp.write_all(&bytes[..half]).map_err(|e| io("write", e))?;
+            (self.fault)(PublishStage::PartialWrite)?;
+            temp.write_all(&bytes[half..]).map_err(|e| io("write", e))?;
+            (self.fault)(PublishStage::Flush)?;
+            temp.flush().map_err(|e| io("flush", e))?;
+            (self.fault)(PublishStage::SyncFile)?;
+            temp.as_file().sync_all().map_err(|e| io("sync file", e))?;
+            if cancelled() {
+                return Err(SaveError::Cancelled);
+            }
+            (self.fault)(PublishStage::Publish)?;
+            temp.persist(&path).map_err(|e| io("publish", e))?;
+            SaveRevision(digest(bytes))
+        };
+        let unconfirmed = || SaveError::DurabilityUnconfirmed {
+            slot: bundle.metadata.slot.clone(),
+            revision,
+        };
+        (self.fault)(PublishStage::SyncDirectory).map_err(|_| unconfirmed())?;
+        self.sync_directories().map_err(|_| unconfirmed())?;
+        Ok(SaveReceipt {
+            metadata: bundle.metadata.clone(),
+            revision,
+        })
+    }
     fn pending(&self) -> MutexGuard<'_, BTreeSet<PathBuf>> {
         self.pending.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -280,6 +360,29 @@ impl SaveStore for FileSaveStore {
         }
         Ok(result)
     }
+    fn rename(
+        &self,
+        id: &SaveId,
+        revision: SaveRevision,
+        name: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<SaveReceipt, SaveError> {
+        if cancelled() {
+            return Err(SaveError::Cancelled);
+        }
+        let original = self.bytes(id)?;
+        if SaveRevision(digest(&original)) != revision {
+            return Err(SaveError::SlotChanged);
+        }
+        let (mut bundle, _) = decode_save(&original, &self.compatibility)?;
+        if &bundle.metadata.slot != id {
+            return Err(SaveError::InvalidId);
+        }
+        bundle.metadata.name = name.into();
+        // Renaming is metadata maintenance, not a save made by the running simulation build.
+        let bytes = encode_save_as(&bundle, &bundle.compatibility)?;
+        self.publish(&bundle, &bytes, &SaveTarget::Replace(revision), cancelled)
+    }
     fn write(
         &self,
         bundle: &SaveBundle,
@@ -296,78 +399,7 @@ impl SaveStore for FileSaveStore {
             "a store stamps only its own build"
         );
         let bytes = encode_save_as(bundle, &self.compatibility)?;
-        {
-            // Create under the lock, so a concurrent write on this store that finds the new
-            // directories already there still finds them pending.
-            make_directory(&self.root, &mut self.pending())?;
-        }
-        let lock_path = self
-            .root
-            .join(format!("{}.lock", bundle.metadata.slot.as_str()));
-        let lock = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(lock_path)
-            .map_err(|e| io("lock", e))?;
-        lock.try_lock().map_err(|error| match error {
-            std::fs::TryLockError::WouldBlock => SaveError::SlotBusy,
-            std::fs::TryLockError::Error(error) => io("lock", error),
-        })?;
-        // The OS releases this lock even on process death. Keep its inode for future writers.
-        let path = self.path(&bundle.metadata.slot);
-        let current = match File::open(&path) {
-            Ok(file) => {
-                let mut data = Vec::new();
-                file.take(MAX_SAVE_BYTES as u64 + 1)
-                    .read_to_end(&mut data)
-                    .map_err(|e| io("revision", e))?;
-                Some(SaveRevision(digest(&data)))
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => return Err(io("revision", e)),
-        };
-        match target {
-            SaveTarget::Create if current.is_none() => (),
-            SaveTarget::Replace(expected) | SaveTarget::ConfirmDurability(expected)
-                if Some(*expected) == current => {}
-            _ => return Err(SaveError::SlotChanged),
-        }
-        let revision = if let SaveTarget::ConfirmDurability(revision) = target {
-            if digest(&bytes) != revision.0 {
-                return Err(SaveError::SlotChanged);
-            }
-            *revision
-        } else {
-            (self.fault)(PublishStage::CreateTemp)?;
-            let mut temp =
-                tempfile::NamedTempFile::new_in(&self.root).map_err(|e| io("temporary file", e))?;
-            let half = bytes.len() / 2;
-            temp.write_all(&bytes[..half]).map_err(|e| io("write", e))?;
-            (self.fault)(PublishStage::PartialWrite)?;
-            temp.write_all(&bytes[half..]).map_err(|e| io("write", e))?;
-            (self.fault)(PublishStage::Flush)?;
-            temp.flush().map_err(|e| io("flush", e))?;
-            (self.fault)(PublishStage::SyncFile)?;
-            temp.as_file().sync_all().map_err(|e| io("sync file", e))?;
-            if cancelled() {
-                return Err(SaveError::Cancelled);
-            }
-            (self.fault)(PublishStage::Publish)?;
-            temp.persist(&path).map_err(|e| io("publish", e))?;
-            SaveRevision(digest(&bytes))
-        };
-        let unconfirmed = || SaveError::DurabilityUnconfirmed {
-            slot: bundle.metadata.slot.clone(),
-            revision,
-        };
-        (self.fault)(PublishStage::SyncDirectory).map_err(|_| unconfirmed())?;
-        self.sync_directories().map_err(|_| unconfirmed())?;
-        Ok(SaveReceipt {
-            metadata: bundle.metadata.clone(),
-            revision,
-        })
+        self.publish(bundle, &bytes, target, cancelled)
     }
 }
 

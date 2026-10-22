@@ -23,7 +23,7 @@ mod hydro_panel;
 mod incidents;
 mod inspector;
 mod layout;
-mod map;
+pub(crate) mod map;
 mod menu;
 mod milestones;
 mod operating;
@@ -189,7 +189,8 @@ impl Plugin for HudPlugin {
         let in_game = in_state(AppState::InGame).and_then(resource_exists::<Session>);
         // The map draws in every in-game phase: in Review it is the dimmed diorama behind the modal.
         let on_the_map = in_game.clone().and_then(has_l10n);
-        app.init_resource::<Selection>()
+        app.init_resource::<crate::world::WorldControls>()
+            .init_resource::<Selection>()
             .init_resource::<MapLayer>()
             .init_resource::<LegendChoice>()
             .init_resource::<MapCache>()

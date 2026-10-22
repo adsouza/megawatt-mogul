@@ -122,13 +122,12 @@ Each ruling ends with what it costs if it turns out to be wrong.
 
 ### For Plan 3
 
-- **Click-through.** Verify that egui's pointer-over-HUD check works with per-system root Uis, so
-  3D picking doesn't click through panels.
+- **Click-through — resolved in Plan 3.** Gestures use the current map response/layer after all
+  floating windows draw, with explicit legend/modal/Review/persistence gates and egui-pass tests.
 - **Drawing lines on the map.** Consider drawing lines on the map once picking exists. Today line
   ends come from the build menu.
 - **Map polish.**
-  - Map labels can run past the right edge when the map is full width (Review). Flip the label
-    anchors near the edge.
+  - Label edges resolved in Plan 3: opaque projected labels flip/clamp and omit overlap/occlusion.
   - Orange, red and yellow are close. The colour test checks only that RGB values are unique.
 
 ### Infrastructure and CI

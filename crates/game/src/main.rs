@@ -39,16 +39,9 @@ fn main() -> AppExit {
             }),
             ..default()
         }))
-        .add_plugins((GamePlugins, WindowSizingPlugin))
-        .add_systems(Startup, spawn_ui_camera);
+        .add_plugins((GamePlugins, WindowSizingPlugin));
     if let Some(frames) = exit_after_frames {
         app.add_plugins(ExitAfterFrames(frames));
     }
     app.run()
-}
-
-/// egui draws through the first camera spawned. Plan 3's `CameraPlugin` replaces this with the
-/// diorama camera.
-fn spawn_ui_camera(mut commands: Commands) {
-    commands.spawn(Camera2d);
 }

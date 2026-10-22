@@ -30,6 +30,8 @@ pub enum PersistAction {
     SaveNew(String),
     ChooseOverwrite { slot: SaveId, name: String },
     ConfirmOverwrite,
+    BeginRename(SaveId),
+    Rename(String),
     Load(SaveId),
     Retry,
     Refresh,
@@ -44,6 +46,7 @@ pub enum SaveScreen {
     Leave,
     Browser,
     ConfirmOverwrite,
+    Rename,
     Automatic,
 }
 #[derive(Clone)]
@@ -52,6 +55,13 @@ struct WriteTask {
     target: SaveTarget,
     automatic: bool,
     leave: bool,
+}
+#[derive(Clone)]
+struct RenameTask {
+    slot: SaveId,
+    revision: SaveRevision,
+    name: String,
+    return_to: SaveScreen,
 }
 #[derive(Clone, Copy)]
 enum ManualIntent {
@@ -71,10 +81,12 @@ struct Run {
     id: SaveId,
     automatic: SaveId,
     revision: Option<SaveRevision>,
+    automatic_name: String,
 }
 enum Completion {
     Listed(Result<Vec<SaveListing>, SaveError>),
     Saved(Result<SaveReceipt, SaveError>),
+    Renamed(Result<SaveReceipt, SaveError>),
     Loaded(Result<Box<Game>, SaveError>),
     Failed(SaveError),
 }
@@ -109,6 +121,7 @@ pub struct Persistence {
     previous_speed: SimSpeed,
     dialog_generation: u64,
     task: Option<WriteTask>,
+    rename: Option<RenameTask>,
     /// The latest month-close autosave that failed and has not been made good since (spec §17.5).
     /// It outlives *Continue without saving*: only a confirmed save at that boundary or a later
     /// one clears it. A new game or a load starts from a fresh `Persistence`, without it.
@@ -148,6 +161,15 @@ impl Persistence {
         self.entries
             .iter()
             .find(|entry| entry.id.as_ref() == Some(slot))?
+            .entry
+            .as_ref()
+            .ok()
+    }
+    pub fn rename_entry(&self) -> Option<&SaveEntry> {
+        let slot = &self.rename.as_ref()?.slot;
+        self.entries
+            .iter()
+            .find(|listing| listing.id.as_ref() == Some(slot))?
             .entry
             .as_ref()
             .ok()
@@ -210,6 +232,7 @@ impl Persistence {
             id: store.allocate_id(),
             automatic: store.allocate_id(),
             revision: None,
+            automatic_name: "save-autosave".into(),
         });
     }
     pub(super) fn abandon(&mut self) {
@@ -291,6 +314,26 @@ impl Persistence {
             }))
         });
     }
+    fn rename(&mut self, generation: u64) {
+        let (Some(store), Some(task)) = (self.store.clone(), self.rename.clone()) else {
+            self.unavailable();
+            return;
+        };
+        self.error = None;
+        self.spawn(generation, move |cancel| {
+            Completion::Renamed(store.rename(&task.slot, task.revision, &task.name, &|| {
+                cancel.load(Ordering::Relaxed)
+            }))
+        });
+    }
+    fn remember_automatic_rename(&mut self, slot: &SaveId, revision: SaveRevision, name: &str) {
+        if let Some(run) = &mut self.run
+            && &run.automatic == slot
+        {
+            run.revision = Some(revision);
+            run.automatic_name = name.into();
+        }
+    }
     fn prepare_write(&mut self, slot: SaveId, target: SaveTarget, name: String, generation: u64) {
         let (Some(store), Some(capture), Some(run)) = (&self.store, &self.capture, &self.run)
         else {
@@ -336,7 +379,9 @@ impl Persistence {
         speed: &mut SimSpeed,
         log_dir: Option<std::path::PathBuf>,
     ) {
-        if self.busy() && !matches!(action, PersistAction::Cancel) {
+        if self.busy()
+            && (self.screen == SaveScreen::Rename || !matches!(action, PersistAction::Cancel))
+        {
             return;
         }
         match action {
@@ -391,6 +436,31 @@ impl Persistence {
             PersistAction::ConfirmOverwrite if self.screen == SaveScreen::ConfirmOverwrite => {
                 self.write(generation)
             }
+            PersistAction::BeginRename(slot)
+                if matches!(self.screen, SaveScreen::Browser | SaveScreen::Save) =>
+            {
+                if let Some(entry) = self
+                    .entries
+                    .iter()
+                    .find(|listing| listing.id.as_ref() == Some(&slot))
+                    .and_then(|listing| listing.entry.as_ref().ok())
+                {
+                    self.rename = Some(RenameTask {
+                        slot,
+                        revision: entry.revision,
+                        name: entry.metadata.name.clone(),
+                        return_to: self.screen,
+                    });
+                    self.error = None;
+                    self.screen = SaveScreen::Rename;
+                }
+            }
+            PersistAction::Rename(name) if self.screen == SaveScreen::Rename => {
+                if let Some(task) = &mut self.rename {
+                    task.name = name.trim().into();
+                    self.rename(generation);
+                }
+            }
             PersistAction::Load(slot) if self.screen == SaveScreen::Browser => {
                 let (Some(store), Some(dir)) = (self.store.clone(), log_dir) else {
                     self.unavailable();
@@ -441,7 +511,9 @@ impl Persistence {
                 });
             }
             PersistAction::Retry if self.error.is_some() => {
-                if self.task.is_some() {
+                if self.rename.is_some() {
+                    self.rename(generation);
+                } else if self.task.is_some() {
                     self.write(generation);
                 } else {
                     self.list(generation);
@@ -459,6 +531,13 @@ impl Persistence {
             }
             PersistAction::Cancel => {
                 if self.screen == SaveScreen::Automatic {
+                    return;
+                }
+                if self.screen == SaveScreen::Rename
+                    && let Some(task) = self.rename.take()
+                {
+                    self.screen = task.return_to;
+                    self.list(generation);
                     return;
                 }
                 if let Some(job) = self.job.take() {
@@ -517,7 +596,7 @@ impl Persistence {
                     slot: run.automatic.clone(),
                     run: run.id.clone(),
                     kind: SaveKind::Automatic,
-                    name: "save-autosave".into(),
+                    name: run.automatic_name.clone(),
                     saved_at: store.now(),
                 },
                 checkpoint,
@@ -662,6 +741,37 @@ pub(super) fn poll_persistence(
                     && let Some(run) = &mut persistence.run
                 {
                     run.revision = Some(*revision);
+                }
+                persistence.error = Some(error);
+            }
+        },
+        Completion::Renamed(result) => match result {
+            Ok(receipt) => {
+                let Some(task) = persistence.rename.take() else {
+                    return;
+                };
+                persistence.remember_automatic_rename(
+                    &receipt.metadata.slot,
+                    receipt.revision,
+                    &receipt.metadata.name,
+                );
+                if persistence
+                    .last_saved
+                    .as_ref()
+                    .is_some_and(|saved| saved.metadata.slot == receipt.metadata.slot)
+                {
+                    persistence.last_saved = Some(receipt);
+                }
+                persistence.screen = task.return_to;
+                persistence.list(generation.0);
+            }
+            Err(error) => {
+                if let SaveError::DurabilityUnconfirmed { revision, .. } = &error
+                    && let Some(task) = &mut persistence.rename
+                {
+                    task.revision = *revision;
+                    let task = task.clone();
+                    persistence.remember_automatic_rename(&task.slot, task.revision, &task.name);
                 }
                 persistence.error = Some(error);
             }

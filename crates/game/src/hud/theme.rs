@@ -148,7 +148,7 @@ pub(super) fn apply_theme(mut contexts: EguiContexts) -> bevy::prelude::Result {
 }
 
 /// Text on terrain or data marks always gets its own opaque surface, even on faded projects.
-pub(super) fn paint_label(
+pub fn paint_label(
     painter: &egui::Painter,
     pos: egui::Pos2,
     align: egui::Align2,

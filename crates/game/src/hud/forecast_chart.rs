@@ -197,35 +197,39 @@ mod tests {
         empty_start(&mut game);
         let views = game.session().plant_views();
         let of_kind = |kind| -> Vec<_> { views.iter().filter(|p| p.kind == kind).collect() };
-        let (nuclear, coal, ccgt) = (
+        let (nuclear, coal, ccgt, peaker) = (
             of_kind(PlantKind::Nuclear),
             of_kind(PlantKind::Coal),
             of_kind(PlantKind::Ccgt),
+            of_kind(PlantKind::Peaker),
         );
         let region = game.session().region().clone();
-        let (nuclear_mw, coal_mw, ccgt_mw) = (
+        let (nuclear_mw, coal_mw, ccgt_mw, peaker_mw) = (
             region.spec(PlantKind::Nuclear).capacity.value(),
             region.spec(PlantKind::Coal).capacity.value(),
             region.spec(PlantKind::Ccgt).capacity.value(),
+            region.spec(PlantKind::Peaker).capacity.value(),
         );
 
-        // Both nuclear plants all day; the first coal plant all day and the second (a daytime
-        // block) only when the sun is up; the first gas plant 08:00-19:59.
+        // Nuclear and coal all day; one gas plant all day, another and a peaker
+        // 08:00-19:59. Two gas units test aggregation within one stack.
         for plant in &nuclear {
             game.execute(Command::StartPlant { plant: plant.id })
                 .unwrap();
         }
         game.execute(Command::StartPlant { plant: coal[0].id })
             .unwrap();
+        game.execute(Command::StartPlant { plant: ccgt[0].id })
+            .unwrap();
         let mut day = [false; 24];
         day[8..20].fill(true);
         game.execute(Command::CommitPlant {
-            plant: coal[1].id,
+            plant: ccgt[1].id,
             hours: day,
         })
         .unwrap();
         game.execute(Command::CommitPlant {
-            plant: ccgt[0].id,
+            plant: peaker[0].id,
             hours: day,
         })
         .unwrap();
@@ -248,17 +252,17 @@ mod tests {
             let day_plants = if on { 1.0 } else { 0.0 };
             assert_eq!(
                 stack_of(&stacks, PlantKind::Nuclear).mw[hour],
-                2.0 * nuclear_mw
+                nuclear.len() as f64 * nuclear_mw
             );
-            assert_eq!(
-                stack_of(&stacks, PlantKind::Coal).mw[hour],
-                coal_mw * (1.0 + day_plants)
-            );
+            assert_eq!(stack_of(&stacks, PlantKind::Coal).mw[hour], coal_mw);
             assert_eq!(
                 stack_of(&stacks, PlantKind::Ccgt).mw[hour],
-                ccgt_mw * day_plants
+                ccgt_mw * (1.0 + day_plants)
             );
-            assert_eq!(stack_of(&stacks, PlantKind::Peaker).mw[hour], 0.0);
+            assert_eq!(
+                stack_of(&stacks, PlantKind::Peaker).mw[hour],
+                peaker_mw * day_plants
+            );
         }
         // Each bar starts where the cheaper kinds end, so the top of the last is the total.
         for hour in 0..24 {
@@ -269,7 +273,10 @@ mod tests {
             }
         }
         let total_at_noon: f64 = stacks.iter().map(|s| s.mw[12]).sum();
-        assert_eq!(total_at_noon, 2.0 * nuclear_mw + 2.0 * coal_mw + ccgt_mw);
+        assert_eq!(
+            total_at_noon,
+            nuclear.len() as f64 * nuclear_mw + coal_mw + 2.0 * ccgt_mw + peaker_mw
+        );
         assert_eq!(stack_of(&stacks, PlantKind::Coal).name, "Coal plant");
         assert_eq!(l10n.problems(), vec![]);
     }
