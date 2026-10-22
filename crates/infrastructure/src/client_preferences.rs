@@ -24,6 +24,8 @@ pub struct ClientPreferences {
     pub window: Option<PreferenceWindow>,
     pub zoom: f32,
     pub speed: u32,
+    /// Bloom and camera-focus blur in the 3D map.
+    pub effects: bool,
     /// egui panel IDs mapped to outer sizes in logical points.
     pub panels: BTreeMap<String, [f32; 2]>,
     /// Movable tool IDs mapped to position and size in logical points.
@@ -36,6 +38,7 @@ impl Default for ClientPreferences {
             window: None,
             zoom: 1.0,
             speed: 1,
+            effects: true,
             panels: BTreeMap::new(),
             tools: BTreeMap::new(),
         }

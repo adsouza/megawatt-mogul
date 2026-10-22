@@ -18,6 +18,7 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "world-overlay-show",
     "world-effects-off",
     "world-effects-on",
+    "world-effects-help",
     "world-help",
     "world-copper-plate",
     "world-dev-title",

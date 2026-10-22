@@ -642,6 +642,14 @@ The presentation layer never reads aggregate internals.
 - **Operating overlay:** supply indicators over the warm, lit diorama: glowing plant output
   pillars, city lights showing supply status and energised lines. Retain terrain colours, building
   face shading and cast shadows; the overlay must not blacken the map or flatten the buildings.
+- **Sunlight and shadows:** use the region's monthly sunrise/sunset times and the simulation
+  clock. Sunlight comes from the east in the morning, south at solar noon and west in the evening;
+  longer days have a higher illustrative northern-hemisphere arc. This is a representative regional
+  sun, not per-cell astronomical positioning. Direction and intensity freeze when simulation time
+  pauses and restore from saved simulation time. After sunset, disable solar light/shadows and
+  retain readable ambient illumination. Planning previews solar noon for building visibility;
+  Operating and Review use the actual clock. Resource overlays and the effects toggle do not
+  change this lighting rule. No simulation tuning, solar generation or RNG changes.
 - Click selects; left drag orbits; Shift + left drag or right/middle drag pans without orbiting
   or selecting. Scroll zooms about the visible terrain or object beneath the pointer, keeping that
   point fixed on screen within the camera's pan bounds. Scrolling over empty background zooms
@@ -650,8 +658,12 @@ The presentation layer never reads aggregate internals.
   operate while pointing at the map without taking keyboard focus from text entry. HUD panels,
   legends and modals capture their own input.
 - Each phase restores its default overlay. Choosing a resource layer in Operating shows resource
-  colours; Control room restores its hologram. Pillar height represents output/capacity. Effects off
-  disables bloom/DOF; unsupported depth-texture platforms skip DOF. HUD and backed labels remain
+  colours; Control room restores its hologram. Pillar height represents output/capacity. Effects
+  add bloom (a soft glow around bright objects) and a subtle camera-focus blur, capped at three
+  pixels. They default on. The button names its action explicitly: **Disable effects** while on,
+  **Enable effects** while off, with a hover explanation. Remember this application preference
+  across new/load games, phase changes and restarts; session reset must not reset it. Disabling
+  removes bloom/DOF; unsupported depth-texture platforms skip DOF. HUD and backed labels remain
   outside post-processing. The perspective legend starts collapsed and can be opened explicitly;
   it scrolls within narrow maps. Narrow map areas use a compact resource-layer dropdown, leaving
   room for the terrain at increased UI zoom.
@@ -1737,7 +1749,7 @@ separate autosave at each month close, as selected by the user.
   layout, zoom and chosen running speed are separate application preferences below; Operating
   resume still starts paused. Replay does not re-emit historical toasts or milestone notifications.
 - **Application preferences** are stored separately from game checkpoints and restored on launch:
-  window size/position, UI zoom, the last chosen running speed, sidebar widths, bottom-panel
+  window size/position, UI zoom, the last chosen running speed, visual effects, sidebar widths, bottom-panel
   heights, the Incidents divider and movable tool-window positions. Observe actual resized/moved
   state; save automatically after changes and flush pending changes on normal OS/menu exit.
   Pausing or entering Review never overwrites the remembered running speed. New days use that

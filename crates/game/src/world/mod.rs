@@ -21,7 +21,9 @@ pub fn region_terrain(
 mod camera;
 pub use camera::{CameraPose, OrbitCamera, physical_viewport};
 
+mod lighting;
 mod model;
+pub use lighting::{SunPosition, sun_position};
 mod overlay;
 mod picking;
 pub use model::{

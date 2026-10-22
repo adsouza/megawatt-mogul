@@ -209,13 +209,14 @@ fn initialise(
     ));
     commands.spawn((
         WorldEntity,
+        super::lighting::SunLight,
         DirectionalLight {
-            illuminance: 14000.0,
+            illuminance: 0.0,
             color: Color::srgb(1.0, 0.90, 0.75),
             shadow_maps_enabled: true,
             ..default()
         },
-        Transform::from_xyz(-50.0, 90.0, 35.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::default(),
         bevy::light::CascadeShadowConfigBuilder {
             maximum_distance: 500.0,
             ..default()
@@ -265,7 +266,7 @@ pub fn reconcile(
         if scene.model.is_some() {
             clear(&mut commands, &entities, &mut store);
             *scene = default();
-            *controls = default();
+            controls.reset_session();
         }
         return;
     };
@@ -280,7 +281,7 @@ pub fn reconcile(
     let model = WorldModel::of(&session.0);
     if fresh {
         clear(&mut commands, &entities, &mut store);
-        *controls = default();
+        controls.reset_session();
         match super::region_terrain(&model.region, MapLayer::Terrain) {
             Ok(geometry) => {
                 initialise(
@@ -420,7 +421,6 @@ pub fn update_visuals(
     mut objects: Query<(&mut Transform, &mut MeshMaterial3d<StandardMaterial>), ObjectFilter>,
     mut pillars: Query<(&Pillar, &mut Transform, &mut Visibility), Without<SelectionMarker>>,
     mut marker: Query<(&mut Transform, &mut Visibility), MarkerFilter>,
-    mut lights: Query<&mut DirectionalLight>,
 ) {
     let VisualInputs {
         scene,
@@ -568,8 +568,5 @@ pub fn update_visuals(
         } else {
             *v = Visibility::Hidden;
         }
-    }
-    for mut light in &mut lights {
-        light.illuminance = tuning.sunlight();
     }
 }

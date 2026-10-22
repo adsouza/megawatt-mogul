@@ -161,7 +161,8 @@ person can see.
   its replay verifies; when it doesn't, the browser shows the other-version copy at 1024×640, and
   neither the menu nor the file changes.
 - `infrastructure/tests/client_preferences.rs` and `tests/game/preferences.rs` cover isolated
-  preference files, restart, real sidebar/bottom-panel drags, zoom/speed, normal-exit flushing and
+  preference files, restart, real sidebar/bottom-panel drags, zoom/speed, effects toggled through
+  real buttons and retained across new games/restarts, legacy effects defaults, normal-exit flushing and
   property-tested reachable geometry. Tests never write the player's real preferences.
 
 `tests/game/world.rs` covers the integrated diorama through CPU geometry, headless lifecycle and
@@ -486,6 +487,8 @@ beside an old curve.
 projection/ray round trips, bounded camera gestures, pointer-anchored zoom across camera angles,
 terrain/roof heights and distance limits, physical viewport rounding and zero-sized
 windows, accelerated ray equivalence to the rendered terrain, object bounds, opaque label fitting,
+simulation-clock sunlight from east through south to west, monthly arc height and sunrise/sunset
+limits, paused lighting, nighttime ambient visibility and Planning's noon preview,
 and uniform copper-plate supply. Invariants use property tests.
 
 Headless `WorldViewPlugin` tests reconcile stable IDs without a renderer, check bounded mesh/material

@@ -58,6 +58,25 @@ fn client_preferences_retains_the_full_egui_zoom_range() {
 }
 
 #[test]
+fn client_preferences_defaults_legacy_effects_to_on_and_roundtrips_both_choices() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("preferences.ron"),
+        "(version:1,window:None,zoom:1.25,speed:4,panels:{},tools:{})",
+    )
+    .unwrap();
+    let mut preferences = read_preferences(dir.path()).unwrap();
+    assert!(preferences.effects);
+    assert_eq!(preferences.zoom, 1.25);
+    assert_eq!(preferences.speed, 4);
+    for effects in [false, true] {
+        preferences.effects = effects;
+        write_preferences(dir.path(), &preferences).unwrap();
+        assert_eq!(read_preferences(dir.path()).unwrap(), preferences);
+    }
+}
+
+#[test]
 fn client_preferences_writer_syncs_only_its_own_directory_and_the_ones_it_created() {
     use std::{
         cell::RefCell,

@@ -40,7 +40,11 @@ impl Plugin for OverlayPlugin {
             .init_resource::<TuningConfig>()
             .add_systems(
                 PostUpdate,
-                super::render::update_visuals
+                (
+                    super::render::update_visuals,
+                    super::lighting::update_sunlight,
+                )
+                    .chain()
                     .after(EguiPostUpdateSet::EndPass)
                     .before(TransformSystems::Propagate),
             );

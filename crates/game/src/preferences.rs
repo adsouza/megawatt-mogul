@@ -66,6 +66,7 @@ fn load(
     dir: Option<Res<SaveDir>>,
     mut settings: ResMut<ClientSettings>,
     last: Option<ResMut<LastSpeed>>,
+    controls: Option<ResMut<crate::world::WorldControls>>,
 ) {
     if settings.loaded {
         return;
@@ -84,6 +85,9 @@ fn load(
     // can mistake its default 1x for a player choice and overwrite the restored preference.
     if let Some(mut last) = last {
         last.0 = settings.speed();
+    }
+    if let Some(mut controls) = controls {
+        controls.effects = settings.value.effects;
     }
 }
 fn apply_egui(mut contexts: EguiContexts, mut settings: ResMut<ClientSettings>) -> Result {
@@ -107,12 +111,16 @@ fn observe_egui(
     mut contexts: EguiContexts,
     mut settings: ResMut<ClientSettings>,
     last: Option<Res<LastSpeed>>,
+    controls: Option<Res<crate::world::WorldControls>>,
 ) -> Result {
     if !settings.loaded || !settings.egui_applied {
         return Ok(());
     }
     let ctx = contexts.ctx_mut()?;
     settings.value.zoom = ctx.zoom_factor().clamp(0.2, 5.0);
+    if let Some(controls) = controls {
+        settings.value.effects = controls.effects;
+    }
     for id in PANELS {
         if let Some(panel) = egui::PanelState::load(ctx, egui::Id::new(id)) {
             let size = panel.size();

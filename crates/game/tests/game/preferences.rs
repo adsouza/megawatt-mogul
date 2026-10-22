@@ -13,6 +13,61 @@ use infrastructure::client_preferences::{
 use tempfile::TempDir;
 
 #[test]
+fn preferences_retain_effects_through_real_clicks_new_games_and_restart() {
+    use game::{
+        hud::{Selection, UiAction},
+        sim::Session,
+        world::{WorldControls, WorldViewPlugin},
+    };
+    let root = TempDir::new().unwrap();
+    let logs = TempDir::new().unwrap();
+    let make_app = || {
+        let mut app = hud_app(logs.path());
+        app.insert_resource(SaveDir(root.path().into()))
+            .add_plugins((PreferencesPlugin, WorldViewPlugin));
+        update_n(&mut app, 2);
+        app
+    };
+    let mut app = make_app();
+    request(&mut app, "western_interconnection");
+    let pass = EguiPass::attach(&mut app);
+    let widgets = pass.settled(&mut app, 1280.0, 800.0);
+    let checkpoint = app.world().resource::<Session>().0.checkpoint();
+    let toggle = crate::support::egui_harness::button(&widgets, "Disable effects");
+    pass.click_at(&mut app, 1280.0, 800.0, toggle.rect.center());
+    assert!(!app.world().resource::<WorldControls>().effects);
+    assert_eq!(app.world().resource::<Session>().0.checkpoint(), checkpoint);
+    assert_eq!(*app.world().resource::<Selection>(), Selection::None);
+    crate::hud_smoke::dispatch_in(&mut app, vec![UiAction::ReturnToMenu]);
+    update_n(&mut app, 3);
+    request(&mut app, "eastern_interconnection");
+    assert!(
+        !app.world().resource::<WorldControls>().effects,
+        "a new session retains the preference"
+    );
+    pass.settled(&mut app, 1280.0, 800.0);
+    app.world_mut().write_message(AppExit::Success);
+    app.update();
+    drop(app);
+    let mut fresh = make_app();
+    assert!(
+        !fresh.world().resource::<WorldControls>().effects,
+        "restart restores effects before a game starts"
+    );
+    request(&mut fresh, "western_interconnection");
+    let pass = EguiPass::attach(&mut fresh);
+    let widgets = pass.settled(&mut fresh, 1280.0, 800.0);
+    let toggle = crate::support::egui_harness::button(&widgets, "Enable effects");
+    pass.click_at(&mut fresh, 1280.0, 800.0, toggle.rect.center());
+    assert!(fresh.world().resource::<WorldControls>().effects);
+    fresh.world_mut().write_message(AppExit::Success);
+    fresh.update();
+    drop(fresh);
+    let again = make_app();
+    assert!(again.world().resource::<WorldControls>().effects);
+}
+
+#[test]
 fn preferences_restore_window_and_clamp_a_missing_monitor() {
     let root = TempDir::new().unwrap();
     let p = ClientPreferences {

@@ -29,6 +29,7 @@ pub struct ToolbarModel {
     pub reset: ButtonModel,
     pub overlay: ButtonModel,
     pub effects: ButtonModel,
+    pub effects_help: String,
     pub help: String,
     pub help_label: String,
     pub layer_label: String,
@@ -64,6 +65,7 @@ pub fn toolbar_model(
             }),
             UiAction::World(WorldAction::ToggleEffects),
         ),
+        effects_help: l10n.text("world-effects-help"),
         help: l10n.text("world-help"),
         help_label: l10n.text("world-help-label"),
         layer_label: l10n.text("world-layer-label"),
@@ -129,7 +131,10 @@ pub fn draw_surface(
         {
             let mut model = model.clone();
             model.enabled &= !surface.blocked;
-            button(ui, &model, &mut actions);
+            let response = button(ui, &model, &mut actions);
+            if model.action == UiAction::World(WorldAction::ToggleEffects) {
+                response.on_hover_text(&toolbar.effects_help);
+            }
         }
         let open = model.legend_choice.0.unwrap_or(false);
         crate::hud::toggle_button(

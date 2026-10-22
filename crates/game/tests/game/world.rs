@@ -177,6 +177,22 @@ proptest! {
 }
 
 #[test]
+fn world_effects_button_names_the_action_it_will_take() {
+    let l10n = crate::support::shipped_l10n();
+    for enabled in [true, false] {
+        let model = game::world::toolbar_model(&l10n, true, enabled, false, false);
+        assert_eq!(
+            model.effects.label,
+            if enabled {
+                "Disable effects"
+            } else {
+                "Enable effects"
+            }
+        );
+    }
+}
+
+#[test]
 fn world_camera_can_zoom_close_enough_to_inspect_cell_sized_models() {
     let size = bevy::math::Vec2::new(100.0, 60.0);
     let mut camera = game::world::OrbitCamera {
@@ -1304,6 +1320,142 @@ fn world_secondary_middle_and_shift_drags_pan_without_orbiting_or_selecting() {
     assert_ne!((after.yaw, after.elevation), (before.yaw, before.elevation));
 }
 
+fn western_solar() -> domain::region::SolarParams {
+    use application::RegionCatalog;
+    let catalog = infrastructure::region::RonRegionCatalog::new(
+        crate::support::shipped_assets().join("regions"),
+    );
+    catalog
+        .load(&domain::ids::RegionId::new("western_interconnection"))
+        .unwrap()
+        .definition
+        .solar()
+        .clone()
+}
+
+#[test]
+fn world_sun_arc_runs_east_to_south_to_west_and_varies_with_the_month() {
+    use domain::time::SimMonth;
+    let solar = &western_solar();
+    for month in [1, 6, 12] {
+        let month = SimMonth::new(2027, month).unwrap();
+        let (rise, set) = solar.daylight[month.index0()];
+        let at = |fraction: f64| {
+            game::world::sun_position(
+                solar,
+                month,
+                ((rise + (set - rise) * fraction) * 60.0).round() as u32,
+            )
+        };
+        let (morning, noon, evening) = (at(0.25), at(0.5), at(0.75));
+        assert!(morning.toward_sun.x > 0.0);
+        assert!(evening.toward_sun.x < 0.0);
+        assert!(noon.toward_sun.x.abs() < 0.01 && noon.toward_sun.z > 0.0);
+        assert!(noon.toward_sun.y > morning.toward_sun.y);
+        assert!(noon.strength > 0.99);
+        assert_eq!(game::world::sun_position(solar, month, 0).strength, 0.0);
+        assert_eq!(game::world::sun_position(solar, month, 1440).strength, 0.0);
+    }
+    let noon = |m| {
+        let month = SimMonth::new(2027, m).unwrap();
+        let (rise, set) = solar.daylight[month.index0()];
+        game::world::sun_position(solar, month, ((rise + set) * 30.0).round() as u32)
+    };
+    assert!(noon(6).toward_sun.y > noon(12).toward_sun.y);
+}
+
+proptest! {
+    #[test]
+    fn world_sun_arc_is_finite_unit_length_and_dark_outside_daylight(month in 1u8..13, tick in 0u32..=1440) {
+        let solar = western_solar();
+        let month = domain::time::SimMonth::new(2027, month).unwrap();
+        let sun = game::world::sun_position(&solar, month, tick);
+        prop_assert!(sun.toward_sun.is_finite());
+        prop_assert!((sun.toward_sun.length() - 1.0).abs() < 1e-5);
+        prop_assert!((0.0..=1.0).contains(&sun.strength));
+        let (rise, set) = solar.daylight[month.index0()];
+        let hour = f64::from(tick) / 60.0;
+        if hour <= rise || hour >= set { prop_assert_eq!(sun.strength, 0.0); }
+        else { prop_assert!(sun.strength > 0.0 && sun.toward_sun.y > 0.0); }
+    }
+}
+
+#[test]
+fn world_sunlight_changes_direction_with_the_operating_clock() {
+    use application::Command;
+    use bevy::prelude::*;
+    use game::{hud::UiAction, sim::Session};
+    let logs = tempfile::TempDir::new().unwrap();
+    let mut app = diorama_app(logs.path());
+    app.insert_resource(GlobalAmbientLight::default());
+    crate::support::request(&mut app, "western_interconnection");
+    crate::hud_smoke::dispatch_in(&mut app, vec![UiAction::Command(Command::BeginOperating)]);
+    app.update();
+    let direction = |app: &mut App| {
+        *app.world_mut()
+            .query_filtered::<&Transform, With<DirectionalLight>>()
+            .single(app.world())
+            .unwrap()
+            .forward()
+    };
+    crate::hud_smoke::dispatch_in(
+        &mut app,
+        vec![UiAction::Command(Command::AdvanceTicks { n: 9 * 60 })],
+    );
+    app.update();
+    let morning = direction(&mut app);
+    crate::hud_smoke::dispatch_in(
+        &mut app,
+        vec![UiAction::Command(Command::AdvanceTicks { n: 6 * 60 })],
+    );
+    app.update();
+    let afternoon = direction(&mut app);
+    assert!(
+        morning.x < 0.0,
+        "morning sunlight travels west: {morning:?}"
+    );
+    assert!(
+        afternoon.x > 0.0,
+        "afternoon sunlight travels east: {afternoon:?}"
+    );
+    let checkpoint = app.world().resource::<Session>().0.checkpoint();
+    crate::hud_smoke::dispatch_in(
+        &mut app,
+        vec![UiAction::SetSpeed(game::sim::SimSpeed::Paused)],
+    );
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+        std::time::Duration::from_secs(2),
+    ));
+    app.update();
+    assert_eq!(direction(&mut app), afternoon, "pausing freezes the sun");
+    assert_eq!(app.world().resource::<Session>().0.checkpoint(), checkpoint);
+    crate::hud_smoke::dispatch_in(
+        &mut app,
+        vec![UiAction::Command(Command::AdvanceTicks { n: 9 * 60 })],
+    );
+    app.update();
+    let light = app
+        .world_mut()
+        .query::<&DirectionalLight>()
+        .single(app.world())
+        .unwrap();
+    assert_eq!(light.illuminance, 0.0);
+    assert!(!light.shadow_maps_enabled);
+    assert!(app.world().resource::<GlobalAmbientLight>().brightness >= 2000.0);
+    crate::hud_smoke::dispatch_in(&mut app, vec![UiAction::Command(Command::FinishReview)]);
+    app.update();
+    assert!(
+        direction(&mut app).z < 0.0,
+        "Planning previews the sun in the south"
+    );
+    let light = app
+        .world_mut()
+        .query::<&DirectionalLight>()
+        .single(app.world())
+        .unwrap();
+    assert!(light.illuminance > 10000.0 && light.shadow_maps_enabled);
+}
+
 #[test]
 fn world_operating_overlay_preserves_lit_terrain_and_building_shading() {
     use application::Command;
@@ -1311,7 +1463,7 @@ fn world_operating_overlay_preserves_lit_terrain_and_building_shading() {
     use game::{
         hud::UiAction,
         sim::Session,
-        world::{TuningConfig, ViewSync, WorldAction, WorldAssets, WorldEntity},
+        world::{ViewSync, WorldAction, WorldAssets, WorldEntity},
     };
     let logs = tempfile::TempDir::new().unwrap();
     for region in ["eastern_interconnection", "western_interconnection"] {
@@ -1365,13 +1517,13 @@ fn world_operating_overlay_preserves_lit_terrain_and_building_shading() {
             ground.base_color, terrain_colour,
             "The supply overlay must not blacken the terrain"
         );
-        let sunlight = app.world().resource::<TuningConfig>().sunlight();
         for light in app
             .world_mut()
             .query::<&DirectionalLight>()
             .iter(app.world())
         {
-            assert_eq!(light.illuminance, sunlight);
+            assert_eq!(light.illuminance, 0.0, "the day begins at midnight");
+            assert!(!light.shadow_maps_enabled);
         }
         for _ in 0..2 {
             crate::hud_smoke::dispatch_in(

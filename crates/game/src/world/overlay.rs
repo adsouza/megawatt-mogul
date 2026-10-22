@@ -39,6 +39,13 @@ pub enum WorldAction {
     ControlRoom,
 }
 impl WorldControls {
+    /// Camera/overlay state belongs to a session; effects are an application preference.
+    pub(super) fn reset_session(&mut self) {
+        *self = Self {
+            effects: self.effects,
+            ..default()
+        };
+    }
     pub fn enter_phase(&mut self, phase: DayPhase) {
         if self.phase != Some(phase) {
             self.phase = Some(phase);

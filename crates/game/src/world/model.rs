@@ -9,6 +9,7 @@ use domain::{
     ids::{CellCoord, CityId, LineId, NodeId, PlantId},
     region::{PlantKind, RegionDefinition},
     session::DayPhase,
+    time::SimMonth,
 };
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -187,6 +188,8 @@ pub struct WorldLine {
 pub struct WorldModel {
     pub region: Arc<RegionDefinition>,
     pub phase: DayPhase,
+    pub month: SimMonth,
+    pub tick: u32,
     pub served: f32,
     pub plants: BTreeMap<PlantId, WorldPlant>,
     pub cities: BTreeMap<CityId, WorldCity>,
@@ -335,6 +338,8 @@ impl WorldModel {
         Self {
             region,
             phase: s.phase(),
+            month: s.clock().month(),
+            tick: s.clock().tick(),
             served,
             plants,
             cities,

@@ -120,7 +120,9 @@ session generation. Workers carry tokens/cancellation; only verified, current re
 candidate or fulfil Save-and-menu. Resume stays paused until phase-entry hooks have settled. A
 resumed branch gets a fresh run ID, diagnostic log and automatic slot.
 
-`PreferencesPlugin` retains window/layout/zoom/speed independently in `preferences.ron`. It observes
+`PreferencesPlugin` retains window/layout/zoom/speed and the visual-effects choice independently in
+`preferences.ron`. Session visual resets retain effects while resetting camera/overlay state;
+legacy preference files without the field keep the default enabled. It observes
 actual native/egui geometry, writes changed snapshots on a worker and flushes the latest one on
 normal exit. No preference is a simulation input. Headless tests inject paths and can omit the
 plugin; there is no ambient working-directory write from `CorePlugins`.
