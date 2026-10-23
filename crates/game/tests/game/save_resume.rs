@@ -1612,6 +1612,109 @@ fn a_failed_load_leaves_no_new_files_in_the_log_directory() {
 }
 
 #[test]
+fn save_and_rename_name_fields_submit_with_enter_using_the_current_text() {
+    use bevy_egui::egui;
+    let logs = TempDir::new().unwrap();
+    let saves = TempDir::new().unwrap();
+    let mut app = operating(&logs, &saves);
+    let expected = app.world().resource::<Session>().0.checkpoint();
+    let pass = crate::support::egui_pass::EguiPass::attach(&mut app);
+    let (width, height) = (1280.0, 640.0);
+    let enter = |pressed| egui::Event::Key {
+        key: egui::Key::Enter,
+        physical_key: None,
+        pressed,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    };
+    action(&mut app, PersistAction::OpenSave { leave: false });
+    settle(&mut app);
+    let widgets = pass.settled(&mut app, width, height);
+    let field = widgets
+        .iter()
+        .find(|w| w.role == egui::accesskit::Role::TextInput)
+        .unwrap();
+    pass.click_at(&mut app, width, height, field.rect.center());
+    // Empty input must not submit, even from the focused field.
+    pass.run_with(&mut app, width, height, vec![enter(true), enter(false)]);
+    assert!(app.world().resource::<Persistence>().last_saved().is_none());
+    let widgets = pass.settled(&mut app, width, height);
+    let field = widgets
+        .iter()
+        .find(|w| w.role == egui::accesskit::Role::TextInput)
+        .unwrap();
+    pass.click_at(&mut app, width, height, field.rect.center());
+    // Text and Enter in the same frame must use the new text and validation.
+    pass.run_with(
+        &mut app,
+        width,
+        height,
+        vec![
+            egui::Event::Text("Keyboard save".into()),
+            enter(true),
+            enter(false),
+        ],
+    );
+    settle(&mut app);
+    let saved = app
+        .world()
+        .resource::<Persistence>()
+        .last_saved()
+        .expect("Enter creates a save")
+        .clone();
+    assert_eq!(saved.metadata.name, "Keyboard save");
+    action(&mut app, PersistAction::OpenBrowser);
+    settle(&mut app);
+    action(
+        &mut app,
+        PersistAction::BeginRename(saved.metadata.slot.clone()),
+    );
+    pass.settled(&mut app, width, height);
+    app.world_mut()
+        .resource_mut::<game::hud::SaveForm>()
+        .rename_name
+        .clear();
+    let widgets = pass.settled(&mut app, width, height);
+    let field = widgets
+        .iter()
+        .find(|w| w.role == egui::accesskit::Role::TextInput)
+        .unwrap();
+    pass.click_at(&mut app, width, height, field.rect.center());
+    pass.run_with(&mut app, width, height, vec![enter(true), enter(false)]);
+    assert_eq!(
+        app.world().resource::<Persistence>().screen,
+        game::sim::SaveScreen::Rename
+    );
+    let widgets = pass.settled(&mut app, width, height);
+    let field = widgets
+        .iter()
+        .find(|w| w.role == egui::accesskit::Role::TextInput)
+        .unwrap();
+    pass.click_at(&mut app, width, height, field.rect.center());
+    pass.run_with(
+        &mut app,
+        width,
+        height,
+        vec![
+            egui::Event::Text("Keyboard rename".into()),
+            enter(true),
+            enter(false),
+        ],
+    );
+    settle(&mut app);
+    assert_eq!(
+        app.world().resource::<Persistence>().screen,
+        game::sim::SaveScreen::Browser
+    );
+    let store = infrastructure::save::FileSaveStore::new(saves.path().into());
+    use application::SaveStore;
+    let (renamed, _) = store.read(&saved.metadata.slot).unwrap();
+    assert_eq!(renamed.metadata.name, "Keyboard rename");
+    assert_eq!(renamed.checkpoint, expected);
+    assert_eq!(store.list().unwrap().len(), 1, "Enter submits only once");
+}
+
+#[test]
 fn save_rename_browser_prefills_name_cancels_and_renames_without_loading_the_game() {
     use crate::support::egui_pass::EguiPass;
     use application::SaveStore;
@@ -1645,7 +1748,24 @@ fn save_rename_browser_prefills_name_cancels_and_renames_without_loading_the_gam
             app.world().resource::<game::hud::SaveForm>().rename_name,
             "Original name"
         );
-        action(&mut app, PersistAction::Cancel);
+        let widgets = pass.settled(&mut app, width, height);
+        let field = widgets
+            .iter()
+            .find(|w| w.role == bevy_egui::egui::accesskit::Role::TextInput)
+            .unwrap();
+        pass.click_at(&mut app, width, height, field.rect.center());
+        pass.run_with(
+            &mut app,
+            width,
+            height,
+            vec![bevy_egui::egui::Event::Key {
+                key: bevy_egui::egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: bevy_egui::egui::Modifiers::NONE,
+            }],
+        );
         settle(&mut app);
         assert_eq!(
             app.world().resource::<Persistence>().screen,

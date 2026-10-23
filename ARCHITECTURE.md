@@ -498,6 +498,15 @@ Every panel is split so that its decisions are testable without a window. Each l
 4. **A system**: it builds the model, opens the container, draws, and passes the actions to
    `dispatch` through its `ActionSink`. It writes nothing anywhere else, and it draws one panel.
 
+Single-line fields submit their associated primary action on Enter, using `action::submitted`
+and the same action/validation as the adjacent button. Refresh pure form presenters with the text
+edited in the current pass, so typing and Enter together cannot submit a stale value. Respect
+busy/disabled states and emit the action once. Save/Rename visually mark that primary button;
+destructive deletion keeps Cancel as its default. Seed entry selects no region implicitly.
+Escape invokes the active dialog's enabled Cancel/Close action through `action::cancelled`.
+Check before drawing text fields so they cannot swallow cancellation by surrendering focus.
+An open popup gets Escape first, and dialogs without an enabled cancellation remain open.
+
 Confirmations go through one `OpenPrompt` resource and one `prompt_overlay`: a button sends
 `UiAction::Prompt(Some(..))`, and a new prompt is a `Prompt` variant plus its case in
 `prompt_model`. A prompt that belongs to one phase, like the shortfall confirmation on *Start the

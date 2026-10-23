@@ -83,6 +83,7 @@ pub fn milestone_row(
 
 /// Each milestone's name, then its status and detail; Close at the bottom.
 pub fn draw_milestones(ui: &mut egui::Ui, model: &MilestonesModel) -> Vec<UiAction> {
+    let dismiss = super::action::cancelled(ui, &model.close);
     let mut actions = Vec::new();
     ui.set_width(MILESTONES_WIDTH);
     for row in &model.rows {
@@ -104,7 +105,11 @@ pub fn draw_milestones(ui: &mut egui::Ui, model: &MilestonesModel) -> Vec<UiActi
     ui.vertical_centered(|ui| {
         button(ui, &model.close, &mut actions);
     });
-    actions
+    if dismiss {
+        vec![model.close.action.clone()]
+    } else {
+        actions
+    }
 }
 
 /// A window under the top bar at the right, above the map and the Review modal alike.

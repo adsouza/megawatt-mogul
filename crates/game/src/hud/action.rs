@@ -178,6 +178,30 @@ pub fn button(
     response
 }
 
+/// Single-line fields submit their associated action on Enter, never on ordinary focus loss.
+/// Call after drawing the field and validate its current text before emitting the action.
+pub(super) fn submitted(response: &egui::Response) -> bool {
+    response.enabled()
+        && response.lost_focus()
+        && response
+            .ctx
+            .input(|input| input.key_pressed(egui::Key::Enter))
+}
+
+/// Capture before drawing editable fields, which otherwise consume Escape to surrender focus.
+/// Only the active dialog's enabled cancellation can consume it; popups get first refusal.
+pub(super) fn cancelled(ui: &egui::Ui, cancel: &ButtonModel) -> bool {
+    cancel.enabled
+        && ui.is_enabled()
+        && ui.memory(|memory| {
+            memory
+                .top_modal_layer()
+                .is_none_or(|layer| layer == ui.layer_id())
+        })
+        && !egui::Popup::is_any_open(ui.ctx())
+        && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+}
+
 /// Adds `widget`, usable only when `enabled` and when `ui` is; a disabled one is drawn with
 /// [`theme::disabled_visuals`], so it looks unavailable. Use this, not `Ui::add_enabled`: the
 /// theme turns egui's own disabled fade off, so that would draw it like an enabled one (clippy's

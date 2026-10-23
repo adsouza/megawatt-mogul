@@ -98,6 +98,7 @@ pub fn prompt_in_phase(open: OpenPrompt, phase: DayPhase) -> OpenPrompt {
 }
 
 pub fn draw_prompt(ui: &mut egui::Ui, model: &PromptModel) -> Vec<UiAction> {
+    let dismiss = super::action::cancelled(ui, &model.cancel);
     let mut actions = Vec::new();
     ui.label(model.question.as_str());
     ui.add_space(12.0);
@@ -105,7 +106,11 @@ pub fn draw_prompt(ui: &mut egui::Ui, model: &PromptModel) -> Vec<UiAction> {
         button(ui, &model.confirm, &mut actions);
         button(ui, &model.cancel, &mut actions);
     });
-    actions
+    if dismiss {
+        vec![model.cancel.action.clone()]
+    } else {
+        actions
+    }
 }
 
 pub(super) fn prompt_overlay(
@@ -121,7 +126,7 @@ pub(super) fn prompt_overlay(
     let shown = egui::Modal::new(egui::Id::new("prompt"))
         .show(contexts.ctx_mut()?, |ui| draw_prompt(ui, &model));
     let mut actions = shown.inner;
-    if shown.backdrop_response.clicked() {
+    if shown.backdrop_response.clicked() && actions.is_empty() && model.cancel.enabled {
         actions.push(model.dismiss.clone());
     }
     dispatch(actions, &mut sink);

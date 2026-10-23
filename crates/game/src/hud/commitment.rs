@@ -59,6 +59,9 @@ pub struct TargetModel {
     pub label: String,
     /// What the field holds: what was typed, or else the plant's current target.
     pub text: String,
+    pub min: Megawatts,
+    pub capacity: Megawatts,
+    pub current: Megawatts,
     /// `240–600 MW`: what the domain accepts.
     pub range: String,
     /// Whether `text` is a number in that range.
@@ -127,6 +130,22 @@ fn parse_target(text: &str, min: Megawatts, capacity: Megawatts) -> Option<Megaw
     }
     let target = Megawatts::new(value);
     (target >= min && target <= capacity).then_some(target)
+}
+
+impl TargetModel {
+    /// Refresh the pure presenter after a field edits its text during the current pass.
+    fn edited(&self, plant: PlantId, text: &str) -> Self {
+        let typed = parse_target(text, self.min, self.capacity);
+        let mut model = self.clone();
+        model.text = text.to_owned();
+        model.valid = typed.is_some();
+        model.set.enabled = typed.is_some_and(|target| target != self.current);
+        model.set.action = UiAction::Command(Command::SetDispatchTarget {
+            plant,
+            mw: typed.unwrap_or(self.current),
+        });
+        model
+    }
 }
 
 pub fn commitment_model(
@@ -252,6 +271,9 @@ pub fn commitment_model(
             agc_tip: l10n.text("commitment-agc-tip"),
             target: TargetModel {
                 label: l10n.text("commitment-target"),
+                min,
+                capacity,
+                current: plant.initial_target,
                 valid: typed.is_some(),
                 range: l10n.args(
                     "commitment-target-range",
@@ -442,15 +464,20 @@ fn draw_row(
             .targets
             .entry(row.plant)
             .or_insert_with(|| row.target.text.clone());
-        ui.add(
-            egui::TextEdit::singleline(text)
-                .desired_width(46.0)
-                .hint_text(row.target.label.as_str()),
-        )
-        .on_hover_text(row.target.label.as_str());
-        button(ui, &row.target.set, actions);
-        let range = egui::RichText::new(row.target.range.as_str());
-        if row.target.valid {
+        let response = ui
+            .add(
+                egui::TextEdit::singleline(text)
+                    .desired_width(46.0)
+                    .hint_text(row.target.label.as_str()),
+            )
+            .on_hover_text(row.target.label.as_str());
+        let target = row.target.edited(row.plant, text);
+        let clicked = button(ui, &target.set, actions).clicked();
+        if !clicked && target.set.enabled && super::action::submitted(&response) {
+            actions.push(target.set.action);
+        }
+        let range = egui::RichText::new(target.range.as_str());
+        if target.valid {
             ui.weak(range);
         } else {
             ui.colored_label(ui.visuals().warn_fg_color, range);

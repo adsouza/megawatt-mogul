@@ -45,6 +45,11 @@ equal to demand. Clean Architecture + DDD; see ARCHITECTURE.md, and the spec in 
   domain's phase.
 - New player-facing text goes in `assets/locales/en-US/*.ftl`; a new literal key also goes in
   `crates/game/src/l10n/keys.rs`, which the coverage test (`tests/game/l10n_coverage.rs`) checks.
+- Single-line form fields submit their associated primary action on Enter. Validate the current
+  text in that same pass, respect disabled/busy states, and emit the action only once. Destructive
+  confirmations default to Cancel. Cover keyboard submission when adding or changing forms.
+- Escape invokes a dialog's enabled Cancel/Close action, even from a text field. Only the active
+  dialog handles it; an open popup gets Escape first. Keep non-dismissible/busy dialogs protected.
 - One test binary: game integration tests are modules of `crates/game/tests/game.rs` under
   `tests/game/`, never a new file in `tests/` (each Bevy-linked binary costs hundreds of MB and
   a link step). See TESTING.md for the layers.

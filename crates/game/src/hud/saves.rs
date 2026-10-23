@@ -53,10 +53,35 @@ pub struct SavesModel {
     pub error: Option<String>,
     pub empty: Option<String>,
     pub name_label: Option<String>,
+    /// Operation availability before validating the name, which can change during this draw pass.
+    pub name_submission_enabled: bool,
     pub renaming: bool,
     pub deleting: bool,
     pub rows: Vec<SaveRowModel>,
     pub buttons: Vec<ButtonModel>,
+}
+
+impl SavesModel {
+    /// Bind name actions to this pass's edited form rather than the previous frame's text.
+    fn edited_name_button(&self, button: &ButtonModel, form: &SaveForm) -> (ButtonModel, bool) {
+        let mut button = button.clone();
+        let name = match &mut button.action {
+            UiAction::Persistence(PersistAction::Rename(name)) => {
+                *name = form.rename_name.clone();
+                Some(name)
+            }
+            UiAction::Persistence(PersistAction::SaveNew(name)) => {
+                *name = form.name.clone();
+                Some(name)
+            }
+            _ => None,
+        };
+        let primary = name.is_some();
+        if let Some(name) = name {
+            button.enabled = self.name_submission_enabled && !name.trim().is_empty();
+        }
+        (button, primary)
+    }
 }
 
 pub(super) fn display_name(metadata: &application::SaveMetadata, l10n: &Localizer) -> String {
@@ -371,6 +396,8 @@ pub fn saves_model(p: &Persistence, form: &SaveForm, l10n: &Localizer) -> SavesM
         error: p.error.as_ref().map(|e| save_error(e, l10n)),
         empty,
         name_label: (saving || renaming).then(|| l10n.text("save-name")),
+        name_submission_enabled: !p.busy()
+            && (renaming || (saving && p.can_save() && p.error.is_none())),
         renaming,
         deleting,
         rows,
@@ -681,6 +708,13 @@ fn draw_library(ui: &mut egui::Ui, model: &SavesModel, height: f32, actions: &mu
 
 pub fn draw_saves(ui: &mut egui::Ui, model: &SavesModel, form: &mut SaveForm) -> Vec<UiAction> {
     let mut actions = Vec::new();
+    let dismiss = model
+        .buttons
+        .iter()
+        .find(|b| b.action == UiAction::Persistence(PersistAction::Cancel))
+        .filter(|b| super::action::cancelled(ui, b))
+        .map(|b| b.action.clone());
+    let mut submit_name = false;
     // Default focus belongs to Cancel on each newly opened deletion confirmation.
     let id = ui.id().with("delete_confirmation");
     let was_deleting = ui.ctx().data_mut(|d| {
@@ -723,7 +757,7 @@ pub fn draw_saves(ui: &mut egui::Ui, model: &SavesModel, form: &mut SaveForm) ->
     }
     if let Some(label) = &model.name_label {
         ui.label(label);
-        add_enabled(
+        let response = add_enabled(
             ui,
             !model.busy,
             egui::TextEdit::singleline(if model.renaming {
@@ -739,6 +773,13 @@ pub fn draw_saves(ui: &mut egui::Ui, model: &SavesModel, form: &mut SaveForm) ->
             .char_limit(80)
             .desired_width(f32::INFINITY),
         );
+        submit_name = super::action::submitted(&response);
+        if response.enabled()
+            && !response.lost_focus()
+            && ui.memory(|memory| memory.focused().is_none())
+        {
+            response.request_focus();
+        }
     }
     ui.add_space(8.0);
     let used = ui.min_rect().height();
@@ -773,10 +814,14 @@ pub fn draw_saves(ui: &mut egui::Ui, model: &SavesModel, form: &mut SaveForm) ->
     ui.add_space(4.0);
     ui.horizontal_wrapped(|ui| {
         for b in &model.buttons {
-            save_action(ui, b, false, &mut actions);
+            let (b, primary) = model.edited_name_button(b, form);
+            save_action(ui, &b, primary, &mut actions);
+            if primary && submit_name && b.enabled && actions.is_empty() {
+                actions.push(b.action);
+            }
         }
     });
-    actions
+    dismiss.map_or(actions, |action| vec![action])
 }
 
 pub(super) fn saves_overlay(

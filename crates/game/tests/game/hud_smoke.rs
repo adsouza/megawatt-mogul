@@ -346,6 +346,10 @@ fn the_leave_prompt_leaves_only_on_leave() {
     };
 
     assert!(shows(&harness.draw(draw), "can't be resumed yet"));
+    assert_eq!(
+        harness.press_key(egui::Key::Escape, draw),
+        vec![UiAction::Prompt(None)]
+    );
     assert_eq!(harness.click("Stay", draw), vec![UiAction::Prompt(None)]);
     assert_eq!(harness.click("Leave", draw), vec![UiAction::ReturnToMenu]);
 }
@@ -369,12 +373,151 @@ fn the_shortfall_prompt_starts_the_day_only_on_start_anyway() {
 
     assert!(shows(&harness.draw(draw), "Expect rotating outages"));
     assert_eq!(
+        harness.press_key(egui::Key::Escape, draw),
+        vec![UiAction::Prompt(None)]
+    );
+    assert_eq!(
         harness.click("Keep planning", draw),
         vec![UiAction::Prompt(None)]
     );
     assert_eq!(
         harness.click("Start anyway", draw),
         vec![UiAction::Command(Command::BeginOperating)]
+    );
+}
+
+#[test]
+fn escape_uses_only_an_available_dialog_cancel_action_even_from_a_text_field() {
+    use game::hud::{SaveForm, draw_saves, saves_model};
+    use game::sim::{PersistAction, SaveScreen};
+    for screen in [
+        SaveScreen::Save,
+        SaveScreen::Browser,
+        SaveScreen::Leave,
+        SaveScreen::Rename,
+        SaveScreen::ConfirmDelete,
+        SaveScreen::ConfirmOverwrite,
+        SaveScreen::Loading,
+        SaveScreen::Automatic,
+    ] {
+        for disabled in [false, true] {
+            let harness = Harness::new();
+            let mut persistence = Persistence::default();
+            persistence.screen = screen;
+            let form = RefCell::new(SaveForm::default());
+            let mut model = saves_model(&persistence, &form.borrow(), &shipped_l10n());
+            let cancel = model
+                .buttons
+                .iter_mut()
+                .find(|b| b.action == UiAction::Persistence(PersistAction::Cancel));
+            if let Some(button) = cancel {
+                button.enabled = !disabled;
+            }
+            let draw = |ui: &mut egui::Ui| {
+                egui::Modal::new(egui::Id::new("saves"))
+                    .show(ui.ctx(), |ui| {
+                        draw_saves(ui, &model, &mut form.borrow_mut())
+                    })
+                    .inner
+            };
+            harness.draw(draw);
+            let widgets = harness.draw(draw);
+            if let Some(field) = widgets
+                .iter()
+                .find(|w| w.role == egui::accesskit::Role::TextInput)
+            {
+                assert!(harness.click_at(field.rect.center(), draw).is_empty());
+            }
+            let actions = harness.press_key(egui::Key::Escape, draw);
+            let expected = if screen != SaveScreen::Automatic && !disabled {
+                vec![UiAction::Persistence(PersistAction::Cancel)]
+            } else {
+                vec![]
+            };
+            assert_eq!(actions, expected, "{screen:?}, disabled={disabled}");
+        }
+    }
+}
+
+#[test]
+fn escape_closes_a_popup_before_cancelling_its_dialog() {
+    let harness = Harness::new();
+    let prompt = prompt_model(
+        OpenPrompt(Some(Prompt::LeaveGame)),
+        Some(&eastern_game()),
+        &shipped_l10n(),
+    )
+    .unwrap();
+    let draw = |ui: &mut egui::Ui| {
+        egui::Modal::new(egui::Id::new("prompt"))
+            .show(ui.ctx(), |ui| {
+                let actions = draw_prompt(ui, &prompt);
+                ui.menu_button("Options", |ui| {
+                    ui.label("Popup contents");
+                });
+                actions
+            })
+            .inner
+    };
+    harness.draw(draw);
+    assert!(harness.click("Options", draw).is_empty());
+    assert!(shows(&harness.draw(draw), "Popup contents"));
+    assert!(harness.press_key(egui::Key::Escape, draw).is_empty());
+    assert!(!shows(&harness.draw(draw), "Popup contents"));
+    assert_eq!(
+        harness.press_key(egui::Key::Escape, draw),
+        vec![UiAction::Prompt(None)]
+    );
+}
+
+#[test]
+fn escape_cancels_only_the_topmost_dialog() {
+    let harness = Harness::new();
+    let prompt = prompt_model(
+        OpenPrompt(Some(Prompt::LeaveGame)),
+        Some(&eastern_game()),
+        &shipped_l10n(),
+    )
+    .unwrap();
+    let mut persistence = Persistence::default();
+    persistence.screen = game::sim::SaveScreen::Browser;
+    let form = RefCell::new(game::hud::SaveForm::default());
+    let saves = game::hud::saves_model(&persistence, &form.borrow(), &shipped_l10n());
+    let draw = |ui: &mut egui::Ui| {
+        let mut actions = egui::Modal::new(egui::Id::new("saves"))
+            .show(ui.ctx(), |ui| {
+                game::hud::draw_saves(ui, &saves, &mut form.borrow_mut())
+            })
+            .inner;
+        actions.extend(
+            egui::Modal::new(egui::Id::new("prompt"))
+                .show(ui.ctx(), |ui| draw_prompt(ui, &prompt))
+                .inner,
+        );
+        actions
+    };
+    harness.draw(draw);
+    harness.draw(draw);
+    assert_eq!(
+        harness.press_key(egui::Key::Escape, draw),
+        vec![UiAction::Prompt(None)]
+    );
+}
+
+#[test]
+fn escape_closes_the_milestones_window() {
+    let harness = Harness::new();
+    let model = game::hud::milestones_model(&eastern_game(), &shipped_l10n());
+    let draw = |ui: &mut egui::Ui| {
+        egui::Window::new(&model.title)
+            .show(ui.ctx(), |ui| game::hud::draw_milestones(ui, &model))
+            .and_then(|shown| shown.inner)
+            .unwrap_or_default()
+    };
+    harness.draw(draw);
+    assert_eq!(
+        harness.press_key(egui::Key::Escape, draw),
+        vec![UiAction::ToggleMilestones]
     );
 }
 
@@ -417,6 +560,10 @@ fn the_game_over_modal_returns_to_the_menu() {
     };
 
     assert!(shows(&harness.draw(draw), "bankrupt"));
+    assert!(
+        harness.press_key(egui::Key::Escape, draw).is_empty(),
+        "game over has no dismiss action"
+    );
     assert_eq!(
         harness.click("Main menu", draw),
         vec![UiAction::Persistence(game::sim::PersistAction::OpenLeave)]
@@ -1712,6 +1859,49 @@ fn find_button_nth_disabled(
     n: usize,
 ) -> bool {
     buttons(widgets, label)[n].disabled
+}
+
+#[test]
+fn enter_in_a_planning_target_field_sets_only_that_plants_valid_target() {
+    let screen = PlanningScreen::new(empty_eastern_game(), Harness::new());
+    let plant = plant_named(&screen.game, &row_names(&screen.widgets()).remove(0));
+    let view = screen
+        .game
+        .session()
+        .plant_views()
+        .into_iter()
+        .find(|p| p.id == plant)
+        .unwrap();
+    let target = view.initial_target.value() + 10.0;
+    for text in ["invalid".to_owned(), format!("{target}")] {
+        screen
+            .state
+            .borrow_mut()
+            .form
+            .targets
+            .insert(plant, text.clone());
+        let widgets = screen.widgets();
+        let field = widgets
+            .iter()
+            .find(|w| w.role == egui::accesskit::Role::TextInput && w.text == text)
+            .unwrap();
+        assert!(
+            screen
+                .harness
+                .click_at(field.rect.center(), screen.draw_fn())
+                .is_empty()
+        );
+        let actions = screen.harness.press_key(egui::Key::Enter, screen.draw_fn());
+        let expected = if text == "invalid" {
+            vec![]
+        } else {
+            vec![UiAction::Command(Command::SetDispatchTarget {
+                plant,
+                mw: domain::units::Megawatts::new(target),
+            })]
+        };
+        assert_eq!(actions, expected);
+    }
 }
 
 #[test]
