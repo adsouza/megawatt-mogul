@@ -271,6 +271,35 @@ pub fn evaluate(
     }
 }
 
+// Portable state schema 1: explicit field order and enum tags.
+crate::state_record!(ProtectionState {
+    mode,
+    shed,
+    shed_ticks,
+    over_ticks,
+    over_armed,
+    stages_fired
+});
+impl crate::state::State for GridMode {
+    fn write(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::Normal => {
+                crate::state::State::write(&0u8, out);
+            }
+            Self::Blackout => {
+                crate::state::State::write(&1u8, out);
+            }
+        }
+    }
+    fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
+        Ok(match <u8 as crate::state::State>::read(input)? {
+            0 => Self::Normal,
+            1 => Self::Blackout,
+            _ => return Err(crate::state::StateError::Invalid),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -17,7 +17,7 @@ const MINIMAL: &str = include_str!("support/minimal_region.ron");
 
 /// SHA-256 of `support/minimal_region.ron`, computed independently with
 /// `shasum -a 256`.
-const MINIMAL_SHA256: &str = "dea1c76d3eab91d40ee8497fe4839f001d9972ebb7eee80eae1fd302ae798c33";
+const MINIMAL_SHA256: &str = "ff39c85ab9324ffc3e7fc6c372baca18128568dc9abbe808d2d558cf7352c458";
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()

@@ -114,3 +114,11 @@ pub struct StartDef {
     pub connected_cities: Vec<CityId>,
     pub fleet: Vec<StartPlantDef>,
 }
+
+// Portable state schema 1: explicit field order and enum tags.
+crate::state_record!(CityDef {
+    id,
+    name_key,
+    cell,
+    base_load
+});

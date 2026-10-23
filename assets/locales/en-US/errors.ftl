@@ -5,7 +5,7 @@
 
 error-invalid-ratio = A share must be between 0% and 100%.
 error-invalid-month = Month { $month } is not a month of the year.
-error-plant-not-dispatchable = { $plant } cannot be dispatched: its output follows the weather, not your orders.
+error-plant-not-dispatchable = { $plant } does not use generator dispatch or commitment controls. Use the controls shown on its card.
 error-plant-not-offline = { $plant } must be offline first. Stop it, then try again.
 error-plant-not-online = { $plant } is not online, so it has no output to set. Start it first.
 error-plant-not-running = { $plant } is neither starting nor online.
@@ -57,3 +57,5 @@ region-error-invalid-band = The value for { $field } has an invalid band.
 ## The command log
 
 error-command-log = The command log could not be written: { $message }
+
+error-plant-not-battery = { $plant } is not battery storage.

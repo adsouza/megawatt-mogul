@@ -106,6 +106,10 @@ impl GameSession {
         let weight = f64::from(days);
         let mut events = Vec::new();
 
+        let close = self.power.close_batteries();
+        self.month_to_date
+            .add_command_events(crate::time::TICKS_PER_DAY, &close);
+        events.extend(close);
         let ledger_from = self.company.ledger().len();
         self.book_month(month, days, &mut events);
         let commissioned = self.advance_construction(month, &mut events);
@@ -350,6 +354,7 @@ impl GameSession {
         let mut merit_order: Vec<MeritOrderEntry> = acc
             .plant_energy()
             .iter()
+            .filter(|(id, _)| self.power.plants()[id].kind() != crate::region::PlantKind::Battery)
             .map(|(id, energy)| {
                 let spec = self.power.plants()[id].spec();
                 MeritOrderEntry {
@@ -372,6 +377,12 @@ impl GameSession {
                 .entry(entry.kind)
                 .or_insert(MegawattHours::ZERO) += entry.energy;
         }
+        if !acc.storage().is_empty() {
+            energy_by_kind.insert(
+                crate::region::PlantKind::Battery,
+                acc.storage().values().map(|b| b.output * weight).sum(),
+            );
+        }
         let demand = acc.demand() * weight;
         let served = acc.served() * weight;
         let out_of_band = acc.out_of_band_share();
@@ -384,6 +395,11 @@ impl GameSession {
             fixed_om: totals.fixed_om,
             construction: totals.construction,
             net: totals.net(),
+            storage: acc
+                .storage()
+                .iter()
+                .map(|(id, total)| (*id, total.weighted(weight)))
+                .collect(),
             energy_by_kind,
             merit_order,
             demand,

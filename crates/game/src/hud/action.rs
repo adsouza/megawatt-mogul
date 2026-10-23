@@ -51,6 +51,7 @@ pub enum UiAction {
     /// Open another tab of the Operating panel.
     SetOperatingTab(OperatingTab),
     SelectSupplyMonth(SimMonth),
+    SetSupplyChartLayout(super::SupplyChartLayout),
     ShowReviewSupply(bool),
     /// Tint an hour's column in the commitment grid (a warning's *show hour*), or clear it.
     ShowHour(Option<u8>),
@@ -312,7 +313,9 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
                 }
             }
             UiAction::SetOperatingTab(tab) => *sink.operating_tab = tab,
-            UiAction::SelectSupplyMonth(_) | UiAction::ShowReviewSupply(_) => {}
+            UiAction::SelectSupplyMonth(_)
+            | UiAction::ShowReviewSupply(_)
+            | UiAction::SetSupplyChartLayout(_) => {}
             UiAction::Select(selection) => *sink.selection = selection,
             UiAction::SetLayer(layer) => {
                 *sink.layer = layer;

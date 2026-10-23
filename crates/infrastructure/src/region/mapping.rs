@@ -173,6 +173,7 @@ fn map_kind(kind: PlantKindDto) -> PlantKind {
         PlantKindDto::Peaker => PlantKind::Peaker,
         PlantKindDto::Solar => PlantKind::Solar,
         PlantKindDto::Hydro => PlantKind::Hydro,
+        PlantKindDto::Battery => PlantKind::Battery,
     }
 }
 
@@ -221,6 +222,25 @@ fn map_spec(spec: &PlantSpecDto) -> Result<PlantSpec> {
         capacity_credit: ratio(spec.capacity_credit, "catalog.capacity_credit")?,
         book_life_months: spec.book_life_months,
         siting: map_siting(spec.siting)?,
+        battery: spec
+            .battery
+            .as_ref()
+            .map(|b| -> Result<_> {
+                Ok(domain::region::BatterySpec {
+                    charge_power: Megawatts::new(non_negative(b.charge_mw, "battery.charge_mw")?),
+                    energy_capacity: domain::units::MegawattHours::new(non_negative(
+                        b.energy_mwh,
+                        "battery.energy_mwh",
+                    )?),
+                    charge_efficiency: ratio(b.charge_efficiency, "battery.charge_efficiency")?,
+                    discharge_efficiency: ratio(
+                        b.discharge_efficiency,
+                        "battery.discharge_efficiency",
+                    )?,
+                    discharge_start_hour: b.discharge_start_hour,
+                })
+            })
+            .transpose()?,
     })
 }
 

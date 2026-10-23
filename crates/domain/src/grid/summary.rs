@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use super::protection::GridMode;
+use crate::generation::BatteryFlow;
 use crate::ids::PlantId;
 use crate::region::PlantKind;
 use crate::units::{Hertz, Megawatts, Ratio};
@@ -22,7 +23,7 @@ use crate::units::{Hertz, Megawatts, Ratio};
 ///
 /// Only connected plants and cities count. Curtailment is physical: curtailed
 /// solar availability is never produced, so it is outside `generation`. The
-/// fields always satisfy `generation = Σ by_plant = served + imbalance`,
+/// fields always satisfy `generation = Σ by_plant = served + battery_charge + imbalance`,
 /// `served = demand × (1 − outage) × (1 − shed)` and `unserved = demand −
 /// served`: a rotating outage cuts load ahead of protection, whose `shed` is a
 /// share of the load the outage leaves (spec §15.3).
@@ -39,9 +40,12 @@ pub struct TickSummary {
     pub unserved: Megawatts,
     /// Total output of connected plants.
     pub generation: Megawatts,
+    pub battery_charge: Megawatts,
+    pub battery_discharge: Megawatts,
+    pub batteries: BTreeMap<PlantId, BatteryFlow>,
     /// Solar availability withheld this tick by over-frequency curtailment.
     pub curtailed: Megawatts,
-    /// Signed residual `generation − served`: positive is surplus, negative a
+    /// Signed residual `generation − served − battery_charge`: positive is surplus, negative a
     /// deficit, both absorbed by system inertia.
     pub imbalance: Megawatts,
     /// Generation per plant kind, over the kinds present on the grid.
@@ -56,3 +60,23 @@ pub struct TickSummary {
     /// The rotating-outage share of demand cut on purpose (spec §15.3).
     pub outage: Ratio,
 }
+
+// Portable state schema 1: explicit field order and enum tags.
+crate::state_record!(TickSummary {
+    tick,
+    demand,
+    served,
+    unserved,
+    generation,
+    curtailed,
+    imbalance,
+    by_kind,
+    by_plant,
+    frequency,
+    mode,
+    shed,
+    outage,
+    battery_charge,
+    battery_discharge,
+    batteries
+});

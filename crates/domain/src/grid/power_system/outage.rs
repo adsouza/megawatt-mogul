@@ -181,6 +181,16 @@ impl PowerSystem {
         hour: u8,
     ) -> Ratio {
         let start = u32::from(hour) * TICKS_PER_HOUR;
+        if self.has_batteries() {
+            let minutes = self.storage_forecast_minutes(
+                region,
+                month,
+                start.max(self.battery_tick),
+                start + 60,
+                false,
+            );
+            return ratio(minutes.into_iter().map(HourEnd::share).fold(0.0, f64::max));
+        }
         let ends = self.hour_ends(region, month, hour, |minute| {
             self.connected_plants()
                 .map(|p| self.deliverable(p, start, minute))
@@ -203,6 +213,18 @@ impl PowerSystem {
         region: &RegionDefinition,
         month: SimMonth,
     ) -> [[HourEnd; 2]; 24] {
+        if self.has_batteries() {
+            let minutes =
+                self.storage_forecast_minutes(region, month, 0, crate::time::TICKS_PER_DAY, true);
+            return std::array::from_fn(|h| {
+                let worst = minutes[h * 60..(h + 1) * 60]
+                    .iter()
+                    .copied()
+                    .reduce(|a, b| if b.shortfall() > a.shortfall() { b } else { a })
+                    .expect("sixty minutes");
+                [worst; 2]
+            });
+        }
         let preview =
             self.compute_hydro_plan(region, month, 0, |p| day_hydro_budget(region, month, p));
         std::array::from_fn(|h| {
@@ -244,7 +266,7 @@ impl PowerSystem {
     /// a persisting surplus) per tick and never faster than the fleet's net
     /// one-tick headroom covers (see [`PowerSystem::next_outage`]), so the
     /// target is where the outage goes, not what minute 0 needs.
-    fn deliverable(&self, plant: &Plant, start: u32, minute: u32) -> Megawatts {
+    pub(super) fn deliverable(&self, plant: &Plant, start: u32, minute: u32) -> Megawatts {
         let PlantStatus::Online { output, target } = plant.status() else {
             return Megawatts::ZERO;
         };

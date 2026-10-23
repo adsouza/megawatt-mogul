@@ -227,6 +227,64 @@ impl Regulator {
     }
 }
 
+// Portable state schema 1: explicit field order and enum tags.
+crate::state_record!(Regulator {
+    tariff,
+    allowed_return,
+    strikes,
+    clean_months,
+    licence,
+    tally,
+    last_cost_per_mwh,
+    last_frequency_notice
+});
+impl crate::state::State for Licence {
+    fn write(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::Active => {
+                crate::state::State::write(&0u8, out);
+            }
+            Self::Revoked => {
+                crate::state::State::write(&1u8, out);
+            }
+        }
+    }
+    fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
+        Ok(match <u8 as crate::state::State>::read(input)? {
+            0 => Self::Active,
+            1 => Self::Revoked,
+            _ => return Err(crate::state::StateError::Invalid),
+        })
+    }
+}
+crate::state_record!(YearTally {
+    demand,
+    served,
+    operating_cost,
+    peak_demand,
+    firm_added,
+    months
+});
+impl crate::state::State for StrikeReason {
+    fn write(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::UnservedEnergy => {
+                crate::state::State::write(&0u8, out);
+            }
+            Self::FrequencyPerformance => {
+                crate::state::State::write(&1u8, out);
+            }
+        }
+    }
+    fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
+        Ok(match <u8 as crate::state::State>::read(input)? {
+            0 => Self::UnservedEnergy,
+            1 => Self::FrequencyPerformance,
+            _ => return Err(crate::state::StateError::Invalid),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

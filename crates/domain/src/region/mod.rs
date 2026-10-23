@@ -19,7 +19,7 @@ pub use params::{
     CityDef, DemandShape, FrequencyParams, HydroParams, LineParams, RegulatorParams,
     SatisfactionParams, SolarParams, StartDef, StartPlantDef,
 };
-pub use plant_spec::{PlantKind, PlantSpec, SitingRule};
+pub use plant_spec::{BatterySpec, PlantKind, PlantSpec, SitingRule};
 pub use terrain::{Cell, TerrainGrid};
 
 use crate::units::Ratio;
@@ -344,6 +344,28 @@ fn validate_bands(regulator: &RegulatorParams) -> Result<(), RegionError> {
 fn validate_catalog_values(catalog: &[PlantSpec]) -> Result<(), RegionError> {
     for spec in catalog {
         check_band(finite_positive(spec.capacity.value()), "catalog.capacity")?;
+        check_band(
+            (spec.kind == PlantKind::Battery) == spec.battery.is_some(),
+            "catalog.battery",
+        )?;
+        if let Some(b) = spec.battery {
+            check_band(
+                finite_positive(b.charge_power.value())
+                    && finite_positive(b.energy_capacity.value())
+                    && b.charge_efficiency.value() > 0.0
+                    && b.discharge_efficiency.value() > 0.0
+                    && (1..24).contains(&b.discharge_start_hour),
+                "catalog.battery.ratings",
+            )?;
+            check_band(
+                spec.min_stable == Ratio::ZERO
+                    && spec.startup.ticks() == 0
+                    && spec.startup_cost == crate::units::Money::ZERO
+                    && spec.marginal_cost.value() == 0.0
+                    && spec.capacity_credit == Ratio::ZERO,
+                "catalog.battery.generator_fields",
+            )?;
+        }
         // Solar output follows the sun, so only dispatchable kinds need a ramp.
         check_band(
             !spec.kind.is_dispatchable() || finite_positive(spec.ramp.value()),
@@ -416,6 +438,18 @@ impl TryFrom<RegionDefinitionParts> for RegionDefinition {
         validate_shapes(&parts)?;
         validate_bands(&parts.regulator)?;
         validate_catalog_values(&catalog)?;
+        for spec in &catalog {
+            if let Some(b) = spec.battery {
+                check_shape(
+                    parts
+                        .solar
+                        .daylight
+                        .iter()
+                        .all(|&(rise, set)| rise < set.min(f64::from(b.discharge_start_hour))),
+                    "catalog.battery.daylight",
+                )?;
+            }
+        }
         validate_frequency(&parts.frequency)?;
         validate_lines(&parts.lines)?;
         Ok(Self {
@@ -468,7 +502,7 @@ mod tests {
                 |p| {
                     p.catalog.pop();
                 },
-                RegionError::MissingPlantSpec(PlantKind::Hydro),
+                RegionError::MissingPlantSpec(PlantKind::Battery),
             ),
             (
                 |p| {
@@ -1114,7 +1148,7 @@ mod tests {
         );
         assert_eq!(
             err(&bad_city, &bad_catalog),
-            RegionError::MissingPlantSpec(PlantKind::Hydro)
+            RegionError::MissingPlantSpec(PlantKind::Battery)
         );
     }
     proptest::proptest! {
@@ -1131,5 +1165,57 @@ mod tests {
                 proptest::prop_assert_eq!(result.unwrap_err(), RegionError::InvalidHomeCity(CityId(home)));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod battery_validation_tests {
+    use super::*;
+    use crate::time::SimDuration;
+    use crate::units::{MegawattHours, Megawatts, Price};
+    #[test]
+    fn rejects_invalid_battery_ratings_and_generator_only_values() {
+        let edits: Vec<fn(&mut PlantSpec)> = vec![
+            |p| p.battery = None,
+            |p| p.battery.as_mut().unwrap().charge_power = Megawatts::ZERO,
+            |p| p.battery.as_mut().unwrap().charge_power = Megawatts::unchecked(f64::NAN),
+            |p| p.battery.as_mut().unwrap().energy_capacity = MegawattHours::new(f64::INFINITY),
+            |p| p.battery.as_mut().unwrap().energy_capacity = MegawattHours::new(-1.0),
+            |p| p.battery.as_mut().unwrap().charge_efficiency = Ratio::ZERO,
+            |p| p.battery.as_mut().unwrap().discharge_efficiency = Ratio::ZERO,
+            |p| p.battery.as_mut().unwrap().discharge_start_hour = 0,
+            |p| p.battery.as_mut().unwrap().discharge_start_hour = 24,
+            |p| p.min_stable = Ratio::ONE,
+            |p| p.startup = SimDuration::from_minutes(1),
+            |p| p.startup_cost = crate::units::Money::from_cents(1),
+            |p| p.marginal_cost = Price::per_mwh(1.0),
+            |p| p.capacity_credit = Ratio::ONE,
+        ];
+        for edit in edits {
+            let mut p = fixtures::tiny_region_parts();
+            edit(
+                p.catalog
+                    .iter_mut()
+                    .find(|p| p.kind == PlantKind::Battery)
+                    .unwrap(),
+            );
+            assert!(RegionDefinition::try_from(p).is_err());
+        }
+        let mut p = fixtures::tiny_region_parts();
+        p.solar.daylight[0] = (18.0, 20.0);
+        assert!(RegionDefinition::try_from(p).is_err());
+        let mut p = fixtures::tiny_region_parts();
+        let spec = p
+            .catalog
+            .iter()
+            .find(|p| p.kind == PlantKind::Battery)
+            .unwrap()
+            .battery;
+        p.catalog
+            .iter_mut()
+            .find(|p| p.kind == PlantKind::Solar)
+            .unwrap()
+            .battery = spec;
+        assert!(RegionDefinition::try_from(p).is_err());
     }
 }

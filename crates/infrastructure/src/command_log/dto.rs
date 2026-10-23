@@ -61,6 +61,7 @@ pub enum PlantKindDto {
     Peaker,
     Solar,
     Hydro,
+    Battery,
 }
 
 impl From<PlantKind> for PlantKindDto {
@@ -72,6 +73,7 @@ impl From<PlantKind> for PlantKindDto {
             PlantKind::Peaker => Self::Peaker,
             PlantKind::Solar => Self::Solar,
             PlantKind::Hydro => Self::Hydro,
+            PlantKind::Battery => Self::Battery,
         }
     }
 }
@@ -85,6 +87,7 @@ impl From<PlantKindDto> for PlantKind {
             PlantKindDto::Peaker => Self::Peaker,
             PlantKindDto::Solar => Self::Solar,
             PlantKindDto::Hydro => Self::Hydro,
+            PlantKindDto::Battery => Self::Battery,
         }
     }
 }
@@ -184,6 +187,7 @@ pub enum CommandDto {
     BeginOperating,
     SetDispatchTarget { plant: u32, mw: f64 },
     SetAutoFollow { plant: u32, on: bool },
+    SetBatteryEnabled { plant: u32, on: bool },
     StartPlant { plant: u32 },
     StopPlant { plant: u32 },
     AdvanceTicks { n: u32 },
@@ -213,6 +217,9 @@ impl From<&Command> for CommandDto {
                 plant: plant.0,
                 mw: mw.value(),
             },
+            Command::SetBatteryEnabled { plant, on } => {
+                Self::SetBatteryEnabled { plant: plant.0, on }
+            }
             Command::SetAutoFollow { plant, on } => Self::SetAutoFollow { plant: plant.0, on },
             Command::StartPlant { plant } => Self::StartPlant { plant: plant.0 },
             Command::StopPlant { plant } => Self::StopPlant { plant: plant.0 },
@@ -252,6 +259,10 @@ impl TryFrom<CommandDto> for Command {
                     mw: Megawatts::new(mw),
                 }
             }
+            CommandDto::SetBatteryEnabled { plant, on } => Self::SetBatteryEnabled {
+                plant: PlantId(plant),
+                on,
+            },
             CommandDto::SetAutoFollow { plant, on } => Self::SetAutoFollow {
                 plant: PlantId(plant),
                 on,

@@ -69,6 +69,20 @@ impl PartialEq for SimRng {
 
 impl Eq for SimRng {}
 
+impl crate::state::State for SimRng {
+    fn write(&self, out: &mut Vec<u8>) {
+        self.inner.get_seed().write(out);
+        self.inner.get_word_pos().write(out);
+    }
+    fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
+        let seed = <[u8; 32]>::read(input)?;
+        let word = u128::read(input)?;
+        let mut inner = ChaCha8Rng::from_seed(seed);
+        inner.set_word_pos(word);
+        Ok(Self { inner })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

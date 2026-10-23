@@ -4,6 +4,7 @@
 //! water) is passed in by the caller each tick, so the plant stays free of
 //! weather and market concerns.
 
+use super::BatteryState;
 use super::commitment::{BoundaryStart, CommitmentSchedule};
 use crate::error::DomainError;
 use crate::events::DomainEvent;
@@ -46,6 +47,7 @@ pub struct Plant {
     commissioned_on: Option<SimMonth>,
     /// Remaining energy for the month; `Some` only for hydro.
     hydro_budget: Option<MegawattHours>,
+    battery: Option<BatteryState>,
     /// Whether the plant sat offline for the whole previous month.
     previous_month_offline: bool,
     initial_target: Megawatts,
@@ -63,6 +65,7 @@ impl Plant {
     ) -> Self {
         let hydro_budget = (spec.kind == PlantKind::Hydro).then_some(MegawattHours::ZERO);
         let initial_target = spec.min_output();
+        let battery = spec.battery.map(|_| BatteryState::new());
         Self {
             id,
             node,
@@ -73,6 +76,7 @@ impl Plant {
             commitment: CommitmentSchedule::none(),
             commissioned_on: None,
             hydro_budget,
+            battery,
             previous_month_offline: true,
             initial_target,
             commitment_suppressed: false,
@@ -150,6 +154,9 @@ impl Plant {
 
     /// Current output: nonzero only while online or stopping.
     pub fn output(&self) -> Megawatts {
+        if let Some(b) = &self.battery {
+            return b.flow().discharge;
+        }
         match self.status {
             PlantStatus::Online { output, .. } | PlantStatus::Stopping { output } => output,
             _ => Megawatts::ZERO,
@@ -158,6 +165,13 @@ impl Plant {
 
     pub fn is_online(&self) -> bool {
         matches!(self.status, PlantStatus::Online { .. })
+    }
+
+    pub fn battery(&self) -> Option<&BatteryState> {
+        self.battery.as_ref()
+    }
+    pub(crate) fn battery_mut(&mut self) -> Option<&mut BatteryState> {
+        self.battery.as_mut()
     }
 
     pub fn auto_follow(&self) -> bool {
@@ -249,6 +263,9 @@ impl Plant {
     pub fn initialise_pattern_day(&mut self) -> BoundaryStart {
         if matches!(self.status, PlantStatus::UnderConstruction { .. }) {
             return BoundaryStart::None;
+        }
+        if let Some(b) = &mut self.battery {
+            b.close_day();
         }
         self.clear_day_overrides();
         if !self.spec.kind.is_dispatchable() {
@@ -392,6 +409,9 @@ impl Plant {
     /// - Hydro then deducts this tick's energy from its budget, snapping to
     ///   exactly zero within 1e-9 MWh and reporting exhaustion on that transition.
     pub fn step(&mut self, available: Megawatts) -> Vec<DomainEvent> {
+        if self.battery.is_some() {
+            return Vec::new();
+        }
         let mut events = Vec::new();
         let cap = available.max(Megawatts::ZERO).min(self.spec.capacity);
         match self.status {
@@ -479,6 +499,10 @@ impl Plant {
     /// Unplanned loss: `Starting`, `Online` or `Stopping` go straight to
     /// `Offline`. Offline and under-construction plants are unaffected.
     pub fn trip(&mut self) -> Vec<DomainEvent> {
+        if let Some(b) = &mut self.battery {
+            b.clear_flow();
+            return Vec::new();
+        }
         match self.status {
             PlantStatus::Starting { .. }
             | PlantStatus::Online { .. }
@@ -552,6 +576,68 @@ impl Plant {
             plant: self.id,
             kind: self.spec.kind,
         }]
+    }
+}
+
+// Portable state schema 1: explicit field order and enum tags.
+crate::state_record!(Plant {
+    id,
+    node,
+    cell,
+    spec,
+    status,
+    auto_follow,
+    commitment,
+    commissioned_on,
+    hydro_budget,
+    previous_month_offline,
+    initial_target,
+    commitment_suppressed,
+    battery
+});
+impl crate::state::State for PlantStatus {
+    fn write(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::UnderConstruction { months_left } => {
+                crate::state::State::write(&0u8, out);
+                crate::state::State::write(months_left, out);
+            }
+            Self::Offline => {
+                crate::state::State::write(&1u8, out);
+            }
+            Self::Starting { ticks_left } => {
+                crate::state::State::write(&2u8, out);
+                crate::state::State::write(ticks_left, out);
+            }
+            Self::Online { output, target } => {
+                crate::state::State::write(&3u8, out);
+                crate::state::State::write(output, out);
+                crate::state::State::write(target, out);
+            }
+            Self::Stopping { output } => {
+                crate::state::State::write(&4u8, out);
+                crate::state::State::write(output, out);
+            }
+        }
+    }
+    fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
+        Ok(match <u8 as crate::state::State>::read(input)? {
+            0 => Self::UnderConstruction {
+                months_left: crate::state::State::read(input)?,
+            },
+            1 => Self::Offline,
+            2 => Self::Starting {
+                ticks_left: crate::state::State::read(input)?,
+            },
+            3 => Self::Online {
+                output: crate::state::State::read(input)?,
+                target: crate::state::State::read(input)?,
+            },
+            4 => Self::Stopping {
+                output: crate::state::State::read(input)?,
+            },
+            _ => return Err(crate::state::StateError::Invalid),
+        })
     }
 }
 

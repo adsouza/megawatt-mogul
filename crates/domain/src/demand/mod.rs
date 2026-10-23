@@ -87,6 +87,10 @@ pub fn forecast_demand<'a>(
         .sum()
 }
 
+// Portable state schema 1: explicit field order and enum tags.
+crate::state_record!(DemandCenter { def, node });
+crate::state_record!(DemandNoise { error });
+
 #[cfg(test)]
 mod tests {
     use super::*;

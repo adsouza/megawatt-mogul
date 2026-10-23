@@ -127,6 +127,25 @@ pub trait CommandLogSink: Send + Sync {
         region_source: &[u8],
     ) -> Result<(), CommandLogError>;
 
+    /// A snapshot-based recording starts at this verified boundary. File adapters retain the
+    /// complete base so future commands never require replaying history under newer rules.
+    fn initialize_checkpoint(
+        &mut self,
+        checkpoint: &crate::GameCheckpoint,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<(), CommandLogError> {
+        self.initialize(&checkpoint.header, &checkpoint.region_source)?;
+        for command in &checkpoint.commands {
+            if cancelled() {
+                return Err(CommandLogError {
+                    message: "recording cancelled".into(),
+                });
+            }
+            self.append(&LogRecord::Command(command.clone()))?;
+        }
+        Ok(())
+    }
+
     /// Records a later entry; fails before `initialize` has succeeded.
     fn append(&mut self, record: &LogRecord) -> Result<(), CommandLogError>;
 }

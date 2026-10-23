@@ -4,7 +4,7 @@
 use super::*;
 use crate::ids::{CellCoord, CityId, RegionId};
 use crate::time::{SimDuration, SimMonth};
-use crate::units::{Hertz, Megawatts, Money, Price, RampRate, Ratio};
+use crate::units::{Hertz, MegawattHours, Megawatts, Money, Price, RampRate, Ratio};
 
 fn r(value: f64) -> Ratio {
     Ratio::new(value).expect("fixture ratio is within 0..=1")
@@ -62,6 +62,13 @@ fn spec(
         capacity_credit: r(credit),
         book_life_months,
         siting,
+        battery: (kind == PlantKind::Battery).then_some(BatterySpec {
+            charge_power: Megawatts::new(200.0),
+            energy_capacity: MegawattHours::new(800.0),
+            charge_efficiency: r(0.9),
+            discharge_efficiency: Ratio::ONE,
+            discharge_start_hour: 17,
+        }),
     }
 }
 
@@ -159,6 +166,21 @@ fn catalog() -> Vec<PlantSpec> {
             0.8,
             600,
             SitingRule::HydroSite { min: r(0.5) },
+        ),
+        spec(
+            PlantKind::Battery,
+            200.0,
+            0.0,
+            0.0,
+            SimDuration::from_ticks(0),
+            Money::ZERO,
+            0.0,
+            dollars(100_000),
+            dollars(100_000_000),
+            2,
+            0.0,
+            180,
+            SitingRule::Anywhere,
         ),
     ]
 }

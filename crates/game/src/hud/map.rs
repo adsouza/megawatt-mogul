@@ -380,6 +380,7 @@ pub fn kind_color(kind: PlantKind) -> Rgb {
         PlantKind::Peaker => [225, 90, 80],
         PlantKind::Solar => [245, 215, 70],
         PlantKind::Hydro => [80, 170, 235],
+        PlantKind::Battery => [45, 225, 195],
     }
 }
 
@@ -411,6 +412,7 @@ fn glyph_key(kind: PlantKind) -> &'static str {
         PlantKind::Peaker => "plant-glyph-peaker",
         PlantKind::Solar => "plant-glyph-solar",
         PlantKind::Hydro => "plant-glyph-hydro",
+        PlantKind::Battery => "plant-glyph-battery",
     }
 }
 
@@ -599,7 +601,7 @@ pub struct LegendEntry {
     pub label: String,
 }
 
-/// The six kinds of plant, then the city marks and the under-construction marks.
+/// Every kind of plant, then the city marks and the under-construction marks.
 fn legend_entries(l10n: &Localizer) -> Vec<LegendEntry> {
     let entry = |swatch, label: String| LegendEntry { swatch, label };
     PlantKind::ALL
@@ -1631,8 +1633,8 @@ mod tests {
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
         let region = game.session().region();
         let terrain = region.terrain();
-        let mut seen_suitable = [false; 6];
-        let mut seen_unsuitable = [false; 6];
+        let mut seen_suitable = [false; PlantKind::ALL.len()];
+        let mut seen_unsuitable = [false; PlantKind::ALL.len()];
 
         for y in 0..terrain.height() {
             for x in 0..terrain.width() {
@@ -1873,7 +1875,11 @@ mod tests {
         assert!(glyphs.iter().all(|g| g.chars().count() == 1), "{glyphs:?}");
         glyphs.sort_unstable();
         glyphs.dedup();
-        assert_eq!(glyphs.len(), 6, "each kind has its own glyph");
+        assert_eq!(
+            glyphs.len(),
+            PlantKind::ALL.len(),
+            "each kind has its own glyph"
+        );
         assert_eq!(model.label, l10n.text("map-label"));
         assert_eq!(l10n.problems(), vec![]);
     }
@@ -1988,6 +1994,7 @@ mod tests {
             PlantKind::Peaker => 3,
             PlantKind::Solar => 4,
             PlantKind::Hydro => 5,
+            PlantKind::Battery => 6,
         }
     }
 
@@ -2014,7 +2021,7 @@ mod tests {
             assert_eq!(model.legend[position(kind)].label, kind.localize(&l10n));
         }
         assert_eq!(
-            swatches[6..],
+            swatches[PlantKind::ALL.len()..],
             [
                 LegendSwatch::ConnectedCity,
                 LegendSwatch::UnconnectedCity,
@@ -2022,7 +2029,10 @@ mod tests {
                 LegendSwatch::LineUnderConstruction,
             ]
         );
-        let labels: Vec<&str> = model.legend[6..].iter().map(|e| e.label.as_str()).collect();
+        let labels: Vec<&str> = model.legend[PlantKind::ALL.len()..]
+            .iter()
+            .map(|e| e.label.as_str())
+            .collect();
         assert_eq!(
             labels,
             [

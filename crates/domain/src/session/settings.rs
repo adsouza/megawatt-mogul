@@ -14,3 +14,7 @@ pub struct SimulationFidelity {
 pub struct GameSettings {
     pub fidelity: SimulationFidelity,
 }
+
+// Portable state schema 1: explicit field order and enum tags.
+crate::state_record!(GameSettings { fidelity });
+crate::state_record!(SimulationFidelity { network });

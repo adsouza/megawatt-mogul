@@ -107,6 +107,7 @@ fn site_errors() -> Vec<SiteError> {
 
 fn domain_errors() -> Vec<DomainError> {
     vec![
+        DomainError::PlantNotBattery { plant: PLANT },
         DomainError::InvalidRatio { value: 1.5 },
         DomainError::InvalidMonth { month: 13 },
         DomainError::PlantNotDispatchable { plant: PLANT },
@@ -317,6 +318,7 @@ fn milestone_progress() -> Vec<MilestoneProgress> {
 fn month_report() -> MonthlyReport {
     let zero = MegawattHours::ZERO;
     MonthlyReport {
+        storage: BTreeMap::new(),
         month: SimMonth::new(2027, 3).unwrap(),
         days: 31,
         revenue: Money::ZERO,
@@ -353,6 +355,9 @@ fn tick_summary() -> TickSummary {
         served: Megawatts::ZERO,
         unserved: Megawatts::ZERO,
         generation: Megawatts::ZERO,
+        battery_charge: Megawatts::ZERO,
+        battery_discharge: Megawatts::ZERO,
+        batteries: Default::default(),
         curtailed: Megawatts::ZERO,
         imbalance: Megawatts::ZERO,
         by_kind: BTreeMap::new(),
@@ -488,6 +493,13 @@ fn events() -> Vec<(DomainEvent, bool)> {
         (DomainEvent::CityConnected { city: CityId(3) }, true),
         (DomainEvent::MonthClosed(Box::new(month_report())), false),
         (DomainEvent::Bankrupt, true),
+        (
+            DomainEvent::BatteryDayClosed {
+                plant: PLANT,
+                unused: MegawattHours::ZERO,
+            },
+            false,
+        ),
     ]
 }
 
@@ -495,7 +507,7 @@ fn events() -> Vec<(DomainEvent, bool)> {
 
 #[test]
 fn the_variant_tables_cover_every_variant() {
-    assert_covers_every_variant("DomainError", &domain_errors(), 21, |e| match e {
+    assert_covers_every_variant("DomainError", &domain_errors(), 22, |e| match e {
         DomainError::InvalidRatio { .. } => 0,
         DomainError::InvalidMonth { .. } => 1,
         DomainError::PlantNotDispatchable { .. } => 2,
@@ -517,6 +529,7 @@ fn the_variant_tables_cover_every_variant() {
         DomainError::InvalidSite { .. } => 18,
         DomainError::PlantNotCommissioned { .. } => 19,
         DomainError::StartUpBeyondDay { .. } => 20,
+        DomainError::PlantNotBattery { .. } => 21,
     });
     assert_covers_every_variant("RegionError", &region_errors(), 11, |e| match e {
         RegionError::GridSizeMismatch { .. } => 0,
@@ -585,7 +598,7 @@ fn the_variant_tables_cover_every_variant() {
         MilestoneProgress::Cities { .. } => 2,
     });
     let events: Vec<DomainEvent> = events().into_iter().map(|(event, _)| event).collect();
-    assert_covers_every_variant("DomainEvent", &events, 30, |e| match e {
+    assert_covers_every_variant("DomainEvent", &events, 31, |e| match e {
         DomainEvent::PlantStarting { .. } => 0,
         DomainEvent::PlantOnline { .. } => 1,
         DomainEvent::PlantStopped { .. } => 2,
@@ -616,6 +629,7 @@ fn the_variant_tables_cover_every_variant() {
         DomainEvent::CityConnected { .. } => 27,
         DomainEvent::MonthClosed(_) => 28,
         DomainEvent::Bankrupt => 29,
+        DomainEvent::BatteryDayClosed { .. } => 30,
     });
 }
 

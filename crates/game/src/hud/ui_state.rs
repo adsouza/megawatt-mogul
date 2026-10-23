@@ -32,6 +32,14 @@ pub enum PlanningTab {
     History,
 }
 
+/// Presentation of the battery energy series alongside supply and demand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SupplyChartLayout {
+    #[default]
+    Separate,
+    Combined,
+}
+
 /// A commitment pattern the player is editing and has not applied yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommitDraft {
@@ -53,6 +61,7 @@ pub struct PendingCommit {
 #[derive(Resource, Debug, Clone, PartialEq, Eq, Default)]
 pub struct UiState {
     pub tab: PlanningTab,
+    pub supply_chart_layout: SupplyChartLayout,
     /// The archived supply chart's month; `None` selects the latest completed month.
     pub supply_month: Option<SimMonth>,
     /// Whether Review is displaying the completed-day chart rather than the summary.
@@ -78,6 +87,7 @@ impl UiState {
     /// Takes in one action. The only writer of this state.
     pub fn apply(&mut self, action: &UiAction) {
         match action {
+            UiAction::SetSupplyChartLayout(layout) => self.supply_chart_layout = *layout,
             UiAction::SelectSupplyMonth(month) => self.supply_month = Some(*month),
             UiAction::ShowReviewSupply(show) => {
                 self.review_supply = *show;
@@ -134,7 +144,10 @@ pub struct CommitmentForm {
 }
 
 pub(super) fn reset_ui_state(mut ui: ResMut<UiState>, mut form: ResMut<CommitmentForm>) {
-    *ui = UiState::default();
+    *ui = UiState {
+        supply_chart_layout: ui.supply_chart_layout,
+        ..Default::default()
+    };
     *form = CommitmentForm::default();
 }
 

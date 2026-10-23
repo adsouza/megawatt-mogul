@@ -43,6 +43,9 @@ pub struct MeritRow {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReviewModel {
+    pub storage_heading: String,
+    pub storage_note: String,
+    pub storage: Vec<(String, Vec<Stat>)>,
     pub title: String,
     /// `March 2027`.
     pub month: String,
@@ -108,7 +111,9 @@ fn review_model_with_history(
         l10n,
     );
     if ui.review_supply {
-        model.supply = Some(supply_history_model(game, ui.supply_month, l10n));
+        model.supply = Some(
+            supply_history_model(game, ui.supply_month, l10n).with_layout(ui.supply_chart_layout),
+        );
         model.supply_button = ButtonModel::new(
             l10n.text("review-summary"),
             UiAction::ShowReviewSupply(false),
@@ -167,6 +172,9 @@ pub fn review_model_for(
         .filter_map(|event| event.toast(l10n, names))
         .collect();
     ReviewModel {
+        storage_heading: l10n.text("battery-review-heading"),
+        storage_note: l10n.text("battery-review-note"),
+        storage: storage_review_rows(report, names, l10n),
         title: l10n.text("review-title"),
         month: format::month_year(report.month),
         pnl_heading: l10n.text("review-pnl"),
@@ -346,6 +354,14 @@ fn draw_summary(ui: &mut egui::Ui, model: &ReviewModel) {
     ui.weak(model.days_note.as_str());
     stats(ui, "review_pnl", &model.pnl);
 
+    if !model.storage.is_empty() {
+        heading(ui, &model.storage_heading);
+        ui.label(&model.storage_note);
+        for (index, (name, rows)) in model.storage.iter().enumerate() {
+            ui.strong(name);
+            stats(ui, &format!("storage_review_{index}"), rows);
+        }
+    }
     heading(ui, &model.reliability_heading);
     stats(ui, "review_reliability", &model.reliability);
 
@@ -431,6 +447,52 @@ pub(super) fn review_modal(
     Ok(())
 }
 
+fn storage_review_rows(
+    report: &MonthlyReport,
+    names: &Names,
+    l10n: &Localizer,
+) -> Vec<(String, Vec<Stat>)> {
+    use domain::generation::BatteryTotals;
+    let rows = |total: BatteryTotals| {
+        [
+            ("battery-input", total.input),
+            ("battery-delivered", total.output),
+            ("battery-charge-loss", total.charge_loss),
+            ("battery-discharge-loss", total.discharge_loss),
+            ("battery-unused", total.unused),
+            (
+                "battery-unused-daily",
+                total.unused * (1.0 / f64::from(report.days)),
+            ),
+        ]
+        .into_iter()
+        .map(|(key, energy)| Stat {
+            label: l10n.text(key),
+            value: format::megawatt_hours(energy),
+        })
+        .collect()
+    };
+    if report.storage.is_empty() {
+        return Vec::new();
+    }
+    let mut total = BatteryTotals::default();
+    for b in report.storage.values() {
+        total.input += b.input;
+        total.output += b.output;
+        total.charge_loss += b.charge_loss;
+        total.discharge_loss += b.discharge_loss;
+        total.unused += b.unused;
+    }
+    std::iter::once((l10n.text("battery-fleet"), rows(total)))
+        .chain(
+            report
+                .storage
+                .iter()
+                .map(|(id, b)| (names.plant(*id), rows(*b))),
+        )
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -484,6 +546,7 @@ mod tests {
     /// A quiet month to vary one field at a time.
     fn report() -> MonthlyReport {
         MonthlyReport {
+            storage: Default::default(),
             month: SimMonth::new(2027, 3).unwrap(),
             days: 31,
             revenue: Money::from_dollars(9_000_000),
@@ -756,6 +819,9 @@ mod tests {
         // Only the footer differs.
         assert_eq!(
             ReviewModel {
+                storage_heading: l10n.text("battery-review-heading"),
+                storage_note: l10n.text("battery-review-note"),
+                storage: Vec::new(),
                 footer_button: running.footer_button.clone(),
                 ..over
             },

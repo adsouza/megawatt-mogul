@@ -6,6 +6,6 @@ pub mod dto;
 mod file_log;
 
 pub use file_log::{
-    FileCommandLog, ReplayInput, ReplayLoadError, load_replay, read_command_log,
-    region_archive_path,
+    FileCommandLog, PreparedRecording, ReplayInput, ReplayLoadError, checkpoint_archive_path,
+    load_replay, read_command_log, region_archive_path,
 };

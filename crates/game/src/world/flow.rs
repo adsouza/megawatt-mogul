@@ -1,4 +1,4 @@
-//! Illustrative source-to-city routes for the copper-plate view, never electrical load flow.
+//! Illustrative source-to-load routes for the copper-plate view, never electrical load flow.
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use bevy::prelude::*;

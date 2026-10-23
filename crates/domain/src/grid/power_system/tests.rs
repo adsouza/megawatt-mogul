@@ -4690,3 +4690,174 @@ fn planned_hour_ends_count_each_kind_by_its_own_rule_at_both_ends() {
         }
     }
 }
+
+fn battery_fixture() -> (PowerSystem, RegionDefinition, PlantId) {
+    let region = tiny_region();
+    let mut defs = start_fleet(&region);
+    defs.push(connected(PlantKind::Battery, cell(5, 1)));
+    let mut sys = system_with(&region, &defs);
+    for p in sys
+        .plants
+        .values_mut()
+        .filter(|p| p.kind().is_dispatchable())
+    {
+        p.set_commitment(CommitmentSchedule::all_day());
+        p.set_auto_follow(true).unwrap();
+    }
+    let id = PlantId(defs.len() as u32);
+    (sys, region, id)
+}
+fn charge_inventory(sys: &mut PowerSystem, id: PlantId, ticks: u32) {
+    let p = sys.plant_mut(id).unwrap();
+    let spec = p.spec().battery.unwrap();
+    let max = p.spec().capacity;
+    for _ in 0..ticks {
+        p.battery_mut()
+            .unwrap()
+            .settle(spec, max, spec.charge_power, Megawatts::ZERO);
+    }
+}
+
+#[test]
+fn storage_forecast_spends_one_inventory_and_detects_exhaustion_inside_the_hour() {
+    let r = tiny_region();
+    let mut sys = system_with(&r, &[connected(PlantKind::Battery, cell(5, 1))]);
+    charge_inventory(&mut sys, PlantId(1), 4); // 12 MWh: less than four minutes at 200 MW.
+    sys.plan_batteries(&r, april(), 1020);
+    let before = sys.clone();
+    let minutes = sys.storage_forecast_minutes(&r, april(), 1020, 1080, false);
+    assert_eq!(minutes[0].deliverable, Megawatts::new(200.0));
+    assert_eq!(minutes[4].deliverable, Megawatts::ZERO);
+    let delivered: f64 = minutes.iter().map(|m| m.deliverable.value() / 60.0).sum();
+    assert!((delivered - 12.0).abs() < 1e-9);
+    assert_eq!(sys.size_outage(&r, april(), 17), Ratio::ONE);
+    assert_eq!(
+        sys, before,
+        "forecast must not consume inventory or alter plans"
+    );
+}
+
+#[test]
+fn battery_mid_hour_outage_resize_starts_from_current_inventory_and_minute() {
+    let r = tiny_region();
+    let mut sys = system_with(&r, &[connected(PlantKind::Battery, cell(5, 1))]);
+    charge_inventory(&mut sys, PlantId(1), 4);
+    sys.battery_tick = 1079;
+    // Only one minute remains. Re-evaluating the preceding 59 minutes would consume this charge twice.
+    assert!(sys.size_outage(&r, april(), 17) < Ratio::ONE);
+}
+
+#[test]
+fn battery_protection_discards_provisional_discharge_without_debiting_inventory() {
+    let (mut sys, r, id) = battery_fixture();
+    let mut rng = SimRng::from_seed(7);
+    sys.begin_day(&r, april(), &mut rng);
+    charge_inventory(&mut sys, id, 30);
+    let stored = sys.plant(id).unwrap().battery().unwrap().stored();
+    sys.deviation = Hertz::new(-10.0);
+    let (summary, events) = sys.tick(&r, april(), 1080, &mut rng);
+    assert!(events.contains(&DomainEvent::Blackout));
+    assert_eq!(summary.battery_discharge, Megawatts::ZERO);
+    assert_eq!(summary.battery_charge, Megawatts::ZERO);
+    assert_eq!(sys.plant(id).unwrap().battery().unwrap().stored(), stored);
+    assert!(!events.iter().any(|e|matches!(e,DomainEvent::PlantStarting{plant}|DomainEvent::PlantTripped{plant} if *plant==id)));
+    sys.tick(&r, april(), 1081, &mut rng);
+    assert_eq!(sys.plant(id).unwrap().battery().unwrap().stored(), stored);
+}
+
+#[test]
+fn battery_charging_stops_for_outages_shedding_low_frequency_and_blackout() {
+    let (mut sys, r, id) = battery_fixture();
+    let mut rng = SimRng::from_seed(1);
+    sys.begin_day(&r, april(), &mut rng);
+    let demand = Megawatts::new(10.0);
+    // Force enough actual primary output to offer a genuine surplus.
+    for p in sys
+        .plants
+        .values_mut()
+        .filter(|p| p.kind().is_dispatchable())
+    {
+        p.set_output_unchecked(p.spec().capacity);
+    }
+    let normal = sys.clone();
+    for fault in 0..4 {
+        sys = normal.clone();
+        match fault {
+            0 => sys.outage = Ratio::new(0.1).unwrap(),
+            1 => sys.protection.shed = Ratio::new(0.1).unwrap(),
+            2 => sys.deviation = Hertz::new(-0.1),
+            _ => sys.protection.mode = GridMode::Blackout,
+        }
+        let f = sys.propose_battery_flows(&r, april(), 720, demand, demand);
+        assert_eq!(f[&id].charge, Megawatts::ZERO);
+    }
+    assert!(
+        normal.propose_battery_flows(&r, april(), 720, demand, demand)[&id].charge
+            > Megawatts::ZERO
+    );
+}
+
+#[test]
+fn stopped_hydro_with_agc_enabled_reserves_no_energy_in_a_battery_fleet() {
+    let r = tiny_region();
+    let mut sys = system_with(
+        &r,
+        &[
+            connected(PlantKind::Hydro, cell(10, 1)),
+            connected(PlantKind::Battery, cell(5, 1)),
+        ],
+    );
+    let hydro = PlantId(1);
+    let p = sys.plant_mut(hydro).unwrap();
+    p.set_commitment(CommitmentSchedule::all_day());
+    p.set_auto_follow(true).unwrap();
+    let mut rng = SimRng::from_seed(1);
+    sys.begin_day(&r, april(), &mut rng);
+    let p = sys.plant_mut(hydro).unwrap();
+    p.trip();
+    p.suppress_commitment_for_day();
+    charge_inventory(&mut sys, PlantId(2), 60);
+    sys.plan_batteries(&r, april(), 1020);
+    sys.plan_hydro(&r, april(), 17);
+    assert!(sys.plant(hydro).unwrap().auto_follow());
+    assert!(!sys.hydro_plan.contains_key(&hydro));
+}
+
+#[test]
+fn storage_planning_retains_frozen_allocations_after_disable_and_draws_no_rng() {
+    let (mut sys, r, id) = battery_fixture();
+    let mut rng = SimRng::from_seed(1);
+    sys.begin_day(&r, april(), &mut rng);
+    let before_rng = rng.clone();
+    let forecast = sys.preview_batteries(&r, april());
+    assert!(forecast.expected_charging);
+    assert_eq!(rng, before_rng);
+    let old = sys.battery_schedule();
+    sys.plant_mut(id)
+        .unwrap()
+        .battery_mut()
+        .unwrap()
+        .set_enabled(false);
+    sys.plan_batteries(&r, april(), 900);
+    let plan = sys.battery_schedule();
+    assert_eq!(
+        &plan.plants[&id].charge[..900],
+        &old.plants[&id].charge[..900]
+    );
+    assert!(
+        plan.plants[&id].charge[900..]
+            .iter()
+            .all(|p| *p == Megawatts::ZERO)
+    );
+}
+
+#[test]
+fn battery_trip_headroom_requires_sustained_energy_not_a_single_tick_burst() {
+    let r = tiny_region();
+    let mut sys = system_with(&r, &[connected(PlantKind::Battery, cell(5, 1))]);
+    charge_inventory(&mut sys, PlantId(1), 1);
+    sys.battery_tick = 1080;
+    assert_eq!(sys.battery_headroom(None), Megawatts::new(3.0));
+    // Physically it could deliver 180 MW for one minute, but that cannot justify a generator trip.
+    assert!(sys.battery_headroom(None) < Megawatts::new(180.0));
+}

@@ -892,3 +892,47 @@ fn allocate_splits_in_proportion_and_degrades_safely() {
     // The last entry takes the rounding remainder but never more than its weight.
     assert!((parts.iter().sum::<f64>() - 1.5).abs() < 1e-12);
 }
+
+#[test]
+fn zero_firm_storage_does_not_shield_a_shared_generator_line_in_either_id_order() {
+    for (battery, generator) in [(1, 2), (2, 1)] {
+        let mut rb = RateBase::default();
+        rb.add(
+            plant(battery),
+            cents(1000),
+            180,
+            month(2027, 1),
+            plant_at(0.0, 10),
+        );
+        rb.add(
+            plant(generator),
+            cents(2000),
+            180,
+            month(2027, 1),
+            plant_at(100.0, 20),
+        );
+        rb.add(
+            line(1),
+            cents(1000),
+            180,
+            month(2027, 1),
+            line_between(10, 20),
+        );
+        rb.add(
+            line(2),
+            cents(1000),
+            180,
+            month(2027, 1),
+            line_between(10, 30),
+        );
+        let changes = rb.apply_reserve_review(&review(2027, 50.0));
+        assert!(changes.contains(&held(plant(generator), 1000)));
+        assert!(changes.contains(&held(line(1), 500)));
+        assert_eq!(rb.asset(plant(battery)).unwrap().held(), Money::ZERO);
+        assert_eq!(rb.asset(line(2)).unwrap().held(), Money::ZERO);
+        assert_eq!(
+            rb.asset(line(1)).unwrap().held_slice().unwrap().follows(),
+            Some(PlantId(generator))
+        );
+    }
+}

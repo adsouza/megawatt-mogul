@@ -26,6 +26,8 @@ pub struct ClientPreferences {
     pub speed: u32,
     /// Bloom and camera-focus blur in the 3D map.
     pub effects: bool,
+    /// Overlay stored MWh on the supply chart rather than using a separate pane.
+    pub combined_supply_chart: bool,
     /// egui panel IDs mapped to outer sizes in logical points.
     pub panels: BTreeMap<String, [f32; 2]>,
     /// Movable tool IDs mapped to position and size in logical points.
@@ -39,6 +41,7 @@ impl Default for ClientPreferences {
             zoom: 1.0,
             speed: 1,
             effects: true,
+            combined_supply_chart: false,
             panels: BTreeMap::new(),
             tools: BTreeMap::new(),
         }

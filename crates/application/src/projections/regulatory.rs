@@ -46,6 +46,9 @@ impl Projection for RegulatoryProjection {
     }
 }
 
+// Portable state schema 1: explicit field order and enum tags.
+domain::state_record!(RegulatoryProjection { latest, pending });
+
 #[cfg(test)]
 mod tests {
     use domain::regulation::StrikeReason;

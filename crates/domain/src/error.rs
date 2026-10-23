@@ -24,6 +24,8 @@ pub enum DomainError {
     /// The operation needs a plant whose output the operator can choose.
     #[error("plant {plant:?} is not dispatchable")]
     PlantNotDispatchable { plant: PlantId },
+    #[error("plant {plant:?} is not battery storage")]
+    PlantNotBattery { plant: PlantId },
     /// The plant must be offline for this operation.
     #[error("plant {plant:?} is not offline")]
     PlantNotOffline { plant: PlantId },

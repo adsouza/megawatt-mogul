@@ -1,4 +1,4 @@
-//! Pure accepted-command checkpoints. Adapters verify bytes before providing a loaded region.
+//! Portable state and accepted-command checkpoints. Adapters verify bytes before loading regions.
 use domain::session::{DayPhase, GameSession, SessionStatus};
 use domain::time::SimMonth;
 use thiserror::Error;
@@ -26,6 +26,7 @@ impl CheckpointSummary {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct GameCheckpoint {
+    pub snapshot: Option<PortableState>,
     pub header: LogHeader,
     pub region_source: Vec<u8>,
     pub commands: Vec<Command>,
@@ -50,6 +51,8 @@ pub enum RestoreError {
     SummaryMismatch,
     #[error("command {index} failed: {error}")]
     ReplayCommandFailed { index: usize, error: CommandError },
+    #[error("invalid or unsupported portable state")]
+    InvalidSnapshot,
     #[error("restore cancelled")]
     Cancelled,
     #[error(transparent)]
@@ -66,7 +69,8 @@ impl RestoreError {
     /// refuses it), so it is a writer bug or a damaged file, and keeps the same-build copy.
     pub fn is_verification_failure(&self) -> bool {
         match self {
-            Self::CommandCountMismatch
+            Self::InvalidSnapshot
+            | Self::CommandCountMismatch
             | Self::StateHashMismatch
             | Self::SummaryMismatch
             | Self::ReplayCommandFailed { .. } => true,
@@ -77,4 +81,47 @@ impl RestoreError {
             | Self::Log(_) => false,
         }
     }
+}
+
+/// Versioned complete state. The journal remains an audit trail; it is not rerun to restore this
+/// boundary. New rules apply only to future commands. Schema upgrades are separate from rules.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PortableState {
+    pub origin: Option<MigrationOrigin>,
+    pub schema: u32,
+    pub session: Vec<u8>,
+    pub projections: Vec<u8>,
+    pub journal_hash: u64,
+}
+impl PortableState {
+    pub fn rules_compatible(recorded: u32, running: u32) -> bool {
+        (8..=running).contains(&recorded)
+    }
+    /// Covers both playable state and history, with explicit boundaries between their bytes.
+    pub fn state_hash(&self) -> u64 {
+        self.schema
+            .to_le_bytes()
+            .into_iter()
+            .chain((self.session.len() as u64).to_le_bytes())
+            .chain(self.session.iter().copied())
+            .chain((self.projections.len() as u64).to_le_bytes())
+            .chain(self.projections.iter().copied())
+            .fold(0xcbf2_9ce4_8422_2325, |h, b| {
+                (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+            })
+    }
+}
+pub fn portable_hash(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, b| {
+        (h ^ u64::from(*b)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MigrationOrigin {
+    pub slot: crate::SaveId,
+    pub revision: crate::SaveRevision,
+    pub rules: u32,
+    pub state_hash: u64,
+    pub command_count: u64,
 }

@@ -14,10 +14,12 @@ pub mod projections;
 pub mod save;
 pub use save::*;
 
-pub use checkpoint::{CheckpointSummary, GameCheckpoint, RestoreError};
+pub use checkpoint::{
+    CheckpointSummary, GameCheckpoint, MigrationOrigin, PortableState, RestoreError, portable_hash,
+};
 pub use command::{Command, CommandHandler};
 pub use error::{CommandError, ReplayError};
-pub use game::{Game, auto_select_region, replay};
+pub use game::{Game, PendingRecording, auto_select_region, replay};
 pub use pipeline::{
     CommandLogLayer, CoreHandler, InvariantCheckLayer, LogHealth, TracingLayer, build_pipeline,
 };

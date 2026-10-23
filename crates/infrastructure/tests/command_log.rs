@@ -113,6 +113,8 @@ fn arb_command() -> impl Strategy<Value = Command> {
             plant,
             mw: Megawatts::new(mw)
         }),
+        (plant.clone(), any::<bool>())
+            .prop_map(|(plant, on)| Command::SetBatteryEnabled { plant, on }),
         (plant.clone(), any::<bool>()).prop_map(|(plant, on)| Command::SetAutoFollow { plant, on }),
         plant
             .clone()

@@ -292,6 +292,12 @@
             book_life_months: 600,
             siting: HydroSite(0.5),
         ),
+        (kind: Battery, capacity_mw: 200.0, min_stable: 0.0, ramp_mw_per_min: 0.0,
+         startup_hours: 0.0, startup_cost_usd: 0, marginal_cost_usd_per_mwh: 0.0,
+         fixed_om_usd_per_month: 100000, capital_cost_usd: 100000000, build_months: 2,
+         capacity_credit: 0.0, book_life_months: 180, siting: Anywhere,
+         battery: Some((charge_mw: 200.0, energy_mwh: 800.0, charge_efficiency: 0.9,
+                        discharge_efficiency: 1.0, discharge_start_hour: 17))),
     ],
     // Each city is a demand centre for its metro and the hinterland it
     // anchors; base loads are proportional to that demand at the game's

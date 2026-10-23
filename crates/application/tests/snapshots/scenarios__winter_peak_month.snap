@@ -1,5 +1,6 @@
 ---
 source: crates/application/tests/scenarios.rs
+assertion_line: 96
 expression: g.projections().monthly_reports.latest().unwrap()
 ---
 MonthlyReport {
@@ -26,6 +27,7 @@ MonthlyReport {
     net: Money(
         3608970813,
     ),
+    storage: {},
     energy_by_kind: {
         Coal: MegawattHours(
             424884.6399069439,

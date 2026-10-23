@@ -61,8 +61,8 @@ impl RampWarningProjection {
 
     fn evaluate(&mut self, tick: u32, session: &GameSession) {
         let last_tick = TICKS_PER_DAY - 1;
-        let net_now = session.forecast_net_load(tick);
-        let net_ahead = session.forecast_net_load((tick + HORIZON_MINUTES).min(last_tick));
+        let net_now = session.forecast_dispatch_net_load(tick);
+        let net_ahead = session.forecast_dispatch_net_load((tick + HORIZON_MINUTES).min(last_tick));
         let capability = session
             .power()
             .ramp_capability_up(SimDuration::from_minutes(HORIZON_MINUTES));
@@ -79,6 +79,15 @@ impl Projection for RampWarningProjection {
         }
     }
 }
+
+// Portable state schema 1: explicit field order and enum tags.
+domain::state_record!(RampWarningProjection { current });
+domain::state_record!(RampWarning {
+    at_tick,
+    horizon_minutes,
+    net_load_change,
+    capability
+});
 
 #[cfg(test)]
 mod tests {

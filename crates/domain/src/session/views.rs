@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use super::{DayPhase, GameSession, Incident, whole_cells};
 use crate::company::CapitalChange;
 use crate::demand::{ForecastPoint, hourly_forecast};
-use crate::generation::{Plant, PlantStatus};
+use crate::generation::{BatteryFlow, BatteryMode, BatteryTotals, Plant, PlantStatus};
 use crate::grid::power_system::{HourEnd, day_hydro_budget};
 use crate::grid::{GridMode, HydroScheduleView, LineStatus, TickSummary};
 use crate::ids::{CellCoord, CityId, LineId, NodeId, PlantId};
@@ -28,6 +28,7 @@ pub struct PlantView {
     pub connected: bool,
     pub commitment: [bool; 24],
     pub hydro_budget: Option<MegawattHours>,
+    pub battery: Option<BatteryView>,
     /// The water a commissioned hydro plant starts the day of the current
     /// month with (spec §2.2): what Planning shows, since until the day
     /// begins `hydro_budget` is still the empty or leftover level. `None` for
@@ -37,6 +38,18 @@ pub struct PlantView {
     /// what Planning's `SetDispatchTarget` sets, minimum stable output until
     /// then.
     pub initial_target: Megawatts,
+}
+
+/// All storage values are physical daily quantities; costs are in the plant specification.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BatteryView {
+    pub enabled: bool,
+    pub mode: BatteryMode,
+    pub stored: MegawattHours,
+    pub spec: crate::region::BatterySpec,
+    pub flow: BatteryFlow,
+    pub today: BatteryTotals,
+    pub charge_window: (f64, f64),
 }
 
 /// One city as the player sees it.
@@ -178,6 +191,54 @@ pub struct CapacityShortfallWarning {
 }
 
 impl GameSession {
+    fn battery_view(&self, p: &Plant) -> Option<BatteryView> {
+        let (Some(spec), Some(b)) = (p.spec().battery, p.battery()) else {
+            return None;
+        };
+        let connected = self.power.network().is_connected(p.node());
+        let f = b.flow();
+        let mode = if !b.enabled() {
+            BatteryMode::Disabled
+        } else if !connected {
+            BatteryMode::Disconnected
+        } else if self.power.protection().mode == GridMode::Blackout {
+            BatteryMode::GridSuspended
+        } else if f.charge > Megawatts::ZERO {
+            BatteryMode::Charging
+        } else if f.discharge > Megawatts::ZERO {
+            BatteryMode::Discharging
+        } else if b.stored() == MegawattHours::ZERO {
+            BatteryMode::Empty
+        } else if spec.energy_capacity.value() - b.stored().value() <= 1e-9 {
+            BatteryMode::Full
+        } else {
+            BatteryMode::Holding
+        };
+        let (rise, set) = self.region.solar().daylight[self.clock.month().index0()];
+        Some(BatteryView {
+            enabled: b.enabled(),
+            mode,
+            stored: b.stored(),
+            spec,
+            flow: f,
+            today: self
+                .month_to_date
+                .storage()
+                .get(&p.id())
+                .copied()
+                .unwrap_or_default(),
+            charge_window: (rise, set.min(f64::from(spec.discharge_start_hour))),
+        })
+    }
+    pub fn battery_schedule(&self) -> crate::grid::BatteryScheduleView {
+        if self.phase == DayPhase::Planning {
+            self.power
+                .preview_batteries(&self.region, self.clock.month())
+        } else {
+            self.power.battery_schedule()
+        }
+    }
+
     /// Every plant, in id order.
     pub fn plant_views(&self) -> Vec<PlantView> {
         self.power
@@ -199,6 +260,7 @@ impl GameSession {
             connected: self.power.network().is_connected(plant.node()),
             commitment: plant.commitment().hours(),
             hydro_budget: plant.hydro_budget(),
+            battery: self.battery_view(plant),
             hydro_day_budget: (plant.kind() == PlantKind::Hydro
                 && !matches!(plant.status(), PlantStatus::UnderConstruction { .. }))
             .then(|| day_hydro_budget(&self.region, self.clock.month(), plant)),
@@ -358,6 +420,11 @@ impl GameSession {
             - self.power.expected_solar(&self.region, month, tick)
     }
 
+    /// The dispatch requirement after planned charging and energy-backed delivery. Pure.
+    pub fn forecast_dispatch_net_load(&self, tick: u32) -> Megawatts {
+        self.forecast_net_load(tick) + self.power.storage_net_adjustment(self.clock.tick(), tick)
+    }
+
     /// The Planning-time check of the commitment plan against the load
     /// forecast (spec §14.3): the hour whose committed minimum generation
     /// exceeds its forecast net load by the most, earliest on ties; `None`
@@ -468,3 +535,12 @@ impl GameSession {
         }
     }
 }
+
+// Portable state schema 1: explicit field order and enum tags.
+crate::state_record!(RateReviewEstimate {
+    projected_return,
+    reserve_margin,
+    capital_to_hold,
+    capital_to_release,
+    capital_at_risk
+});

@@ -76,6 +76,10 @@ impl LocalizeWith for DomainError {
                 "error-invalid-month",
                 &[("month", month.to_string().into())],
             ),
+            Self::PlantNotBattery { plant } => l10n.args(
+                "error-plant-not-battery",
+                &[("plant", names.plant(*plant).into())],
+            ),
             Self::PlantNotDispatchable { plant } => l10n.args(
                 "error-plant-not-dispatchable",
                 &[("plant", names.plant(*plant).into())],
@@ -294,6 +298,7 @@ impl Localize for PlantKind {
             Self::Peaker => "plant-kind-peaker",
             Self::Solar => "plant-kind-solar",
             Self::Hydro => "plant-kind-hydro",
+            Self::Battery => "plant-kind-battery",
         })
     }
 }
@@ -613,8 +618,25 @@ impl Toast for DomainEvent {
             | Self::PhaseChanged { .. }
             | Self::PlantConstructionStarted { .. }
             | Self::LineConstructionStarted { .. }
+            | Self::BatteryDayClosed { .. }
             | Self::MonthClosed(_) => return None,
         };
         Some(text)
+    }
+}
+
+impl Localize for domain::generation::BatteryMode {
+    fn localize(&self, l10n: &Localizer) -> String {
+        use domain::generation::BatteryMode::*;
+        l10n.text(match self {
+            Disabled => "battery-mode-disabled",
+            Disconnected => "battery-mode-disconnected",
+            Holding => "battery-mode-holding",
+            Charging => "battery-mode-charging",
+            Discharging => "battery-mode-discharging",
+            Empty => "battery-mode-empty",
+            Full => "battery-mode-full",
+            GridSuspended => "battery-mode-suspended",
+        })
     }
 }

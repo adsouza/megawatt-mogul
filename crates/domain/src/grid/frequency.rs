@@ -42,6 +42,35 @@ pub fn band(dev: Hertz, p: &FrequencyParams) -> FrequencyBand {
     }
 }
 
+// Portable state schema 1: explicit field order and enum tags.
+impl crate::state::State for FrequencyBand {
+    fn write(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::Normal => {
+                crate::state::State::write(&0u8, out);
+            }
+            Self::Low => {
+                crate::state::State::write(&1u8, out);
+            }
+            Self::Shedding => {
+                crate::state::State::write(&2u8, out);
+            }
+            Self::High => {
+                crate::state::State::write(&3u8, out);
+            }
+        }
+    }
+    fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
+        Ok(match <u8 as crate::state::State>::read(input)? {
+            0 => Self::Normal,
+            1 => Self::Low,
+            2 => Self::Shedding,
+            3 => Self::High,
+            _ => return Err(crate::state::StateError::Invalid),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

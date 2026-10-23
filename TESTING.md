@@ -532,3 +532,116 @@ scenario reads tuning from shipped data instead of copying plant numbers into te
 Build presenter tests compare both total and approximate monthly payments to the actual instalment
 split, including singular one-month line quotes. UI fixtures that need several hydro budgets provide
 those units explicitly; generic fleet tests derive expected counts from the region.
+
+
+## Battery storage (Plan 4)
+
+Domain tests exercise daylight grid charging, evening discharge, efficiency and capacity limits,
+blackout/islanding, shared-grid accounting, daily inventory close and monthly weighting. Property
+tests cover energy conservation, schedule bounds and arbitrary save boundaries. Application tests
+compare tick batches, preserved inventory, reports and completed curves after portable restore.
+Game tests use real enabled controls and graph layouts, with and without connected batteries,
+at the 1280×640 minimum window size. Client preferences remain separate from simulation state.
+
+## Save migrations and portable state (A10)
+
+`domain/tests/portable_state.rs` checks complete state/RNG continuation at arbitrary tick boundaries
+and rejects hostile bytes without panicking. `application/tests/save_resume.rs` covers canonical
+state/projection hashes, the complete audit journal, schema/rules compatibility and battery inventory
+across restoration. Domain remains free of serde and I/O.
+
+`infrastructure/tests/support/portable-saves/` freezes format-2/schema-1 examples in every phase,
+including a charged battery. Never regenerate old fixtures to clear a compatibility failure; retain
+readers or add explicit schema upcasters. CI must restore, continue and re-save all of them.
+`infrastructure/tests/save_snapshots.rs` also checks historical-rule refusal, original-slot write
+protection, provenance deduplication, unknown future schemas and snapshot-rooted diagnostic replay.
+`game/tests/game/save_snapshots.rs` loads converted saves with the normal Resume buttons and checks
+read-only preload/activation: loading creates no new player save or recovery prompt.
+
+Historical engines, the converter, twelve pre-battery fixtures, migration tests and supporting
+sources are retained only in `tools/archive/save-recovery-2026-10-23/recovery-source.tar.gz`, outside
+the Cargo workspace. Verify its checksum and extracted source hashes, build it in an isolated
+checkout/target directory and run its nine migration tests. The shipped game's Cargo dependency
+tree must contain no `legacy-sim`; do not reintroduce the engine to fix a snapshot reader.
+
+Delayed-worker game regressions prove monthly autosaves show no modal, keep Review/retrospective
+and Continue usable, preserve exact closing boundaries while later play proceeds, serialize queued
+months and never pause a later day on receipt. A failed earlier save remains retryable with newer
+boundaries queued; cancelling a manual dialog does not cancel the background save. Existing fault
+and durability tests retain warnings and original checkpoints. Every writable fixture uses its own
+TempDir. Native acceptance uses isolated save/log directories; real saves/backups are hash-checked
+before and after work, never used as writable test fixtures.
+
+
+## Fast save-library metadata
+
+`infrastructure/tests/save_store.rs` asserts that cards can be extracted without constructing a
+playable region or decoding command history, while selected reads still reject invalid content.
+An injected listing reader proves warm scans do not read unchanged files. Examples cover external
+rename/add/delete/recreation, same-size edits with restored mtime, atomic-replacement races and
+transient read errors. Restart tests prove unchanged files cause no source reads; changed/deleted
+sources refresh/evict individually. Missing, truncated, corrupt, oversized, obsolete, foreign-build
+and unwritable disk indexes fall back without changing saves. Unavailable cards persist; transient
+I/O errors do not. A property test compares memory, restarted disk and independent fresh scans after
+arbitrary slot changes.
+The listing projector has property coverage for arbitrary escaped strings, nested decoys and hostile
+UTF-8, plus normal-parser fallback for noncanonical RON. Existing integrity/version/provenance tests
+remain binding. `game/tests/game/save_snapshots.rs` paints the real browser before polling its
+refresh worker and verifies that cached cards appear without Working/Loading text.
+
+`cargo run -p infrastructure --example save_library_timing -- <save-directory>` measures cold and
+warm and process-restart scans (only disposable metadata is written). Full validation remains separate:
+`cargo run -p infrastructure --example verify_saves -- <save-directory>` restores every visible
+snapshot. Native acceptance opens the library from the menu and loads a selected game with isolated
+save/log directories. Hash-check actual player files and backups before/after the work.
+
+
+## Prepared Resume activation
+
+`application/tests/save_resume.rs` covers the ownership boundary that freezes a game and its
+captured checkpoint until recording activation. Infrastructure tests bind precompressed recording
+bytes to the exact checkpoint, reject mismatches/cancellation before publishing sidecars, and
+verify replay of the prepared base plus newly accepted commands. Existing game tests require the
+opening menu to paint before preload begins, remain interactive, create no speculative recordings,
+reuse one in-flight worker, discard prepared memory on other choices and reject replaced sources.
+`cargo run -p infrastructure --example resume_timing -- <save-directory>` separates source decoding,
+restoration, in-memory preparation and explicit activation using temporary recording files.
+
+
+## Lossless tick RLE (save envelope 3)
+
+`infrastructure/tests/save_codec.rs` verifies adjacent-only runs, changed speed/action boundaries,
+zero-tick batches, malformed/oversized counts and arbitrary batch-size/repeat/action round trips.
+The frozen `tests/support/tick-rle-format1.mgsave` was captured with the pre-RLE writer. It must
+load, re-encode, restore and continue with exactly the same commands, per-command events,
+projections and diagnostic replay. Existing format-2/schema-1 golden snapshots remain immutable and
+must restore/continue/re-save as format 3. Unit tests cover combined expansion limits and
+cancellation during expansion. Counts and audit hashes always cover original expanded commands.
+
+`cargo run -p infrastructure --example snapshot_rle_size -- <save-directory>` compares the latest
+automatic snapshot's original bytes with current encoding in memory, verifies full restoration,
+and leaves source snapshots untouched (only the disposable metadata index may refresh).
+
+
+## Monthly binary chart directories (format 4)
+
+`application/tests/save_resume.rs` checks exact chart split/join across Planning/Operating/Review
+and arbitrary tick boundaries; compare canonical bytes, not just visual output. Keep all live
+buffer/forecast and completed-month samples. `infrastructure/tests/monthly_charts.rs` covers binary
+monthly files and the compressed text manifest, exact restoration, every publication fault for
+new/overwritten snapshots, cancellation, durability retries, immutable-file reuse and orphan cleanup,
+rename/delete conflicts, deletion retries with recreated slots, cached restart metadata, corrupted/
+missing parts, path traversal and symlinks. Production game save/resume asserts directory output and
+compares the complete saved state/projections after reloading it. Diagnostic replay tests exercise
+the same binary layout in resumed recording bases.
+
+Personal conversion is one-time local work: ignored tooling verifies every source/converted
+checkpoint before publishing the library, then verifies all originals in an external backup.
+No migration prompt or converter is linked into the game. `/tools/archive/` is Git-ignored; do not
+commit archived tools, backups, migration receipts or staging saves. Native acceptance uses isolated
+copies to Resume, inspect retrospective curves, save and reload directory snapshots.
+
+`tests/support/monthly-directory-v4/` retains a permanent binary-format compatibility fixture,
+paired with the older charged-battery format-2 save. Its original bytes are immutable; tests load,
+compare exact canonical state, continue, and re-save a temporary copy. This fixture is part of the
+normal tests and is distinct from Git-ignored personal recovery tools and backups.

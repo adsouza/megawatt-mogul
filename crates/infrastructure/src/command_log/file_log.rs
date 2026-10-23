@@ -35,6 +35,13 @@ pub fn region_archive_path(log_path: &Path) -> Option<PathBuf> {
     Some(log_path.with_file_name(name))
 }
 
+/// Format-2 recordings retain a verified base checkpoint beside their command stream.
+pub fn checkpoint_archive_path(path: &Path) -> Option<PathBuf> {
+    let mut name = path.file_name()?.to_owned();
+    name.push(".checkpoint");
+    Some(path.with_file_name(name))
+}
+
 fn log_error(message: impl Into<String>) -> CommandLogError {
     CommandLogError {
         message: message.into(),
@@ -61,7 +68,9 @@ enum State {
 pub struct FileCommandLog {
     log: File,
     archive_path: PathBuf,
+    checkpoint_path: PathBuf,
     state: State,
+    prepared: Option<PreparedRecording>,
 }
 
 impl FileCommandLog {
@@ -78,8 +87,18 @@ impl FileCommandLog {
         Ok(Self {
             log,
             archive_path,
+            checkpoint_path: checkpoint_archive_path(path)
+                .ok_or_else(|| log_error("checkpoint path"))?,
             state: State::Created,
+            prepared: None,
         })
+    }
+
+    /// Attach bytes prepared speculatively in memory. Initialization still binds them to the
+    /// exact verified checkpoint and writes nothing until the player activates the game.
+    pub fn with_prepared_recording(mut self, prepared: PreparedRecording) -> Self {
+        self.prepared = Some(prepared);
+        self
     }
 
     fn write_archive(&self, source: &[u8]) -> Result<(), CommandLogError> {
@@ -134,6 +153,43 @@ impl CommandLogSink for FileCommandLog {
         Ok(())
     }
 
+    fn initialize_checkpoint(
+        &mut self,
+        checkpoint: &application::GameCheckpoint,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<(), CommandLogError> {
+        if self.state != State::Created {
+            return Err(log_error("log already initialised or failed"));
+        }
+        let prepared = match self.prepared.take() {
+            Some(prepared) if &prepared.checkpoint == checkpoint => prepared,
+            Some(_) => {
+                self.state = State::Failed;
+                return Err(log_error("prepared recording differs from checkpoint"));
+            }
+            None => PreparedRecording::new(checkpoint.clone(), cancelled)?,
+        };
+        if cancelled() {
+            self.state = State::Failed;
+            return Err(log_error("recording cancelled"));
+        }
+        let mut header = checkpoint.header.clone();
+        if let Some(bytes) = prepared.snapshot {
+            // Until initialization completes, every failed write leaves an unusable sink.
+            self.state = State::Failed;
+            crate::save::monthly::publish_fresh(&self.checkpoint_path, &bytes, cancelled)
+                .map_err(|e| log_error(e.to_string()))?;
+            header.log_format_version = 2;
+            self.state = State::Created;
+        }
+        self.initialize(&header, &checkpoint.region_source)?;
+        self.state = State::Failed;
+        write_prepared(&mut self.log, &prepared.commands, cancelled)?;
+        self.log.sync_all().map_err(|e| log_error(e.to_string()))?;
+        self.state = State::Ready;
+        Ok(())
+    }
+
     fn append(&mut self, record: &LogRecord) -> Result<(), CommandLogError> {
         if self.state != State::Ready {
             return Err(log_error("log not initialised"));
@@ -150,6 +206,78 @@ impl CommandLogSink for FileCommandLog {
     }
 }
 
+/// Immutable diagnostic base prepared without filesystem access. Retained only while Resume
+/// remains a possible menu choice. Preparation includes snapshot compression and prefix encoding.
+#[derive(Debug)]
+pub struct PreparedRecording {
+    checkpoint: application::GameCheckpoint,
+    snapshot: Option<crate::save::monthly::EncodedArchive>,
+    commands: Vec<u8>,
+}
+impl PreparedRecording {
+    pub fn new(
+        checkpoint: application::GameCheckpoint,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Self, CommandLogError> {
+        if cancelled() {
+            return Err(log_error("recording cancelled"));
+        }
+        let snapshot = if checkpoint.snapshot.is_some() {
+            let bundle = application::SaveBundle {
+                compatibility: crate::save::replay_compatibility(),
+                checkpoint: checkpoint.clone(),
+                metadata: application::SaveMetadata {
+                    slot: application::SaveId::new("0".repeat(32))
+                        .map_err(|e| log_error(e.to_string()))?,
+                    run: application::SaveId::new("0".repeat(32))
+                        .map_err(|e| log_error(e.to_string()))?,
+                    kind: application::SaveKind::Manual,
+                    name: "diagnostic-checkpoint".into(),
+                    saved_at: 0,
+                },
+            };
+            Some(
+                crate::save::monthly::encode(&bundle, &bundle.compatibility)
+                    .map_err(|e| log_error(e.to_string()))?,
+            )
+        } else {
+            None
+        };
+        let mut commands = Vec::new();
+        for command in &checkpoint.commands {
+            if cancelled() {
+                return Err(log_error("recording cancelled"));
+            }
+            let line = ron::to_string(&LogRecordDto::from(&LogRecord::Command(command.clone())))
+                .map_err(|e| log_error(e.to_string()))?;
+            commands.extend_from_slice(line.as_bytes());
+            commands.push(b'\n');
+        }
+        if cancelled() {
+            return Err(log_error("recording cancelled"));
+        }
+        Ok(Self {
+            checkpoint,
+            snapshot,
+            commands,
+        })
+    }
+}
+fn write_prepared(
+    file: &mut File,
+    bytes: &[u8],
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(), CommandLogError> {
+    for chunk in bytes.chunks(64 * 1024) {
+        if cancelled() {
+            return Err(log_error("recording cancelled"));
+        }
+        file.write_all(chunk)
+            .map_err(|e| log_error(e.to_string()))?;
+    }
+    Ok(())
+}
+
 /// Why a log could not be read or turned into replay inputs.
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum ReplayLoadError {
@@ -157,6 +285,8 @@ pub enum ReplayLoadError {
     Io(String),
     #[error("line {line}: {message}")]
     Parse { line: usize, message: String },
+    #[error("recording checkpoint could not be verified: {0}")]
+    Checkpoint(String),
     #[error("log has no header as its first record")]
     MissingHeader,
     #[error("log has more than one header")]
@@ -180,6 +310,29 @@ pub struct ReplayInput {
     pub header: LogHeader,
     pub region: LoadedRegion,
     pub commands: Vec<Command>,
+    pub checkpoint: Option<application::GameCheckpoint>,
+}
+impl ReplayInput {
+    /// Replay from the recording's own verified base, including migrated games.
+    pub fn replay(self) -> Result<domain::session::GameSession, ReplayLoadError> {
+        if let Some(base) = self.checkpoint {
+            let mut game = application::Game::restore(
+                self.region,
+                base,
+                Box::new(application::InMemoryCommandLog::default()),
+                &|| false,
+            )
+            .map_err(|e| ReplayLoadError::Checkpoint(e.to_string()))?;
+            for command in self.commands {
+                game.execute(command)
+                    .map_err(|e| ReplayLoadError::Checkpoint(e.to_string()))?;
+            }
+            Ok(game.session().clone())
+        } else {
+            application::replay(self.region, &self.header, &self.commands)
+                .map_err(|e| ReplayLoadError::Checkpoint(e.to_string()))
+        }
+    }
 }
 
 /// The part of a header every format version shares. Decoding only this lets a
@@ -216,7 +369,7 @@ fn peek_versions(text: &str) -> Result<VersionEnvelope, ReplayLoadError> {
 }
 
 fn check_format(versions: &VersionEnvelope) -> Result<(), ReplayLoadError> {
-    if versions.log_format_version == LOG_FORMAT_VERSION {
+    if [LOG_FORMAT_VERSION, 2].contains(&versions.log_format_version) {
         return Ok(());
     }
     Err(ReplayLoadError::LogFormatVersionMismatch {
@@ -276,7 +429,7 @@ pub fn load_replay(path: &Path) -> Result<ReplayInput, ReplayLoadError> {
         return Err(ReplayLoadError::MissingHeader);
     };
     // `parse_log` guarantees every later record is a command.
-    let commands = records
+    let mut commands: Vec<Command> = records
         .filter_map(|record| match record {
             LogRecord::Command(command) => Some(command),
             LogRecord::Header(_) => None,
@@ -301,9 +454,38 @@ pub fn load_replay(path: &Path) -> Result<ReplayInput, ReplayLoadError> {
             actual: region.fingerprint,
         });
     }
+    let checkpoint = if header.log_format_version == 2 {
+        let path = checkpoint_archive_path(path)
+            .ok_or_else(|| ReplayLoadError::Checkpoint("missing checkpoint path".into()))?;
+        let (bundle, _) = if path.is_dir() {
+            crate::save::monthly::read(&path, &crate::save::replay_compatibility(), &|| false)
+                .map_err(|e| ReplayLoadError::Checkpoint(e.to_string()))?
+        } else {
+            let bytes = crate::save::file_store::read_bounded(&path, crate::save::MAX_SAVE_BYTES)
+                .map_err(|e| ReplayLoadError::Checkpoint(e.to_string()))?;
+            crate::save::decode_save(&bytes, &crate::save::replay_compatibility())
+                .map_err(|e| ReplayLoadError::Checkpoint(e.to_string()))?
+        };
+        let base = bundle.checkpoint;
+        let mut expected = header.clone();
+        expected.log_format_version = LOG_FORMAT_VERSION;
+        if base.header != expected
+            || base.region_source != region.source_bytes
+            || commands.get(..base.commands.len()) != Some(base.commands.as_slice())
+        {
+            return Err(ReplayLoadError::Checkpoint(
+                "recording prefix differs from checkpoint".into(),
+            ));
+        }
+        commands.drain(..base.commands.len());
+        Some(base)
+    } else {
+        None
+    };
     Ok(ReplayInput {
         header,
         region,
         commands,
+        checkpoint,
     })
 }

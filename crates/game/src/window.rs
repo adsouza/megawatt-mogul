@@ -5,24 +5,42 @@
 //! the size once and then stops for good, so a resize by the player always wins.
 
 use bevy::prelude::*;
-use bevy::window::{Monitor, MonitorSelection, PrimaryMonitor, PrimaryWindow, WindowPosition};
+use bevy::window::{Monitor, PrimaryMonitor, PrimaryWindow, WindowPosition};
 
-/// The smallest window the HUD is laid out for. Smaller than this, the map is too small to read
-/// and the side panels crowd it.
-pub const MIN_WINDOW_SIZE: Vec2 = Vec2::new(1024.0, 640.0);
+/// Minimum supported logical display size. Client space must also leave room for desktop chrome.
+pub const MIN_SCREEN_SIZE: Vec2 = Vec2::new(1280.0, 720.0);
+/// Allow 80 logical pixels vertically for the title bar and system bars, with no side margins.
+/// Bevy's Monitor
+/// exposes the full display, not the OS work area; this is a layout budget, not a native query.
+const DESKTOP_CHROME_SIZE: Vec2 = Vec2::new(0.0, 80.0);
+const DESKTOP_TOP_LEFT: Vec2 = Vec2::new(0.0, 40.0);
+/// Smallest content area: 1280×640 on the minimum supported display.
+pub const MIN_WINDOW_SIZE: Vec2 = Vec2::new(
+    MIN_SCREEN_SIZE.x - DESKTOP_CHROME_SIZE.x,
+    MIN_SCREEN_SIZE.y - DESKTOP_CHROME_SIZE.y,
+);
+
+/// Logical inset and available client size within a full monitor. Keep a reachable fallback on
+/// unsupported smaller displays too.
+pub(crate) fn screen_work_area(monitor: Vec2) -> (Vec2, Vec2) {
+    let size = (monitor - DESKTOP_CHROME_SIZE).max(Vec2::ONE).min(monitor);
+    let inset = DESKTOP_TOP_LEFT.min((monitor - size).max(Vec2::ZERO));
+    (inset, size)
+}
 /// The share of the monitor's width and height the window opens at.
 pub const OPENING_SHARE: f32 = 0.8;
 
 /// The window's opening logical size on a monitor of logical size `monitor`: [`OPENING_SHARE`] of
-/// it, at least [`MIN_WINDOW_SIZE`] and at most the monitor. `None` when no monitor is known (or
-/// it reports no size), so the window keeps its default size.
+/// it, at least [`MIN_WINDOW_SIZE`] and at most the client area after desktop allowances. `None`
+/// when no monitor is known (or it reports no size), so the window keeps its default size.
 pub fn opening_size(monitor: Option<Vec2>) -> Option<Vec2> {
     let monitor = monitor.filter(|size| size.is_finite() && size.cmpgt(Vec2::ZERO).all())?;
+    let (_, available) = screen_work_area(monitor);
     Some(
         (monitor * OPENING_SHARE)
             .max(MIN_WINDOW_SIZE)
-            .min(monitor)
-            .round(),
+            .round()
+            .min(available),
     )
 }
 
@@ -86,8 +104,11 @@ fn apply_opening_size(
     let logical = monitor.physical_size().as_vec2() / monitor.scale_factor as f32;
     if let Some(size) = opening_size(Some(logical)) {
         window.resolution.set(size.x, size.y);
-        // Centred on the new size: winit places the window before it resizes it.
-        window.position = WindowPosition::Centered(MonitorSelection::Primary);
+        // Window positions are physical; sizes and the desktop allowance are logical.
+        let (inset, available) = screen_work_area(logical);
+        let at = monitor.physical_position.as_vec2()
+            + (inset + (available - size) * 0.5) * monitor.scale_factor as f32;
+        window.position = WindowPosition::At(at.round().as_ivec2());
     }
     commands.insert_resource(OpeningSizeApplied);
 }
@@ -105,20 +126,20 @@ mod tests {
             opening_size(Some(Vec2::new(2560.0, 1440.0))),
             Some(Vec2::new(2048.0, 1152.0))
         );
-        // 80% of 1280×800 is 1024×640, the minimum window.
+        // Width reaches the minimum; height retains 80% where desktop allowances permit.
         assert_eq!(
             opening_size(Some(Vec2::new(1280.0, 800.0))),
-            Some(MIN_WINDOW_SIZE)
+            Some(Vec2::new(1280.0, 640.0))
         );
-        // 80% of the minimum is below it: clamped up to the minimum, which is the monitor.
+        // An unsupported smaller monitor still retains the desktop allowance.
         assert_eq!(
             opening_size(Some(Vec2::new(1024.0, 640.0))),
-            Some(Vec2::new(1024.0, 640.0))
+            Some(Vec2::new(1024.0, 560.0))
         );
-        // A monitor smaller than the minimum: clamped up, then down to the monitor.
+        // Even smaller displays retain a bounded fallback inside the desktop allowance.
         assert_eq!(
             opening_size(Some(Vec2::new(800.0, 600.0))),
-            Some(Vec2::new(800.0, 600.0))
+            Some(Vec2::new(800.0, 520.0))
         );
         // Clamped in each direction on its own.
         assert_eq!(
@@ -129,6 +150,37 @@ mod tests {
         assert_eq!(opening_size(None), None);
         assert_eq!(opening_size(Some(Vec2::ZERO)), None);
         assert_eq!(opening_size(Some(Vec2::new(f32::NAN, 1440.0))), None);
+    }
+
+    #[test]
+    fn smallest_supported_screen_leaves_room_for_desktop_chrome() {
+        assert_eq!(MIN_WINDOW_SIZE, Vec2::new(1280.0, 640.0));
+        assert_eq!(
+            opening_size(Some(Vec2::new(1280.0, 720.0))),
+            Some(MIN_WINDOW_SIZE)
+        );
+        let (mut app, entity) = app_with_window();
+        spawn_primary_monitor(&mut app, UVec2::new(1280, 720), 1.0);
+        app.update();
+        assert_eq!(
+            window(&app, entity).resolution.size(),
+            Vec2::new(1280.0, 640.0)
+        );
+        assert_eq!(
+            window(&app, entity).position,
+            WindowPosition::At(IVec2::new(0, 40))
+        );
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn opening_size_fits_supported_screens_with_desktop_space(
+            width in 1280.0_f32..7680.0, height in 720.0_f32..4320.0,
+        ) {
+            let size = opening_size(Some(Vec2::new(width, height))).unwrap();
+            proptest::prop_assert!(size.x >= 1280.0 && size.y >= 640.0);
+            proptest::prop_assert!(size.x <= width && size.y <= height - 80.0);
+        }
     }
 
     fn app_with_window() -> (App, Entity) {
@@ -194,10 +246,7 @@ mod tests {
         app.update();
         let opened = window(&app, entity);
         assert_eq!(opened.resolution.size(), Vec2::new(2048.0, 1152.0));
-        assert_eq!(
-            opened.position,
-            WindowPosition::Centered(MonitorSelection::Primary)
-        );
+        assert_eq!(opened.position, WindowPosition::At(IVec2::new(512, 288)));
 
         // The player resizes the window: their size stays, frame after frame.
         app.world_mut()

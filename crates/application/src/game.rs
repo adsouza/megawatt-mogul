@@ -1,9 +1,11 @@
 //! The `Game` service: a session plus its command pipeline, and replay.
 
+use crate::{PortableState, portable_hash};
 use domain::SIM_RULES_VERSION;
 use domain::events::DomainEvent;
 use domain::ids::RegionId;
 use domain::session::{GameSession, GameSettings};
+use domain::state::State;
 
 use crate::command::{Command, CommandHandler};
 use crate::error::{CommandError, ReplayError};
@@ -13,7 +15,7 @@ use crate::ports::{
     RegionListing,
 };
 use crate::projections::Projections;
-use crate::{CheckpointSummary, GameCheckpoint, LogRecord, RestoreError};
+use crate::{CheckpointSummary, GameCheckpoint, RestoreError};
 
 /// One running game: the session and the pipeline every command goes through.
 pub struct Game {
@@ -24,6 +26,7 @@ pub struct Game {
     header: LogHeader,
     region_source: Vec<u8>,
     journal: Vec<Command>,
+    origin: Option<crate::MigrationOrigin>,
 }
 
 impl Game {
@@ -58,6 +61,7 @@ impl Game {
             header,
             region_source: loaded.source_bytes,
             journal: Vec::new(),
+            origin: None,
         })
     }
 
@@ -69,12 +73,20 @@ impl Game {
     }
 
     pub fn checkpoint(&self) -> GameCheckpoint {
+        let snapshot = PortableState {
+            origin: self.origin.clone(),
+            schema: 1,
+            session: self.session.snapshot_state(),
+            projections: self.projections.state_bytes(),
+            journal_hash: portable_hash(&self.journal.state_bytes()),
+        };
         GameCheckpoint {
+            state_hash: snapshot.state_hash(),
+            snapshot: Some(snapshot),
             header: self.header.clone(),
             region_source: self.region_source.clone(),
             commands: self.journal.clone(),
             command_count: self.journal.len() as u64,
-            state_hash: self.session.state_hash(),
             summary: CheckpointSummary::of(&self.session),
         }
     }
@@ -83,11 +95,24 @@ impl Game {
     /// Cancellation never exposes a partially replayed game to the caller.
     pub fn restore(
         region: LoadedRegion,
-        checkpoint: GameCheckpoint,
+        mut checkpoint: GameCheckpoint,
         mut sink: Box<dyn CommandLogSink>,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Self, RestoreError> {
-        validate_replay(&region, &checkpoint.header)?;
+        if checkpoint.snapshot.is_none() {
+            validate_replay(&region, &checkpoint.header)?;
+        } else {
+            let mut header = checkpoint.header.clone();
+            if !PortableState::rules_compatible(header.sim_rules_version, SIM_RULES_VERSION) {
+                return Err(ReplayError::RulesVersionMismatch {
+                    recorded: header.sim_rules_version,
+                    supported: SIM_RULES_VERSION,
+                }
+                .into());
+            }
+            header.sim_rules_version = SIM_RULES_VERSION;
+            validate_replay(&region, &header)?;
+        }
         if region.definition.id() != &checkpoint.header.region {
             return Err(RestoreError::RegionIdMismatch);
         }
@@ -97,21 +122,45 @@ impl Game {
         if checkpoint.command_count != checkpoint.commands.len() as u64 {
             return Err(RestoreError::CommandCountMismatch);
         }
-        let (session, projections) =
-            fold_replay(region, &checkpoint.header, &checkpoint.commands, cancelled)?;
-        if session.state_hash() != checkpoint.state_hash {
-            return Err(RestoreError::StateHashMismatch);
-        }
+        let (session, projections) = if let Some(snapshot) = &checkpoint.snapshot {
+            if cancelled() {
+                return Err(RestoreError::Cancelled);
+            }
+            if snapshot.schema != 1 {
+                return Err(RestoreError::InvalidSnapshot);
+            }
+            if snapshot.state_hash() != checkpoint.state_hash {
+                return Err(RestoreError::StateHashMismatch);
+            }
+            if portable_hash(&checkpoint.commands.state_bytes()) != snapshot.journal_hash {
+                return Err(RestoreError::CommandCountMismatch);
+            }
+            let session =
+                GameSession::from_snapshot_state(&snapshot.session, region.definition.clone())
+                    .map_err(|_| RestoreError::InvalidSnapshot)?;
+            let projections = Projections::from_state_bytes(&snapshot.projections)
+                .map_err(|_| RestoreError::InvalidSnapshot)?;
+            if session.snapshot_state() != snapshot.session
+                || projections.state_bytes() != snapshot.projections
+            {
+                return Err(RestoreError::InvalidSnapshot);
+            }
+            (session, projections)
+        } else {
+            let (session, projections) =
+                fold_replay(region, &checkpoint.header, &checkpoint.commands, cancelled)?;
+            if session.state_hash() != checkpoint.state_hash {
+                return Err(RestoreError::StateHashMismatch);
+            }
+            (session, projections)
+        };
         if CheckpointSummary::of(&session) != checkpoint.summary {
             return Err(RestoreError::SummaryMismatch);
         }
-        record_history(
-            sink.as_mut(),
-            &checkpoint.header,
-            &checkpoint.region_source,
-            &checkpoint.commands,
-            cancelled,
-        )?;
+        if checkpoint.snapshot.is_some() {
+            checkpoint.header.sim_rules_version = SIM_RULES_VERSION;
+        }
+        record_checkpoint(sink.as_mut(), &checkpoint, cancelled)?;
         let (handler, log_health) = build_pipeline(sink);
         Ok(Self {
             session,
@@ -121,25 +170,28 @@ impl Game {
             header: checkpoint.header,
             region_source: checkpoint.region_source,
             journal: checkpoint.commands,
+            origin: checkpoint.snapshot.and_then(|s| s.origin),
         })
     }
 
     /// Attach a fresh diagnostic recording to an already verified in-memory game. The accepted
     /// prefix is recorded once; neither simulation state nor projections are replayed again.
     pub fn with_recording(
-        mut self,
-        mut sink: Box<dyn CommandLogSink>,
+        self,
+        sink: Box<dyn CommandLogSink>,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Self, RestoreError> {
-        record_history(
-            sink.as_mut(),
-            &self.header,
-            &self.region_source,
-            &self.journal,
-            cancelled,
-        )?;
-        (self.handler, self.log_health) = build_pipeline(sink);
-        Ok(self)
+        self.prepare_recording().activate(sink, cancelled)
+    }
+
+    /// Capture once while preloading and relinquish mutable access to the game until activation.
+    /// This ownership boundary prevents commands invalidating prepared diagnostic bytes.
+    pub fn prepare_recording(self) -> PendingRecording {
+        let checkpoint = self.checkpoint();
+        PendingRecording {
+            game: self,
+            checkpoint,
+        }
     }
 
     pub fn session(&self) -> &GameSession {
@@ -159,24 +211,39 @@ impl Game {
     }
 }
 
-fn record_history(
+/// An immutable, verified game boundary awaiting its recording. It cannot execute commands.
+pub struct PendingRecording {
+    game: Game,
+    checkpoint: GameCheckpoint,
+}
+impl PendingRecording {
+    pub fn checkpoint(&self) -> &GameCheckpoint {
+        &self.checkpoint
+    }
+    pub fn activate(
+        mut self,
+        mut sink: Box<dyn CommandLogSink>,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Game, RestoreError> {
+        record_checkpoint(sink.as_mut(), &self.checkpoint, cancelled)?;
+        (self.game.handler, self.game.log_health) = build_pipeline(sink);
+        Ok(self.game)
+    }
+}
+
+fn record_checkpoint(
     sink: &mut dyn CommandLogSink,
-    header: &LogHeader,
-    source: &[u8],
-    commands: &[Command],
+    checkpoint: &GameCheckpoint,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<(), RestoreError> {
     if cancelled() {
         return Err(RestoreError::Cancelled);
     }
-    sink.initialize(header, source)?;
-    for command in commands {
-        if cancelled() {
-            return Err(RestoreError::Cancelled);
-        }
-        sink.append(&LogRecord::Command(command.clone()))?;
+    let result = sink.initialize_checkpoint(checkpoint, cancelled);
+    if cancelled() {
+        return Err(RestoreError::Cancelled);
     }
-    Ok(())
+    result.map_err(RestoreError::Log)
 }
 
 /// Rebuilds a session from a log. The format version, rules version and region

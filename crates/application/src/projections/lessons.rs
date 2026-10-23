@@ -200,6 +200,109 @@ impl Projection for LessonsProjection {
     }
 }
 
+// Portable state schema 1: explicit field order and enum tags.
+domain::state_record!(LessonsProjection { latest });
+impl domain::state::State for Lesson {
+    fn write(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::ExpensivePeaking {
+                energy,
+                cost,
+                alternative,
+            } => {
+                domain::state::State::write(&0u8, out);
+                domain::state::State::write(energy, out);
+                domain::state::State::write(cost, out);
+                domain::state::State::write(alternative, out);
+            }
+            Self::RotatingOutages { energy, peak_share } => {
+                domain::state::State::write(&1u8, out);
+                domain::state::State::write(energy, out);
+                domain::state::State::write(peak_share, out);
+            }
+            Self::UnservedEnergy {
+                energy,
+                first_incident_tick,
+            } => {
+                domain::state::State::write(&2u8, out);
+                domain::state::State::write(energy, out);
+                domain::state::State::write(first_incident_tick, out);
+            }
+            Self::Overgeneration { energy, trips } => {
+                domain::state::State::write(&3u8, out);
+                domain::state::State::write(energy, out);
+                domain::state::State::write(trips, out);
+            }
+            Self::FrequencyPerformance {
+                out_of_band,
+                notice,
+            } => {
+                domain::state::State::write(&4u8, out);
+                domain::state::State::write(out_of_band, out);
+                domain::state::State::write(notice, out);
+            }
+            Self::SolarCurtailed { energy } => {
+                domain::state::State::write(&5u8, out);
+                domain::state::State::write(energy, out);
+            }
+            Self::StartUpCosts { total, share } => {
+                domain::state::State::write(&6u8, out);
+                domain::state::State::write(total, out);
+                domain::state::State::write(share, out);
+            }
+            Self::RateReview {
+                tariff,
+                allowed_return,
+            } => {
+                domain::state::State::write(&7u8, out);
+                domain::state::State::write(tariff, out);
+                domain::state::State::write(allowed_return, out);
+            }
+            Self::AllClear => {
+                domain::state::State::write(&8u8, out);
+            }
+        }
+    }
+    fn read(input: &mut domain::state::StateReader<'_>) -> Result<Self, domain::state::StateError> {
+        Ok(match <u8 as domain::state::State>::read(input)? {
+            0 => Self::ExpensivePeaking {
+                energy: domain::state::State::read(input)?,
+                cost: domain::state::State::read(input)?,
+                alternative: domain::state::State::read(input)?,
+            },
+            1 => Self::RotatingOutages {
+                energy: domain::state::State::read(input)?,
+                peak_share: domain::state::State::read(input)?,
+            },
+            2 => Self::UnservedEnergy {
+                energy: domain::state::State::read(input)?,
+                first_incident_tick: domain::state::State::read(input)?,
+            },
+            3 => Self::Overgeneration {
+                energy: domain::state::State::read(input)?,
+                trips: domain::state::State::read(input)?,
+            },
+            4 => Self::FrequencyPerformance {
+                out_of_band: domain::state::State::read(input)?,
+                notice: domain::state::State::read(input)?,
+            },
+            5 => Self::SolarCurtailed {
+                energy: domain::state::State::read(input)?,
+            },
+            6 => Self::StartUpCosts {
+                total: domain::state::State::read(input)?,
+                share: domain::state::State::read(input)?,
+            },
+            7 => Self::RateReview {
+                tariff: domain::state::State::read(input)?,
+                allowed_return: domain::state::State::read(input)?,
+            },
+            8 => Self::AllClear,
+            _ => return Err(domain::state::StateError::Invalid),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use domain::region::fixtures::tiny_region;

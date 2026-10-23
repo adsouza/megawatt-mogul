@@ -112,3 +112,16 @@ fn client_preferences_writer_syncs_only_its_own_directory_and_the_ones_it_create
     assert_eq!(synced.take(), [root.clone()].into());
     assert_eq!(read_preferences(&root).unwrap(), p);
 }
+
+#[test]
+fn chart_layout_defaults_to_separate_and_roundtrips_both_choices() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(dir.path().join("preferences.ron"), "(version:1)").unwrap();
+    let mut preferences = read_preferences(dir.path()).unwrap();
+    assert!(!preferences.combined_supply_chart);
+    for combined in [true, false] {
+        preferences.combined_supply_chart = combined;
+        write_preferences(dir.path(), &preferences).unwrap();
+        assert_eq!(read_preferences(dir.path()).unwrap(), preferences);
+    }
+}

@@ -198,6 +198,86 @@ impl Network {
     }
 }
 
+// Portable state schema 1: explicit field order and enum tags.
+crate::state_record!(Node { kind, cell });
+impl crate::state::State for NodeKind {
+    fn write(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::Plant(v0) => {
+                crate::state::State::write(&0u8, out);
+                crate::state::State::write(v0, out);
+            }
+            Self::City(v0) => {
+                crate::state::State::write(&1u8, out);
+                crate::state::State::write(v0, out);
+            }
+        }
+    }
+    fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
+        Ok(match <u8 as crate::state::State>::read(input)? {
+            0 => Self::Plant(crate::state::State::read(input)?),
+            1 => Self::City(crate::state::State::read(input)?),
+            _ => return Err(crate::state::StateError::Invalid),
+        })
+    }
+}
+crate::state_record!(Line {
+    id,
+    from,
+    to,
+    status,
+    length_cells
+});
+impl crate::state::State for LineStatus {
+    fn write(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::UnderConstruction { months_left } => {
+                crate::state::State::write(&0u8, out);
+                crate::state::State::write(months_left, out);
+            }
+            Self::InService => {
+                crate::state::State::write(&1u8, out);
+            }
+        }
+    }
+    fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
+        Ok(match <u8 as crate::state::State>::read(input)? {
+            0 => Self::UnderConstruction {
+                months_left: crate::state::State::read(input)?,
+            },
+            1 => Self::InService,
+            _ => return Err(crate::state::StateError::Invalid),
+        })
+    }
+}
+crate::state_record!(Network {
+    root,
+    nodes,
+    lines,
+    connected
+});
+
+impl Network {
+    pub(crate) fn valid_snapshot(&self, anchor: NodeId) -> bool {
+        if self.root != anchor || !self.nodes.contains_key(&anchor) {
+            return false;
+        }
+        for (id, line) in &self.lines {
+            if *id != line.id
+                || line.from == line.to
+                || !self.nodes.contains_key(&line.from)
+                || !self.nodes.contains_key(&line.to)
+                || line.length_cells < 0.0
+            {
+                return false;
+            }
+        }
+        let mut network = self.clone();
+        network.recompute_connectivity();
+        network.connected == self.connected
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

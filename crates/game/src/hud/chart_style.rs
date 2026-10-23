@@ -37,11 +37,22 @@ pub(super) fn draw_key<'a>(
     plot_id: egui::Id,
     entries: impl IntoIterator<Item = (&'a str, Color32, KeyMark)>,
 ) -> Option<egui::Id> {
+    draw_key_with_control(ui, plot_id, entries, |_| {})
+}
+
+/// A wrapping key with an optional chart control in the same reserved layout space.
+pub(super) fn draw_key_with_control<'a>(
+    ui: &mut Ui,
+    plot_id: egui::Id,
+    entries: impl IntoIterator<Item = (&'a str, Color32, KeyMark)>,
+    control: impl FnOnce(&mut Ui),
+) -> Option<egui::Id> {
     let mut memory = PlotMemory::load(ui.ctx(), plot_id);
     let mut hovered = None;
     ui.scope(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(8.0, 2.0);
         ui.horizontal_wrapped(|ui| {
+            control(ui);
             for (name, colour, mark) in entries {
                 let id = egui::Id::new(name);
                 let mut visible = !memory

@@ -1,6 +1,6 @@
 //! Automatically retained client layout. Preference writes are separate from game saves.
 use crate::{
-    hud::{HudSet, LastSpeed},
+    hud::{HudSet, LastSpeed, SupplyChartLayout, UiState},
     paths::SaveDir,
     sim::SimSpeed,
 };
@@ -69,6 +69,7 @@ fn load(
     mut settings: ResMut<ClientSettings>,
     last: Option<ResMut<LastSpeed>>,
     controls: Option<ResMut<crate::world::WorldControls>>,
+    ui: Option<ResMut<UiState>>,
 ) {
     if settings.loaded {
         return;
@@ -87,6 +88,13 @@ fn load(
     // can mistake its default 1x for a player choice and overwrite the restored preference.
     if let Some(mut last) = last {
         last.0 = settings.speed();
+    }
+    if let Some(mut ui) = ui {
+        ui.supply_chart_layout = if settings.value.combined_supply_chart {
+            SupplyChartLayout::Combined
+        } else {
+            SupplyChartLayout::Separate
+        };
     }
     if let Some(mut controls) = controls {
         controls.effects = settings.value.effects;
@@ -114,12 +122,17 @@ fn observe_egui(
     mut settings: ResMut<ClientSettings>,
     last: Option<Res<LastSpeed>>,
     controls: Option<Res<crate::world::WorldControls>>,
+    ui: Option<Res<UiState>>,
 ) -> Result {
     if !settings.loaded || !settings.egui_applied {
         return Ok(());
     }
     let ctx = contexts.ctx_mut()?;
     settings.value.zoom = ctx.zoom_factor().clamp(0.2, 5.0);
+    if let Some(ui) = ui {
+        settings.value.combined_supply_chart =
+            ui.supply_chart_layout == SupplyChartLayout::Combined;
+    }
     if let Some(controls) = controls {
         settings.value.effects = controls.effects;
     }
@@ -237,19 +250,20 @@ pub fn fit_window(
     } else {
         1.0
     };
-    let available = pixels.as_vec2() / scale;
+    let (inset, available) = crate::window::screen_work_area(pixels.as_vec2() / scale);
+    let top_left = origin.as_vec2() + inset * scale;
     let size = Vec2::new(saved.width, saved.height)
         .max(crate::window::MIN_WINDOW_SIZE)
         .min(available);
-    let room = (pixels.as_vec2() - size * scale).max(Vec2::ZERO);
+    let room = (available - size).max(Vec2::ZERO) * scale;
     PreferenceWindow {
         width: size.x,
         height: size.y,
         x: (saved.x as f32)
-            .clamp(origin.x as f32, origin.x as f32 + room.x)
+            .clamp(top_left.x, top_left.x + room.x)
             .round() as i32,
         y: (saved.y as f32)
-            .clamp(origin.y as f32, origin.y as f32 + room.y)
+            .clamp(top_left.y, top_left.y + room.y)
             .round() as i32,
     }
 }

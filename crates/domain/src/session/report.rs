@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::events::DomainEvent;
-use crate::generation::{Plant, PlantStatus};
+use crate::generation::{BatteryTotals, Plant, PlantStatus};
 use crate::grid::{GridMode, TickSummary};
 use crate::ids::PlantId;
 use crate::region::PlantKind;
@@ -70,6 +70,7 @@ pub struct MonthlyReport {
     pub fixed_om: Money,
     pub construction: Money,
     pub net: Money,
+    pub storage: BTreeMap<PlantId, BatteryTotals>,
     pub energy_by_kind: BTreeMap<PlantKind, MegawattHours>,
     /// Sorted by `(marginal_cost, plant)`.
     pub merit_order: Vec<MeritOrderEntry>,
@@ -77,7 +78,7 @@ pub struct MonthlyReport {
     pub served: MegawattHours,
     pub unserved: MegawattHours,
     pub curtailed: MegawattHours,
-    /// Signed `generation − served`, summed over the month.
+    /// Signed `generation − served − battery_charge`, summed over the month.
     pub imbalance: MegawattHours,
     /// Surplus generation: the sum of each tick's positive imbalance (the
     /// deficits that `imbalance` nets off are left out), weighted by `days`.
@@ -117,6 +118,7 @@ pub struct MonthlyReport {
 pub struct MonthAccumulator {
     /// Energy of every plant that appeared in a tick's `by_plant`.
     energy: BTreeMap<PlantId, MegawattHours>,
+    storage: BTreeMap<PlantId, BatteryTotals>,
     /// `PlantStarting` events during the played day: recurring daily starts.
     daily_starts: BTreeMap<PlantId, u32>,
     /// One-off month-boundary starts reported when the day was initialised.
@@ -146,6 +148,7 @@ impl Default for MonthAccumulator {
     fn default() -> Self {
         Self {
             energy: BTreeMap::new(),
+            storage: BTreeMap::new(),
             daily_starts: BTreeMap::new(),
             boundary_starts: BTreeMap::new(),
             operated: BTreeSet::new(),
@@ -187,6 +190,9 @@ impl MonthAccumulator {
                 self.operated.insert(*plant);
             }
         }
+        for (id, flow) in &summary.batteries {
+            self.storage.entry(*id).or_default().record(*flow);
+        }
         self.demand += minute(summary.demand);
         self.served += minute(summary.served);
         self.unserved += minute(summary.unserved);
@@ -214,6 +220,10 @@ impl MonthAccumulator {
     fn add_events(&mut self, tick: u32, events: &[DomainEvent]) {
         for event in events {
             let kind = match event {
+                DomainEvent::BatteryDayClosed { plant, unused } => {
+                    self.storage.entry(*plant).or_default().unused = *unused;
+                    continue;
+                }
                 DomainEvent::PlantStarting { plant } => {
                     *self.daily_starts.entry(*plant).or_insert(0) += 1;
                     self.operated.insert(*plant);
@@ -266,6 +276,10 @@ impl MonthAccumulator {
     }
 
     /// Day energy per plant that was connected and commissioned at some tick.
+    pub fn storage(&self) -> &BTreeMap<PlantId, BatteryTotals> {
+        &self.storage
+    }
+
     pub fn plant_energy(&self) -> &BTreeMap<PlantId, MegawattHours> {
         &self.energy
     }
@@ -354,6 +368,103 @@ impl MonthAccumulator {
     }
 }
 
+// Portable state schema 1: explicit field order and enum tags.
+crate::state_record!(MonthAccumulator {
+    energy,
+    daily_starts,
+    boundary_starts,
+    operated,
+    demand,
+    served,
+    unserved,
+    curtailed,
+    imbalance,
+    overgeneration,
+    rotating_outage,
+    peak_outage_share,
+    peak_demand,
+    incidents,
+    normal_ticks,
+    out_of_band_ticks,
+    storage
+});
+impl crate::state::State for IncidentKind {
+    fn write(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::LoadShed { mw } => {
+                crate::state::State::write(&0u8, out);
+                crate::state::State::write(mw, out);
+            }
+            Self::Blackout => {
+                crate::state::State::write(&1u8, out);
+            }
+            Self::BlackoutRestored => {
+                crate::state::State::write(&2u8, out);
+            }
+            Self::OverFrequencyTrip { plant } => {
+                crate::state::State::write(&3u8, out);
+                crate::state::State::write(plant, out);
+            }
+            Self::RotatingOutage { share } => {
+                crate::state::State::write(&4u8, out);
+                crate::state::State::write(share, out);
+            }
+        }
+    }
+    fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
+        Ok(match <u8 as crate::state::State>::read(input)? {
+            0 => Self::LoadShed {
+                mw: crate::state::State::read(input)?,
+            },
+            1 => Self::Blackout,
+            2 => Self::BlackoutRestored,
+            3 => Self::OverFrequencyTrip {
+                plant: crate::state::State::read(input)?,
+            },
+            4 => Self::RotatingOutage {
+                share: crate::state::State::read(input)?,
+            },
+            _ => return Err(crate::state::StateError::Invalid),
+        })
+    }
+}
+crate::state_record!(Incident { tick, kind });
+crate::state_record!(MeritOrderEntry {
+    plant,
+    kind,
+    marginal_cost,
+    energy
+});
+crate::state_record!(MonthlyReport {
+    month,
+    days,
+    revenue,
+    fuel,
+    start_up,
+    fixed_om,
+    construction,
+    net,
+    energy_by_kind,
+    merit_order,
+    demand,
+    served,
+    unserved,
+    curtailed,
+    imbalance,
+    overgeneration,
+    rotating_outage,
+    peak_outage_share,
+    peak_demand,
+    reliability,
+    incidents,
+    over_frequency_trips,
+    out_of_band_share,
+    frequency_failed,
+    frequency_notice,
+    rate_review,
+    storage
+});
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,6 +485,9 @@ mod tests {
             served: Megawatts::new(served),
             unserved: Megawatts::new(demand - served),
             generation,
+            battery_charge: Megawatts::ZERO,
+            battery_discharge: Megawatts::ZERO,
+            batteries: BTreeMap::new(),
             curtailed: Megawatts::new(6.0),
             imbalance: generation - Megawatts::new(served),
             by_kind: BTreeMap::new(),

@@ -117,6 +117,14 @@ fn clamp_return(raw: f64, p: &RegulatorParams) -> Ratio {
     Ratio::new(clamped).unwrap_or(p.base_return)
 }
 
+// Portable state schema 1: explicit field order and enum tags.
+crate::state_record!(RateReviewOutcome {
+    tariff,
+    allowed_return,
+    revenue_requirement,
+    cost_per_mwh
+});
+
 #[cfg(test)]
 mod tests {
     use super::*;

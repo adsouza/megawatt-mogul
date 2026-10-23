@@ -1,9 +1,9 @@
 //! Plant kinds and their per-region specifications.
 
 use crate::time::SimDuration;
-use crate::units::{Megawatts, Money, Price, RampRate, Ratio};
+use crate::units::{MegawattHours, Megawatts, Money, Price, RampRate, Ratio};
 
-/// The kinds of generating plant a player can build.
+/// The generation and storage plant kinds a player can build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum PlantKind {
     Nuclear,
@@ -12,21 +12,24 @@ pub enum PlantKind {
     Peaker,
     Solar,
     Hydro,
+    Battery,
 }
 
 impl PlantKind {
-    pub const ALL: [PlantKind; 6] = [
+    pub const ALL: [PlantKind; 7] = [
         PlantKind::Nuclear,
         PlantKind::Coal,
         PlantKind::Ccgt,
         PlantKind::Peaker,
         PlantKind::Solar,
         PlantKind::Hydro,
+        PlantKind::Battery,
     ];
 
-    /// Whether the operator can choose its output. Solar output follows the sun.
+    /// Whether generator commitment and output controls apply.
+    /// Solar follows the sun; batteries use the separate daily storage controller.
     pub fn is_dispatchable(self) -> bool {
-        self != PlantKind::Solar
+        !matches!(self, PlantKind::Solar | PlantKind::Battery)
     }
 }
 
@@ -54,6 +57,7 @@ pub struct PlantSpec {
     pub capacity_credit: Ratio,
     pub book_life_months: u32,
     pub siting: SitingRule,
+    pub battery: Option<BatterySpec>,
 }
 
 impl PlantSpec {
@@ -62,3 +66,106 @@ impl PlantSpec {
         self.capacity * self.min_stable.value()
     }
 }
+
+/// Storage-specific ratings; discharge power is `PlantSpec::capacity`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BatterySpec {
+    pub charge_power: Megawatts,
+    pub energy_capacity: MegawattHours,
+    pub charge_efficiency: Ratio,
+    pub discharge_efficiency: Ratio,
+    pub discharge_start_hour: u8,
+}
+
+// Portable state schema 1: explicit field order and enum tags.
+crate::state_record!(PlantSpec {
+    kind,
+    capacity,
+    min_stable,
+    ramp,
+    startup,
+    startup_cost,
+    marginal_cost,
+    fixed_om_per_month,
+    capital_cost,
+    build_months,
+    capacity_credit,
+    book_life_months,
+    siting,
+    battery
+});
+impl crate::state::State for SitingRule {
+    fn write(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::Anywhere => {
+                crate::state::State::write(&0u8, out);
+            }
+            Self::CoolingWater { min } => {
+                crate::state::State::write(&1u8, out);
+                crate::state::State::write(min, out);
+            }
+            Self::HydroSite { min } => {
+                crate::state::State::write(&2u8, out);
+                crate::state::State::write(min, out);
+            }
+        }
+    }
+    fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
+        Ok(match <u8 as crate::state::State>::read(input)? {
+            0 => Self::Anywhere,
+            1 => Self::CoolingWater {
+                min: crate::state::State::read(input)?,
+            },
+            2 => Self::HydroSite {
+                min: crate::state::State::read(input)?,
+            },
+            _ => return Err(crate::state::StateError::Invalid),
+        })
+    }
+}
+impl crate::state::State for PlantKind {
+    fn write(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::Nuclear => {
+                crate::state::State::write(&0u8, out);
+            }
+            Self::Coal => {
+                crate::state::State::write(&1u8, out);
+            }
+            Self::Ccgt => {
+                crate::state::State::write(&2u8, out);
+            }
+            Self::Peaker => {
+                crate::state::State::write(&3u8, out);
+            }
+            Self::Solar => {
+                crate::state::State::write(&4u8, out);
+            }
+            Self::Hydro => {
+                crate::state::State::write(&5u8, out);
+            }
+            Self::Battery => {
+                crate::state::State::write(&6u8, out);
+            }
+        }
+    }
+    fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
+        Ok(match <u8 as crate::state::State>::read(input)? {
+            0 => Self::Nuclear,
+            1 => Self::Coal,
+            2 => Self::Ccgt,
+            3 => Self::Peaker,
+            4 => Self::Solar,
+            5 => Self::Hydro,
+            6 => Self::Battery,
+            _ => return Err(crate::state::StateError::Invalid),
+        })
+    }
+}
+crate::state_record!(BatterySpec {
+    charge_power,
+    energy_capacity,
+    charge_efficiency,
+    discharge_efficiency,
+    discharge_start_hour
+});

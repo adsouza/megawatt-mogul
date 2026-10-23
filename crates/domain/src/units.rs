@@ -352,6 +352,22 @@ impl Ratio {
     }
 }
 
+// Portable state schema 1: explicit field order and enum tags.
+crate::state_tuple!(Money);
+impl crate::state::State for Ratio {
+    fn write(&self, out: &mut Vec<u8>) {
+        crate::state::State::write(&self.0, out);
+    }
+    fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
+        Self::new(crate::state::State::read(input)?).map_err(|_| crate::state::StateError::Invalid)
+    }
+}
+crate::state_tuple!(Megawatts);
+crate::state_tuple!(RampRate);
+crate::state_tuple!(Price);
+crate::state_tuple!(MegawattHours);
+crate::state_tuple!(Hertz);
+
 #[cfg(test)]
 mod tests {
     use super::*;

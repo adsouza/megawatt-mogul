@@ -242,6 +242,9 @@ pub enum BoundaryStart {
     Charged,
 }
 
+// Portable state schema 1: explicit field order and enum tags.
+crate::state_tuple!(CommitmentSchedule);
+
 #[cfg(test)]
 mod tests {
     use super::*;

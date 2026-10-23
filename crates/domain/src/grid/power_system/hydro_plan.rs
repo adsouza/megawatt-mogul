@@ -167,8 +167,22 @@ impl PowerSystem {
         from_hour: u8,
         budget: impl Fn(&Plant) -> MegawattHours,
     ) -> BTreeMap<PlantId, HydroFill> {
+        self.compute_hydro_plan_with_storage(region, month, from_hour, budget, &self.battery_plan)
+    }
+
+    pub(super) fn compute_hydro_plan_with_storage(
+        &self,
+        region: &RegionDefinition,
+        month: SimMonth,
+        from_hour: u8,
+        budget: impl Fn(&Plant) -> MegawattHours,
+        storage: &super::BatteryScheduleView,
+    ) -> BTreeMap<PlantId, HydroFill> {
         let from = usize::from(from_hour);
         let mut residual = self.hourly_net_load(region, month);
+        for (h, net) in residual.iter_mut().enumerate() {
+            *net -= self.battery_hourly_discharge(storage, h);
+        }
         residual
             .iter_mut()
             .take(from)
@@ -315,5 +329,36 @@ impl PowerSystem {
             })
             .collect();
         HydroScheduleView { plants }
+    }
+}
+
+// Portable state schema 1: explicit field order and enum tags.
+crate::state_record!(PlantHydroPlan {
+    level,
+    hourly,
+    frozen,
+    planned
+});
+impl crate::state::State for HydroOverride {
+    fn write(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::Off => {
+                crate::state::State::write(&0u8, out);
+            }
+            Self::Lifted => {
+                crate::state::State::write(&1u8, out);
+            }
+            Self::Recovering => {
+                crate::state::State::write(&2u8, out);
+            }
+        }
+    }
+    fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
+        Ok(match <u8 as crate::state::State>::read(input)? {
+            0 => Self::Off,
+            1 => Self::Lifted,
+            2 => Self::Recovering,
+            _ => return Err(crate::state::StateError::Invalid),
+        })
     }
 }

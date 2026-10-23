@@ -47,6 +47,9 @@ impl Projection for RateReviewProjection {
     }
 }
 
+// Portable state schema 1: explicit field order and enum tags.
+domain::state_record!(RateReviewProjection { estimate });
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, OnceLock};

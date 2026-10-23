@@ -8,7 +8,8 @@
   under-frequency shedding (§15, 2026-10-19); A5, the inherited schedule, the shortfall
   confirmation, window and panel sizing, the city card and
   construction progress (§16, 2026-10-20); A6, save/resume before Plan 3 (§17, 2026-10-20);
-  A7, faster expansion pacing (§18, 2026-10-22)
+  A7, faster expansion pacing (§18, 2026-10-22); A8, automatic AGC recovery (§19, 2026-10-22);
+  A9, daily-cycle battery storage (§20, 2026-10-23, specified; implementation pending)
 - **Engine:** Rust 1.98, Bevy 0.20, bevy_egui 0.43, bevy-inspector-egui 0.38
 
 ## 1. Vision and goals
@@ -40,8 +41,8 @@ Each played day is the **representative day of one calendar month** (§2.3) and 
 modelled as the domain state machine `DayPhase`:
 
 1. **Planning** (paused). The player sees the coming month's hourly demand forecast with an uncertainty
-   band, the solar forecast and each hydro plant's water budget. They **commit** plants hour by
-   hour, queue construction and build lines to connect cities. The current regulated tariff and a
+   band, the solar forecast, each hydro plant's water budget and the battery charge/discharge
+   preview (§20). They **commit** generating plants hour by hour, queue construction and build lines to connect cities. The current regulated tariff and a
    projection of the next rate review are shown, but the player does not set them (§2.5).
 2. **Operating** (runs). The 24 game hours run as 1,440 ticks (1 tick = 1 game minute) at a
    selectable speed: pause, 1×, 2×, 4×, 8×, 16× or 32×. At 1× a day takes about 6 real minutes
@@ -50,7 +51,8 @@ modelled as the domain state machine `DayPhase`:
    individual plants. Predictive warnings flag trouble ahead.
 3. **Review** (paused). P&L, the merit order that actually ran, a timeline of reliability incidents,
    and 2–3 plain-language lessons generated from that day's events. Money and energy totals are
-   shown for the whole month (§2.3).
+   shown for the whole month (§2.3). Battery reporting separates charging, delivered energy,
+   conversion losses and unused energy cleared at midnight (§20.6).
 
 ### 2.3 Calendar compression
 
@@ -68,6 +70,10 @@ stands for.
   implied by that month's pattern, including any start-up already in progress across midnight.
   Physical plant state never carries from March's representative day into April's. Persistent
   construction, company and regulator state still advances by calendar month.
+- **Batteries use a daily cycle (§20).** Every played day starts empty. They may charge during
+  daylight, including the morning, hold energy for evening peak discharge, and report then clear
+  unused energy at midnight. Their energy flows and midnight remainder receive the daily accounting
+  weight; instantaneous power, energy capacity and state of charge do not.
 - **Seasons change visibly every few played days.** Months drive the demand shape, solar
   irradiance and hydro water budgets, so seasonal swings become central to play.
 - **Build times are counted in months** (= played days, §3.2). They are compressed for tycoon
@@ -136,7 +142,8 @@ ratemaking (PBR)**:
   the sum of their hourly mean load profiles, with seasonal/monthly factors and no random noise;
   it is not the sum of individual cities' separate peaks. Unbuilt connections do not count.
   Firm capacity is the sum of `capacity × capacity_credit` (§3.2), and the allowed **planning
-  reserve margin** (e.g. 20%) is applied to this review peak.
+  reserve margin** (e.g. 20%) is applied to this review peak. Batteries initially have zero
+  regulatory capacity credit (§20.6); their nameplate MW is not guaranteed firm generation.
 - **"Plant held for future use" before disallowance.** Excess capacity is assessed against newly
   added capital and capital already held from the previous review. The excess portion earns no
   return in the tariff set by that review, but is re-tested at the next annual review. A held
@@ -201,7 +208,8 @@ preview remain selectable through their cards; broken entries retain their disab
 - Main menu, then new-game setup with region selection and an editable seed, then a new game.
 - Both regions as data files (`assets/regions/*.ron`).
 - A 3D diorama map built from the region's terrain cell grid, with phase-specific overlays (§8.3).
-- Six plant types (§3.2), plant construction, and transmission-line construction for connectivity.
+- Six generating plant types plus battery storage (§3.2, §20), plant construction, and
+  transmission-line construction for connectivity. Battery implementation is Plan 4, after Plan 3.
 - Demand centres with daily, seasonal and noise profiles, plus forecasts.
 - The full day cycle (one representative day per month), frequency model, protection, economics, regulator, scoring and failure.
 - An egui HUD for every phase, and dev tools behind a `dev` feature.
@@ -220,6 +228,9 @@ preview remain selectable through their cards; broken entries retain their disab
 | Solar | 300 MW | 0% | n/a (weather) | n/a | n/a | $0/MWh | $0.15B | 2 | The duck curve |
 | Hydro | 800 MW | 0% | 100 MW/min | 5 min | $1k | $0/MWh | $1.2B | 12 | Energy-limited dispatch |
 
+- **Battery storage** is a buildable seventh asset kind: separate charge/discharge MW and stored
+  MWh, automatic daylight charging and evening discharge, and no energy carried overnight. Its
+  initial tuning and operating contract are in §20; it is not a primary energy source.
 - **Hydro** has a **daily water budget** (MWh per day, varying by month and site). Output stops when
   the budget runs out, and unused water does not carry over to the next month in milestone 1. Under
   AGC, hydro follows a **peak-shaving schedule** that spends its water on the day's highest net
@@ -236,11 +247,12 @@ preview remain selectable through their cards; broken entries retain their disab
 ### 3.3 Out of scope for Milestone 1
 
 - Transmission congestion and power-flow physics.
-- Wind, storage and other plant types.
+- Wind and other generating plant types; storage beyond the daily battery cycle of §20
+  (including pumped hydro, overnight/seasonal carry-over and degradation).
 - Weather events.
 - Competitors and markets.
 - Loans.
-- Fast-load aggregate snapshots, cross-platform replay and migration of incompatible saves.
+- Cross-platform command replay. Portable state and supported save migrations are defined in §21.
 - Audio.
 - A tutorial campaign.
 - More regions.
@@ -344,6 +356,8 @@ These are immutable newtypes, and no bare `f64` crosses a module boundary.
 
   Invariants: output stays between minimum stable output and capacity while online; output changes
   by no more than the ramp rate per tick; hydro output never exceeds the remaining budget.
+  Batteries reuse plant identity/construction but have dedicated energy state and inverter
+  dispatch (§20.2–§20.5); thermal commitment, start-up and ramp rules do not apply to them.
 - **`demand`**: `DemandCenter`, `LoadProfile` (a daily curve × a monthly factor) and `Forecast`.
   The forecast holds an hourly mean and band; actual demand is the forecast plus AR(1) noise from
   the session's seeded RNG.
@@ -355,6 +369,8 @@ These are immutable newtypes, and no bare `f64` crosses a module boundary.
   - **AGC** (automatic generation control): moves auto-follow plants' targets to close the
     imbalance, raising the cheapest plant first and lowering the most expensive first, within ramp
     limits. After a system-wide trip it automatically restarts eligible units (§19).
+  - **Battery scheduling** (§20): daylight valley filling and evening peak shaving, with
+    separate charging load, finite stored energy and customer-first dispatch.
   - **`FrequencyModel`** (§5.4).
   - **`Protection`**: load shedding, curtailment and blackout.
 - **`company`**: the **`Company` aggregate**: cash, a `Ledger` of typed cash entries (fuel, start-up,
@@ -403,9 +419,11 @@ built. No placeholder exists today; `Plant::commissioned_on` is the only seam.
   | ±0.05 Hz | Normal |
   | Below −0.5 Hz | Under-frequency load shedding in 5% steps, spread proportionally across connected cities; staged relays drop one more step per 0.2 Hz of depth (Amendment A4, §15.4) |
   | Forecast shortfall | **Rotating outage:** a planned share of load is cut, sized hourly to the shortfall (Amendment A4, §15.3) |
-  | Below −1.5 Hz, or shedding for N consecutive ticks | **Blackout**: all plants trip to `Offline`, and the player must restart them |
+  | Below −1.5 Hz, or shedding for N consecutive ticks | **Blackout**: generating plants trip; eligible AGC units restart under §19. Batteries suspend flows and retain charge under §20.5 |
   | Above +0.5 Hz | Solar curtailed first, then AGC plants pushed to minimum stable output |
   | Above +1.5 Hz for N consecutive ticks | **Over-frequency trip:** the most expensive producing plant trips (Amendment A3, §14.2) |
+- Battery charging is additional grid load, separate from customer demand; battery discharge is
+  a supply contribution. The complete balance and protection ordering are in §20.4–§20.5.
 - **Unserved energy is shed load only:** `served = demand × (1 − shed)` and `unserved = demand × shed`.
   A residual mismatch between supply and served load is a signed `imbalance` absorbed by system
   inertia and visible as frequency deviation; it is neither unserved nor paid for. Unserved energy
@@ -419,6 +437,7 @@ Ticks and commands return `Vec<DomainEvent>`. Nothing is pushed through a framew
 - `CityConnected`, `LineCommissioned`
 - `FrequencyDeviated { band }`, `LoadShed { mw }`, `SolarCurtailed { mw }`, `Blackout`
 - `HydroBudgetExhausted { plant }`
+- `BatteryDayClosed { plant, unused: MegawattHours }` (daily physical amount, including zero; §20.6)
 - `LedgerEntryRecorded`, `StrikeIssued`, `StrikeExpired`
 - `RateReviewCompleted { tariff, allowed_return }`, `CapitalHeld { asset, amount }`,
   `CapitalReleased { asset, amount }`, `CapitalDisallowed { asset, amount }`
@@ -442,9 +461,9 @@ Ticks and commands return `Vec<DomainEvent>`. Nothing is pushed through a framew
 - The same seed, settings, region content, simulation rules version and command log must produce
   an identical state hash on the same build and platform (libm transcendentals such as `ln`, `cos`,
   `sin`, `exp` and `hypot` may differ in the last bit between targets). Replay verifies these inputs
-  before executing any commands (§7). Across builds or platforms there is no promise, so a save
-  load does not trust one: it replays and accepts the result only if it reproduces the recorded
-  end state (§17.3).
+  before executing any commands (§7). Across builds or platforms command replay has no promise.
+  Format-1 saves verify that replay with the matching engine; portable format-2/3 saves restore and validate
+  portable state without rerunning history (§17.3, §21).
 
 ## 6. Application layer (`crates/application`)
 
@@ -459,8 +478,12 @@ Every command is a plain struct handled as
 | `BuildPlant { spec, cell }`, `BuildLine { from, to }`, `CommitPlant { plant, hours }` | Planning |
 | `BeginOperating` | Planning → Operating |
 | `SetDispatchTarget { plant, mw }`, `SetAutoFollow { plant, on }`, `StartPlant { plant }`, `StopPlant { plant }` | Planning, Operating |
+| `SetBatteryEnabled { plant, on }` | Planning, Operating (§20.2) |
 | `AdvanceTicks { n }` | Operating |
 | `FinishReview` | Review → the next month's Planning |
+
+Battery controls are separate from generating-plant controls: commitment, dispatch-target,
+AGC and start/stop commands reject batteries with a typed kind error (§20.2).
 
 **Commitment is a daily pattern that repeats throughout the month.** Treat the 24 hourly flags as
 a circle. `CommitPlant` validates every off-gap between committed runs, including the gap across
@@ -524,10 +547,13 @@ The presentation layer never reads aggregate internals.
     to the save format or simulation rules.
     *(Builder's call: under a regulated tariff the per-tick "price" the merit order teaches is the
     system marginal cost: `TimelinePoint.marginal_cost` is the highest marginal cost among the
-    connected plants producing in that tick, `None` when none does.)*
+    connected primary generators producing in that tick, `None` when none does. Battery
+    discharge has no independent fuel price and is excluded from this marginal-cost calculation.)*
   - `MonthlyReportProjection`: P&L, the merit order used, incidents and unserved energy.
-  - `PlantHistoryProjection`: starts, trips, energy and revenue per plant. A plant's revenue is
-    its weighted merit-order energy times the tariff in force that month, rounded once per plant
+  - `PlantHistoryProjection`: starts, trips, energy and revenue per generating plant. Battery
+    history instead separates charge input, delivered output, losses and unused energy (§20.7).
+    A generating plant's revenue is its weighted merit-order energy times the tariff in force
+    that month, rounded once per plant
     per month; a read-side figure, not a ledger entry.
   - `MilestoneProjection`: progress toward milestones.
   - `RateReviewProjection`: a running estimate of the next review (projected allowed return,
@@ -552,7 +578,7 @@ The presentation layer never reads aggregate internals.
 5. Plants progress (start-up; ramp toward target; hydro budget use). Construction completes at
    month close.
 6. AGC re-targets auto-follow plants, with scheduled hydro capped as in §12.4.
-7. Imbalance = supply − served load.
+7. Imbalance = supply − served customer load − battery charging load (§20.4).
 8. Frequency update.
 9. Protection (shed, curtail or blackout, and an over-frequency trip of one plant, after which AGC
    re-targets again in the same tick; §14.2). The `TickSummary` reports the post-protection state.
@@ -560,8 +586,13 @@ The presentation layer never reads aggregate internals.
     and *served* energy. Nothing is priced per tick. At month close, apply each total's weight
     (§6.1) and **round to cents once per ledger entry** (round-half-even), so money never accumulates
     fractional cents. Retain only the whole-month offline summary for next month's start charging.
-11. Advance the clock and collect events. After tick 1,440: the month's totals are weighted,
-    `MonthClosed`, policies run, and the phase moves to Review.
+11. Advance the clock and collect events. After the final interval ending at tick 1,440, capture
+    each battery's unused energy and clear it exactly once (§20.6). Then weight the month's totals,
+    emit `MonthClosed`, run policies, and move the phase to Review.
+
+Amendment A9 (§20.4–§20.5) extends steps 3–10 with coordinated battery/hydro plans, provisional
+charge/discharge, post-protection energy settlement and energy-aware outage sizing. Batteries never
+run through the ordinary generating-plant step or acquire synthetic opening output.
 
 ### 6.5 Ports
 
@@ -671,7 +702,8 @@ The presentation layer never reads aggregate internals.
   days or current weather; season, sun angle and cloud cover separately affect solar output.
 - **Selectable map layers:** terrain, sunshine, cooling water, hydro potential, and suitability
   for nuclear, coal, solar and hydro. Omit gas (CCGT) and peaker suitability overlays: those
-  plants accept any land cell, so separate overlays add no siting information. The cell inspector
+  plants accept any land cell, so separate overlays add no siting information. Batteries likewise
+  have no suitability overlay (§20.7). The cell inspector
   still reports suitability for every plant kind.
 - **Operating overlay:** supply indicators over the warm, lit diorama: glowing plant output
   pillars, city lights showing supply status and energised lines. Retain terrain colours, building
@@ -712,7 +744,9 @@ connected plant's proportional contribution toward cities with positive served d
 in-service lines, using shortest paths by hop count with line-ID tie breaks. Net opposing
 transfers before choosing an arrow direction; unused or balanced lines have no arrows. These
 routes are a presentation aid, not electrical load flow or a per-line MW/loading estimate.
-Recompute directions from current output and served demand. Hide arrows outside the Operating
+Recompute directions from current output and served demand. Under §20, discharging batteries
+are sources and charging batteries are sinks; these routes do not identify which generator
+charged a battery. Hide arrows outside the Operating
 control-room overlay and on unfinished/disconnected lines, during blackouts, or without supply
 or served demand. Use a steady visual travel speed, freeze during pause/save dialogs, and reuse
 render entities/assets across frames. The effects toggle controls bloom/DOF, not these indicators.
@@ -727,7 +761,8 @@ Actual per-line loading still requires a power-flow `NetworkModel`.
   suitability, city details, construction progress, or a commissioned plant's operating status,
   grid connection, capacity, minimum output, initial target, ramp rate, start-up time and cost,
   marginal cost and fixed monthly O&M. Solar sites show their solar potential; hydro plants show
-  the month's daily water budget. Omit dispatch-only figures for solar.
+  the month's daily water budget. Batteries have a dedicated card and schedule preview (§20.7),
+  with no thermal commitment controls. Omit dispatch-only figures for solar.
 - **Operating:** speed controls; a frequency gauge with the current imbalance; a selected-plant panel
   (grid connection, output/capacity, target, ramp, cost, energy and revenue, hydro water, AGC toggle,
   start/stop, and expandable specifications); a merit-order stacked supply chart against
@@ -773,9 +808,9 @@ Actual per-line loading still requires a power-flow `NetworkModel`.
 | Concern | Approach |
 |---|---|
 | Observability | A `TracingLayer` span per command (command, outcome, emitted events); `#[tracing::instrument]` on handlers; Bevy's Tracy feature for frame profiling. The domain stays free of logging. |
-| Persistence | Command sourcing with versioned replay inputs (§7.1). A complete in-memory command journal supplies atomic, self-contained saves through `SaveStore` (§17); `CommandLogSink` remains the diagnostic recording adapter. Aggregates remain persistence-ignorant. Fast-load snapshots come later. |
+| Persistence | Command sourcing with versioned replay inputs (§7.1). A complete in-memory command journal supplies atomic, self-contained saves through `SaveStore` (§17); `CommandLogSink` remains the diagnostic recording adapter. Aggregates remain persistence-ignorant. Format 2 adds portable state and migrations (§21). |
 | Error handling | Typed `Result`s at every layer (`DomainError` → `CommandError` with `thiserror`). The domain never panics on player input; `panic!` and `debug_assert!` are only for bugs. Errors are mapped for display once, at the Bevy boundary. |
-| Data integrity | Types first: newtypes, validating constructors and state enums. Debug and test builds run `InvariantCheckLayer` after each command or tick (on the post-protection `TickSummary`: generation = Σ by_plant = Σ by_kind = served + imbalance, 0 ≤ served ≤ demand, curtailed ≥ 0, and generation matches the connected plants' outputs; cash change = ledger sum; plant bounds). |
+| Data integrity | Types first: newtypes, validating constructors and state enums. Debug and test builds run `InvariantCheckLayer` after each command or tick (on the post-protection `TickSummary`: generation = Σ by_plant = Σ by_kind = served + battery_charge + imbalance (§20.4), 0 ≤ served ≤ demand, curtailed ≥ 0, and generation matches the connected plants' outputs; cash change = ledger sum; plant bounds). |
 | Localisation | The domain never produces user-facing text, only typed events, errors and lessons with parameters. Fluent `.ftl` files live under `assets/locales/en-US/`, and region data refers to translation keys. Milestone 1 ships en-US only. |
 
 ## 10. Testing strategy
@@ -798,7 +833,7 @@ Actual per-line loading still requires a power-flow `NetworkModel`.
 - **Merit order:** AGC never leaves a cheaper auto-follow plant with headroom while raising a more
   expensive one, and the reverse holds when lowering.
 - **Conservation:** each `TickSummary` is the post-protection state, with generation = served +
-  imbalance (signed), served = demand × (1 − shed), unserved = demand × shed, and
+  battery_charge + imbalance (signed; §20.4), served = demand × (1 − shed), unserved = demand × shed, and
   0 ≤ served ≤ demand. `curtailed` is solar availability withheld (never generated), so it is not
   part of generation.
 - **Money:** the change in cash always equals the sum of the ledger entries, exactly.
@@ -809,6 +844,9 @@ Actual per-line loading still requires a power-flow `NetworkModel`.
   once, without double-counting a recurring restart. Exactly one rounding step applies per entry.
 - **Hydro:** the energy a hydro plant produces in a played day never exceeds that day's budget. The
   peak-shaving schedule's properties are in §12.7.
+- **Battery conservation:** daily charge input = delivered output + conversion losses + unused
+  internal energy at midnight; every tick preserves energy bounds and exclusive charge/discharge
+  (§20.8). Stored energy is never credited twice or carried into the next played month.
 - **Rules-version guard:** a fixed scripted month's outcome digest (report and ledger figures, not
   `Debug` output) is snapshotted together with `SIM_RULES_VERSION`, so an outcome change without a
   version bump fails review.
@@ -858,9 +896,9 @@ Test-driven development throughout: failing test → minimal code → refactor.
 |---|---|
 | Transmission congestion | A new `NetworkModel::DcPowerFlow` variant; a settings toggle once it exists |
 | Equipment ageing and maintenance | `Plant::commissioned_on`; a new field in `SimulationFidelity` |
-| Fast-load snapshots and save migrations | The verified command checkpoints of §17; a future `SnapshotStore` and explicit migration path |
+| Further save-schema migrations | Portable snapshots and retained schema readers/golden fixtures (§21) |
 | More regions | A new `.ron` file; the picker already appears for two or more regions |
-| More plant types (wind, storage) | `PlantSpec` is data-driven; new behaviour goes in the `generation` module |
+| More plant types (wind; storage beyond §20) | `PlantSpec` is data-driven; new behaviour goes in the `generation` module |
 | More languages | New `assets/locales/<lang>/` folder |
 
 ## 12. Amendment A1: Hydro peak-shaving schedule (2026-10-18)
@@ -895,6 +933,9 @@ Hydro is what grids such as the Pacific Northwest use to ride the evening ramp.
     forecast alone.
 
 ### 12.3 The schedule (water filling)
+
+Amendment A9 (§20.3) subtracts the coordinated battery discharge plan from the residual before
+allocating hydro. The water budget, commitment eligibility and hydro emergency rules still apply.
 
 1. **Inputs.** For each hour `h` of the remaining day, compute the forecast **net load**: the
    connected cities' forecast demand at minute 30 of `h` (the same mean as the hourly forecast)
@@ -1081,6 +1122,10 @@ Real systems respond to it, and the game should model two of those responses:
 The teaching goal is to make the trap visible before the player falls into it.
 
 ### 14.2 Over-frequency generator protection
+
+With batteries, §20.5 first removes battery discharge and uses feasible daylight charging. Surplus
+and headroom gates use the complete bus balance, including charging, and exclude unavailable
+storage energy. Batteries are excluded from the generating-plant trip candidate list.
 
 - **New `FrequencyParams` fields** (region data): `trip_above: Hertz` (default +1.5 Hz) and
   `trip_after_ticks: u32` (default 5). Validation requires `trip_above > curtail_above` and
@@ -1304,6 +1349,10 @@ whole grid.
 
 ### 15.3 Rotating outages (forecast-based, planned shedding)
 
+For a fleet with batteries, §20.5 supersedes the two-endpoint shortcut below: evaluate every
+remaining minute with a sequential stored-energy budget. Charging is optional and cancelled
+before shedding customers; battery nameplate MW is never counted as unlimited generation.
+
 - **State.** `PowerSystem` gains `outage: Ratio`, the current rotating-outage share, and
   `outage_target: Ratio`, the share ordered for the current hour. Both are 0 outside a shortage.
 - **Protection acts on what the outage leaves.** The tick's **load** is
@@ -1431,6 +1480,10 @@ whole grid.
   that scaled every tick's shed by depth arrested the same deficits but rebounded to +1.6 Hz.)*
 
 ### 15.5 Capacity-shortfall warning (read side)
+
+Battery fleets use the sequential daily preview in §20.5, including feasible forecast charging
+from empty. It is an expected-day preview, not a promise that weather or manual actions will
+provide the forecast energy. Storage-free fleets retain the existing evaluator.
 
 - **A direct query, like §14.3:** `GameSession::capacity_shortfall_check() -> Option<CapacityShortfallWarning>`,
   returning `CapacityShortfallWarning { hour: u8, demand: Megawatts, deliverable: Megawatts, shortfall: Megawatts }`.
@@ -1616,7 +1669,7 @@ should be asked before starting a day that the forecast already says will need r
   - with a shortfall, the prompt opens and no command is sent;
   - Keep planning sends nothing and closes the prompt;
   - Start anyway begins operating;
-  - the prompt fits at 1024×640.
+  - the prompt fits at 1280×640.
 
 ### 16.7 Window and panel sizing (playtest, presentation only)
 
@@ -1624,37 +1677,44 @@ Playtesting found two sizing problems. On a large monitor the window opens at Be
 1280×720. The side and bottom panels have fixed sizes, so a player with room to spare can't give
 the commitment grid, the charts or the plant list more space.
 
-- **The opening size.** The window opens centred on the primary monitor at about 80% of its
-  logical width and height. It is clamped to at least the 1024×640 minimum window and at most the
-  monitor. If no monitor is known, it keeps the default size.
+- **Display target and window minimum.** Support displays of at least 1280×720 logical pixels
+  at the default UI zoom. The minimum client area is 1280×640, reserving 80 logical pixels
+  vertically for the title bar and top/bottom system bars, with no horizontal allowance.
+  This is a conservative cross-platform budget; the engine does not query native OS work areas.
+- **The opening size.** The window opens at about 80% of the primary monitor's logical width and
+  height, clamped between the 1280×640 minimum client area and the monitor minus that desktop
+  budget. Centre within the reserved area: full monitor width, 40 logical pixels from the top
+  and 40 from the bottom. Apply the same bounds to restored sizes and positions, respecting
+  monitor scale and origin. On unsupported smaller displays, clamp to the available area. If no
+  monitor is known, keep the default size.
 - **Resizable panels.** The outer panels can be resized by dragging their inner edge:
   - Planning's inspector (left), build menu (right) and bottom panel;
   - Operating's side panel (right) and bottom panel.
 
   Each panel opens at its current size. That size is also its minimum, so everything that fits at
-  1024×640 still fits. Each panel also has a maximum, so the map always keeps a usable area:
+  1280×640 still fits. Each panel also has a maximum, so the map always keeps a usable area:
   - a side panel takes at most 40% of the window's width, and a bottom panel at most half its
     height;
   - the map's **area**, the space the panels leave it, never drops below 320×200. The map drawn in
     it is a little smaller: it sits inside that area's margins and under the layer buttons;
   - the Operating bottom panel also leaves the side panel above it its minimum height: the gauge,
-    the selected plant's details and three rows of the plant list. At about 1024×640 it barely
+    the selected plant's details and three rows of the plant list. At about 1280×640 it barely
     grows.
 
   Content that already fills the available width or height, such as charts, the plant list and
   scroll areas, uses the extra room.
 - **The map still never moves on its own.** Only a drag changes a panel's size. A selection
   change, a tab change or a phase change leaves it alone, as before. A panel's size lasts for the
-  rest of the run. It isn't saved to disk, because there is no settings persistence yet.
+  rest of the run and is saved with client preferences (§17.1).
 - **The Operating side panel, from top to bottom** (playtest):
   1. the frequency gauge;
   2. the selected plant's details, in a block of fixed height. With nothing selected, a
      placeholder of the same height stands in;
   3. the plant list, which fills the rest of the panel's height and scrolls, with at least three
-     rows at 1024×640.
+     rows at 1280×640.
 
   The list's position doesn't change when the selection does.
-- **Out of scope:** remembering the window size between runs, and fullscreen.
+- **Out of scope:** fullscreen. Window geometry is retained by client preferences (§17.1).
 
 ### 16.8 The city card (playtest, read side and presentation)
 
@@ -1761,7 +1821,10 @@ separate autosave at each month close, as selected by the user.
   do not show the save library during a successful shortcut load. After the first opening-screen
   paint, verify this snapshot in a background worker and retain one candidate in memory. Keep
   the menu interactive; do not install a session, advance simulation, or create recording files
-  speculatively. Resume reuses the verified candidate without replaying it twice, waiting for
+  speculatively. Prepare snapshot encoding/compression and the diagnostic command prefix in memory
+  during preload too; retain the immutable game boundary so activation need not capture it again.
+  Bind prepared bytes to that exact boundary. Resume writes them to a fresh recording only after
+  rechecking the source revision. Resume reuses the verified candidate without replaying it twice, waiting for
   the same worker if necessary. Any other menu choice or cancellation drops the candidate and
   cancels pending work; late results cannot install a game. Bind the cache to the slot revision
   and re-check the source before opening a fresh recording on explicit Resume. A load failure opens the save browser with its normal error/cancel/retry controls and never silently
@@ -1806,12 +1869,16 @@ separate autosave at each month close, as selected by the user.
   `MonthClosed`, after its projections have been applied and before a later `FinishReview`.
   Thus it preserves the completed report and any game-over outcome. Each new game or successful
   resume gets a new recording-run ID and its own automatic slot. Later months replace that run's
-  autosave; they never overwrite a manual slot or the source of a resumed branch.
+  autosave; they never overwrite a manual slot or the source of a resumed branch. Capture is
+  synchronous at that exact boundary; compression and durable writing run in the background.
+  Success opens no dialog and does not block Review, the retrospective, Continue or later play.
+  Serialize captures in order and resolve each expected revision after the preceding write.
+  Only a failure opens the Retry/Continue-without-saving barrier (§21.5).
 - **Menu** offers *Save and return to menu*, *Leave without saving*, and *Stay*. A failed save
   keeps the session and the dialog available for Retry or Cancel; it never performs the leave.
   The game-over modal exposes Save too. **The OS close button still quits without confirmation**
   (the earlier user ruling); it does not promise an exit autosave. Main-menu Quit is unchanged.
-- Saving and loading show progress and disable conflicting actions. Opening the save/leave
+- Manual saving and loading show progress and disable conflicting actions. Opening the save/leave
   dialog freezes new ticks and simulation input. Cancel restores the preceding speed only if
   the game is still active in Operating; successful manual saving leaves it paused. An autosave
   error is visible and retryable, but the player may acknowledge it and continue without saving.
@@ -1838,18 +1905,23 @@ but a complete manual save can still succeed (§17.2).
 
 ### 17.2 Authoritative capture and complete history
 
-A save is a **self-contained command checkpoint**, not a serialised aggregate or a reference to a
-live log. `Game` retains the original `LogHeader`, the exact region source bytes loaded at creation,
+A save is a **self-contained checkpoint**, never a reference to a live log. Formats 2 and 3 include
+portable domain/projection state; format 1 contains replay inputs only (§21). Format 3 adds lossless
+run-length encoding for identical tick batches (§21.7), retaining command-only reader support. `Game` retains the
+`LogHeader`, the exact region source bytes loaded at creation (extended only by explicit migration),
 and an in-memory `Vec<Command>` containing every successfully executed command, in order. Append
 once after the handler succeeds, regardless of the disk sink's health, and update projections in
 the same command call. Rejected commands are absent. Preserve original `AdvanceTicks` batches,
-including successful zero-tick commands; never merge, split or reinterpret them when saving.
+including successful zero-tick commands; never merge, split or reinterpret their execution boundaries.
+Lossless storage encoding must expand those exact batches before verification or replay.
 
 `Game::checkpoint()` captures those inputs, the accepted-command count, the current
-`GameSession::state_hash()` and a summary derived from public queries. It has no I/O and neither
+canonical complete-state hash (legacy format 1 uses `GameSession::state_hash()`) and a summary
+derived from public queries. It has no I/O and neither
 executes a command nor reads installed region files. Capture uses one boundary, never a mixture
 of a pre-tick clock, a post-tick RNG and an earlier report. Memory is retained for the current run;
-history compaction and aggregate snapshots are deferred, not approximated by dropping commands.
+in-memory history remains complete; storage compression never drops or combines commands. Portable snapshots retain
+the complete audit trail and all projections (§21).
 
 The bridge establishes a barrier: stop command producers, drain commands already admitted to the
 session, and capture after `SimSet::Apply`. A queued `AdvanceTicks` is applied and its in-flight
@@ -1869,55 +1941,49 @@ written live `.log` is used as a save.
 
 ### 17.3 Save contents, identity and compatibility
 
-Each `<opaque-slot-id>.mgsave` is one independent file. It includes:
+Each new `<opaque-slot-id>.mgsave/` is one independent, self-contained directory. Its
+`snapshot.ron.z` manifest is compressed text and references a compressed binary chart file per month.
+Copying a save means copying its entire directory. It includes:
 
-- `SAVE_FORMAT_VERSION`, initially 1, distinct from `LOG_FORMAT_VERSION`;
+- directory format 4, distinct from command-log and portable-state schema versions; standalone
+  formats 1–3 remain readable, and flat codec 3 supplies the manifest's internal RLE state (§21);
 - a replay compatibility identity: simulation-build fingerprint and target platform, recorded
   for diagnostics only;
 - the original `LogHeader` (rules/log versions, settings, seed and region fingerprint);
 - a byte-exact embedded copy of the original region RON, and the complete command prefix;
-- command count, expected end-state hash, phase/date/minute/status summary;
+- complete versioned domain/projection state, with monthly chart data split into binary files;
+  all references bind file names, months, sizes and SHA-256 digests. Reassembly retains the exact
+  canonical projection bytes. The accepted-command journal remains a lossless RLE audit trail;
+- command count, canonical snapshot/journal hashes, phase/date/minute/status summary;
 - slot ID, manual/automatic kind, recording-run ID, display name and saved-at UTC time.
 
 Use a small version envelope around a checksummed payload. Infrastructure hashes the exact payload
 bytes with SHA-256 and verifies length/checksum before decoding its command DTOs. Unsupported save
 versions fail before decoding version-specific payloads. IDs are adapter-generated opaque values;
 clock times and IDs are injected metadata, never simulation inputs. A slot revision is the SHA-256
-of its committed file bytes, used to confirm the specific revision being overwritten.
+of its committed manifest bytes (or historical flat file), used to confirm the specific revision
+being overwritten. Explicit Resume also rechecks all referenced month-file digests.
 
-The deterministic guarantee is same simulation build/platform (§5.7). Do not assume
-`SIM_RULES_VERSION` alone makes arbitrary builds bit-identical: libm and the Debug-based
-`state_hash` can change without an outcome-rule change. So loading does not trust a build
-identity; it trusts a replay that reproduces the recorded end state. The simulation-build
-fingerprint and target platform are recorded for diagnostics: the identity is available to the
-save listing, and loading logs it next to the running one when they differ. A writer always
-stamps its own build, so a game resumed from another build's save saves as the current build.
-Generate the fingerprint from sorted, relative paths and exact bytes of
-`domain`/`application`/`infrastructure` sources and manifests, the workspace manifest/lockfile,
-compiler identity, target, profile, enabled simulation features and compilation flags. Do not
-include checkout location, timestamps, game rendering sources or assets; region content has its
-own fingerprint.
+For command-only saves, reproducibility requires the matching simulation: replay must reproduce the
+recorded command count, session state hash and phase/date/status boundary. For portable formats 2/3,
+load restores the snapshot directly and does not rerun historical simulation/economic choices.
+Its canonical memento representation and schema version are independent of Rust Debug output and
+simulation rules; changing future rules alone does not invalidate a compatible snapshot. See §21
+for the migration and schema-evolution policy.
 
-Load checks save format/integrity, size limits, log/rules versions, and the embedded region
-fingerprint before replay; the rules version is a fast, clear early failure. Hash the embedded
-bytes before mapping them, then construct the region from those same bytes; never fall back to
-installed region data. Load accepts any build or platform whose replay reproduces the recorded
-command count, end-state hash and summary; verify them after replay, before installing anything.
-A retuned or deleted shipped region therefore does not break a save. A replay that doesn't
-reproduce them fails explicitly and installs nothing, leaving the running state and the save file
-unchanged. When the save came from another build or platform, the player is told that this
-version of the game doesn't reproduce it and that the file is unchanged; on the same build the
-existing state/replay copy stays. There is no migration in this release.
+Keep the simulation-build fingerprint and target platform for diagnostics. Generate the fingerprint
+from sorted relative paths and exact bytes of active domain/application/infrastructure
+sources/manifests, workspace manifest/lockfile, compiler identity, target,
+profile, features and flags. Rendering, checkout location and timestamps remain excluded. A writer
+stamps its own build. Region content retains its own fingerprint.
 
-The caveat is honest: `state_hash` hashes the session's `Debug` form, so a refactor that changes
-that form, such as adding or renaming a session field, also makes older saves fail verification
-even when no outcome changed. That is a safe failure, never a silent wrong load. A canonical state
-hash or a stored snapshot would remove it; both are future work.
-
-The initial implementation leaves `SIM_RULES_VERSION` at 6 and `LOG_FORMAT_VERSION` at 1. Changing
-those is justified only by an independent rule or raw-log-format change. Save codec changes use
-their own version. Raw diagnostic-log import, cloud sync, UI-state saves,
-aggregate snapshots and migration of incompatible saves are outside Plan 2b.
+Load verifies the save envelope/limits/checksum and exact embedded region before installing any
+candidate. Never substitute current shipped region data. A retuned or deleted shipped region does
+not break a save. Rules-6/7 command-only recovery is archived outside the game (§21.1); already
+converted snapshots load normally. Rules-8 command-only saves retain their current-engine reader.
+Unknown formats or failed verification return an error without changing files or the running game.
+The old Debug-hash caveat remains confined to format-1 verification. New saves use explicit portable
+state schema 1, with a migration/upcaster required for incompatible data-model changes.
 
 ### 17.4 Reconstruct a runnable game, then publish it
 
@@ -1928,6 +1994,10 @@ infrastructure owns DTOs, bytes, hashing, IDs, filesystem paths and atomic publi
 localised dialogs and request orchestration. No Bevy, I/O or persistence fields enter the domain.
 
 Restoration builds a **candidate `Game`**, not just the `GameSession` returned by today's `replay`:
+
+For portable formats 2/3, decode and validate the domain/projection state, audit trail, hash and
+summary directly (§21), then continue at step 4. For command-only saves (expanding format-3 runs
+first), the reconstruction path is:
 
 1. Start a fresh session from the verified region, original seed and settings, and seed
    `Projections::new` from that initial session.
@@ -2020,7 +2090,7 @@ boundary; distinguish "recording stopped" from "save failed".
 - Exercise queued ticks, entry hooks, Cancel/Retry, stale jobs and Save-and-menu failures through
   headless Bevy integration and real egui passes. Nothing runs until explicitly unpaused after load.
 - Property tests cover arbitrary successful command prefixes and continuation, failed-command
-  exclusion, codec round trips and corruption rejection. All UI fits at 1024×640 and meets 4.5:1
+  exclusion, codec round trips and corruption rejection. All UI fits at 1280×640 and meets 4.5:1
   text contrast. Run workspace tests, clippy, format checks and the native launch/playtest checks
   in the Plan 2b implementation plan before declaring it complete.
 
@@ -2082,7 +2152,7 @@ migration, which is outside this amendment. Start a new game to use the faster p
 ## 19. Amendment A8: Automatic AGC recovery after a system-wide trip (2026-10-22)
 
 After protection enters Blackout and trips the fleet, AGC immediately restarts each connected,
-commissioned dispatchable plant that had AGC enabled and was Online or Starting immediately before
+commissioned dispatchable generating plant that had AGC enabled and was Online or Starting immediately before
 that trip. Restart candidates are captured before any unit trips, all trips happen first, and
 restarts then happen once in ascending PlantId order at the same tick's ending instant. There is
 no extra waiting tick and no repeated start attempt while a unit is already Starting.
@@ -2105,8 +2175,536 @@ over-frequency trip. A manual stop after an automatic restart cancels that start
 not retried. Scheduled commitment actions remain suppressed for the day after a protection trip;
 recovery does not rewrite the month's cyclic pattern or AGC choices.
 
+Batteries added under §20 do not use this thermal restart path: they suspend flows during a
+blackout, preserve charge, and become eligible again when generation re-energises the grid.
+
 This changes simulation outcomes: advance SIM_RULES_VERSION from 6 to 7. Log and save formats stay
 the same, but older rules versions remain rejected by the existing replay compatibility checks;
-those saves/logs require their matching previous engine. Pin the rules-version outcome digest and
+those command-only logs require their matching previous engine. Rules-6/7 save migration is now
+provided by §21, which supersedes that historical save rejection policy. Pin the rules-version outcome digest and
 cover automatic restoration, eligibility across mixed plant states and horizons, hydro scheduling,
 and once-only start-up billing with regression/property tests.
+
+
+## 20. Amendment A9: Daily-cycle battery storage (2026-10-23)
+
+**Status:** Implemented in the current working tree under rules version 8. Automated checks,
+windowed launch and native cycle/save-resume checks on both regions pass. See the implementation record in
+[Plan 4: Battery storage](../plans/2026-10-23-plan-4-battery-storage.md), following implemented
+Plans 1, 2, 2b and 3. This amendment governs storage wherever earlier sections assume every plant
+only generates electricity. It does not turn hydro water into stored electrical energy.
+
+### 20.1 Player contract and scope
+
+- Build and connect batteries through the existing plant/line workflow. No battery is added to
+  either starter fleet; buying storage is a player investment.
+- Every representative day starts with **zero stored energy**, even if the previous month ended
+  with a surplus. Construction and the enabled choice persist; electrical energy does not.
+- **Morning and afternoon charging are both allowed.** The charging window is regional daylight
+  before the configured evening discharge start: `sunrise <= t < min(sunset, discharge_start)`.
+  Reuse the region's monthly solar sunrise/sunset calculation. This is a clock window, not a
+  cloud threshold, and does not require an installed solar plant. Grid charging is allowed and
+  can increase thermal generation; the UI must never label all stored energy as solar energy.
+- The automatic charge plan favours the lowest forecast net-load minutes in that window. It can
+  therefore use a low-demand morning or a sunny afternoon rather than always filling at sunrise.
+  Actual available surplus can be absorbed sooner. Charging is best effort and never causes
+  deliberate customer shedding.
+- Outside daylight the battery holds its charge until the evening window. During
+  `discharge_start <= t < 24:00`, it shaves the highest remaining forecast net-load periods.
+  It cannot charge in this window. No overnight charging or morning discharge in this release.
+- At midnight, report unused energy before clearing it. This explicit daily reset is a gameplay
+  simplification: the representative day stands for every day of its month, not a continuous
+  March-to-April physical day. The same charge/discharge/reset cycle is weighted across the month.
+- First release has automatic operation and an enabled toggle. Manual MW targets, editable player
+  schedules, price arbitrage, degradation, reserve bidding, pumped hydro, and energy carried
+  overnight or between months are outside this amendment.
+
+### 20.2 Model, tuning and commands
+
+Add `PlantKind::Battery`, reusing `PlantId`, the plant network node and plant rate-base identity
+for construction, lines, selection and accounting. Add dedicated `BatterySpec` and `BatteryState`
+inside the generation context; do not represent storage as a free dispatchable generator, a
+hydro budget, or negative generation. `PlantSpec` carries an optional battery specification,
+required exactly for Battery and forbidden for the six generating kinds.
+
+Battery state contains its enabled choice, internal stored MWh and separate nonnegative charging
+and discharging MW. A commissioned battery is ready without a start-up; its operating mode is
+Disabled, Disconnected, Holding, Charging, Discharging, Empty, Full or GridSuspended as appropriate.
+These typed modes drive the card; the thermal Starting/Stopping state machine does not control it.
+Under-construction batteries cannot operate. Generic construction may retain its existing status
+representation, but generic plant stepping, AGC, commitment and restart paths must exclude Battery.
+
+Initial shipped tuning, authored in **both region RON files** and the `test-fixtures` fixture:
+
+| Field | Initial value |
+|---|---:|
+| Maximum grid charging power | 200 MW |
+| Maximum grid discharge (`PlantSpec.capacity`) | 200 MW |
+| Internal energy capacity | 800 MWh |
+| Charge efficiency | 90% |
+| Discharge efficiency | 100% |
+| Evening discharge start | 17:00 |
+| Capital cost / build time | $100M / 2 months |
+| Fixed O&M / book life | $100k per month / 180 months |
+| Start-up time and cost / minimum stable / marginal fuel cost | Zero |
+| Regulatory capacity credit | Zero (§20.6) |
+| Siting | Any otherwise buildable, unoccupied land cell |
+
+This is 90% round-trip efficiency: apply the loss once, not once on each side. The model supports
+separate efficiencies in `(0, 1]`, whose product is round-trip efficiency; the initial discharge
+value of 100% makes the 800 MWh rating deliver four hours at 200 MW. These are game tuning values,
+not a claim about current commercial battery prices or performance. Batteries can change inverter
+power anywhere within their ratings in one minute; they have no thermal ramp/minimum/start costs.
+Any inherited ramp field is unused for Battery, not an additional limit or a source of output.
+
+Validating domain constructors reject missing/extraneous battery data, non-finite/nonpositive
+power or energy ratings, efficiencies outside `(0, 1]`, an evening hour outside `1..24`, or a
+month with no daylight charging interval before it. Generic costs/lifetime/build validation still
+applies; require the battery's generic minimum, start-up, fuel cost and capacity credit to be zero.
+New tuning stays in region data/fixtures, never in simulation constants.
+
+`SetBatteryEnabled { plant, on }` is accepted in Planning and Operating for a commissioned battery,
+defaulting to enabled at commissioning. Turning it off cancels future flows but retains charge
+until midnight. Enabling resumes the appropriate automatic policy at the next tick, with no energy
+or start-up fee. The choice carries into the next month. A same-value command is a successful no-op.
+Unknown ID, wrong kind, construction, wrong phase and game-over cases return existing typed errors
+or an explicit typed extension, leaving state and command history unchanged on failure.
+`CommitPlant`, `StartPlant`, `StopPlant`, `SetDispatchTarget` and `SetAutoFollow` reject batteries;
+`SetBatteryEnabled` rejects generators. The HUD offers only the applicable controls.
+
+### 20.3 Deterministic automatic schedules
+
+Scheduling is pure, draws no RNG and uses the existing mean city demand and expected solar.
+Times refer to minute intervals `[t, t+1)`; sunrise and sunset use the same boundaries as solar
+availability. Work in chronological minute order and stable PlantId order, with fixed numerical
+iteration counts/tolerances shared by live and preview paths.
+
+1. **Charge plan.** For enabled, connected, commissioned batteries in PlantId order, valley-fill
+   the remaining daylight charging minutes against forecast city demand minus expected solar plus
+   earlier batteries' planned charging. Let `cap_m = min(charge_max, forecast_headroom_m)` and
+   allocate `q_m = clamp(level - residual_m, 0, cap_m)` so `sum(q_m / 60) <= (capacity_MWh - stored_MWh) / charge_efficiency`. Choose the level to fill
+   remaining space if the available minutes/power permit it, otherwise request the maximum feasible
+   input. Conservatively bound requested headroom by expected solar plus reachable committed
+   non-hydro generation after full city demand and earlier charge requests. Do not request extra
+   hydro to fill batteries: its stored water can supply the evening directly. Actual surplus from
+   any generator may still be absorbed under §20.4. This avoids a circular dependency between
+   charging requests and the hydro plan built below. Add each plan to
+   the residual before allocating the next battery. This is a request to AGC, not assumed energy.
+2. **Discharge plan.** Peak-shave remaining evening minutes using the water-filling principle of
+   §12.3, with the grid-deliverable budget `stored_MWh * discharge_efficiency` and the discharge
+   power rating. Subtract each battery's allocation from forecast net load before the next battery.
+   No allocation may exceed positive residual demand. Do not reserve the same energy twice.
+3. **Hydro coordination.** Build battery plans first, then allocate scheduled hydro against net
+   city load less planned battery discharge. Battery charging does not enlarge the hydro water
+   budget or make the hydro planner burn water to fill batteries. Hydro's budget, commitment,
+   ramp envelope and emergency override still apply. Generator AGC sees the combined net requirement.
+4. **Re-plan.** Re-plan at day start, hourly, at the evening-window boundary and on the next tick
+   after a battery is enabled/disabled or grid service is restored. Plan only the remaining day;
+   use actual stored energy. Freeze elapsed allocations for history; do not rewrite them. A live
+   afternoon plan may show expected future charging separately, but neither outage sizing nor
+   hydro's firm discharge allocation may spend energy not yet stored. Planning previews may
+   forecast the whole cycle from empty, clearly labelled as expected, and use those projected
+   charge receipts to plan evening discharge.
+
+Schedules are targets, not energy guarantees. Forecast error, generation limits, disconnection,
+protection and a player's generator controls can prevent a charge or leave energy unused.
+
+### 20.4 Tick balance and energy settlement
+
+Let `G` be primary generation, `D` battery discharge, `C` battery charging input, and `S` served
+**customer** load. The copper-plate balance is:
+
+```
+imbalance = G + D - S - C
+```
+
+Keep `TickSummary.generation` as total supply including discharge, equal to sums of nonnegative
+`by_plant` and `by_kind` output. Add separate charging power totals and per-battery flow/energy
+records. Thus `generation = served + battery_charge + imbalance`; primary generation is
+`generation - battery_discharge`. The battery kind in the supply stack represents delivered
+output only. Neither charging nor losses are negative generation.
+
+For one minute, with internal stored energy `E`:
+
+```
+E_next = E + charge_efficiency * C / 60 - D / (60 * discharge_efficiency)
+charge_loss = (1 - charge_efficiency) * C / 60
+discharge_loss = (1 / discharge_efficiency - 1) * D / 60
+```
+
+Maintain `0 <= E <= capacity_MWh`, `0 <= C <= charge_max`, `0 <= D <= discharge_max`, and never
+charge and discharge in the same interval. Cap flows using the exact remaining one-minute energy
+or headroom, including a fractional final tick; do not clamp an overdrawn result and invent energy.
+Floating-point tolerance only normalises roundoff near zero/capacity, not physical overdraw.
+
+Extend §6.4 without changing the seeded demand/solar draws or the generator target timing:
+
+- After generating plants step, compute provisional battery flows from current actual supply,
+  charge/discharge plans and grid conditions. Daylight charging takes available surplus after
+  **full** customer demand, capped by power/room; it may absorb more than its scheduled request
+  when surplus is already available. AGC may request extra generation to meet scheduled charging
+  on the following tick. It never treats that request as an actual receipt this tick. Allocate
+  actual available surplus/deficit among batteries in ascending PlantId order, consuming shared
+  headroom as each allocation is made; fleet totals cannot allocate the same surplus twice.
+  Taper charging requests ahead of full capacity and daylight cutoff using generator downward
+  ramp capability. Reserve enough room for already-requested generation to ramp down; opportunistic
+  absorption must not spend that reserved room and force an avoidable full-battery surplus.
+- In the evening, battery output fills the actual deficit after generating plants, up to the
+  scheduled allowance, power and stored-energy caps. AGC subtracts the next tick's intended
+  battery discharge from its generation requirement; otherwise generators would cover all load
+  and the battery could never discharge. Account for generator ramps and approaching battery
+  depletion when replacing that output. Do not inject discharge into an already oversupplied bus.
+- Frequency/protection use net load including feasible battery charging. After protection changes
+  output or served load, cancel charging where necessary and re-evaluate battery delivery/flows
+  against the final state. Settle **one** energy change from the final post-protection flow record,
+  the same record used by the summary and monthly accumulator. Do not debit a provisional flow
+  and debit it again during redispatch. Preserve the existing distinction between the imbalance
+  that moved frequency and the final post-protection imbalance (§6.4).
+- Account for the final interval ending at 24:00 before performing the midnight close below.
+  `AdvanceTicks` batching and simulation speed cannot change any flow, report or reset boundary.
+
+### 20.5 Customers, forecasts and protection
+
+Customer demand, served/unserved energy, reliability, strikes, satisfaction and revenue retain
+their city-only definitions. Charging does not inflate peak customer demand, customer energy,
+retail revenue or the denominator of reliability. Keep the frequency system-size basis as
+`city_demand * (1 - outage)`, before protection shedding and excluding battery charging, with
+the existing dark-grid handling. Optional charging must not dilute the severity of a shortage.
+
+**Customer priority.** Charging is zero whenever customer load is shed (planned or unplanned),
+while in blackout/restoration, or while frequency is below the normal band. Stop it before asking
+protection to shed customers. On over-supply, reduce battery discharge first and allow feasible
+charging only in its daylight window, before further solar curtailment/generator protection.
+A full battery, a night-time battery or one without room is not downward headroom. Standing solar
+curtailment still follows its existing release timing; do not count withheld solar as generated.
+
+**Emergency discharge.** During the evening window an enabled battery may exceed its planned
+allocation to cover an actual deficit before customer shedding, while still obeying energy/power
+limits. Outside this window it holds charge; it is not a general 24-hour emergency reserve in this
+release. Emergency use reduces the next plan's available energy and can leave a later shortage.
+A planned rotating outage may use this support to restore customer load only as fast as the
+combined feasible headroom allows; do not drain batteries to serve fictional charging load.
+
+**Blackout.** Suspend both flows immediately, retain stored energy and the enabled choice, and
+exclude batteries from thermal trip/restart/start-up billing. They do not black-start the grid.
+Once generating plants have re-energised it and protection completes restoration, an enabled
+battery can resume within its current window. Recovery does not refill it. Disabled or isolated
+batteries remain idle; all batteries still take part in the midnight inventory close.
+
+**Energy-limited forecasts.** Any path counting battery contribution—Planning shortfall checks,
+operating rotating-outage sizing, ramp warnings, AGC/trip headroom and restoration—must project a
+single sequential inventory. A 200 MW battery with 10 MWh remaining cannot cover a whole hour.
+For fleets with batteries, evaluate every minute of each assessed horizon rather than just the
+hour endpoints; depletion or a window change can create the worst shortage inside an hour.
+Operating outage targets use the largest minute shortfall share for that hour, preserving the
+existing exact fraction/paced application rules. Retain §15.3's generator reach-by-hour-end
+convention for AGC units, so an outage does not hold their forecast output down and ratchet itself.
+Storage is always projected chronologically against its finite budget, never treated as one of
+those unlimited AGC units. Use only energy already stored, with charging
+cancelled in a shortage; future hoped-for charging is not firm cover. Planning's expected-day
+preview may include feasible mean-forecast charging, starting from zero, and must expose that
+assumption. Queries run on projected state, never consume live energy or RNG.
+
+Minimum-generation warnings remain conservative: batteries add no committed minimum, and optional
+charging is not guaranteed cover for an inflexible generator's surplus. Ramp replacement and
+falling-output trip gates must include foreseeable depletion and window boundaries. Prevent a
+predictable scheduled battery fall from outrunning the committed generator fleet; if the fleet
+cannot replace it, warn/size a shortage instead of inventing storage output. Storage-free fleets
+retain the earlier forecast and dispatch behavior.
+
+### 20.6 Midnight, monthly accounting and regulation
+
+After the final post-protection tick has settled, and **before** month-close construction,
+regulatory work, report publication and autosave:
+
+1. Capture each commissioned battery's internal remaining MWh, including disabled/disconnected
+   batteries, and emit `BatteryDayClosed { plant, unused }` once in PlantId order. Include zero
+   so an empty battery and a missing close are distinguishable. Construction projects have no
+   active inventory and contribute zero report energy.
+2. Accumulate the daily remainder as **unused battery energy at midnight**, then clear stored
+   energy and both power flows. This is inventory discarded by the daily-cycle abstraction,
+   not discharge, solar curtailment, customer unserved energy or a cash penalty.
+3. Publish the monthly report with per-battery and fleet charge input, delivered output, charge
+   and discharge losses, and unused energy. All are played-day MWh multiplied by `days_in_month`,
+   including leap-year February. Preserve the unweighted curves for the retrospective. Every
+   Review state and monthly autosave contains zero live stored energy plus the completed report.
+   Keep the final tick record immutable, including its pre-close SOC and delivered MW; clearing
+   live state must not erase the last minute from energy totals or history. Check tick/output
+   invariants before this boundary reset, or explicitly account for the closed-day boundary.
+
+For a day starting empty, within numerical tolerance:
+
+```
+charge_input = delivered_output + charge_loss + discharge_loss + unused_at_midnight
+```
+
+Fuel is charged for actual primary generation, including generation that served charging.
+Battery output has no second fuel charge or start-up charge. Revenue remains tariff × served
+customer energy, never tariff × battery throughput. Fixed O&M, construction instalments,
+depreciation and allowed return use the ordinary plant rules; no per-tick money rounding.
+Do not present a battery's discharge × tariff as extra company revenue. Its benefit is shifted
+supply, avoided expensive generation and potentially improved reliability, with charging costs
+and losses visible in company totals. Profitable operation is not guaranteed by enabling it.
+
+For this release, battery **regulatory capacity credit is zero**: a plant that starts empty and
+needs same-day charging is not guaranteed firm supply. Its MW is excluded from the annual reserve
+capacity sum, while its commissioned capital and line capital enter normal eligible rate base.
+The existing MW-based excess assessment does not hold/write off a zero-firm battery or a line
+whose only plant endpoint is that battery merely because the generating fleet is excessive. For
+a line also ending at a new positive-firm generator, associate it with that generator (lowest
+PlantId among positive-firm candidates), so adding a battery endpoint cannot shield excess
+generator line capital. This is a deliberately limited regulator model,
+not a duration-based storage accreditation scheme. Do not use nameplate MW or one arbitrarily
+chosen evening hour as firm credit. Storage accreditation and prudence tests are future work.
+
+A repeated capture/query, save retry, `AdvanceTicks` extending beyond close, resumed Review or
+`FinishReview` cannot close the battery twice. `BeginOperating` also asserts/initialises zero
+energy without re-reporting discarded inventory. A battery commissioned at month close starts
+empty, and first operates on the next representative day. Its newly finished line cannot alter
+energy or city demand in the just-completed day's report.
+
+### 20.7 Queries, HUD, map and persistence
+
+- **Views.** Extend `PlantView` with optional typed battery details: enabled, mode, grid connection,
+  stored/capacity MWh, charge/discharge power ratings and current flows, efficiencies, charge window
+  and evening start. Expose pure charge/discharge schedule previews with forecast assumptions and
+  frozen elapsed allocations. No battery rows in the thermal commitment grid or thermal merit order.
+- **Cards and construction.** Build/quote cards show both MW and MWh, cost, instalments, lead time,
+  grid connection and automatic cycle. The operating card shows charge level, Charging/Discharging/
+  Holding/etc., live MW, today's input/output/losses and Enable/Disable storage. Explicitly say
+  that grid charging can use thermal generation. Keep generators' controls and labels unchanged.
+- **Charts.** Show battery discharge as a separate positive supply contribution and charging as
+  an additional-load curve/band, alongside original customer demand and served load. A separate
+  stored-energy trace uses a labelled MWh axis; never stack MWh on a MW scale. Default to two
+  side-by-side panes with the supply/demand pane allocated twice the battery pane's width. A
+  “Combine graphs” toggle overlays the stored-energy line on the supply/demand plot, retaining an
+  independent labelled MWh axis and hover values. Keep its distinct colour and visibility key
+  outside the plot. The layout choice is shared by live history, archived months and the Supply
+  demand retrospective and retained in client preferences across sessions and launches. Hide the
+  control when the chart has no storage data. Short bottom panels use unit-only axis titles so
+  rotated text cannot overlap the legend. At midnight show the
+  pre-reset remainder as an explicit close marker, not an unexplained fall or discharge spike.
+  All legends stay outside the plot; all labels meet the existing 4.5:1 contrast floor.
+- **Review.** Add a storage summary and per-battery breakdown with input, delivered energy, losses
+  and unused-at-midnight MWh, all clearly month-weighted. Also label the daily midnight remainder
+  (for example, 100 MWh per day and 3,100 MWh in a 31-day month), so it is comparable to capacity.
+  Show zero unused energy explicitly when
+  storage was present. Keep storage throughput separate from the right-side generator merit-order
+  table. A typed lesson may explain a nonzero discarded remainder; storage does not displace
+  higher-priority reliability lessons or increase the three-lesson cap.
+- **World.** Add a recognisable battery enclosure model/marker within the existing 0.8-cell fitted
+  footprint, with construction/selection/connection behavior. Charging batteries are sinks and
+  discharging batteries sources for illustrative line routes, including city-to-city paths. Never
+  label a route as actual electrical flow or prove a solar source from it. No battery suitability
+  overlay: any buildable land cell is already represented by the build tool.
+- **Localisation and input.** Follow pure presenter → draw → `UiAction` → `dispatch`, `ActionSink`
+  getters and Fluent keys/coverage. Battery UI actions become domain commands; no UI code writes
+  stored energy or policy state. Small-window/zoom layouts keep the new controls reachable.
+- **Saves and replays.** Retain battery tuning in the exact archived region bytes, enabled commands
+  in the complete journal, and battery state/schedules/accumulators in deterministic session state.
+  Restore must preserve energy, RNG, reports and all projections at the saved boundary (§21). Loading mid-day preserves charge exactly and enters paused; it must not call
+  day initialisation or clear the battery. A Review load preserves the completed unused-energy
+  report and zero live inventory. Preload remains a pure candidate build, with no live mutations.
+
+### 20.8 Versioning and acceptance
+
+Implement this under `SIM_RULES_VERSION` **8**, advancing the currently implemented version 7.
+The command addition and battery region data are carried by versioned command DTOs and archived
+region bytes. Save envelope **3** (superseding envelope 2 under §21.7), portable schema **1** and
+snapshot-rooted command-log format **2** are independent versions defined in §21. Rules-6/7 recovery used the archived historical engine
+to create separate battery-capable slots; originals stay intact. Command-only historical
+logs still need a matching engine. Validate versions and inputs before running commands, and fail
+unsupported versions without changing source files. Never replay old years under the new rules.
+The save library must retain unavailable entries and deletion access under its existing contract.
+
+Required regression and property coverage:
+
+- Empty at day start; daylight morning/afternoon eligibility, sunset/17:00/midnight exact boundaries,
+  cloudy days, no-solar grid charging, full/empty/fractional final ticks and both efficiency factors.
+- No simultaneous flows; bounds and conservation for generated state/command sequences, multiple
+  batteries and stable ID ordering. Disable/re-enable, construction, disconnection and typed command
+  refusals leave energy/state/history correct; refused commands change nothing.
+- Actual charging is paid-for generation/load, never customer service or fictitious solar. It stops
+  before any customer shedding. Forecast requests alone cannot put energy into a battery.
+- Evening discharge displaces peaker energy in a crafted solar/daylight + evening-peak fixture;
+  an empty battery does not reduce outages. No new blackout or avoidable frequency trip is introduced
+  by charge start/stop, scheduled depletion, hydro coordination or full-capacity transitions on a
+  covered, noise-free day. Emergency exhaustion follows ordinary shortage/protection rules.
+- A battery that empties mid-hour is not credited for that whole hour. Planning previews, actual
+  inventory forecasts, headroom and outage sizing share the same physical limits and consume no RNG.
+- Final interval settled once, remainder captured before zeroing, exact month weighting, no duplicate
+  midnight close under batched ticks/Review/resume. Customer revenue/fuel/OM/capital and annual reserve
+  assessment follow §20.6, with no double fuel or invented firm capacity.
+- Mid-charge, mid-discharge, disabled-with-charge, blackout, midnight Review and next-day save/resume
+  agree with uninterrupted continuation in state hash, views, projections and RNG-driven outcomes.
+  Rules-7 saves fail clearly before archived-region mapping; archived new-rule regions survive retuning.
+- Build/select/connect/toggle, charge/discharge graph keys, unused-energy review, history and line
+  direction work through actual dispatch/egui/ViewSync paths at minimum size/zoom; localisation is
+  complete. Native launch and a full charge/evening/reset/resume playtest pass.
+- Existing storage-free shipped-region baseline runs and scenario intent remain intact. Review
+  rules-version digest/snapshot changes deliberately; no unrelated tuning is used to conceal a flaw.
+
+## 21. Amendment A10: Preserve saved games across feature updates (2026-10-23)
+
+**Status:** Implemented; verification and player-save publication tracked in
+`docs/superpowers/plans/2026-10-23-save-migration-and-portable-state.md`.
+
+### 21.1 Completed one-time battery recovery
+
+All pre-battery player saves were verified against historical rules 6/7, converted into separate
+portable snapshot slots and restored again for exact state/history comparison. Original files and
+byte-identical backups remain intact. Conversion kept cash/ledger, construction, connections,
+commitments, hydro plans, regulator/rate base, RNG, IDs, reports, incidents and charts, appending
+only the frozen authored battery catalog entry. New rules affect future play only.
+
+This pre-release recovery is complete. The frozen historical engines, converter, original golden
+fixtures and supporting sources are archived with checksums and restore instructions in
+`tools/archive/save-recovery-2026-10-23/`. They are outside the active Cargo workspace and shipped
+game. There is no in-game upgrade action, recovery prompt, old-rule replay engine or copy
+publication on Resume/Load. Converted snapshots use the normal Resume buttons; preload is read-only.
+Unsupported historical command saves fail safely, preserving all bytes for archived recovery.
+
+### 21.2 Original preservation and provenance
+
+Retain converted snapshots and original backups without rewriting or deleting them. Snapshot
+provenance (source slot/revision/rules/hash/count) remains part of schema 1 and guards against
+writing a converted snapshot over its original slot. The library suppresses an unchanged original
+only while a readable converted copy of that exact boundary exists. Later progress must not hide
+earlier boundaries. Deleting/corrupting the copy, an unsupported schema or a changed source makes
+the original visible again as unavailable for normal play. Recovery then uses the archived tool.
+Future snapshot-schema migrations run through normal loading and preserve originals; they do not
+require a special player-facing upgrade workflow.
+
+### 21.3 Storage and future compatibility
+
+New directory format 4 stores portable state schema 1: complete domain state and projections,
+with monthly chart samples in compressed binary files and the remaining state, region and RLE
+journal in a compressed text manifest (§21.8). Reassemble the exact original canonical projection
+bytes before verification. Retain historical flat formats 1–3 as readers, not a migration flow. Encode fields and enum tags
+explicitly, with fixed-width little-endian scalars and ordered collections; do not derive persisted
+identity from Debug text, object layout or pointer addresses. Cover both state and history with the
+canonical boundary hash and protect the envelope with SHA-256. Bound decoded size/collections;
+validate scalars, topology, IDs, session invariants, canonical re-encoding, audit hash and boundary.
+
+A rules bump alone must not discard compatible snapshot saves. Keep schema versions separate from
+rule/build versions. When adding fields, provide explicit defaults/upcasters or a new schema reader;
+retain readers and golden old-save fixtures for every supported released schema. CI must load,
+validate and continue these fixtures. Never silently replay old years under new economics, replace
+archived tuning with shipped content, drop unknown state or erase originals to make a load work.
+A genuinely changed state meaning still needs migration work; snapshots keep that work independent
+of replaying every historical engine. Unknown future schemas fail safely and preserve all bytes.
+
+Snapshot-rooted diagnostic recordings use command-log format 2 and a verified checkpoint sidecar.
+Use the snapshot-aware replay API; command-only replay rejects format 2 explicitly. Format-1 logs
+and rules-8 command-only saves keep their original reader. Invalid/failed candidates leave no branch
+recordings or sidecars behind.
+
+### 21.4 Verification
+
+Keep released portable-schema golden saves for every phase, including a charged battery. Restore,
+validate, continue and save them without a historical engine. Cover exact progress/history, RNG,
+canonical hashes, bounded malformed input, protected original slots, provenance deduplication,
+unknown schemas, ordinary Resume clicks and read-only preload. The archive separately retains
+and passes the historical migration fixtures/tests; verify archive checksums and source hashes.
+Confirm the shipped Cargo dependency tree contains no historical engine. Hash-check all actual
+converted saves/originals/backups before and after changes. Run relevant backend/client tests,
+formatting, clippy, build, launch smoke and an isolated native playtest.
+
+### 21.5 Background monthly autosaves
+
+A successful monthly autosave never opens a dialog. Keep Review and its supply/demand retrospective
+usable during writing, and let the player continue into Planning/Operating. The immutable snapshot
+still represents the exact closing command, even if the live game has advanced. Use one writer,
+queue later month-close captures in order, and determine overwrite revisions from the preceding
+receipt. Never let a late older receipt pause later play, clear a newer manual capture or fulfil
+Save-and-return-to-menu. Manual save/leave requests can wait for the background write; cancelling
+their dialog must not cancel that write.
+
+An automatic-write failure pauses play and opens the existing retry/continue-without-saving
+barrier. Keep the failed immutable boundary and any newer queued captures. Retry confirms or
+publishes that exact boundary before newer queued writes; Continue without saving may skip the
+failed write and advance to queued captures. Queued work must not disable the failure controls.
+Preserve uncertain-publication revisions and persistent warning semantics (§17.5). Only a confirmed
+receipt reports success. OS close and explicit Leave without saving retain their existing contract.
+
+
+### 21.6 Lightweight save-library metadata
+
+Opening Load game reuses the opening menu's metadata index and refreshes it asynchronously; paint
+cached cards immediately rather than showing generic Working text. First-time enumeration may show
+Loading saved games. Listing must not construct game sessions, decode command histories, decompress
+state/projections, map region definitions or rasterize terrain. Extract only card metadata and the
+archived region ID/name key, retaining envelope/version/identity checks and raw revisions for
+conflict-safe actions. Metadata readability is not proof that a game can restore. Selected loading
+always reads fresh bytes and performs the complete validation/restore path; caches cannot bypass it.
+
+Cache lightweight rows in memory on the save store, surviving menu transitions. Key them by file
+identity, size and modification/creation/change timestamps where the platform provides them. Scan
+for added/deleted files on refresh, invalidate changed slots individually and evict disappeared paths.
+Do not cache reads raced by replacement or transient I/O errors. Full selected reads remain the
+safety boundary even if a filesystem stamp is unreliable. Preserve sorting, the newest-12 display
+cap, provenance deduplication, unavailable entries, and rename/delete revision checks.
+
+Persist the lightweight index as a disposable `.save-library-cache.ron` beside the saves, containing
+only card rows, stable inspection errors, revisions, provenance and filesystem stamps. Version and
+checksum it, bound its size/entry count/parse depth, and bind it to the inspecting build/platform.
+Publish atomically without rewriting any save or backup; a failed cache write must not fail a scan.
+Missing, damaged or incompatible indexes rebuild automatically. A restart must still enumerate the
+save directory and stat every source before reusing its row, detecting additions, replacements,
+changes and deletions; cached paths never establish file existence. Do not persist transient I/O
+errors or raced reads. Full selected validation and save formats remain unchanged.
+
+
+### 21.7 Lossless tick journal run-length encoding
+
+Save envelope 3 stores the journal as `Command(<original CommandDto>)` entries and
+`TickRun(n:<original batch size>,repeat:<number of original commands>)` entries. Only consecutive,
+identical `AdvanceTicks` commands may become runs. Any other command or changed tick batch size is
+a boundary. Preserve zero-tick commands, all player actions and all command ordering. Singleton
+ticks remain ordinary commands. Flat codec writers use format 3, including the state carried inside directory format 4; readers
+retain formats 1 and 2 unchanged.
+Portable state schema and simulation rules do not change for this storage-only amendment. Format 3
+also supports current-rule command-only checkpoints, expanding the journal before verified replay.
+
+The count and audit hash always describe the expanded original command sequence. A repeat count
+never means one call with multiplied ticks: expand into the original separate commands before
+verification, diagnostic-prefix comparison or replay, preserving projections at every original
+boundary. Existing diagnostic log formats and live append semantics remain unchanged; snapshot
+sidecars use the new save encoding. Do not rewrite existing player slots or backups automatically.
+
+Reject empty runs, length overflow, unknown records, declared-count mismatches and expanded journals
+over `MAX_SAVE_COMMANDS` before allocating expanded storage or installing a game. Expansion remains
+cancellable. Keep checksum/region/rules/schema validation and atomic save publication unchanged.
+Property tests cover arbitrary batch sizes, repeats and intervening actions; frozen format-1 and
+format-2 fixtures must load, re-encode and continue with exact state, projections and diagnostic
+replay behavior. Unsupported future versions fail safely without modifying original files.
+
+
+### 21.8 Monthly binary chart directories
+
+Each player snapshot is a directory `<slot>.mgsave/`, containing compressed text `snapshot.ron.z`
+and monthly `YYYY-MM-<SHA256>.bin.z` files. Names are local, validated references, never arbitrary
+paths. Bind each file's month, compressed/expanded size and digest in the manifest; reject duplicate
+months, wrong names, traversal, symlinks, corrupt/missing files and aggregate size overruns. Keep
+complete minute samples, forecasts and the live rolling buffer, including Planning/Review boundaries.
+The pure application split/join must reproduce identical portable projection bytes, canonical hashes,
+RNG, reports and audit history. Domain schema 1 and simulation rules remain unchanged.
+
+Writes stage immutable chart files, flush/sync them and their directory, then atomically publish the
+new manifest as the commit point. New snapshots stage the whole directory before publishing it.
+Keep old referenced files through failed/uncertain publication and reuse unchanged month files;
+remove obsolete versions only after success. Retain slot locks, revision-conflict checks, cancellation
+and durability Retry semantics. Delete renames the directory out of the library before syncing its
+absence and cleaning up; retries cannot delete a recreated slot with a different revision. Rename
+preserves all historical game/chart data. Diagnostic base recordings use the same directory layout.
+
+The metadata index remains lightweight and persisted. Check directory, manifest and monthly-file
+identity/timestamps on refresh; selected loading verifies every referenced file. The original
+historical flat readers remain available, with no implicit conversion at startup or Resume.
+
+Convert the owner's existing saves once, using local ignored tooling outside the workspace. Verify
+all canonical state/history and saved metadata before publishing converted copies. Preserve originals
+and earlier backups outside the repository, retain preferences and slot IDs, and perform no runtime
+upgrade flow. `/tools/archive/` is ignored; recovery archives, converter sources, staged files and
+backups are not added to Git. Future users' format/schema evolution still requires retained readers
+or explicit schema upcasters backed by compatibility fixtures; this one-off conversion is not shipped.

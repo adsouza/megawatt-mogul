@@ -154,6 +154,63 @@ impl SimClock {
     }
 }
 
+// Portable state schema 1: explicit field order and enum tags.
+impl crate::state::State for SimClock {
+    fn write(&self, out: &mut Vec<u8>) {
+        crate::state::State::write(&self.month, out);
+        crate::state::State::write(&self.tick, out);
+    }
+    fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
+        let month = crate::state::State::read(input)?;
+        let tick = <u32 as crate::state::State>::read(input)?;
+        if tick > TICKS_PER_DAY {
+            return Err(crate::state::StateError::Invalid);
+        }
+        Ok(Self { month, tick })
+    }
+}
+impl crate::state::State for SimMonth {
+    fn write(&self, out: &mut Vec<u8>) {
+        crate::state::State::write(&self.year, out);
+        crate::state::State::write(&self.month, out);
+    }
+    fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
+        Self::new(
+            crate::state::State::read(input)?,
+            crate::state::State::read(input)?,
+        )
+        .map_err(|_| crate::state::StateError::Invalid)
+    }
+}
+impl crate::state::State for Season {
+    fn write(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::Winter => {
+                crate::state::State::write(&0u8, out);
+            }
+            Self::Spring => {
+                crate::state::State::write(&1u8, out);
+            }
+            Self::Summer => {
+                crate::state::State::write(&2u8, out);
+            }
+            Self::Autumn => {
+                crate::state::State::write(&3u8, out);
+            }
+        }
+    }
+    fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
+        Ok(match <u8 as crate::state::State>::read(input)? {
+            0 => Self::Winter,
+            1 => Self::Spring,
+            2 => Self::Summer,
+            3 => Self::Autumn,
+            _ => return Err(crate::state::StateError::Invalid),
+        })
+    }
+}
+crate::state_tuple!(SimDuration);
+
 #[cfg(test)]
 mod tests {
     use super::*;

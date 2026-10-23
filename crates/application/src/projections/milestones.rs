@@ -196,6 +196,107 @@ impl Projection for MilestoneProjection {
     }
 }
 
+// Portable state schema 1: explicit field order and enum tags.
+domain::state_record!(MilestoneProjection {
+    reached,
+    newly_reached,
+    peak_demand,
+    connected_cities,
+    strike_pending,
+    run
+});
+impl domain::state::State for MilestoneKind {
+    fn write(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::ServePeak { gigawatts } => {
+                domain::state::State::write(&0u8, out);
+                domain::state::State::write(gigawatts, out);
+            }
+            Self::FullSeasonWithoutStrike => {
+                domain::state::State::write(&1u8, out);
+            }
+            Self::ConnectCities { count } => {
+                domain::state::State::write(&2u8, out);
+                domain::state::State::write(count, out);
+            }
+        }
+    }
+    fn read(input: &mut domain::state::StateReader<'_>) -> Result<Self, domain::state::StateError> {
+        Ok(match <u8 as domain::state::State>::read(input)? {
+            0 => Self::ServePeak {
+                gigawatts: domain::state::State::read(input)?,
+            },
+            1 => Self::FullSeasonWithoutStrike,
+            2 => Self::ConnectCities {
+                count: domain::state::State::read(input)?,
+            },
+            _ => return Err(domain::state::StateError::Invalid),
+        })
+    }
+}
+impl domain::state::State for MilestoneProgress {
+    fn write(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::Peak { best, goal } => {
+                domain::state::State::write(&0u8, out);
+                domain::state::State::write(best, out);
+                domain::state::State::write(goal, out);
+            }
+            Self::StrikeFreeMonths { months, needed } => {
+                domain::state::State::write(&1u8, out);
+                domain::state::State::write(months, out);
+                domain::state::State::write(needed, out);
+            }
+            Self::Cities { connected, needed } => {
+                domain::state::State::write(&2u8, out);
+                domain::state::State::write(connected, out);
+                domain::state::State::write(needed, out);
+            }
+        }
+    }
+    fn read(input: &mut domain::state::StateReader<'_>) -> Result<Self, domain::state::StateError> {
+        Ok(match <u8 as domain::state::State>::read(input)? {
+            0 => Self::Peak {
+                best: domain::state::State::read(input)?,
+                goal: domain::state::State::read(input)?,
+            },
+            1 => Self::StrikeFreeMonths {
+                months: domain::state::State::read(input)?,
+                needed: domain::state::State::read(input)?,
+            },
+            2 => Self::Cities {
+                connected: domain::state::State::read(input)?,
+                needed: domain::state::State::read(input)?,
+            },
+            _ => return Err(domain::state::StateError::Invalid),
+        })
+    }
+}
+impl domain::state::State for MilestoneStatus {
+    fn write(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::Reached { month } => {
+                domain::state::State::write(&0u8, out);
+                domain::state::State::write(month, out);
+            }
+            Self::InProgress(v0) => {
+                domain::state::State::write(&1u8, out);
+                domain::state::State::write(v0, out);
+            }
+        }
+    }
+    fn read(input: &mut domain::state::StateReader<'_>) -> Result<Self, domain::state::StateError> {
+        Ok(match <u8 as domain::state::State>::read(input)? {
+            0 => Self::Reached {
+                month: domain::state::State::read(input)?,
+            },
+            1 => Self::InProgress(domain::state::State::read(input)?),
+            _ => return Err(domain::state::StateError::Invalid),
+        })
+    }
+}
+domain::state_record!(StrikeFreeRun { season, months });
+
 #[cfg(test)]
 mod tests {
     use super::*;

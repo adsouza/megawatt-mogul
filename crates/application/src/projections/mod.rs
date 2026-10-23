@@ -4,6 +4,7 @@
 //! Projections are pure functions of the event stream (plus the session, for
 //! facts an event only hints at), so they are deterministic and rebuildable.
 
+mod chart_archive;
 mod lessons;
 mod milestones;
 mod monthly_report;
@@ -16,6 +17,7 @@ mod timeline;
 use domain::events::DomainEvent;
 use domain::session::GameSession;
 
+pub use chart_archive::ArchivedChartMonth;
 pub use lessons::{Lesson, LessonsProjection, lessons_for};
 pub use milestones::{
     MILESTONES, MilestoneKind, MilestoneProgress, MilestoneProjection, MilestoneStatus,
@@ -103,6 +105,9 @@ pub(crate) mod test_support {
             served: Megawatts::new(100.0),
             unserved: Megawatts::new(0.0),
             generation: Megawatts::new(100.0),
+            battery_charge: Megawatts::ZERO,
+            battery_discharge: Megawatts::ZERO,
+            batteries: Default::default(),
             curtailed: Megawatts::new(0.0),
             imbalance: Megawatts::new(0.0),
             by_kind: BTreeMap::new(),
@@ -116,6 +121,7 @@ pub(crate) mod test_support {
 
     pub fn report(year: i32, month: u8, peak_mw: f64) -> MonthlyReport {
         MonthlyReport {
+            storage: BTreeMap::new(),
             month: SimMonth::new(year, month).unwrap(),
             days: 30,
             revenue: Money::ZERO,
@@ -145,3 +151,15 @@ pub(crate) mod test_support {
         }
     }
 }
+
+// Portable state schema 1: explicit field order and enum tags.
+domain::state_record!(Projections {
+    timeline,
+    monthly_reports,
+    plant_history,
+    milestones,
+    ramp_warnings,
+    rate_review,
+    lessons,
+    regulatory
+});

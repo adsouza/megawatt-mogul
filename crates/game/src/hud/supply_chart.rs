@@ -3,13 +3,14 @@
 //! forecast and the system marginal cost (the dearest plant producing, Task 2's timeline field)
 //! on a secondary axis.
 
+use super::SupplyChartLayout;
 use application::Game;
 use application::projections::{CompletedDay, TimelinePoint};
 use bevy_egui::egui;
 use domain::demand::ForecastPoint;
 use domain::region::{PlantKind, RegionDefinition};
 use domain::time::{TICKS_PER_DAY, TICKS_PER_HOUR};
-use egui_plot::{FilledArea, HPlacement, Line, LineStyle, Plot, VLine};
+use egui_plot::{FilledArea, HPlacement, HoverPosition, Line, LineStyle, Plot, PlotMemory, VLine};
 
 use super::action::UiAction;
 use super::frequency::NORMAL_COLOR;
@@ -23,6 +24,8 @@ use crate::l10n::{Localize, Localizer};
 pub const SERVED_COLOR: Rgb = NORMAL_COLOR;
 /// The system marginal cost line, on the secondary axis.
 pub const MARGINAL_COST_COLOR: Rgb = [240, 190, 60];
+/// Inventory is distinct from battery power, which is teal.
+pub const STORED_ENERGY_COLOR: Rgb = [200, 180, 255];
 
 /// One kind's band of the stack: from `low` (the kinds below it) to `high`, at each point.
 #[derive(Debug, Clone, PartialEq)]
@@ -36,13 +39,25 @@ pub struct SupplyStack {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SupplyModel {
+    pub layout: SupplyChartLayout,
+    pub layout_label: String,
     pub hour_axis: String,
     pub power_axis: String,
     pub cost_axis: String,
+    pub power_unit: String,
+    pub cost_unit: String,
+    pub energy_unit: String,
     pub demand_label: String,
     pub served_label: String,
     pub forecast_label: String,
     pub cost_label: String,
+    pub storage_load_label: String,
+    pub storage_energy_label: String,
+    pub storage_energy_legend: String,
+    pub storage_unused_label: String,
+    pub storage_load: Vec<f64>,
+    pub stored: Vec<f64>,
+    pub has_storage: bool,
     /// The day's ticks so far, in hours: `0.0, 0.0167, ...`. The supply series are sampled here.
     pub x: Vec<f64>,
     /// The kinds that produced today, in merit order.
@@ -57,6 +72,13 @@ pub struct SupplyModel {
     pub marginal_cost: Vec<[f64; 2]>,
     /// The time of day now, in hours.
     pub now: f64,
+}
+
+impl SupplyModel {
+    pub fn with_layout(mut self, layout: SupplyChartLayout) -> Self {
+        self.layout = layout;
+        self
+    }
 }
 
 /// The timeline points of the day being played: the projection keeps the last 1,440 ticks, so
@@ -133,13 +155,31 @@ fn supply_model_for(
         })
         .collect();
     SupplyModel {
+        layout: SupplyChartLayout::default(),
+        layout_label: l10n.text("supply-chart-combine"),
         hour_axis: l10n.text("forecast-axis-hour"),
         power_axis: l10n.text("forecast-axis-power"),
         cost_axis: l10n.text("supply-chart-axis-cost"),
+        power_unit: l10n.text("supply-chart-unit-power"),
+        cost_unit: l10n.text("supply-chart-unit-cost"),
+        energy_unit: l10n.text("supply-chart-unit-energy"),
         demand_label: l10n.text("supply-chart-demand"),
         served_label: l10n.text("supply-chart-served"),
         forecast_label: l10n.text("supply-chart-forecast"),
         cost_label: l10n.text("supply-chart-marginal-cost"),
+        storage_load_label: l10n.text("battery-total-load"),
+        storage_energy_label: l10n.text("battery-stored-axis"),
+        storage_energy_legend: l10n.text("battery-stored"),
+        storage_unused_label: l10n.text("battery-midnight-marker"),
+        storage_load: points
+            .iter()
+            .map(|p| p.demand.value() + p.batteries.values().map(|b| b.charge.value()).sum::<f64>())
+            .collect(),
+        stored: points
+            .iter()
+            .map(|p| p.batteries.values().map(|b| b.stored.value()).sum())
+            .collect(),
+        has_storage: points.iter().any(|p| !p.batteries.is_empty()),
         x: points.iter().map(|point| hours(point.tick)).collect(),
         stacks,
         demand: points.iter().map(|point| point.demand.value()).collect(),
@@ -158,8 +198,11 @@ fn supply_model_for(
 }
 
 /// The chart and its wrapping key fill the space given. Visibility is local plot UI state;
-/// neither chart nor key asks for a simulation action.
+/// layout changes return a UI action and never alter the simulation.
 pub fn draw_supply_chart(ui: &mut egui::Ui, model: &SupplyModel) -> Vec<UiAction> {
+    let mut actions = Vec::new();
+    let combined = model.has_storage && model.layout == SupplyChartLayout::Combined;
+    let midnight = model.now >= 24.0;
     let line_color = ui.visuals().strong_text_color();
     let now_color = ui.visuals().weak_text_color();
     // Keep the existing plot ID/visibility choices while giving its key real layout space.
@@ -184,12 +227,48 @@ pub fn draw_supply_chart(ui: &mut egui::Ui, model: &SupplyModel) -> Vec<UiAction
                 KeyMark::Line,
             ),
         ]);
-    let hovered = super::chart_style::draw_key(ui, id, entries);
+    let mut entries: Vec<_> = entries.collect();
+    if model.has_storage {
+        entries.push((
+            model.storage_load_label.as_str(),
+            color32(kind_color(PlantKind::Battery)),
+            KeyMark::Dashed,
+        ));
+        entries.push((
+            model.storage_energy_legend.as_str(),
+            color32(STORED_ENERGY_COLOR),
+            KeyMark::Line,
+        ));
+    }
+    let hovered = super::chart_style::draw_key_with_control(ui, id, entries, |ui| {
+        if model.has_storage {
+            let mut on = combined;
+            if ui
+                .checkbox(&mut on, egui::RichText::new(&model.layout_label).size(12.0))
+                .changed()
+            {
+                actions.push(UiAction::SetSupplyChartLayout(if on {
+                    SupplyChartLayout::Combined
+                } else {
+                    SupplyChartLayout::Separate
+                }));
+            }
+        }
+    });
+    if model.has_storage && midnight {
+        let unused = model.stored.last().copied().unwrap_or(0.0);
+        ui.label(format!(
+            "{}: {}",
+            model.storage_unused_label,
+            crate::l10n::format::megawatt_hours(domain::units::MegawattHours::new(unused))
+        ));
+    }
     // The marginal cost shares the power axis's space: the highest cost reaches the top of the
     // power data, and the right-hand axis reads it back in $/MWh.
     let top = model
         .demand
         .iter()
+        .chain(model.storage_load.iter())
         .chain(model.stacks.iter().flat_map(|stack| stack.high.iter()))
         .chain(model.forecast.iter().map(|[_, mw]| mw))
         .fold(1.0_f64, |top, mw| top.max(*mw));
@@ -200,67 +279,210 @@ pub fn draw_supply_chart(ui: &mut egui::Ui, model: &SupplyModel) -> Vec<UiAction
     let scale = if dearest > 0.0 { top / dearest } else { 1.0 };
     let points =
         |ys: &[f64]| -> Vec<[f64; 2]> { model.x.iter().zip(ys).map(|(x, y)| [*x, *y]).collect() };
-    let cost_axis = super::chart_style::y_axis(&model.cost_axis)
-        .placement(HPlacement::Right)
-        .formatter(move |mark, _| format!("{:.0}", mark.value / scale));
-    Plot::new("operating_supply")
-        .id(id)
-        .height(ui.available_height())
-        .allow_zoom(false)
-        .allow_drag(false)
-        .allow_scroll(false)
-        .allow_boxed_zoom(false)
-        .allow_double_click_reset(false)
-        .show_crosshair(false)
-        .include_x(0.0)
-        .include_x(24.0)
-        .include_y(0.0)
-        .custom_x_axes(vec![super::chart_style::x_axis(&model.hour_axis)])
-        .custom_y_axes(vec![
-            super::chart_style::y_axis(&model.power_axis),
-            cost_axis,
-        ])
-        .show(ui, |plot| {
-            for stack in &model.stacks {
-                plot.add(
-                    FilledArea::new(stack.name.as_str(), &model.x, &stack.low, &stack.high)
-                        .highlight(hovered == Some(egui::Id::new(&stack.name)))
-                        .fill_color(color32(stack.color).gamma_multiply(0.8)),
+    let energy_peak = model.stored.iter().copied().fold(1.0_f64, f64::max);
+    let energy_scale = top / energy_peak;
+    let stored_points = |scale: f64| -> Vec<[f64; 2]> {
+        model
+            .x
+            .iter()
+            .zip(&model.stored)
+            .map(|(x, y)| [*x + 1.0 / 60.0, y * scale])
+            .collect()
+    };
+    // Both panes share the remaining height after the external key and midnight annotation.
+    let plot_height = ui.available_height();
+    // Long rotated titles can extend into the legend in a short bottom bar. The key already
+    // names each quantity; compact axes retain the units without overlapping other UI.
+    let compact = plot_height < 180.0;
+    let power_label = if compact {
+        &model.power_unit
+    } else {
+        &model.power_axis
+    };
+    let cost_label = if compact {
+        &model.cost_unit
+    } else {
+        &model.cost_axis
+    };
+    let energy_label = if compact {
+        &model.energy_unit
+    } else {
+        &model.storage_energy_label
+    };
+    let power = |ui: &mut egui::Ui| {
+        let mut axes = vec![
+            super::chart_style::y_axis(power_label),
+            super::chart_style::y_axis(cost_label)
+                .placement(HPlacement::Right)
+                .formatter(move |mark, _| format!("{:.0}", mark.value / scale)),
+        ];
+        if combined {
+            axes.push(
+                super::chart_style::y_axis(energy_label)
+                    .placement(HPlacement::Right)
+                    .formatter(move |mark, _| format!("{:.0}", mark.value / energy_scale)),
+            );
+        }
+        Plot::new("operating_supply")
+            .id(id)
+            .height(plot_height)
+            .allow_zoom(false)
+            .allow_drag(false)
+            .allow_scroll(false)
+            .allow_boxed_zoom(false)
+            .allow_double_click_reset(false)
+            .show_crosshair(false)
+            .include_x(0.0)
+            .include_x(24.0)
+            .include_y(0.0)
+            .custom_x_axes(vec![super::chart_style::x_axis(&model.hour_axis)])
+            .custom_y_axes(axes)
+            .label_formatter(|position| {
+                let HoverPosition::NearDataPoint {
+                    plot_name,
+                    position,
+                    ..
+                } = position
+                else {
+                    return None;
+                };
+                use crate::l10n::format;
+                use domain::units::{MegawattHours, Megawatts, Price};
+                let value = if *plot_name == model.storage_energy_legend {
+                    format::megawatt_hours(MegawattHours::new(position.y / energy_scale))
+                } else if *plot_name == model.cost_label {
+                    format::price(Price::per_mwh(position.y / scale))
+                } else {
+                    format::megawatts(Megawatts::new(position.y))
+                };
+                Some(format!(
+                    "{plot_name}\n{}: {:.2}\n{value}",
+                    model.hour_axis, position.x
+                ))
+            })
+            .show(ui, |plot| {
+                for stack in &model.stacks {
+                    plot.add(
+                        FilledArea::new(stack.name.as_str(), &model.x, &stack.low, &stack.high)
+                            .highlight(hovered == Some(egui::Id::new(&stack.name)))
+                            .fill_color(color32(stack.color).gamma_multiply(0.8)),
+                    );
+                }
+                plot.line(
+                    Line::new(model.demand_label.as_str(), points(&model.demand))
+                        .highlight(hovered == Some(egui::Id::new(&model.demand_label)))
+                        .color(line_color)
+                        .width(2.0),
                 );
-            }
-            plot.line(
-                Line::new(model.demand_label.as_str(), points(&model.demand))
-                    .highlight(hovered == Some(egui::Id::new(&model.demand_label)))
-                    .color(line_color)
-                    .width(2.0),
+                plot.line(
+                    Line::new(model.served_label.as_str(), points(&model.served))
+                        .highlight(hovered == Some(egui::Id::new(&model.served_label)))
+                        .color(color32(SERVED_COLOR))
+                        .width(1.5),
+                );
+                plot.line(
+                    Line::new(model.forecast_label.as_str(), model.forecast.clone())
+                        .highlight(hovered == Some(egui::Id::new(&model.forecast_label)))
+                        .color(line_color)
+                        .style(LineStyle::dashed_loose())
+                        .width(1.0),
+                );
+                let cost: Vec<[f64; 2]> = model
+                    .marginal_cost
+                    .iter()
+                    .map(|[x, cost]| [*x, cost * scale])
+                    .collect();
+                plot.line(
+                    Line::new(model.cost_label.as_str(), cost)
+                        .highlight(hovered == Some(egui::Id::new(&model.cost_label)))
+                        .color(color32(MARGINAL_COST_COLOR))
+                        .width(1.5),
+                );
+                if model.has_storage {
+                    plot.line(
+                        Line::new(
+                            model.storage_load_label.as_str(),
+                            points(&model.storage_load),
+                        )
+                        .color(color32(kind_color(PlantKind::Battery)))
+                        .style(LineStyle::dashed_loose())
+                        .highlight(hovered == Some(egui::Id::new(&model.storage_load_label))),
+                    );
+                }
+                if combined {
+                    plot.line(
+                        Line::new(&model.storage_energy_legend, stored_points(energy_scale))
+                            .color(color32(STORED_ENERGY_COLOR))
+                            .highlight(hovered == Some(egui::Id::new(&model.storage_energy_legend)))
+                            .width(2.5),
+                    );
+                    if midnight {
+                        plot.vline(VLine::new(&model.storage_unused_label, 24.0).color(line_color));
+                    }
+                }
+                plot.vline(VLine::new("", model.now).color(now_color).width(1.0));
+            });
+    };
+    if model.has_storage && !combined {
+        let gap = ui.spacing().item_spacing.x;
+        let unit = (ui.available_width() - gap).max(0.0) / 3.0;
+        ui.horizontal_top(|ui| {
+            ui.allocate_ui_with_layout(
+                egui::vec2(unit * 2.0, plot_height),
+                egui::Layout::top_down(egui::Align::Min),
+                power,
             );
-            plot.line(
-                Line::new(model.served_label.as_str(), points(&model.served))
-                    .highlight(hovered == Some(egui::Id::new(&model.served_label)))
-                    .color(color32(SERVED_COLOR))
-                    .width(1.5),
+            ui.allocate_ui_with_layout(
+                egui::vec2(unit, plot_height),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    let hidden = PlotMemory::load(ui.ctx(), id).is_some_and(|memory| {
+                        memory
+                            .hidden_items
+                            .contains(&egui::Id::new(&model.storage_energy_legend))
+                    });
+                    Plot::new("battery_inventory")
+                        .id(id.with("inventory"))
+                        .height(plot_height)
+                        .allow_zoom(false)
+                        .allow_drag(false)
+                        .allow_scroll(false)
+                        .allow_boxed_zoom(false)
+                        .allow_double_click_reset(false)
+                        .show_crosshair(false)
+                        .include_x(0.0)
+                        .include_x(24.0)
+                        .include_y(0.0)
+                        .include_y(energy_peak)
+                        .custom_x_axes(vec![super::chart_style::x_axis(&model.hour_axis)])
+                        .custom_y_axes(vec![super::chart_style::y_axis(energy_label)])
+                        .show(ui, |plot| {
+                            if !hidden {
+                                plot.line(
+                                    Line::new(&model.storage_energy_legend, stored_points(1.0))
+                                        .color(color32(STORED_ENERGY_COLOR))
+                                        .highlight(
+                                            hovered
+                                                == Some(egui::Id::new(
+                                                    &model.storage_energy_legend,
+                                                )),
+                                        )
+                                        .width(2.5),
+                                );
+                            }
+                            if midnight {
+                                plot.vline(
+                                    VLine::new(&model.storage_unused_label, 24.0).color(line_color),
+                                );
+                            }
+                        });
+                },
             );
-            plot.line(
-                Line::new(model.forecast_label.as_str(), model.forecast.clone())
-                    .highlight(hovered == Some(egui::Id::new(&model.forecast_label)))
-                    .color(line_color)
-                    .style(LineStyle::dashed_loose())
-                    .width(1.0),
-            );
-            let cost: Vec<[f64; 2]> = model
-                .marginal_cost
-                .iter()
-                .map(|[x, cost]| [*x, cost * scale])
-                .collect();
-            plot.line(
-                Line::new(model.cost_label.as_str(), cost)
-                    .highlight(hovered == Some(egui::Id::new(&model.cost_label)))
-                    .color(color32(MARGINAL_COST_COLOR))
-                    .width(1.5),
-            );
-            plot.vline(VLine::new("", model.now).color(now_color).width(1.0));
         });
-    Vec::new()
+    } else {
+        power(ui);
+    }
+    actions
 }
 
 #[cfg(test)]
@@ -374,6 +596,7 @@ mod tests {
 
     fn point(tick: u32) -> TimelinePoint {
         TimelinePoint {
+            batteries: Default::default(),
             tick,
             demand: Megawatts::new(100.0),
             served: Megawatts::new(100.0),

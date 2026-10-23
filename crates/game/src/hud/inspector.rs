@@ -167,7 +167,7 @@ pub fn draw_inspector(ui: &mut egui::Ui, model: &InspectorModel) -> Vec<UiAction
             InspectorModel::Cell(cell) => draw_cell(ui, cell, &mut actions),
             InspectorModel::City(city) => draw_city_card(ui, city),
             InspectorModel::Construction(card) => draw_construction_card(ui, card),
-            InspectorModel::Plant(card) => draw_plant_card(ui, card),
+            InspectorModel::Plant(card) => actions.extend(draw_plant_card(ui, card)),
         });
     actions
 }

@@ -87,42 +87,98 @@ the `CommandLogSink` port, and the aggregates know nothing about persistence. Th
 log/rules versions, settings, seed and a SHA-256 fingerprint of the exact region source bytes.
 Infrastructure archives those same bytes as `<log-name>.region.ron` before the session starts.
 Replay verifies versions and fingerprints before executing commands and uses the archive when
-shipped data changes. A rules change still needs a matching engine or a future explicit migration.
+shipped data changes. The shipped game has no rules-6/7 importer or special upgrade UI. One-time
+recovery tools and their historical engines are frozen outside the workspace in
+`tools/archive/save-recovery-2026-10-23/`; existing portable snapshots load normally.
 Event sourcing would force every domain event to be a stable, versioned persistence format, which
 fights the goal of keeping the domain free to change. Commands are the smaller, more stable surface.
 `Game` also retains its original header/region bytes and every accepted command, independently of
 that best-effort recording. `checkpoint()` captures a pure boundary with count, hash and summary.
-Restoration replays the original command batches through `CoreHandler`, applying projections
-against each batch's resulting session. It verifies the boundary, seeds a fresh branch recording
-exactly once, and returns a runnable candidate. Refused commands never enter the journal.
+Format-1 restoration replays original command batches through the matching `CoreHandler`, applying
+projections against each batch's resulting session. Formats 2 and 3 restore complete portable state
+without replaying history when present. Format 3 run-length encodes adjacent identical tick commands,
+expanding the exact original batches before count/journal-hash verification or command-only replay.
+Readers retain formats 1 and 2. All paths verify the boundary, seed a fresh branch recording exactly once,
+and return a runnable candidate. Refused commands never enter the journal.
 
-`SaveStore` is an application-owned port. Infrastructure packages one complete prefix and region
-into a checksummed/versioned RON envelope, stamps it with its own build fingerprint and platform,
-and owns atomic publication. The stamp is diagnostics, not a gate: decoding returns the recorded
-build, and `SaveBundle::restore` accepts a save from any build or platform whose replay reproduces
-its recorded count, hash and summary. When such a replay fails, the error is
+`SaveStore` is an application-owned port. Production snapshots use self-contained format-4
+directories: a compressed text manifest plus checksummed binary chart files, one per month.
+Infrastructure stamps the saved state with its build fingerprint/platform and owns atomic
+publication. Flat formats 1–3 remain readable; no runtime conversion or upgrade UI is involved. The stamp is diagnostics, not a gate: decoding returns the recorded
+build, and `SaveBundle::restore` accepts a save from any build or platform whose state verification
+reproduces its recorded count, hash and summary. When verification fails, the error is
 `OtherVersionDiverged`; when such a save no longer decodes, it is `OtherVersionUnreadable`. Either
 way the game can say that this version doesn't reproduce the save, rather than call it corrupt.
-A per-slot OS lock protects revision checks and same-directory temporary-file replacement. File
-and directory synchronisation precede a success receipt. The directories synced are the save root
+A per-slot OS lock protects revision checks. Immutable monthly files are written and synchronised
+before atomically replacing the compressed manifest. A new directory is staged and renamed into
+place only when complete. Old referenced files remain until a durable receipt; obsolete versions
+are cleaned afterwards. File and directory synchronisation precede a success receipt. The directories synced are the save root
 and the parent of each directory the store created, until that parent's sync succeeds; on
 Windows no directory is synced (NTFS journals the rename; see `sync_directory`).
 Post-publication sync failure returns the new revision as `DurabilityUnconfirmed`, not a claim of
-rollback. `SaveStore::rename` changes display metadata through that same publication path, keeping
+rollback. Directory deletion first renames the snapshot out of the library, synchronises its
+absence, then removes the hidden directory; uncertain removal remains retryable. `SaveStore::rename` changes display metadata through that same publication path, keeping
 its recorded build/platform stamp, saved-at time and checkpoint. It checks the selected revision
 again under the OS lock. The game refreshes the list after completion; renaming an active autosave
 also updates its expected revision/name for later month closes, without saving the live session.
 
+Save listing has its own metadata-only reader. It verifies the envelope and card identity/version
+fields, skips command/snapshot bodies without constructing them, and reads only the archived region
+ID/name key without rasterizing terrain. A bounded structural projection accelerates canonical
+writer output; noncanonical RON uses the normal metadata deserializer. The selected-save path
+always reads fresh bytes and performs full decode, archived-region mapping and state verification.
+An in-memory per-store cache retains cards/errors by file size, modification/creation time and,
+on Unix, device/inode/change time. Directory scans discover added/deleted slots and evict removed
+entries; changed files refresh individually. Directory stamps include the manifest and monthly
+file identities/timestamps, so changed or deleted month files invalidate the card too. Reads raced by replacement and transient I/O errors
+are not cached. A bounded, versioned, checksummed `.save-library-cache.ron` persists lightweight
+rows and stable inspection errors atomically. It is a disposable hint tied to the inspecting build
+and platform: missing, damaged, incompatible or unwritable indexes never block listing or loading.
+Every restart scans the directory and stats each source before reusing a row; the index cannot
+resurrect deleted files. The store survives menu transitions, so opening Load game reuses the
+opening menu's index; cached cards paint during refresh. Player saves and backups are never rewritten.
+
 The game's persistence coordinator freezes producers, drains admitted commands and captures manual
 saves after application. Autosaves capture inside the funnel at the individual `MonthClosed`
-command, before later queued commands. Remaining commands are retained in an owned queue with a
+command, before later queued commands. Successful automatic writes run in the background without
+a modal or a simulation freeze: Review, its retrospective and Continue remain usable. Immutable
+captures are serialized by one worker; queued writes resolve their expected revisions only after
+the preceding receipt. A late success never pauses later play or closes a manual dialog. A failed
+autosave opens the retry/continue-without-saving barrier and retains its warning. Cancelling a
+manual dialog does not cancel a background save. Remaining commands are retained in an owned queue with a
 session generation. Workers carry tokens/cancellation; only verified, current results can install a
 candidate or fulfil Save-and-menu. Resume stays paused until phase-entry hooks have settled. A
 resumed branch gets a fresh run ID, diagnostic log and automatic slot.
 
-`PreferencesPlugin` retains window/layout/zoom/speed and the visual-effects choice independently in
-`preferences.ron`. Session visual resets retain effects while resetting camera/overlay state;
-legacy preference files without the field keep the default enabled. It observes
+`domain::state` provides pure, explicit mementos without serde or I/O. Format-4 snapshot directories
+store schema-1 session/projection snapshots and a lossless tick-RLE audit journal in a compressed
+text manifest, with full chart history moved to independently compressed monthly binary files.
+Application-owned pure chart decomposition/reassembly restores identical canonical projection bytes
+before verification, including the live buffer and forecast. Every reference binds a local filename,
+month, compressed/expanded size and SHA-256; paths, duplicates, symlinks and size overruns are rejected.
+No samples are discarded and no image data is stored. Flat save codec 3 remains the manifest's
+internal state representation; canonical bytes replace Debug as the
+persisted boundary hash. State schema versions are independent of rule versions. New rules act on
+future commands; data changes require defaults/upcasters and retained golden-save CI coverage.
+Historical recovery has completed and its engine, converter and fixtures are archived rather than
+linked into the shipped game. Portable snapshots retain source slot/revision/rules/hash/count as
+provenance. This metadata protects original slots and suppresses duplicate library rows only for
+exact converted boundaries; reading or resuming never writes an upgraded copy. Future schema
+upcasters remain part of normal snapshot loading, backed by retained golden-save CI coverage.
+Snapshot-rooted command recordings retain a verified directory sidecar with the same monthly layout and use the explicit format-2 replay
+API, so old command-only replay cannot accidentally ignore a migrated base. Opening-menu preload
+also prepares snapshot compression and encoded command prefixes in memory. `PendingRecording` owns
+the verified game and its captured boundary, exposing no mutable game until activation; prepared
+infrastructure bytes must match that exact checkpoint. Explicit Resume rechecks the source revision,
+creates fresh recording files and writes the prepared prefix in batches. Speculation creates no
+recordings, saves or live session; cancellation/other menu choices discard all prepared memory.
+
+`PreferencesPlugin` retains window/layout/zoom/speed, visual effects and the supply-chart layout
+independently in `preferences.ron`. The stored-energy chart can use a separate pane at half the
+supply pane's width, or overlay an independently labelled MWh scale. `UiState` owns this choice
+across live, History and retrospective views; `dispatch` handles its UI action without issuing a
+simulation command. Session resets retain chart layout and effects while resetting other UI state;
+legacy preference files default to separate charts and enabled effects. It observes
 actual native/egui geometry, writes changed snapshots on a worker and flushes the latest one on
 normal exit. No preference is a simulation input. Headless tests inject paths and can omit the
 plugin; there is no ambient working-directory write from `CorePlugins`.
@@ -131,9 +187,10 @@ plugin; there is no ambient working-directory write from `CorePlugins`.
 
 The same verified versions, settings, region content, seed and command log must produce an identical
 state hash. Bit-identical replay is guaranteed **for the same build on the same platform**. Loading
-a save doesn't rely on that: it replays on whatever build is running and verifies the end state.
-`state_hash` hashes the session's `Debug` form, so a change to that form fails older saves'
-verification even when no outcome changed: a safe failure, not a wrong load. A few
+a portable format-2/3 save restores canonical state bytes instead of replaying its past. Format-1 saves need
+a matching historical engine and verify the old session `Debug` hash before migration; a Debug
+change can fail that old verification even when no outcome changed. New saves hash stable,
+versioned state and projection encodings independently of Rust's Debug implementation. A few
 places call the platform's libm, whose last-bit results may differ between targets: the Box-Muller
 transform in `SimRng::standard_normal` (`ln`, `cos`), the solar day curve (`sin`), line lengths
 (`hypot`) and the terrain rasteriser in `infrastructure` (`cos`, `exp`). The region fingerprint
@@ -173,11 +230,15 @@ only eligible remaining book value earns return. Holding and write-off do not ch
 `GameSession::tick` first requires an active game in `Operating` (`require_operating`), then runs
 `PowerSystem::tick` over the connected grid and its own bookkeeping, in this fixed order:
 
-1. At each hour boundary after midnight (tick 60, 120, ...), the hydro schedule is re-planned for the
-   rest of the day from the remaining budgets (`plan_hydro`; `BeginOperating` plans from hour 0).
+1. At each hour boundary after midnight (tick 60, 120, ...), storage plans are recomputed from
+   actual inventory before hydro is allocated against residual demand. Storage also replans on
+   the next tick after enable changes or restoration. Elapsed allocations stay frozen. Hydro is
+   re-planned from remaining water (`plan_hydro`; `BeginOperating` plans from hour 0).
    Then, in Normal mode, the rotating outage is re-sized for the hour starting (`size_outage`): its
    target is the exact forecast shortfall share at the hour's worse end (minute 0 or 59) against
-   what the fleet can deliver by then, 0 when the fleet covers both ends. During a blackout the
+   what the fleet can deliver by then, 0 when the fleet covers both ends. With active batteries,
+   evaluate every remaining minute chronologically so depletion inside the hour is visible;
+   operating forecasts spend only existing inventory. During a blackout the
    target ordered before it stays frozen. `BeginOperating` sizes hour 0 after a first boundary
    dispatch for the full forecast and starts the day with the outage at that target. Planning and
    sizing draw no randomness.
@@ -205,7 +266,13 @@ only eligible remaining book value earns return. Holding and write-off do not ch
    never lifts it. When the lift ends, a recovery phase lets hydro above its ceiling ramp down only
    as fast as the other AGC plants' one-tick headroom (net of the shortfall) can follow, until it is
    at or below every ceiling it meets before the next re-plan.
-8. Imbalance between connected supply and served load, `load × (1 − shed)`.
+8. Stage storage flows from actual generation after customer demand: daylight charging absorbs
+   surplus, evening discharge fills deficits, each limited by power and finite inventory. Cancel
+   charging before shedding or below the normal frequency band. AGC requests take effect next tick,
+   include optional charging load and subtract energy-backed discharge. Charging waits for cheaper
+   generation to ramp and tapers before full inventory/daylight cutoff to absorb ramp-down tails.
+   Imbalance is connected supply (including storage discharge) minus charging and served city load,
+   `load × (1 − shed)`.
 9. Frequency update, with the load as the system size. It is held at nominal during a blackout and
    on a dark grid (a Normal-mode tick whose load is `≤ 0`: the outage at 1, zero demand, or no
    connected city), where over-frequency tracking also resets, so protection never arms on a grid
@@ -224,21 +291,33 @@ only eligible remaining book value earns return. Holding and write-off do not ch
     another plant is already losing output AGC cannot reverse, so protection does not trip the grid
     into a deficit. After a trip AGC re-targets again in the same tick, so the rest of the fleet
     responds on the next step. Tripped solar reconnects once restoration re-energises the grid.
-11. The `TickSummary` of the post-protection state, also emitted last as `TickCompleted`.
+11. Re-evaluate storage flows after protection and settle inventory once. The `TickSummary` of
+    that post-protection state includes separate charging/discharge and per-battery flow records,
+    and is emitted last as `TickCompleted`. Storage cannot black-start; blackout retains inventory
+    and enabled state, with no flow until generating plants restore the grid.
 12. Accounting: the session adds the summary to the month-to-date totals (energy per plant,
     recurring and boundary starts, served, unserved, overgenerated and rotating-outage energy, the
     largest outage share ordered, and the Normal-mode ticks outside the frequency-performance band).
     Hour 0's order at `BeginOperating` is recorded as tick 0's. Nothing is priced per tick.
-13. The clock advances. After tick 1,440 the month closes: totals are weighted by `days_in_month`
+13. The clock advances. After tick 1,440, capture each battery's unused inventory and clear it
+    once, before construction, reporting or autosave. Daily input equals output plus both losses
+    plus unused inventory. Then the month closes: totals are weighted by `days_in_month`
     and booked, construction advances, policies run (including the frequency-performance notice or
     strike), `MonthClosed` is emitted and the phase moves to Review. The hydro schedule view then
     shows the finished day with every hour frozen; `FinishReview` clears it for the next Planning.
 
-Each `TickSummary` satisfies `generation = Σ by_plant = served + imbalance` (signed), with
+Each `TickSummary` satisfies `generation = Σ by_plant = served + battery_charge + imbalance` (signed), with
 `served = demand × (1 − outage) × (1 − shed)` and `unserved = demand − served`; without an outage,
 `unserved = demand × shed`. The planned part, `demand × outage`, is part of `unserved`, never added
 to it, and the month's `rotating_outage` is its energy. `curtailed` is solar availability withheld,
-which is never generated, so it is not part of `generation`.
+which is never generated, so it is not part of `generation`. Battery output is positive supply;
+charging is separate load and earns no customer-service revenue. Monthly storage reports weight
+input, output, losses and unused energy by days; ratings and live inventory remain unweighted.
+
+Storage uses rules version 8 with existing save/log envelope version 1. Command-sourced restore
+reconstructs enabled state, inventory, schedules and history from exact archived region data; it
+does not initialise a new day. Converted rules-6/7 games are ordinary portable snapshots. Historical
+recovery is archived outside the shipped game; diagnostic command-only logs need matching rules.
 
 ## Settings seams
 
@@ -295,12 +374,16 @@ layer shown, is a selected toggle, not a disabled button.
 
 `CorePlugins` groups the first three. They need no window or renderer, so the tests run them on
 `MinimalPlugins` plus `StatesPlugin`. `GamePlugins` adds `EguiPlugin`, `HudPlugin` and `PreferencesPlugin`, and
-`main.rs` puts it on `DefaultPlugins` with a 1024×640 minimum window, plus `WindowSizingPlugin`
+`main.rs` puts it on `DefaultPlugins` with a 1280×640 minimum client area, targeting 1280×720
+logical displays with room for desktop chrome, plus `WindowSizingPlugin`
 (`window.rs`). Bevy 0.20 spawns the `Monitor` entities only once the winit event loop runs, so
 that plugin waits for monitors and preference loading. It restores reachable saved geometry if
 available; otherwise it sizes the window once to `opening_size` (80% of the
-monitor's logical size, clamped between the minimum window and the monitor) centred on it, and
-then never runs again, so the player's own resize wins.
+monitor's logical size, clamped between the minimum window and a reserved client area). Opening
+and restored geometry may use the full monitor width and leave at least 40 logical pixels above
+and below, budgeting for title bars and system bars. Monitor exposes full display bounds, so this
+is a conservative allowance rather than an OS work-area query. Positions account for physical origins and scaling.
+The sizing system then never runs again, so the player's own resize wins.
 
 - **Boot** waits for every `require_for_boot::<R>()` resource: `AssetRoot` and `LogDir` (from the
   command line), `Localizer` and `Catalog`. A `BootError` keeps the app in `Boot`, which shows it.
@@ -485,3 +568,9 @@ Checked against the versions in use (Task 1 of Plan 2, and the lessons since):
 - **One egui:** egui 0.36.2 is the only `egui` in `Cargo.lock` (egui_plot 0.37 requires
   `^0.36`). Check with `cargo tree -d -p game --depth 0 | grep egui`, which should print nothing.
 - `fn main() -> AppExit` works, and `App::update()` works without `finish()`.
+
+
+Personal flat-save conversion was performed once with local ignored tooling. Original libraries
+are preserved outside the repository; `/tools/archive/` is ignored and contains no shipped code.
+No converter, archived recovery source, staged library or backup is added to Git. New games and
+monthly/manual saves use the directory store; metadata rename never saves a different live boundary.

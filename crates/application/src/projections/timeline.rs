@@ -4,7 +4,9 @@ use std::collections::{BTreeMap, VecDeque};
 
 use domain::demand::ForecastPoint;
 use domain::events::DomainEvent;
+use domain::generation::BatteryFlow;
 use domain::grid::TickSummary;
+use domain::ids::PlantId;
 use domain::region::PlantKind;
 use domain::session::{DayPhase, GameSession};
 use domain::time::SimMonth;
@@ -20,6 +22,7 @@ pub const TIMELINE_CAPACITY: usize = 1_440;
 pub struct TimelinePoint {
     pub tick: u32,
     pub demand: Megawatts,
+    pub batteries: BTreeMap<PlantId, BatteryFlow>,
     pub served: Megawatts,
     pub frequency: Hertz,
     pub by_kind: BTreeMap<PlantKind, Megawatts>,
@@ -33,9 +36,9 @@ pub struct TimelinePoint {
 /// The last [`TIMELINE_CAPACITY`] ticks, oldest first.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct TimelineProjection {
-    points: VecDeque<TimelinePoint>,
-    forecast: Option<[ForecastPoint; 24]>,
-    completed: Vec<CompletedDay>,
+    pub(super) points: VecDeque<TimelinePoint>,
+    pub(super) forecast: Option<[ForecastPoint; 24]>,
+    pub(super) completed: Vec<CompletedDay>,
 }
 
 /// The played day representing a closed month, with its original demand forecast.
@@ -64,6 +67,7 @@ fn system_marginal_cost(summary: &TickSummary, session: &GameSession) -> Option<
         .iter()
         .filter(|(_, output)| **output > Megawatts::ZERO)
         .filter_map(|(id, _)| session.power().plant(*id))
+        .filter(|p| p.kind() != PlantKind::Battery)
         .map(|plant| plant.spec().marginal_cost)
         .max_by(|a, b| a.value().total_cmp(&b.value()))
 }
@@ -94,6 +98,7 @@ impl Projection for TimelineProjection {
             self.points.push_back(TimelinePoint {
                 tick: summary.tick,
                 demand: summary.demand,
+                batteries: summary.batteries.clone(),
                 served: summary.served,
                 frequency: summary.frequency,
                 by_kind: summary.by_kind.clone(),
@@ -102,6 +107,27 @@ impl Projection for TimelineProjection {
         }
     }
 }
+
+// Portable state schema 1: explicit field order and enum tags.
+domain::state_record!(TimelineProjection {
+    points,
+    forecast,
+    completed
+});
+domain::state_record!(TimelinePoint {
+    tick,
+    demand,
+    served,
+    frequency,
+    by_kind,
+    marginal_cost,
+    batteries
+});
+domain::state_record!(CompletedDay {
+    month,
+    points,
+    forecast
+});
 
 #[cfg(test)]
 mod tests {
@@ -137,6 +163,7 @@ mod tests {
         assert_eq!(
             timeline.points().next(),
             Some(&TimelinePoint {
+                batteries: BTreeMap::new(),
                 tick: 7,
                 demand: summary.demand,
                 served: summary.served,

@@ -32,6 +32,7 @@ pub const BUILD_PANEL: OuterPanel = OuterPanel {
 pub struct PlantRow {
     pub kind: PlantKind,
     pub name: String,
+    pub help: Option<String>,
     /// Capacity, capital cost, build time and fuel cost, from the region's spec.
     pub stats: Vec<Stat>,
     /// Why the plant can't go on this cell: the localised siting error.
@@ -169,19 +170,34 @@ fn plant_section(game: &Game, l10n: &Localizer, selection: Selection) -> PlantSe
         .map(|kind| {
             let spec = region.spec(kind);
             let site = region.site_check(kind, cell);
+            let mut stats = vec![
+                stat("build-capacity", format::megawatts(spec.capacity)),
+                stat("build-capital", format::money(spec.capital_cost)),
+                stat(
+                    "build-monthly-payment",
+                    monthly_payment(spec.capital_cost, spec.build_months),
+                ),
+                stat("build-months", months_value(l10n, spec.build_months)),
+            ];
+            if let Some(b) = spec.battery {
+                stats.extend([
+                    stat("battery-charge-rating", format::megawatts(b.charge_power)),
+                    stat(
+                        "battery-energy-rating",
+                        format::megawatt_hours(b.energy_capacity),
+                    ),
+                ]);
+            } else {
+                stats.push(stat(
+                    "build-marginal-cost",
+                    format::price(spec.marginal_cost),
+                ));
+            }
             PlantRow {
                 kind,
                 name: kind.localize(l10n),
-                stats: vec![
-                    stat("build-capacity", format::megawatts(spec.capacity)),
-                    stat("build-capital", format::money(spec.capital_cost)),
-                    stat(
-                        "build-monthly-payment",
-                        monthly_payment(spec.capital_cost, spec.build_months),
-                    ),
-                    stat("build-months", months_value(l10n, spec.build_months)),
-                    stat("build-marginal-cost", format::price(spec.marginal_cost)),
-                ],
+                help: spec.battery.map(|_| l10n.text("battery-cycle-hint")),
+                stats,
                 blocked: site.as_ref().err().map(|error| error.localize(l10n)),
                 build: ButtonModel::new(
                     l10n.text("build-plant"),
@@ -363,6 +379,9 @@ fn draw_plant_section(ui: &mut egui::Ui, section: &PlantSection, actions: &mut V
                             ui.end_row();
                         }
                     });
+                    if let Some(help) = &row.help {
+                        ui.add(egui::Label::new(help).wrap());
+                    }
                     if let Some(reason) = &row.blocked {
                         ui.colored_label(ui.visuals().warn_fg_color, reason.as_str());
                     }
@@ -523,7 +542,7 @@ mod tests {
             .find(|at| !region.terrain().get(*at).unwrap().land)
             .unwrap();
         let model = build_model(&game, &l10n, Selection::Cell(water)).unwrap();
-        assert_eq!(rows(&model).len(), 6);
+        assert_eq!(rows(&model).len(), PlantKind::ALL.len());
         for row in rows(&model) {
             assert!(!row.build.enabled, "{:?} on water", row.kind);
             assert_eq!(row.blocked, Some(SiteError::NotLand.localize(&l10n)));

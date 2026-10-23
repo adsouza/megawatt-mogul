@@ -577,8 +577,10 @@ impl RateBase {
         self.assets
             .values()
             .find_map(|a| match (a.asset, a.profile) {
-                (AssetRef::Plant(id), AssetProfile::Plant { node, .. })
-                    if a.is_new_in(year) && (node == from || node == to) =>
+                (AssetRef::Plant(id), AssetProfile::Plant { node, firm })
+                    if firm > Megawatts::ZERO
+                        && a.is_new_in(year)
+                        && (node == from || node == to) =>
                 {
                     Some(id)
                 }
@@ -636,6 +638,61 @@ fn div_round_half_even(n: i128, d: i128) -> i128 {
         Ordering::Less => q,
         Ordering::Greater => q + 1,
         Ordering::Equal => q + (q & 1),
+    }
+}
+
+// Portable state schema 1: explicit field order and enum tags.
+crate::state_record!(RateBase {
+    assets,
+    last_review_year
+});
+crate::state_record!(RateBaseAsset {
+    asset,
+    original,
+    remaining,
+    monthly_depreciation,
+    added_on,
+    profile,
+    legacy,
+    months_left,
+    depreciated,
+    written_off,
+    live_share,
+    held
+});
+crate::state_record!(HeldSlice {
+    share,
+    follows,
+    last_excess_review,
+    consecutive_excess_reviews
+});
+impl crate::state::State for AssetProfile {
+    fn write(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::Plant { firm, node } => {
+                crate::state::State::write(&0u8, out);
+                crate::state::State::write(firm, out);
+                crate::state::State::write(node, out);
+            }
+            Self::Line { from, to } => {
+                crate::state::State::write(&1u8, out);
+                crate::state::State::write(from, out);
+                crate::state::State::write(to, out);
+            }
+        }
+    }
+    fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
+        Ok(match <u8 as crate::state::State>::read(input)? {
+            0 => Self::Plant {
+                firm: crate::state::State::read(input)?,
+                node: crate::state::State::read(input)?,
+            },
+            1 => Self::Line {
+                from: crate::state::State::read(input)?,
+                to: crate::state::State::read(input)?,
+            },
+            _ => return Err(crate::state::StateError::Invalid),
+        })
     }
 }
 

@@ -176,11 +176,35 @@ fn outcome_digest() -> String {
     out
 }
 
+fn battery_outcome_digest() -> String {
+    let mut parts = tiny_region_parts();
+    parts.start.fleet.push(domain::region::StartPlantDef {
+        kind: PlantKind::Battery,
+        cell: CellCoord { x: 5, y: 1 },
+    });
+    let (mut game, _) = game_on(parts, SEED);
+    game.execute(Command::BeginOperating).unwrap();
+    game.execute(Command::AdvanceTicks { n: 1440 }).unwrap();
+    let r = game.projections().monthly_reports.latest().unwrap();
+    let b = r.storage.values().next().unwrap();
+    format!(
+        "battery month_mwh input={:.3} delivered={:.3} charge_loss={:.3} discharge_loss={:.3} unused={:.3} served={:.3} fuel_cents={}\n",
+        b.input.value(),
+        b.output.value(),
+        b.charge_loss.value(),
+        b.discharge_loss.value(),
+        b.unused.value(),
+        r.served.value(),
+        r.fuel.cents()
+    )
+}
+
 #[test]
 fn outcome_digest_is_pinned_to_rules_version() {
     insta::assert_snapshot!(format!(
-        "SIM_RULES_VERSION={}\n{}",
+        "SIM_RULES_VERSION={}\n{}{}",
         domain::SIM_RULES_VERSION,
-        outcome_digest()
+        outcome_digest(),
+        battery_outcome_digest()
     ));
 }

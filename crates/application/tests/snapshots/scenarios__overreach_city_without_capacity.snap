@@ -1,5 +1,6 @@
 ---
 source: crates/application/tests/scenarios.rs
+assertion_line: 164
 expression: report
 ---
 MonthlyReport {
@@ -26,6 +27,7 @@ MonthlyReport {
     net: Money(
         3827516289,
     ),
+    storage: {},
     energy_by_kind: {
         Coal: MegawattHours(
             446325.57926468167,

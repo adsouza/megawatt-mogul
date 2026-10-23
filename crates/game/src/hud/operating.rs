@@ -95,7 +95,7 @@ pub fn operating_panel_model(
     l10n: &Localizer,
     tab: OperatingTab,
 ) -> Option<OperatingPanelModel> {
-    operating_model_with_history(game, l10n, tab, None)
+    operating_model_with_history(game, l10n, tab, None, super::SupplyChartLayout::default())
 }
 
 fn operating_model_with_history(
@@ -103,6 +103,7 @@ fn operating_model_with_history(
     l10n: &Localizer,
     tab: OperatingTab,
     month: Option<domain::time::SimMonth>,
+    layout: super::SupplyChartLayout,
 ) -> Option<OperatingPanelModel> {
     if game.session().phase() != DayPhase::Operating {
         return None;
@@ -118,11 +119,13 @@ fn operating_model_with_history(
             toggle(OperatingTab::History, "supply-history-title"),
         ],
         content: match tab {
-            OperatingTab::Supply => OperatingContent::Supply(Box::new(supply_model(game, l10n))),
-            OperatingTab::Hydro => OperatingContent::Hydro(hydro_model(game, l10n)),
-            OperatingTab::History => {
-                OperatingContent::History(super::supply_history_model(game, month, l10n))
+            OperatingTab::Supply => {
+                OperatingContent::Supply(Box::new(supply_model(game, l10n).with_layout(layout)))
             }
+            OperatingTab::Hydro => OperatingContent::Hydro(hydro_model(game, l10n)),
+            OperatingTab::History => OperatingContent::History(
+                super::supply_history_model(game, month, l10n).with_layout(layout),
+            ),
         },
         ramp: ramp_warnings_model(game, l10n),
         incidents: incidents_model(game, l10n),
@@ -328,6 +331,7 @@ pub(super) fn operating_panel(
         &l10n,
         sink.operating_tab(),
         sink.ui_state().supply_month,
+        sink.ui_state().supply_chart_layout,
     ) else {
         return Ok(());
     };

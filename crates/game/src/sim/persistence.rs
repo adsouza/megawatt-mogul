@@ -53,6 +53,7 @@ pub enum SaveScreen {
     ConfirmOverwrite,
     ConfirmDelete,
     Rename,
+    /// Shown only after an automatic write fails, never while a background save succeeds.
     Automatic,
 }
 #[derive(Clone)]
@@ -117,9 +118,10 @@ struct Job {
     token: u64,
 }
 struct PreloadedGame {
-    game: Box<Game>,
+    game: PendingRecording,
     slot: SaveId,
     revision: SaveRevision,
+    recording: infrastructure::command_log::PreparedRecording,
 }
 struct PreloadJob {
     receiver: Mutex<Receiver<Result<PreloadedGame, SaveError>>>,
@@ -150,6 +152,7 @@ pub struct Persistence {
     previous_speed: SimSpeed,
     dialog_generation: u64,
     task: Option<WriteTask>,
+    queued_autosaves: VecDeque<WriteTask>,
     rename: Option<RenameTask>,
     deletion: Option<DeleteTask>,
     /// The latest month-close autosave that failed and has not been made good since (spec §17.5).
@@ -189,6 +192,9 @@ impl Persistence {
     pub fn busy(&self) -> bool {
         self.job.is_some() || self.draining || self.waiting_resume.is_some()
     }
+    fn background_write(&self) -> bool {
+        self.job.is_some() && self.task.as_ref().is_some_and(|t| t.automatic)
+    }
     pub fn resume_preloaded(&self) -> bool {
         matches!(self.preloaded, Some(Ok(_)))
     }
@@ -223,7 +229,9 @@ impl Persistence {
             .name("resume-preload".into())
             .spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let (bundle, region, running) = read_snapshot(store.as_ref(), &slot)?;
+                    let (bundle, region, running) = read_snapshot(store.as_ref(), &slot, &|| {
+                        worker_cancel.load(Ordering::Relaxed)
+                    })?;
                     if store.revision(&slot)? != revision {
                         return Err(SaveError::SlotChanged);
                     }
@@ -233,8 +241,15 @@ impl Persistence {
                         Box::new(InMemoryCommandLog::default()),
                         &|| worker_cancel.load(Ordering::Relaxed),
                     )?;
+                    let game = game.prepare_recording();
+                    let recording = infrastructure::command_log::PreparedRecording::new(
+                        game.checkpoint().clone(),
+                        &|| worker_cancel.load(Ordering::Relaxed),
+                    )
+                    .map_err(RestoreError::Log)?;
                     Ok(PreloadedGame {
-                        game: Box::new(game),
+                        recording,
+                        game,
                         slot,
                         revision,
                     })
@@ -293,7 +308,10 @@ impl Persistence {
                 .map_err(RestoreError::Log)?;
                 candidate
                     .game
-                    .with_recording(Box::new(sink), &|| cancel.load(Ordering::Relaxed))
+                    .activate(
+                        Box::new(sink.with_prepared_recording(candidate.recording)),
+                        &|| cancel.load(Ordering::Relaxed),
+                    )
                     .map(Box::new)
                     .map_err(SaveError::Restore)
                     .inspect_err(|_| discard_branch_log(&log))
@@ -322,7 +340,7 @@ impl Persistence {
         self.resuming
             || self.return_after_save
             || self.screen != SaveScreen::Closed
-            || self.job.is_some()
+            || (self.job.is_some() && !self.background_write())
             || self.manual.is_some()
     }
     pub fn last_saved(&self) -> Option<&SaveReceipt> {
@@ -496,6 +514,23 @@ impl Persistence {
                 cancel.load(Ordering::Relaxed)
             }))
         });
+        if self.automatic_error() {
+            self.screen = SaveScreen::Automatic;
+        }
+    }
+    /// One writer at a time; resolve the expected revision after the preceding receipt arrives.
+    fn next_autosave(&mut self, generation: u64) -> bool {
+        let Some(mut task) = self.queued_autosaves.pop_front() else {
+            return false;
+        };
+        task.target = self
+            .run
+            .as_ref()
+            .and_then(|r| r.revision)
+            .map_or(SaveTarget::Create, SaveTarget::Replace);
+        self.task = Some(task);
+        self.write(generation);
+        true
     }
     fn rename(&mut self, generation: u64) {
         let (Some(store), Some(task)) = (self.store.clone(), self.rename.clone()) else {
@@ -574,7 +609,15 @@ impl Persistence {
         speed: &mut SimSpeed,
         log_dir: Option<std::path::PathBuf>,
     ) {
+        let background = self.background_write();
         if self.busy()
+            && !(background
+                && matches!(
+                    action,
+                    PersistAction::OpenSave { .. }
+                        | PersistAction::OpenLeave
+                        | PersistAction::Cancel
+                ))
             && (matches!(self.screen, SaveScreen::Rename | SaveScreen::ConfirmDelete)
                 || !matches!(action, PersistAction::Cancel))
         {
@@ -726,21 +769,31 @@ impl Persistence {
                 self.error = None;
                 self.spawn(generation, move |cancel| {
                     Completion::Loaded((|| {
-                        let (bundle, region, running) = read_snapshot(store.as_ref(), &slot)?;
+                        let revision = store.revision(&slot)?;
+                        let (bundle, region, running) =
+                            read_snapshot(store.as_ref(), &slot, &|| {
+                                cancel.load(Ordering::Relaxed)
+                            })?;
                         if cancel.load(Ordering::Relaxed) {
                             return Err(SaveError::Cancelled);
+                        }
+                        let game = bundle.restore(
+                            region,
+                            &running,
+                            Box::new(InMemoryCommandLog::default()),
+                            &|| cancel.load(Ordering::Relaxed),
+                        )?;
+                        if store.revision(&slot)? != revision {
+                            return Err(SaveError::SlotChanged);
                         }
                         let (log, sink) = super::new_game::create_log(
                             &dir,
                             &format!("resume-{}", store.allocate_id().as_str()),
                         )
                         .map_err(RestoreError::Log)?;
-                        bundle
-                            .restore(region, &running, Box::new(sink), &|| {
-                                cancel.load(Ordering::Relaxed)
-                            })
+                        game.with_recording(Box::new(sink), &|| cancel.load(Ordering::Relaxed))
                             .map(Box::new)
-                            // The abandoned candidate's sink is dropped by now.
+                            .map_err(SaveError::Restore)
                             .inspect_err(|_| discard_branch_log(&log))
                     })())
                 });
@@ -762,12 +815,26 @@ impl Persistence {
                 self.task = None;
                 self.error = None;
                 self.screen = self.manual.map_or(SaveScreen::Closed, ManualIntent::screen);
+                if self.next_autosave(generation) {
+                    return;
+                }
                 if self.screen == SaveScreen::Save {
                     self.list(generation);
                 }
             }
             PersistAction::Cancel => {
                 self.discard_preload();
+                if background {
+                    // Cancelling a manual dialog must not cancel an unrelated month-close write.
+                    if self.dialog_generation == generation {
+                        *speed = self.previous_speed;
+                    }
+                    self.capture = None;
+                    self.manual = None;
+                    self.draining = false;
+                    self.screen = SaveScreen::Closed;
+                    return;
+                }
                 if self.screen == SaveScreen::Automatic {
                     return;
                 }
@@ -833,7 +900,7 @@ impl Persistence {
             self.capture = Some(checkpoint.clone());
             self.draining = false;
         }
-        self.task = Some(WriteTask {
+        let task = WriteTask {
             bundle: SaveBundle {
                 compatibility: store.compatibility(),
                 metadata: SaveMetadata {
@@ -848,18 +915,23 @@ impl Persistence {
             target: run.revision.map_or(SaveTarget::Create, SaveTarget::Replace),
             automatic: true,
             leave: false,
-        });
-        self.screen = SaveScreen::Automatic;
-        self.write(generation);
+        };
+        if self.job.is_some() || self.task.is_some() {
+            self.queued_autosaves.push_back(task);
+        } else {
+            self.task = Some(task);
+            self.write(generation);
+        }
     }
 }
 
 fn read_snapshot(
     store: &dyn SaveStore,
     slot: &SaveId,
+    cancelled: &dyn Fn() -> bool,
 ) -> Result<(SaveBundle, LoadedRegion, ReplayCompatibility), SaveError> {
     let running = store.compatibility();
-    let read = store.read(slot);
+    let read = store.read_cancellable(slot, cancelled);
     // The recorded build is diagnostics: replay verification decides. Name
     // it next to the running one, so a failure that follows can be traced.
     let recorded = match &read {
@@ -891,8 +963,16 @@ pub(super) fn discard_menu_preload(mut persistence: ResMut<Persistence>) {
 /// is written only once verification passes.
 fn discard_branch_log(log: &std::path::Path) {
     let archive = infrastructure::command_log::region_archive_path(log);
-    for path in std::iter::once(log.to_path_buf()).chain(archive) {
-        match std::fs::remove_file(&path) {
+    for path in std::iter::once(log.to_path_buf())
+        .chain(archive)
+        .chain(infrastructure::command_log::checkpoint_archive_path(log))
+    {
+        let removal = if path.is_dir() && !path.is_symlink() {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+        match removal {
             Ok(()) => (),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
             Err(error) => warn!(
@@ -912,7 +992,9 @@ pub(super) fn initialise_store(
     if persistence.store.is_none()
         && let Some(dir) = dir
     {
-        persistence.store = Some(Arc::new(FileSaveStore::new(dir.0.clone())));
+        persistence.store = Some(Arc::new(
+            FileSaveStore::new(dir.0.clone()).with_monthly_charts(),
+        ));
     }
     if *state.get() == AppState::Boot
         && persistence.enabled()
@@ -985,6 +1067,10 @@ pub(super) fn poll_persistence(
             }
             // A worker that died writing an autosave is a failed autosave.
             persistence.autosave_did_fail();
+            if persistence.automatic_error() {
+                persistence.screen = SaveScreen::Automatic;
+                *speed = SimSpeed::Paused;
+            }
         }
         Completion::Listed(result) => {
             persistence.listed = true;
@@ -1010,15 +1096,22 @@ pub(super) fn poll_persistence(
                 persistence.last_summary = Some(task.bundle.checkpoint.summary);
                 persistence.last_saved = Some(receipt);
                 persistence.error = None;
-                *speed = SimSpeed::Paused;
-                if task.automatic && persistence.manual.is_some() {
-                    persistence.screen = persistence
-                        .manual
-                        .map_or(SaveScreen::Closed, ManualIntent::screen);
-                    if persistence.screen == SaveScreen::Save {
+                if task.automatic {
+                    // A late receipt must not pause later play, close a manual dialog or discard
+                    // its newer capture. Only an actual failure opens the automatic-save dialog.
+                    if persistence.screen == SaveScreen::Automatic {
+                        persistence.screen = persistence
+                            .manual
+                            .map_or(SaveScreen::Closed, ManualIntent::screen);
+                    }
+                    if persistence.next_autosave(generation.0) {
+                        return;
+                    }
+                    if persistence.manual.is_some() && persistence.screen == SaveScreen::Save {
                         persistence.list(generation.0);
                     }
                 } else {
+                    *speed = SimSpeed::Paused;
                     persistence.screen = SaveScreen::Closed;
                     persistence.capture = None;
                     persistence.manual = None;
@@ -1048,6 +1141,10 @@ pub(super) fn poll_persistence(
                     run.revision = Some(*revision);
                 }
                 persistence.error = Some(error);
+                if automatic {
+                    persistence.screen = SaveScreen::Automatic;
+                    *speed = SimSpeed::Paused;
+                }
             }
         },
         Completion::Deleted(result) => match result {

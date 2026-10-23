@@ -274,8 +274,27 @@ proptest::proptest! {
         let pixels = UVec2::new(1920,1080);
         let fit = game::preferences::fit_window(&original,origin,pixels,scale);
         proptest::prop_assert!(fit.width.is_finite() && fit.height.is_finite());
-        proptest::prop_assert!(fit.x >= origin.x && fit.y >= origin.y);
+        proptest::prop_assert!(f64::from(fit.x) >= f64::from(origin.x) - 1.0);
+        proptest::prop_assert!(f64::from(fit.y) >= f64::from(origin.y) + 40.0 * scale - 1.0);
         proptest::prop_assert!(fit.x as f64 + f64::from(fit.width)*scale <= (origin.x+1920) as f64 + 1.0);
-        proptest::prop_assert!(fit.y as f64 + f64::from(fit.height)*scale <= (origin.y+1080) as f64 + 1.0);
+        proptest::prop_assert!(fit.y as f64 + f64::from(fit.height)*scale <= (origin.y+1080) as f64 - 40.0 * scale + 1.0);
+    }
+}
+
+#[test]
+fn restored_windows_reserve_desktop_chrome_on_720p_and_scaled_secondary_screens() {
+    for (origin, scale) in [(IVec2::ZERO, 1.0), (IVec2::new(-2560, 200), 2.0)] {
+        let pixels = UVec2::new((1280.0 * scale) as u32, (720.0 * scale) as u32);
+        for (width, height) in [(1024.0, 640.0), (4000.0, 3000.0)] {
+            let saved = PreferenceWindow {
+                width,
+                height,
+                x: origin.x - 100,
+                y: origin.y - 100,
+            };
+            let fit = game::preferences::fit_window(&saved, origin, pixels, scale);
+            assert_eq!((fit.width, fit.height), (1280.0, 640.0));
+            assert_eq!((fit.x, fit.y), (origin.x, origin.y + (40.0 * scale) as i32));
+        }
     }
 }

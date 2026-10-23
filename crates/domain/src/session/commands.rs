@@ -162,6 +162,35 @@ impl GameSession {
         Ok(Vec::new())
     }
 
+    /// Enable/disable automatic storage without changing its inventory or advancing time.
+    pub fn set_battery_enabled(
+        &mut self,
+        id: PlantId,
+        on: bool,
+    ) -> Result<Vec<DomainEvent>, DomainError> {
+        self.require_phase(&PLANNING_OR_OPERATING)?;
+        let plant = self
+            .power
+            .plant(id)
+            .ok_or(DomainError::UnknownPlant { plant: id })?;
+        if plant.kind() != PlantKind::Battery {
+            return Err(DomainError::PlantNotBattery { plant: id });
+        }
+        if matches!(plant.status(), PlantStatus::UnderConstruction { .. }) {
+            return Err(DomainError::PlantNotCommissioned { plant: id });
+        }
+        if plant.battery().is_some_and(|b| b.enabled() != on) {
+            self.power
+                .plant_mut(id)
+                .expect("checked plant")
+                .battery_mut()
+                .expect("battery kind")
+                .set_enabled(on);
+            self.power.invalidate_battery_plan();
+        }
+        Ok(Vec::new())
+    }
+
     /// Turns automatic generation control on or off for a plant.
     pub fn set_auto_follow(
         &mut self,

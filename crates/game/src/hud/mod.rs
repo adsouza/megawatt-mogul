@@ -151,7 +151,9 @@ pub use self::toasts::{
     MAX_TOASTS, TOAST_SECONDS, ToastQueue, ToastsModel, draw_toasts, toasts_model,
 };
 pub use self::top_bar::{Stat, TopBarModel, WarningsBanner, draw_top_bar, top_bar_model};
-pub use self::ui_state::{CommitDraft, CommitmentForm, PendingCommit, PlanningTab, UiState};
+pub use self::ui_state::{
+    CommitDraft, CommitmentForm, PendingCommit, PlanningTab, SupplyChartLayout, UiState,
+};
 use domain::session::DayPhase;
 
 use crate::l10n::Localizer;

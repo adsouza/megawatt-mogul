@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use domain::events::DomainEvent;
+use domain::generation::BatteryTotals;
 use domain::ids::PlantId;
 use domain::session::GameSession;
 use domain::units::{MegawattHours, Money, Price};
@@ -13,6 +14,7 @@ use super::Projection;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PlantHistory {
     pub starts: u32,
+    pub storage: BatteryTotals,
     pub trips: u32,
     /// Weighted energy from the merit order of every closed month.
     pub energy: MegawattHours,
@@ -26,6 +28,7 @@ impl PlantHistory {
     fn new() -> Self {
         Self {
             starts: 0,
+            storage: BatteryTotals::default(),
             trips: 0,
             energy: MegawattHours::new(0.0),
             revenue: Money::ZERO,
@@ -81,6 +84,14 @@ impl Projection for PlantHistoryProjection {
                     // days: one rounding, to cents, ties to even.
                     record.revenue += tariff.cost_of(entry.energy, 1);
                 }
+                for (id, b) in &report.storage {
+                    let t = &mut self.entry(*id).storage;
+                    t.input += b.input;
+                    t.output += b.output;
+                    t.charge_loss += b.charge_loss;
+                    t.discharge_loss += b.discharge_loss;
+                    t.unused += b.unused;
+                }
                 if let Some(next) = self.next_tariff.take() {
                     self.tariff = next;
                 }
@@ -89,6 +100,20 @@ impl Projection for PlantHistoryProjection {
         }
     }
 }
+
+// Portable state schema 1: explicit field order and enum tags.
+domain::state_record!(PlantHistoryProjection {
+    plants,
+    tariff,
+    next_tariff
+});
+domain::state_record!(PlantHistory {
+    starts,
+    trips,
+    energy,
+    revenue,
+    storage
+});
 
 #[cfg(test)]
 mod tests {

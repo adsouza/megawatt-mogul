@@ -37,6 +37,10 @@ pub struct ForecastModel {
     pub forecast_label: String,
     pub band_label: String,
     pub solar_label: String,
+    pub storage_charge_label: String,
+    pub storage_discharge_label: String,
+    pub storage_charge: Vec<[f64; 2]>,
+    pub storage_discharge: Vec<[f64; 2]>,
     /// The middle of each hour, in hours: `0.5, 1.5, ...`. Every series is sampled here.
     pub x: [f64; 24],
     /// Forecast demand at minute 30 of each hour, in megawatts.
@@ -98,7 +102,40 @@ pub fn forecast_model(game: &Game, l10n: &Localizer, ui: &UiState) -> ForecastMo
         let tick = hour as u32 * TICKS_PER_HOUR + TICKS_PER_HOUR / 2;
         (mean[hour] - session.forecast_net_load(tick).value()).max(0.0)
     });
+    let storage = session.battery_schedule();
+    let storage_series = |charge: bool| {
+        (0..1440)
+            .map(|tick| {
+                [
+                    tick as f64 / 60.0,
+                    storage
+                        .plants
+                        .values()
+                        .map(|p| {
+                            if charge {
+                                p.charge[tick].value()
+                            } else {
+                                p.discharge[tick].value()
+                            }
+                        })
+                        .sum(),
+                ]
+            })
+            .collect()
+    };
     ForecastModel {
+        storage_charge_label: l10n.text("battery-preview-charge"),
+        storage_discharge_label: l10n.text("battery-preview-discharge"),
+        storage_charge: if storage.plants.is_empty() {
+            Vec::new()
+        } else {
+            storage_series(true)
+        },
+        storage_discharge: if storage.plants.is_empty() {
+            Vec::new()
+        } else {
+            storage_series(false)
+        },
         hour_axis: l10n.text("forecast-axis-hour"),
         power_axis: l10n.text("forecast-axis-power"),
         forecast_label: l10n.text("commitment-forecast"),
@@ -135,6 +172,21 @@ pub fn draw_forecast_chart(ui: &mut egui::Ui, model: &ForecastModel) -> Vec<UiAc
             (model.band_label.as_str(), band_color, KeyMark::Band),
             (model.solar_label.as_str(), solar_color, KeyMark::Line),
         ]);
+    let mut entries: Vec<_> = entries.collect();
+    if !model.storage_charge.is_empty() {
+        entries.extend([
+            (
+                model.storage_charge_label.as_str(),
+                color32(kind_color(PlantKind::Battery)),
+                KeyMark::Dashed,
+            ),
+            (
+                model.storage_discharge_label.as_str(),
+                color32(kind_color(PlantKind::Battery)),
+                KeyMark::Line,
+            ),
+        ]);
+    }
     let hovered = super::chart_style::draw_key(ui, id, entries);
     Plot::new("planning_forecast")
         .id(id)
@@ -195,6 +247,22 @@ pub fn draw_forecast_chart(ui: &mut egui::Ui, model: &ForecastModel) -> Vec<UiAc
                     .color(solar_color)
                     .width(2.0),
             );
+            if !model.storage_charge.is_empty() {
+                plot.line(
+                    Line::new(&model.storage_charge_label, model.storage_charge.clone())
+                        .color(color32(kind_color(PlantKind::Battery)))
+                        .style(egui_plot::LineStyle::dashed_loose())
+                        .highlight(hovered == Some(egui::Id::new(&model.storage_charge_label))),
+                );
+                plot.line(
+                    Line::new(
+                        &model.storage_discharge_label,
+                        model.storage_discharge.clone(),
+                    )
+                    .color(color32(kind_color(PlantKind::Battery)))
+                    .highlight(hovered == Some(egui::Id::new(&model.storage_discharge_label))),
+                );
+            }
             if let Some(hour) = model.highlight_hour {
                 plot.vline(
                     VLine::new("", f64::from(hour) + 0.5)

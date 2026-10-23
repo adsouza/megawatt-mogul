@@ -21,6 +21,7 @@ impl CommandHandler for CoreHandler {
             Command::CommitPlant { plant, hours } => session.commit_plant(*plant, *hours)?,
             Command::BeginOperating => session.begin_operating()?,
             Command::SetDispatchTarget { plant, mw } => session.set_dispatch_target(*plant, *mw)?,
+            Command::SetBatteryEnabled { plant, on } => session.set_battery_enabled(*plant, *on)?,
             Command::SetAutoFollow { plant, on } => session.set_auto_follow(*plant, *on)?,
             Command::StartPlant { plant } => session.start_plant(*plant)?,
             Command::StopPlant { plant } => session.stop_plant(*plant)?,

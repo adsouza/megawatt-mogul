@@ -7,6 +7,8 @@
 
 use std::collections::BTreeMap;
 
+mod battery;
+pub use battery::{BatteryScheduleView, PlantBatteryScheduleView};
 mod hydro_plan;
 mod outage;
 
@@ -102,6 +104,9 @@ pub struct PowerSystem {
     /// The rotating-outage share ordered for the current hour, which
     /// `outage` moves toward; frozen during a blackout.
     outage_target: Ratio,
+    battery_plan: BatteryScheduleView,
+    battery_plan_dirty: bool,
+    battery_tick: u32,
 }
 
 fn is_curtailable(plant: &Plant) -> bool {
@@ -160,6 +165,9 @@ impl PowerSystem {
             hydro_override: HydroOverride::Off,
             outage: Ratio::ZERO,
             outage_target: Ratio::ZERO,
+            battery_plan: BatteryScheduleView::default(),
+            battery_plan_dirty: false,
+            battery_tick: 0,
         }
     }
 
@@ -299,6 +307,9 @@ impl PowerSystem {
         self.hydro_override = HydroOverride::Off;
         self.outage = Ratio::ZERO;
         self.outage_target = Ratio::ZERO;
+        self.battery_tick = 0;
+        self.battery_plan = BatteryScheduleView::default();
+        self.plan_batteries(region, month, 0);
         self.plan_hydro(region, month, 0);
         self.balance_boundary(region, month);
         self.outage_target = self.size_outage(region, month, 0);
@@ -446,10 +457,14 @@ impl PowerSystem {
         tick: u32,
         rng: &mut SimRng,
     ) -> (TickSummary, Vec<DomainEvent>) {
+        self.battery_tick = tick;
         let params = region.frequency();
         let mut events = Vec::new();
         let hour = u8::try_from(tick / TICKS_PER_HOUR).unwrap_or(u8::MAX);
         let ordered = self.outage_target;
+        if self.battery_plan_dirty || (tick > 0 && tick.is_multiple_of(TICKS_PER_HOUR)) {
+            self.plan_batteries(region, month, tick);
+        }
         if tick > 0 && tick.is_multiple_of(TICKS_PER_HOUR) {
             self.plan_hydro(region, month, hour);
             if self.protection.mode == GridMode::Normal {
@@ -479,6 +494,11 @@ impl PowerSystem {
             self.resize_outage(region, month, hour);
         }
 
+        let served_before =
+            demand * (1.0 - self.outage.value()) * (1.0 - self.protection.shed.value());
+        let provisional = self.propose_battery_flows(region, month, tick, demand, served_before);
+        self.stage_batteries(&provisional);
+        let charging: Megawatts = provisional.values().map(|f| f.charge).sum();
         let supply: Megawatts = self.connected_plants().map(Plant::output).sum();
 
         let mode = self.protection.mode;
@@ -490,7 +510,11 @@ impl PowerSystem {
         let dark = mode == GridMode::Normal && load <= Megawatts::ZERO;
         if mode == GridMode::Normal && self.outage != self.outage_target {
             let served = load * (1.0 - shed);
-            let cover = self.outage_cover(&available, served - supply - withheld, effect_tick);
+            let cover = self.outage_cover(
+                &available,
+                served + charging - supply - withheld,
+                effect_tick,
+            );
             // Only a surplus that persists may be restored as load at once
             // (ruling N1): none while any plant is losing output AGC cannot
             // hold, judged as at the trip gate. The surplus is over the
@@ -500,7 +524,7 @@ impl PowerSystem {
                 if self.has_unrecoverable_ramp_down(None, &self.foreseen_ceilings(effect_tick)) {
                     Megawatts::ZERO
                 } else {
-                    (supply - load).max(Megawatts::ZERO)
+                    (supply - charging - load).max(Megawatts::ZERO)
                 }
             };
             self.outage = self.next_outage(params.shed_step, demand, cover, surplus);
@@ -517,14 +541,15 @@ impl PowerSystem {
         };
         let redispatch = Redispatch {
             available: &available,
-            to_serve: demand * to_serve,
+            to_serve: demand * to_serve
+                + self.battery_request(region, month, effect_tick, &provisional, demand * to_serve),
             withheld,
             curtailable,
             effect_tick,
         };
         let leftover = self.redispatch(&redispatch);
 
-        let imbalance = supply - load * (1.0 - shed);
+        let imbalance = supply - charging - load * (1.0 - shed);
         // Builder's call (controller rulings R8, I3 and M7): a fully cut grid
         // has no frequency to measure; the 1 MW system-size floor is for
         // numerical safety, not physics. So on a Normal-mode tick with no load
@@ -542,7 +567,7 @@ impl PowerSystem {
             &mut self.protection,
             self.deviation,
             params,
-            supply,
+            supply - charging,
             load,
             self.outage_target,
         );
@@ -568,7 +593,7 @@ impl PowerSystem {
         self.apply_protection(
             outcome,
             after_outage * shed.value(),
-            after_outage * (1.0 - shed.value()),
+            after_outage * (1.0 - shed.value()) + charging,
             params,
             &redispatch,
             &mut events,
@@ -585,6 +610,20 @@ impl PowerSystem {
             events.push(DomainEvent::FrequencyDeviated { band: now });
         }
 
+        // Re-evaluate on final outputs/shed. Commit each inventory exactly once.
+        let final_flows = self.propose_battery_flows(
+            region,
+            month,
+            tick,
+            demand,
+            after_outage * (1.0 - shed.value()),
+        );
+        self.settle_batteries(&final_flows);
+        if outcome == ProtectionOutcome::BlackoutRestored {
+            self.battery_plan_dirty = true;
+        }
+        let battery_charge: Megawatts = final_flows.values().map(|f| f.charge).sum();
+        let battery_discharge: Megawatts = final_flows.values().map(|f| f.discharge).sum();
         // The summary reports instant t + 1, after protection acted.
         let by_plant: BTreeMap<PlantId, Megawatts> = self
             .connected_plants()
@@ -607,8 +646,11 @@ impl PowerSystem {
             // exactly `demand × shed`.
             unserved: demand * (outage + (1.0 - outage) * shed.value()),
             generation,
+            battery_charge,
+            battery_discharge,
+            batteries: final_flows,
             curtailed: withheld,
-            imbalance: generation - served,
+            imbalance: generation - served - battery_charge,
             by_kind,
             by_plant,
             frequency: params.nominal + self.deviation,
@@ -823,10 +865,12 @@ impl PowerSystem {
         ceilings: &BTreeMap<PlantId, Megawatts>,
         except: Option<PlantId>,
     ) -> Megawatts {
-        self.connected_plants()
+        let generation: Megawatts = self
+            .connected_plants()
             .filter(|p| Some(p.id()) != except && p.auto_follow())
             .map(|p| p.headroom_up(agc_cap(available, ceilings, p.id())))
-            .sum()
+            .sum();
+        generation + self.battery_headroom(except)
     }
 
     /// The one-tick ramp-down room of the connected auto-follow plants: for
@@ -849,7 +893,7 @@ impl PowerSystem {
     /// outputs alone, so a second pass replaces the first's targets rather
     /// than adding to them.
     fn redispatch(&mut self, r: &Redispatch<'_>) -> Megawatts {
-        let supply: Megawatts = self.connected_plants().map(Plant::output).sum();
+        let supply: Megawatts = self.primary_supply();
         self.retarget_agc(r.available, r.to_serve - supply - r.withheld, r.effect_tick)
     }
 
@@ -1061,6 +1105,9 @@ impl PowerSystem {
         except: Option<PlantId>,
         ceilings: &BTreeMap<PlantId, Megawatts>,
     ) -> bool {
+        if self.battery_fall_ahead() {
+            return true;
+        }
         self.connected_plants()
             .filter(|p| Some(p.id()) != except)
             .any(|p| match p.status() {
@@ -1212,6 +1259,43 @@ impl PowerSystem {
 fn cell_ratio(region: &RegionDefinition, cell: CellCoord, field: impl Fn(&Cell) -> Ratio) -> Ratio {
     region.terrain().get(cell).map_or(Ratio::ZERO, field)
 }
+
+// Portable state schema 1: explicit field order and enum tags.
+impl crate::state::State for NetworkModel {
+    fn write(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::CopperPlate => {
+                crate::state::State::write(&0u8, out);
+            }
+        }
+    }
+    fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
+        Ok(match <u8 as crate::state::State>::read(input)? {
+            0 => Self::CopperPlate,
+            _ => return Err(crate::state::StateError::Invalid),
+        })
+    }
+}
+crate::state_record!(PowerSystem {
+    network,
+    plants,
+    cities,
+    model,
+    noise,
+    clearness,
+    deviation,
+    band,
+    protection,
+    curtailment,
+    hydro_plan,
+    hydro_planned_from,
+    hydro_override,
+    outage,
+    outage_target,
+    battery_plan,
+    battery_plan_dirty,
+    battery_tick
+});
 
 #[cfg(test)]
 mod tests;

@@ -202,3 +202,178 @@ fn supply_key_visibility_can_be_changed_from_the_keyboard() {
         );
     }
 }
+
+#[test]
+fn storage_inventory_keeps_a_readable_plot_beside_the_supply_curve_in_a_short_panel() {
+    let mut model = full_key();
+    model.has_storage = true;
+    model.stored = vec![400.0; model.x.len()];
+    for width in [528.0, 1280.0] {
+        let ctx = context();
+        for _ in 0..3 {
+            paint(&ctx, &model, width, vec![])
+                .0
+                .drop_without_applying_deltas();
+        }
+        let (output, supply_id) = paint(&ctx, &model, width, vec![]);
+        let supply = *PlotMemory::load(&ctx, supply_id)
+            .unwrap()
+            .transform()
+            .frame();
+        let energy_id = supply_id.with("inventory");
+        let inventory = *PlotMemory::load(&ctx, energy_id)
+            .expect("inventory plot")
+            .transform()
+            .frame();
+        assert!(supply.height() >= 40.0, "{supply:?}");
+        assert!(inventory.height() >= 40.0, "{inventory:?}");
+        assert!(!supply.intersects(inventory));
+        assert!(supply.right() < inventory.left());
+        assert!(
+            // The two supply-axis gutters consume more of its 2:1 allocation.
+            supply.width() > inventory.width() * 1.7,
+            "supply {supply:?}, inventory {inventory:?}"
+        );
+        output.drop_without_applying_deltas();
+    }
+}
+
+#[test]
+fn combined_storage_uses_one_full_width_plot_and_a_labelled_energy_axis() {
+    use game::hud::SupplyChartLayout;
+    let mut model = full_key().with_layout(SupplyChartLayout::Combined);
+    model.has_storage = true;
+    model.stored = vec![400.0; model.x.len()];
+    for width in [528.0, 1280.0] {
+        let ctx = context();
+        for _ in 0..3 {
+            paint(&ctx, &model, width, vec![])
+                .0
+                .drop_without_applying_deltas();
+        }
+        let (output, id) = paint(&ctx, &model, width, vec![]);
+        let frame = *PlotMemory::load(&ctx, id).unwrap().transform().frame();
+        assert!(frame.width() > width * 0.6, "{frame:?}");
+        assert!(frame.height() >= 40.0, "{frame:?}");
+        assert!(PlotMemory::load(&ctx, id.with("inventory")).is_none());
+        let widgets = widgets_of(&output);
+        assert!(widgets.iter().any(|w| w.text == model.layout_label));
+        // Axis text is painted by egui_plot, not exposed as a widget.
+        fn contains(shapes: &[egui::epaint::ClippedShape], text: &str) -> bool {
+            shapes
+                .iter()
+                .any(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.text() == text))
+        }
+        assert!(contains(&output.shapes, &model.energy_unit));
+        assert!(contains(&output.shapes, &model.cost_unit));
+        assert!(!contains(&output.shapes, &model.storage_energy_label));
+        assert!(!contains(&output.shapes, &model.cost_axis));
+        output.drop_without_applying_deltas();
+    }
+}
+
+#[test]
+fn storage_visibility_survives_switching_between_separate_and_combined_views() {
+    use game::hud::SupplyChartLayout;
+    let mut model = full_key();
+    model.has_storage = true;
+    model.stored = vec![400.0; model.x.len()];
+    let ctx = context();
+    for _ in 0..3 {
+        paint(&ctx, &model, 1280.0, vec![])
+            .0
+            .drop_without_applying_deltas();
+    }
+    let (output, id) = paint(&ctx, &model, 1280.0, vec![]);
+    let at = widgets_of(&output)
+        .iter()
+        .find(|w| w.text == model.storage_energy_legend)
+        .unwrap()
+        .rect
+        .center();
+    output.drop_without_applying_deltas();
+    for layout in [SupplyChartLayout::Separate, SupplyChartLayout::Combined] {
+        model.layout = layout;
+        for pressed in [true, false] {
+            paint(
+                &ctx,
+                &model,
+                1280.0,
+                vec![
+                    egui::Event::PointerMoved(at),
+                    egui::Event::PointerButton {
+                        pos: at,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            )
+            .0
+            .drop_without_applying_deltas();
+        }
+        assert_eq!(
+            PlotMemory::load(&ctx, id)
+                .unwrap()
+                .hidden_items
+                .contains(&Id::new(&model.storage_energy_legend)),
+            layout == SupplyChartLayout::Separate
+        );
+    }
+}
+
+#[test]
+fn combined_inventory_hover_reports_mwh_instead_of_scaled_power() {
+    use game::hud::SupplyChartLayout;
+    let mut model = full_key().with_layout(SupplyChartLayout::Combined);
+    model.has_storage = true;
+    model.stored = vec![400.0; model.x.len()];
+    let ctx = context();
+    for _ in 0..3 {
+        paint(&ctx, &model, 1280.0, vec![])
+            .0
+            .drop_without_applying_deltas();
+    }
+    let (output, id) = paint(&ctx, &model, 1280.0, vec![]);
+    output.drop_without_applying_deltas();
+    // The inventory peak reaches the top of the physical power data, but reads as 400 MWh.
+    let power_peak = model
+        .demand
+        .iter()
+        .chain(&model.storage_load)
+        .chain(model.stacks.iter().flat_map(|s| &s.high))
+        .chain(model.forecast.iter().map(|[_, y]| y))
+        .copied()
+        .fold(1.0_f64, f64::max);
+    let at = PlotMemory::load(&ctx, id)
+        .unwrap()
+        .transform()
+        .position_from_point(&egui_plot::PlotPoint::new(12.0, power_peak));
+    let mut found = false;
+    for _ in 0..3 {
+        let (output, _) = paint(&ctx, &model, 1280.0, vec![egui::Event::PointerMoved(at)]);
+        fn has_label(shape: &egui::Shape) -> bool {
+            match shape {
+                egui::Shape::Text(t) => t.galley.text().contains("400 MWh"),
+                egui::Shape::Vec(shapes) => shapes.iter().any(has_label),
+                _ => false,
+            }
+        }
+        found |= output.shapes.iter().any(|s| has_label(&s.shape));
+        output.drop_without_applying_deltas();
+    }
+    assert!(found, "hover must report the actual stored MWh");
+}
+
+#[test]
+fn games_without_storage_have_no_layout_toggle_or_energy_key() {
+    let model = full_key();
+    assert!(!model.has_storage);
+    let (output, _) = paint(&context(), &model, 528.0, vec![]);
+    assert!(
+        widgets_of(&output)
+            .iter()
+            .all(|w| w.text != model.layout_label && w.text != model.storage_energy_legend)
+    );
+    output.drop_without_applying_deltas();
+}

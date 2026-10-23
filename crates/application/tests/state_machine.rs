@@ -71,6 +71,7 @@ fn allowed_phases(command: &Command) -> &'static [DayPhase] {
         | Command::BeginOperating => &[Planning],
         Command::SetDispatchTarget { .. }
         | Command::SetAutoFollow { .. }
+        | Command::SetBatteryEnabled { .. }
         | Command::StartPlant { .. }
         | Command::StopPlant { .. } => &[Planning, Operating],
         Command::AdvanceTicks { .. } => &[Operating],
@@ -157,6 +158,7 @@ impl ReferenceStateMachine for SessionMachine {
             }),
             3 => (plant_id(model), any::<bool>())
                 .prop_map(|(plant, on)| Command::SetAutoFollow { plant, on }),
+            2 => (plant_id(model), any::<bool>()).prop_map(|(plant,on)| Command::SetBatteryEnabled {plant,on}),
             2 => plant_id(model).prop_map(|plant| Command::StartPlant { plant }),
             2 => plant_id(model).prop_map(|plant| Command::StopPlant { plant }),
         ]

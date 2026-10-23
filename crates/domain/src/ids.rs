@@ -68,6 +68,22 @@ impl IdAllocator {
     }
 }
 
+// Portable state schema 1: explicit field order and enum tags.
+crate::state_record!(IdAllocator { next });
+crate::state_record!(CellCoord { x, y });
+
+crate::state_tuple!(PlantId);
+crate::state_tuple!(CityId);
+crate::state_tuple!(NodeId);
+crate::state_tuple!(LineId);
+crate::state_tuple!(RegionId);
+
+impl IdAllocator {
+    pub(crate) fn next_value(&self) -> u32 {
+        self.next
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

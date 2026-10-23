@@ -1,5 +1,6 @@
 ---
 source: crates/application/tests/scenarios.rs
+assertion_line: 606
 expression: "OverbuildOutcome { status, timeline, minimum_generation, last_report, }"
 ---
 OverbuildOutcome {
@@ -233,6 +234,7 @@ OverbuildOutcome {
         net: Money(
             2853306916,
         ),
+        storage: {},
         energy_by_kind: {
             Coal: MegawattHours(
                 275365.02887711034,

@@ -834,3 +834,459 @@ proptest::proptest! {
         proptest::prop_assert_eq!(store.list().unwrap().len(), originals.len() - 1);
     }
 }
+
+#[test]
+fn save_listing_reads_only_card_metadata_and_selected_loading_still_validates_everything() {
+    use sha2::{Digest, Sha256};
+    let dir = TempDir::new().unwrap();
+    let store = FileSaveStore::new(dir.path().into());
+    let mut saved = bundle(&store, "Metadata only");
+    // Sufficient card metadata, deliberately insufficient region content for a playable game.
+    saved.checkpoint.region_source =
+        br#"(id:"eastern_interconnection",name_key:"region-archived-label")"#.to_vec();
+    saved.checkpoint.header.region_fingerprint =
+        RegionFingerprint::new(Sha256::digest(&saved.checkpoint.region_source).into());
+    let bytes = infrastructure::save::encode_save(&saved).unwrap();
+    let path = dir
+        .path()
+        .join(format!("{}.mgsave", saved.metadata.slot.as_str()));
+    std::fs::write(&path, &bytes).unwrap();
+    let rows = store.list().unwrap();
+    let row = rows[0]
+        .entry
+        .as_ref()
+        .expect("listing must not construct the playable region");
+    assert_eq!(row.metadata, saved.metadata);
+    assert_eq!(row.region_name_key, "region-archived-label");
+    assert!(
+        store.read(&saved.metadata.slot).is_err(),
+        "selected loading must validate the full archived region"
+    );
+    assert_eq!(std::fs::read(path).unwrap(), bytes);
+}
+
+fn counted_listing_store(root: &Path) -> (FileSaveStore, Arc<std::sync::atomic::AtomicUsize>) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let reads = Arc::new(AtomicUsize::new(0));
+    let counter = reads.clone();
+    (
+        FileSaveStore::new(root.into()).with_listing_reader(Arc::new(move |path| {
+            counter.fetch_add(1, Ordering::Relaxed);
+            std::fs::read(path).map_err(|e| SaveError::Io {
+                stage: "test-read",
+                message: e.to_string(),
+            })
+        })),
+        reads,
+    )
+}
+#[test]
+fn listing_cache_skips_unchanged_files_and_refreshes_external_add_rename_replace_and_delete() {
+    use std::sync::atomic::Ordering;
+    let dir = TempDir::new().unwrap();
+    let (store, reads) = counted_listing_store(dir.path());
+    let first = bundle(&store, "First");
+    let receipt = store.write(&first, &SaveTarget::Create, &|| false).unwrap();
+    let cold = store.list().unwrap();
+    assert_eq!(reads.load(Ordering::Relaxed), 1);
+    assert_eq!(store.list().unwrap(), cold);
+    assert_eq!(reads.load(Ordering::Relaxed), 1);
+    let external = FileSaveStore::new(dir.path().into());
+    let renamed = external
+        .rename(
+            &first.metadata.slot,
+            receipt.revision,
+            "Renamed elsewhere",
+            &|| false,
+        )
+        .unwrap();
+    assert_eq!(
+        store.list().unwrap()[0]
+            .entry
+            .as_ref()
+            .unwrap()
+            .metadata
+            .name,
+        "Renamed elsewhere"
+    );
+    assert_eq!(reads.load(Ordering::Relaxed), 2);
+    let mut other = first.clone();
+    other.metadata.slot = store.allocate_id();
+    other.metadata.name = "Other".into();
+    let other_receipt = external
+        .write(&other, &SaveTarget::Create, &|| false)
+        .unwrap();
+    assert_eq!(store.list().unwrap().len(), 2);
+    assert_eq!(reads.load(Ordering::Relaxed), 3);
+    assert_eq!(store.list().unwrap().len(), 2);
+    assert_eq!(reads.load(Ordering::Relaxed), 3);
+    external
+        .delete(&first.metadata.slot, renamed.revision, &|| false)
+        .unwrap();
+    assert_eq!(store.list().unwrap().len(), 1);
+    assert_eq!(reads.load(Ordering::Relaxed), 3);
+    external
+        .delete(&other.metadata.slot, other_receipt.revision, &|| false)
+        .unwrap();
+    assert!(store.list().unwrap().is_empty());
+    // Recreating a removed path must not resurrect a stale entry.
+    external
+        .write(&first, &SaveTarget::Create, &|| false)
+        .unwrap();
+    assert_eq!(
+        store.list().unwrap()[0]
+            .entry
+            .as_ref()
+            .unwrap()
+            .metadata
+            .name,
+        "First"
+    );
+    assert_eq!(reads.load(Ordering::Relaxed), 4);
+}
+#[cfg(unix)]
+#[test]
+fn cache_detects_same_size_edits_with_restored_mtime_and_selected_reads_always_validate() {
+    use std::sync::atomic::Ordering;
+    let dir = TempDir::new().unwrap();
+    let (store, reads) = counted_listing_store(dir.path());
+    let saved = bundle(&store, "Original");
+    store.write(&saved, &SaveTarget::Create, &|| false).unwrap();
+    assert!(store.list().unwrap()[0].entry.is_ok());
+    assert_eq!(reads.load(Ordering::Relaxed), 1);
+    // Recreate the store so this also exercises persisted stamps, including Unix change time.
+    let (store, reads) = counted_listing_store(dir.path());
+    assert!(store.list().unwrap()[0].entry.is_ok());
+    assert_eq!(reads.load(Ordering::Relaxed), 0);
+    let path = dir
+        .path()
+        .join(format!("{}.mgsave", saved.metadata.slot.as_str()));
+    let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+    let mut corrupt = std::fs::read(&path).unwrap();
+    let at = corrupt.len() / 2;
+    corrupt[at] ^= 1;
+    std::fs::write(&path, &corrupt).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_times(std::fs::FileTimes::new().set_modified(modified))
+        .unwrap();
+    assert!(
+        store.read(&saved.metadata.slot).is_err(),
+        "selected loads never trust cached cards"
+    );
+    assert!(store.list().unwrap()[0].entry.is_err());
+    assert_eq!(reads.load(Ordering::Relaxed), 1);
+    assert!(store.list().unwrap()[0].entry.is_err());
+    assert_eq!(reads.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn listing_cache_does_not_remember_a_read_raced_by_atomic_replacement() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let dir = TempDir::new().unwrap();
+    let writer = FileSaveStore::new(dir.path().into());
+    let first = bundle(&writer, "First");
+    writer
+        .write(&first, &SaveTarget::Create, &|| false)
+        .unwrap();
+    let mut next = first.clone();
+    next.metadata.name = "Replacement".into();
+    let replacement = infrastructure::save::encode_save(&next).unwrap();
+    let reads = Arc::new(AtomicUsize::new(0));
+    let counter = reads.clone();
+    let store = FileSaveStore::new(dir.path().into()).with_listing_reader(Arc::new(move |path| {
+        let bytes = std::fs::read(path).unwrap();
+        if counter.fetch_add(1, Ordering::Relaxed) == 0 {
+            let temporary = path.with_extension("replacement");
+            std::fs::write(&temporary, &replacement).unwrap();
+            std::fs::rename(temporary, path).unwrap();
+        }
+        Ok(bytes)
+    }));
+    assert_eq!(
+        store.list().unwrap()[0]
+            .entry
+            .as_ref()
+            .unwrap()
+            .metadata
+            .name,
+        "First"
+    );
+    assert_eq!(
+        store.list().unwrap()[0]
+            .entry
+            .as_ref()
+            .unwrap()
+            .metadata
+            .name,
+        "Replacement"
+    );
+    assert_eq!(
+        store.list().unwrap()[0]
+            .entry
+            .as_ref()
+            .unwrap()
+            .metadata
+            .name,
+        "Replacement"
+    );
+    assert_eq!(reads.load(Ordering::Relaxed), 2);
+}
+
+#[test]
+fn transient_listing_io_errors_are_not_cached() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let dir = TempDir::new().unwrap();
+    let writer = FileSaveStore::new(dir.path().into());
+    let saved = bundle(&writer, "Retry reading");
+    writer
+        .write(&saved, &SaveTarget::Create, &|| false)
+        .unwrap();
+    let fail = AtomicBool::new(true);
+    let store = FileSaveStore::new(dir.path().into()).with_listing_reader(Arc::new(move |path| {
+        if fail.swap(false, Ordering::Relaxed) {
+            return Err(SaveError::Io {
+                stage: "test",
+                message: "temporary read failure".into(),
+            });
+        }
+        Ok(std::fs::read(path).unwrap())
+    }));
+    assert!(store.list().unwrap()[0].entry.is_err());
+    assert!(store.list().unwrap()[0].entry.is_ok());
+}
+
+#[test]
+fn card_scan_skips_command_decoding_but_selected_load_rejects_invalid_commands() {
+    use sha2::{Digest, Sha256};
+    #[derive(serde::Deserialize, serde::Serialize)]
+    struct Envelope {
+        version: u32,
+        length: usize,
+        checksum: [u8; 32],
+        payload: String,
+    }
+    let dir = TempDir::new().unwrap();
+    let store = FileSaveStore::new(dir.path().into());
+    let saved = bundle(&store, "Commands are validated on load");
+    let mut envelope: Envelope =
+        ron::de::from_bytes(&infrastructure::save::encode_save(&saved).unwrap()).unwrap();
+    assert!(envelope.payload.contains("commands:[]"));
+    envelope.payload = envelope.payload.replace(
+        "commands:[]",
+        "commands:[FutureCommand((name:\"nested decoy\",count:999))]",
+    );
+    envelope.length = envelope.payload.len();
+    envelope.checksum = Sha256::digest(envelope.payload.as_bytes()).into();
+    let bytes = ron::to_string(&envelope).unwrap();
+    let path = dir
+        .path()
+        .join(format!("{}.mgsave", saved.metadata.slot.as_str()));
+    std::fs::write(&path, &bytes).unwrap();
+    let row = store.list().unwrap();
+    assert_eq!(row[0].entry.as_ref().unwrap().metadata, saved.metadata);
+    assert!(store.read(&saved.metadata.slot).is_err());
+    assert_eq!(std::fs::read_to_string(path).unwrap(), bytes);
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(16))]
+    #[test]
+    fn cached_library_matches_a_fresh_scan_after_arbitrary_slot_changes(ops in proptest::collection::vec(0u8..4,1..12)) {
+        let dir=TempDir::new().unwrap();let (cached,_)=counted_listing_store(dir.path());
+        let writer=FileSaveStore::new(dir.path().into());let mut saved=bundle(&writer,"Initial");
+        let mut receipt=Some(writer.write(&saved,&SaveTarget::Create,&||false).unwrap());
+        cached.list().unwrap();
+        for (index,op) in ops.into_iter().enumerate() {
+            match op {
+                0 if receipt.is_some() => {
+                    let name=format!("Rename {index}");
+                    receipt=Some(writer.rename(&saved.metadata.slot,receipt.as_ref().unwrap().revision,&name,&||false).unwrap());saved.metadata.name=name;
+                }
+                1 => {
+                    saved.metadata.name=format!("Write {index}");
+                    let target=receipt.as_ref().map_or(SaveTarget::Create,|r|SaveTarget::Replace(r.revision));
+                    receipt=Some(writer.write(&saved,&target,&||false).unwrap());
+                }
+                2 if receipt.is_some() => {writer.delete(&saved.metadata.slot,receipt.take().unwrap().revision,&||false).unwrap();}
+                _ => {}
+            }
+            let restarted=FileSaveStore::new(dir.path().into()).list().unwrap();
+            let _=std::fs::remove_file(dir.path().join(".save-library-cache.ron"));
+            let fresh=FileSaveStore::new(dir.path().into()).list().unwrap();
+            proptest::prop_assert_eq!(restarted,fresh.clone());
+            proptest::prop_assert_eq!(cached.list().unwrap(),fresh.clone());
+            proptest::prop_assert_eq!(cached.list().unwrap(),fresh);
+        }
+    }
+}
+
+#[test]
+fn disk_listing_cache_survives_restart_and_revalidates_changed_and_deleted_sources() {
+    use std::sync::atomic::Ordering;
+    let dir = TempDir::new().unwrap();
+    let writer = FileSaveStore::new(dir.path().into());
+    let first = bundle(&writer, "First");
+    let mut second = first.clone();
+    second.metadata.slot = writer.allocate_id();
+    second.metadata.name = "Second".into();
+    let first_receipt = writer
+        .write(&first, &SaveTarget::Create, &|| false)
+        .unwrap();
+    let second_receipt = writer
+        .write(&second, &SaveTarget::Create, &|| false)
+        .unwrap();
+    let (cold, reads) = counted_listing_store(dir.path());
+    let expected = cold.list().unwrap();
+    assert_eq!(reads.load(Ordering::Relaxed), 2);
+    drop(cold);
+    let (restarted, reads) = counted_listing_store(dir.path());
+    assert_eq!(restarted.list().unwrap(), expected);
+    assert_eq!(
+        reads.load(Ordering::Relaxed),
+        0,
+        "restart must reuse disk metadata"
+    );
+    drop(restarted);
+    writer
+        .rename(
+            &first.metadata.slot,
+            first_receipt.revision,
+            "Changed",
+            &|| false,
+        )
+        .unwrap();
+    writer
+        .delete(&second.metadata.slot, second_receipt.revision, &|| false)
+        .unwrap();
+    let (restarted, reads) = counted_listing_store(dir.path());
+    let rows = restarted.list().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].entry.as_ref().unwrap().metadata.name, "Changed");
+    assert_eq!(reads.load(Ordering::Relaxed), 1);
+    let (restarted, reads) = counted_listing_store(dir.path());
+    assert_eq!(restarted.list().unwrap(), rows);
+    assert_eq!(reads.load(Ordering::Relaxed), 0);
+    assert_eq!(
+        writer.read(&first.metadata.slot).unwrap().0.checkpoint,
+        first.checkpoint
+    );
+}
+
+#[test]
+fn missing_corrupt_incompatible_or_unwritable_disk_cache_never_blocks_a_save() {
+    use std::sync::atomic::Ordering;
+    for damage in [
+        "missing",
+        "truncated",
+        "checksum",
+        "version",
+        "oversize",
+        "directory",
+        "other-build",
+    ] {
+        let dir = TempDir::new().unwrap();
+        let writer = FileSaveStore::new(dir.path().into());
+        let saved = bundle(&writer, "Preserved");
+        writer
+            .write(&saved, &SaveTarget::Create, &|| false)
+            .unwrap();
+        let path = dir
+            .path()
+            .join(format!("{}.mgsave", saved.metadata.slot.as_str()));
+        let original = std::fs::read(&path).unwrap();
+        let expected = writer.list().unwrap();
+        let index = dir.path().join(".save-library-cache.ron");
+        match damage {
+            "missing" => std::fs::remove_file(&index).unwrap(),
+            "truncated" => std::fs::write(&index, b"(version:1,").unwrap(),
+            "checksum" => {
+                let bytes = std::fs::read_to_string(&index)
+                    .unwrap()
+                    .replace("Preserved", "Corrupted");
+                std::fs::write(&index, bytes).unwrap();
+            }
+            "version" => {
+                let bytes = std::fs::read_to_string(&index).unwrap().replacen(
+                    "version:1",
+                    "version:999",
+                    1,
+                );
+                std::fs::write(&index, bytes).unwrap();
+            }
+            "oversize" => {
+                std::fs::File::create(&index)
+                    .unwrap()
+                    .set_len(8 * 1024 * 1024 + 1)
+                    .unwrap();
+            }
+            "directory" => {
+                std::fs::remove_file(&index).unwrap();
+                std::fs::create_dir(&index).unwrap();
+            }
+            "other-build" => {
+                let other = FileSaveStore::with_sources(
+                    dir.path().into(),
+                    ReplayCompatibility {
+                        build: "different build".into(),
+                        platform: writer.compatibility().platform,
+                    },
+                    Arc::new(|| 0),
+                    Arc::new(|| SaveId::new(format!("{:032x}", 99)).unwrap()),
+                );
+                other.list().unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let (store, reads) = counted_listing_store(dir.path());
+        assert_eq!(store.list().unwrap(), expected, "{damage}");
+        assert_eq!(reads.load(Ordering::Relaxed), 1, "{damage}");
+        assert_eq!(
+            store.read(&saved.metadata.slot).unwrap().0.checkpoint,
+            saved.checkpoint
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+    }
+}
+
+#[test]
+fn unavailable_cards_are_cached_across_restart_but_transient_read_errors_are_retried() {
+    use std::sync::atomic::Ordering;
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join(format!(
+        "{}.mgsave",
+        SaveId::new(format!("{:032x}", 98)).unwrap().as_str()
+    ));
+    std::fs::write(&path, b"damaged save").unwrap();
+    let (store, reads) = counted_listing_store(dir.path());
+    let expected = store.list().unwrap();
+    assert!(expected[0].entry.is_err());
+    assert_eq!(reads.load(Ordering::Relaxed), 1);
+    let (restarted, reads) = counted_listing_store(dir.path());
+    assert_eq!(restarted.list().unwrap(), expected);
+    assert_eq!(reads.load(Ordering::Relaxed), 0);
+    // An external addition still needs a read. A transient failure must not enter the disk index.
+    let writer = FileSaveStore::new(dir.path().into());
+    let saved = bundle(&writer, "Retry after restart");
+    writer
+        .write(&saved, &SaveTarget::Create, &|| false)
+        .unwrap();
+    let failed = FileSaveStore::new(dir.path().into()).with_listing_reader(Arc::new(|_| {
+        Err(SaveError::Io {
+            stage: "test",
+            message: "temporary".into(),
+        })
+    }));
+    assert!(
+        failed
+            .list()
+            .unwrap()
+            .iter()
+            .any(|r| matches!(r.entry, Err(SaveError::Io { .. })))
+    );
+    let (restarted, reads) = counted_listing_store(dir.path());
+    assert!(restarted.list().unwrap().iter().any(|r| r.entry.is_ok()));
+    assert_eq!(reads.load(Ordering::Relaxed), 1);
+}

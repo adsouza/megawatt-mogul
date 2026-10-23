@@ -130,6 +130,15 @@ pub fn plant_parts(kind: PlantKind) -> Vec<Part> {
                 parts.push(block(0.0, 0.35, z, 2.1, 0.18, 0.35, color));
             }
         }
+        PlantKind::Battery => {
+            for x in [-0.72, 0.0, 0.72] {
+                parts.push(block(x, 0.6, 0.0, 0.55, 0.95, 1.25, color));
+                parts.push(block(x, 1.12, 0.0, 0.4, 0.12, 1.0, pale));
+                for z in [-0.4, 0.0, 0.4] {
+                    parts.push(block(x, 0.7, z, 0.57, 0.08, 0.08, dark));
+                }
+            }
+        }
         PlantKind::Hydro => {
             parts.push(block(0.0, 0.7, 0.0, 2.3, 1.2, 0.45, pale));
             for x in [-0.8, 0.0, 0.8] {
@@ -285,6 +294,15 @@ impl WorldModel {
             .into_iter()
             .filter(|c| c.connected)
             .filter_map(|c| Some((c.node, s.city_detail(c.id)?.served_now?.value())))
+            .chain(
+                s.plant_views()
+                    .into_iter()
+                    .filter(|p| p.connected)
+                    .filter_map(|p| {
+                        let charge = p.battery?.flow.charge.value();
+                        (charge > 0.0).then_some((p.node, charge))
+                    }),
+            )
             .collect();
         let flows = if s.phase() == DayPhase::Operating && energized {
             super::flow::route_flows(&line_views, &sources, &sinks)

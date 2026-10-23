@@ -170,7 +170,7 @@ fn opening_menu_controls_remain_clear_and_reachable_at_small_and_large_sizes() {
 proptest::proptest! {
     #![proptest_config(proptest::test_runner::Config::with_cases(16))]
     #[test]
-    fn opening_controls_fit_across_window_sizes_and_ui_zoom(width in 1024.0f32..2560.0, height in 640.0f32..1440.0, zoom in 1.0f32..1.5) {
+    fn opening_controls_fit_across_window_sizes_and_ui_zoom(width in 1280.0f32..2560.0, height in 640.0f32..1440.0, zoom in 1.0f32..1.5) {
         assert_opening_controls_fit(width / zoom, height / zoom);
     }
 }
@@ -900,7 +900,11 @@ fn the_build_menu_orders_the_selected_kind_on_the_selected_cell() {
 
     let widgets = harness.draw(draw);
     let build_buttons = buttons(&widgets, "Build plant");
-    assert_eq!(build_buttons.len(), 6, "one per kind");
+    assert_eq!(
+        build_buttons.len(),
+        domain::region::PlantKind::ALL.len(),
+        "one per kind"
+    );
     let kinds = domain::region::PlantKind::ALL;
     let peaker = kinds
         .iter()
@@ -1392,13 +1396,19 @@ impl PlanningScreen {
     }
 }
 
-/// The smallest window the game allows is 1024×640. At that size the map still has room, the
+/// The smallest window the game allows is 1280×640. At that size the map still has room, the
 /// grid has all 24 hours and the first row's controls on screen, and no panel's widgets sit on
 /// another's or on the map.
 #[test]
 fn at_the_smallest_window_the_map_the_panels_and_the_grid_all_fit_without_overlap() {
     for region in [EASTERN, WESTERN] {
-        let screen = PlanningScreen::new(game_in(region), Harness::with_screen(1024.0, 640.0));
+        let screen = PlanningScreen::new(
+            game_in(region),
+            Harness::with_screen(
+                game::window::MIN_WINDOW_SIZE.x,
+                game::window::MIN_WINDOW_SIZE.y,
+            ),
+        );
         let screen_rect = screen.harness.screen_rect();
 
         let widgets = screen.widgets();
@@ -2160,11 +2170,15 @@ fn select_and_open(app: &mut App, selection: Selection, tab: OperatingTab) {
     );
 }
 
-/// The smallest window the game allows is 1024×640. Drawn by the real systems, every Operating
+/// The smallest window the game allows is 1280×640. Drawn by the real systems, every Operating
 /// control must be on screen and inside its own panel there, clear of the map and of each other,
 /// with no horizontal scroll, and the selected plant's figures must show without scrolling.
 #[test]
 fn at_the_smallest_window_the_operating_controls_fit_without_overlap() {
+    let (width, height) = (
+        game::window::MIN_WINDOW_SIZE.x,
+        game::window::MIN_WINDOW_SIZE.y,
+    );
     for region in [EASTERN, WESTERN] {
         for tab in [OperatingTab::Supply, OperatingTab::Hydro] {
             let logs = TempDir::new().unwrap();
@@ -2176,9 +2190,9 @@ fn at_the_smallest_window_the_operating_controls_fit_without_overlap() {
             );
             select_and_open(&mut app, Selection::Plant(plant.id), tab);
             let screen_rect =
-                egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1024.0, 640.0));
+                egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, height));
 
-            let widgets = pass.settled(&mut app, 1024.0, 640.0);
+            let widgets = pass.settled(&mut app, width, height);
 
             let map = widget(&widgets, "Map").rect;
             let menu = find_button(&widgets, "Menu").rect;
@@ -2191,14 +2205,14 @@ fn at_the_smallest_window_the_operating_controls_fit_without_overlap() {
             let tabs = ["Supply", "Hydro"].map(|l| find_button(&widgets, l).rect);
             let label = format!("{region} {tab:?}");
 
-            let bottom_top = 640.0 - OPERATING_PANEL_HEIGHT;
+            let bottom_top = height - OPERATING_PANEL_HEIGHT;
             let side = egui::Rect::from_min_max(
-                egui::pos2(1024.0 - OPERATING_SIDE_WIDTH, menu.bottom()),
-                egui::pos2(1024.0, bottom_top),
+                egui::pos2(width - OPERATING_SIDE_WIDTH, menu.bottom()),
+                egui::pos2(width, bottom_top),
             );
             let bottom = egui::Rect::from_min_max(
                 egui::pos2(0.0, bottom_top),
-                egui::pos2(1024.0 - OPERATING_LOG_WIDTH, 640.0),
+                egui::pos2(width - OPERATING_LOG_WIDTH, height),
             );
             for (name, rect) in speeds.iter().map(|r| ("speed", r)) {
                 assert!(screen_rect.contains_rect(*rect), "{label}: {name} {rect:?}");
@@ -2278,7 +2292,7 @@ fn at_the_smallest_window_the_operating_controls_fit_without_overlap() {
             // No horizontal scroll: nothing reaches past the window's right edge.
             for w in &widgets {
                 assert!(
-                    w.rect.right() <= 1024.5,
+                    w.rect.right() <= width + 0.5,
                     "{label}: {:?} {:?} runs off the right edge",
                     w.text,
                     w.rect

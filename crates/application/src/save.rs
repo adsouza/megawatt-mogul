@@ -24,7 +24,7 @@ impl SaveId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SaveRevision(pub [u8; 32]);
 /// The simulation build and target platform that wrote a save. Diagnostics only: loading accepts
-/// a save from any build or platform whose replay verifies (`SaveBundle::restore`).
+/// a save from any build or platform whose state verifies (`SaveBundle::restore`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplayCompatibility {
     pub build: String,
@@ -66,8 +66,8 @@ pub struct SaveBundle {
     pub checkpoint: GameCheckpoint,
 }
 impl SaveBundle {
-    /// Replays and verifies this save on the `running` build, as [`Game::restore`] does, whichever
-    /// build recorded it. A replay that doesn't reproduce the recorded boundary returns no game.
+    /// Restores and verifies this save on the `running` build, as [`Game::restore`] does, whichever
+    /// build recorded it. Portable state bypasses historical replay. A mismatched boundary returns no game.
     /// If the save came from another build or platform, that failure is
     /// [`SaveError::OtherVersionDiverged`], so the player learns why; other failures keep their
     /// own cause.
@@ -105,6 +105,7 @@ pub struct SaveListing {
     pub modified_at: u64,
     /// Digest of the listed bytes, retained even when a safely identified file cannot decode.
     pub revision: Option<SaveRevision>,
+    /// Card metadata only; a readable card does not guarantee that the full game can restore.
     pub entry: Result<SaveEntry, SaveError>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -182,8 +183,23 @@ pub trait SaveStore: Send + Sync {
     fn compatibility(&self) -> ReplayCompatibility;
     fn allocate_id(&self) -> SaveId;
     fn now(&self) -> u64;
+    /// Lightweight metadata hints, possibly cached. Selected reads/restores validate fresh bytes.
     fn list(&self) -> Result<Vec<SaveListing>, SaveError>;
     fn read(&self, id: &SaveId) -> Result<(SaveBundle, crate::LoadedRegion), SaveError>;
+    fn read_cancellable(
+        &self,
+        id: &SaveId,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<(SaveBundle, crate::LoadedRegion), SaveError> {
+        if cancelled() {
+            return Err(SaveError::Cancelled);
+        }
+        let result = self.read(id);
+        if cancelled() {
+            return Err(SaveError::Cancelled);
+        }
+        result
+    }
     /// Re-check a preloaded source before publishing it. File stores can hash the bytes without
     /// decoding or replaying; other adapters may use their normal listing revision.
     fn revision(&self, id: &SaveId) -> Result<SaveRevision, SaveError> {

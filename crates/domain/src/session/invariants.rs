@@ -37,7 +37,7 @@ impl GameSession {
     /// that every online dispatchable plant's output lies within
     /// `[min_output, capacity]` (hydro may fall to zero, since its reservoir
     /// caps output below minimum); that the last tick summary satisfies
-    /// `generation = Σ by_plant = Σ by_kind = served + imbalance`,
+    /// `generation = Σ by_plant = Σ by_kind = served + battery_charge + imbalance`,
     /// `served + unserved = demand`, `0 ≤ served ≤ demand`,
     /// `demand × outage ≤ unserved` (within `1e-6 × demand`) and
     /// `curtailed ≥ 0`; and that its `by_plant` is exactly the connected,
@@ -54,6 +54,19 @@ impl GameSession {
             });
         }
         for plant in self.power.plants().values() {
+            if let (Some(spec), Some(b)) = (plant.spec().battery, plant.battery()) {
+                let f = b.flow();
+                if b.stored().value() < -TOLERANCE
+                    || b.stored().value() > spec.energy_capacity.value() + TOLERANCE
+                    || f.charge.value() < 0.0
+                    || f.charge > spec.charge_power
+                    || f.discharge.value() < 0.0
+                    || f.discharge > plant.spec().capacity
+                    || (f.charge > Megawatts::ZERO && f.discharge > Megawatts::ZERO)
+                {
+                    return Err(InvariantViolation::PlantOutOfBounds { plant: plant.id() });
+                }
+            }
             let PlantStatus::Online { output, .. } = plant.status() else {
                 continue;
             };
@@ -106,6 +119,8 @@ impl GameSession {
             && live.iter().all(|p| {
                 s.by_plant.get(&p.id()).is_some_and(|&reported| {
                     reported == p.output()
+                        || (p.battery().is_some_and(|b| b.flow_overridden())
+                            && p.output() == Megawatts::ZERO)
                         || (reported == Megawatts::ZERO && p.spec().startup.ticks() == 0)
                 })
             })
@@ -129,12 +144,34 @@ fn conserves(s: &TickSummary) -> bool {
     let by_kind: Megawatts = s.by_kind.values().copied().sum();
     near(s.generation, by_plant)
         && near(s.generation, by_kind)
-        && near(s.generation, s.served + s.imbalance)
+        && near(s.generation, s.served + s.battery_charge + s.imbalance)
         && near(s.served + s.unserved, s.demand)
         && planned_is_within_unserved(s)
         && at_least(s.served, Megawatts::ZERO)
         && at_least(s.demand, s.served)
         && at_least(s.curtailed, Megawatts::ZERO)
+        && at_least(s.battery_charge, Megawatts::ZERO)
+        && near(
+            s.battery_charge,
+            s.batteries.values().map(|f| f.charge).sum(),
+        )
+        && near(
+            s.battery_discharge,
+            s.batteries.values().map(|f| f.discharge).sum(),
+        )
+        && s.batteries.iter().all(|(id, f)| {
+            let expected = f.opening.value() + f.charge.value() / 60.0
+                - f.charge_loss.value()
+                - f.discharge.value() / 60.0
+                - f.discharge_loss.value();
+            (expected - f.stored.value()).abs() <= TOLERANCE
+                && f.stored.value() >= 0.0
+                && (f.charge == Megawatts::ZERO || f.discharge == Megawatts::ZERO)
+                && near(
+                    s.by_plant.get(id).copied().unwrap_or(Megawatts::ZERO),
+                    f.discharge,
+                )
+        })
 }
 
 #[cfg(test)]
@@ -291,6 +328,9 @@ mod tests {
             served: Megawatts::new(served),
             unserved: Megawatts::new(demand - served),
             generation: Megawatts::new(generation),
+            battery_charge: Megawatts::ZERO,
+            battery_discharge: Megawatts::ZERO,
+            batteries: Default::default(),
             curtailed: Megawatts::ZERO,
             imbalance: Megawatts::new(imbalance),
             by_kind: BTreeMap::from([(PlantKind::Coal, Megawatts::new(by_plant.iter().sum()))]),

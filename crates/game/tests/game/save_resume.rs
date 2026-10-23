@@ -60,6 +60,19 @@ fn save_resume_mid_day_restores_a_paused_runnable_game_with_all_projections() {
             .metadata
             .slot
             .clone();
+        let saved_directory = saves.path().join(format!("{}.mgsave", slot.as_str()));
+        assert!(
+            saved_directory.is_dir(),
+            "production Save writes a directory snapshot"
+        );
+        assert!(saved_directory.join("snapshot.ron.z").is_file());
+        assert!(
+            std::fs::read_dir(&saved_directory).unwrap().any(|e| e
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".bin.z"))
+        );
         let mut uninterrupted = app.world_mut().remove_resource::<Session>().unwrap().0;
         drop(app);
         let mut app = hud_app(logs.path());
@@ -2733,4 +2746,266 @@ fn save_delete_retries_storage_failures_and_deletes_an_unreadable_snapshot() {
         );
         assert!(!app.world().contains_resource::<Session>());
     }
+}
+
+#[test]
+fn monthly_autosave_stays_in_background_and_serializes_later_boundaries() {
+    use application::SaveStore;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    struct Release(Arc<AtomicBool>);
+    impl Drop for Release {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+    let logs = TempDir::new().unwrap();
+    let saves = TempDir::new().unwrap();
+    let entered = Arc::new(AtomicBool::new(false));
+    let released = Arc::new(AtomicBool::new(false));
+    let _release = Release(released.clone());
+    let flag = entered.clone();
+    let gate = released.clone();
+    let store = Arc::new(
+        infrastructure::save::FileSaveStore::new(saves.path().into()).with_fault(Arc::new(
+            move |stage| {
+                if stage == infrastructure::save::PublishStage::PartialWrite {
+                    flag.store(true, Ordering::Release);
+                    while !gate.load(Ordering::Acquire) {
+                        std::thread::park_timeout(std::time::Duration::from_millis(1));
+                    }
+                }
+                Ok(())
+            },
+        )),
+    );
+    let mut app = hud_app(logs.path());
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+        std::time::Duration::ZERO,
+    ))
+    .insert_resource(Persistence::with_store(store.clone()));
+    request(&mut app, "western_interconnection");
+    dispatch_in(
+        &mut app,
+        vec![
+            UiAction::Command(Command::BeginOperating),
+            UiAction::Command(Command::AdvanceTicks { n: 1440 }),
+        ],
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !entered.load(Ordering::Acquire) {
+        app.update();
+        assert!(std::time::Instant::now() < deadline);
+    }
+    assert_eq!(
+        app.world().resource::<Persistence>().screen,
+        game::sim::SaveScreen::Closed
+    );
+    assert!(!app.world().resource::<Persistence>().frozen());
+    update_n(&mut app, 3);
+    let pass = crate::support::egui_pass::EguiPass::attach(&mut app);
+    let widgets = pass.settled(&mut app, 1280.0, 640.0);
+    let retrospective =
+        crate::support::egui_harness::button(&widgets, "Supply demand retrospective");
+    pass.click_at(&mut app, 1280.0, 640.0, retrospective.rect.center());
+    let widgets = pass.settled(&mut app, 1280.0, 640.0);
+    assert!(widgets.iter().any(|w| w.text == "Review summary"));
+    dispatch_in(
+        &mut app,
+        vec![
+            UiAction::Command(Command::FinishReview),
+            UiAction::Command(Command::BeginOperating),
+            UiAction::Command(Command::AdvanceTicks { n: 1440 }),
+        ],
+    );
+    update_n(&mut app, 3);
+    let latest = app.world().resource::<Session>().0.checkpoint();
+    assert_eq!(latest.summary.month.month(), 2);
+    dispatch_in(
+        &mut app,
+        vec![
+            UiAction::Command(Command::FinishReview),
+            UiAction::Command(Command::BeginOperating),
+        ],
+    );
+    update_n(&mut app, 3);
+    dispatch_in(&mut app, vec![UiAction::SetSpeed(SimSpeed::X4)]);
+    released.store(true, Ordering::Release);
+    settle(&mut app);
+    assert_eq!(
+        *app.world().resource::<SimSpeed>(),
+        SimSpeed::X4,
+        "late autosave completion must not pause the next day"
+    );
+    let rows = store.list().unwrap();
+    assert_eq!(rows.len(), 1);
+    let (saved, _) = store.read(rows[0].id.as_ref().unwrap()).unwrap();
+    assert_eq!(
+        saved.checkpoint, latest,
+        "latest month-close snapshot wins; later live commands stay out"
+    );
+    assert_eq!(
+        app.world()
+            .resource::<Session>()
+            .0
+            .session()
+            .clock()
+            .month()
+            .month(),
+        3
+    );
+}
+
+struct DelayedAutosave {
+    entered: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    released: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+impl Drop for DelayedAutosave {
+    fn drop(&mut self) {
+        self.released
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+}
+fn delayed_autosave(
+    fail_once: bool,
+) -> (
+    App,
+    TempDir,
+    TempDir,
+    std::sync::Arc<infrastructure::save::FileSaveStore>,
+    DelayedAutosave,
+) {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let logs = TempDir::new().unwrap();
+    let saves = TempDir::new().unwrap();
+    let gate = DelayedAutosave {
+        entered: Arc::new(AtomicBool::new(false)),
+        released: Arc::new(AtomicBool::new(false)),
+    };
+    let entered = gate.entered.clone();
+    let released = gate.released.clone();
+    let fail = AtomicBool::new(fail_once);
+    let store = Arc::new(
+        infrastructure::save::FileSaveStore::new(saves.path().into()).with_fault(Arc::new(
+            move |stage| {
+                if stage == infrastructure::save::PublishStage::PartialWrite {
+                    entered.store(true, Ordering::Release);
+                    while !released.load(Ordering::Acquire) {
+                        std::thread::park_timeout(std::time::Duration::from_millis(1));
+                    }
+                    if fail.swap(false, Ordering::Relaxed) {
+                        return Err(application::SaveError::Io {
+                            stage: "test",
+                            message: "full".into(),
+                        });
+                    }
+                }
+                Ok(())
+            },
+        )),
+    );
+    let mut app = hud_app(logs.path());
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+        std::time::Duration::ZERO,
+    ))
+    .insert_resource(Persistence::with_store(store.clone()));
+    request(&mut app, "western_interconnection");
+    dispatch_in(
+        &mut app,
+        vec![
+            UiAction::Command(Command::BeginOperating),
+            UiAction::Command(Command::AdvanceTicks { n: 1440 }),
+        ],
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !gate.entered.load(Ordering::Acquire) {
+        app.update();
+        assert!(std::time::Instant::now() < deadline);
+    }
+    (app, logs, saves, store, gate)
+}
+#[test]
+fn queued_background_autosaves_can_retry_a_failure_without_losing_the_newer_boundary() {
+    use application::SaveStore;
+    use std::sync::atomic::Ordering;
+    let (mut app, _logs, _saves, store, gate) = delayed_autosave(true);
+    dispatch_in(
+        &mut app,
+        vec![
+            UiAction::Command(Command::FinishReview),
+            UiAction::Command(Command::BeginOperating),
+            UiAction::Command(Command::AdvanceTicks { n: 1440 }),
+        ],
+    );
+    update_n(&mut app, 3);
+    let latest = app.world().resource::<Session>().0.checkpoint();
+    assert_eq!(latest.summary.month.month(), 2);
+    gate.released.store(true, Ordering::Release);
+    settle(&mut app);
+    let p = app.world().resource::<Persistence>();
+    assert!(p.automatic_error());
+    assert!(!p.busy());
+    assert_eq!(p.autosave_failure().unwrap().month.month(), 1);
+    action(&mut app, PersistAction::Retry);
+    settle(&mut app);
+    let p = app.world().resource::<Persistence>();
+    assert!(p.error.is_none());
+    assert!(p.autosave_failure().is_none());
+    assert_eq!(p.screen, game::sim::SaveScreen::Closed);
+    let rows = store.list().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        store
+            .read(rows[0].id.as_ref().unwrap())
+            .unwrap()
+            .0
+            .checkpoint,
+        latest
+    );
+}
+#[test]
+fn cancelling_a_manual_dialog_does_not_cancel_the_background_month_close_save() {
+    use application::SaveStore;
+    use std::sync::atomic::Ordering;
+    let (mut app, _logs, _saves, store, gate) = delayed_autosave(false);
+    let closed = app.world().resource::<Session>().0.checkpoint();
+    dispatch_in(
+        &mut app,
+        vec![
+            UiAction::Command(Command::FinishReview),
+            UiAction::Command(Command::BeginOperating),
+            UiAction::Command(Command::AdvanceTicks { n: 20 }),
+        ],
+    );
+    update_n(&mut app, 3);
+    let live = app.world().resource::<Session>().0.checkpoint();
+    action(&mut app, PersistAction::OpenSave { leave: false });
+    update_n(&mut app, 2);
+    assert_eq!(
+        app.world().resource::<Persistence>().screen,
+        game::sim::SaveScreen::Save
+    );
+    action(&mut app, PersistAction::Cancel);
+    assert_eq!(
+        app.world().resource::<Persistence>().screen,
+        game::sim::SaveScreen::Closed
+    );
+    gate.released.store(true, Ordering::Release);
+    settle(&mut app);
+    assert_eq!(app.world().resource::<Session>().0.checkpoint(), live);
+    let rows = store.list().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        store
+            .read(rows[0].id.as_ref().unwrap())
+            .unwrap()
+            .0
+            .checkpoint,
+        closed
+    );
 }

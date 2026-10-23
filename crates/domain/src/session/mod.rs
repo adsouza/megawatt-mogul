@@ -8,6 +8,8 @@
 //! that the phase allows it, and validates fully before mutating anything, so
 //! a command that returns `Err` leaves [`GameSession::state_hash`] unchanged.
 
+#[cfg(test)]
+mod battery_tests;
 mod commands;
 mod invariants;
 mod month_close;
@@ -23,8 +25,8 @@ pub use invariants::InvariantViolation;
 pub use report::{Incident, IncidentKind, MeritOrderEntry, MonthAccumulator, MonthlyReport};
 pub use settings::{GameSettings, SimulationFidelity};
 pub use views::{
-    CapacityShortfallWarning, CityDetail, CityView, CompanyView, GridSnapshot, LineView,
-    MinimumGenerationWarning, PlantView, RateReviewEstimate,
+    BatteryView, CapacityShortfallWarning, CityDetail, CityView, CompanyView, GridSnapshot,
+    LineView, MinimumGenerationWarning, PlantView, RateReviewEstimate,
 };
 
 use std::collections::{BTreeMap, VecDeque};
@@ -451,4 +453,211 @@ fn whole_cells(length: f64) -> u32 {
 /// Capital cost of a line spanning `cells` whole cells.
 fn line_cost(params: &LineParams, cells: u32) -> Money {
     params.cost_per_cell * i64::from(cells)
+}
+
+impl GameSession {
+    pub fn snapshot_state(&self) -> Vec<u8> {
+        use crate::state::State;
+        let mut out = Vec::new();
+        1u32.write(&mut out);
+        self.settings.write(&mut out);
+        self.clock.write(&mut out);
+        self.phase.write(&mut out);
+        self.status.write(&mut out);
+        self.rng.write(&mut out);
+        self.ids.write(&mut out);
+        self.anchor.write(&mut out);
+        self.power.write(&mut out);
+        self.company.write(&mut out);
+        self.regulator.write(&mut out);
+        self.instalments.write(&mut out);
+        self.month_to_date.write(&mut out);
+        self.year_depreciation.write(&mut out);
+        self.day_ticks.write(&mut out);
+        out
+    }
+    pub fn from_snapshot_state(
+        bytes: &[u8],
+        region: Arc<RegionDefinition>,
+    ) -> Result<Self, crate::state::StateError> {
+        use crate::state::{State, StateError, StateReader};
+        let mut input = StateReader::new(bytes);
+        if u32::read(&mut input)? != 1 {
+            return Err(StateError::Version);
+        }
+        let session = Self {
+            region,
+            settings: State::read(&mut input)?,
+            clock: State::read(&mut input)?,
+            phase: State::read(&mut input)?,
+            status: State::read(&mut input)?,
+            rng: State::read(&mut input)?,
+            ids: State::read(&mut input)?,
+            anchor: State::read(&mut input)?,
+            power: State::read(&mut input)?,
+            company: State::read(&mut input)?,
+            regulator: State::read(&mut input)?,
+            instalments: State::read(&mut input)?,
+            month_to_date: State::read(&mut input)?,
+            year_depreciation: State::read(&mut input)?,
+            day_ticks: State::read(&mut input)?,
+        };
+        input.finish()?;
+        session.validate_snapshot()?;
+        session
+            .check_invariants()
+            .map_err(|_| StateError::Invalid)?;
+        Ok(session)
+    }
+}
+
+impl crate::state::State for DayPhase {
+    fn write(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::Planning => {
+                crate::state::State::write(&0u8, out);
+            }
+            Self::Operating => {
+                crate::state::State::write(&1u8, out);
+            }
+            Self::Review => {
+                crate::state::State::write(&2u8, out);
+            }
+        }
+    }
+    fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
+        Ok(match <u8 as crate::state::State>::read(input)? {
+            0 => Self::Planning,
+            1 => Self::Operating,
+            2 => Self::Review,
+            _ => return Err(crate::state::StateError::Invalid),
+        })
+    }
+}
+
+impl crate::state::State for SessionStatus {
+    fn write(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::Active => {
+                crate::state::State::write(&0u8, out);
+            }
+            Self::GameOver(v0) => {
+                crate::state::State::write(&1u8, out);
+                crate::state::State::write(v0, out);
+            }
+        }
+    }
+    fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
+        Ok(match <u8 as crate::state::State>::read(input)? {
+            0 => Self::Active,
+            1 => Self::GameOver(crate::state::State::read(input)?),
+            _ => return Err(crate::state::StateError::Invalid),
+        })
+    }
+}
+
+impl crate::state::State for GameOverReason {
+    fn write(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::Bankrupt => {
+                crate::state::State::write(&0u8, out);
+            }
+            Self::LicenseRevoked => {
+                crate::state::State::write(&1u8, out);
+            }
+        }
+    }
+    fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
+        Ok(match <u8 as crate::state::State>::read(input)? {
+            0 => Self::Bankrupt,
+            1 => Self::LicenseRevoked,
+            _ => return Err(crate::state::StateError::Invalid),
+        })
+    }
+}
+
+impl GameSession {
+    fn validate_snapshot(&self) -> Result<(), crate::state::StateError> {
+        use crate::state::StateError;
+        match self.phase {
+            DayPhase::Planning if self.clock.tick() != 0 => return Err(StateError::Invalid),
+            DayPhase::Operating if self.clock.tick() >= crate::time::TICKS_PER_DAY => {
+                return Err(StateError::Invalid);
+            }
+            DayPhase::Review if self.clock.tick() != crate::time::TICKS_PER_DAY => {
+                return Err(StateError::Invalid);
+            }
+            _ => {}
+        }
+        if self
+            .power
+            .cities()
+            .get(&self.region.start().home_city)
+            .is_none_or(|c| c.node() != self.anchor)
+        {
+            return Err(StateError::Invalid);
+        }
+        if !self.power.network().valid_snapshot(self.anchor) {
+            return Err(StateError::Invalid);
+        }
+        let ledger = self
+            .company
+            .ledger()
+            .iter()
+            .try_fold(0i64, |sum, e| sum.checked_add(e.amount.cents()))
+            .ok_or(StateError::Invalid)?;
+        let delta = self
+            .company
+            .cash()
+            .cents()
+            .checked_sub(self.company.starting_cash().cents())
+            .ok_or(StateError::Invalid)?;
+        if ledger != delta {
+            return Err(StateError::Invalid);
+        }
+        let mut max_id = 0;
+        for (id, node) in self.power.network().nodes() {
+            max_id = max_id.max(id.0);
+            match node.kind {
+                NodeKind::Plant(plant) => {
+                    let p = self.power.plant(plant).ok_or(StateError::Invalid)?;
+                    if p.node() != id || p.cell() != node.cell {
+                        return Err(StateError::Invalid);
+                    }
+                }
+                NodeKind::City(city) => {
+                    let c = self.power.cities().get(&city).ok_or(StateError::Invalid)?;
+                    if c.node() != id || c.def().cell != node.cell {
+                        return Err(StateError::Invalid);
+                    }
+                }
+            }
+        }
+        for line in self.power.network().lines() {
+            max_id = max_id.max(line.id.0);
+        }
+        for (id, plant) in self.power.plants() {
+            max_id = max_id.max(id.0);
+            if *id != plant.id() || plant.spec() != self.region.spec(plant.kind()) {
+                return Err(StateError::Invalid);
+            }
+        }
+        if self.ids.next_value() <= max_id || self.ids.next_value() == u32::MAX {
+            return Err(StateError::Invalid);
+        }
+        if self.power.cities().len() != self.region.cities().len() {
+            return Err(StateError::Invalid);
+        }
+        for def in self.region.cities() {
+            if self
+                .power
+                .cities()
+                .get(&def.id)
+                .is_none_or(|c| c.def() != def)
+            {
+                return Err(StateError::Invalid);
+            }
+        }
+        Ok(())
+    }
 }

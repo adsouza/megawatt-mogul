@@ -116,9 +116,10 @@ pub fn planning_model(
             PlanningTab::Construction => {
                 PlanningContent::Construction(construction_model(game, l10n))
             }
-            PlanningTab::History => {
-                PlanningContent::History(supply_history_model(game, ui.supply_month, l10n))
-            }
+            PlanningTab::History => PlanningContent::History(
+                supply_history_model(game, ui.supply_month, l10n)
+                    .with_layout(ui.supply_chart_layout),
+            ),
         },
     })
 }

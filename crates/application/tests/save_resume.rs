@@ -299,7 +299,7 @@ fn a_checkpoint_whose_replay_diverges_fails_verification_and_installs_nothing() 
             (0, RestoreError::CommandCountMismatch)
                 | (1, RestoreError::StateHashMismatch)
                 | (2, RestoreError::SummaryMismatch)
-                | (3, RestoreError::ReplayCommandFailed { index: 0, .. })
+                | (3, RestoreError::CommandCountMismatch)
         ));
         for (recorded, error) in [
             (running(), SaveError::Restore(expected.clone())),
@@ -480,6 +480,9 @@ fn save_resume_historical_errors_are_indexed_and_branch_log_failure_returns_no_g
     let (mut game, _) = game_on(tiny_region_parts(), 3);
     game.execute(Command::BeginOperating).unwrap();
     let mut checkpoint = game.checkpoint();
+    // The version-1 command-only path still reports the precise failing historical command.
+    checkpoint.snapshot = None;
+    checkpoint.state_hash = game.session().state_hash();
     checkpoint.commands.push(Command::FinishReview);
     checkpoint.command_count += 1;
     assert!(matches!(
@@ -555,4 +558,171 @@ fn a_preloaded_game_attaches_a_new_recording_without_replaying_or_losing_project
         restore(&game).with_recording(Box::new(FailingSink { accepted: 2 }), &|| false),
         Err(RestoreError::Log(_))
     ));
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(8))]
+    #[test]
+    fn battery_checkpoint_replays_charged_disabled_and_evening_states(seed in 0u64..32, cutoff in 600u32..1300) {
+        use domain::region::{PlantKind,StartPlantDef};
+        use domain::ids::CellCoord;
+        let mut parts=tiny_region_parts();
+        parts.start.fleet.push(StartPlantDef{kind:PlantKind::Battery,cell:CellCoord{x:5,y:1}});
+        if seed % 2 == 0 { parts.start.fleet.push(StartPlantDef{kind:PlantKind::Battery,cell:CellCoord{x:5,y:2}}); }
+        let loaded=support::loaded_region(parts.clone());
+        let (mut live,_)=game_on(parts,seed);
+        let id=live.session().plant_views().iter().find(|p|p.kind==PlantKind::Battery).unwrap().id;
+        live.execute(Command::BeginOperating).unwrap();
+        live.execute(Command::AdvanceTicks{n:cutoff}).unwrap();
+        let mut resumed=Game::restore(loaded.clone(),live.checkpoint(),Box::new(InMemoryCommandLog::default()),&||false).unwrap();
+        same(&live,&resumed);
+        for on in [false,true,false,true] {
+            let command=Command::SetBatteryEnabled{plant:id,on};
+            live.execute(command.clone()).unwrap();resumed.execute(command).unwrap();
+            same(&live,&resumed);
+        }
+        live.execute(Command::SetBatteryEnabled{plant:id,on:false}).unwrap();
+        resumed=Game::restore(loaded.clone(),live.checkpoint(),Box::new(InMemoryCommandLog::default()),&||false).unwrap();
+        same(&live,&resumed);
+        for command in [Command::SetBatteryEnabled{plant:id,on:true},Command::AdvanceTicks{n:TICKS_PER_DAY-cutoff}] {
+            live.execute(command.clone()).unwrap();resumed.execute(command).unwrap();
+        }
+        same(&live,&resumed);
+        let report=live.projections().monthly_reports.latest().unwrap();
+        prop_assert!(report.storage[&id].input.value()>0.0);
+        prop_assert_eq!(live.session().plant_views().iter().find(|p|p.id==id).unwrap().battery.as_ref().unwrap().stored,domain::units::MegawattHours::ZERO);
+        prop_assert_eq!(live.projections().timeline.completed_days()[0].points.len(),1440);
+        resumed=Game::restore(loaded,live.checkpoint(),Box::new(InMemoryCommandLog::default()),&||false).unwrap();
+        same(&live,&resumed);
+    }
+}
+
+#[test]
+fn storage_flow_report_and_inventory_are_independent_of_tick_batching() {
+    use domain::ids::CellCoord;
+    use domain::region::{PlantKind, StartPlantDef};
+    let mut parts = tiny_region_parts();
+    parts.start.fleet.push(StartPlantDef {
+        kind: PlantKind::Battery,
+        cell: CellCoord { x: 5, y: 1 },
+    });
+    let (mut one, _) = game_on(parts.clone(), 7);
+    let (mut batches, _) = game_on(parts, 7);
+    one.execute(Command::BeginOperating).unwrap();
+    batches.execute(Command::BeginOperating).unwrap();
+    one.execute(Command::AdvanceTicks { n: 1440 }).unwrap();
+    for n in [1, 31, 32, 128, 512, 736] {
+        batches.execute(Command::AdvanceTicks { n }).unwrap();
+    }
+    assert_eq!(one.session().state_hash(), batches.session().state_hash());
+    assert_eq!(one.projections().timeline, batches.projections().timeline);
+    assert_eq!(
+        one.projections().monthly_reports,
+        batches.projections().monthly_reports
+    );
+    assert_eq!(
+        one.projections().plant_history,
+        batches.projections().plant_history
+    );
+}
+
+#[test]
+fn portable_snapshots_allow_rule_upgrades_and_cover_history_without_debug_hashes() {
+    assert!(application::PortableState::rules_compatible(8, 9));
+    assert!(application::PortableState::rules_compatible(8, 10));
+    assert!(!application::PortableState::rules_compatible(9, 8));
+    let (mut game, _) = game_on(tiny_region_parts(), 3);
+    game.execute(Command::BeginOperating).unwrap();
+    game.execute(Command::AdvanceTicks { n: 120 }).unwrap();
+    let checkpoint = game.checkpoint();
+    assert_eq!(
+        checkpoint.state_hash,
+        checkpoint.snapshot.as_ref().unwrap().state_hash()
+    );
+    let mut bad = checkpoint.clone();
+    bad.snapshot.as_mut().unwrap().projections[0] ^= 1;
+    assert!(matches!(
+        Game::restore(
+            tiny_loaded_region(),
+            bad,
+            Box::new(InMemoryCommandLog::default()),
+            &|| false
+        ),
+        Err(RestoreError::StateHashMismatch)
+    ));
+    // The old rules-8 command-only checkpoint remains supported too.
+    let mut legacy = checkpoint;
+    legacy.snapshot = None;
+    legacy.state_hash = game.session().state_hash();
+    let restored = Game::restore(
+        tiny_loaded_region(),
+        legacy,
+        Box::new(InMemoryCommandLog::default()),
+        &|| false,
+    )
+    .unwrap();
+    assert_eq!(restored.session().state_hash(), game.session().state_hash());
+    assert_eq!(restored.projections(), game.projections());
+}
+
+#[test]
+fn pending_recording_owns_the_frozen_boundary_until_activation() {
+    let (mut game, _) = game_on(tiny_region_parts(), 17);
+    game.execute(Command::BeginOperating).unwrap();
+    game.execute(Command::AdvanceTicks { n: 12 }).unwrap();
+    let expected = game.checkpoint();
+    let pending = game.prepare_recording();
+    assert_eq!(pending.checkpoint(), &expected);
+    let game = pending
+        .activate(Box::new(InMemoryCommandLog::default()), &|| false)
+        .unwrap();
+    assert_eq!(game.checkpoint(), expected);
+    assert!(matches!(
+        game.prepare_recording()
+            .activate(Box::new(InMemoryCommandLog::default()), &|| true),
+        Err(RestoreError::Cancelled)
+    ));
+}
+
+#[test]
+fn monthly_chart_archive_reconstructs_exact_projection_bytes_across_phase_boundaries() {
+    use domain::state::State;
+    let (mut game, _) = game_on(tiny_region_parts(), 17);
+    for command in [
+        Command::BeginOperating,
+        Command::AdvanceTicks { n: 60 },
+        Command::AdvanceTicks { n: 1440 },
+        Command::FinishReview,
+        Command::BeginOperating,
+        Command::AdvanceTicks { n: 20 },
+    ] {
+        game.execute(command).unwrap();
+        let original = game.projections().clone();
+        let (rest, charts) = original
+            .clone()
+            .split_charts(game.session().clock().month())
+            .unwrap();
+        assert!(rest.timeline.completed_days().is_empty());
+        assert_eq!(rest.timeline.points().count(), 0);
+        let restored = rest.restore_charts(charts).unwrap();
+        assert_eq!(restored.state_bytes(), original.state_bytes());
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(12))]
+    #[test]
+    fn monthly_chart_split_is_lossless_at_arbitrary_boundaries(ns in prop::collection::vec(0u32..1441,0..8),seed in 0u64..20) {
+        use domain::state::State;
+        let (mut game,_) = game_on(tiny_region_parts(),seed);
+        for n in ns {
+            if game.session().status()!=domain::session::SessionStatus::Active{break;}
+            if game.session().phase()==DayPhase::Review{game.execute(Command::FinishReview).unwrap();}
+            if game.session().phase()==DayPhase::Planning{game.execute(Command::BeginOperating).unwrap();}
+            game.execute(Command::AdvanceTicks{n}).unwrap();
+            let original=game.projections().clone();
+            let (rest,charts)=original.clone().split_charts(game.session().clock().month()).unwrap();
+            prop_assert_eq!(rest.restore_charts(charts).unwrap().state_bytes(),original.state_bytes());
+        }
+    }
 }

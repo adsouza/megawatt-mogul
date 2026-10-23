@@ -16,6 +16,15 @@ pub struct SupplyHistoryModel {
     pub chart: Option<Box<SupplyModel>>,
 }
 
+impl SupplyHistoryModel {
+    pub fn with_layout(mut self, layout: super::SupplyChartLayout) -> Self {
+        if let Some(chart) = &mut self.chart {
+            chart.layout = layout;
+        }
+        self
+    }
+}
+
 pub fn supply_history_model(
     game: &Game,
     selected: Option<SimMonth>,

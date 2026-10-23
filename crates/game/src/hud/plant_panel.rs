@@ -78,6 +78,8 @@ pub struct SelectedPlant {
     pub status: String,
     pub agc: ToggleModel,
     pub agc_tip: String,
+    pub storage_toggle: Option<ToggleModel>,
+    pub storage_hint: Option<String>,
     pub start: ButtonModel,
     pub stop: ButtonModel,
     pub slider: TargetSlider,
@@ -90,6 +92,8 @@ pub struct SelectedPlant {
 /// Read-only Planning details for a commissioned plant.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlantCardModel {
+    pub storage_toggle: Option<ToggleModel>,
+    pub storage_hint: Option<String>,
     pub plant: PlantId,
     pub name: String,
     pub status: String,
@@ -146,17 +150,42 @@ pub fn plant_card_model(game: &Game, l10n: &Localizer, id: PlantId) -> Option<Pl
     {
         stats.push(stat("map-solar-scale", format::percent(cell.irradiance)));
     }
+    if let Some(b) = &plant.battery {
+        stats = battery_stats(l10n, b, plant.connected, spec.capacity);
+        stats.push(stat(
+            "plant-fixed-om",
+            format::money(spec.fixed_om_per_month),
+        ));
+    }
     Some(PlantCardModel {
+        storage_toggle: plant
+            .battery
+            .as_ref()
+            .map(|b| battery_toggle(l10n, id, b.enabled)),
+        storage_hint: plant
+            .battery
+            .as_ref()
+            .map(|_| l10n.text("battery-grid-charging-hint")),
         plant: id,
         name: Names::new(l10n, session).plant(id),
-        status: plant.status.localize(l10n),
+        status: plant
+            .battery
+            .as_ref()
+            .map_or_else(|| plant.status.localize(l10n), |b| b.mode.localize(l10n)),
         stats,
     })
 }
 
-pub fn draw_plant_card(ui: &mut egui::Ui, model: &PlantCardModel) {
+pub fn draw_plant_card(ui: &mut egui::Ui, model: &PlantCardModel) -> Vec<UiAction> {
+    let mut actions = Vec::new();
     ui.heading(&model.name);
     ui.weak(&model.status);
+    if let Some(toggle) = &model.storage_toggle {
+        toggle_button(ui, toggle, &mut actions);
+    }
+    if let Some(hint) = &model.storage_hint {
+        ui.label(hint);
+    }
     egui::Grid::new("plant_card_stats")
         .num_columns(2)
         .spacing(egui::vec2(8.0, 1.0))
@@ -168,6 +197,7 @@ pub fn draw_plant_card(ui: &mut egui::Ui, model: &PlantCardModel) {
                 ui.end_row();
             }
         });
+    actions
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -246,7 +276,10 @@ pub fn plant_list_model(game: &Game, l10n: &Localizer, selection: Selection) -> 
                     ),
                     on: selection == Selection::Plant(plant.id),
                 },
-                status: plant.status.localize(l10n),
+                status: plant
+                    .battery
+                    .as_ref()
+                    .map_or_else(|| plant.status.localize(l10n), |b| b.mode.localize(l10n)),
                 output: format::megawatts(plant.output),
                 agc: plant.auto_follow.then(|| agc.clone()),
             })
@@ -331,10 +364,24 @@ pub fn plant_panel_model(game: &Game, l10n: &Localizer, selection: Selection) ->
     if let Some(water) = plant.hydro_budget {
         stats.push(stat("plant-hydro-budget", format::megawatt_hours(water)));
     }
+    if let Some(b) = &plant.battery {
+        stats = battery_stats(l10n, b, plant.connected, spec.capacity);
+    }
     PlantPanelModel::Plant(Box::new(SelectedPlant {
+        storage_toggle: plant
+            .battery
+            .as_ref()
+            .map(|b| battery_toggle(l10n, plant.id, b.enabled)),
+        storage_hint: plant
+            .battery
+            .as_ref()
+            .map(|_| l10n.text("battery-grid-charging-hint")),
         plant: plant.id,
         name: Names::new(l10n, session).plant(plant.id),
-        status: plant.status.localize(l10n),
+        status: plant
+            .battery
+            .as_ref()
+            .map_or_else(|| plant.status.localize(l10n), |b| b.mode.localize(l10n)),
         agc: ToggleModel {
             button: ButtonModel::new(
                 l10n.text("plant-list-agc"),
@@ -487,25 +534,34 @@ pub fn draw_plant_panel(
         ui.strong(plant.name.as_str());
         ui.weak(plant.status.as_str());
     });
-    ui.horizontal(|ui| {
-        toggle_button(ui, &plant.agc, &mut actions).on_hover_text(plant.agc_tip.as_str());
-        button(ui, &plant.start, &mut actions);
-        button(ui, &plant.stop, &mut actions);
-    });
-    let slider = &plant.slider;
-    form.sync(slider);
-    let response = add_enabled(
-        ui,
-        slider.enabled,
-        egui::Slider::new(&mut form.value, slider.min..=slider.max)
-            .text(slider.label.as_str())
-            .show_value(false),
-    );
-    // A drag sends once, as it ends; a keyboard step changes the value without a drag.
-    if slider.enabled && (response.drag_stopped() || (response.changed() && !response.dragged())) {
-        actions.push(slider.command(form.value));
+    if let Some(toggle) = &plant.storage_toggle {
+        toggle_button(ui, toggle, &mut actions);
+        if let Some(hint) = &plant.storage_hint {
+            ui.label(hint);
+        }
+    } else {
+        ui.horizontal(|ui| {
+            toggle_button(ui, &plant.agc, &mut actions).on_hover_text(plant.agc_tip.as_str());
+            button(ui, &plant.start, &mut actions);
+            button(ui, &plant.stop, &mut actions);
+        });
+        let slider = &plant.slider;
+        form.sync(slider);
+        let response = add_enabled(
+            ui,
+            slider.enabled,
+            egui::Slider::new(&mut form.value, slider.min..=slider.max)
+                .text(slider.label.as_str())
+                .show_value(false),
+        );
+        // A drag sends once, as it ends; a keyboard step changes the value without a drag.
+        if slider.enabled
+            && (response.drag_stopped() || (response.changed() && !response.dragged()))
+        {
+            actions.push(slider.command(form.value));
+        }
+        form.held = response.dragged();
     }
-    form.held = response.dragged();
     egui::ScrollArea::vertical()
         .id_salt(("operating_plant_stats", plant.plant.0))
         .auto_shrink([false, false])
@@ -537,6 +593,100 @@ pub fn draw_plant_panel(
             });
         });
     actions
+}
+
+fn battery_toggle(l10n: &Localizer, id: PlantId, enabled: bool) -> ToggleModel {
+    ToggleModel {
+        button: ButtonModel::new(
+            l10n.text(if enabled {
+                "battery-disable"
+            } else {
+                "battery-enable"
+            }),
+            UiAction::Command(Command::SetBatteryEnabled {
+                plant: id,
+                on: !enabled,
+            }),
+        ),
+        on: enabled,
+    }
+}
+fn battery_stats(
+    l10n: &Localizer,
+    b: &domain::session::BatteryView,
+    connected: bool,
+    discharge: Megawatts,
+) -> Vec<Stat> {
+    let stat = |key: &str, value: String| Stat {
+        label: l10n.text(key),
+        value,
+    };
+    vec![
+        grid_connection_stat(l10n, connected),
+        stat(
+            "battery-stored",
+            format!(
+                "{} / {}",
+                format::megawatt_hours(b.stored),
+                format::megawatt_hours(b.spec.energy_capacity)
+            ),
+        ),
+        stat("battery-charging", format::megawatts(b.flow.charge)),
+        stat("battery-discharging", format::megawatts(b.flow.discharge)),
+        stat("battery-input", format::megawatt_hours(b.today.input)),
+        stat("battery-delivered", format::megawatt_hours(b.today.output)),
+        stat(
+            "battery-losses",
+            format::megawatt_hours(b.today.charge_loss + b.today.discharge_loss),
+        ),
+        stat(
+            "battery-charge-rating",
+            format::megawatts(b.spec.charge_power),
+        ),
+        stat("battery-discharge-rating", format::megawatts(discharge)),
+        stat(
+            "battery-energy-rating",
+            format::megawatt_hours(b.spec.energy_capacity),
+        ),
+        stat(
+            "battery-round-trip",
+            format::percent(
+                domain::units::Ratio::new(
+                    b.spec.charge_efficiency.value() * b.spec.discharge_efficiency.value(),
+                )
+                .expect("validated efficiencies"),
+            ),
+        ),
+        stat(
+            "battery-charge-window",
+            l10n.args(
+                "battery-window-value",
+                &[
+                    (
+                        "start",
+                        format::clock((b.charge_window.0 * 60.0).ceil() as u32).into(),
+                    ),
+                    (
+                        "end",
+                        format::clock((b.charge_window.1 * 60.0).ceil() as u32).into(),
+                    ),
+                ],
+            ),
+        ),
+        stat(
+            "battery-evening-window",
+            l10n.args(
+                "battery-window-value",
+                &[
+                    (
+                        "start",
+                        format::clock(u32::from(b.spec.discharge_start_hour) * 60).into(),
+                    ),
+                    ("end", format::clock(1440).into()),
+                ],
+            ),
+        ),
+    ]
 }
 
 #[cfg(test)]

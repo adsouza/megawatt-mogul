@@ -2,10 +2,10 @@
 //! `mapping` turns them into validated domain types. Unknown fields are
 //! rejected so a typo in a hand-authored file is an error, not a silent default.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// A whole region file. Self-contained: no includes, no external inputs.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RegionFile {
     pub id: String,
@@ -33,7 +33,7 @@ pub struct RegionFile {
 }
 
 /// Geographic extent of the grid in degrees.
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Bounds {
     pub west: f64,
@@ -42,7 +42,7 @@ pub struct Bounds {
     pub north: f64,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct GridSize {
     pub width: u16,
@@ -50,14 +50,14 @@ pub struct GridSize {
 }
 
 /// A resource layer: a constant base plus Gaussian blobs, clamped to `[0, 1]`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Field {
     pub base: f64,
     pub blobs: Vec<Blob>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Blob {
     pub lon: f64,
@@ -66,7 +66,7 @@ pub struct Blob {
     pub value: f64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 pub enum PlantKindDto {
     Nuclear,
     Coal,
@@ -74,16 +74,17 @@ pub enum PlantKindDto {
     Peaker,
     Solar,
     Hydro,
+    Battery,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Serialize)]
 pub enum SitingDto {
     Anywhere,
     CoolingWater(f64),
     HydroSite(f64),
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlantSpecDto {
     pub kind: PlantKindDto,
@@ -99,9 +100,11 @@ pub struct PlantSpecDto {
     pub capacity_credit: f64,
     pub book_life_months: u32,
     pub siting: SitingDto,
+    #[serde(default)]
+    pub battery: Option<BatteryDto>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CityDto {
     pub id: u32,
@@ -113,7 +116,7 @@ pub struct CityDto {
 
 /// Fixed-length arrays are sequences here; `mapping` checks the lengths
 /// (24 hours, 12 months).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DemandDto {
     pub winter: Vec<f64>,
@@ -124,7 +127,7 @@ pub struct DemandDto {
     pub error_persistence: f64,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SolarDto {
     /// (sunrise, sunset) hours, one pair per month.
@@ -133,13 +136,13 @@ pub struct SolarDto {
     pub clearness_sd: f64,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct HydroDto {
     pub monthly_flow: Vec<f64>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FrequencyDto {
     pub nominal_hz: f64,
@@ -156,7 +159,7 @@ pub struct FrequencyDto {
     pub shed_step: f64,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RegulatorDto {
     pub starting_tariff_usd_per_mwh: f64,
@@ -175,7 +178,7 @@ pub struct RegulatorDto {
     pub frequency_violation_share: f64,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SatisfactionDto {
     pub starting: f64,
@@ -184,7 +187,7 @@ pub struct SatisfactionDto {
     pub smoothing: f64,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LinesDto {
     pub cost_per_cell_usd: i64,
@@ -193,7 +196,7 @@ pub struct LinesDto {
 }
 
 /// The starting scenario. The home city is an id; fleet points are (lon, lat).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct StartDto {
     pub year: i32,
@@ -202,4 +205,14 @@ pub struct StartDto {
     pub home_city: u32,
     pub connected_cities: Vec<u32>,
     pub fleet: Vec<(PlantKindDto, f64, f64)>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BatteryDto {
+    pub charge_mw: f64,
+    pub energy_mwh: f64,
+    pub charge_efficiency: f64,
+    pub discharge_efficiency: f64,
+    pub discharge_start_hour: u8,
 }

@@ -217,7 +217,7 @@ pub fn construction_card_model(
     let progress = projects(game)
         .into_iter()
         .find(|p| p.project == Project::Plant(plant))?;
-    Some(ConstructionCardModel {
+    let mut model = ConstructionCardModel {
         plant,
         name: Names::new(l10n, session).plant(plant),
         status: l10n.text("construction-card-status"),
@@ -242,7 +242,20 @@ pub fn construction_card_model(
         months: progress.months(l10n),
         progress: progress.share(),
         in_service: progress.in_service(l10n),
-    })
+    };
+    if let Some(b) = session.region().spec(view.kind).battery {
+        model.stats.extend([
+            Stat {
+                label: l10n.text("battery-charge-rating"),
+                value: format::megawatts(b.charge_power),
+            },
+            Stat {
+                label: l10n.text("battery-energy-rating"),
+                value: format::megawatt_hours(b.energy_capacity),
+            },
+        ]);
+    }
+    Some(model)
 }
 
 /// The tab's body: the rows in a grid that scrolls when there are more than fit, or the one line

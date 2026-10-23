@@ -5,6 +5,8 @@
 //! top-level file in `tests/`. (A test crate root resolves `mod` paths from `tests/`, hence the
 //! `#[path]` attributes.)
 
+#[path = "game/battery.rs"]
+mod battery;
 #[path = "game/city_card.rs"]
 mod city_card;
 #[path = "game/cli.rs"]
@@ -39,6 +41,8 @@ mod region_picker;
 mod review_smoke;
 #[path = "game/save_resume.rs"]
 mod save_resume;
+#[path = "game/save_snapshots.rs"]
+mod save_snapshots;
 #[path = "game/shortfall_prompt.rs"]
 mod shortfall_prompt;
 #[path = "game/simulation.rs"]

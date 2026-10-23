@@ -25,3 +25,6 @@ mutants.out*/
 .superpowers/
 
 /saves/
+
+# Local one-off recovery tooling and backups
+/tools/archive/

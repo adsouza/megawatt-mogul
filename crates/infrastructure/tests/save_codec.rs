@@ -396,3 +396,230 @@ fn a_save_from_another_build_whose_payload_no_longer_parses_names_its_build() {
         Err(SaveError::Malformed(_))
     ));
 }
+
+#[test]
+fn unknown_rules_are_rejected_before_mapping_their_archived_region() {
+    let mut saved = bundle();
+    saved.checkpoint.header.sim_rules_version = 999;
+    saved.checkpoint.region_source = b"old region schema is not decoded".to_vec();
+    let bytes = encode_save(&saved).unwrap();
+    assert!(matches!(
+        decode_save(&bytes, &identity()),
+        Err(SaveError::Restore(application::RestoreError::Replay(
+            application::ReplayError::RulesVersionMismatch {
+                recorded: 999,
+                supported: 8
+            }
+        )))
+    ));
+    assert_eq!(bytes, encode_save(&saved).unwrap());
+}
+
+#[test]
+fn battery_codec_restores_mid_charge_with_exact_archived_tuning_and_continuation() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let source = include_str!("support/minimal_region.ron").replacen(
+        "fleet: [",
+        "fleet: [(Battery, 5.5, 6.5),",
+        1,
+    );
+    std::fs::write(dir.path().join("minimal.ron"), &source).unwrap();
+    let catalog = RonRegionCatalog::new(dir.path());
+    let mut live = Game::start_new(
+        &catalog,
+        &RegionId::new("minimal"),
+        7,
+        GameSettings::default(),
+        Box::new(InMemoryCommandLog::default()),
+    )
+    .unwrap();
+    live.execute(Command::BeginOperating).unwrap();
+    live.execute(Command::AdvanceTicks { n: 800 }).unwrap();
+    let battery = live
+        .session()
+        .plant_views()
+        .into_iter()
+        .find(|p| p.kind == domain::region::PlantKind::Battery)
+        .unwrap();
+    assert!(battery.battery.as_ref().unwrap().stored.value() > 0.0);
+    let mut saved = bundle();
+    saved.checkpoint = live.checkpoint();
+    let bytes = encode_save(&saved).unwrap();
+    // Installed data, diagnostic logs and source directory are not dependencies of a save.
+    std::fs::write(
+        dir.path().join("minimal.ron"),
+        source.replace("energy_mwh: 800.0", "energy_mwh: 1.0"),
+    )
+    .unwrap();
+    let (decoded, loaded) = decode_save(&bytes, &identity()).unwrap();
+    assert_eq!(decoded.checkpoint.region_source, source.as_bytes());
+    let mut resumed = Game::restore(
+        loaded,
+        decoded.checkpoint,
+        Box::new(InMemoryCommandLog::default()),
+        &|| false,
+    )
+    .unwrap();
+    assert_eq!(
+        resumed.session().plant_views(),
+        live.session().plant_views()
+    );
+    assert_eq!(resumed.projections(), live.projections());
+    for command in [
+        Command::SetBatteryEnabled {
+            plant: battery.id,
+            on: false,
+        },
+        Command::SetBatteryEnabled {
+            plant: battery.id,
+            on: true,
+        },
+        Command::AdvanceTicks { n: 640 },
+    ] {
+        live.execute(command.clone()).unwrap();
+        resumed.execute(command).unwrap();
+    }
+    assert_eq!(resumed.session().state_hash(), live.session().state_hash());
+    assert_eq!(resumed.projections(), live.projections());
+}
+
+#[test]
+fn repeated_tick_batches_are_encoded_as_runs_without_crossing_player_actions_or_speed_changes() {
+    let mut saved = bundle();
+    saved.checkpoint.commands = vec![
+        Command::BeginOperating,
+        Command::AdvanceTicks { n: 8 },
+        Command::AdvanceTicks { n: 8 },
+        Command::SetAutoFollow {
+            plant: domain::ids::PlantId(1),
+            on: true,
+        },
+        Command::AdvanceTicks { n: 8 },
+        Command::AdvanceTicks { n: 8 },
+        Command::AdvanceTicks { n: 32 },
+        Command::AdvanceTicks { n: 32 },
+        Command::AdvanceTicks { n: 0 },
+        Command::AdvanceTicks { n: 0 },
+        Command::FinishReview,
+    ];
+    saved.checkpoint.command_count = saved.checkpoint.commands.len() as u64;
+    let bytes = encode_save(&saved).unwrap();
+    let envelope: Envelope = ron::de::from_bytes(&bytes).unwrap();
+    assert_eq!(envelope.version, 3);
+    assert_eq!(envelope.payload.matches("TickRun(").count(), 4);
+    assert_eq!(envelope.payload.matches("TickRun(n:8,repeat:2)").count(), 2);
+    assert_eq!(decode_save(&bytes, &identity()).unwrap().0, saved);
+}
+
+#[test]
+fn malformed_tick_runs_cannot_overflow_exceed_limits_or_change_the_expanded_command_count() {
+    let mut saved = bundle();
+    saved.checkpoint.commands = vec![Command::AdvanceTicks { n: 8 }; 10];
+    saved.checkpoint.command_count = 10;
+    let bytes = encode_save(&saved).unwrap();
+    let envelope: Envelope = ron::de::from_bytes(&bytes).unwrap();
+    assert!(envelope.payload.contains("TickRun(n:8,repeat:10)"));
+    for repeat in [0u64, 9, 11, 1_000_001, u32::MAX as u64, u64::MAX] {
+        let corrupt = rewrite(
+            &bytes,
+            |e| e.payload = e.payload.replace("repeat:10", &format!("repeat:{repeat}")),
+            true,
+        );
+        assert!(
+            decode_save(&corrupt, &identity()).is_err(),
+            "repeat={repeat}"
+        );
+    }
+    let corrupt = rewrite(
+        &bytes,
+        |e| e.payload = e.payload.replace("count:10", "count:1000001"),
+        true,
+    );
+    assert!(matches!(
+        decode_save(&corrupt, &identity()),
+        Err(SaveError::SaveTooLarge)
+    ));
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(24))]
+    #[test]
+    fn tick_rle_round_trip_preserves_every_original_batch_and_action(
+        runs in prop::collection::vec((any::<u32>(), 1usize..25, any::<bool>()), 0..20)
+    ) {
+        let mut saved=bundle();
+        let mut commands=vec![Command::BeginOperating];
+        for (n,repeat,barrier) in runs {
+            commands.extend(std::iter::repeat_n(Command::AdvanceTicks{n},repeat));
+            if barrier {commands.push(Command::SetAutoFollow{plant:domain::ids::PlantId(1),on:true});}
+        }
+        saved.checkpoint.command_count=commands.len() as u64;
+        saved.checkpoint.commands=commands;
+        let bytes=encode_save(&saved).unwrap();
+        prop_assert_eq!(decode_save(&bytes,&identity()).unwrap().0,saved);
+    }
+}
+
+#[test]
+fn frozen_format1_ticks_reencode_to_rle_and_replay_with_identical_projections_and_continuation() {
+    use application::{CommandLogSink, LogRecord};
+    use infrastructure::command_log::{FileCommandLog, load_replay, read_command_log};
+    let original = include_bytes!("support/tick-rle-format1.mgsave");
+    let (old, region) = decode_save(original, &identity()).unwrap();
+    assert!(old.checkpoint.snapshot.is_none());
+    let encoded = encode_save(&old).unwrap();
+    let envelope: Envelope = ron::de::from_bytes(&encoded).unwrap();
+    assert_eq!(envelope.version, 3);
+    assert!(envelope.payload.contains("TickRun(n:8,repeat:10)"));
+    assert!(envelope.payload.contains("TickRun(n:32,repeat:3)"));
+    let (new, new_region) = decode_save(&encoded, &identity()).unwrap();
+    assert_eq!(
+        new, old,
+        "original batches, count, hash and metadata are retained"
+    );
+    let log = InMemoryCommandLog::default();
+    let mut before = old
+        .restore(
+            region,
+            &identity(),
+            Box::new(InMemoryCommandLog::default()),
+            &|| false,
+        )
+        .unwrap();
+    let mut after = new
+        .restore(new_region, &identity(), Box::new(log.clone()), &|| false)
+        .unwrap();
+    assert_eq!(after.checkpoint(), before.checkpoint());
+    assert_eq!(after.projections(), before.projections());
+    assert_eq!(
+        log.records()[1..],
+        before
+            .checkpoint()
+            .commands
+            .iter()
+            .cloned()
+            .map(LogRecord::Command)
+            .collect::<Vec<_>>()
+    );
+    // The expanded history still writes the same exact diagnostic prefix and can replay it.
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("plain.log");
+    let mut file = FileCommandLog::create(&path).unwrap();
+    let checkpoint = decode_save(&encoded, &identity()).unwrap().0.checkpoint;
+    file.initialize_checkpoint(&checkpoint, &|| false).unwrap();
+    assert_eq!(read_command_log(&path).unwrap(), log.records());
+    assert_eq!(
+        load_replay(&path).unwrap().replay().unwrap().state_hash(),
+        before.session().state_hash()
+    );
+    for command in [
+        Command::AdvanceTicks { n: 0 },
+        Command::AdvanceTicks { n: 32 },
+        Command::AdvanceTicks { n: 1440 },
+        Command::FinishReview,
+    ] {
+        assert_eq!(before.execute(command.clone()), after.execute(command));
+        assert_eq!(before.checkpoint(), after.checkpoint());
+        assert_eq!(before.projections(), after.projections());
+    }
+}

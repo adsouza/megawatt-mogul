@@ -7,38 +7,40 @@ use domain::time::SimMonth;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-pub const SAVE_FORMAT_VERSION: u32 = 1;
+pub const SAVE_FORMAT_VERSION: u32 = 3;
 pub const MAX_SAVE_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_SAVE_COMMANDS: usize = 1_000_000;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Envelope {
-    version: u32,
+pub(super) struct Envelope {
+    pub(super) version: u32,
     length: usize,
     checksum: [u8; 32],
-    payload: String,
+    pub(super) payload: String,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Payload {
-    build: String,
-    platform: String,
-    slot: String,
-    run: String,
-    automatic: bool,
-    name: String,
-    saved_at: u64,
-    header: LogHeaderDto,
-    region: Vec<u8>,
-    commands: Vec<CommandDto>,
-    count: u64,
-    state_hash: u64,
-    year: i32,
-    month: u8,
-    tick: u32,
-    phase: PhaseDto,
-    status: StatusDto,
+pub(super) struct Payload<C> {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) snapshot: Option<SnapshotDto>,
+    pub(super) build: String,
+    pub(super) platform: String,
+    pub(super) slot: String,
+    pub(super) run: String,
+    pub(super) automatic: bool,
+    pub(super) name: String,
+    pub(super) saved_at: u64,
+    pub(super) header: LogHeaderDto,
+    pub(super) region: Vec<u8>,
+    pub(super) commands: Vec<C>,
+    pub(super) count: u64,
+    pub(super) state_hash: u64,
+    pub(super) year: i32,
+    pub(super) month: u8,
+    pub(super) tick: u32,
+    pub(super) phase: PhaseDto,
+    pub(super) status: StatusDto,
 }
 /// Only the stamp of a [`Payload`], read when the full payload doesn't parse, so a save another
 /// build wrote in DTO shapes this build doesn't know still names that build. It deliberately
@@ -53,13 +55,13 @@ struct Stamp {
     platform: String,
 }
 #[derive(Serialize, Deserialize)]
-enum PhaseDto {
+pub(super) enum PhaseDto {
     Planning,
     Operating,
     Review,
 }
 #[derive(Serialize, Deserialize)]
-enum StatusDto {
+pub(super) enum StatusDto {
     Active,
     Bankrupt,
     LicenseRevoked,
@@ -68,7 +70,7 @@ enum StatusDto {
 pub(crate) fn digest(bytes: &[u8]) -> [u8; 32] {
     Sha256::digest(bytes).into()
 }
-fn malformed(error: impl std::fmt::Display) -> SaveError {
+pub(super) fn malformed(error: impl std::fmt::Display) -> SaveError {
     SaveError::Malformed(error.to_string())
 }
 
@@ -92,6 +94,7 @@ pub(crate) fn encode_save_as(
     }
     let m = &bundle.metadata;
     let payload = Payload {
+        snapshot: c.snapshot.as_ref().map(SnapshotDto::encode).transpose()?,
         build: compatibility.build.clone(),
         platform: compatibility.platform.clone(),
         slot: m.slot.as_str().into(),
@@ -101,7 +104,7 @@ pub(crate) fn encode_save_as(
         saved_at: m.saved_at,
         header: (&c.header).into(),
         region: c.region_source.clone(),
-        commands: c.commands.iter().map(Into::into).collect(),
+        commands: super::journal::encode(&c.commands),
         count: c.command_count,
         state_hash: c.state_hash,
         year: c.summary.month.year(),
@@ -144,12 +147,28 @@ pub fn decode_save(
     bytes: &[u8],
     running: &ReplayCompatibility,
 ) -> Result<(SaveBundle, LoadedRegion), SaveError> {
+    decode_save_cancellable(bytes, running, &|| false)
+}
+pub fn decode_save_cancellable(
+    bytes: &[u8],
+    running: &ReplayCompatibility,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(SaveBundle, LoadedRegion), SaveError> {
+    decode_save_inner(bytes, running, cancelled)
+}
+pub(super) fn decode_preserving(
+    bytes: &[u8],
+    running: &ReplayCompatibility,
+) -> Result<(SaveBundle, LoadedRegion), SaveError> {
+    decode_save_inner(bytes, running, &|| false)
+}
+pub(super) fn read_envelope(bytes: &[u8]) -> Result<Envelope, SaveError> {
     if bytes.len() > MAX_SAVE_BYTES {
         return Err(SaveError::SaveTooLarge);
     }
     let options = ron::Options::default().with_recursion_limit(64);
     let e: Envelope = options.from_bytes(bytes).map_err(malformed)?;
-    if e.version != SAVE_FORMAT_VERSION {
+    if !(1..=SAVE_FORMAT_VERSION).contains(&e.version) {
         return Err(SaveError::SaveFormatVersionMismatch {
             recorded: e.version,
             supported: SAVE_FORMAT_VERSION,
@@ -158,7 +177,31 @@ pub fn decode_save(
     if e.length != e.payload.len() || e.checksum != digest(e.payload.as_bytes()) {
         return Err(SaveError::ChecksumMismatch);
     }
-    let p: Payload = match options.from_str(&e.payload) {
+    Ok(e)
+}
+
+fn decode_save_inner(
+    bytes: &[u8],
+    running: &ReplayCompatibility,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(SaveBundle, LoadedRegion), SaveError> {
+    if cancelled() {
+        return Err(SaveError::Cancelled);
+    }
+    let e = read_envelope(bytes)?;
+    if e.version == 3 {
+        decode_typed_payload::<super::journal::JournalRecord>(e, running, cancelled)
+    } else {
+        decode_typed_payload::<CommandDto>(e, running, cancelled)
+    }
+}
+fn decode_typed_payload<C: for<'de> Deserialize<'de> + Into<super::journal::JournalRecord>>(
+    e: Envelope,
+    running: &ReplayCompatibility,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(SaveBundle, LoadedRegion), SaveError> {
+    let options = ron::Options::default().with_recursion_limit(64);
+    let p: Payload<C> = match options.from_str(&e.payload) {
         Ok(p) => p,
         Err(error) => {
             return Err(match options.from_str::<Stamp>(&e.payload) {
@@ -180,11 +223,17 @@ pub fn decode_save(
             });
         }
     };
+    if p.commands.len() > MAX_SAVE_COMMANDS || p.region.len() > MAX_SAVE_BYTES {
+        return Err(SaveError::SaveTooLarge);
+    }
+    if (e.version == 1 && p.snapshot.is_some()) || (e.version == 2 && p.snapshot.is_none()) {
+        return Err(malformed("save envelope and snapshot schema disagree"));
+    }
     let recorded = ReplayCompatibility {
         build: p.build.clone(),
         platform: p.platform.clone(),
     };
-    decode_payload(p, recorded.clone()).map_err(|error| match error {
+    decode_payload(p, recorded.clone(), cancelled).map_err(|error| match error {
         SaveError::Malformed(cause) if &recorded != running => {
             SaveError::OtherVersionUnreadable { recorded, cause }
         }
@@ -192,15 +241,13 @@ pub fn decode_save(
     })
 }
 
-fn decode_payload(
-    p: Payload,
+fn decode_payload<C: Into<super::journal::JournalRecord>>(
+    p: Payload<C>,
     compatibility: ReplayCompatibility,
+    cancelled: &dyn Fn() -> bool,
 ) -> Result<(SaveBundle, LoadedRegion), SaveError> {
-    if p.commands.len() > MAX_SAVE_COMMANDS {
+    if p.count > MAX_SAVE_COMMANDS as u64 {
         return Err(SaveError::SaveTooLarge);
-    }
-    if p.count != p.commands.len() as u64 {
-        return Err(RestoreError::CommandCountMismatch.into());
     }
     let header: LogHeader = p.header.try_into().map_err(malformed)?;
     if header.log_format_version != LOG_FORMAT_VERSION {
@@ -210,12 +257,19 @@ fn decode_payload(
         })
         .into());
     }
-    if header.sim_rules_version != domain::SIM_RULES_VERSION {
+    let compatible_snapshot = p.snapshot.is_some()
+        && PortableState::rules_compatible(header.sim_rules_version, domain::SIM_RULES_VERSION);
+    if header.sim_rules_version != domain::SIM_RULES_VERSION && !compatible_snapshot {
         return Err(RestoreError::Replay(ReplayError::RulesVersionMismatch {
             recorded: header.sim_rules_version,
             supported: domain::SIM_RULES_VERSION,
         })
         .into());
+    }
+    // Metadata-only scans must reject unknown schemas too. Otherwise a future converted copy
+    // could suppress the still-usable legacy original without being restorable by this build.
+    if p.snapshot.as_ref().is_some_and(|s| s.schema != 1) {
+        return Err(SaveError::Restore(RestoreError::InvalidSnapshot));
     }
     let actual = RegionFingerprint::new(digest(&p.region));
     if actual != header.region_fingerprint {
@@ -227,6 +281,7 @@ fn decode_payload(
             .into(),
         );
     }
+    let commands = super::journal::expand(p.commands, p.count, cancelled)?;
     let loaded = load_region_bytes(p.region.clone(), &RegionId::new(header.region.as_str()))
         .map_err(malformed)?;
     let metadata = SaveMetadata {
@@ -256,14 +311,10 @@ fn decode_payload(
         },
     };
     let checkpoint = GameCheckpoint {
+        snapshot: p.snapshot.map(SnapshotDto::decode).transpose()?,
         header,
         region_source: p.region,
-        commands: p
-            .commands
-            .into_iter()
-            .map(TryInto::try_into)
-            .collect::<Result<_, _>>()
-            .map_err(malformed)?,
+        commands,
         command_count: p.count,
         state_hash: p.state_hash,
         summary,
@@ -276,4 +327,96 @@ fn decode_payload(
         },
         loaded,
     ))
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct OriginDto {
+    slot: String,
+    revision: [u8; 32],
+    rules: u32,
+    state_hash: u64,
+    command_count: u64,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct SnapshotDto {
+    schema: u32,
+    session: Vec<u8>,
+    projections: Vec<u8>,
+    journal_hash: u64,
+    origin: Option<OriginDto>,
+}
+impl SnapshotDto {
+    fn encode(state: &PortableState) -> Result<Self, SaveError> {
+        use std::io::Write;
+        fn compress(bytes: &[u8]) -> Result<Vec<u8>, SaveError> {
+            if bytes.len() > MAX_SAVE_BYTES {
+                return Err(SaveError::SaveTooLarge);
+            }
+            let mut out = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+            out.write_all(bytes).map_err(malformed)?;
+            out.finish().map_err(malformed)
+        }
+        Ok(Self {
+            schema: state.schema,
+            session: compress(&state.session)?,
+            projections: compress(&state.projections)?,
+            journal_hash: state.journal_hash,
+            origin: state.origin.as_ref().map(|o| OriginDto {
+                slot: o.slot.as_str().into(),
+                revision: o.revision.0,
+                rules: o.rules,
+                state_hash: o.state_hash,
+                command_count: o.command_count,
+            }),
+        })
+    }
+    fn decode(self) -> Result<PortableState, SaveError> {
+        use std::io::Read;
+        fn decompress(bytes: &[u8]) -> Result<Vec<u8>, SaveError> {
+            let mut out = Vec::new();
+            flate2::read::ZlibDecoder::new(bytes)
+                .take(MAX_SAVE_BYTES as u64 + 1)
+                .read_to_end(&mut out)
+                .map_err(malformed)?;
+            if out.len() > MAX_SAVE_BYTES {
+                return Err(SaveError::SaveTooLarge);
+            }
+            Ok(out)
+        }
+        if self.schema != 1 {
+            return Err(SaveError::Restore(RestoreError::InvalidSnapshot));
+        }
+        Ok(PortableState {
+            schema: self.schema,
+            session: decompress(&self.session)?,
+            projections: decompress(&self.projections)?,
+            journal_hash: self.journal_hash,
+            origin: self
+                .origin
+                .map(|o| {
+                    Ok::<_, SaveError>(MigrationOrigin {
+                        slot: SaveId::new(o.slot)?,
+                        revision: SaveRevision(o.revision),
+                        rules: o.rules,
+                        state_hash: o.state_hash,
+                        command_count: o.command_count,
+                    })
+                })
+                .transpose()?,
+        })
+    }
+}
+
+impl OriginDto {
+    pub(super) fn decode(&self) -> Result<MigrationOrigin, SaveError> {
+        Ok(MigrationOrigin {
+            slot: SaveId::new(self.slot.clone())?,
+            revision: SaveRevision(self.revision),
+            rules: self.rules,
+            state_hash: self.state_hash,
+            command_count: self.command_count,
+        })
+    }
 }

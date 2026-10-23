@@ -370,3 +370,50 @@ save-rename-body = Rename “{ $name }”. Saved progress and the save date stay
 
 # Construction is paid in monthly instalments, not upfront.
 build-monthly-payment = Per month (approx.)
+
+# Daily-cycle battery storage
+plant-kind-battery = Battery storage
+plant-glyph-battery = B
+battery-mode-disabled = Disabled
+battery-mode-disconnected = Not connected
+battery-mode-holding = Holding charge
+battery-mode-charging = Charging
+battery-mode-discharging = Discharging
+battery-mode-empty = Empty
+battery-mode-full = Full
+battery-mode-suspended = Grid suspended
+battery-enable = Enable storage
+battery-disable = Disable storage
+battery-grid-charging-hint = Charges from the grid in daylight; thermal generation may supply it. Holds energy for the evening.
+battery-stored = Stored energy
+battery-charging = Charging now
+battery-discharging = Discharging now
+battery-input = Charge input
+battery-delivered = Delivered energy
+battery-losses = Conversion losses
+battery-charge-loss = Charging losses
+battery-discharge-loss = Discharge losses
+battery-charge-rating = Max charging power
+battery-discharge-rating = Max discharge power
+battery-energy-rating = Energy capacity
+battery-round-trip = Round-trip efficiency
+battery-charge-window = Charging window
+battery-evening-window = Discharge window
+battery-window-value = { $start }–{ $end }
+battery-cycle = Daily cycle
+battery-cycle-hint = Empty at dawn; daylight charge, evening discharge, remainder cleared at midnight.
+battery-total-load = Demand + battery charging
+battery-stored-axis = Stored energy (MWh)
+battery-midnight-marker = Unused energy cleared at midnight
+battery-preview-charge = Expected charging (MW)
+battery-preview-discharge = Expected discharge (MW)
+battery-review-heading = Battery storage
+battery-review-note = Energy totals cover the whole month. Unused energy is reported, then cleared at midnight each day; charging earns no customer revenue.
+battery-unused = Unused at midnight (month)
+battery-unused-daily = Unused at midnight (per day)
+battery-fleet = All batteries
+
+supply-chart-combine = Combine graphs
+supply-chart-unit-power = MW
+supply-chart-unit-cost = $/MWh
+supply-chart-unit-energy = MWh

@@ -140,6 +140,13 @@ pub fn saves_model(p: &Persistence, form: &SaveForm, l10n: &Localizer) -> SavesM
     };
     let mut body = l10n.text(if p.screen == SaveScreen::Loading {
         "save-restoring"
+    } else if p.screen == SaveScreen::Browser && !p.menu_scanned() && !p.entries.is_empty() {
+        // Keep cached cards visible while their small metadata refresh completes.
+        "save-choose"
+    } else if p.screen == SaveScreen::Browser && !p.menu_scanned() && p.busy() {
+        "save-loading-list"
+    } else if p.screen == SaveScreen::Browser && p.busy() {
+        "save-restoring"
     } else if p.busy() {
         "save-working"
     } else if p.screen == SaveScreen::Leave {
@@ -390,7 +397,8 @@ pub fn save_error(error: &SaveError, l10n: &Localizer) -> String {
             application::RestoreError::Replay(_) => "save-error-rules",
             application::RestoreError::RegionSourceMismatch
             | application::RestoreError::RegionIdMismatch => "save-error-region",
-            application::RestoreError::CommandCountMismatch
+            application::RestoreError::InvalidSnapshot
+            | application::RestoreError::CommandCountMismatch
             | application::RestoreError::StateHashMismatch
             | application::RestoreError::SummaryMismatch => "save-error-state",
             application::RestoreError::ReplayCommandFailed { .. } => "save-error-replay",

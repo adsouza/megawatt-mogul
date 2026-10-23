@@ -22,13 +22,16 @@ pub fn is_commitable(plant: &PlantView) -> bool {
     plant.kind.is_dispatchable() && !matches!(plant.status, PlantStatus::UnderConstruction { .. })
 }
 
-/// Every plant kind in merit order: ascending marginal cost, a tie going to the kind that comes
+/// Generating kinds in merit order, followed by storage as a separate group: ascending marginal cost, a tie going to the kind that comes
 /// first in [`PlantKind::ALL`]. The one ordering every panel stacks or lists kinds in.
 pub fn kinds_in_merit_order(region: &RegionDefinition) -> Vec<PlantKind> {
     let mut kinds = PlantKind::ALL.to_vec();
     kinds.sort_by(|a, b| {
         let cost = |kind: PlantKind| region.spec(kind).marginal_cost.value();
-        cost(*a).total_cmp(&cost(*b)).then(a.cmp(b))
+        (*a == PlantKind::Battery)
+            .cmp(&(*b == PlantKind::Battery))
+            .then_with(|| cost(*a).total_cmp(&cost(*b)))
+            .then(a.cmp(b))
     });
     kinds
 }
@@ -116,6 +119,7 @@ mod tests {
         assert_eq!(sorted, PlantKind::ALL, "each kind once");
         let costs: Vec<f64> = kinds
             .iter()
+            .filter(|kind| **kind != PlantKind::Battery)
             .map(|kind| region.spec(*kind).marginal_cost.value())
             .collect();
         assert!(costs.windows(2).all(|pair| pair[0] <= pair[1]), "{costs:?}");

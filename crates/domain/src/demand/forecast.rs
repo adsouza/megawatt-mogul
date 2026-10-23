@@ -37,6 +37,14 @@ pub fn hourly_forecast<'a>(
     })
 }
 
+// Portable state schema 1: explicit field order and enum tags.
+crate::state_record!(ForecastPoint {
+    hour,
+    mean,
+    low,
+    high
+});
+
 #[cfg(test)]
 mod tests {
     use super::*;
