@@ -38,6 +38,44 @@ cargo mutants -p domain -p application         # mutation testing
 Property tests use `proptest`; set `PROPTEST_CASES` to run more cases locally. Note that nextest does
 not run doctests; run `cargo test --doc --workspace` for those.
 
+### Behavioral contracts across features
+
+Line coverage, replay equality and pinned outcomes do not establish physical correctness. Keep
+independent expectations alongside tests that compare consumers of a shared calculation:
+
+- `domain/grid/power_system/tests/transition_properties.rs` constructs valid cyclic commitments
+  with shutdown **plus** startup in every off-gap. Every generated day must start with online,
+  offline, starting and stopping plants; it must actually complete starts and stops. It varies
+  manual targets, AGC, connectivity, scarce hydro water and the placement of mixed runs. Every
+  minute checks physical output transitions through the whole controller, reported generation,
+  disconnected supply and water consumption. Only an explicit plant-trip event permits an
+  instantaneous loss; resource caps and startup minimum output have separate explicit rules.
+  A second property checks that extra fixed generation displaces the same amount of midnight AGC.
+- `application/tests/state_machine.rs` mixes constructively valid recurring runs with hostile
+  patterns and wrong-phase commands. A separate property requires generated mixed commitments
+  to be accepted; increasing random seeds must not substitute for reaching valid schedules.
+- `domain/session/forecast_contract_tests.rs` derives thermal supply from commitments, manual
+  targets and eligibility independently of `supply_forecast()`. It checks every minute, including
+  connected construction, and verifies warning magnitude/hour. Mixed hydro/solar/storage cases
+  calculate solar output, cumulative water use and stored energy with losses independently,
+  including disabled, disconnected and unfinished batteries. A balanced, noise-free manual
+  fleet compares forecast against every actual operating minute. This exact comparison is
+  intentionally restricted: the general forecast is an optimistic capacity estimate, not a
+  simulation of every ramp, protection action or random demand error.
+- `game/tests/game/player_workflows.rs` uses actual widgets at minimum window size (including
+  enlarged UI zoom): scroll to a plant, edit and apply a valid commitment, inspect the forecast,
+  dismiss/accept the shortfall prompt, operate at 32×, open the retrospective, continue and revisit
+  unchanged history. A refused infeasible schedule must restore an editable plan and leave
+  Start usable. Check command multiplicity, simulation state and control visibility as well as
+  the presenter data; setup commands and phase advancement alone do not prove a player task works.
+  `game/tests/game/battery.rs` also takes a charged battery through disabling, naming a real disk
+  save with Enter, leaving, selecting Load/Resume, and enabling it again. The full checkpoint,
+  paused clock, enabled state and stored energy must survive, and evening discharge must work.
+
+When adding a regression, ensure it fails for the faulty behavior independently of other fixes.
+For example, removing a midnight dispatch error must not hide unsafe surplus protection. Prefer
+small physical oracles and explicit transition coverage over blessing changed snapshot numbers.
+
 The whole workspace runs in about 23 s in a debug build. Most of that is the three year-long
 acceptance runs in `infrastructure::shipped_regions`, `hands_off_plan_survives_year_one`,
 `no_commands_survive_year_one` and `shipped_regions_never_order_outages_hands_off` (about 18 s

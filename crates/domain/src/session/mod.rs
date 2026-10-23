@@ -11,6 +11,8 @@
 #[cfg(test)]
 mod battery_tests;
 mod commands;
+#[cfg(test)]
+mod forecast_contract_tests;
 mod invariants;
 mod month_close;
 mod report;

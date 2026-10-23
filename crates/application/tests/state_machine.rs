@@ -41,6 +41,8 @@ struct Model {
     phase: DayPhase,
     tick: u32,
     plants: Vec<PlantId>,
+    /// Existing plants paired with the longest feasible single daily run.
+    valid_runs: Vec<(PlantId, usize)>,
     nodes: Vec<NodeId>,
 }
 
@@ -56,6 +58,17 @@ impl Model {
             phase: session.phase(),
             tick: session.clock().tick(),
             plants: session.plant_views().iter().map(|plant| plant.id).collect(),
+            valid_runs: session
+                .plant_views()
+                .iter()
+                .filter_map(|plant| {
+                    let spec = session.region().spec(plant.kind);
+                    let shutdown =
+                        (spec.capacity.value() / spec.ramp.per_tick().value()).ceil() as u32;
+                    let gap = (shutdown + spec.startup.ticks()).div_ceil(60) as usize;
+                    (gap < 24).then_some((plant.id, 24 - gap))
+                })
+                .collect(),
             nodes,
         }
     }
@@ -123,6 +136,27 @@ fn advance() -> impl Strategy<Value = Command> {
     select(vec![0u32, 1, 60, 1440]).prop_map(|n| Command::AdvanceTicks { n })
 }
 
+fn valid_commitment(model: &Model) -> BoxedStrategy<Command> {
+    select(model.valid_runs.clone())
+        .prop_flat_map(|(plant, maximum)| {
+            (0usize..24, 1usize..=maximum, any::<bool>()).prop_map(move |(start, length, twice)| {
+                let mut hours = [false; 24];
+                let gap = 24 - maximum;
+                if twice && gap < 12 {
+                    for i in 0..24 {
+                        hours[(start + i) % 24] = i % 12 < 12 - gap;
+                    }
+                } else {
+                    for i in 0..length {
+                        hours[(start + i) % 24] = true;
+                    }
+                }
+                Command::CommitPlant { plant, hours }
+            })
+        })
+        .boxed()
+}
+
 struct SessionMachine;
 
 impl ReferenceStateMachine for SessionMachine {
@@ -155,6 +189,8 @@ impl ReferenceStateMachine for SessionMachine {
             2 => (0u32..64).prop_map(|id| Command::CancelLineConstruction { line: LineId(id) }),
             3 => (plant_id(model), hours())
                 .prop_map(|(plant, hours)| Command::CommitPlant { plant, hours }),
+            // Exercise accepted mixed schedules as well as hostile random bit patterns.
+            4 => valid_commitment(model),
             3 => (plant_id(model), -50.0..1_300.0f64).prop_map(|(plant, mw)| {
                 Command::SetDispatchTarget { plant, mw: Megawatts::new(mw) }
             }),
@@ -285,4 +321,17 @@ prop_state_machine! {
 
     #[test]
     fn any_command_sequence_keeps_the_session_consistent(sequential 1..=40 => SessionTest);
+}
+
+proptest! {
+    #[test]
+    fn generated_mixed_commitments_are_accepted_without_rejection_sampling(
+        command in valid_commitment(&Model::new(7, false)),
+    ) {
+        let Command::CommitPlant { plant, hours } = command else { unreachable!() };
+        prop_assert!(hours.iter().any(|&on| on) && hours.iter().any(|&on| !on));
+        let (mut game, _) = game_on(tiny_region_parts(), 7);
+        game.execute(Command::CommitPlant { plant, hours }).unwrap();
+        prop_assert_eq!(game.session().plant_views().iter().find(|p| p.id == plant).unwrap().commitment, hours);
+    }
 }

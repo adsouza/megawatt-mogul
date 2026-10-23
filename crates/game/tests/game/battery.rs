@@ -123,6 +123,119 @@ fn egui_rect() -> bevy_egui::egui::Rect {
 }
 
 #[test]
+fn charged_battery_toggle_save_with_enter_leave_load_and_resume_is_a_complete_player_task() {
+    use crate::player_workflows::{click, settle_save};
+    use bevy_egui::egui;
+    let (mut app, dir, id) = app_with_battery();
+    command(&mut app, Command::BeginOperating);
+    command(&mut app, Command::AdvanceTicks { n: 900 });
+    let battery = |app: &App| {
+        app.world()
+            .resource::<Session>()
+            .0
+            .session()
+            .plant_views()
+            .into_iter()
+            .find(|p| p.id == id)
+            .unwrap()
+            .battery
+            .unwrap()
+    };
+    let stored = battery(&app).stored;
+    assert!(
+        stored > MegawattHours::ZERO,
+        "this task must save actual stored energy"
+    );
+    dispatch_in(&mut app, vec![UiAction::Select(Selection::Plant(id))]);
+    let pass = EguiPass::attach(&mut app);
+    pass.ctx().set_zoom_factor(1.25);
+    let size = (WIDTH / 1.25, HEIGHT / 1.25);
+    let l10n = shipped_l10n();
+    click(&pass, &mut app, size, &l10n.text("battery-disable"));
+    update_n(&mut app, 2);
+    assert!(!battery(&app).enabled);
+    assert_eq!(battery(&app).stored, stored);
+    let expected = app.world().resource::<Session>().0.checkpoint();
+    click(&pass, &mut app, size, &l10n.text("save-title"));
+    settle_save(&mut app);
+    let widgets = pass.settled(&mut app, size.0, size.1);
+    let field = widgets
+        .iter()
+        .find(|w| w.role == egui::accesskit::Role::TextInput)
+        .unwrap();
+    pass.click_at(&mut app, size.0, size.1, field.rect.center());
+    let enter = |pressed| egui::Event::Key {
+        key: egui::Key::Enter,
+        physical_key: None,
+        pressed,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    };
+    pass.run_with(
+        &mut app,
+        size.0,
+        size.1,
+        vec![
+            egui::Event::Text("Charged but disabled".into()),
+            enter(true),
+            enter(false),
+        ],
+    );
+    settle_save(&mut app);
+    let entry = app
+        .world()
+        .resource::<game::sim::Persistence>()
+        .last_saved()
+        .unwrap()
+        .clone();
+    assert_eq!(entry.metadata.name, "Charged but disabled");
+    assert!(
+        dir.path()
+            .join("saves")
+            .join(format!("{}.mgsave", entry.metadata.slot.as_str()))
+            .join("snapshot.ron.z")
+            .is_file()
+    );
+    assert_eq!(app.world().resource::<Session>().0.checkpoint(), expected);
+    click(&pass, &mut app, size, &l10n.text("topbar-menu"));
+    settle_save(&mut app);
+    click(&pass, &mut app, size, &l10n.text("save-leave-unsaved"));
+    update_n(&mut app, 3);
+    settle_save(&mut app);
+    assert!(!app.world().contains_resource::<Session>());
+    click(&pass, &mut app, size, &l10n.text("save-load"));
+    settle_save(&mut app);
+    let widgets = pass.settled(&mut app, size.0, size.1);
+    assert!(widgets.iter().any(|w| w.text == "Charged but disabled"));
+    click(&pass, &mut app, size, &l10n.text("save-resume"));
+    settle_save(&mut app);
+    update_n(&mut app, 4);
+    assert_eq!(app.world().resource::<Session>().0.checkpoint(), expected);
+    assert_eq!(
+        *app.world().resource::<game::sim::SimSpeed>(),
+        game::sim::SimSpeed::Paused
+    );
+    assert!(!battery(&app).enabled);
+    assert_eq!(battery(&app).stored, stored);
+    dispatch_in(&mut app, vec![UiAction::Select(Selection::Plant(id))]);
+    click(&pass, &mut app, size, &l10n.text("battery-enable"));
+    update_n(&mut app, 2);
+    assert!(battery(&app).enabled);
+    assert_eq!(battery(&app).stored, stored);
+    command(&mut app, Command::AdvanceTicks { n: 240 });
+    assert!(
+        battery(&app).stored < stored,
+        "the restored battery can actually supply the evening peak"
+    );
+    assert!(
+        app.world()
+            .resource::<game::l10n::Localizer>()
+            .problems()
+            .is_empty()
+    );
+}
+
+#[test]
 fn battery_day_flows_change_line_direction_and_survive_history_review_and_restore() {
     let (mut app, _dir, id) = app_with_battery();
     let l10n = shipped_l10n();
