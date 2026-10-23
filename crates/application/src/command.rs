@@ -1,7 +1,7 @@
 //! Player commands and the handler trait every pipeline layer implements.
 
 use domain::events::DomainEvent;
-use domain::ids::{CellCoord, NodeId, PlantId};
+use domain::ids::{CellCoord, LineId, NodeId, PlantId};
 use domain::region::PlantKind;
 use domain::session::GameSession;
 use domain::units::Megawatts;
@@ -49,6 +49,9 @@ pub enum Command {
         n: u32,
     },
     FinishReview,
+    CancelLineConstruction {
+        line: LineId,
+    },
 }
 
 /// One stage of the command pipeline. Layers wrap an inner handler and the
@@ -123,6 +126,10 @@ impl domain::state::State for Command {
             Self::FinishReview => {
                 domain::state::State::write(&10u8, out);
             }
+            Self::CancelLineConstruction { line } => {
+                domain::state::State::write(&11u8, out);
+                domain::state::State::write(line, out);
+            }
         }
     }
     fn read(input: &mut domain::state::StateReader<'_>) -> Result<Self, domain::state::StateError> {
@@ -162,6 +169,9 @@ impl domain::state::State for Command {
                 n: domain::state::State::read(input)?,
             },
             10 => Self::FinishReview,
+            11 => Self::CancelLineConstruction {
+                line: domain::state::State::read(input)?,
+            },
             _ => return Err(domain::state::StateError::Invalid),
         })
     }

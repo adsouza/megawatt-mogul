@@ -33,6 +33,74 @@ fn same(a: &Game, b: &Game) {
     assert_eq!(a.checkpoint(), b.checkpoint());
 }
 
+#[test]
+fn cancelled_line_stays_cancelled_in_snapshots_and_command_replay() {
+    use domain::state::State;
+    let (mut game, _) = game_on(tiny_region_parts(), 8);
+    let to = game
+        .session()
+        .city_views()
+        .into_iter()
+        .find(|city| !city.connected)
+        .unwrap()
+        .node;
+    game.execute(Command::BuildLine {
+        from: game.session().anchor_node(),
+        to,
+    })
+    .unwrap();
+    let line = game
+        .session()
+        .line_views()
+        .into_iter()
+        .find(|line| {
+            matches!(
+                line.status,
+                domain::grid::LineStatus::UnderConstruction { .. }
+            )
+        })
+        .unwrap()
+        .id;
+    let command = Command::CancelLineConstruction { line };
+    assert_eq!(
+        Command::from_state_bytes(&command.state_bytes()).unwrap(),
+        command
+    );
+    game.execute(command).unwrap();
+    same(&game, &restore(&game));
+    let mut checkpoint = game.checkpoint();
+    checkpoint.snapshot = None;
+    checkpoint.state_hash = game.session().state_hash();
+    let mut replayed = Game::restore(
+        tiny_loaded_region(),
+        checkpoint,
+        Box::new(InMemoryCommandLog::default()),
+        &|| false,
+    )
+    .unwrap();
+    same(&game, &replayed);
+    for game in [&mut game, &mut replayed] {
+        assert!(
+            !game
+                .session()
+                .line_views()
+                .iter()
+                .any(|view| view.id == line)
+        );
+        game.execute(Command::BeginOperating).unwrap();
+        game.execute(Command::AdvanceTicks { n: TICKS_PER_DAY })
+            .unwrap();
+        assert!(
+            !game
+                .session()
+                .line_views()
+                .iter()
+                .any(|view| view.id == line)
+        );
+        same(game, &restore(game));
+    }
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(16))]
     #[test]

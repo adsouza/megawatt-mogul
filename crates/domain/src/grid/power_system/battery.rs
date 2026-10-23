@@ -20,6 +20,46 @@ pub struct BatteryScheduleView {
     pub expected_charging: bool,
 }
 
+/// One minute of expected Planning supply. Battery fleets use the sequential
+/// shortfall evaluator. All flows are grid-side MW; storage starts empty each day.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SupplyForecastPoint {
+    pub demand: Megawatts,
+    pub generation: BTreeMap<PlantKind, Megawatts>,
+    /// Generation plus feasible discharge, before optional charging.
+    pub gross_supply: Megawatts,
+    pub battery_charge: Megawatts,
+    pub battery_discharge: Megawatts,
+}
+
+impl SupplyForecastPoint {
+    pub fn net_supply(&self) -> Megawatts {
+        self.gross_supply - self.battery_charge
+    }
+}
+
+/// Shared supply source for Planning charts and shortfall checks.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SupplyForecast {
+    /// Storage requires every minute to be assessed; other fleets use hour endpoints.
+    pub has_storage: bool,
+    pub minutes: Vec<SupplyForecastPoint>,
+}
+
+impl SupplyForecast {
+    /// Points assessed by the warning: all minutes with storage, hour endpoints otherwise.
+    pub fn assessed_minutes(&self) -> impl Iterator<Item = (u32, &SupplyForecastPoint)> {
+        self.minutes
+            .iter()
+            .enumerate()
+            .filter(|(tick, _)| {
+                let minute = tick % TICKS_PER_HOUR as usize;
+                self.has_storage || minute == 0 || minute == TICKS_PER_HOUR as usize - 1
+            })
+            .map(|(tick, point)| (tick as u32, point))
+    }
+}
+
 pub(super) fn charging_window(
     region: &RegionDefinition,
     month: SimMonth,
@@ -421,6 +461,19 @@ impl PowerSystem {
 }
 
 impl PowerSystem {
+    /// Expected-day supply, using exactly the shortfall evaluator's finite inventory.
+    /// Empty when no connected, commissioned battery is enabled.
+    pub(crate) fn battery_supply_forecast(
+        &self,
+        region: &RegionDefinition,
+        month: SimMonth,
+    ) -> Vec<SupplyForecastPoint> {
+        if !self.has_batteries() {
+            return Vec::new();
+        }
+        self.project_storage_supply(region, month, 0, TICKS_PER_DAY, true)
+    }
+
     /// One sequential inventory per projected horizon. Future receipts are allowed only in Planning.
     pub(super) fn storage_forecast_minutes(
         &self,
@@ -430,6 +483,24 @@ impl PowerSystem {
         end: u32,
         preview: bool,
     ) -> Vec<super::outage::HourEnd> {
+        self.project_storage_supply(region, month, start, end, preview)
+            .into_iter()
+            .map(|point| super::outage::HourEnd {
+                demand: point.demand,
+                solar: point.generation[&PlantKind::Solar],
+                deliverable: point.gross_supply,
+            })
+            .collect()
+    }
+
+    fn project_storage_supply(
+        &self,
+        region: &RegionDefinition,
+        month: SimMonth,
+        start: u32,
+        end: u32,
+        preview: bool,
+    ) -> Vec<SupplyForecastPoint> {
         let plans = if preview {
             self.preview_batteries(region, month)
         } else {
@@ -478,6 +549,7 @@ impl PowerSystem {
             let solar = self.expected_solar(region, month, tick);
             let demand = self.connected_demand_forecast(region, month, tick);
             let mut primary = solar;
+            let mut generation = BTreeMap::from([(PlantKind::Solar, solar)]);
             for p in self
                 .connected_plants()
                 .filter(|p| p.kind().is_dispatchable())
@@ -502,10 +574,12 @@ impl PowerSystem {
                     *left = MegawattHours::new((left.value() - output.value() / 60.0).max(0.0));
                 }
                 primary += output;
+                *generation.entry(p.kind()).or_insert(Megawatts::ZERO) += output;
             }
             let mut remaining = (demand - primary).max(Megawatts::ZERO);
             let mut charging_room = (primary - demand).max(Megawatts::ZERO);
             let mut storage = Megawatts::ZERO;
+            let mut charging = Megawatts::ZERO;
             for p in self.connected_plants() {
                 let (Some(spec), Some(state)) = (p.spec().battery, inventory.get_mut(&p.id()))
                 else {
@@ -528,12 +602,15 @@ impl PowerSystem {
                 let flow = state.settle(spec, p.spec().capacity, charge, discharge);
                 remaining = (remaining - flow.discharge).max(Megawatts::ZERO);
                 storage += flow.discharge;
+                charging += flow.charge;
                 charging_room = (charging_room - flow.charge).max(Megawatts::ZERO);
             }
-            minutes.push(super::outage::HourEnd {
+            minutes.push(SupplyForecastPoint {
                 demand,
-                solar,
-                deliverable: primary + storage,
+                generation,
+                gross_supply: primary + storage,
+                battery_charge: charging,
+                battery_discharge: storage,
             });
         }
         minutes

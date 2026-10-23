@@ -26,6 +26,60 @@ fn storage_session() -> (GameSession, PlantId) {
     (s, id)
 }
 
+proptest::proptest! {
+    #[test]
+    fn battery_supply_forecast_preserves_state_energy_and_warning_agreement(
+        end_hour in 17usize..22,
+        enabled in proptest::bool::ANY,
+    ) {
+        let (mut s, id) = storage_session();
+        let mut hours = [false; 24];
+        hours[..end_hour].fill(true);
+        for plant in s.plant_views() {
+            if matches!(plant.kind, PlantKind::Ccgt | PlantKind::Peaker) {
+                s.commit_plant(plant.id, hours).unwrap();
+            }
+        }
+        s.set_battery_enabled(id, enabled).unwrap();
+        let before = s.state_hash();
+        let points = s.battery_supply_forecast();
+        proptest::prop_assert_eq!(s.state_hash(), before);
+        proptest::prop_assert_eq!(&points, &s.battery_supply_forecast());
+        if !enabled {
+            proptest::prop_assert!(points.is_empty());
+            return Ok(());
+        }
+        proptest::prop_assert_eq!(points.len(), crate::time::TICKS_PER_DAY as usize);
+        let spec = s.region().spec(PlantKind::Battery).battery.unwrap();
+        let power = s.region().spec(PlantKind::Battery).capacity.value();
+        let mut stored = 0.0;
+        let mut worst = (0.0, 0u8);
+        for (tick, point) in points.iter().enumerate() {
+            let charge = point.battery_charge.value();
+            let discharge = point.battery_discharge.value();
+            stored += (charge * spec.charge_efficiency.value()
+                - discharge / spec.discharge_efficiency.value()) / 60.0;
+            proptest::prop_assert!(stored >= -1e-6 && stored <= spec.energy_capacity.value() + 1e-6);
+            proptest::prop_assert!(charge >= 0.0 && charge <= spec.charge_power.value());
+            proptest::prop_assert!(discharge >= 0.0 && discharge <= power);
+            proptest::prop_assert!(charge == 0.0 || discharge == 0.0);
+            let generation: f64 = point.generation.values().map(|mw| mw.value()).sum();
+            proptest::prop_assert!((point.net_supply().value() - (generation + discharge - charge)).abs() < 1e-6);
+            if charge > 0.0 {
+                proptest::prop_assert!(point.net_supply().value() + 1e-6 >= point.demand.value());
+            }
+            let shortfall = (point.demand - point.net_supply()).value();
+            if shortfall > worst.0 { worst = (shortfall, (tick / 60) as u8); }
+        }
+        let warning = s.capacity_shortfall_check();
+        if worst.0 > 0.0 {
+            let warning = warning.unwrap();
+            proptest::prop_assert!((warning.shortfall.value() - worst.0).abs() < 1e-6);
+            proptest::prop_assert_eq!(warning.hour, worst.1);
+        } else { proptest::prop_assert!(warning.is_none()); }
+    }
+}
+
 #[test]
 fn battery_commands_are_typed_and_atomic() {
     let (mut s, id) = storage_session();

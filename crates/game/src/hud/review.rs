@@ -1,7 +1,8 @@
 //! The Review modal (spec §8.4): the month just closed, over the dimmed map.
 //!
 //! The summary column shows P&L (weighted by the month's days, §2.3), reliability, incidents,
-//! lessons, regulation and the annual rate review. The merit order sits in its own right column.
+//! lessons, regulation and the annual rate review. Merit order and battery storage have their
+//! own independently scrolling columns.
 //! *Continue* is the way out: it sends `FinishReview`. The backdrop dims the map but not the top
 //! bar, so the menu and the milestones stay in reach.
 //!
@@ -292,7 +293,8 @@ pub fn draw_review(ui: &mut egui::Ui, model: &ReviewModel) -> Vec<UiAction> {
         });
     } else {
         if ui.available_width() >= 680.0 {
-            ui.columns(2, |columns| {
+            let count = if model.storage.is_empty() { 2 } else { 3 };
+            ui.columns(count, |columns| {
                 egui::ScrollArea::vertical()
                     .id_salt("review_sections")
                     .auto_shrink([false, false])
@@ -303,6 +305,13 @@ pub fn draw_review(ui: &mut egui::Ui, model: &ReviewModel) -> Vec<UiAction> {
                     .auto_shrink([false, false])
                     .max_height(content_height)
                     .show(&mut columns[1], |ui| draw_merit(ui, model));
+                if count == 3 {
+                    egui::ScrollArea::vertical()
+                        .id_salt("review_storage_rows")
+                        .auto_shrink([false, false])
+                        .max_height(content_height)
+                        .show(&mut columns[2], |ui| draw_storage(ui, model));
+                }
             });
         } else {
             // At extreme UI zoom retain every section inside the window's width.
@@ -313,6 +322,7 @@ pub fn draw_review(ui: &mut egui::Ui, model: &ReviewModel) -> Vec<UiAction> {
                 .show(ui, |ui| {
                     draw_summary(ui, model);
                     draw_merit(ui, model);
+                    draw_storage(ui, model);
                 });
         }
     }
@@ -329,18 +339,6 @@ fn draw_summary(ui: &mut egui::Ui, model: &ReviewModel) {
         ui.add_space(6.0);
         ui.strong(text);
     };
-    let stats = |ui: &mut egui::Ui, id: &str, stats: &[Stat]| {
-        egui::Grid::new(id)
-            .num_columns(2)
-            .max_col_width((ui.available_width() - ui.spacing().item_spacing.x) / 2.0)
-            .show(ui, |ui| {
-                for stat in stats {
-                    ui.label(stat.label.as_str());
-                    ui.label(stat.value.as_str());
-                    ui.end_row();
-                }
-            });
-    };
     let lines = |ui: &mut egui::Ui, lines: &[String], empty: Option<&String>| {
         if let Some(empty) = empty {
             ui.weak(empty.as_str());
@@ -352,18 +350,9 @@ fn draw_summary(ui: &mut egui::Ui, model: &ReviewModel) {
 
     heading(ui, &model.pnl_heading);
     ui.weak(model.days_note.as_str());
-    stats(ui, "review_pnl", &model.pnl);
-
-    if !model.storage.is_empty() {
-        heading(ui, &model.storage_heading);
-        ui.label(&model.storage_note);
-        for (index, (name, rows)) in model.storage.iter().enumerate() {
-            ui.strong(name);
-            stats(ui, &format!("storage_review_{index}"), rows);
-        }
-    }
+    draw_stats(ui, "review_pnl", &model.pnl);
     heading(ui, &model.reliability_heading);
-    stats(ui, "review_reliability", &model.reliability);
+    draw_stats(ui, "review_reliability", &model.reliability);
 
     heading(ui, &model.incidents_heading);
     lines(ui, &model.incidents, model.incidents_empty.as_ref());
@@ -379,6 +368,32 @@ fn draw_summary(ui: &mut egui::Ui, model: &ReviewModel) {
     if let Some(result) = &model.rate_review {
         heading(ui, &model.rate_review_heading);
         ui.label(result.as_str());
+    }
+}
+
+fn draw_stats(ui: &mut egui::Ui, id: &str, stats: &[Stat]) {
+    egui::Grid::new(id)
+        .num_columns(2)
+        .max_col_width((ui.available_width() - ui.spacing().item_spacing.x) / 2.0)
+        .show(ui, |ui| {
+            for stat in stats {
+                ui.label(stat.label.as_str());
+                ui.label(stat.value.as_str());
+                ui.end_row();
+            }
+        });
+}
+
+fn draw_storage(ui: &mut egui::Ui, model: &ReviewModel) {
+    if model.storage.is_empty() {
+        return;
+    }
+    ui.add_space(6.0);
+    ui.strong(&model.storage_heading);
+    ui.label(&model.storage_note);
+    for (index, (name, rows)) in model.storage.iter().enumerate() {
+        ui.strong(name);
+        draw_stats(ui, &format!("storage_review_{index}"), rows);
     }
 }
 
@@ -589,6 +604,65 @@ mod tests {
             false,
             l10n,
         )
+    }
+
+    #[test]
+    fn battery_storage_has_a_third_review_column_with_a_visible_footer() {
+        let l10n = shipped_l10n();
+        let mut report = report();
+        report.storage.insert(
+            domain::ids::PlantId(1),
+            domain::generation::BatteryTotals::default(),
+        );
+        let model = model_of(&report, &[], &l10n);
+        fn text_rect(shape: &egui::Shape, text: &str) -> Option<egui::Rect> {
+            match shape {
+                egui::Shape::Vec(shapes) => shapes.iter().find_map(|shape| text_rect(shape, text)),
+                egui::Shape::Text(shape) if shape.galley.text() == text => {
+                    Some(shape.visual_bounding_rect())
+                }
+                _ => None,
+            }
+        }
+        for width in [1024.0, 1024.0 / 1.25, 1920.0] {
+            let ctx = egui::Context::default();
+            let screen =
+                egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 640.0 / 1.25));
+            for frame in 0..3 {
+                let output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(screen),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        draw_review(ui, &model);
+                    },
+                );
+                if frame == 2 {
+                    let at = |text| {
+                        output
+                            .shapes
+                            .iter()
+                            .find_map(|shape| text_rect(&shape.shape, text))
+                            .unwrap_or_else(|| panic!("missing {text}"))
+                    };
+                    let summary = at(&model.pnl_heading);
+                    let merit = at(&model.merit_heading);
+                    let storage = at(&model.storage_heading);
+                    assert!(
+                        summary.left() < merit.left() && merit.left() < storage.left(),
+                        "storage needs its own third column at {width}"
+                    );
+                    assert!(
+                        (summary.top() - storage.top()).abs() <= 2.0,
+                        "{width}: summary {summary:?}, storage {storage:?}"
+                    );
+                    assert!(screen.contains_rect(at(&model.footer_button.label)));
+                }
+                output.drop_without_applying_deltas();
+            }
+        }
+        assert_eq!(l10n.problems(), vec![]);
     }
 
     #[test]

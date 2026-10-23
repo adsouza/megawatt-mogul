@@ -9,7 +9,7 @@ use application::{
     RegionFingerprint, RegionLoadError, ReplayError, replay,
 };
 use domain::SIM_RULES_VERSION;
-use domain::ids::{CellCoord, NodeId, PlantId, RegionId};
+use domain::ids::{CellCoord, LineId, NodeId, PlantId, RegionId};
 use domain::region::PlantKind;
 use domain::session::GameSettings;
 use domain::time::TICKS_PER_DAY;
@@ -122,6 +122,7 @@ fn arb_command() -> impl Strategy<Value = Command> {
         plant.prop_map(|plant| Command::StopPlant { plant }),
         any::<u32>().prop_map(|n| Command::AdvanceTicks { n }),
         Just(Command::FinishReview),
+        any::<u32>().prop_map(|id| Command::CancelLineConstruction { line: LineId(id) }),
     ]
 }
 

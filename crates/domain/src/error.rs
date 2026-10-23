@@ -69,6 +69,10 @@ pub enum DomainError {
     /// No plant has this id.
     #[error("unknown plant {plant:?}")]
     UnknownPlant { plant: PlantId },
+    #[error("unknown line {line:?}")]
+    UnknownLine { line: LineId },
+    #[error("line {line:?} is not under construction")]
+    LineNotUnderConstruction { line: LineId },
     /// The command is not valid in the current day phase.
     #[error("command not valid in phase {actual:?}")]
     WrongPhase { actual: DayPhase },

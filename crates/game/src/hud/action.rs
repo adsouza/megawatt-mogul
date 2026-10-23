@@ -8,7 +8,7 @@ use application::Command;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy_egui::egui;
-use domain::ids::{PlantId, RegionId};
+use domain::ids::{LineId, PlantId, RegionId};
 use domain::time::SimMonth;
 use domain::units::Megawatts;
 
@@ -104,7 +104,13 @@ pub enum Prompt {
     /// Starting a day the forecast says the committed fleet can't cover (spec §16.4). It holds
     /// the figures the player saw when they clicked *Start the day*: the worst hour and the
     /// shortfall then, from `capacity_shortfall_check()`.
-    ShortfallStart { hour: u8, shortfall: Megawatts },
+    ShortfallStart {
+        hour: u8,
+        shortfall: Megawatts,
+    },
+    CancelLineConstruction {
+        line: LineId,
+    },
 }
 
 /// The prompt on screen, if any. Cleared whenever a game starts or ends.

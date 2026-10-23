@@ -593,6 +593,7 @@ pub fn update_visuals(
         )
         .cell_center(model.region.terrain(), c),
         Selection::LineFrom(node) => model.nodes.get(&node).copied(),
+        Selection::Line(id) => model.lines.get(&id).map(|line| line.midpoint),
         Selection::None => None,
     };
     for (mut t, mut v) in &mut marker {

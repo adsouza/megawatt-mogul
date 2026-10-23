@@ -14,12 +14,12 @@
 
 use std::collections::BTreeMap;
 
-use super::PowerSystem;
+use super::{PowerSystem, SupplyForecast, SupplyForecastPoint};
 use crate::events::DomainEvent;
 use crate::generation::{CommitmentAction, HydroFill, Plant, PlantStatus, commitment_actions};
 use crate::ids::PlantId;
 use crate::region::{PlantKind, RegionDefinition};
-use crate::time::{SimMonth, TICKS_PER_HOUR};
+use crate::time::{SimMonth, TICKS_PER_DAY, TICKS_PER_HOUR};
 use crate::units::{Megawatts, Ratio};
 
 /// An outage within this of its target counts as there, so stepwise float
@@ -32,6 +32,11 @@ const LAST_MINUTE: u32 = TICKS_PER_HOUR - 1;
 /// The minutes at which an hour is judged: demand is interpolated linearly
 /// within an hour, so its extremes are at the two ends.
 const HOUR_ENDS: [u32; 2] = [0, LAST_MINUTE];
+
+struct PlannedGeneration {
+    total: Megawatts,
+    by_kind: BTreeMap<PlantKind, Megawatts>,
+}
 
 /// One end of an hour (minute 0 or 59), judged against a fleet rule: the
 /// evaluation shared by operating-time sizing (spec §15.3) and the two
@@ -115,6 +120,62 @@ fn ratio(value: f64) -> Ratio {
 }
 
 impl PowerSystem {
+    /// Generation credited by the Planning warning, before expected solar.
+    /// Preserve plant-ID summation order and the warning's manual-target rule.
+    fn planned_generation_hours(
+        &self,
+        region: &RegionDefinition,
+        month: SimMonth,
+    ) -> [PlannedGeneration; 24] {
+        let preview = self.preview_hydro(region, month, &self.battery_plan);
+        std::array::from_fn(|h| {
+            let mut total = Megawatts::ZERO;
+            let mut by_kind = BTreeMap::new();
+            for plant in self
+                .connected_plants()
+                .filter(|p| p.kind().is_dispatchable() && p.commitment().is_committed(h as u8))
+            {
+                let output = planned_deliverable(plant, h as u8, &preview);
+                total += output;
+                *by_kind.entry(plant.kind()).or_insert(Megawatts::ZERO) += output;
+            }
+            PlannedGeneration { total, by_kind }
+        })
+    }
+
+    pub(crate) fn supply_forecast(
+        &self,
+        region: &RegionDefinition,
+        month: SimMonth,
+    ) -> SupplyForecast {
+        if self.has_batteries() {
+            return SupplyForecast {
+                has_storage: true,
+                minutes: self.battery_supply_forecast(region, month),
+            };
+        }
+        let hours = self.planned_generation_hours(region, month);
+        let minutes = (0..TICKS_PER_DAY)
+            .map(|tick| {
+                let hour = &hours[(tick / TICKS_PER_HOUR) as usize];
+                let solar = self.expected_solar(region, month, tick);
+                let mut generation = hour.by_kind.clone();
+                generation.insert(PlantKind::Solar, solar);
+                SupplyForecastPoint {
+                    demand: self.connected_demand_forecast(region, month, tick),
+                    generation,
+                    gross_supply: hour.total + solar,
+                    battery_charge: Megawatts::ZERO,
+                    battery_discharge: Megawatts::ZERO,
+                }
+            })
+            .collect();
+        SupplyForecast {
+            has_storage: false,
+            minutes,
+        }
+    }
+
     /// The rotating-outage share in effect: the share of demand cut on
     /// purpose this tick, ahead of protection (spec §15.3). Zero outside a
     /// shortage and during a blackout.
@@ -213,27 +274,25 @@ impl PowerSystem {
         region: &RegionDefinition,
         month: SimMonth,
     ) -> [[HourEnd; 2]; 24] {
-        if self.has_batteries() {
+        let forecast = self.supply_forecast(region, month);
+        let end = |point: &SupplyForecastPoint| HourEnd {
+            demand: point.demand,
+            solar: point.generation[&PlantKind::Solar],
+            deliverable: point.gross_supply,
+        };
+        std::array::from_fn(|h| {
             let minutes =
-                self.storage_forecast_minutes(region, month, 0, crate::time::TICKS_PER_DAY, true);
-            return std::array::from_fn(|h| {
-                let worst = minutes[h * 60..(h + 1) * 60]
+                &forecast.minutes[h * TICKS_PER_HOUR as usize..(h + 1) * TICKS_PER_HOUR as usize];
+            if forecast.has_storage {
+                let worst = minutes
                     .iter()
-                    .copied()
+                    .map(end)
                     .reduce(|a, b| if b.shortfall() > a.shortfall() { b } else { a })
                     .expect("sixty minutes");
                 [worst; 2]
-            });
-        }
-        let preview = self.preview_hydro(region, month, &self.battery_plan);
-        std::array::from_fn(|h| {
-            let hour = h as u8;
-            let fleet: Megawatts = self
-                .connected_plants()
-                .filter(|p| p.kind().is_dispatchable() && p.commitment().is_committed(hour))
-                .map(|p| planned_deliverable(p, hour, &preview))
-                .sum();
-            self.hour_ends(region, month, hour, |_| fleet)
+            } else {
+                [end(&minutes[0]), end(&minutes[LAST_MINUTE as usize])]
+            }
         })
     }
 

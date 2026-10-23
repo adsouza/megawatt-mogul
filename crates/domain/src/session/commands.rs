@@ -27,6 +27,18 @@ pub struct LineQuote {
 }
 
 impl GameSession {
+    /// Cancels an unfinished line in Planning. Paid instalments remain spent;
+    /// future instalments are removed and the line can never commission.
+    pub fn cancel_line_construction(
+        &mut self,
+        line: LineId,
+    ) -> Result<Vec<DomainEvent>, DomainError> {
+        self.require_phase(&[DayPhase::Planning])?;
+        self.power.network_mut().cancel_construction(line)?;
+        self.instalments.remove(&AssetRef::Line(line));
+        Ok(vec![DomainEvent::LineConstructionCancelled { line }])
+    }
+
     /// Orders a plant of `kind` at `cell` (Planning only). The plant sits
     /// under construction for its build months on a new node with no line,
     /// and its capital cost is queued as equal monthly instalments.

@@ -2,7 +2,7 @@
 //! about.
 
 use bevy::prelude::*;
-use domain::ids::{CellCoord, CityId, NodeId, PlantId};
+use domain::ids::{CellCoord, CityId, LineId, NodeId, PlantId};
 
 /// The current selection. The diorama's bounds/terrain picking writes it through
 /// [`UiAction::Select`], as does the headless 2D reference adapter. It is reset to `None` whenever a game starts.
@@ -15,6 +15,7 @@ pub enum Selection {
     Cell(CellCoord),
     Plant(PlantId),
     City(CityId),
+    Line(LineId),
     /// The first end of a line being drawn: the next node picked is its other end.
     LineFrom(NodeId),
 }

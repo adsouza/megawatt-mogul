@@ -9,8 +9,10 @@
 //! - **Shortfall start** (*Start the day* on a short forecast, spec §16.4): *Start anyway* sends
 //!   `BeginOperating`; *Keep planning* closes it. It is Planning's: the frame that begins the day
 //!   closes it, before any Operating panel draws.
+//! - **Cancel line construction**: removes an unfinished order in Planning; *Keep building* is
+//!   the initial keyboard focus, and backing out preserves the order.
 //!
-//! A click outside a prompt is its `dismiss`, which for both is backing out.
+//! A click outside a prompt is its `dismiss`, which always backs out.
 
 use application::{Command, Game};
 use bevy::prelude::*;
@@ -19,7 +21,7 @@ use domain::session::{DayPhase, SessionStatus};
 
 use super::action::{ActionSink, ButtonModel, OpenPrompt, Prompt, UiAction, button, dispatch};
 use super::planning_warnings::time_of;
-use crate::l10n::{Localizer, format};
+use crate::l10n::{Localizer, Names, format};
 use crate::sim::Session;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -42,6 +44,30 @@ pub fn prompt_model(
     l10n: &Localizer,
 ) -> Option<PromptModel> {
     match open.0? {
+        Prompt::CancelLineConstruction { line } => {
+            let session = game?.session();
+            prompt_in_phase(prompt_after(open, session.status()), session.phase()).0?;
+            session.line_views().into_iter().find(|view| {
+                view.id == line
+                    && matches!(
+                        view.status,
+                        domain::grid::LineStatus::UnderConstruction { .. }
+                    )
+            })?;
+            let cancel = UiAction::Prompt(None);
+            Some(PromptModel {
+                question: l10n.args(
+                    "line-cancel-question",
+                    &[("line", Names::new(l10n, session).line(line).into())],
+                ),
+                confirm: ButtonModel::new(
+                    l10n.text("line-cancel-confirm"),
+                    UiAction::Command(Command::CancelLineConstruction { line }),
+                ),
+                cancel: ButtonModel::new(l10n.text("line-cancel-keep"), cancel.clone()),
+                dismiss: cancel,
+            })
+        }
         Prompt::LeaveGame => {
             let game = game?;
             prompt_after(open, game.session().status()).0?;
@@ -88,11 +114,14 @@ pub fn prompt_after(open: OpenPrompt, status: SessionStatus) -> OpenPrompt {
     }
 }
 
-/// What stays open in `phase`: the shortfall prompt asks about starting the day, so it closes once
-/// the day has begun. The leave prompt is for every phase.
+/// Planning actions close once the day begins. The leave prompt is for every phase.
 pub fn prompt_in_phase(open: OpenPrompt, phase: DayPhase) -> OpenPrompt {
     match open.0 {
-        Some(Prompt::ShortfallStart { .. }) if phase != DayPhase::Planning => OpenPrompt(None),
+        Some(Prompt::ShortfallStart { .. } | Prompt::CancelLineConstruction { .. })
+            if phase != DayPhase::Planning =>
+        {
+            OpenPrompt(None)
+        }
         _ => open,
     }
 }
@@ -103,8 +132,26 @@ pub fn draw_prompt(ui: &mut egui::Ui, model: &PromptModel) -> Vec<UiAction> {
     ui.label(model.question.as_str());
     ui.add_space(12.0);
     ui.horizontal(|ui| {
-        button(ui, &model.confirm, &mut actions);
-        button(ui, &model.cancel, &mut actions);
+        if matches!(
+            model.confirm.action,
+            UiAction::Command(Command::CancelLineConstruction { .. })
+        ) {
+            let response = button(ui, &model.cancel, &mut actions);
+            let frame = ui.ctx().cumulative_frame_nr();
+            let id = ui.make_persistent_id("line_cancel_focus");
+            let first = ui.data_mut(|data| {
+                let last = data.get_temp::<u64>(id);
+                data.insert_temp(id, frame);
+                last != Some(frame) && last != Some(frame.saturating_sub(1))
+            });
+            if first {
+                response.request_focus();
+            }
+            button(ui, &model.confirm, &mut actions);
+        } else {
+            button(ui, &model.confirm, &mut actions);
+            button(ui, &model.cancel, &mut actions);
+        }
     });
     if dismiss {
         vec![model.cancel.action.clone()]
@@ -139,6 +186,20 @@ pub(super) fn prompt_overlay(
 pub(super) fn close_stale_prompt(session: Res<Session>, mut open: ResMut<OpenPrompt>) {
     let session = session.0.session();
     let after = prompt_in_phase(prompt_after(*open, session.status()), session.phase());
+    let after = match after.0 {
+        Some(Prompt::CancelLineConstruction { line })
+            if !session.line_views().iter().any(|view| {
+                view.id == line
+                    && matches!(
+                        view.status,
+                        domain::grid::LineStatus::UnderConstruction { .. }
+                    )
+            }) =>
+        {
+            OpenPrompt(None)
+        }
+        _ => after,
+    };
     if after != *open {
         *open = after;
     }

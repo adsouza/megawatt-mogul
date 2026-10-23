@@ -239,6 +239,25 @@ impl GameSession {
         }
     }
 
+    /// The coming day's minute-by-minute supply with feasible battery flows,
+    /// from the Planning shortfall evaluator. Starts storage empty and credits
+    /// only charging available from forecast surplus. Pure; leaves live water,
+    /// storage, schedules and RNG untouched. Empty without enabled, connected,
+    /// commissioned storage. Unlike a battery schedule, these are feasible
+    /// flows after customer demand, generation and hydro water are accounted for.
+    pub fn battery_supply_forecast(&self) -> Vec<crate::grid::SupplyForecastPoint> {
+        self.power
+            .battery_supply_forecast(&self.region, self.clock.month())
+    }
+
+    /// The coming day's expected supply, using the shortfall check's rules for
+    /// connectivity, commissioning, commitments, manual targets, hydro and storage.
+    /// With storage, every minute is assessed; otherwise the warning assesses
+    /// minute 0 and 59 of each hour. Pure: no live water, energy or RNG changes.
+    pub fn supply_forecast(&self) -> crate::grid::SupplyForecast {
+        self.power.supply_forecast(&self.region, self.clock.month())
+    }
+
     /// Every plant, in id order.
     pub fn plant_views(&self) -> Vec<PlantView> {
         self.power

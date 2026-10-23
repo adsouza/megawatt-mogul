@@ -147,6 +147,13 @@ impl LocalizeWith for DomainError {
             Self::UnknownPlant { plant } => {
                 l10n.args("error-unknown-plant", &[("plant", id_of!(plant))])
             }
+            Self::UnknownLine { line } => {
+                l10n.args("error-unknown-line", &[("line", names.line(*line).into())])
+            }
+            Self::LineNotUnderConstruction { line } => l10n.args(
+                "error-line-not-under-construction",
+                &[("line", names.line(*line).into())],
+            ),
             Self::WrongPhase { actual } => l10n.args(
                 "error-wrong-phase",
                 &[("phase", actual.localize(l10n).into())],
@@ -591,6 +598,10 @@ impl Toast for DomainEvent {
             ),
             Self::LineCommissioned { line } => l10n.args(
                 "event-line-commissioned",
+                &[("line", names.line(*line).into())],
+            ),
+            Self::LineConstructionCancelled { line } => l10n.args(
+                "event-line-construction-cancelled",
                 &[("line", names.line(*line).into())],
             ),
             Self::RateReviewCompleted {

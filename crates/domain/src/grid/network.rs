@@ -149,6 +149,20 @@ impl Network {
         commissioned
     }
 
+    /// Removes only an unfinished line; all validation precedes mutation.
+    pub fn cancel_construction(&mut self, line: LineId) -> Result<(), DomainError> {
+        let existing = self
+            .lines
+            .get(&line)
+            .ok_or(DomainError::UnknownLine { line })?;
+        if !matches!(existing.status, LineStatus::UnderConstruction { .. }) {
+            return Err(DomainError::LineNotUnderConstruction { line });
+        }
+        self.lines.remove(&line);
+        self.recompute_connectivity();
+        Ok(())
+    }
+
     pub fn is_connected(&self, node: NodeId) -> bool {
         self.connected.contains(&node)
     }

@@ -132,7 +132,22 @@ fn battery_day_flows_change_line_direction_and_survive_history_review_and_restor
         &Default::default(),
     );
     assert!(forecast.storage_charge.iter().any(|[_, mw]| *mw > 0.0));
-    assert!(forecast.storage_discharge.iter().any(|[_, mw]| *mw > 0.0));
+    // The committed fleet can cover expected demand at full output; only
+    // live AGC dispatch below that capacity needs the planned battery discharge.
+    assert!(forecast.storage_discharge.iter().all(|[_, mw]| *mw == 0.0));
+    assert!(
+        app.world()
+            .resource::<Session>()
+            .0
+            .session()
+            .battery_schedule()
+            .plants
+            .values()
+            .any(|p| p
+                .discharge
+                .iter()
+                .any(|mw| *mw > domain::units::Megawatts::ZERO))
+    );
     command(&mut app, Command::BeginOperating);
     let mut saw_charge = false;
     let mut saw_discharge = false;
@@ -244,14 +259,30 @@ fn battery_day_flows_change_line_direction_and_survive_history_review_and_restor
     }
     update_n(&mut app, 3);
     let pass = EguiPass::attach(&mut app);
-    let widgets = pass.settled(&mut app, WIDTH, HEIGHT);
-    assert!(
-        widgets
-            .iter()
-            .any(|w| w.text == l10n.text("battery-review-heading")),
-        "{:?}",
-        widgets.iter().map(|w| &w.text).collect::<Vec<_>>()
-    );
+    for zoom in [1.0, 1.25] {
+        pass.ctx().set_zoom_factor(zoom);
+        for (width, height) in [(WIDTH, HEIGHT), (1920.0, 1080.0)] {
+            let (width, height) = (width / zoom, height / zoom);
+            let widgets = pass.settled(&mut app, width, height);
+            let at = |key: &str| {
+                widgets
+                    .iter()
+                    .find(|w| {
+                        w.text == l10n.text(key)
+                            && w.role == bevy_egui::egui::accesskit::Role::Label
+                    })
+                    .expect(key)
+                    .rect
+            };
+            assert!(at("review-pnl").left() < at("review-merit-order").left());
+            assert!(at("review-merit-order").left() < at("battery-review-heading").left());
+            let screen = bevy_egui::egui::Rect::from_min_size(
+                bevy_egui::egui::Pos2::ZERO,
+                bevy_egui::egui::vec2(width, height),
+            );
+            assert!(screen.contains_rect(button(&widgets, &l10n.text("ui-continue")).rect));
+        }
+    }
     assert_eq!(l10n.problems(), vec![]);
 }
 

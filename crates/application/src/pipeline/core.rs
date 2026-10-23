@@ -18,6 +18,7 @@ impl CommandHandler for CoreHandler {
         let events = match command {
             Command::BuildPlant { kind, cell } => session.build_plant(*kind, *cell)?.1,
             Command::BuildLine { from, to } => session.build_line(*from, *to)?.1,
+            Command::CancelLineConstruction { line } => session.cancel_line_construction(*line)?,
             Command::CommitPlant { plant, hours } => session.commit_plant(*plant, *hours)?,
             Command::BeginOperating => session.begin_operating()?,
             Command::SetDispatchTarget { plant, mw } => session.set_dispatch_target(*plant, *mw)?,

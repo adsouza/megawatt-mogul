@@ -767,6 +767,17 @@ Actual per-line loading still requires a power-flow `NetworkModel`.
   capacity, water-aware hydro and expected solar from connected, commissioned plants. Solar uses
   site sunshine, the daily sun arc and monthly mean cloud clearness, matching the shortfall check;
   its separate expected-output curve is a reference, not an additional supply contribution.
+  All fleets use `GameSession::supply_forecast()`, the same source as the warning: manual plants
+  count their initial target and disconnected or unfinished plants supply nothing. Without enabled
+  storage the net-supply and demand curves assess minute 0 and 59 of each hour, revealing boundary
+  peaks hidden by mid-hour bars. The uncertainty band follows those same demand samples.
+  With enabled storage, the forecast uses the shortfall evaluator's sequential, energy-limited
+  supply preview. A signed battery contribution is stacked below generation: discharge raises
+  supply and charging lowers the stack baseline, so its top is generation + discharge − charging.
+  Battery reference curves show feasible flows, not requested allocations. A minute-resolution
+  net-supply curve and customer-demand curve expose depletion inside an hour; the bars remain
+  mid-hour samples. Disabled, disconnected and unfinished batteries contribute nothing. This
+  expected-day preview assumes feasible forecast charging from an empty daily inventory.
   The commitment grid is the primary planning tool. The inspector shows cell resources and
   suitability, city details, construction progress, or a commissioned plant's operating status,
   grid connection, capacity, minimum output, initial target, ramp rate, start-up time and cost,
@@ -1818,6 +1829,16 @@ be in service. The commissioning toasts arrive with no warning.
   - No new domain state. A read-only query is added only if the in-service month can't be derived
     from public views.
 
+#### Cancelling an unfinished line (playtest)
+
+Selecting a line on the map selects that line, rather than starting another line drawing.
+In Planning its inspector shows construction progress and **Cancel construction** while it is
+unfinished. The confirmation defaults to **Keep building**; Escape and clicking outside also keep
+the order. Confirming removes the line and all remaining monthly instalments. Costs already paid
+remain spent, with no refund. The route can be ordered again. In-service lines cannot be cancelled,
+and line construction cannot be cancelled in Operating or Review. **Cancel drawing** in the build
+menu only abandons choosing endpoints, without cancelling an existing order.
+
 ## 17. Amendment A6: Save/resume before Plan 3 (2026-10-20)
 
 ### 17.1 Scope and player experience
@@ -2509,6 +2530,9 @@ energy or city demand in the just-completed day's report.
   storage was present. Keep storage throughput separate from the right-side generator merit-order
   table. A typed lesson may explain a nonzero discarded remainder; storage does not displace
   higher-priority reliability lessons or increase the three-lesson cap.
+  In the summary view, battery storage has a third independently scrolling column after the
+  summary and merit order. Omit the third column without storage. Below 680 logical pixels,
+  retain all sections in a single scrolling report. Continue/Back stays pinned below the content.
 - **World.** Add a recognisable battery enclosure model/marker within the existing 0.8-cell fitted
   footprint, with construction/selection/connection behavior. Charging batteries are sinks and
   discharging batteries sources for illustrative line routes, including city-to-city paths. Never

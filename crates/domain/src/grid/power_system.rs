@@ -8,7 +8,9 @@
 use std::collections::BTreeMap;
 
 mod battery;
-pub use battery::{BatteryScheduleView, PlantBatteryScheduleView};
+pub use battery::{
+    BatteryScheduleView, PlantBatteryScheduleView, SupplyForecast, SupplyForecastPoint,
+};
 mod hydro_plan;
 mod outage;
 

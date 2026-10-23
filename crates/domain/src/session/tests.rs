@@ -1,7 +1,7 @@
 use super::*;
 use crate::generation::PlantStatus;
 use crate::grid::{GridMode, NetworkModel};
-use crate::ids::CityId;
+use crate::ids::{CityId, LineId};
 use crate::region::PlantKind;
 use crate::region::fixtures::tiny_region;
 use crate::regulation::Licence;
@@ -10,6 +10,57 @@ use crate::units::{Hertz, MegawattHours, Megawatts, Ratio};
 
 fn session() -> GameSession {
     GameSession::new(Arc::new(tiny_region()), 1, GameSettings::default())
+}
+
+#[test]
+fn cancel_line_construction_removes_the_order_and_future_payments_without_refunding_paid_costs() {
+    use crate::state::State;
+    let mut s = session();
+    let from = s.anchor_node();
+    let to = s
+        .city_views()
+        .into_iter()
+        .find(|city| !city.connected)
+        .unwrap()
+        .node;
+    let (line, _) = s.build_line(from, to).unwrap();
+    assert!(s.line_build_months(line).unwrap() > 1);
+    s.begin_operating().unwrap();
+    run_ticks(&mut s, TICKS_PER_DAY);
+    s.finish_review().unwrap();
+    let cash = s.company().cash();
+    let ledger = s.company().ledger().to_vec();
+    assert!(
+        ledger
+            .iter()
+            .any(|entry| entry.subject == Some(AssetRef::Line(line))),
+        "one construction instalment has already been paid"
+    );
+    let events = s.cancel_line_construction(line).unwrap();
+    for event in events {
+        assert_eq!(
+            DomainEvent::from_state_bytes(&event.state_bytes()).unwrap(),
+            event
+        );
+    }
+    assert!(s.power().network().line(line).is_none());
+    assert!(!s.instalments.contains_key(&AssetRef::Line(line)));
+    assert_eq!(s.company().cash(), cash);
+    assert_eq!(s.company().ledger(), ledger);
+    assert!(
+        s.line_quote(from, to).is_ok(),
+        "the route can be ordered again"
+    );
+    s.check_invariants().unwrap();
+    s.begin_operating().unwrap();
+    let events = run_ticks(&mut s, TICKS_PER_DAY);
+    assert!(!events.iter().any(|event| matches!(event,
+        DomainEvent::LedgerEntryRecorded(entry) if entry.subject == Some(AssetRef::Line(line)))));
+    assert!(
+        !events.iter().any(
+            |event| matches!(event, DomainEvent::LineCommissioned { line: id } if *id == line)
+        )
+    );
 }
 
 #[test]
@@ -40,6 +91,44 @@ fn starting_network_uses_a_city_node_without_an_extra_anchor_asset() {
 }
 
 proptest::proptest! {
+    #[test]
+    fn line_cancellation_is_atomic_and_preserves_completed_connections(
+        seed in proptest::prelude::any::<u64>(),
+        operating in proptest::bool::ANY,
+    ) {
+        let mut s = GameSession::new(Arc::new(tiny_region()), seed, GameSettings::default());
+        let completed = s.line_views().into_iter().find(|line|
+            matches!(line.status, crate::grid::LineStatus::InService)
+        ).unwrap().id;
+        let to = s.city_views().into_iter().find(|city| !city.connected).unwrap().node;
+        let (line, _) = s.build_line(s.anchor_node(), to).unwrap();
+        if operating {
+            s.begin_operating().unwrap();
+        }
+        for target in [LineId(u32::MAX), completed] {
+            let before = s.state_hash();
+            proptest::prop_assert!(s.cancel_line_construction(target).is_err());
+            proptest::prop_assert_eq!(s.state_hash(), before);
+        }
+        let before = s.state_hash();
+        if operating {
+            proptest::prop_assert_eq!(s.cancel_line_construction(line), Err(DomainError::WrongPhase {
+                actual: DayPhase::Operating,
+            }));
+            proptest::prop_assert_eq!(s.state_hash(), before);
+        } else {
+            proptest::prop_assert_eq!(s.cancel_line_construction(line).unwrap(), vec![
+                DomainEvent::LineConstructionCancelled { line },
+            ]);
+            proptest::prop_assert!(s.power().network().line(line).is_none());
+            let cancelled = s.state_hash();
+            proptest::prop_assert_eq!(s.cancel_line_construction(line), Err(DomainError::UnknownLine { line }));
+            proptest::prop_assert_eq!(s.state_hash(), cancelled);
+        }
+        proptest::prop_assert!(s.power().network().line(completed).is_some());
+        proptest::prop_assert!(s.check_invariants().is_ok());
+    }
+
     #[test]
     fn hydro_forecast_is_pure_and_respects_daily_water_and_commitments(
         hours in proptest::array::uniform24(proptest::bool::ANY),
@@ -1658,6 +1747,53 @@ fn capacity_shortfall_check_is_pure() {
     assert_eq!(s.capacity_shortfall_check(), first);
     assert!(s.hydro_schedule().plants.is_empty());
     assert_eq!(s.state_hash(), before);
+}
+
+proptest::proptest! {
+    #[test]
+    fn shared_supply_forecast_matches_manual_targets_connectivity_and_warning(
+        fraction in 0u16..=100,
+        disconnected in proptest::bool::ANY,
+    ) {
+        let mut s = session();
+        for plant in s.plant_views() {
+            let spec = s.region().spec(plant.kind);
+            let target = spec.min_output() + (spec.capacity - spec.min_output()) * (f64::from(fraction) / 100.0);
+            s.set_auto_follow(plant.id, false).unwrap();
+            s.set_dispatch_target(plant.id, target).unwrap();
+        }
+        if disconnected {
+            let old = s.power.network().clone();
+            let root = s.anchor_node();
+            let mut network = Network::new(root, *old.node(root).unwrap());
+            for (id, node) in old.nodes() {
+                if id != root { network.add_node(id, *node).unwrap(); }
+            }
+            *s.power.network_mut() = network;
+        }
+        let before = s.state_hash();
+        let forecast = s.supply_forecast();
+        proptest::prop_assert!(!forecast.has_storage);
+        proptest::prop_assert_eq!(forecast.assessed_minutes().count(), 48);
+        proptest::prop_assert_eq!(s.state_hash(), before);
+        proptest::prop_assert_eq!(&forecast, &s.supply_forecast());
+        let expected: Megawatts = s.plant_views().iter().filter(|p| p.connected)
+            .map(|p| p.initial_target).sum();
+        let mut worst = (0.0, 0u8);
+        for (tick, point) in forecast.assessed_minutes() {
+            proptest::prop_assert_eq!(point.net_supply(), expected);
+            let shortfall = (point.demand - point.net_supply()).value();
+            if shortfall > worst.0 { worst = (shortfall, (tick / 60) as u8); }
+        }
+        match s.capacity_shortfall_check() {
+            Some(warning) => {
+                proptest::prop_assert_eq!(warning.hour, worst.1);
+                proptest::prop_assert!((warning.shortfall.value() - worst.0).abs() < 1e-6);
+                proptest::prop_assert_eq!(warning.deliverable, expected);
+            }
+            None => proptest::prop_assert!(worst.0 <= 0.0),
+        }
+    }
 }
 
 #[test]

@@ -1,21 +1,25 @@
-//! The Planning inspector: selected cells, cities, plant specifications and construction progress.
+//! The Planning inspector: selected cells, cities, plants and lines, with construction progress.
 
 use application::Game;
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
-use domain::ids::CellCoord;
+use domain::grid::LineStatus;
+use domain::ids::{CellCoord, LineId};
 use domain::region::{PlantKind, RegionDefinition};
 use domain::session::DayPhase;
 
-use super::action::{ActionSink, ButtonModel, UiAction, button, dispatch};
+use super::action::{ActionSink, ButtonModel, Prompt, UiAction, button, dispatch};
 use super::build::BUILD_PANEL;
 use super::city_card::{CityCardModel, city_card_model, draw_city_card};
-use super::construction::{ConstructionCardModel, construction_card_model, draw_construction_card};
+use super::construction::{
+    ConstructionCardModel, Project, construction_card_model, construction_model,
+    draw_construction_card,
+};
 use super::layout::{Edge, HudArea, OuterPanel};
 use super::plant_panel::{PlantCardModel, draw_plant_card, plant_card_model};
 use super::selection::Selection;
 use super::top_bar::Stat;
-use crate::l10n::{Localize, Localizer, format};
+use crate::l10n::{Localize, Localizer, Names, format};
 use crate::sim::Session;
 
 /// The inspector's width, fixed so the map beside it never moves.
@@ -57,6 +61,7 @@ pub struct CellInspector {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InspectorModel {
+    Line(LineInspector),
     /// A cell on the map is selected.
     Cell(CellInspector),
     /// A city is selected (spec §16.8).
@@ -66,10 +71,47 @@ pub enum InspectorModel {
     /// A commissioned plant's connection and specifications.
     Plant(PlantCardModel),
     /// Nothing or an unknown object is selected. The panel keeps its place, so the map does not move.
-    Empty { hint: String },
+    Empty {
+        hint: String,
+    },
 }
 
-/// The inspector (Planning only, spec §8.4): the selected cell, city or plant, or a hint to select
+#[derive(Debug, Clone, PartialEq)]
+pub struct LineInspector {
+    pub title: String,
+    pub status: String,
+    pub in_service: Option<String>,
+    pub cancel: Option<ButtonModel>,
+    pub close: ButtonModel,
+}
+
+fn line_inspector(game: &Game, l10n: &Localizer, id: LineId) -> Option<LineInspector> {
+    let line = game
+        .session()
+        .line_views()
+        .into_iter()
+        .find(|line| line.id == id)?;
+    let progress = construction_model(game, l10n)
+        .rows
+        .into_iter()
+        .find(|row| row.project == Project::Line(id));
+    Some(LineInspector {
+        title: Names::new(l10n, game.session()).line(id),
+        status: progress
+            .as_ref()
+            .map_or_else(|| l10n.text("line-in-service"), |row| row.months.clone()),
+        in_service: progress.map(|row| row.in_service_text),
+        cancel: matches!(line.status, LineStatus::UnderConstruction { .. }).then(|| {
+            ButtonModel::new(
+                l10n.text("line-cancel-construction"),
+                UiAction::Prompt(Some(Prompt::CancelLineConstruction { line: id })),
+            )
+        }),
+        close: ButtonModel::new(l10n.text("ui-close"), UiAction::Select(Selection::None)),
+    })
+}
+
+/// The inspector (Planning only, spec §8.4): the selected cell, city, plant or line, or a hint to select
 /// a cell. `None` outside Planning.
 pub fn inspector_model(
     game: &Game,
@@ -80,6 +122,7 @@ pub fn inspector_model(
         return None;
     }
     let model = match selection {
+        Selection::Line(id) => line_inspector(game, l10n, id).map(InspectorModel::Line),
         Selection::Cell(at) => cell_inspector(game, l10n, at).map(InspectorModel::Cell),
         Selection::City(city) => city_card_model(game, l10n, city).map(InspectorModel::City),
         Selection::Plant(plant) => construction_card_model(game, l10n, plant)
@@ -161,6 +204,17 @@ pub fn draw_inspector(ui: &mut egui::Ui, model: &InspectorModel) -> Vec<UiAction
         ))
         .auto_shrink([false, false])
         .show(ui, |ui| match model {
+            InspectorModel::Line(line) => {
+                ui.heading(&line.title);
+                ui.label(&line.status);
+                if let Some(in_service) = &line.in_service {
+                    ui.label(in_service);
+                }
+                if let Some(cancel) = &line.cancel {
+                    button(ui, cancel, &mut actions);
+                }
+                button(ui, &line.close, &mut actions);
+            }
             InspectorModel::Empty { hint } => {
                 ui.weak(hint.as_str());
             }

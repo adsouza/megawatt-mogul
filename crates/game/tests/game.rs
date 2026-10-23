@@ -25,6 +25,8 @@ mod hud_smoke;
 mod l10n_coverage;
 #[path = "game/layout.rs"]
 mod layout;
+#[path = "game/line_cancellation.rs"]
+mod line_cancellation;
 #[path = "game/map_legend.rs"]
 mod map_legend;
 #[path = "game/operating_side.rs"]

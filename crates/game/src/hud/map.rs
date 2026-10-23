@@ -13,7 +13,7 @@ use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 use domain::generation::PlantStatus;
 use domain::grid::LineStatus;
-use domain::ids::{CellCoord, CityId, NodeId, PlantId, RegionId};
+use domain::ids::{CellCoord, CityId, LineId, NodeId, PlantId, RegionId};
 use domain::region::{PlantKind, RegionDefinition};
 use egui::{Color32, Pos2, Rect, Stroke, StrokeKind, vec2};
 
@@ -175,6 +175,7 @@ pub struct CityMarker {
 /// A transmission line, from cell to cell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LineMarker {
+    pub id: LineId,
     pub from: CellCoord,
     pub to: CellCoord,
     /// The months left while under construction, `None` in service. Drawn dashed, and labelled
@@ -236,6 +237,7 @@ impl MapObjects {
             .into_iter()
             .filter_map(|line| {
                 Some(LineMarker {
+                    id: line.id,
                     from: *nodes.get(&line.from)?,
                     to: *nodes.get(&line.to)?,
                     months_left: match line.status {
@@ -266,8 +268,8 @@ pub fn city_radius(layout: &MapLayout) -> f32 {
 }
 
 /// What a click at `pos` selects: what is drawn there, topmost first. That is a plant (its drawn
-/// square), else a city (its drawn circle), else the cell, else nothing. Among objects drawn on
-/// top of each other, the one drawn last is on top.
+/// square), else a city (its drawn circle), else the nearest line, else the cell, else nothing.
+/// Among markers drawn on top of each other, the one drawn last is on top.
 pub fn pick(layout: &MapLayout, pos: Pos2, objects: &MapObjects) -> Selection {
     if layout.cell_size() <= 0.0 {
         return Selection::None;
@@ -288,6 +290,21 @@ pub fn pick(layout: &MapLayout, pos: Pos2, objects: &MapObjects) -> Selection {
     plant
         .map(|plant| Selection::Plant(plant.id))
         .or_else(|| city().map(|city| Selection::City(city.id)))
+        .or_else(|| {
+            objects
+                .lines
+                .iter()
+                .filter_map(|line| {
+                    let a = layout.cell_center(line.from);
+                    let delta = layout.cell_center(line.to) - a;
+                    let along = ((pos - a).dot(delta) / delta.length_sq().max(f32::EPSILON))
+                        .clamp(0.0, 1.0);
+                    let distance = pos.distance(a + delta * along);
+                    (distance <= 5.0).then_some((line.id, distance))
+                })
+                .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))
+                .map(|(id, _)| Selection::Line(id))
+        })
         .or_else(|| layout.cell_at(pos).map(Selection::Cell))
         .unwrap_or(Selection::None)
 }
@@ -1121,6 +1138,14 @@ fn paint_selection(painter: &egui::Painter, layout: &MapLayout, model: &MapModel
     let objects = &model.objects;
     let around = |cell| painter.circle_stroke(layout.cell_center(cell), half * 1.5, ring);
     match model.selection {
+        Selection::Line(id) => {
+            if let Some(line) = objects.lines.iter().find(|line| line.id == id) {
+                painter.line_segment(
+                    [layout.cell_center(line.from), layout.cell_center(line.to)],
+                    ring,
+                );
+            }
+        }
         Selection::None => {}
         Selection::Cell(at) => {
             painter.rect_stroke(
@@ -1258,6 +1283,45 @@ mod tests {
             let colour = color32(rgb);
             assert_eq!(colour.to_array(), [rgb[0], rgb[1], rgb[2], 255], "{rgb:?}");
         }
+    }
+
+    #[test]
+    fn reference_map_selects_a_line_order_and_keeps_its_endpoints_selectable() {
+        let layout = MapLayout::fit(area(0.0, 0.0, 1000.0, 600.0), 100, 60);
+        let from = CellCoord { x: 10, y: 10 };
+        let to = CellCoord { x: 30, y: 10 };
+        let line = LineId(7);
+        let mut objects = objects_of(
+            Vec::new(),
+            vec![CityMarker {
+                id: CityId(1),
+                cell: from,
+                connected: true,
+            }],
+        );
+        objects.lines.push(LineMarker {
+            id: line,
+            from,
+            to,
+            months_left: Some(3),
+        });
+        assert_eq!(
+            pick(
+                &layout,
+                layout.cell_center(CellCoord { x: 20, y: 10 }),
+                &objects
+            ),
+            Selection::Line(line)
+        );
+        assert_eq!(
+            pick(&layout, layout.cell_center(from), &objects),
+            Selection::City(CityId(1))
+        );
+        let away = CellCoord { x: 20, y: 11 };
+        assert_eq!(
+            pick(&layout, layout.cell_center(away), &objects),
+            Selection::Cell(away)
+        );
     }
 
     proptest! {
@@ -1525,7 +1589,9 @@ mod tests {
     fn a_dense_cluster_leaves_its_cells_clickable() {
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
         let layout = MapLayout::fit(area(0.0, 0.0, 1000.0, 600.0), 100, 60);
-        let objects = MapObjects::of(&game);
+        let mut objects = MapObjects::of(&game);
+        // Isolate marker bounds: lines crossing these cells are separately selectable.
+        objects.lines.clear();
         let occupied: Vec<CellCoord> = objects
             .plants
             .iter()
@@ -1559,7 +1625,7 @@ mod tests {
                 }
                 let at = layout.cell_center(neighbour);
                 assert_eq!(
-                    hit_test(&layout, at, &game),
+                    pick(&layout, at, &objects),
                     Selection::Cell(neighbour),
                     "next to the plant at {:?}",
                     plant.cell
@@ -1576,10 +1642,7 @@ mod tests {
         let plant = &objects.plants[0];
         let corner = layout.cell_rect(plant.cell).max - vec2(0.1, 0.1);
         assert!(!covers(&layout, plant, corner));
-        assert_eq!(
-            hit_test(&layout, corner, &game),
-            Selection::Cell(plant.cell)
-        );
+        assert_eq!(pick(&layout, corner, &objects), Selection::Cell(plant.cell));
     }
 
     #[test]

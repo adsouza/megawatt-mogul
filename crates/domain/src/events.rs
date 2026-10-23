@@ -93,6 +93,8 @@ pub enum DomainEvent {
     MonthClosed(Box<MonthlyReport>),
     /// Cash was negative at too many consecutive month closes: game over.
     Bankrupt,
+    /// An unfinished transmission line was cancelled; future instalments stop.
+    LineConstructionCancelled { line: LineId },
 }
 
 // Portable state schema 1: explicit field order and enum tags.
@@ -233,6 +235,10 @@ impl crate::state::State for DomainEvent {
             Self::Bankrupt => {
                 crate::state::State::write(&30u8, out);
             }
+            Self::LineConstructionCancelled { line } => {
+                crate::state::State::write(&31u8, out);
+                crate::state::State::write(line, out);
+            }
         }
     }
     fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
@@ -327,6 +333,9 @@ impl crate::state::State for DomainEvent {
             },
             29 => Self::MonthClosed(crate::state::State::read(input)?),
             30 => Self::Bankrupt,
+            31 => Self::LineConstructionCancelled {
+                line: crate::state::State::read(input)?,
+            },
             _ => return Err(crate::state::StateError::Invalid),
         })
     }

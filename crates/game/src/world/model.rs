@@ -359,7 +359,7 @@ impl WorldModel {
                     l.id,
                     WorldLine {
                         id: l.id,
-                        selection: Selection::LineFrom(l.from),
+                        selection: Selection::Line(l.id),
                         parts,
                         building: match l.status {
                             LineStatus::UnderConstruction { months_left } => Some(months_left),

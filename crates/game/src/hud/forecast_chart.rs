@@ -2,12 +2,15 @@
 //! band, the expected solar output, and the capacity committed in each hour, stacked by kind.
 //! Hydro counts its water-aware allocation on AGC, or its initial target on manual dispatch.
 //! Expected solar contributes to the stack as well as its reference curve.
+//! Every fleet uses the shortfall evaluator's supply source. Enabled storage uses feasible minute flows. Its signed contribution
+//! is stacked first, so charging lowers the baseline and discharge raises total supply.
 //! Read it against the commitment grid: where the stack dips under the forecast, the plan is
 //! short.
 
 use application::Game;
 use bevy_egui::egui;
 use domain::demand::ForecastPoint;
+use domain::grid::SupplyForecast;
 use domain::region::PlantKind;
 use domain::time::TICKS_PER_HOUR;
 use domain::units::Megawatts;
@@ -26,9 +29,9 @@ pub struct StackModel {
     /// `Coal plant`.
     pub name: String,
     pub color: Rgb,
-    /// Megawatts: committed capacity, water-aware hydro, or expected solar output.
+    /// MW: generation or signed feasible battery output (discharge minus charging).
     pub mw: [f64; 24],
-    /// Where this kind's bar starts: the capacity of the kinds below it (cheaper fuel first).
+    /// The sum of contributions below this kind: signed storage first, then generation in merit order.
     pub base: [f64; 24],
 }
 
@@ -43,7 +46,12 @@ pub struct ForecastModel {
     pub storage_discharge_label: String,
     pub storage_charge: Vec<[f64; 2]>,
     pub storage_discharge: Vec<[f64; 2]>,
-    /// The middle of each hour, in hours: `0.5, 1.5, ...`. Every series is sampled here.
+    pub net_supply_label: String,
+    /// Net supply and demand at the warning's assessed points: all minutes with
+    /// enabled storage, hour endpoints otherwise. Bars remain midpoint samples.
+    pub net_supply: Vec<[f64; 2]>,
+    pub demand_minutes: Vec<[f64; 2]>,
+    /// The middle of each hour, in hours: `0.5, 1.5, ...`. Bars are sampled here.
     pub x: [f64; 24],
     /// Forecast demand at minute 30 of each hour, in megawatts.
     pub mean: [f64; 24],
@@ -53,7 +61,7 @@ pub struct ForecastModel {
     pub high: [f64; 24],
     /// Expected solar output at each hour's midpoint, also included in the supply stack.
     pub solar: [f64; 24],
-    /// Committed capacity and expected solar supply, in merit order.
+    /// Net supply: signed storage first, then generation in merit order.
     pub stacks: Vec<StackModel>,
     /// The hour a warning pointed at, if any.
     pub highlight_hour: Option<u8>,
@@ -63,67 +71,55 @@ pub struct ForecastModel {
 /// order. Hydro uses the shortfall check's water-aware preview on AGC and initial targets
 /// on manual dispatch; disconnected hydro contributes nothing. Expected solar from connected,
 /// commissioned plants is included independently of commitment, as in the shortfall check.
+/// With enabled storage, all contributions use the shared sequential battery evaluator and
+/// its net battery output is the first stack, keeping the top at generation + discharge − charge.
 pub fn stacked_committed_capacity(game: &Game, l10n: &Localizer) -> Vec<StackModel> {
-    let session = game.session();
-    let region = session.region();
-    let hydro = session.hydro_forecast();
-    let mut stacks: Vec<_> = plants_by_kind(game)
-        .into_iter()
-        .map(|group| {
-            let capacity = region.spec(group.kind).capacity.value();
-            let mw: [f64; 24] = std::array::from_fn(|hour| {
-                group
-                    .plants
-                    .iter()
-                    .filter(|plant| plant.commitment[hour])
-                    .map(|plant| {
-                        if group.kind != PlantKind::Hydro {
-                            capacity
-                        } else if !plant.connected {
-                            0.0
-                        } else if plant.auto_follow {
-                            hydro.get(&plant.id).map_or(0.0, |mw| mw[hour].value())
-                        } else {
-                            plant.initial_target.value()
-                        }
-                    })
-                    .sum()
-            });
-            StackModel {
-                kind: group.kind,
-                name: group.kind.localize(l10n),
-                color: kind_color(group.kind),
-                mw,
-                base: [0.0; 24],
-            }
-        })
-        .collect();
-    let solar = std::array::from_fn(|hour| {
-        let tick = hour as u32 * TICKS_PER_HOUR + TICKS_PER_HOUR / 2;
-        session
-            .power()
-            .expected_solar(region, session.clock().month(), tick)
-            .value()
-    });
-    if solar.iter().any(|mw| *mw > 0.0) {
-        stacks.push(StackModel {
-            kind: PlantKind::Solar,
-            name: PlantKind::Solar.localize(l10n),
-            color: kind_color(PlantKind::Solar),
-            mw: solar,
-            base: [0.0; 24],
-        });
-    }
-    let order = kinds_in_merit_order(region);
-    stacks.sort_by_key(|stack| order.iter().position(|kind| *kind == stack.kind));
+    let forecast = game.session().supply_forecast();
+    stacked_supply(game, l10n, &forecast)
+}
+
+fn stacked_supply(game: &Game, l10n: &Localizer, forecast: &SupplyForecast) -> Vec<StackModel> {
+    let storage = &forecast.minutes;
+    let groups = plants_by_kind(game);
+    let order = kinds_in_merit_order(game.session().region());
+    // Put the signed battery contribution below generation: charging lowers
+    // the baseline, so the top of the stack remains net supply in both directions.
+    let kinds = std::iter::once(PlantKind::Battery)
+        .filter(|_| forecast.has_storage)
+        .chain(order.into_iter().filter(|kind| {
+            groups.iter().any(|group| group.kind == *kind)
+                || (*kind == PlantKind::Solar
+                    && storage.iter().any(|p| p.generation[kind] > Megawatts::ZERO))
+        }));
     let mut below = [0.0; 24];
-    for stack in &mut stacks {
-        stack.base = below;
-        for (total, mw) in below.iter_mut().zip(stack.mw) {
-            *total += mw;
-        }
-    }
-    stacks
+    kinds
+        .map(|kind| {
+            let mw = std::array::from_fn(|hour| {
+                let point = &storage[hour * TICKS_PER_HOUR as usize + TICKS_PER_HOUR as usize / 2];
+                if kind == PlantKind::Battery {
+                    (point.battery_discharge - point.battery_charge).value()
+                } else {
+                    point
+                        .generation
+                        .get(&kind)
+                        .copied()
+                        .unwrap_or(Megawatts::ZERO)
+                        .value()
+                }
+            });
+            let stack = StackModel {
+                kind,
+                name: kind.localize(l10n),
+                color: kind_color(kind),
+                mw,
+                base: below,
+            };
+            for (total, add) in below.iter_mut().zip(mw) {
+                *total += add;
+            }
+            stack
+        })
+        .collect()
 }
 
 pub fn forecast_model(game: &Game, l10n: &Localizer, ui: &UiState) -> ForecastModel {
@@ -133,45 +129,44 @@ pub fn forecast_model(game: &Game, l10n: &Localizer, ui: &UiState) -> ForecastMo
         std::array::from_fn(|hour| read(&forecast[hour]).value())
     };
     let mean = at(|point| point.mean);
-    let stacks = stacked_committed_capacity(game, l10n);
+    let forecast_supply = session.supply_forecast();
+    let storage = &forecast_supply.minutes;
+    let stacks = stacked_supply(game, l10n, &forecast_supply);
     let solar = stacks
         .iter()
         .find(|stack| stack.kind == PlantKind::Solar)
         .map_or([0.0; 24], |stack| stack.mw);
-    let storage = session.battery_schedule();
     let storage_series = |charge: bool| {
-        (0..1440)
-            .map(|tick| {
+        storage
+            .iter()
+            .enumerate()
+            .filter(|_| forecast_supply.has_storage)
+            .map(|(tick, point)| {
                 [
                     tick as f64 / 60.0,
-                    storage
-                        .plants
-                        .values()
-                        .map(|p| {
-                            if charge {
-                                p.charge[tick].value()
-                            } else {
-                                p.discharge[tick].value()
-                            }
-                        })
-                        .sum(),
+                    if charge {
+                        point.battery_charge.value()
+                    } else {
+                        point.battery_discharge.value()
+                    },
                 ]
             })
             .collect()
     };
     ForecastModel {
+        net_supply_label: l10n.text("forecast-net-supply"),
+        net_supply: forecast_supply
+            .assessed_minutes()
+            .map(|(tick, p)| [tick as f64 / 60.0, p.net_supply().value()])
+            .collect(),
+        demand_minutes: forecast_supply
+            .assessed_minutes()
+            .map(|(tick, p)| [tick as f64 / 60.0, p.demand.value()])
+            .collect(),
         storage_charge_label: l10n.text("battery-preview-charge"),
         storage_discharge_label: l10n.text("battery-preview-discharge"),
-        storage_charge: if storage.plants.is_empty() {
-            Vec::new()
-        } else {
-            storage_series(true)
-        },
-        storage_discharge: if storage.plants.is_empty() {
-            Vec::new()
-        } else {
-            storage_series(false)
-        },
+        storage_charge: storage_series(true),
+        storage_discharge: storage_series(false),
         hour_axis: l10n.text("forecast-axis-hour"),
         power_axis: l10n.text("forecast-axis-power"),
         forecast_label: l10n.text("commitment-forecast"),
@@ -193,10 +188,37 @@ pub fn draw_forecast_chart(ui: &mut egui::Ui, model: &ForecastModel) -> Vec<UiAc
     let line_color = ui.visuals().strong_text_color();
     let band_color = egui::Color32::from_rgba_unmultiplied(160, 160, 170, 60);
     let solar_color = color32(kind_color(PlantKind::Solar));
+    let net_supply_color = egui::Color32::from_rgb(80, 210, 160);
     let points = |ys: &[f64; 24]| -> Vec<[f64; 2]> {
         model.x.iter().zip(ys).map(|(x, y)| [*x, *y]).collect()
     };
-    let (x, high, low) = (model.x.to_vec(), model.high.to_vec(), model.low.to_vec());
+    let (x, high, low) = if model.demand_minutes.is_empty() {
+        (model.x.to_vec(), model.high.to_vec(), model.low.to_vec())
+    } else {
+        // The error band is a constant share of demand; use the same demand
+        // samples as the warning curve so hourly peaks stay inside the band.
+        let (low_scale, high_scale) = model
+            .mean
+            .iter()
+            .enumerate()
+            .find(|(_, mean)| **mean > 0.0)
+            .map_or((0.0, 0.0), |(h, mean)| {
+                (model.low[h] / mean, model.high[h] / mean)
+            });
+        (
+            model.demand_minutes.iter().map(|p| p[0]).collect(),
+            model
+                .demand_minutes
+                .iter()
+                .map(|p| p[1] * high_scale)
+                .collect(),
+            model
+                .demand_minutes
+                .iter()
+                .map(|p| p[1] * low_scale)
+                .collect(),
+        )
+    };
     use super::chart_style::KeyMark;
     let id = ui.make_persistent_id(egui::Id::new("planning_forecast"));
     let entries = model
@@ -209,6 +231,11 @@ pub fn draw_forecast_chart(ui: &mut egui::Ui, model: &ForecastModel) -> Vec<UiAc
             (model.solar_label.as_str(), solar_color, KeyMark::Line),
         ]);
     let mut entries: Vec<_> = entries.collect();
+    entries.push((
+        model.net_supply_label.as_str(),
+        net_supply_color,
+        KeyMark::Line,
+    ));
     if !model.storage_charge.is_empty() {
         entries.extend([
             (
@@ -251,7 +278,14 @@ pub fn draw_forecast_chart(ui: &mut egui::Ui, model: &ForecastModel) -> Vec<UiAc
         ])
         .custom_y_axes(vec![super::chart_style::y_axis(&model.power_axis)])
         .show(ui, |plot| {
-            for stack in &model.stacks {
+            // Paint storage last so its negative charging band remains visible
+            // where generation starts below zero on the adjusted baseline.
+            for stack in model
+                .stacks
+                .iter()
+                .filter(|s| s.kind != PlantKind::Battery)
+                .chain(model.stacks.iter().filter(|s| s.kind == PlantKind::Battery))
+            {
                 let bars = (0..24)
                     .map(|hour| {
                         Bar::new(model.x[hour], stack.mw[hour])
@@ -272,16 +306,29 @@ pub fn draw_forecast_chart(ui: &mut egui::Ui, model: &ForecastModel) -> Vec<UiAc
                     .highlight(hovered == Some(egui::Id::new(&model.band_label))),
             );
             plot.line(
-                Line::new(model.forecast_label.as_str(), points(&model.mean))
-                    .highlight(hovered == Some(egui::Id::new(&model.forecast_label)))
-                    .color(line_color)
-                    .width(2.0),
+                Line::new(
+                    model.forecast_label.as_str(),
+                    if model.demand_minutes.is_empty() {
+                        points(&model.mean)
+                    } else {
+                        model.demand_minutes.clone()
+                    },
+                )
+                .highlight(hovered == Some(egui::Id::new(&model.forecast_label)))
+                .color(line_color)
+                .width(2.0),
             );
             plot.line(
                 Line::new(model.solar_label.as_str(), points(&model.solar))
                     .highlight(hovered == Some(egui::Id::new(&model.solar_label)))
                     .color(solar_color)
                     .width(2.0),
+            );
+            plot.line(
+                Line::new(&model.net_supply_label, model.net_supply.clone())
+                    .color(net_supply_color)
+                    .width(2.0)
+                    .highlight(hovered == Some(egui::Id::new(&model.net_supply_label))),
             );
             if !model.storage_charge.is_empty() {
                 plot.line(
@@ -316,7 +363,8 @@ mod tests {
 
     use super::*;
     use crate::hud::test_support::{
-        eastern_game, edited_western_game, empty_start, order_plant, shipped_game, shipped_l10n,
+        eastern_game, edited_western_game, empty_start, flat_load, order_plant, shipped_game,
+        shipped_l10n,
     };
 
     #[test]
@@ -507,6 +555,280 @@ mod tests {
             .iter()
             .find(|stack| stack.kind == kind)
             .unwrap_or_else(|| panic!("a {kind:?} stack"))
+    }
+
+    #[test]
+    fn manual_thermal_forecast_uses_targets_and_matches_warning_without_storage() {
+        let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        empty_start(&mut game);
+        let plant = game
+            .session()
+            .plant_views()
+            .into_iter()
+            .find(|p| p.kind == PlantKind::Ccgt)
+            .unwrap();
+        let target = game.session().region().spec(plant.kind).capacity * 0.5;
+        game.execute(Command::StartPlant { plant: plant.id })
+            .unwrap();
+        game.execute(Command::SetDispatchTarget {
+            plant: plant.id,
+            mw: target,
+        })
+        .unwrap();
+        let l10n = shipped_l10n();
+        let model = forecast_model(&game, &l10n, &UiState::default());
+        assert_eq!(
+            stack_of(&model.stacks, PlantKind::Ccgt).mw,
+            [target.value(); 24]
+        );
+        assert_eq!(
+            model.net_supply.len(),
+            48,
+            "hour endpoints expose peaks missed by midpoint bars"
+        );
+        let worst = model
+            .demand_minutes
+            .iter()
+            .zip(&model.net_supply)
+            .enumerate()
+            .map(|(i, (d, s))| (i, d[1] - s[1]))
+            .fold((0, f64::NEG_INFINITY), |worst, next| {
+                if next.1 > worst.1 { next } else { worst }
+            });
+        let warning = game.session().capacity_shortfall_check().unwrap();
+        assert_eq!(model.net_supply[worst.0][0].floor() as u8, warning.hour);
+        assert!((worst.1 - warning.shortfall.value()).abs() < 1e-6);
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    #[test]
+    fn storage_free_forecast_exposes_an_hour_boundary_shortfall_hidden_by_midpoints() {
+        let original = shipped_game(
+            "western_interconnection",
+            Box::new(InMemoryCommandLog::default()),
+        );
+        let session = original.session();
+        let capacity = session.region().spec(PlantKind::Ccgt).capacity.value();
+        let peak = session
+            .region()
+            .demand()
+            .winter
+            .iter()
+            .copied()
+            .fold(0.0, f64::max)
+            * session.region().demand().monthly[session.clock().month().index0()];
+        let cities = session
+            .city_views()
+            .iter()
+            .filter(|city| city.connected)
+            .count();
+        let base_load = capacity * 1.001 / peak / cities as f64;
+        let mut game = edited_western_game(|text| flat_load(text, base_load));
+        empty_start(&mut game);
+        let plant = game
+            .session()
+            .plant_views()
+            .into_iter()
+            .find(|p| p.kind == PlantKind::Ccgt)
+            .unwrap()
+            .id;
+        game.execute(Command::StartPlant { plant }).unwrap();
+        game.execute(Command::SetAutoFollow { plant, on: true })
+            .unwrap();
+        let l10n = shipped_l10n();
+        let model = forecast_model(&game, &l10n, &UiState::default());
+        assert!(
+            model.mean.iter().all(|mean| *mean < capacity),
+            "every midpoint looks covered"
+        );
+        let warning = game.session().capacity_shortfall_check().unwrap();
+        let (demand, supply) = model
+            .demand_minutes
+            .iter()
+            .zip(&model.net_supply)
+            .find(|(d, _)| d[0] == f64::from(warning.hour))
+            .expect("the hour boundary is drawn");
+        assert!((demand[1] - supply[1] - warning.shortfall.value()).abs() < 1e-6);
+        assert!(demand[1] > supply[1]);
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    fn battery_forecast_game(energy_mwh: Option<f64>) -> Game {
+        let mut game = edited_western_game(|text| {
+            let mut text = text.replacen("fleet: [", "fleet: [(Battery, -117.0, 34.5),", 1);
+            if let Some(energy) = energy_mwh {
+                let start = text.find("energy_mwh: ").unwrap() + "energy_mwh: ".len();
+                let end = start + text[start..].find(',').unwrap();
+                text.replace_range(start..end, &format!("{energy:?}"));
+            }
+            text
+        });
+        let mut hours = [false; 24];
+        hours[..17].fill(true);
+        for plant in game.session().plant_views() {
+            if plant.kind.is_dispatchable() && plant.kind != PlantKind::Hydro {
+                game.execute(Command::CommitPlant {
+                    plant: plant.id,
+                    hours,
+                })
+                .unwrap();
+            }
+        }
+        game
+    }
+
+    #[test]
+    fn battery_forecast_stacks_feasible_discharge_and_subtracts_charging() {
+        let game = battery_forecast_game(None);
+        let l10n = shipped_l10n();
+        let before = game.session().state_hash();
+        let model = forecast_model(&game, &l10n, &UiState::default());
+        assert_eq!(game.session().state_hash(), before);
+        let battery = stack_of(&model.stacks, PlantKind::Battery);
+        assert!(
+            battery.mw.iter().any(|mw| *mw < 0.0),
+            "charging lowers supply"
+        );
+        assert!(
+            battery.mw.iter().any(|mw| *mw > 0.0),
+            "discharge raises supply"
+        );
+        assert_eq!(
+            model.stacks[0].kind,
+            PlantKind::Battery,
+            "charging offsets the stack baseline"
+        );
+        for (hour, mw) in battery.mw.iter().enumerate() {
+            let tick = hour * TICKS_PER_HOUR as usize + TICKS_PER_HOUR as usize / 2;
+            assert!(
+                (mw - (model.storage_discharge[tick][1] - model.storage_charge[tick][1])).abs()
+                    < 1e-6
+            );
+            let mut total = 0.0;
+            for stack in &model.stacks {
+                assert_eq!(stack.base[hour], total);
+                total += stack.mw[hour];
+            }
+            assert!((total - model.net_supply[tick][1]).abs() < 1e-6);
+        }
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    #[test]
+    fn battery_forecast_cannot_discharge_without_feasible_charging() {
+        let mut game = battery_forecast_game(None);
+        empty_start(&mut game);
+        let l10n = shipped_l10n();
+        let model = forecast_model(&game, &l10n, &UiState::default());
+        let battery = stack_of(&model.stacks, PlantKind::Battery);
+        assert_eq!(battery.mw, [0.0; 24]);
+        assert!(model.storage_discharge.iter().all(|p| p[1] == 0.0));
+        assert!(model.storage_charge.iter().all(|p| p[1] == 0.0));
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    #[test]
+    fn battery_depletion_inside_an_hour_matches_the_shortfall_warning_and_renders() {
+        let game = battery_forecast_game(Some(13.0));
+        let l10n = shipped_l10n();
+        let model = forecast_model(&game, &l10n, &UiState::default());
+        let depletion = model
+            .storage_discharge
+            .windows(2)
+            .enumerate()
+            .find(|(_, pair)| pair[0][1] > 0.0 && pair[1][1] == 0.0)
+            .map(|(tick, _)| tick + 1)
+            .expect("a charged battery empties");
+        assert_ne!(
+            depletion % TICKS_PER_HOUR as usize,
+            0,
+            "depletion occurs inside an hour"
+        );
+        assert!(model.net_supply[depletion][1] < model.net_supply[depletion - 1][1]);
+        let (tick, shortfall) = model
+            .demand_minutes
+            .iter()
+            .zip(&model.net_supply)
+            .enumerate()
+            .map(|(tick, (demand, supply))| (tick, demand[1] - supply[1]))
+            .fold((0, f64::NEG_INFINITY), |worst, next| {
+                if next.1 > worst.1 { next } else { worst }
+            });
+        let warning = game.session().capacity_shortfall_check().unwrap();
+        assert_eq!(tick / TICKS_PER_HOUR as usize, usize::from(warning.hour));
+        assert!((shortfall - warning.shortfall.value()).abs() < 1e-6);
+        assert!((model.net_supply[tick][1] - warning.deliverable.value()).abs() < 1e-6);
+        let ctx = egui::Context::default();
+        for _ in 0..3 {
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1024.0 / 1.25, 240.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    draw_forecast_chart(ui, &model);
+                },
+            )
+            .drop_without_applying_deltas();
+        }
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    #[test]
+    fn disabled_batteries_add_no_supply_or_charging_deduction() {
+        let mut game = battery_forecast_game(None);
+        let battery = game
+            .session()
+            .plant_views()
+            .into_iter()
+            .find(|p| p.kind == PlantKind::Battery)
+            .unwrap()
+            .id;
+        game.execute(Command::SetBatteryEnabled {
+            plant: battery,
+            on: false,
+        })
+        .unwrap();
+        let l10n = shipped_l10n();
+        let model = forecast_model(&game, &l10n, &UiState::default());
+        assert!(
+            model
+                .stacks
+                .iter()
+                .all(|stack| stack.kind != PlantKind::Battery)
+        );
+        assert!(model.storage_charge.is_empty() && model.storage_discharge.is_empty());
+        assert_eq!(
+            model.net_supply.len(),
+            48,
+            "the remaining fleet still has a net-supply curve"
+        );
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    #[test]
+    fn battery_forecast_counts_feasible_flows_instead_of_requested_allocations() {
+        let game = edited_western_game(|text| {
+            text.replacen("fleet: [", "fleet: [(Battery, -117.0, 34.5),", 1)
+        });
+        assert!(
+            game.session()
+                .battery_schedule()
+                .plants
+                .values()
+                .any(|p| p.discharge.iter().any(|mw| *mw > Megawatts::ZERO))
+        );
+        let l10n = shipped_l10n();
+        let model = forecast_model(&game, &l10n, &UiState::default());
+        assert!(
+            model.storage_discharge.iter().all(|p| p[1] == 0.0),
+            "a fully covered fleet does not discharge into a surplus"
+        );
+        assert!(model.storage_charge.iter().any(|p| p[1] > 0.0));
+        assert_eq!(l10n.problems(), vec![]);
     }
 
     #[test]
@@ -763,6 +1085,15 @@ mod tests {
         let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
         empty_start(&mut game);
         let views = game.session().plant_views();
+        for plant in &views {
+            if plant.kind.is_dispatchable() {
+                game.execute(Command::SetAutoFollow {
+                    plant: plant.id,
+                    on: true,
+                })
+                .unwrap();
+            }
+        }
         let of_kind = |kind| -> Vec<_> { views.iter().filter(|p| p.kind == kind).collect() };
         let (nuclear, coal, ccgt, peaker) = (
             of_kind(PlantKind::Nuclear),

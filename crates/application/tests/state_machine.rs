@@ -16,7 +16,7 @@ mod support;
 use application::{Command, CommandError, Game};
 use domain::error::DomainError;
 use domain::events::DomainEvent;
-use domain::ids::{CellCoord, NodeId, PlantId};
+use domain::ids::{CellCoord, LineId, NodeId, PlantId};
 use domain::region::PlantKind;
 use domain::region::fixtures::tiny_region_parts;
 use domain::session::{DayPhase, SessionStatus};
@@ -67,6 +67,7 @@ fn allowed_phases(command: &Command) -> &'static [DayPhase] {
     match command {
         Command::BuildPlant { .. }
         | Command::BuildLine { .. }
+        | Command::CancelLineConstruction { .. }
         | Command::CommitPlant { .. }
         | Command::BeginOperating => &[Planning],
         Command::SetDispatchTarget { .. }
@@ -151,6 +152,7 @@ impl ReferenceStateMachine for SessionMachine {
                 .prop_map(|(kind, cell)| Command::BuildPlant { kind, cell }),
             2 => (node_id(model), node_id(model))
                 .prop_map(|(from, to)| Command::BuildLine { from, to }),
+            2 => (0u32..64).prop_map(|id| Command::CancelLineConstruction { line: LineId(id) }),
             3 => (plant_id(model), hours())
                 .prop_map(|(plant, hours)| Command::CommitPlant { plant, hours }),
             3 => (plant_id(model), -50.0..1_300.0f64).prop_map(|(plant, mw)| {

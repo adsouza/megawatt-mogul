@@ -3,7 +3,7 @@
 
 use application::{Command, LogHeader, LogRecord, RegionFingerprint};
 use domain::grid::NetworkModel;
-use domain::ids::{CellCoord, NodeId, PlantId, RegionId};
+use domain::ids::{CellCoord, LineId, NodeId, PlantId, RegionId};
 use domain::region::PlantKind;
 use domain::session::{GameSettings, SimulationFidelity};
 use domain::units::Megawatts;
@@ -192,6 +192,7 @@ pub enum CommandDto {
     StopPlant { plant: u32 },
     AdvanceTicks { n: u32 },
     FinishReview,
+    CancelLineConstruction { line: u32 },
 }
 
 impl From<&Command> for CommandDto {
@@ -225,6 +226,9 @@ impl From<&Command> for CommandDto {
             Command::StopPlant { plant } => Self::StopPlant { plant: plant.0 },
             Command::AdvanceTicks { n } => Self::AdvanceTicks { n },
             Command::FinishReview => Self::FinishReview,
+            Command::CancelLineConstruction { line } => {
+                Self::CancelLineConstruction { line: line.0 }
+            }
         }
     }
 }
@@ -275,6 +279,9 @@ impl TryFrom<CommandDto> for Command {
             },
             CommandDto::AdvanceTicks { n } => Self::AdvanceTicks { n },
             CommandDto::FinishReview => Self::FinishReview,
+            CommandDto::CancelLineConstruction { line } => {
+                Self::CancelLineConstruction { line: LineId(line) }
+            }
         })
     }
 }

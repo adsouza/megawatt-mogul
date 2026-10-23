@@ -1155,7 +1155,7 @@ fn the_build_menu_picks_a_line_start_then_prices_and_orders_the_line() {
         })]
     );
     assert_eq!(
-        harness.click("Cancel line", draw),
+        harness.click("Cancel drawing", draw),
         vec![UiAction::Select(Selection::None)]
     );
 }
