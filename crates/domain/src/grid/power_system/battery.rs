@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlantBatteryScheduleView {
     pub charge: Vec<Megawatts>,
+    /// Expected gap coverage, not an instruction for generators to back off.
     pub discharge: Vec<Megawatts>,
 }
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -165,6 +166,22 @@ impl PowerSystem {
         from: u32,
         preview: bool,
     ) -> BatteryScheduleView {
+        let mut plan = self.compute_battery_charge_plan(region, month, from, preview);
+        if !self.has_batteries() {
+            return plan;
+        }
+        // Delivery is an estimate of gaps left by generation, never a generation reduction request.
+        self.project_storage_supply(region, month, from, TICKS_PER_DAY, preview, &mut plan);
+        plan
+    }
+
+    fn compute_battery_charge_plan(
+        &self,
+        region: &RegionDefinition,
+        month: SimMonth,
+        from: u32,
+        preview: bool,
+    ) -> BatteryScheduleView {
         if !self.connected_plants().any(|p| p.battery().is_some()) {
             return BatteryScheduleView::default();
         }
@@ -175,7 +192,6 @@ impl PowerSystem {
                     - self.expected_solar(region, month, t)
             })
             .collect();
-        let mut discharge_residual = charge_residual.clone();
         let mut headroom: Vec<_> = (0..TICKS_PER_DAY)
             .map(|t| {
                 (self.thermal_for_charge(t, from, preview) - charge_residual[t as usize])
@@ -210,38 +226,17 @@ impl PowerSystem {
                 ),
                 true,
             );
-            let expected_input = charge.iter().map(|p| p.value()).sum::<f64>() / 60.0;
-            let energy = stored
-                + if preview {
-                    expected_input * spec.charge_efficiency.value()
-                } else {
-                    0.0
-                };
-            let caps: Vec<_> = (0..TICKS_PER_DAY)
-                .map(|t| {
-                    if enabled && t >= from && discharging_window(spec, t) {
-                        p.spec()
-                            .capacity
-                            .min(discharge_residual[t as usize].max(Megawatts::ZERO))
-                    } else {
-                        Megawatts::ZERO
-                    }
-                })
-                .collect();
-            let discharge = fill_minutes(
-                &discharge_residual,
-                &caps,
-                MegawattHours::new(energy * spec.discharge_efficiency.value()),
-                false,
-            );
             for t in 0..n {
                 charge_residual[t] += charge[t];
                 headroom[t] = (headroom[t] - charge[t]).max(Megawatts::ZERO);
-                discharge_residual[t] -= discharge[t];
             }
-            result
-                .plants
-                .insert(p.id(), PlantBatteryScheduleView { charge, discharge });
+            result.plants.insert(
+                p.id(),
+                PlantBatteryScheduleView {
+                    charge,
+                    discharge: vec![Megawatts::ZERO; n],
+                },
+            );
         }
         result
     }
@@ -274,7 +269,7 @@ impl PowerSystem {
             .min(((ramp * ramp + 2.0 * ramp * energy.max(0.0) * 60.0).sqrt() - ramp).max(0.0))
             .min(ramp * minutes.max(0.0))
     }
-    pub(super) fn battery_request(
+    pub(super) fn battery_charge_request(
         &self,
         region: &RegionDefinition,
         month: SimMonth,
@@ -337,14 +332,6 @@ impl PowerSystem {
                 let request = Megawatts::new(request).min(charge_budget);
                 net += request;
                 charge_budget -= request;
-            } else if discharging_window(spec, tick) {
-                let request = Self::taper(
-                    plan.discharge[tick as usize].value(),
-                    stored * spec.discharge_efficiency.value(),
-                    self.battery_ramp_share(),
-                    f64::from(TICKS_PER_DAY - tick - 1),
-                );
-                net -= Megawatts::new(request);
             }
         }
         net
@@ -396,7 +383,7 @@ impl PowerSystem {
                     let solar_surplus = (solar - demand).max(Megawatts::ZERO);
                     charge = surplus.min(Megawatts::new(safe).max(solar_surplus));
                 } else if discharging_window(spec, tick) {
-                    // Real deficits (including noise/emergencies) may exceed the planned allowance.
+                    // Bridge only the actual gap. Generators continue aiming at full served load.
                     discharge = deficit;
                 }
             }
@@ -441,23 +428,6 @@ impl PowerSystem {
             })
             .collect()
     }
-    pub(super) fn battery_hourly_discharge(
-        &self,
-        plans: &BatteryScheduleView,
-        hour: usize,
-    ) -> Megawatts {
-        plans
-            .plants
-            .values()
-            .map(|p| {
-                p.discharge[hour * 60..(hour + 1) * 60]
-                    .iter()
-                    .copied()
-                    .sum::<Megawatts>()
-                    * (1.0 / 60.0)
-            })
-            .sum()
-    }
 }
 
 impl PowerSystem {
@@ -471,7 +441,8 @@ impl PowerSystem {
         if !self.has_batteries() {
             return Vec::new();
         }
-        self.project_storage_supply(region, month, 0, TICKS_PER_DAY, true)
+        let mut plan = self.compute_battery_charge_plan(region, month, 0, true);
+        self.project_storage_supply(region, month, 0, TICKS_PER_DAY, true, &mut plan)
     }
 
     /// One sequential inventory per projected horizon. Future receipts are allowed only in Planning.
@@ -483,7 +454,12 @@ impl PowerSystem {
         end: u32,
         preview: bool,
     ) -> Vec<super::outage::HourEnd> {
-        self.project_storage_supply(region, month, start, end, preview)
+        let mut plan = if preview {
+            self.compute_battery_charge_plan(region, month, start, true)
+        } else {
+            self.battery_plan.clone()
+        };
+        self.project_storage_supply(region, month, start, end, preview, &mut plan)
             .into_iter()
             .map(|point| super::outage::HourEnd {
                 demand: point.demand,
@@ -500,22 +476,13 @@ impl PowerSystem {
         start: u32,
         end: u32,
         preview: bool,
+        plans: &mut BatteryScheduleView,
     ) -> Vec<SupplyForecastPoint> {
-        let plans = if preview {
-            self.preview_batteries(region, month)
-        } else {
-            self.battery_plan.clone()
-        };
         let hydro = if preview {
-            self.preview_hydro(region, month, &plans)
+            self.preview_hydro(region, month)
         } else {
-            self.compute_hydro_plan_with_storage(
-                region,
-                month,
-                (start / 60) as u8,
-                |p| p.hydro_budget().unwrap_or(MegawattHours::ZERO),
-                &plans,
-            )
+            // Live projections use the applied hydro ceilings through `deliverable` below.
+            BTreeMap::new()
         };
         let mut inventory: BTreeMap<_, _> = self
             .connected_plants()
@@ -600,6 +567,9 @@ impl PowerSystem {
                     Megawatts::ZERO
                 };
                 let flow = state.settle(spec, p.spec().capacity, charge, discharge);
+                if let Some(plan) = plans.plants.get_mut(&p.id()) {
+                    plan.discharge[tick as usize] = flow.discharge;
+                }
                 remaining = (remaining - flow.discharge).max(Megawatts::ZERO);
                 storage += flow.discharge;
                 charging += flow.charge;
@@ -666,35 +636,19 @@ impl PowerSystem {
 }
 
 impl PowerSystem {
-    pub(crate) fn storage_net_adjustment(&self, from: u32, tick: u32) -> Megawatts {
+    pub(crate) fn storage_charging_requirement(&self, from: u32, tick: u32) -> Megawatts {
         if tick < from || tick >= TICKS_PER_DAY || self.protection.mode != GridMode::Normal {
             return Megawatts::ZERO;
         }
         let mut net = Megawatts::ZERO;
         for p in self.connected_plants() {
-            let (Some(spec), Some(b), Some(plan)) = (
-                p.spec().battery,
-                p.battery(),
-                self.battery_plan.plants.get(&p.id()),
-            ) else {
+            let (Some(b), Some(plan)) = (p.battery(), self.battery_plan.plants.get(&p.id())) else {
                 continue;
             };
             if !b.enabled() {
                 continue;
             }
-            let mut inventory = b.clone();
-            for t in from..=tick {
-                let d = if discharging_window(spec, t) {
-                    plan.discharge[t as usize]
-                } else {
-                    Megawatts::ZERO
-                };
-                // No future charging receipt is spent by a live forecast.
-                let f = inventory.settle(spec, p.spec().capacity, Megawatts::ZERO, d);
-                if t == tick {
-                    net += plan.charge[t as usize] - f.discharge;
-                }
-            }
+            net += plan.charge[tick as usize];
         }
         net
     }

@@ -27,6 +27,59 @@ fn storage_session() -> (GameSession, PlantId) {
 }
 
 proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(24))]
+    #[test]
+    fn battery_preview_preserves_reserves_for_a_later_generation_shortfall(
+        peak in 19usize..22,
+        energy in 10.0f64..120.0,
+    ) {
+        let mut parts = fixtures::tiny_region_parts();
+        parts.start.fleet.retain(|p| p.kind == PlantKind::Ccgt);
+        parts.start.fleet.push(StartPlantDef { kind: PlantKind::Battery, cell: CellCoord { x: 5, y: 1 } });
+        parts.catalog.iter_mut().find(|p| p.kind == PlantKind::Battery).unwrap().battery.as_mut().unwrap().energy_capacity = MegawattHours::new(energy);
+        parts.demand.forecast_error = Ratio::ZERO;
+        let mut shape = [1.0; 24];
+        shape[peak..peak + 2].fill(1.5);
+        parts.demand.winter = shape; parts.demand.summer = shape; parts.demand.shoulder = shape;
+        parts.demand.monthly = [1.0; 12];
+        let count = parts.start.connected_cities.len() as f64;
+        for city in &mut parts.cities { city.base_load = Megawatts::new(400.0 / count); }
+        let s = GameSession::new(Arc::new(RegionDefinition::try_from(parts).unwrap()), 7, GameSettings::default());
+        let before = s.state_hash();
+        let forecast = s.supply_forecast();
+        let schedule = s.battery_schedule();
+        let thermal_capacity = s.region.spec(PlantKind::Ccgt).capacity.value();
+        let storage_spec = s.region.spec(PlantKind::Battery);
+        let storage_power = storage_spec.capacity.value();
+        let efficiency = storage_spec.battery.unwrap().charge_efficiency.value();
+        let id = s.plant_views().iter().find(|p| p.kind == PlantKind::Battery).unwrap().id;
+        let mut stored = 0.0f64;
+        let mut delivered = 0.0;
+        let mut worst = (0.0, 0u8);
+        for (tick, point) in forecast.minutes.iter().enumerate() {
+            let deficit = (point.demand.value() - thermal_capacity).max(0.0);
+            let expected = if tick >= 17 * 60 { deficit.min(storage_power).min(stored.max(0.0) * 60.0) } else { 0.0 };
+            proptest::prop_assert!((point.battery_discharge.value() - expected).abs() < 1e-6);
+            proptest::prop_assert!((schedule.plants[&id].discharge[tick].value() - expected).abs() < 1e-6);
+            stored += (point.battery_charge.value() * efficiency - expected) / 60.0;
+            delivered += expected / 60.0;
+            if (17 * 60..(peak - 1) * 60).contains(&tick) {
+                proptest::prop_assert_eq!(point.battery_discharge, Megawatts::ZERO);
+                proptest::prop_assert!((stored - energy).abs() < 1e-6);
+            }
+            let shortfall = point.demand.value() - point.net_supply().value();
+            if shortfall > worst.0 { worst = (shortfall, (tick / 60) as u8); }
+        }
+        proptest::prop_assert!(delivered > 0.0);
+        let warning = s.capacity_shortfall_check().unwrap();
+        proptest::prop_assert!((warning.shortfall.value() - worst.0).abs() < 1e-6);
+        proptest::prop_assert_eq!(warning.hour, worst.1);
+        proptest::prop_assert_eq!(s.state_hash(), before);
+    }
+
+}
+
+proptest::proptest! {
     #[test]
     fn battery_supply_forecast_preserves_state_energy_and_warning_agreement(
         end_hour in 17usize..22,
@@ -302,7 +355,7 @@ fn battery_monthly_weighting_includes_leap_february() {
 }
 
 #[test]
-fn battery_peak_shaving_replaces_peaker_energy_without_extra_customer_revenue() {
+fn battery_reserve_preserves_peaker_dispatch_and_customer_revenue() {
     fn play(storage: bool) -> Box<MonthlyReport> {
         let mut p = fixtures::tiny_region_parts();
         p.demand.forecast_error = Ratio::ZERO;
@@ -357,19 +410,15 @@ fn battery_peak_shaving_replaces_peaker_energy_without_extra_customer_revenue() 
     }
     let without = play(false);
     let with = play(true);
-    assert!(
-        with.energy_by_kind[&PlantKind::Peaker] < without.energy_by_kind[&PlantKind::Peaker],
-        "with {:?} without {:?} storage {:?}",
-        with.energy_by_kind,
-        without.energy_by_kind,
-        with.storage
+    assert_eq!(
+        with.energy_by_kind[&PlantKind::Peaker],
+        without.energy_by_kind[&PlantKind::Peaker],
+        "batteries must not deliberately replace available evening generation"
     );
     assert!((with.served.value() - without.served.value()).abs() < 1e-6);
     assert_eq!(with.revenue, without.revenue);
-    assert!(
-        with.storage
-            .values()
-            .any(|b| b.input.value() > 0.0 && b.output.value() > 0.0)
-    );
+    assert!(with.storage.values().any(|b| b.input.value() > 0.0
+        && b.output.value() > 0.0
+        && b.unused.value() > b.output.value()));
     assert_eq!(with.unserved, MegawattHours::ZERO);
 }

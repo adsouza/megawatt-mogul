@@ -311,8 +311,8 @@ impl PowerSystem {
         self.outage_target = Ratio::ZERO;
         self.battery_tick = 0;
         self.battery_plan = BatteryScheduleView::default();
-        self.plan_batteries(region, month, 0);
         self.plan_hydro(region, month, 0);
+        self.plan_batteries(region, month, 0);
         self.balance_boundary(region, month);
         self.outage_target = self.size_outage(region, month, 0);
         self.outage = self.outage_target;
@@ -468,14 +468,15 @@ impl PowerSystem {
         let mut events = Vec::new();
         let hour = u8::try_from(tick / TICKS_PER_HOUR).unwrap_or(u8::MAX);
         let ordered = self.outage_target;
-        if self.battery_plan_dirty || (tick > 0 && tick.is_multiple_of(TICKS_PER_HOUR)) {
+        let hour_boundary = tick > 0 && tick.is_multiple_of(TICKS_PER_HOUR);
+        if hour_boundary {
+            self.plan_hydro(region, month, hour);
+        }
+        if self.battery_plan_dirty || hour_boundary {
             self.plan_batteries(region, month, tick);
         }
-        if tick > 0 && tick.is_multiple_of(TICKS_PER_HOUR) {
-            self.plan_hydro(region, month, hour);
-            if self.protection.mode == GridMode::Normal {
-                self.resize_outage(region, month, hour);
-            }
+        if hour_boundary && self.protection.mode == GridMode::Normal {
+            self.resize_outage(region, month, hour);
         }
 
         let error = self.noise.step(region.demand(), rng);
@@ -547,8 +548,15 @@ impl PowerSystem {
         };
         let redispatch = Redispatch {
             available: &available,
+            // Storage bridges the current gap; it never lowers the generators' load target.
             to_serve: demand * to_serve
-                + self.battery_request(region, month, effect_tick, &provisional, demand * to_serve),
+                + self.battery_charge_request(
+                    region,
+                    month,
+                    effect_tick,
+                    &provisional,
+                    demand * to_serve,
+                ),
             withheld,
             curtailable,
             effect_tick,

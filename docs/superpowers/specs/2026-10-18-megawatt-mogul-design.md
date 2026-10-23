@@ -2328,23 +2328,27 @@ iteration counts/tolerances shared by live and preview paths.
    any generator may still be absorbed under §20.4. This avoids a circular dependency between
    charging requests and the hydro plan built below. Add each plan to
    the residual before allocating the next battery. This is a request to AGC, not assumed energy.
-2. **Discharge plan.** Peak-shave remaining evening minutes using the water-filling principle of
-   §12.3, with the grid-deliverable budget `stored_MWh * discharge_efficiency` and the discharge
-   power rating. Subtract each battery's allocation from forecast net load before the next battery.
-   No allocation may exceed positive residual demand. Do not reserve the same energy twice.
-3. **Hydro coordination.** Build battery plans first, then allocate scheduled hydro against net
-   city load less planned battery discharge. Battery charging does not enlarge the hydro water
-   budget or make the hydro planner burn water to fill batteries. Hydro's budget, commitment,
-   ramp envelope and emergency override still apply. Generator AGC sees the combined net requirement.
+2. **Discharge preview.** Project remaining evening minutes chronologically against primary
+   generation, using one finite inventory per battery in PlantId order. Discharge only into a
+   positive generation shortfall, bounded by inverter power and stored energy. Hold reserves
+   whenever generation covers demand, even after 17:00. This is a delivery estimate, not a
+   request to reduce generation. Do not reserve the same energy twice.
+3. **Hydro coordination.** Allocate scheduled hydro against net city load without subtracting
+   battery discharge. Batteries cover gaps left by hydro and other generators; they do not make
+   those generators back off. Battery charging does not enlarge the hydro water budget or make
+   the hydro planner burn water to fill batteries. Hydro's budget, commitment, ramp envelope and
+   emergency override still apply. Generator AGC aims at full served customer load plus feasible
+   charging requests, without subtracting planned or actual battery output.
 4. **Re-plan.** Re-plan at day start, hourly, at the evening-window boundary and on the next tick
    after a battery is enabled/disabled or grid service is restored. Plan only the remaining day;
    use actual stored energy. Freeze elapsed allocations for history; do not rewrite them. A live
    afternoon plan may show expected future charging separately, but neither outage sizing nor
-   hydro's firm discharge allocation may spend energy not yet stored. Planning previews may
+   battery support may spend energy not yet stored. Planning previews may
    forecast the whole cycle from empty, clearly labelled as expected, and use those projected
    charge receipts to plan evening discharge.
 
-Schedules are targets, not energy guarantees. Forecast error, generation limits, disconnection,
+Charging schedules are requests; discharge schedules estimate gap coverage. Neither guarantees
+energy. Forecast error, generation limits, disconnection,
 protection and a player's generator controls can prevent a charge or leave energy unused.
 
 ### 20.4 Tick balance and energy settlement
@@ -2387,11 +2391,11 @@ Extend §6.4 without changing the seeded demand/solar draws or the generator tar
   Taper charging requests ahead of full capacity and daylight cutoff using generator downward
   ramp capability. Reserve enough room for already-requested generation to ramp down; opportunistic
   absorption must not spend that reserved room and force an avoidable full-battery surplus.
-- In the evening, battery output fills the actual deficit after generating plants, up to the
-  scheduled allowance, power and stored-energy caps. AGC subtracts the next tick's intended
-  battery discharge from its generation requirement; otherwise generators would cover all load
-  and the battery could never discharge. Account for generator ramps and approaching battery
-  depletion when replacing that output. Do not inject discharge into an already oversupplied bus.
+- In the evening, battery output fills the actual deficit after generating plants, bounded by
+  power and stored-energy caps. AGC continues asking generators to cover the full served customer
+  load: a battery bridges their ramp/start-up gap, then stops as primary generation catches up.
+  Do not reduce generation to create a gap for storage or inject discharge into an oversupplied
+  bus. A persistent capacity shortfall can still consume the reserve until it is exhausted.
 - Frequency/protection use net load including feasible battery charging. After protection changes
   output or served load, cancel charging where necessary and re-evaluate battery delivery/flows
   against the final state. Settle **one** energy change from the final post-protection flow record,
@@ -2416,9 +2420,9 @@ charging only in its daylight window, before further solar curtailment/generator
 A full battery, a night-time battery or one without room is not downward headroom. Standing solar
 curtailment still follows its existing release timing; do not count withheld solar as generated.
 
-**Emergency discharge.** During the evening window an enabled battery may exceed its planned
-allocation to cover an actual deficit before customer shedding, while still obeying energy/power
-limits. Outside this window it holds charge; it is not a general 24-hour emergency reserve in this
+**Emergency discharge.** During the evening window an enabled battery covers an actual deficit
+before customer shedding, including unexpected deficits beyond its preview, while obeying
+energy/power limits. Outside this window it holds charge; it is not a general 24-hour emergency reserve in this
 release. Emergency use reduces the next plan's available energy and can leave a later shortage.
 A planned rotating outage may use this support to restore customer load only as fast as the
 combined feasible headroom allows; do not drain batteries to serve fictional charging load.
@@ -2772,3 +2776,20 @@ progress and history; only subsequent commands use rules 9. Do not rewrite playe
 past monthly reports on load. Historical command-only logs remain version-fenced rather than
 silently replaying changed behavior. Retain all immutable compatibility fixtures and verify old
 portable saves still load, continue and re-save under the new rules.
+
+## 23. Battery reserves bridge generation gaps (2026-10-23)
+
+The evening battery controller no longer deliberately replaces available thermal generation or
+scheduled hydro. Generators continue aiming to meet served customer demand; batteries cover the
+remaining real deficit during the existing evening window and stop once generation catches up.
+Use the same chronological, energy-limited residual-gap projection for the battery schedule,
+Planning supply chart and shortfall warning. Keep daytime charging, efficiencies, ratings,
+protection priorities and the midnight inventory close unchanged. A sustained generation shortage
+still drains batteries; conserving reserves must not withhold feasible emergency support.
+
+Advance simulation rules from 9 to 10. Keep portable schema 1 and existing save formats unchanged;
+restore historical snapshots without rewriting saved state, reports or files, and apply the new
+policy to subsequent play. Historical command-only replays remain fenced by their rules version.
+Regression tests cover a balanced 17:00 fleet holding charge, transient ramp gaps ending as
+generators catch up, later-peak reserve preservation, shared chart/warning/schedule predictions,
+finite-inventory exhaustion, and save/resume/batching determinism.

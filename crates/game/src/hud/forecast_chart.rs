@@ -778,6 +778,59 @@ mod tests {
     }
 
     #[test]
+    fn battery_reserve_waits_for_a_later_supply_gap_in_chart_schedule_and_warning() {
+        let mut game = battery_forecast_game(Some(13.0));
+        let mut hours = [false; 24];
+        hours[..20].fill(true);
+        for plant in game.session().plant_views() {
+            if plant.kind.is_dispatchable() && plant.kind != PlantKind::Hydro {
+                game.execute(Command::CommitPlant {
+                    plant: plant.id,
+                    hours,
+                })
+                .unwrap();
+            }
+        }
+        let before = game.session().state_hash();
+        let l10n = shipped_l10n();
+        let model = forecast_model(&game, &l10n, &UiState::default());
+        assert!(
+            model.storage_discharge[..20 * 60]
+                .iter()
+                .all(|p| p[1] == 0.0)
+        );
+        assert!(
+            model.storage_discharge[20 * 60..]
+                .iter()
+                .any(|p| p[1] > 0.0)
+        );
+        let schedule = game.session().battery_schedule();
+        for (tick, point) in model.storage_discharge.iter().enumerate() {
+            let scheduled: f64 = schedule
+                .plants
+                .values()
+                .map(|p| p.discharge[tick].value())
+                .sum();
+            assert!((scheduled - point[1]).abs() < 1e-6);
+        }
+        let (tick, gap) = model
+            .demand_minutes
+            .iter()
+            .zip(&model.net_supply)
+            .enumerate()
+            .map(|(tick, (demand, supply))| (tick, demand[1] - supply[1]))
+            .fold(
+                (0, 0.0),
+                |worst, next| if next.1 > worst.1 { next } else { worst },
+            );
+        let warning = game.session().capacity_shortfall_check().unwrap();
+        assert_eq!(usize::from(warning.hour), tick / 60);
+        assert!((warning.shortfall.value() - gap).abs() < 1e-6);
+        assert_eq!(game.session().state_hash(), before);
+        assert!(l10n.problems().is_empty());
+    }
+
+    #[test]
     fn disabled_batteries_add_no_supply_or_charging_deduction() {
         let mut game = battery_forecast_game(None);
         let battery = game
@@ -810,7 +863,7 @@ mod tests {
     }
 
     #[test]
-    fn battery_forecast_counts_feasible_flows_instead_of_requested_allocations() {
+    fn battery_forecast_and_schedule_hold_energy_when_generation_covers_demand() {
         let game = edited_western_game(|text| {
             text.replacen("fleet: [", "fleet: [(Battery, -117.0, 34.5),", 1)
         });
@@ -819,7 +872,7 @@ mod tests {
                 .battery_schedule()
                 .plants
                 .values()
-                .any(|p| p.discharge.iter().any(|mw| *mw > Megawatts::ZERO))
+                .all(|p| p.discharge.iter().all(|mw| *mw == Megawatts::ZERO))
         );
         let l10n = shipped_l10n();
         let model = forecast_model(&game, &l10n, &UiState::default());
@@ -1014,7 +1067,7 @@ mod tests {
     }
 
     #[test]
-    fn hydro_forecast_includes_expected_battery_discharge_and_refreshes_after_edits() {
+    fn battery_reserves_do_not_reduce_the_hydro_forecast() {
         let l10n = shipped_l10n();
         let mut game = edited_western_game(|text| {
             text.replacen("fleet: [", "fleet: [(Battery, -117.0, 34.5),", 1)
@@ -1027,7 +1080,7 @@ mod tests {
             storage
                 .plants
                 .values()
-                .any(|p| p.discharge.iter().any(|mw| *mw > Megawatts::ZERO))
+                .all(|p| p.discharge.iter().all(|mw| *mw == Megawatts::ZERO))
         );
         let preview = game.session().hydro_forecast();
         for hour in 0..24 {
@@ -1047,7 +1100,7 @@ mod tests {
         })
         .unwrap();
         let without_storage = stacked_committed_capacity(&game, &l10n);
-        assert_ne!(
+        assert_eq!(
             stack_of(&with_storage, PlantKind::Hydro).mw,
             stack_of(&without_storage, PlantKind::Hydro).mw
         );

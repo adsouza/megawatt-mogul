@@ -7,6 +7,7 @@ use crate::region::fixtures::tiny_region;
 use crate::time::{SimDuration, TICKS_PER_DAY};
 use proptest::prelude::*;
 
+mod battery_bridge;
 mod transition_properties;
 
 const ROOT: NodeId = NodeId(0);

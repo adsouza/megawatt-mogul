@@ -127,7 +127,7 @@ impl PowerSystem {
         region: &RegionDefinition,
         month: SimMonth,
     ) -> [PlannedGeneration; 24] {
-        let preview = self.preview_hydro(region, month, &self.battery_plan);
+        let preview = self.preview_hydro(region, month);
         std::array::from_fn(|h| {
             let mut total = Megawatts::ZERO;
             let mut by_kind = BTreeMap::new();

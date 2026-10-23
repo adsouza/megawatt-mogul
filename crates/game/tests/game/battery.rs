@@ -127,6 +127,22 @@ fn charged_battery_toggle_save_with_enter_leave_load_and_resume_is_a_complete_pl
     use crate::player_workflows::{click, settle_save};
     use bevy_egui::egui;
     let (mut app, dir, id) = app_with_battery();
+    // Leave a real evening supply gap: reserve mode must not discharge just because it is 17:00.
+    let thermal: Vec<_> = app
+        .world()
+        .resource::<Session>()
+        .0
+        .session()
+        .plant_views()
+        .into_iter()
+        .filter(|p| p.kind.is_dispatchable() && p.kind != PlantKind::Hydro)
+        .map(|p| p.id)
+        .collect();
+    let mut hours = [false; 24];
+    hours[..18].fill(true);
+    for plant in thermal {
+        command(&mut app, Command::CommitPlant { plant, hours });
+    }
     command(&mut app, Command::BeginOperating);
     command(&mut app, Command::AdvanceTicks { n: 900 });
     let battery = |app: &App| {
@@ -225,7 +241,7 @@ fn charged_battery_toggle_save_with_enter_leave_load_and_resume_is_a_complete_pl
     command(&mut app, Command::AdvanceTicks { n: 240 });
     assert!(
         battery(&app).stored < stored,
-        "the restored battery can actually supply the evening peak"
+        "the restored battery supplies a genuine evening generation gap"
     );
     assert!(
         app.world()
@@ -245,8 +261,8 @@ fn battery_day_flows_change_line_direction_and_survive_history_review_and_restor
         &Default::default(),
     );
     assert!(forecast.storage_charge.iter().any(|[_, mw]| *mw > 0.0));
-    // The committed fleet can cover expected demand at full output; only
-    // live AGC dispatch below that capacity needs the planned battery discharge.
+    // The committed fleet can cover expected demand. Storage holds its reserve;
+    // live ramp gaps and weather/demand noise can still call on it.
     assert!(forecast.storage_discharge.iter().all(|[_, mw]| *mw == 0.0));
     assert!(
         app.world()
@@ -256,10 +272,10 @@ fn battery_day_flows_change_line_direction_and_survive_history_review_and_restor
             .battery_schedule()
             .plants
             .values()
-            .any(|p| p
+            .all(|p| p
                 .discharge
                 .iter()
-                .any(|mw| *mw > domain::units::Megawatts::ZERO))
+                .all(|mw| *mw == domain::units::Megawatts::ZERO))
     );
     command(&mut app, Command::BeginOperating);
     let mut saw_charge = false;

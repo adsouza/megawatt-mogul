@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 
-use super::{BatteryScheduleView, PowerSystem, day_hydro_budget};
+use super::{PowerSystem, day_hydro_budget};
 use crate::generation::{HydroFill, Plant, PlantStatus, water_fill};
 use crate::grid::frequency::FrequencyBand;
 use crate::ids::PlantId;
@@ -84,21 +84,14 @@ pub struct PlantHydroScheduleView {
 
 impl PowerSystem {
     /// The coming day's hour-0 water allocation, shared by Planning charts
-    /// and the shortfall check. Uses fresh daily budgets and the expected
-    /// storage discharge, never the live hydro plan or leftover water.
+    /// and the shortfall check. Uses fresh daily budgets, never the live
+    /// hydro plan or leftover water. Batteries do not displace scheduled hydro.
     pub(crate) fn preview_hydro(
         &self,
         region: &RegionDefinition,
         month: SimMonth,
-        storage: &BatteryScheduleView,
     ) -> BTreeMap<PlantId, HydroFill> {
-        self.compute_hydro_plan_with_storage(
-            region,
-            month,
-            0,
-            |p| day_hydro_budget(region, month, p),
-            storage,
-        )
+        self.compute_hydro_plan(region, month, 0, |p| day_hydro_budget(region, month, p))
     }
 
     /// Expected (noise-free) demand of connected cities less expected solar at
@@ -185,22 +178,8 @@ impl PowerSystem {
         from_hour: u8,
         budget: impl Fn(&Plant) -> MegawattHours,
     ) -> BTreeMap<PlantId, HydroFill> {
-        self.compute_hydro_plan_with_storage(region, month, from_hour, budget, &self.battery_plan)
-    }
-
-    pub(super) fn compute_hydro_plan_with_storage(
-        &self,
-        region: &RegionDefinition,
-        month: SimMonth,
-        from_hour: u8,
-        budget: impl Fn(&Plant) -> MegawattHours,
-        storage: &super::BatteryScheduleView,
-    ) -> BTreeMap<PlantId, HydroFill> {
         let from = usize::from(from_hour);
         let mut residual = self.hourly_net_load(region, month);
-        for (h, net) in residual.iter_mut().enumerate() {
-            *net -= self.battery_hourly_discharge(storage, h);
-        }
         residual
             .iter_mut()
             .take(from)

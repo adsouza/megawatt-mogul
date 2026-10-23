@@ -388,15 +388,12 @@ impl GameSession {
 
     /// The coming day's hourly allocations for connected, commissioned hydro
     /// on AGC, from the same water-aware preview as the Planning shortfall
-    /// check (including expected battery discharge). Manual hydro is absent:
+    /// check. Battery reserves do not reduce its allocation. Manual hydro is absent:
     /// the Planning check counts its initial target instead. Pure; leaves the
     /// live schedule, water budgets and RNG untouched.
     pub fn hydro_forecast(&self) -> BTreeMap<PlantId, [Megawatts; 24]> {
-        let storage = self
-            .power
-            .preview_batteries(&self.region, self.clock.month());
         self.power
-            .preview_hydro(&self.region, self.clock.month(), &storage)
+            .preview_hydro(&self.region, self.clock.month())
             .into_iter()
             .map(|(id, fill)| (id, fill.hourly))
             .collect()
@@ -455,9 +452,13 @@ impl GameSession {
             - self.power.expected_solar(&self.region, month, tick)
     }
 
-    /// The dispatch requirement after planned charging and energy-backed delivery. Pure.
+    /// The generators' dispatch requirement, including planned charging.
+    /// Battery discharge bridges actual gaps without reducing this requirement. Pure.
     pub fn forecast_dispatch_net_load(&self, tick: u32) -> Megawatts {
-        self.forecast_net_load(tick) + self.power.storage_net_adjustment(self.clock.tick(), tick)
+        self.forecast_net_load(tick)
+            + self
+                .power
+                .storage_charging_requirement(self.clock.tick(), tick)
     }
 
     /// The Planning-time check of the commitment plan against the load
