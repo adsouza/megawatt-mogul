@@ -53,6 +53,7 @@ all = { level = "warn", priority = -1 }
 # debugging of the code we change.
 [profile.dev]
 debug = true # full debug info for workspace crates (the default, stated so it isn't "fixed")
+split-debuginfo = "packed" # bundle macOS debug info into dSYMs instead of retaining loose objects
 
 # Every non-workspace crate: Bevy, wgpu, egui, but also rand_chacha, proptest and the rest.
 [profile.dev.package."*"]
