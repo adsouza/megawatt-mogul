@@ -30,6 +30,65 @@ fn latest_report(game: &Game) -> &MonthlyReport {
         .expect("a month has closed")
 }
 
+#[test]
+fn may_2033_evening_ccgt_shutdown_does_not_black_out_the_hydro_fleet() {
+    let (mut game, _) = game_on(domain::region::fixtures::may_2033_parts(), 7);
+    let tail = game
+        .session()
+        .plant_views()
+        .into_iter()
+        .rfind(|p| p.kind == PlantKind::Ccgt)
+        .unwrap()
+        .id;
+    for plant in game.session().plant_views() {
+        let mut hours = [true; 24];
+        if plant.id == tail {
+            hours[..17].fill(false);
+        }
+        game.execute(Command::CommitPlant {
+            plant: plant.id,
+            hours,
+        })
+        .unwrap();
+        game.execute(Command::SetAutoFollow {
+            plant: plant.id,
+            on: true,
+        })
+        .unwrap();
+    }
+    assert_eq!(game.session().capacity_shortfall_check(), None);
+    game.execute(Command::BeginOperating).unwrap();
+    let start = game.checkpoint();
+    let loaded = support::loaded_region(domain::region::fixtures::may_2033_parts());
+    let mut restored = Game::restore(
+        loaded,
+        start,
+        Box::new(application::InMemoryCommandLog::default()),
+        &|| false,
+    )
+    .unwrap();
+    let events = game.execute(Command::AdvanceTicks { n: 1440 }).unwrap();
+    restored.execute(Command::AdvanceTicks { n: 1440 }).unwrap();
+    assert_eq!(game.checkpoint(), restored.checkpoint());
+    assert!(!events.contains(&DomainEvent::Blackout));
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, DomainEvent::OverFrequencyTrip { .. }))
+    );
+    let report = latest_report(&game);
+    assert_eq!(report.month, SimMonth::new(2033, 5).unwrap());
+    assert_eq!(report.unserved, MegawattHours::ZERO);
+    assert_eq!(report.reliability, Ratio::ONE);
+    assert!(
+        game.projections().timeline.completed_days()[0]
+            .points
+            .iter()
+            .take(60)
+            .all(|p| p.by_kind[&PlantKind::Hydro] > Megawatts::ZERO)
+    );
+}
+
 /// Sanity checks every snapshotted report must pass before it is worth
 /// reviewing: finite energies, reliability in 0..=1, served + unserved =
 /// demand, `net` the sum of the money lines, and revenue whenever energy was

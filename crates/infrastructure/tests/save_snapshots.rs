@@ -35,6 +35,16 @@ fn released_portable_schema1_golden_saves_restore_and_continue_without_replaying
         let before = game.checkpoint();
         let (mut bundle, _) = decode_save(&bytes, &replay_compatibility()).unwrap();
         assert_eq!(bundle.checkpoint.snapshot.as_ref().unwrap().schema, 1);
+        assert_eq!(
+            bundle.checkpoint.header.sim_rules_version, 8,
+            "released rules-8 bytes"
+        );
+        let mut expected = bundle.checkpoint.clone();
+        expected.header.sim_rules_version = domain::SIM_RULES_VERSION;
+        assert_eq!(
+            before, expected,
+            "rule upgrade preserves all canonical state, RNG, history and audit commands"
+        );
         if path.file_name().unwrap() == "schema1-charged-battery.mgsave" {
             assert_eq!(before.summary.tick, 900);
             assert!(

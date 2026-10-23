@@ -407,6 +407,50 @@ fn automatic_black_start_respects_the_ending_instant_and_midnight_cutoff() {
     }
 }
 
+#[test]
+fn may_2033_sized_surplus_recovers_without_dropping_the_hydro_fleet() {
+    let region = RegionDefinition::try_from(crate::region::fixtures::may_2033_parts()).unwrap();
+    let month = region.start().month;
+    let mut sys = auto_follow_fleet(&region);
+    let mut hours = [false; 24];
+    hours[17..].fill(true);
+    let p = sys.plant_mut(PlantId(9)).unwrap();
+    p.set_commitment(CommitmentSchedule::try_new(hours, p.spec()).unwrap());
+    let mut rng = SimRng::from_seed(7);
+    sys.begin_day(&region, month, &mut rng);
+    // Reintroduce just May's 500 MW dispatch error to test protection independently
+    // of the midnight fix. Four hydro units can lower only 400 MW on the next tick.
+    let excess = region.spec(PlantKind::Ccgt).capacity;
+    let p = sys.plant_mut(PlantId(4)).unwrap();
+    p.set_output_unchecked((p.output() + excess).min(p.spec().capacity));
+    for tick in 0..60 {
+        let before: BTreeMap<_, _> = sys
+            .plants()
+            .iter()
+            .map(|(id, p)| (*id, p.output()))
+            .collect();
+        let (s, events) = sys.tick(&region, month, tick, &mut rng);
+        assert_eq!(s.mode, GridMode::Normal, "tick {tick}: {events:?}");
+        assert_eq!(s.unserved, Megawatts::ZERO, "tick {tick}");
+        if tick == 0 {
+            assert!(s.frequency - region.frequency().nominal > region.frequency().curtail_above);
+        }
+        for p in sys
+            .connected_plants()
+            .filter(|p| p.kind() == PlantKind::Hydro)
+        {
+            assert!(
+                (p.output() - before[&p.id()]).abs() <= p.spec().ramp.per_tick(),
+                "tick {tick}: {:?} was {:?}, now {:?}",
+                p.id(),
+                before[&p.id()],
+                p.output()
+            );
+        }
+    }
+    assert!(sys.deviation().value().abs() < region.frequency().normal_band.value());
+}
+
 proptest! {
     #[test]
     fn automatic_black_start_only_resumes_eligible_tripped_units(
@@ -648,7 +692,7 @@ fn blackout_restoration_reconnects_load_and_solar() {
 }
 
 #[test]
-fn surplus_beyond_solar_forces_agc_to_minimum_then_curtails_all_solar() {
+fn surplus_beyond_solar_keeps_agc_ramp_limited_and_curtails_all_solar() {
     let region = tiny_region();
     let mut defs = start_fleet(&region);
     defs.push(connected(PlantKind::Solar, cell(5, 5)));
@@ -1055,6 +1099,107 @@ fn begin_day_balances_the_boundary_against_load_net_of_manual_and_solar() {
 }
 
 #[test]
+fn may_2033_midnight_shutdown_tail_is_counted_before_dispatch_and_never_blacks_out() {
+    let region = RegionDefinition::try_from(crate::region::fixtures::may_2033_parts()).unwrap();
+    let month = region.start().month;
+    let mut sys = auto_follow_fleet(&region);
+    let tail = PlantId(9);
+    let mut hours = [false; 24];
+    hours[17..].fill(true);
+    let p = sys.plant_mut(tail).unwrap();
+    p.set_commitment(CommitmentSchedule::try_new(hours, p.spec()).unwrap());
+    let mut rng = SimRng::from_seed(7);
+    sys.begin_day(&region, month, &mut rng);
+    assert!(matches!(
+        sys.plant(tail).unwrap().status(),
+        PlantStatus::Stopping { .. }
+    ));
+    assert_eq!(
+        sys.plant(tail).unwrap().output(),
+        region.spec(PlantKind::Ccgt).capacity
+    );
+    let generation: Megawatts = sys.connected_plants().map(Plant::output).sum();
+    let forecast = sys.connected_demand_forecast(&region, month, 0);
+    assert!(
+        (generation - forecast).abs().value() < 1e-8,
+        "generation={generation:?}, forecast={forecast:?}"
+    );
+    for tick in 0..60 {
+        let (s, events) = sys.tick(&region, month, tick, &mut rng);
+        assert_eq!(s.mode, GridMode::Normal, "tick {tick}: {events:?}");
+        assert_eq!(s.unserved, Megawatts::ZERO, "tick {tick}");
+        assert!(s.by_kind[&PlantKind::Hydro] > Megawatts::ZERO);
+    }
+}
+
+proptest! {
+    #[test]
+    fn midnight_tail_balances_for_manual_and_agc_units_and_arbitrary_evening_runs(hour in 3usize..24, agc in any::<bool>(), tail_connected in any::<bool>(), seed in any::<u64>()) {
+        let region=RegionDefinition::try_from(crate::region::fixtures::may_2033_parts()).unwrap();
+        let month=region.start().month;
+        let mut defs=start_fleet(&region);
+        defs.last_mut().unwrap().connected=tail_connected;
+        let mut sys=committed_auto_follow(&region,&defs);
+        let p=sys.plant_mut(PlantId(9)).unwrap();
+        let mut hours=[false;24];hours[hour..].fill(true);
+        p.set_commitment(CommitmentSchedule::try_new(hours,p.spec()).unwrap());
+        p.set_auto_follow(agc).unwrap();
+        let mut rng=SimRng::from_seed(seed);
+        sys.begin_day(&region,month,&mut rng);
+        let generation:Megawatts=sys.connected_plants().map(Plant::output).sum();
+        prop_assert!((generation-sys.connected_demand_forecast(&region,month,0)).abs().value()<1e-8);
+        for tick in 0..60 {
+            let (s,_)=sys.tick(&region,month,tick,&mut rng);
+            prop_assert_eq!(s.mode,GridMode::Normal);
+            prop_assert_eq!(s.unserved,Megawatts::ZERO);
+        }
+    }
+
+    #[test]
+    fn curtailment_preserves_agc_outputs_and_queued_ramp_limited_targets(surplus in 0.0f64..4000.0, solar in 0.0f64..1000.0) {
+        let region=tiny_region();
+        let mut sys=auto_follow_fleet(&region);
+        sys.begin_day(&region,april(),&mut SimRng::from_seed(7));
+        let before=sys.plants.clone();
+        sys.update_curtailment(ProtectionOutcome::Curtail,Megawatts::new(surplus),Megawatts::new(solar),&mut Vec::new());
+        prop_assert_eq!(&sys.plants,&before,"protection must not replace dispatch with an instantaneous fleet reduction");
+        prop_assert_eq!(sys.curtailment,Megawatts::new(surplus.min(solar)));
+    }
+}
+
+#[test]
+fn resource_limited_hydro_shutdown_tail_cannot_displace_available_midnight_generation() {
+    let region = region_with(|parts| {
+        noise_free(parts);
+        parts.hydro.monthly_flow.fill(0.00001);
+    });
+    let mut defs = start_fleet(&region);
+    defs.push(connected(PlantKind::Hydro, cell(10, 1)));
+    let mut sys = committed_auto_follow(&region, &defs);
+    let mut hours = [false; 24];
+    hours[17..].fill(true);
+    let p = sys.plant_mut(PlantId(4)).unwrap();
+    p.set_commitment(CommitmentSchedule::try_new(hours, p.spec()).unwrap());
+    let mut rng = SimRng::from_seed(7);
+    sys.begin_day(&region, april(), &mut rng);
+    let hydro = sys.plant(PlantId(4)).unwrap();
+    assert!(hydro.hydro_available() < hydro.spec().ramp.per_tick());
+    assert_eq!(hydro.output(), hydro.hydro_available());
+    let total: Megawatts = sys.connected_plants().map(Plant::output).sum();
+    assert!(
+        (total - sys.connected_demand_forecast(&region, april(), 0))
+            .abs()
+            .value()
+            < 1e-8
+    );
+    for tick in 0..60 {
+        let (s, events) = sys.tick(&region, april(), tick, &mut rng);
+        assert_eq!(s.mode, GridMode::Normal, "tick {tick}: {events:?}");
+        assert_eq!(s.unserved, Megawatts::ZERO);
+    }
+}
+
+#[test]
 fn begin_day_draw_count_is_unchanged() {
     let region = tiny_region();
     let (mut a, mut b) = (auto_follow_fleet(&region), auto_follow_fleet(&region));
@@ -1206,7 +1351,7 @@ fn grid_following_solar_resynchronises_only_once_load_is_being_restored() {
 }
 
 #[test]
-fn force_agc_to_minimum_returns_the_targets_it_removed() {
+fn curtailment_keeps_agc_and_manual_targets_instead_of_forcing_them_to_minimum() {
     let region = tiny_region();
     let mut sys = auto_follow_fleet(&region);
     sys.begin_day(&region, april(), &mut SimRng::from_seed(1));
@@ -1233,16 +1378,21 @@ fn force_agc_to_minimum_returns_the_targets_it_removed() {
         .set_target(Megawatts::new(100.0))
         .unwrap();
 
-    let removed = sys.force_agc_to_minimum();
-
-    assert_eq!(removed, Megawatts::new((400.0 - 240.0) + (300.0 - 200.0)));
-    assert_eq!(target_of(&sys, 1), Megawatts::new(240.0));
-    assert_eq!(target_of(&sys, 2), Megawatts::new(200.0));
+    let before = sys.plants.clone();
+    sys.update_curtailment(
+        ProtectionOutcome::Curtail,
+        Megawatts::new(100.0),
+        Megawatts::ZERO,
+        &mut Vec::new(),
+    );
+    assert_eq!(sys.plants, before);
+    assert_eq!(target_of(&sys, 1), Megawatts::new(400.0));
+    assert_eq!(target_of(&sys, 2), Megawatts::new(300.0));
     assert_eq!(target_of(&sys, 3), Megawatts::new(100.0));
 }
 
 #[test]
-fn curtailment_is_what_forcing_agc_down_cannot_cover() {
+fn curtailment_covers_only_residual_surplus_up_to_available_solar() {
     let region = tiny_region();
     let mut sys = auto_follow_fleet(&region);
     sys.begin_day(&region, april(), &mut SimRng::from_seed(1));
@@ -1260,8 +1410,8 @@ fn curtailment_is_what_forcing_agc_down_cannot_cover() {
         .unwrap();
     let mut events = Vec::new();
 
-    // 100 MW of surplus, 60 MW of solar to curtail, and forcing AGC to minimum
-    // removes 70 MW of targets: only 30 MW of solar then has to be curtailed.
+    // AGC has already queued its reduction. Cover at most 60 MW of the 100 MW
+    // residual with solar; leave dispatch intact to handle the remaining surplus.
     sys.update_curtailment(
         ProtectionOutcome::Curtail,
         Megawatts::new(100.0),
@@ -1272,11 +1422,11 @@ fn curtailment_is_what_forcing_agc_down_cannot_cover() {
     assert_eq!(
         events,
         vec![DomainEvent::SolarCurtailed {
-            mw: Megawatts::new(30.0)
+            mw: Megawatts::new(60.0)
         }]
     );
-    assert_eq!(sys.curtailment, Megawatts::new(30.0));
-    assert_eq!(target_of(&sys, 1), Megawatts::new(240.0));
+    assert_eq!(sys.curtailment, Megawatts::new(60.0));
+    assert_eq!(target_of(&sys, 1), Megawatts::new(310.0));
 }
 
 #[test]
@@ -3085,7 +3235,7 @@ fn an_over_frequency_trip_unplans_tripped_hydro() {
 
 #[test]
 fn an_over_frequency_trip_tick_still_curtails_first() {
-    // As `curtailment_is_what_forcing_agc_down_cannot_cover`, on a trip tick.
+    // The same bounded curtailment runs on a trip tick without rewriting AGC targets.
     let region = tiny_region();
     let mut sys = auto_follow_fleet(&region);
     sys.begin_day(&region, april(), &mut SimRng::from_seed(1));
@@ -3105,10 +3255,10 @@ fn an_over_frequency_trip_tick_still_curtails_first() {
     assert_eq!(
         events,
         vec![DomainEvent::SolarCurtailed {
-            mw: Megawatts::new(30.0)
+            mw: Megawatts::new(60.0)
         }]
     );
-    assert_eq!(target_of(&sys, 1), Megawatts::new(240.0));
+    assert_eq!(target_of(&sys, 1), Megawatts::new(310.0));
 }
 
 /// The overbuild fixture: the start fleet (coal 1, CCGT 2, peaker 3) plus

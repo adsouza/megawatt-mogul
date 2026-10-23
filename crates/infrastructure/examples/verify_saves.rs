@@ -13,7 +13,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let id = entry.metadata.slot;
         let revision = store.revision(&id)?;
         let (bundle, region) = store.read(&id)?;
-        let expected = bundle.checkpoint.clone();
+        let mut expected = bundle.checkpoint.clone();
         let game = bundle.restore(
             region,
             &store.compatibility(),
@@ -21,6 +21,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &|| false,
         )?;
         if expected.snapshot.is_some() {
+            // A portable restore adopts today's rules for future commands only.
+            // Every byte of saved state/history and every other header field must match.
+            expected.header.sim_rules_version = domain::SIM_RULES_VERSION;
             assert_eq!(
                 game.checkpoint(),
                 expected,

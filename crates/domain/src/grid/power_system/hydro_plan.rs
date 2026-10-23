@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 
-use super::PowerSystem;
+use super::{BatteryScheduleView, PowerSystem, day_hydro_budget};
 use crate::generation::{HydroFill, Plant, PlantStatus, water_fill};
 use crate::grid::frequency::FrequencyBand;
 use crate::ids::PlantId;
@@ -83,6 +83,24 @@ pub struct PlantHydroScheduleView {
 }
 
 impl PowerSystem {
+    /// The coming day's hour-0 water allocation, shared by Planning charts
+    /// and the shortfall check. Uses fresh daily budgets and the expected
+    /// storage discharge, never the live hydro plan or leftover water.
+    pub(crate) fn preview_hydro(
+        &self,
+        region: &RegionDefinition,
+        month: SimMonth,
+        storage: &BatteryScheduleView,
+    ) -> BTreeMap<PlantId, HydroFill> {
+        self.compute_hydro_plan_with_storage(
+            region,
+            month,
+            0,
+            |p| day_hydro_budget(region, month, p),
+            storage,
+        )
+    }
+
     /// Expected (noise-free) demand of connected cities less expected solar at
     /// minute 30 of each hour of a day in `month`: the forecast net load the
     /// dispatchable fleet has to follow, hour by hour.

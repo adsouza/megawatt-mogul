@@ -543,6 +543,19 @@ compare tick batches, preserved inventory, reports and completed curves after po
 Game tests use real enabled controls and graph layouts, with and without connected batteries,
 at the 1280×640 minimum window size. Client preferences remain separate from simulation state.
 
+## Midnight dispatch and surplus protection (May 2033)
+
+`domain::region::fixtures::may_2033_parts` reduces the incident to its five hydro units, four
+CCGTs and 3,552.12 MW midnight demand without retaining a personal save. Domain tests check that
+the evening CCGT's shutdown tail is counted exactly once, and that a separate injected surplus
+engages protection while respecting ramps and preserving service. Properties cover arbitrary
+evening runs and manual/AGC tails, and forbid curtailment from replacing dispatch outputs/targets.
+A resource-limited hydro tail must be capped before it displaces other midnight supply.
+The application scenario checks the full May day, reports and operating-boundary snapshot restore.
+Rules-8 portable golden snapshots must retain state/history through the rules-9 upgrade; original
+fixture files are never regenerated. Actual player saves may be verified read-only with temporary
+in-memory continuations, preserving source bytes and historical reports.
+
 ## Save migrations and portable state (A10)
 
 `domain/tests/portable_state.rs` checks complete state/RNG continuation at arbitrary tick boundaries
@@ -612,9 +625,10 @@ restoration, in-memory preparation and explicit activation using temporary recor
 
 `infrastructure/tests/save_codec.rs` verifies adjacent-only runs, changed speed/action boundaries,
 zero-tick batches, malformed/oversized counts and arbitrary batch-size/repeat/action round trips.
-The frozen `tests/support/tick-rle-format1.mgsave` was captured with the pre-RLE writer. It must
-load, re-encode, restore and continue with exactly the same commands, per-command events,
-projections and diagnostic replay. Existing format-2/schema-1 golden snapshots remain immutable and
+The frozen `tests/support/tick-rle-format1.mgsave` was captured with the pre-RLE writer. Its
+rules-8 command-only state remains version-fenced. Recompute its batch pattern with current rules
+and its exact archived region in a TempDir, then verify format-1 load, RLE re-encoding, per-command
+events, projections and diagnostic replay. Existing format-2/schema-1 golden snapshots remain immutable and
 must restore/continue/re-save as format 3. Unit tests cover combined expansion limits and
 cancellation during expansion. Counts and audit hashes always cover original expanded commands.
 

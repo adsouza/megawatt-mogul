@@ -53,7 +53,15 @@ fn setup(
     update_n(&mut app, 3);
     settle(&mut app);
     update_n(&mut app, 3);
-    (app, saves, logs, id, bytes, bundle.checkpoint)
+    let mut expected = bundle.checkpoint;
+    assert_eq!(
+        expected.header.sim_rules_version, 8,
+        "immutable released fixture"
+    );
+    // Loading changes only the rules used for future commands; all saved state/history
+    // and the actual source bytes must remain identical.
+    expected.header.sim_rules_version = domain::SIM_RULES_VERSION;
+    (app, saves, logs, id, bytes, expected)
 }
 #[test]
 fn portable_resume_click_uses_normal_ui_and_restores_paused_progress() {

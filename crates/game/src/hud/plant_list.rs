@@ -2,7 +2,7 @@
 //!
 //! The commitment grid lists them row by row and the forecast chart stacks their capacity by
 //! kind, so both read one list: commissioned, dispatchable plants, grouped by kind in merit order
-//! (cheapest fuel first, as the grid dispatches them).
+//! (cheapest fuel first, as the grid dispatches them). The forecast also adds expected solar supply.
 
 use application::Game;
 use domain::generation::PlantStatus;

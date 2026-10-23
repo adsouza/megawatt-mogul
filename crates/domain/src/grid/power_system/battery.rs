@@ -435,19 +435,17 @@ impl PowerSystem {
         } else {
             self.battery_plan.clone()
         };
-        let hydro = self.compute_hydro_plan_with_storage(
-            region,
-            month,
-            (start / 60) as u8,
-            |p| {
-                if preview {
-                    super::day_hydro_budget(region, month, p)
-                } else {
-                    p.hydro_budget().unwrap_or(MegawattHours::ZERO)
-                }
-            },
-            &plans,
-        );
+        let hydro = if preview {
+            self.preview_hydro(region, month, &plans)
+        } else {
+            self.compute_hydro_plan_with_storage(
+                region,
+                month,
+                (start / 60) as u8,
+                |p| p.hydro_budget().unwrap_or(MegawattHours::ZERO),
+                &plans,
+            )
+        };
         let mut inventory: BTreeMap<_, _> = self
             .connected_plants()
             .filter_map(|p| {

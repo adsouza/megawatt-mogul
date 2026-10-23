@@ -367,6 +367,22 @@ impl GameSession {
         self.power.hydro_schedule()
     }
 
+    /// The coming day's hourly allocations for connected, commissioned hydro
+    /// on AGC, from the same water-aware preview as the Planning shortfall
+    /// check (including expected battery discharge). Manual hydro is absent:
+    /// the Planning check counts its initial target instead. Pure; leaves the
+    /// live schedule, water budgets and RNG untouched.
+    pub fn hydro_forecast(&self) -> BTreeMap<PlantId, [Megawatts; 24]> {
+        let storage = self
+            .power
+            .preview_batteries(&self.region, self.clock.month());
+        self.power
+            .preview_hydro(&self.region, self.clock.month(), &storage)
+            .into_iter()
+            .map(|(id, fill)| (id, fill.hourly))
+            .collect()
+    }
+
     /// The played day's incidents so far, oldest first, each with its tick
     /// (spec §8.4: the Operating HUD's incident ticker). The day starts empty
     /// at `BeginOperating`, and the month close publishes them in the report

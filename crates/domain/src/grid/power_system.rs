@@ -326,20 +326,24 @@ impl PowerSystem {
     /// Sets the dispatch state at instant 0 as the end of the previous,
     /// identical day left it: the auto-follow fleet fills the tick-0 forecast
     /// in merit order (see [`boundary_dispatch`]). The load is the connected
-    /// demand forecast less the rotating outage, less expected solar and less
-    /// the output of connected online plants that are not auto-follow, which
-    /// keep their initial target. Scheduled hydro is capped at its hour-0 ceiling: its hour-0
+    /// demand forecast less the rotating outage, expected solar, manual online output
+    /// and every connected shutdown tail (including AGC units). Stopping plants still
+    /// generate but cannot participate in boundary dispatch. Manual plants keep their
+    /// initial target. Scheduled hydro is capped at its hour-0 ceiling: its hour-0
     /// allocation, lowered to the ramp envelope (see
     /// [`PowerSystem::hydro_ceilings`]). Draws no random numbers.
     fn balance_boundary(&mut self, region: &RegionDefinition, month: SimMonth) {
-        let manual: Megawatts = self
+        let fixed: Megawatts = self
             .connected_plants()
-            .filter(|p| p.is_online() && !p.auto_follow())
+            .filter(|p| {
+                matches!(p.status(), PlantStatus::Stopping { .. })
+                    || (p.is_online() && !p.auto_follow())
+            })
             .map(Plant::output)
             .sum();
         let forecast = self.connected_demand_forecast(region, month, 0);
         let solar = self.expected_solar(region, month, 0);
-        let load = forecast * (1.0 - self.outage.value()) - solar - manual;
+        let load = forecast * (1.0 - self.outage.value()) - solar - fixed;
         let (mut available, _, _) = self.availability(region, month, 0);
         for (id, ceiling) in self.hydro_ceilings(0) {
             if let Some(mw) = available.get_mut(&id) {
@@ -445,11 +449,11 @@ impl PowerSystem {
     /// one-tick ramp (the negated leftover of step 6), clamped to the solar
     /// available to curtail. It therefore follows the surplus down as demand
     /// rises, solar falls or AGC makes room, and disengages at zero, so solar is
-    /// never stranded and nothing oscillates. AGC plants are forced to minimum
-    /// only on a `Curtail` tick where curtailing every connected solar plant
-    /// still could not cover that surplus; the curtailment is then reduced by
-    /// what forcing removes. After an over-frequency trip the curtailment is
-    /// recomputed from the post-trip AGC pass, without forcing.
+    /// never stranded. AGC's surplus-only, ramp-limited targets are left intact:
+    /// curtailment never forces dispatchable plants to minimum or changes their current
+    /// output. A surplus beyond available solar waits for the queued ramp and, if
+    /// persistent, the guarded individual over-frequency trip. After a trip curtailment
+    /// is recomputed from the post-trip AGC pass.
     pub fn tick(
         &mut self,
         region: &RegionDefinition,
@@ -696,8 +700,8 @@ impl PowerSystem {
     }
 
     /// Recomputes the solar curtailment from the surplus AGC cannot absorb (see
-    /// [`PowerSystem::tick`]), forcing AGC plants to minimum on a `Curtail`
-    /// tick when solar alone cannot cover it.
+    /// [`PowerSystem::tick`]). AGC already queued the achievable reduction; never
+    /// replace its targets or force an instantaneous reduction of the entire fleet.
     fn update_curtailment(
         &mut self,
         outcome: ProtectionOutcome,
@@ -707,33 +711,12 @@ impl PowerSystem {
     ) {
         let mut needed = surplus.max(Megawatts::ZERO);
         if outcome.curtails() {
-            if needed > curtailable {
-                needed -= self.force_agc_to_minimum();
-            }
             needed = needed.clamp(Megawatts::ZERO, curtailable);
             if needed > Megawatts::ZERO {
                 events.push(DomainEvent::SolarCurtailed { mw: needed });
             }
         }
         self.curtailment = needed.min(curtailable);
-    }
-
-    /// Forces connected AGC plants to minimum stable output. Returns how far
-    /// that lowers their next-tick output below the targets AGC just set.
-    fn force_agc_to_minimum(&mut self) -> Megawatts {
-        let network = &self.network;
-        self.plants
-            .values_mut()
-            .filter(|p| p.auto_follow() && p.is_online() && network.is_connected(p.node()))
-            .map(|p| {
-                let before = match p.status() {
-                    PlantStatus::Online { target, .. } => target,
-                    _ => Megawatts::ZERO,
-                };
-                p.force_to_minimum();
-                (before - p.spec().min_output()).max(Megawatts::ZERO)
-            })
-            .sum()
     }
 
     fn apply_commitment(&mut self, tick: u32, events: &mut Vec<DomainEvent>) {
@@ -1013,11 +996,8 @@ impl PowerSystem {
     /// the same availability and hydro ceilings. The rest of the fleet then
     /// ramps on the next tick's step, which is the one tick of ramp the gate
     /// credits. The curtailment is recomputed from what that pass cannot
-    /// absorb, without forcing AGC to minimum again. Forcing that already
-    /// happened this tick (the curtail response comes before any trip) stays:
-    /// it acted on outputs before the trip was sized, so the gate measured the
-    /// post-forcing surplus, and the redispatch raises the forced plants from
-    /// their minimum within their ramp.
+    /// absorb. Both passes leave physical outputs unchanged and their targets
+    /// remain within the same one-tick ramp envelope; they do not stack ramps.
     fn over_frequency_trip(
         &mut self,
         served: Megawatts,

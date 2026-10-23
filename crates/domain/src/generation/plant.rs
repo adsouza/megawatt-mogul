@@ -281,6 +281,13 @@ impl Plant {
         self.status = self
             .commitment
             .initial_status(&self.spec, self.initial_target);
+        if let PlantStatus::Stopping { output } = self.status {
+            // A synthetic shutdown tail cannot contain more output than today's
+            // resource permits. Otherwise boundary dispatch displaces real supply.
+            self.status = PlantStatus::Stopping {
+                output: output.min(self.hydro_available()),
+            };
+        }
         if self.previous_month_offline && self.commitment.is_all_day() {
             BoundaryStart::Charged
         } else {

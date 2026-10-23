@@ -332,3 +332,45 @@ pub fn tiny_region_parts() -> RegionDefinitionParts {
 pub fn tiny_region() -> RegionDefinition {
     RegionDefinition::try_from(tiny_region_parts()).expect("tiny region fixture is valid")
 }
+
+/// Reduced May 2033 incident: five 800 MW hydro units, three all-day 500 MW CCGTs,
+/// and one CCGT whose evening run ends at midnight. No personal save/history is embedded.
+/// Flat, noise-free 3,552.12 MW demand isolates the shutdown tail and protection response.
+pub fn may_2033_parts() -> RegionDefinitionParts {
+    let mut parts = tiny_region_parts();
+    parts.start.month = SimMonth::new(2033, 5).expect("valid month");
+    parts.start.fleet = (6..=10)
+        .map(|x| StartPlantDef {
+            kind: PlantKind::Hydro,
+            cell: CellCoord { x, y: 1 },
+        })
+        .chain((2..=5).map(|x| StartPlantDef {
+            kind: PlantKind::Ccgt,
+            cell: CellCoord { x, y: 1 },
+        }))
+        .collect();
+    let cells = (0..8)
+        .flat_map(|y| {
+            (0..12).map(move |x| {
+                let mut c = cell(x, y);
+                if y == 1 && (6..=10).contains(&x) {
+                    c.hydro_potential = r(0.8);
+                }
+                c
+            })
+        })
+        .collect();
+    parts.terrain = TerrainGrid::new(12, 8, cells).expect("rectangular fixture");
+    parts
+        .catalog
+        .iter_mut()
+        .find(|s| s.kind == PlantKind::Ccgt)
+        .expect("CCGT spec")
+        .min_stable = r(0.3);
+    parts.cities[0].base_load = Megawatts::new(2_131.272);
+    parts.cities[1].base_load = Megawatts::new(1_420.848);
+    parts.demand.shoulder = [1.0; 24];
+    parts.demand.monthly = [1.0; 12];
+    parts.demand.forecast_error = Ratio::ZERO;
+    parts
+}

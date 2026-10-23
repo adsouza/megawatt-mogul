@@ -420,7 +420,7 @@ built. No placeholder exists today; `Plant::commissioned_on` is the only seam.
   | Below −0.5 Hz | Under-frequency load shedding in 5% steps, spread proportionally across connected cities; staged relays drop one more step per 0.2 Hz of depth (Amendment A4, §15.4) |
   | Forecast shortfall | **Rotating outage:** a planned share of load is cut, sized hourly to the shortfall (Amendment A4, §15.3) |
   | Below −1.5 Hz, or shedding for N consecutive ticks | **Blackout**: generating plants trip; eligible AGC units restart under §19. Batteries suspend flows and retain charge under §20.5 |
-  | Above +0.5 Hz | Solar curtailed first, then AGC plants pushed to minimum stable output |
+  | Above +0.5 Hz | Curtail the residual surplus up to available solar; retain AGC's surplus-only, ramp-limited targets |
   | Above +1.5 Hz for N consecutive ticks | **Over-frequency trip:** the most expensive producing plant trips (Amendment A3, §14.2) |
 - Battery charging is additional grid load, separate from customer demand; battery discharge is
   a supply contribution. The complete balance and protection ordering are in §20.4–§20.5.
@@ -501,6 +501,12 @@ ticks. Shutdown tails crossing midnight are initialised conservatively from capa
 elapsed ramp-down time. Other dispatchable plants begin offline. This boundary initialisation is
 not an operating tick, and does not carry a 48 h start-up between calendar months. Solar availability
 and hydro budgets are initialised independently as before.
+Boundary dispatch must subtract every connected shutdown tail from the load allocated to the
+online AGC fleet, regardless of the stopping plant's AGC setting. These plants still generate
+but cannot participate in dispatch. Count each tail once, alongside manual online output and
+expected solar, both before outage sizing and when balancing against the final outage load.
+Cap a hydro shutdown tail by its refilled day's physical water availability before counting it;
+resource-limited synthetic output must never displace generation that can actually be delivered.
 Frequency starts at nominal and protection at normal for the new representative day; the previous
 month's incidents and reliability totals remain in its report and company/regulator history.
 
@@ -756,7 +762,11 @@ Actual per-line loading still requires a power-flow `NetworkModel`.
 
 - **All phases:** a top bar with month and year, season, phase, cash, reliability and satisfaction.
 - **Planning:** a build menu (plants and lines), a selected-object inspector, a
-  tariff panel (current tariff, projected rate review, reserve margin), and a commitment grid with the coming month's forecast band and stacked committed baseload.
+  tariff panel (current tariff, projected rate review, reserve margin), and a commitment grid with
+  the coming month's forecast band and stacked supply. The stack includes committed dispatchable
+  capacity, water-aware hydro and expected solar from connected, commissioned plants. Solar uses
+  site sunshine, the daily sun arc and monthly mean cloud clearness, matching the shortfall check;
+  its separate expected-output curve is a reference, not an additional supply contribution.
   The commitment grid is the primary planning tool. The inspector shows cell resources and
   suitability, city details, construction progress, or a commissioned plant's operating status,
   grid connection, capacity, minimum output, initial target, ramp rate, start-up time and cost,
@@ -1148,8 +1158,13 @@ storage energy. Batteries are excluded from the generating-plant trip candidate 
   - `over_ticks` resets to 0 after each trip, so at most one plant trips per `trip_after_ticks`
     window and the fleet sheds generation gradually until frequency is back at or below
     `curtail_above`.
-- **The existing response comes first.** Curtailment at +0.5 Hz (solar first, then AGC to minimum)
-  still runs before any trip, and nothing changes below `trip_above`.
+- **The existing response comes first.** AGC queues only the required surplus reduction in
+  reverse merit order, within each online unit's one-tick ramp and minimum output. At +0.5 Hz,
+  curtail the remaining surplus up to available solar before considering an individual trip.
+  Curtailment never forces dispatchable outputs or targets to minimum. A residual beyond solar
+  waits for the queued ramps or a sustained, safely gated trip; it must not turn a transient
+  oversupply into a fleet-wide instantaneous deficit. Recompute curtailment and AGC after a trip
+  against the surviving outputs, without stacking a second tick's ramp allowance.
 - **New event `OverFrequencyTrip { plant }`** (alongside the usual `PlantTripped`), and a new
   `IncidentKind::OverFrequencyTrip { plant }` in the monthly report.
 
@@ -1512,8 +1527,10 @@ provide the forecast energy. Storage-free fleets retain the existing evaluator.
   ordered. Scheduled hydro is the one exception to "upper bound", and a safe one: each boundary
   re-plan pours water left unused earlier in the day, so the live allocation can exceed the
   preview and an hour the check warns of may not be cut.
-- The pure hydro preview is `pub(crate)`. Exposing it as a Planning view of `hydro_schedule()` is
-  left to Plan 2 (§12.6).
+- `GameSession::hydro_forecast()` exposes the pure hour-0 allocations for Planning without
+  changing the live `hydro_schedule()`. The forecast chart uses these allocations for connected
+  AGC hydro (including the expected battery adjustment), zero for dry or disconnected hydro,
+  and initial targets for committed manual hydro, matching the check's hydro rules above.
 
 ### 15.6 Lessons
 
@@ -2675,9 +2692,11 @@ sidecars use the new save encoding. Do not rewrite existing player slots or back
 Reject empty runs, length overflow, unknown records, declared-count mismatches and expanded journals
 over `MAX_SAVE_COMMANDS` before allocating expanded storage or installing a game. Expansion remains
 cancellable. Keep checksum/region/rules/schema validation and atomic save publication unchanged.
-Property tests cover arbitrary batch sizes, repeats and intervening actions; frozen format-1 and
-format-2 fixtures must load, re-encode and continue with exact state, projections and diagnostic
-replay behavior. Unsupported future versions fail safely without modifying original files.
+Property tests cover arbitrary batch sizes, repeats and intervening actions. Current-rule format-1
+command-only records must re-encode and replay exactly; historical command-only recordings fail
+with `RulesVersionMismatch` rather than replaying changed rules. Frozen format-2 portable snapshots
+must load, re-encode and continue with exact saved state and projections. Unsupported future
+versions fail safely without modifying original files.
 
 
 ### 21.8 Monthly binary chart directories
@@ -2708,3 +2727,24 @@ and earlier backups outside the repository, retain preferences and slot IDs, and
 upgrade flow. `/tools/archive/` is ignored; recovery archives, converter sources, staged files and
 backups are not added to Git. Future users' format/schema evolution still requires retained readers
 or explicit schema upcasters backed by compatibility fixtures; this one-off conversion is not shipped.
+
+## 22. Midnight dispatch and proportional surplus response (2026-10-23)
+
+The May 2033 incident exposed two interacting defects: a 500 MW CCGT shutdown tail was omitted
+from midnight dispatch, then over-frequency protection forced the entire AGC fleet to minimum,
+dropping hydro to zero and causing a blackout. The corrected contracts in §6 and §14.2 require
+counting non-dispatchable shutdown output and retaining surplus-only, ramp-limited AGC targets.
+
+Regression coverage uses a reduced, deterministic May 2033 fixture with five hydro units, three
+all-day CCGTs, an evening CCGT ending at midnight, and 3,552.12 MW midnight demand. Assert balanced
+initial generation, uninterrupted first-hour service, and a full day without blackout. Independently
+inject a May-sized surplus: over-frequency must engage without an instantaneous hydro collapse,
+ramp violation or induced blackout. Property tests vary evening runs, AGC/manual shutdown tails
+and surplus/solar availability; curtailment cannot rewrite physical outputs or queued AGC targets.
+
+Advance `SIM_RULES_VERSION` from 8 to 9 because outcomes change. Keep portable state schema 1 and
+save formats unchanged. Rules-8 portable snapshots restore their complete saved boundary, RNG,
+progress and history; only subsequent commands use rules 9. Do not rewrite player saves or revise
+past monthly reports on load. Historical command-only logs remain version-fenced rather than
+silently replaying changed behavior. Retain all immutable compatibility fixtures and verify old
+portable saves still load, continue and re-save under the new rules.

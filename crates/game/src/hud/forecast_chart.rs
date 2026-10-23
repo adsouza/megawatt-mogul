@@ -1,5 +1,7 @@
 //! The forecast chart (spec §2.2, §8.4): the coming day's demand forecast with its uncertainty
 //! band, the expected solar output, and the capacity committed in each hour, stacked by kind.
+//! Hydro counts its water-aware allocation on AGC, or its initial target on manual dispatch.
+//! Expected solar contributes to the stack as well as its reference curve.
 //! Read it against the commitment grid: where the stack dips under the forecast, the plan is
 //! short.
 
@@ -13,18 +15,18 @@ use egui_plot::{Bar, BarChart, FilledArea, Line, Plot, VLine};
 
 use super::action::UiAction;
 use super::map::{Rgb, color32, kind_color};
-use super::plant_list::plants_by_kind;
+use super::plant_list::{kinds_in_merit_order, plants_by_kind};
 use super::ui_state::UiState;
 use crate::l10n::{Localize, Localizer};
 
-/// The capacity committed in each hour for one kind of plant.
+/// The forecast supply in each hour for one kind of plant.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StackModel {
     pub kind: PlantKind,
     /// `Coal plant`.
     pub name: String,
     pub color: Rgb,
-    /// Megawatts: the summed capacity of the plants of this kind committed in each hour.
+    /// Megawatts: committed capacity, water-aware hydro, or expected solar output.
     pub mw: [f64; 24],
     /// Where this kind's bar starts: the capacity of the kinds below it (cheaper fuel first).
     pub base: [f64; 24],
@@ -49,44 +51,79 @@ pub struct ForecastModel {
     pub low: [f64; 24],
     /// The forecast plus two standard deviations of its error.
     pub high: [f64; 24],
-    /// Expected solar output: the forecast demand less the forecast net load.
+    /// Expected solar output at each hour's midpoint, also included in the supply stack.
     pub solar: [f64; 24],
-    /// The committed capacity of each kind that has a plant, in merit order.
+    /// Committed capacity and expected solar supply, in merit order.
     pub stacks: Vec<StackModel>,
     /// The hour a warning pointed at, if any.
     pub highlight_hour: Option<u8>,
 }
 
 /// Capacity committed per hour for each kind of commissioned dispatchable plant, stacked in merit
-/// order. Σ over the plants of a kind that are committed in the hour of their capacity.
+/// order. Hydro uses the shortfall check's water-aware preview on AGC and initial targets
+/// on manual dispatch; disconnected hydro contributes nothing. Expected solar from connected,
+/// commissioned plants is included independently of commitment, as in the shortfall check.
 pub fn stacked_committed_capacity(game: &Game, l10n: &Localizer) -> Vec<StackModel> {
-    let region = game.session().region();
-    let mut below = [0.0; 24];
-    plants_by_kind(game)
+    let session = game.session();
+    let region = session.region();
+    let hydro = session.hydro_forecast();
+    let mut stacks: Vec<_> = plants_by_kind(game)
         .into_iter()
         .map(|group| {
             let capacity = region.spec(group.kind).capacity.value();
             let mw: [f64; 24] = std::array::from_fn(|hour| {
-                let committed = group
+                group
                     .plants
                     .iter()
                     .filter(|plant| plant.commitment[hour])
-                    .count();
-                capacity * committed as f64
+                    .map(|plant| {
+                        if group.kind != PlantKind::Hydro {
+                            capacity
+                        } else if !plant.connected {
+                            0.0
+                        } else if plant.auto_follow {
+                            hydro.get(&plant.id).map_or(0.0, |mw| mw[hour].value())
+                        } else {
+                            plant.initial_target.value()
+                        }
+                    })
+                    .sum()
             });
-            let stack = StackModel {
+            StackModel {
                 kind: group.kind,
                 name: group.kind.localize(l10n),
                 color: kind_color(group.kind),
                 mw,
-                base: below,
-            };
-            for (total, add) in below.iter_mut().zip(mw) {
-                *total += add;
+                base: [0.0; 24],
             }
-            stack
         })
-        .collect()
+        .collect();
+    let solar = std::array::from_fn(|hour| {
+        let tick = hour as u32 * TICKS_PER_HOUR + TICKS_PER_HOUR / 2;
+        session
+            .power()
+            .expected_solar(region, session.clock().month(), tick)
+            .value()
+    });
+    if solar.iter().any(|mw| *mw > 0.0) {
+        stacks.push(StackModel {
+            kind: PlantKind::Solar,
+            name: PlantKind::Solar.localize(l10n),
+            color: kind_color(PlantKind::Solar),
+            mw: solar,
+            base: [0.0; 24],
+        });
+    }
+    let order = kinds_in_merit_order(region);
+    stacks.sort_by_key(|stack| order.iter().position(|kind| *kind == stack.kind));
+    let mut below = [0.0; 24];
+    for stack in &mut stacks {
+        stack.base = below;
+        for (total, mw) in below.iter_mut().zip(stack.mw) {
+            *total += mw;
+        }
+    }
+    stacks
 }
 
 pub fn forecast_model(game: &Game, l10n: &Localizer, ui: &UiState) -> ForecastModel {
@@ -96,12 +133,11 @@ pub fn forecast_model(game: &Game, l10n: &Localizer, ui: &UiState) -> ForecastMo
         std::array::from_fn(|hour| read(&forecast[hour]).value())
     };
     let mean = at(|point| point.mean);
-    // Expected solar is not a query of its own: the net load is the forecast less expected solar
-    // at the same minute 30 the forecast mean is taken at.
-    let solar = std::array::from_fn(|hour| {
-        let tick = hour as u32 * TICKS_PER_HOUR + TICKS_PER_HOUR / 2;
-        (mean[hour] - session.forecast_net_load(tick).value()).max(0.0)
-    });
+    let stacks = stacked_committed_capacity(game, l10n);
+    let solar = stacks
+        .iter()
+        .find(|stack| stack.kind == PlantKind::Solar)
+        .map_or([0.0; 24], |stack| stack.mw);
     let storage = session.battery_schedule();
     let storage_series = |charge: bool| {
         (0..1440)
@@ -146,7 +182,7 @@ pub fn forecast_model(game: &Game, l10n: &Localizer, ui: &UiState) -> ForecastMo
         low: at(|point| point.low),
         high: at(|point| point.high),
         solar,
-        stacks: stacked_committed_capacity(game, l10n),
+        stacks,
         highlight_hour: ui.highlight_hour,
     }
 }
@@ -279,7 +315,9 @@ mod tests {
     use application::{Command, InMemoryCommandLog};
 
     use super::*;
-    use crate::hud::test_support::{eastern_game, empty_start, shipped_l10n};
+    use crate::hud::test_support::{
+        eastern_game, edited_western_game, empty_start, order_plant, shipped_game, shipped_l10n,
+    };
 
     #[test]
     fn forecast_key_has_its_own_space_and_preserves_series_toggles() {
@@ -469,6 +507,254 @@ mod tests {
             .iter()
             .find(|stack| stack.kind == kind)
             .unwrap_or_else(|| panic!("a {kind:?} stack"))
+    }
+
+    #[test]
+    fn expected_solar_is_stacked_once_and_agrees_with_the_shortfall_warning() {
+        let l10n = shipped_l10n();
+        let mut game = edited_western_game(|text| {
+            text.replacen("fleet: [", "fleet: [(Solar, -117.0, 34.5),", 1)
+        });
+        empty_start(&mut game);
+        let before = game.session().state_hash();
+        let model = forecast_model(&game, &l10n, &UiState::default());
+        assert_eq!(game.session().state_hash(), before);
+        let solar = stack_of(&model.stacks, PlantKind::Solar);
+        assert_eq!(solar.mw, model.solar);
+        assert_eq!(
+            model
+                .stacks
+                .iter()
+                .filter(|s| s.kind == PlantKind::Solar)
+                .count(),
+            1
+        );
+        assert_eq!(model.solar[0], 0.0);
+        assert_eq!(model.solar[23], 0.0);
+        assert!(model.solar[12] > 0.0);
+        assert!(
+            model.solar[12]
+                < game
+                    .session()
+                    .region()
+                    .spec(PlantKind::Solar)
+                    .capacity
+                    .value()
+        );
+
+        let session = game.session();
+        let mut worst = (f64::NEG_INFINITY, 0, 0.0);
+        for (hour, solar_midpoint) in model.solar.iter().enumerate() {
+            let mut total = 0.0;
+            for stack in &model.stacks {
+                assert_eq!(stack.base[hour], total);
+                total += stack.mw[hour];
+            }
+            assert_eq!(
+                total, *solar_midpoint,
+                "only solar supplies the all-off fleet"
+            );
+            // The warning samples hour ends, while the chart samples minute 30.
+            for minute in [0, TICKS_PER_HOUR - 1] {
+                let tick = hour as u32 * TICKS_PER_HOUR + minute;
+                let expected_solar = session
+                    .power()
+                    .expected_solar(session.region(), session.clock().month(), tick)
+                    .value();
+                let supply = total - solar_midpoint + expected_solar;
+                let demand = session
+                    .power()
+                    .connected_demand_forecast(session.region(), session.clock().month(), tick)
+                    .value();
+                let shortfall = demand - supply;
+                if shortfall > worst.0 {
+                    worst = (shortfall, hour as u8, supply);
+                }
+            }
+        }
+        let warning = session
+            .capacity_shortfall_check()
+            .expect("solar alone is short");
+        assert_eq!(warning.hour, worst.1);
+        assert!((warning.shortfall.value() - worst.0).abs() < 1e-6);
+        assert!((warning.deliverable.value() - worst.2).abs() < 1e-6);
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    proptest::proptest! {
+    #[test]
+    fn solar_stack_preserves_merit_order_and_ignores_unfinished_plants(
+        hours in proptest::array::uniform24(proptest::bool::ANY),
+    ) {
+        let l10n = shipped_l10n();
+        let mut game = edited_western_game(|text| {
+            text.replacen("fleet: [", "fleet: [(Solar, -117.0, 34.5),", 1)
+        });
+        let hydro = game.session().plant_views().into_iter()
+            .find(|plant| plant.kind == PlantKind::Hydro).unwrap().id;
+        game.execute(Command::CommitPlant { plant: hydro, hours }).unwrap();
+        let before = stacked_committed_capacity(&game, &l10n);
+        order_plant(&mut game, PlantKind::Solar, 0);
+        let stacks = stacked_committed_capacity(&game, &l10n);
+        proptest::prop_assert_eq!(&stacks, &before, "construction adds no forecast supply");
+        let order = crate::hud::plant_list::kinds_in_merit_order(game.session().region());
+        let ranks: Vec<_> = stacks
+            .iter()
+            .map(|s| order.iter().position(|kind| *kind == s.kind).unwrap())
+            .collect();
+        proptest::prop_assert!(ranks.windows(2).all(|pair| pair[0] < pair[1]));
+        proptest::prop_assert!(stack_of(&stacks, PlantKind::Solar).mw[12] > 0.0);
+        for hour in 0..24 {
+            let mut below = 0.0;
+            for stack in &stacks {
+                proptest::prop_assert_eq!(stack.base[hour], below);
+                below += stack.mw[hour];
+            }
+        }
+        proptest::prop_assert_eq!(l10n.problems(), vec![]);
+    }
+    }
+
+    #[test]
+    fn hydro_forecast_uses_the_water_plan_and_agrees_with_the_shortfall_warning() {
+        let l10n = shipped_l10n();
+        let mut game = shipped_game(
+            "western_interconnection",
+            Box::new(InMemoryCommandLog::default()),
+        );
+        for plant in game.session().plant_views() {
+            if plant.kind.is_dispatchable() && plant.kind != PlantKind::Hydro {
+                game.execute(Command::StopPlant { plant: plant.id })
+                    .unwrap();
+            }
+        }
+        let model = forecast_model(&game, &l10n, &UiState::default());
+        let hydro = &stack_of(&model.stacks, PlantKind::Hydro).mw;
+        assert!(hydro[23] < hydro[19], "hydro falls after the evening peak");
+        let warning = game
+            .session()
+            .capacity_shortfall_check()
+            .expect("hydro alone is short");
+        let start = u32::from(warning.hour) * TICKS_PER_HOUR;
+        let shortfall = [start, start + TICKS_PER_HOUR - 1]
+            .map(|tick| {
+                game.session().forecast_net_load(tick).value() - hydro[usize::from(warning.hour)]
+            })
+            .into_iter()
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert!((shortfall - warning.shortfall.value()).abs() < 1e-6);
+        assert!(
+            game.session().hydro_schedule().plants.is_empty(),
+            "preview leaves the live plan empty"
+        );
+
+        game.execute(Command::BeginOperating).unwrap();
+        let plan = game.session().hydro_schedule();
+        for (hour, actual) in hydro.iter().enumerate() {
+            let expected: f64 = plan.plants.values().map(|p| p.hourly[hour].value()).sum();
+            assert!((actual - expected).abs() < 1e-6, "hour {hour}");
+        }
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    #[test]
+    fn manual_hydro_forecast_counts_its_initial_target_only_in_committed_hours() {
+        let l10n = shipped_l10n();
+        let mut game = shipped_game(
+            "western_interconnection",
+            Box::new(InMemoryCommandLog::default()),
+        );
+        empty_start(&mut game);
+        let plant = game
+            .session()
+            .plant_views()
+            .into_iter()
+            .find(|p| p.kind == PlantKind::Hydro)
+            .unwrap();
+        let target = game.session().region().spec(PlantKind::Hydro).capacity * 0.5;
+        game.execute(Command::SetDispatchTarget {
+            plant: plant.id,
+            mw: target,
+        })
+        .unwrap();
+        let mut hours = [false; 24];
+        hours[17..21].fill(true);
+        game.execute(Command::CommitPlant {
+            plant: plant.id,
+            hours,
+        })
+        .unwrap();
+        let stacks = stacked_committed_capacity(&game, &l10n);
+        for (hour, mw) in stack_of(&stacks, PlantKind::Hydro).mw.iter().enumerate() {
+            assert_eq!(*mw, if hours[hour] { target.value() } else { 0.0 });
+        }
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    #[test]
+    fn hydro_forecast_includes_expected_battery_discharge_and_refreshes_after_edits() {
+        let l10n = shipped_l10n();
+        let mut game = edited_western_game(|text| {
+            text.replacen("fleet: [", "fleet: [(Battery, -117.0, 34.5),", 1)
+        });
+        let before = game.session().state_hash();
+        let with_storage = stacked_committed_capacity(&game, &l10n);
+        assert_eq!(game.session().state_hash(), before);
+        let storage = game.session().battery_schedule();
+        assert!(
+            storage
+                .plants
+                .values()
+                .any(|p| p.discharge.iter().any(|mw| *mw > Megawatts::ZERO))
+        );
+        let preview = game.session().hydro_forecast();
+        for hour in 0..24 {
+            let expected: f64 = preview.values().map(|mw| mw[hour].value()).sum();
+            assert!((stack_of(&with_storage, PlantKind::Hydro).mw[hour] - expected).abs() < 1e-6);
+        }
+        let battery = game
+            .session()
+            .plant_views()
+            .into_iter()
+            .find(|p| p.kind == PlantKind::Battery)
+            .unwrap()
+            .id;
+        game.execute(Command::SetBatteryEnabled {
+            plant: battery,
+            on: false,
+        })
+        .unwrap();
+        let without_storage = stacked_committed_capacity(&game, &l10n);
+        assert_ne!(
+            stack_of(&with_storage, PlantKind::Hydro).mw,
+            stack_of(&without_storage, PlantKind::Hydro).mw
+        );
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    #[test]
+    fn uncommitted_hydro_adds_no_forecast_capacity() {
+        let l10n = shipped_l10n();
+        let mut game = shipped_game(
+            "western_interconnection",
+            Box::new(InMemoryCommandLog::default()),
+        );
+        for plant in game.session().plant_views() {
+            if plant.kind == PlantKind::Hydro {
+                game.execute(Command::StopPlant { plant: plant.id })
+                    .unwrap();
+            }
+        }
+        let stacks = stacked_committed_capacity(&game, &l10n);
+        assert_eq!(stack_of(&stacks, PlantKind::Hydro).mw, [0.0; 24]);
+        for hour in 0..24 {
+            let mut below = 0.0;
+            for stack in &stacks {
+                assert_eq!(stack.base[hour], below);
+                below += stack.mw[hour];
+            }
+        }
+        assert_eq!(l10n.problems(), vec![]);
     }
 
     #[test]

@@ -14,7 +14,7 @@
 
 use std::collections::BTreeMap;
 
-use super::{PowerSystem, day_hydro_budget};
+use super::PowerSystem;
 use crate::events::DomainEvent;
 use crate::generation::{CommitmentAction, HydroFill, Plant, PlantStatus, commitment_actions};
 use crate::ids::PlantId;
@@ -225,8 +225,7 @@ impl PowerSystem {
                 [worst; 2]
             });
         }
-        let preview =
-            self.compute_hydro_plan(region, month, 0, |p| day_hydro_budget(region, month, p));
+        let preview = self.preview_hydro(region, month, &self.battery_plan);
         std::array::from_fn(|h| {
             let hour = h as u8;
             let fleet: Megawatts = self

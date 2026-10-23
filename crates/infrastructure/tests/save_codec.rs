@@ -408,7 +408,7 @@ fn unknown_rules_are_rejected_before_mapping_their_archived_region() {
         Err(SaveError::Restore(application::RestoreError::Replay(
             application::ReplayError::RulesVersionMismatch {
                 recorded: 999,
-                supported: 8
+                supported: domain::SIM_RULES_VERSION
             }
         )))
     ));
@@ -561,11 +561,71 @@ proptest! {
 }
 
 #[test]
-fn frozen_format1_ticks_reencode_to_rle_and_replay_with_identical_projections_and_continuation() {
+fn historical_command_only_fixture_is_version_fenced_without_replaying_changed_rules() {
+    let original = include_bytes!("support/tick-rle-format1.mgsave");
+    assert!(matches!(
+        decode_save(original, &identity()),
+        Err(SaveError::Restore(application::RestoreError::Replay(
+            application::ReplayError::RulesVersionMismatch {
+                recorded: 8,
+                supported: domain::SIM_RULES_VERSION
+            }
+        )))
+    ));
+}
+
+#[test]
+fn format1_ticks_reencode_to_rle_and_replay_with_identical_projections_and_continuation() {
     use application::{CommandLogSink, LogRecord};
     use infrastructure::command_log::{FileCommandLog, load_replay, read_command_log};
-    let original = include_bytes!("support/tick-rle-format1.mgsave");
-    let (old, region) = decode_save(original, &identity()).unwrap();
+    // Reuse the frozen batch pattern, but compute its boundary with the current engine.
+    // Historical command-only state must never be relabelled and replayed under new rules.
+    #[derive(serde::Deserialize)]
+    struct Journal {
+        commands: Vec<infrastructure::command_log::dto::CommandDto>,
+        header: infrastructure::command_log::dto::LogHeaderDto,
+        region: Vec<u8>,
+    }
+    let frozen: Envelope =
+        ron::de::from_bytes(include_bytes!("support/tick-rle-format1.mgsave")).unwrap();
+    let journal: Journal = ron::from_str(&frozen.payload).unwrap();
+    let header = application::LogHeader::try_from(journal.header).unwrap();
+    let assets = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        assets
+            .path()
+            .join(format!("{}.ron", header.region.as_str())),
+        &journal.region,
+    )
+    .unwrap();
+    let catalog = RonRegionCatalog::new(assets.path());
+    let mut live = Game::start_new(
+        &catalog,
+        &header.region,
+        header.seed,
+        header.settings,
+        Box::new(InMemoryCommandLog::default()),
+    )
+    .unwrap();
+    for command in journal.commands.iter().cloned() {
+        live.execute(Command::try_from(command).unwrap()).unwrap();
+    }
+    let mut current = bundle();
+    current.checkpoint = live.checkpoint();
+    current.checkpoint.snapshot = None;
+    current.checkpoint.state_hash = live.session().state_hash();
+    let flat_commands = ron::to_string(&journal.commands).unwrap();
+    let original = rewrite(
+        &encode_save(&current).unwrap(),
+        |e| {
+            e.version = 1;
+            let start = e.payload.find("commands:").unwrap() + "commands:".len();
+            let end = start + e.payload[start..].find(",count:").unwrap();
+            e.payload.replace_range(start..end, &flat_commands);
+        },
+        true,
+    );
+    let (old, region) = decode_save(&original, &identity()).unwrap();
     assert!(old.checkpoint.snapshot.is_none());
     let encoded = encode_save(&old).unwrap();
     let envelope: Envelope = ron::de::from_bytes(&encoded).unwrap();

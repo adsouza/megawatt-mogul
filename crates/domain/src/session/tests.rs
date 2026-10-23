@@ -41,6 +41,45 @@ fn starting_network_uses_a_city_node_without_an_extra_anchor_asset() {
 
 proptest::proptest! {
     #[test]
+    fn hydro_forecast_is_pure_and_respects_daily_water_and_commitments(
+        hours in proptest::array::uniform24(proptest::bool::ANY),
+        flow in 1u16..200,
+        month in 1u8..=12,
+        seed in proptest::prelude::any::<u64>(),
+    ) {
+        let mut parts = crate::region::fixtures::tiny_region_parts();
+        parts.start.fleet = vec![crate::region::StartPlantDef {
+            kind: PlantKind::Hydro,
+            cell: CellCoord { x: 10, y: 1 },
+        }];
+        parts.start.month = SimMonth::new(2027, month).unwrap();
+        parts.hydro.monthly_flow = [f64::from(flow) / 100.0; 12];
+        let region = crate::region::RegionDefinition::try_from(parts).unwrap();
+        let mut s = GameSession::new(Arc::new(region), seed, GameSettings::default());
+        let plant = s.plant_views().remove(0);
+        s.commit_plant(plant.id, hours).unwrap();
+        let before = s.state_hash();
+        let preview = s.hydro_forecast();
+        proptest::prop_assert_eq!(&preview, &s.hydro_forecast());
+        proptest::prop_assert_eq!(s.state_hash(), before);
+        proptest::prop_assert!(s.hydro_schedule().plants.is_empty());
+        let hourly = preview.get(&plant.id).copied().unwrap_or([Megawatts::ZERO; 24]);
+        let energy: f64 = hourly.iter().map(|mw| mw.value()).sum();
+        proptest::prop_assert!(energy <= plant.hydro_day_budget.unwrap().value() + 1e-6);
+        for hour in 0..24 {
+            proptest::prop_assert!(hourly[hour] >= Megawatts::ZERO);
+            proptest::prop_assert!(hourly[hour] <= s.region().spec(PlantKind::Hydro).capacity);
+            if !hours[hour] {
+                proptest::prop_assert_eq!(hourly[hour], Megawatts::ZERO);
+            }
+        }
+        s.begin_operating().unwrap();
+        let live = s.hydro_schedule();
+        let expected = live.plants.get(&plant.id).map_or([Megawatts::ZERO; 24], |p| p.hourly);
+        proptest::prop_assert_eq!(hourly, expected);
+    }
+
+    #[test]
     fn any_starter_city_can_anchor_the_network(
         home in 0usize..3,
         mask in 0u8..8,

@@ -27,7 +27,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Box::new(InMemoryCommandLog::default()),
             &|| false,
         )?;
-        assert_eq!(game.checkpoint(), bundle.checkpoint);
+        let mut expected = bundle.checkpoint.clone();
+        expected.header.sim_rules_version = domain::SIM_RULES_VERSION;
+        assert_eq!(game.checkpoint(), expected);
         println!(
             "{}: directory snapshot={} bytes; commands={}",
             entry.metadata.slot.as_str(),
@@ -61,7 +63,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Box::new(InMemoryCommandLog::default()),
         &|| false,
     )?;
-    assert_eq!(game.checkpoint(), bundle.checkpoint);
+    if bundle.checkpoint.snapshot.is_some() {
+        let mut expected = bundle.checkpoint.clone();
+        expected.header.sim_rules_version = domain::SIM_RULES_VERSION;
+        assert_eq!(game.checkpoint(), expected);
+    } else {
+        assert_eq!(game.session().state_hash(), bundle.checkpoint.state_hash);
+        assert_eq!(game.checkpoint().summary, bundle.checkpoint.summary);
+        assert_eq!(game.checkpoint().commands, bundle.checkpoint.commands);
+    }
     let ticks = bundle
         .checkpoint
         .commands
