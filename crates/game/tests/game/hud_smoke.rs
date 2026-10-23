@@ -115,48 +115,137 @@ fn the_boot_error_screen_quits_even_without_translations() {
     assert_eq!(actions, vec![UiAction::Quit]);
 }
 
+fn assert_opening_controls_fit(width: f32, height: f32) {
+    let l10n = shipped_l10n();
+    for resume_available in [false, true] {
+        let mut model = main_menu_model(&Persistence::default(), &l10n);
+        if resume_available {
+            model.continue_game = Some(ButtonModel::new(
+                "Resume game".into(),
+                UiAction::Persistence(game::sim::PersistAction::Continue(
+                    application::SaveId::new("0".repeat(32)).unwrap(),
+                )),
+            ));
+            model.continue_details = Some(
+                "Monthly autosave · Western Interconnection · February 2027 · Review · 24:00"
+                    .into(),
+            );
+        }
+        let harness = Harness::with_screen(width, height);
+        let widgets = harness.draw(|ui| central(ui, |ui| draw_main_menu(ui, &model)));
+        let new_game = find_button(&widgets, "New game").rect;
+        let load = find_button(&widgets, "Load game").rect;
+        let quit = find_button(&widgets, "Quit").rect;
+        let primary = if resume_available {
+            find_button(&widgets, "Resume game").rect
+        } else {
+            new_game
+        };
+        assert!(
+            primary.height() >= 40.0,
+            "the primary action needs a generous target"
+        );
+        for rect in [primary, new_game, load, quit] {
+            assert!(
+                harness.screen_rect().contains_rect(rect),
+                "{width}×{height}, resume={resume_available}: {rect:?}"
+            );
+        }
+        assert!(!new_game.intersects(load) && !load.intersects(quit));
+    }
+}
+
+#[test]
+fn opening_menu_controls_remain_clear_and_reachable_at_small_and_large_sizes() {
+    for (width, height) in [
+        (1024.0, 640.0),
+        (1024.0 / 1.25, 640.0 / 1.25),
+        (1920.0, 1080.0),
+        (512.0, 400.0),
+    ] {
+        assert_opening_controls_fit(width, height);
+    }
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(16))]
+    #[test]
+    fn opening_controls_fit_across_window_sizes_and_ui_zoom(width in 1024.0f32..2560.0, height in 640.0f32..1440.0, zoom in 1.0f32..1.5) {
+        assert_opening_controls_fit(width / zoom, height / zoom);
+    }
+}
+
 #[test]
 fn new_game_with_two_regions_opens_the_picker() {
     let l10n = shipped_l10n();
-    let listings = shipped_listings();
-    let mut form = MenuForm::new(42);
-    let model = main_menu_model(&listings, &form, &l10n);
+    let model = main_menu_model(&Persistence::default(), &l10n);
 
     let actions = Harness::new().click("New game", |ui| {
-        central(ui, |ui| draw_main_menu(ui, &model, &mut form))
+        central(ui, |ui| draw_main_menu(ui, &model))
     });
 
     assert_eq!(actions, vec![UiAction::Navigate(MenuScreen::RegionSelect)]);
 }
 
 #[test]
-fn new_game_with_one_region_starts_it_directly() {
-    let l10n = shipped_l10n();
+fn new_game_with_one_region_opens_setup_to_edit_the_seed() {
+    let logs = TempDir::new().unwrap();
     let regions = regions_with_eastern(&[]);
-    let listings = listings_in(regions.path());
-    let mut form = MenuForm::new(42);
-    let model = main_menu_model(&listings, &form, &l10n);
-
-    let actions = Harness::new().click("New game", |ui| {
-        central(ui, |ui| draw_main_menu(ui, &model, &mut form))
-    });
-
+    let mut app = crate::support::hud_app(logs.path());
+    app.insert_resource(game::sim::Catalog(
+        infrastructure::region::RonRegionCatalog::new(regions.path()),
+    ));
+    app.insert_resource(listings_in(regions.path()));
+    app.world_mut().resource_mut::<MenuForm>().seed = "invalid".into();
+    let pass = EguiPass::attach(&mut app);
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    click_in_pass(&pass, &mut app, &widgets, "New game");
+    crate::support::update_n(&mut app, 2);
     assert_eq!(
-        actions,
-        vec![UiAction::NewGame {
-            region: RegionId::new(EASTERN),
-            seed: 42
-        }]
+        *app.world().resource::<State<game::state::AppState>>().get(),
+        game::state::AppState::RegionSelect
+    );
+    assert!(!app.world().contains_resource::<Session>());
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    assert!(shows(&widgets, "Seed"));
+    assert!(find_button(&widgets, "Eastern Interconnection").disabled);
+    click_in_pass(&pass, &mut app, &widgets, "Back");
+    crate::support::update_n(&mut app, 2);
+    assert_eq!(app.world().resource::<MenuForm>().seed, "invalid");
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    assert!(!shows(&widgets, "Seed"));
+    click_in_pass(&pass, &mut app, &widgets, "New game");
+    crate::support::update_n(&mut app, 2);
+    app.world_mut().resource_mut::<MenuForm>().seed = "314".into();
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    click_in_pass(&pass, &mut app, &widgets, "Eastern Interconnection");
+    crate::support::update_n(&mut app, 3);
+    assert_eq!(
+        app.world().resource::<Session>().0.checkpoint().header.seed,
+        314
     );
 }
 
 #[test]
-fn the_picker_starts_the_region_clicked_with_the_menu_seed() {
+fn opening_menu_has_no_seed_field() {
+    let l10n = shipped_l10n();
+    let model = main_menu_model(&Persistence::default(), &l10n);
+    let harness = Harness::new();
+    let widgets = harness.draw(|ui| central(ui, |ui| draw_main_menu(ui, &model)));
+    assert!(!widgets.iter().any(|w| w.text == "Seed"));
+    assert!(!find_button(&widgets, "New game").disabled);
+}
+
+#[test]
+fn the_picker_starts_the_region_clicked_with_the_setup_seed() {
     let l10n = shipped_l10n();
     let model = region_select_model(&shipped_listings(), Some(42), &l10n);
+    let form = RefCell::new(MenuForm::new(42));
 
     let actions = Harness::new().click("Eastern Interconnection", |ui| {
-        central(ui, |ui| draw_region_select(ui, &model))
+        central(ui, |ui| {
+            draw_region_select(ui, &model, &mut form.borrow_mut())
+        })
     });
 
     assert_eq!(
@@ -173,8 +262,13 @@ fn a_broken_region_is_listed_disabled_next_to_a_good_one() {
     let l10n = shipped_l10n();
     let regions = regions_with_eastern(&[("broken.ron", "this is not RON (")]);
     let model = region_select_model(&listings_in(regions.path()), Some(3), &l10n);
+    let form = RefCell::new(MenuForm::new(3));
     let harness = Harness::new();
-    let draw = |ui: &mut egui::Ui| central(ui, |ui| draw_region_select(ui, &model));
+    let draw = |ui: &mut egui::Ui| {
+        central(ui, |ui| {
+            draw_region_select(ui, &model, &mut form.borrow_mut())
+        })
+    };
 
     let widgets = harness.draw(draw);
     assert!(find_button(&widgets, "broken").disabled);
@@ -200,8 +294,13 @@ fn an_empty_or_missing_regions_folder_offers_back() {
         listings_in(&empty.path().join("missing")),
     ] {
         let model = region_select_model(&listings, Some(1), &l10n);
+        let form = RefCell::new(MenuForm::new(1));
         let harness = Harness::new();
-        let draw = |ui: &mut egui::Ui| central(ui, |ui| draw_region_select(ui, &model));
+        let draw = |ui: &mut egui::Ui| {
+            central(ui, |ui| {
+                draw_region_select(ui, &model, &mut form.borrow_mut())
+            })
+        };
 
         assert!(shows(&harness.draw(draw), "No regions were found"));
         assert_eq!(

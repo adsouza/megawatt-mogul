@@ -10,7 +10,8 @@ use game::{
 use tempfile::TempDir;
 
 fn settle(app: &mut App) {
-    for _ in 0..2000 {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
         app.update();
         if !app.world().resource::<Persistence>().busy() {
             return;
@@ -1291,6 +1292,73 @@ fn browser_model(app: &App) -> game::hud::SavesModel {
     )
 }
 
+#[test]
+fn load_library_empty_state_keeps_refresh_and_cancel_available() {
+    let logs = TempDir::new().unwrap();
+    let saves = TempDir::new().unwrap();
+    let mut app = load_browser(&logs, &saves);
+    let pass = crate::support::egui_pass::EguiPass::attach(&mut app);
+    let widgets = pass.settled(&mut app, 1024.0 / 1.25, 640.0 / 1.25);
+    assert!(widgets.iter().any(|w| w.text == "No saves found."));
+    assert!(!widgets.iter().any(|w| w.text == "Resume"));
+    let cancel = widgets.iter().find(|w| w.text == "Cancel").unwrap();
+    assert!(widgets.iter().any(|w| w.text == "Refresh" && !w.disabled));
+    pass.click_at(&mut app, 1024.0 / 1.25, 640.0 / 1.25, cancel.rect.center());
+    assert_eq!(
+        app.world().resource::<Persistence>().screen,
+        game::sim::SaveScreen::Closed
+    );
+}
+
+#[test]
+fn load_library_has_prominent_resume_controls_and_keeps_its_footer_visible() {
+    use crate::support::egui_pass::EguiPass;
+    let logs = TempDir::new().unwrap();
+    let saves = TempDir::new().unwrap();
+    let source = operating(&logs, &saves);
+    let store = infrastructure::save::FileSaveStore::new(saves.path().into());
+    write_manual(
+        &store,
+        "Northwest power company",
+        source.world().resource::<Session>().0.checkpoint(),
+    );
+    drop(source);
+    let mut app = load_browser(&logs, &saves);
+    let pass = EguiPass::attach(&mut app);
+    for (width, height) in [
+        (1024.0, 640.0),
+        (1024.0 / 1.25, 640.0 / 1.25),
+        (1920.0, 1080.0),
+    ] {
+        let widgets = pass.settled(&mut app, width, height);
+        let resume = widgets.iter().find(|w| w.text == "Resume").unwrap();
+        assert!(
+            resume.rect.height() >= 36.0,
+            "Resume must be a clear primary action"
+        );
+        assert!(
+            resume.rect.right()
+                < widgets
+                    .iter()
+                    .find(|w| w.text == "Automatic snapshots")
+                    .unwrap()
+                    .rect
+                    .left(),
+            "named saves belong in the left column"
+        );
+        for label in ["Resume", "Rename", "Refresh", "Cancel"] {
+            let widget = widgets.iter().find(|w| w.text == label).unwrap();
+            assert!(
+                widget.rect.left() >= 0.0
+                    && widget.rect.right() <= width
+                    && widget.rect.bottom() <= height,
+                "{width}×{height}: {widget:?}"
+            );
+        }
+        assert!(crate::contrast::check_paint(pass.paint_with(&mut app, width, height, vec![])) > 0);
+    }
+}
+
 /// The build fingerprint no longer gates loading: a save from another build or platform lists by
 /// its name and loads, paused, exactly as a same-build save does, when its replay verifies here.
 /// The resumed game's own saves carry this build's stamp.
@@ -1757,4 +1825,912 @@ fn save_rename_conflict_keeps_the_other_windows_change_and_cancel_refreshes_the_
     action(&mut app, PersistAction::Cancel);
     settle(&mut app);
     assert_eq!(browser_model(&app).rows[0].name, "Other window");
+}
+
+fn startup_menu(logs: &TempDir, saves: &TempDir) -> App {
+    let mut app = crate::support::headless_app(&crate::support::shipped_assets(), logs.path());
+    app.insert_resource(SaveDir(saves.path().into()))
+        .add_plugins((game::hud::HudPlugin, game::preferences::PreferencesPlugin));
+    settle(&mut app);
+    update_n(&mut app, 3);
+    app
+}
+
+#[test]
+fn first_launch_with_no_snapshots_goes_straight_to_new_game_setup() {
+    let logs = TempDir::new().unwrap();
+    let saves = TempDir::new().unwrap();
+    let mut app = startup_menu(&logs, &saves);
+    assert_eq!(
+        *app.world().resource::<State<game::state::AppState>>().get(),
+        game::state::AppState::RegionSelect
+    );
+    assert!(app.world().contains_resource::<game::hud::RegionListings>());
+    assert!(!app.world().contains_resource::<Session>());
+    dispatch_in(
+        &mut app,
+        vec![UiAction::Navigate(game::hud::MenuScreen::MainMenu)],
+    );
+    update_n(&mut app, 3);
+    assert_eq!(
+        *app.world().resource::<State<game::state::AppState>>().get(),
+        game::state::AppState::MainMenu
+    );
+}
+
+#[test]
+fn corrupt_snapshots_and_scan_errors_do_not_skip_the_opening_screen() {
+    for broken_directory in [false, true] {
+        let logs = TempDir::new().unwrap();
+        let saves = TempDir::new().unwrap();
+        if broken_directory {
+            std::fs::write(saves.path().join("not-a-directory"), "x").unwrap();
+            let mut app =
+                crate::support::headless_app(&crate::support::shipped_assets(), logs.path());
+            app.insert_resource(SaveDir(saves.path().join("not-a-directory")))
+                .add_plugins(game::hud::HudPlugin);
+            settle(&mut app);
+            update_n(&mut app, 3);
+            assert_eq!(
+                *app.world().resource::<State<game::state::AppState>>().get(),
+                game::state::AppState::MainMenu
+            );
+            assert!(app.world().resource::<Persistence>().error.is_some());
+        } else {
+            std::fs::write(saves.path().join("broken.mgsave"), "broken").unwrap();
+            let app = startup_menu(&logs, &saves);
+            assert_eq!(
+                *app.world().resource::<State<game::state::AppState>>().get(),
+                game::state::AppState::MainMenu
+            );
+            assert_eq!(app.world().resource::<Persistence>().entries.len(), 1);
+        }
+    }
+}
+
+#[test]
+fn opening_resume_defaults_to_the_newest_monthly_autosave_and_restores_it_with_enter() {
+    use application::SaveStore;
+    let logs = TempDir::new().unwrap();
+    let saves = TempDir::new().unwrap();
+    let mut source = hud_app(logs.path());
+    request(&mut source, "western_interconnection");
+    play_a_month(&mut source);
+    let older = source.world().resource::<Session>().0.checkpoint();
+    play_the_next_month(&mut source);
+    let expected = source.world().resource::<Session>().0.checkpoint();
+    let store = infrastructure::save::FileSaveStore::new(saves.path().into());
+    write_snapshot(
+        &store,
+        "Older autosave",
+        application::SaveKind::Automatic,
+        100,
+        older,
+    );
+    let chosen = write_snapshot(
+        &store,
+        "Latest autosave",
+        application::SaveKind::Automatic,
+        200,
+        expected.clone(),
+    );
+    let manual = write_snapshot(
+        &store,
+        "Newer manual save",
+        application::SaveKind::Manual,
+        999,
+        expected.clone(),
+    );
+    std::fs::write(saves.path().join("broken.mgsave"), "broken").unwrap();
+    for keyboard in [true, false] {
+        let mut app = startup_menu(&logs, &saves);
+        assert_eq!(
+            *app.world().resource::<State<game::state::AppState>>().get(),
+            game::state::AppState::MainMenu
+        );
+        let model = game::hud::main_menu_model(
+            app.world().resource::<Persistence>(),
+            &crate::support::shipped_l10n(),
+        );
+        assert_eq!(
+            model.continue_game.unwrap().action,
+            UiAction::Persistence(PersistAction::Continue(chosen.clone()))
+        );
+        let pass = crate::support::egui_pass::EguiPass::attach(&mut app);
+        let widgets = pass.settled(&mut app, 1024.0 / 1.25, 640.0 / 1.25);
+        let resume = crate::support::egui_harness::button(&widgets, "Resume game");
+        assert!(!resume.disabled);
+        assert!(
+            resume.rect.top()
+                < crate::support::egui_harness::button(&widgets, "New game")
+                    .rect
+                    .top()
+        );
+        if keyboard {
+            pass.run_with(
+                &mut app,
+                1024.0 / 1.25,
+                640.0 / 1.25,
+                vec![bevy_egui::egui::Event::Key {
+                    key: bevy_egui::egui::Key::Enter,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: bevy_egui::egui::Modifiers::NONE,
+                }],
+            );
+        } else {
+            pass.click_at(&mut app, 1024.0 / 1.25, 640.0 / 1.25, resume.rect.center());
+        }
+        assert_eq!(
+            app.world().resource::<Persistence>().screen,
+            game::sim::SaveScreen::Loading
+        );
+        let progress = browser_model(&app);
+        assert!(!progress.library);
+        assert!(progress.rows.is_empty());
+        assert_eq!(progress.title, "Resuming game…");
+        assert!(
+            crate::contrast::check_paint(pass.paint_with(
+                &mut app,
+                1024.0 / 1.25,
+                640.0 / 1.25,
+                vec![]
+            )) > 0
+        );
+        settle(&mut app);
+        update_n(&mut app, 5);
+        assert_eq!(app.world().resource::<Session>().0.checkpoint(), expected);
+        assert_eq!(*app.world().resource::<SimSpeed>(), SimSpeed::Paused);
+        assert_ne!(chosen, manual);
+        assert_eq!(store.list().unwrap().len(), 4);
+        assert!(
+            crate::contrast::check_paint(pass.paint_with(
+                &mut app,
+                1024.0 / 1.25,
+                640.0 / 1.25,
+                vec![]
+            )) > 0
+        );
+    }
+}
+
+fn write_snapshot(
+    store: &infrastructure::save::FileSaveStore,
+    name: &str,
+    kind: application::SaveKind,
+    saved_at: u64,
+    checkpoint: application::GameCheckpoint,
+) -> application::SaveId {
+    use application::SaveStore;
+    let bundle = application::SaveBundle {
+        compatibility: store.compatibility(),
+        metadata: application::SaveMetadata {
+            slot: store.allocate_id(),
+            run: store.allocate_id(),
+            kind,
+            name: name.into(),
+            saved_at,
+        },
+        checkpoint,
+    };
+    store
+        .write(&bundle, &application::SaveTarget::Create, &|| false)
+        .unwrap()
+        .metadata
+        .slot
+}
+
+#[test]
+fn manual_snapshots_keep_the_menu_and_load_game_without_a_resume_shortcut() {
+    let logs = TempDir::new().unwrap();
+    let saves = TempDir::new().unwrap();
+    let mut source = hud_app(logs.path());
+    request(&mut source, "western_interconnection");
+    let store = infrastructure::save::FileSaveStore::new(saves.path().into());
+    write_manual(
+        &store,
+        "Manual only",
+        source.world().resource::<Session>().0.checkpoint(),
+    );
+    let mut app = startup_menu(&logs, &saves);
+    assert_eq!(
+        *app.world().resource::<State<game::state::AppState>>().get(),
+        game::state::AppState::MainMenu
+    );
+    let model = game::hud::main_menu_model(
+        app.world().resource::<Persistence>(),
+        &crate::support::shipped_l10n(),
+    );
+    assert!(model.continue_game.is_none());
+    let pass = crate::support::egui_pass::EguiPass::attach(&mut app);
+    let widgets = pass.settled(&mut app, 1024.0 / 1.25, 640.0 / 1.25);
+    assert!(!widgets.iter().any(|w| w.text == "Resume game"));
+    let load = crate::support::egui_harness::button(&widgets, "Load game");
+    pass.click_at(&mut app, 1024.0 / 1.25, 640.0 / 1.25, load.rect.center());
+    settle(&mut app);
+    assert_eq!(browser_model(&app).rows[0].name, "Manual only");
+}
+
+#[test]
+fn opening_resume_reports_a_snapshot_removed_after_the_index_scan() {
+    let logs = TempDir::new().unwrap();
+    let saves = TempDir::new().unwrap();
+    let mut source = hud_app(logs.path());
+    request(&mut source, "western_interconnection");
+    play_a_month(&mut source);
+    let store = infrastructure::save::FileSaveStore::new(saves.path().into());
+    let slot = write_snapshot(
+        &store,
+        "Removed",
+        application::SaveKind::Automatic,
+        200,
+        source.world().resource::<Session>().0.checkpoint(),
+    );
+    let mut app = startup_menu(&logs, &saves);
+    std::fs::remove_file(saves.path().join(format!("{}.mgsave", slot.as_str()))).unwrap();
+    action(&mut app, PersistAction::Continue(slot));
+    settle(&mut app);
+    assert!(!app.world().contains_resource::<Session>());
+    assert_eq!(
+        app.world().resource::<Persistence>().screen,
+        game::sim::SaveScreen::Browser
+    );
+    assert!(browser_model(&app).error.is_some());
+    action(&mut app, PersistAction::Cancel);
+    assert_eq!(
+        app.world().resource::<Persistence>().screen,
+        game::sim::SaveScreen::Closed
+    );
+}
+
+fn wait_for_preload(app: &mut App) {
+    for _ in 0..4000 {
+        app.update();
+        if app.world().resource::<Persistence>().resume_preloaded() {
+            return;
+        }
+        std::thread::yield_now();
+    }
+    panic!("resume preload did not finish");
+}
+
+#[test]
+fn opening_preload_waits_for_render_keeps_the_menu_interactive_and_discards_on_new_game() {
+    let logs = TempDir::new().unwrap();
+    let saves = TempDir::new().unwrap();
+    let mut source = hud_app(logs.path());
+    request(&mut source, "western_interconnection");
+    play_a_month(&mut source);
+    let store = infrastructure::save::FileSaveStore::new(saves.path().into());
+    write_snapshot(
+        &store,
+        "Latest",
+        application::SaveKind::Automatic,
+        200,
+        source.world().resource::<Session>().0.checkpoint(),
+    );
+    let before = files_in(logs.path());
+    let mut app = startup_menu(&logs, &saves);
+    assert!(!app.world().resource::<Persistence>().resume_preloaded());
+    let pass = crate::support::egui_pass::EguiPass::attach(&mut app);
+    pass.settled(&mut app, 1024.0, 640.0);
+    wait_for_preload(&mut app);
+    assert!(!app.world().resource::<Persistence>().busy());
+    assert!(!app.world().resource::<Persistence>().frozen());
+    assert!(!app.world().contains_resource::<Session>());
+    assert_eq!(
+        files_in(logs.path()),
+        before,
+        "background verification creates no recording files"
+    );
+    dispatch_in(
+        &mut app,
+        vec![UiAction::Navigate(game::hud::MenuScreen::RegionSelect)],
+    );
+    update_n(&mut app, 2);
+    assert!(!app.world().resource::<Persistence>().resume_preloaded());
+    assert!(!app.world().contains_resource::<Session>());
+    assert_eq!(files_in(logs.path()), before);
+}
+
+struct GatedReadStore {
+    inner: infrastructure::save::FileSaveStore,
+    reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    started: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    release: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+impl application::SaveStore for GatedReadStore {
+    fn compatibility(&self) -> application::ReplayCompatibility {
+        self.inner.compatibility()
+    }
+    fn allocate_id(&self) -> application::SaveId {
+        self.inner.allocate_id()
+    }
+    fn now(&self) -> u64 {
+        self.inner.now()
+    }
+    fn list(&self) -> Result<Vec<application::SaveListing>, application::SaveError> {
+        self.inner.list()
+    }
+    fn revision(
+        &self,
+        slot: &application::SaveId,
+    ) -> Result<application::SaveRevision, application::SaveError> {
+        self.inner.revision(slot)
+    }
+    fn read(
+        &self,
+        slot: &application::SaveId,
+    ) -> Result<(application::SaveBundle, application::LoadedRegion), application::SaveError> {
+        use std::sync::atomic::Ordering;
+        self.reads.fetch_add(1, Ordering::SeqCst);
+        self.started.store(true, Ordering::SeqCst);
+        // Bound the test gate even if an assertion fails, so an abandoned thread cannot spin forever.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !self.release.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        self.inner.read(slot)
+    }
+    fn rename(
+        &self,
+        slot: &application::SaveId,
+        rev: application::SaveRevision,
+        name: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<application::SaveReceipt, application::SaveError> {
+        self.inner.rename(slot, rev, name, cancelled)
+    }
+    fn delete(
+        &self,
+        slot: &application::SaveId,
+        revision: application::SaveRevision,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<(), application::SaveError> {
+        self.inner.delete(slot, revision, cancelled)
+    }
+    fn write(
+        &self,
+        bundle: &application::SaveBundle,
+        target: &application::SaveTarget,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<application::SaveReceipt, application::SaveError> {
+        self.inner.write(bundle, target, cancelled)
+    }
+}
+
+#[test]
+fn resume_waits_for_one_in_flight_preload_and_other_choices_discard_late_results() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    };
+    for resume in [true, false] {
+        let logs = TempDir::new().unwrap();
+        let saves = TempDir::new().unwrap();
+        let mut source = hud_app(logs.path());
+        request(&mut source, "western_interconnection");
+        play_a_month(&mut source);
+        let expected = source.world().resource::<Session>().0.checkpoint();
+        let store = infrastructure::save::FileSaveStore::new(saves.path().into());
+        let slot = write_snapshot(
+            &store,
+            "Latest",
+            application::SaveKind::Automatic,
+            200,
+            expected.clone(),
+        );
+        let reads = Arc::new(AtomicUsize::new(0));
+        let started = Arc::new(AtomicBool::new(false));
+        let release = Arc::new(AtomicBool::new(false));
+        let mut app = crate::support::headless_app(&crate::support::shipped_assets(), logs.path());
+        app.add_plugins(game::hud::HudPlugin)
+            .insert_resource(Persistence::with_store(Arc::new(GatedReadStore {
+                inner: store,
+                reads: reads.clone(),
+                started: started.clone(),
+                release: release.clone(),
+            })));
+        settle(&mut app);
+        update_n(&mut app, 3);
+        let before = files_in(logs.path());
+        let pass = crate::support::egui_pass::EguiPass::attach(&mut app);
+        pass.settled(&mut app, 1024.0, 640.0);
+        for _ in 0..4000 {
+            if started.load(Ordering::SeqCst) {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        assert!(started.load(Ordering::SeqCst));
+        assert!(!app.world().resource::<Persistence>().busy());
+        assert_eq!(files_in(logs.path()), before);
+        if resume {
+            action(&mut app, PersistAction::Continue(slot));
+            assert!(app.world().resource::<Persistence>().busy());
+            assert_eq!(
+                app.world().resource::<Persistence>().screen,
+                game::sim::SaveScreen::Loading
+            );
+        } else {
+            dispatch_in(
+                &mut app,
+                vec![UiAction::Navigate(game::hud::MenuScreen::RegionSelect)],
+            );
+        }
+        release.store(true, Ordering::SeqCst);
+        settle(&mut app);
+        update_n(&mut app, 5);
+        assert_eq!(
+            reads.load(Ordering::SeqCst),
+            1,
+            "Resume reuses the first read/replay job"
+        );
+        if resume {
+            assert_eq!(app.world().resource::<Session>().0.checkpoint(), expected);
+            assert_eq!(*app.world().resource::<SimSpeed>(), SimSpeed::Paused);
+        } else {
+            assert!(!app.world().contains_resource::<Session>());
+            assert!(!app.world().resource::<Persistence>().resume_preloaded());
+            assert_eq!(files_in(logs.path()), before);
+        }
+    }
+}
+
+#[test]
+fn a_preloaded_snapshot_replaced_on_disk_is_rejected_and_load_game_discards_the_cache() {
+    use application::SaveStore;
+    for replace in [false, true] {
+        let logs = TempDir::new().unwrap();
+        let saves = TempDir::new().unwrap();
+        let mut source = hud_app(logs.path());
+        request(&mut source, "western_interconnection");
+        play_a_month(&mut source);
+        let store = infrastructure::save::FileSaveStore::new(saves.path().into());
+        let slot = write_snapshot(
+            &store,
+            "Latest",
+            application::SaveKind::Automatic,
+            200,
+            source.world().resource::<Session>().0.checkpoint(),
+        );
+        let mut app = startup_menu(&logs, &saves);
+        let pass = crate::support::egui_pass::EguiPass::attach(&mut app);
+        pass.settled(&mut app, 1024.0, 640.0);
+        wait_for_preload(&mut app);
+        let before = files_in(logs.path());
+        if replace {
+            let (mut bundle, _) = store.read(&slot).unwrap();
+            let revision = store.revision(&slot).unwrap();
+            bundle.metadata.saved_at += 1;
+            store
+                .write(
+                    &bundle,
+                    &application::SaveTarget::Replace(revision),
+                    &|| false,
+                )
+                .unwrap();
+            action(&mut app, PersistAction::Continue(slot));
+            settle(&mut app);
+            assert_eq!(
+                app.world().resource::<Persistence>().error,
+                Some(application::SaveError::SlotChanged)
+            );
+        } else {
+            action(&mut app, PersistAction::OpenBrowser);
+            settle(&mut app);
+        }
+        assert_eq!(
+            app.world().resource::<Persistence>().screen,
+            game::sim::SaveScreen::Browser
+        );
+        assert!(!app.world().resource::<Persistence>().resume_preloaded());
+        assert!(!app.world().contains_resource::<Session>());
+        assert_eq!(files_in(logs.path()), before);
+    }
+}
+
+#[test]
+fn load_library_splits_large_named_cards_from_twelve_recent_compact_snapshots() {
+    use application::{SaveKind, SaveStore};
+    let logs = TempDir::new().unwrap();
+    let saves = TempDir::new().unwrap();
+    let mut source = hud_app(logs.path());
+    request(&mut source, "western_interconnection");
+    play_a_month(&mut source);
+    let checkpoint = source.world().resource::<Session>().0.checkpoint();
+    let store = infrastructure::save::FileSaveStore::new(saves.path().into());
+    for n in 0..17 {
+        write_snapshot(
+            &store,
+            &format!("Snapshot {n:02}"),
+            SaveKind::Automatic,
+            100 + n,
+            checkpoint.clone(),
+        );
+    }
+    write_snapshot(
+        &store,
+        "Named company Alpha",
+        SaveKind::Manual,
+        1,
+        checkpoint.clone(),
+    );
+    write_snapshot(
+        &store,
+        "Named company Beta",
+        SaveKind::Manual,
+        2,
+        checkpoint,
+    );
+    std::fs::write(saves.path().join("broken.mgsave"), "broken").unwrap();
+    let mut app = load_browser(&logs, &saves);
+    let model = browser_model(&app);
+    let automatic: Vec<_> = model
+        .rows
+        .iter()
+        .filter(|row| row.automatic)
+        .map(|row| row.name.as_str())
+        .collect();
+    assert_eq!(automatic.len(), 12);
+    assert_eq!(automatic[0], "Snapshot 16");
+    assert_eq!(automatic[11], "Snapshot 05");
+    assert_eq!(
+        model
+            .rows
+            .iter()
+            .filter(|row| !row.automatic && row.problem.is_none())
+            .count(),
+        2
+    );
+    assert_eq!(
+        model
+            .rows
+            .iter()
+            .filter(|row| row.problem.is_some())
+            .count(),
+        1
+    );
+    assert_eq!(
+        store.list().unwrap().len(),
+        20,
+        "the display cap never deletes files"
+    );
+    let pass = crate::support::egui_pass::EguiPass::attach(&mut app);
+    for (width, height) in [
+        (1024.0, 640.0),
+        (1024.0 / 1.25, 640.0 / 1.25),
+        (1920.0, 1080.0),
+    ] {
+        let widgets = pass.settled(&mut app, width, height);
+        let named = widgets.iter().find(|w| w.text == "Named games").unwrap();
+        let auto = widgets
+            .iter()
+            .find(|w| w.text == "Automatic snapshots")
+            .unwrap();
+        assert!(named.rect.right() < auto.rect.left());
+        let left_resume = widgets
+            .iter()
+            .find(|w| w.text == "Resume" && w.rect.left() < auto.rect.left())
+            .unwrap();
+        let right_resume = widgets
+            .iter()
+            .find(|w| w.text == "Resume" && w.rect.left() >= auto.rect.left())
+            .unwrap();
+        assert!(left_resume.rect.height() >= 36.0);
+        assert!(right_resume.rect.height() <= 30.0);
+        assert!(left_resume.rect.width() > right_resume.rect.width());
+        for label in ["Refresh", "Cancel"] {
+            let control = widgets.iter().find(|w| w.text == label).unwrap();
+            assert!(
+                control.rect.left() >= 0.0
+                    && control.rect.right() <= width
+                    && control.rect.bottom() <= height
+            );
+        }
+        assert!(crate::contrast::check_paint(pass.paint_with(&mut app, width, height, vec![])) > 0);
+    }
+    let (width, height) = (1024.0 / 1.25, 640.0 / 1.25);
+    let before = pass.settled(&mut app, width, height);
+    let named = before
+        .iter()
+        .find(|w| w.text == "Named company Beta")
+        .unwrap()
+        .rect;
+    let heading = before
+        .iter()
+        .find(|w| w.text == "Automatic snapshots")
+        .unwrap()
+        .rect;
+    pass.run_with(
+        &mut app,
+        width,
+        height,
+        vec![
+            bevy_egui::egui::Event::PointerMoved(
+                heading.center() + bevy_egui::egui::vec2(0.0, 90.0),
+            ),
+            bevy_egui::egui::Event::MouseWheel {
+                unit: bevy_egui::egui::MouseWheelUnit::Point,
+                phase: bevy_egui::egui::TouchPhase::Move,
+                delta: bevy_egui::egui::vec2(0.0, -3000.0),
+                modifiers: bevy_egui::egui::Modifiers::NONE,
+            },
+        ],
+    );
+    let after = pass.settled(&mut app, width, height);
+    assert_eq!(
+        after
+            .iter()
+            .find(|w| w.text == "Named company Beta")
+            .unwrap()
+            .rect,
+        named,
+        "columns scroll independently"
+    );
+    let oldest = after.iter().find(|w| w.text == "Snapshot 05").unwrap().rect;
+    assert!(
+        oldest.top() >= heading.bottom() && oldest.bottom() < height - 50.0,
+        "{oldest:?}"
+    );
+    assert!(!app.world().contains_resource::<Session>());
+    let visible_action = |widgets: &[crate::support::egui_harness::Widget], label: &str| {
+        widgets
+            .iter()
+            .find(|w| {
+                w.text == label
+                    && w.rect.left() >= heading.left()
+                    && w.rect.top() >= heading.bottom()
+                    && w.rect.bottom() < height - 50.0
+            })
+            .unwrap()
+            .rect
+            .center()
+    };
+    pass.click_at(&mut app, width, height, visible_action(&after, "Rename"));
+    assert_eq!(
+        app.world().resource::<Persistence>().screen,
+        game::sim::SaveScreen::Rename
+    );
+    action(&mut app, PersistAction::Cancel);
+    settle(&mut app);
+    let widgets = pass.settled(&mut app, width, height);
+    pass.click_at(&mut app, width, height, visible_action(&widgets, "Resume"));
+    settle(&mut app);
+    update_n(&mut app, 5);
+    assert_eq!(
+        app.world().resource::<Session>().0.checkpoint(),
+        source.world().resource::<Session>().0.checkpoint()
+    );
+    assert_eq!(*app.world().resource::<SimSpeed>(), SimSpeed::Paused);
+}
+
+#[test]
+fn save_delete_card_confirms_cancels_and_removes_only_the_selected_save() {
+    use application::{SaveKind, SaveStore};
+    let logs = TempDir::new().unwrap();
+    let saves = TempDir::new().unwrap();
+    let mut source = hud_app(logs.path());
+    request(&mut source, "western_interconnection");
+    let checkpoint = source.world().resource::<Session>().0.checkpoint();
+    let store = infrastructure::save::FileSaveStore::new(saves.path().into());
+    let manual = write_snapshot(
+        &store,
+        "Delete this company",
+        SaveKind::Manual,
+        3,
+        checkpoint.clone(),
+    );
+    let auto = write_snapshot(
+        &store,
+        "Monthly snapshot",
+        SaveKind::Automatic,
+        2,
+        checkpoint,
+    );
+    let auto_path = saves.path().join(format!("{}.mgsave", auto.as_str()));
+    let auto_bytes = std::fs::read(&auto_path).unwrap();
+    let mut app = load_browser(&logs, &saves);
+    let pass = crate::support::egui_pass::EguiPass::attach(&mut app);
+    let (width, height) = (1024.0 / 1.25, 640.0 / 1.25);
+    let widgets = pass.settled(&mut app, width, height);
+    let deletes: Vec<_> = widgets.iter().filter(|w| w.text == "Delete").collect();
+    assert_eq!(deletes.len(), 2);
+    for button in &deletes {
+        assert!(!button.disabled);
+        assert!(button.rect.right() <= width && button.rect.bottom() < height - 45.0);
+    }
+    let manual_delete = deletes
+        .iter()
+        .min_by(|a, b| a.rect.left().total_cmp(&b.rect.left()))
+        .unwrap();
+    pass.click_at(&mut app, width, height, manual_delete.rect.center());
+    assert_eq!(
+        app.world().resource::<Persistence>().screen,
+        game::sim::SaveScreen::ConfirmDelete
+    );
+    let model = browser_model(&app);
+    assert!(model.body.contains("Delete this company"));
+    assert!(model.body.contains("Western") && model.body.contains("2027"));
+    assert!(
+        store.read(&manual).is_ok(),
+        "choosing Delete never removes a file"
+    );
+    let widgets = pass.settled(&mut app, width, height);
+    let cancel = widgets.iter().find(|w| w.text == "Cancel").unwrap();
+    pass.click_at(&mut app, width, height, cancel.rect.center());
+    settle(&mut app);
+    assert!(store.read(&manual).is_ok());
+    action(&mut app, PersistAction::BeginDelete(manual.clone()));
+    pass.settled(&mut app, width, height);
+    for pressed in [true, false] {
+        pass.run_with(
+            &mut app,
+            width,
+            height,
+            vec![bevy_egui::egui::Event::Key {
+                key: bevy_egui::egui::Key::Enter,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: bevy_egui::egui::Modifiers::NONE,
+            }],
+        );
+    }
+    settle(&mut app);
+    assert_eq!(
+        app.world().resource::<Persistence>().screen,
+        game::sim::SaveScreen::Browser,
+        "Enter defaults to Cancel"
+    );
+    assert!(store.read(&manual).is_ok());
+    action(&mut app, PersistAction::BeginDelete(manual.clone()));
+    let widgets = pass.settled(&mut app, width, height);
+    assert!(crate::contrast::check_paint(pass.paint_with(&mut app, width, height, vec![])) > 0);
+    let confirm = widgets
+        .iter()
+        .find(|w| w.text == "Delete permanently")
+        .unwrap();
+    pass.click_at(&mut app, width, height, confirm.rect.center());
+    settle(&mut app);
+    assert_eq!(
+        app.world().resource::<Persistence>().screen,
+        game::sim::SaveScreen::Browser
+    );
+    assert!(
+        !saves
+            .path()
+            .join(format!("{}.mgsave", manual.as_str()))
+            .exists()
+    );
+    assert_eq!(std::fs::read(&auto_path).unwrap(), auto_bytes);
+    assert_eq!(browser_model(&app).rows.len(), 1);
+    assert!(!app.world().contains_resource::<Session>());
+}
+
+#[test]
+fn save_delete_refreshes_resume_and_protects_a_changed_confirmation_target() {
+    use application::{SaveError, SaveKind, SaveStore};
+    let logs = TempDir::new().unwrap();
+    let saves = TempDir::new().unwrap();
+    let mut source = hud_app(logs.path());
+    request(&mut source, "western_interconnection");
+    let checkpoint = source.world().resource::<Session>().0.checkpoint();
+    let store = infrastructure::save::FileSaveStore::new(saves.path().into());
+    let older = write_snapshot(&store, "Older", SaveKind::Automatic, 1, checkpoint.clone());
+    let latest = write_snapshot(&store, "Latest", SaveKind::Automatic, 2, checkpoint);
+    let mut app = load_browser(&logs, &saves);
+    action(&mut app, PersistAction::BeginDelete(latest.clone()));
+    store
+        .rename(
+            &latest,
+            store.revision(&latest).unwrap(),
+            "Changed elsewhere",
+            &|| false,
+        )
+        .unwrap();
+    action(&mut app, PersistAction::ConfirmDelete);
+    settle(&mut app);
+    assert_eq!(
+        app.world().resource::<Persistence>().error,
+        Some(SaveError::SlotChanged)
+    );
+    assert_eq!(
+        store.read(&latest).unwrap().0.metadata.name,
+        "Changed elsewhere"
+    );
+    action(&mut app, PersistAction::Cancel);
+    settle(&mut app);
+    action(&mut app, PersistAction::BeginDelete(latest));
+    action(&mut app, PersistAction::ConfirmDelete);
+    settle(&mut app);
+    assert_eq!(
+        app.world()
+            .resource::<Persistence>()
+            .continue_entry()
+            .unwrap()
+            .metadata
+            .slot,
+        older
+    );
+    action(&mut app, PersistAction::BeginDelete(older));
+    action(&mut app, PersistAction::ConfirmDelete);
+    settle(&mut app);
+    action(&mut app, PersistAction::Cancel);
+    assert!(
+        app.world()
+            .resource::<Persistence>()
+            .continue_entry()
+            .is_none()
+    );
+    assert_eq!(
+        app.world().resource::<Persistence>().screen,
+        game::sim::SaveScreen::Closed
+    );
+}
+
+#[test]
+fn save_delete_retries_storage_failures_and_deletes_an_unreadable_snapshot() {
+    use application::{SaveError, SaveStore};
+    use infrastructure::save::{FileSaveStore, PublishStage};
+    for stage in [PublishStage::Publish, PublishStage::SyncDirectory] {
+        let logs = TempDir::new().unwrap();
+        let saves = TempDir::new().unwrap();
+        let (fail, persistence) = faulty_store_at(&saves, stage, Injected::Error);
+        let slot = application::SaveId::new("f".repeat(32)).unwrap();
+        let path = saves.path().join(format!("{}.mgsave", slot.as_str()));
+        std::fs::write(&path, b"unreadable snapshot").unwrap();
+        let mut app = hud_app(logs.path());
+        app.insert_resource(persistence);
+        action(&mut app, PersistAction::OpenBrowser);
+        settle(&mut app);
+        let row = browser_model(&app).rows.remove(0);
+        assert!(row.action.is_none() && row.rename.is_none());
+        assert!(row.delete.is_some());
+        action(&mut app, PersistAction::BeginDelete(slot.clone()));
+        assert!(browser_model(&app).body.contains(slot.as_str()));
+        set(&fail, true);
+        action(&mut app, PersistAction::ConfirmDelete);
+        // Cancellation cannot orphan a committed deletion, even before polling its worker.
+        action(&mut app, PersistAction::Cancel);
+        assert_eq!(
+            app.world().resource::<Persistence>().screen,
+            game::sim::SaveScreen::ConfirmDelete
+        );
+        assert!(
+            browser_model(&app)
+                .buttons
+                .iter()
+                .any(|b| b.label == "Cancel" && !b.enabled)
+        );
+        settle(&mut app);
+        let p = app.world().resource::<Persistence>();
+        assert_eq!(p.screen, game::sim::SaveScreen::ConfirmDelete);
+        assert!(p.error.is_some());
+        if stage == PublishStage::SyncDirectory {
+            assert!(matches!(
+                p.error,
+                Some(SaveError::DeleteDurabilityUnconfirmed { .. })
+            ));
+            assert!(!path.exists());
+        } else {
+            assert_eq!(std::fs::read(&path).unwrap(), b"unreadable snapshot");
+        }
+        set(&fail, false);
+        action(&mut app, PersistAction::Retry);
+        settle(&mut app);
+        assert_eq!(
+            app.world().resource::<Persistence>().screen,
+            game::sim::SaveScreen::Browser
+        );
+        assert!(browser_model(&app).rows.is_empty());
+        assert!(
+            FileSaveStore::new(saves.path().into())
+                .list()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(!app.world().contains_resource::<Session>());
+    }
 }

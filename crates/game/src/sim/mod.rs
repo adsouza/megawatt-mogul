@@ -22,7 +22,7 @@ use infrastructure::region::RonRegionCatalog;
 use self::driver::TicksInFlight;
 pub use self::driver::{FIXED_STEP_HZ, drive_ticks};
 use self::new_game::start_new_game;
-pub use self::new_game::{default_seed, utc_stamp};
+pub use self::new_game::{default_seed, utc_date_time, utc_stamp};
 use crate::paths::AssetRoot;
 use crate::state::{AppState, BootChecklistAppExt, BootError, PhaseState, finish_boot};
 
@@ -123,6 +123,7 @@ impl Plugin for SimulationPlugin {
             .add_systems(
                 Update,
                 persistence::initialise_store
+                    .before(finish_boot)
                     .before(start_new_game)
                     .before(SimSet::Apply),
             )
@@ -156,6 +157,11 @@ impl Plugin for SimulationPlugin {
                 ),
             )
             .add_systems(FixedUpdate, drive_ticks.run_if(in_game))
+            .add_systems(OnEnter(AppState::MainMenu), persistence::refresh_menu_saves)
+            .add_systems(
+                OnExit(AppState::MainMenu),
+                persistence::discard_menu_preload,
+            )
             .add_systems(OnEnter(AppState::InGame), enter_game)
             .add_systems(OnExit(AppState::InGame), leave_game)
             .add_systems(OnEnter(PhaseState::Operating), begin_speed)

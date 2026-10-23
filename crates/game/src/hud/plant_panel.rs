@@ -189,7 +189,7 @@ impl PlantPanelModel {
     }
 }
 
-/// What the slider holds between frames. A `Resource`, like the menu's seed field.
+/// What the slider holds between frames. A `Resource`, like the new-game setup's seed field.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Default)]
 pub struct PlantPanelForm {
     /// The plant the value belongs to.

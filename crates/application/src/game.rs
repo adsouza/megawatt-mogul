@@ -105,16 +105,13 @@ impl Game {
         if CheckpointSummary::of(&session) != checkpoint.summary {
             return Err(RestoreError::SummaryMismatch);
         }
-        if cancelled() {
-            return Err(RestoreError::Cancelled);
-        }
-        sink.initialize(&checkpoint.header, &checkpoint.region_source)?;
-        for command in &checkpoint.commands {
-            if cancelled() {
-                return Err(RestoreError::Cancelled);
-            }
-            sink.append(&LogRecord::Command(command.clone()))?;
-        }
+        record_history(
+            sink.as_mut(),
+            &checkpoint.header,
+            &checkpoint.region_source,
+            &checkpoint.commands,
+            cancelled,
+        )?;
         let (handler, log_health) = build_pipeline(sink);
         Ok(Self {
             session,
@@ -125,6 +122,24 @@ impl Game {
             region_source: checkpoint.region_source,
             journal: checkpoint.commands,
         })
+    }
+
+    /// Attach a fresh diagnostic recording to an already verified in-memory game. The accepted
+    /// prefix is recorded once; neither simulation state nor projections are replayed again.
+    pub fn with_recording(
+        mut self,
+        mut sink: Box<dyn CommandLogSink>,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Self, RestoreError> {
+        record_history(
+            sink.as_mut(),
+            &self.header,
+            &self.region_source,
+            &self.journal,
+            cancelled,
+        )?;
+        (self.handler, self.log_health) = build_pipeline(sink);
+        Ok(self)
     }
 
     pub fn session(&self) -> &GameSession {
@@ -142,6 +157,26 @@ impl Game {
     pub fn log_failure(&self) -> Option<CommandLogError> {
         self.log_health.failure()
     }
+}
+
+fn record_history(
+    sink: &mut dyn CommandLogSink,
+    header: &LogHeader,
+    source: &[u8],
+    commands: &[Command],
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(), RestoreError> {
+    if cancelled() {
+        return Err(RestoreError::Cancelled);
+    }
+    sink.initialize(header, source)?;
+    for command in commands {
+        if cancelled() {
+            return Err(RestoreError::Cancelled);
+        }
+        sink.append(&LogRecord::Command(command.clone()))?;
+    }
+    Ok(())
 }
 
 /// Rebuilds a session from a log. The format version, rules version and region

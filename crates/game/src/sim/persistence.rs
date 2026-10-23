@@ -27,9 +27,13 @@ pub enum PersistAction {
     OpenSave { leave: bool },
     OpenLeave,
     OpenBrowser,
+    Continue(SaveId),
+    PreloadResume,
     SaveNew(String),
     ChooseOverwrite { slot: SaveId, name: String },
     ConfirmOverwrite,
+    BeginDelete(SaveId),
+    ConfirmDelete,
     BeginRename(SaveId),
     Rename(String),
     Load(SaveId),
@@ -45,7 +49,9 @@ pub enum SaveScreen {
     Save,
     Leave,
     Browser,
+    Loading,
     ConfirmOverwrite,
+    ConfirmDelete,
     Rename,
     Automatic,
 }
@@ -62,6 +68,12 @@ struct RenameTask {
     revision: SaveRevision,
     name: String,
     return_to: SaveScreen,
+}
+#[derive(Clone)]
+struct DeleteTask {
+    listing: SaveListing,
+    slot: SaveId,
+    revision: SaveRevision,
 }
 #[derive(Clone, Copy)]
 enum ManualIntent {
@@ -87,6 +99,7 @@ enum Completion {
     Listed(Result<Vec<SaveListing>, SaveError>),
     Saved(Result<SaveReceipt, SaveError>),
     Renamed(Result<SaveReceipt, SaveError>),
+    Deleted(Result<(), SaveError>),
     Loaded(Result<Box<Game>, SaveError>),
     Failed(SaveError),
 }
@@ -103,11 +116,27 @@ struct Job {
     generation: u64,
     token: u64,
 }
+struct PreloadedGame {
+    game: Box<Game>,
+    slot: SaveId,
+    revision: SaveRevision,
+}
+struct PreloadJob {
+    receiver: Mutex<Receiver<Result<PreloadedGame, SaveError>>>,
+    cancel: Arc<AtomicBool>,
+    generation: u64,
+}
+
 #[derive(Resource, Default)]
 pub struct Persistence {
     store: Option<Arc<dyn SaveStore>>,
     pub screen: SaveScreen,
     pub entries: Vec<SaveListing>,
+    listed: bool,
+    preload_key: Option<(SaveId, SaveRevision)>,
+    preload: Option<PreloadJob>,
+    preloaded: Option<Result<PreloadedGame, SaveError>>,
+    waiting_resume: Option<std::path::PathBuf>,
     pub error: Option<SaveError>,
     pub last_summary: Option<CheckpointSummary>,
     last_saved: Option<SaveReceipt>,
@@ -122,6 +151,7 @@ pub struct Persistence {
     dialog_generation: u64,
     task: Option<WriteTask>,
     rename: Option<RenameTask>,
+    deletion: Option<DeleteTask>,
     /// The latest month-close autosave that failed and has not been made good since (spec §17.5).
     /// It outlives *Continue without saving*: only a confirmed save at that boundary or a later
     /// one clears it. A new game or a load starts from a fresh `Persistence`, without it.
@@ -140,8 +170,153 @@ impl Persistence {
     pub fn enabled(&self) -> bool {
         self.store.is_some()
     }
+    pub fn menu_scanned(&self) -> bool {
+        self.listed
+    }
+    /// Most recently written readable automatic monthly snapshot, independent of list order.
+    pub fn continue_entry(&self) -> Option<&SaveEntry> {
+        self.entries
+            .iter()
+            .filter_map(|listing| listing.entry.as_ref().ok())
+            .filter(|entry| entry.metadata.kind == SaveKind::Automatic)
+            .max_by(|a, b| {
+                a.metadata
+                    .saved_at
+                    .cmp(&b.metadata.saved_at)
+                    .then_with(|| b.metadata.slot.cmp(&a.metadata.slot))
+            })
+    }
     pub fn busy(&self) -> bool {
-        self.job.is_some() || self.draining
+        self.job.is_some() || self.draining || self.waiting_resume.is_some()
+    }
+    pub fn resume_preloaded(&self) -> bool {
+        matches!(self.preloaded, Some(Ok(_)))
+    }
+    /// A different menu choice owns no candidate. Dropping the receiver also discards any late
+    /// result; cancellation is cooperative during replay and creates no recording files.
+    pub fn discard_preload(&mut self) {
+        if let Some(job) = self.preload.take() {
+            job.cancel.store(true, Ordering::Relaxed);
+        }
+        self.preload_key = None;
+        self.preloaded = None;
+        self.waiting_resume = None;
+    }
+    fn preload_resume(&mut self, generation: u64) {
+        let Some(entry) = self.continue_entry() else {
+            return;
+        };
+        let key = (entry.metadata.slot.clone(), entry.revision);
+        if self.preload_key.as_ref() == Some(&key) {
+            return;
+        }
+        self.discard_preload();
+        let Some(store) = self.store.clone() else {
+            return;
+        };
+        self.preload_key = Some(key.clone());
+        let (slot, revision) = key;
+        let (tx, rx) = mpsc::channel();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let worker_cancel = cancel.clone();
+        match thread::Builder::new()
+            .name("resume-preload".into())
+            .spawn(move || {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let (bundle, region, running) = read_snapshot(store.as_ref(), &slot)?;
+                    if store.revision(&slot)? != revision {
+                        return Err(SaveError::SlotChanged);
+                    }
+                    let game = bundle.restore(
+                        region,
+                        &running,
+                        Box::new(InMemoryCommandLog::default()),
+                        &|| worker_cancel.load(Ordering::Relaxed),
+                    )?;
+                    Ok(PreloadedGame {
+                        game: Box::new(game),
+                        slot,
+                        revision,
+                    })
+                }))
+                .unwrap_or_else(|_| {
+                    Err(SaveError::Io {
+                        stage: "preload",
+                        message: "preload worker panicked".into(),
+                    })
+                });
+                let _ = tx.send(result);
+            }) {
+            Ok(_) => {
+                self.preload = Some(PreloadJob {
+                    receiver: Mutex::new(rx),
+                    cancel,
+                    generation,
+                })
+            }
+            Err(error) => {
+                self.preloaded = Some(Err(SaveError::Io {
+                    stage: "preload",
+                    message: error.to_string(),
+                }))
+            }
+        }
+    }
+    fn activate_preloaded(&mut self, generation: u64, dir: std::path::PathBuf) {
+        let Some(candidate) = self.preloaded.take() else {
+            return;
+        };
+        let candidate = match candidate {
+            Ok(candidate) => candidate,
+            Err(error) => {
+                self.error = Some(error);
+                self.screen = SaveScreen::Browser;
+                return;
+            }
+        };
+        let Some(store) = self.store.clone() else {
+            self.unavailable();
+            return;
+        };
+        self.spawn(generation, move |cancel| {
+            Completion::Loaded((|| {
+                if store.revision(&candidate.slot)? != candidate.revision {
+                    return Err(SaveError::SlotChanged);
+                }
+                if cancel.load(Ordering::Relaxed) {
+                    return Err(SaveError::Cancelled);
+                }
+                let (log, sink) = super::new_game::create_log(
+                    &dir,
+                    &format!("resume-{}", store.allocate_id().as_str()),
+                )
+                .map_err(RestoreError::Log)?;
+                candidate
+                    .game
+                    .with_recording(Box::new(sink), &|| cancel.load(Ordering::Relaxed))
+                    .map(Box::new)
+                    .map_err(SaveError::Restore)
+                    .inspect_err(|_| discard_branch_log(&log))
+            })())
+        });
+        if self.error.is_some() {
+            self.screen = SaveScreen::Browser;
+        }
+    }
+    fn poll_preload(&mut self, generation: u64) {
+        let result = self
+            .preload
+            .as_ref()
+            .and_then(|job| job.receiver.lock().ok()?.try_recv().ok());
+        if let Some(result) = result {
+            let job = self.preload.take().expect("preload completion has job");
+            if job.generation == generation && !job.cancel.load(Ordering::Relaxed) {
+                self.preloaded = Some(result);
+                if let Some(dir) = self.waiting_resume.take() {
+                    self.activate_preloaded(generation, dir);
+                }
+            }
+        }
     }
     pub fn frozen(&self) -> bool {
         self.resuming
@@ -173,6 +348,9 @@ impl Persistence {
             .entry
             .as_ref()
             .ok()
+    }
+    pub fn deletion_listing(&self) -> Option<&SaveListing> {
+        self.deletion.as_ref().map(|task| &task.listing)
     }
     pub fn can_save(&self) -> bool {
         self.store.is_some() && self.capture.is_some() && !self.busy()
@@ -236,6 +414,7 @@ impl Persistence {
         });
     }
     pub(super) fn abandon(&mut self) {
+        self.discard_preload();
         if let Some(job) = self.job.take() {
             job.cancel.store(true, Ordering::Relaxed);
         }
@@ -294,7 +473,11 @@ impl Persistence {
             return;
         };
         self.error = None;
+        self.listed = false;
         self.spawn(generation, move |_| Completion::Listed(store.list()));
+        if self.job.is_none() {
+            self.listed = true;
+        }
     }
     fn unavailable(&mut self) {
         self.error = Some(SaveError::Io {
@@ -322,6 +505,18 @@ impl Persistence {
         self.error = None;
         self.spawn(generation, move |cancel| {
             Completion::Renamed(store.rename(&task.slot, task.revision, &task.name, &|| {
+                cancel.load(Ordering::Relaxed)
+            }))
+        });
+    }
+    fn delete(&mut self, generation: u64) {
+        let (Some(store), Some(task)) = (self.store.clone(), self.deletion.clone()) else {
+            self.unavailable();
+            return;
+        };
+        self.error = None;
+        self.spawn(generation, move |cancel| {
+            Completion::Deleted(store.delete(&task.slot, task.revision, &|| {
                 cancel.load(Ordering::Relaxed)
             }))
         });
@@ -380,7 +575,8 @@ impl Persistence {
         log_dir: Option<std::path::PathBuf>,
     ) {
         if self.busy()
-            && (self.screen == SaveScreen::Rename || !matches!(action, PersistAction::Cancel))
+            && (matches!(self.screen, SaveScreen::Rename | SaveScreen::ConfirmDelete)
+                || !matches!(action, PersistAction::Cancel))
         {
             return;
         }
@@ -407,7 +603,43 @@ impl Persistence {
                 self.draining = true;
                 self.screen = SaveScreen::Leave;
             }
+            PersistAction::PreloadResume
+                if self.screen == SaveScreen::Closed && self.run.is_none() =>
+            {
+                self.preload_resume(generation);
+            }
+            PersistAction::Continue(slot)
+                if self.screen == SaveScreen::Closed && self.run.is_none() =>
+            {
+                if let Some(revision) = self
+                    .continue_entry()
+                    .filter(|entry| entry.metadata.slot == slot)
+                    .map(|entry| entry.revision)
+                {
+                    self.screen = SaveScreen::Loading;
+                    if self.preload_key.as_ref() == Some(&(slot.clone(), revision))
+                        && (self.preload.is_some() || self.preloaded.is_some())
+                    {
+                        if let Some(dir) = log_dir {
+                            if self.preloaded.is_some() {
+                                self.activate_preloaded(generation, dir);
+                            } else {
+                                self.waiting_resume = Some(dir);
+                            }
+                        } else {
+                            self.unavailable();
+                            self.screen = SaveScreen::Browser;
+                        }
+                    } else {
+                        self.request(PersistAction::Load(slot), generation, speed, log_dir);
+                        if self.error.is_some() {
+                            self.screen = SaveScreen::Browser;
+                        }
+                    }
+                }
+            }
             PersistAction::OpenBrowser if self.screen == SaveScreen::Closed => {
+                self.discard_preload();
                 self.screen = SaveScreen::Browser;
                 self.list(generation);
             }
@@ -436,6 +668,29 @@ impl Persistence {
             PersistAction::ConfirmOverwrite if self.screen == SaveScreen::ConfirmOverwrite => {
                 self.write(generation)
             }
+            PersistAction::BeginDelete(slot)
+                if self.screen == SaveScreen::Browser && self.run.is_none() =>
+            {
+                if let Some(listing) = self
+                    .entries
+                    .iter()
+                    .find(|e| e.id.as_ref() == Some(&slot))
+                    .cloned()
+                    && let Some(revision) = listing.revision
+                {
+                    self.discard_preload();
+                    self.deletion = Some(DeleteTask {
+                        listing,
+                        slot,
+                        revision,
+                    });
+                    self.error = None;
+                    self.screen = SaveScreen::ConfirmDelete;
+                }
+            }
+            PersistAction::ConfirmDelete if self.screen == SaveScreen::ConfirmDelete => {
+                self.delete(generation);
+            }
             PersistAction::BeginRename(slot)
                 if matches!(self.screen, SaveScreen::Browser | SaveScreen::Save) =>
             {
@@ -461,7 +716,9 @@ impl Persistence {
                     self.rename(generation);
                 }
             }
-            PersistAction::Load(slot) if self.screen == SaveScreen::Browser => {
+            PersistAction::Load(slot)
+                if matches!(self.screen, SaveScreen::Browser | SaveScreen::Loading) =>
+            {
                 let (Some(store), Some(dir)) = (self.store.clone(), log_dir) else {
                     self.unavailable();
                     return;
@@ -469,29 +726,7 @@ impl Persistence {
                 self.error = None;
                 self.spawn(generation, move |cancel| {
                     Completion::Loaded((|| {
-                        let running = store.compatibility();
-                        let read = store.read(&slot);
-                        // The recorded build is diagnostics: replay verification decides. Name
-                        // it next to the running one, so a failure that follows can be traced.
-                        let recorded = match &read {
-                            Ok((bundle, _)) => Some(&bundle.compatibility),
-                            Err(SaveError::OtherVersionUnreadable { recorded, .. }) => {
-                                Some(recorded)
-                            }
-                            Err(_) => None,
-                        };
-                        if let Some(recorded) = recorded.filter(|recorded| **recorded != running) {
-                            info!(
-                                "loading save {} from another build: recorded build {} on {}, \
-                                 running build {} on {}",
-                                slot.as_str(),
-                                recorded.build,
-                                recorded.platform,
-                                running.build,
-                                running.platform
-                            );
-                        }
-                        let (bundle, region) = read?;
+                        let (bundle, region, running) = read_snapshot(store.as_ref(), &slot)?;
                         if cancel.load(Ordering::Relaxed) {
                             return Err(SaveError::Cancelled);
                         }
@@ -511,7 +746,9 @@ impl Persistence {
                 });
             }
             PersistAction::Retry if self.error.is_some() => {
-                if self.rename.is_some() {
+                if self.deletion.is_some() {
+                    self.delete(generation);
+                } else if self.rename.is_some() {
                     self.rename(generation);
                 } else if self.task.is_some() {
                     self.write(generation);
@@ -530,7 +767,14 @@ impl Persistence {
                 }
             }
             PersistAction::Cancel => {
+                self.discard_preload();
                 if self.screen == SaveScreen::Automatic {
+                    return;
+                }
+                if self.screen == SaveScreen::ConfirmDelete {
+                    self.deletion = None;
+                    self.screen = SaveScreen::Browser;
+                    self.list(generation);
                     return;
                 }
                 if self.screen == SaveScreen::Rename
@@ -610,6 +854,38 @@ impl Persistence {
     }
 }
 
+fn read_snapshot(
+    store: &dyn SaveStore,
+    slot: &SaveId,
+) -> Result<(SaveBundle, LoadedRegion, ReplayCompatibility), SaveError> {
+    let running = store.compatibility();
+    let read = store.read(slot);
+    // The recorded build is diagnostics: replay verification decides. Name
+    // it next to the running one, so a failure that follows can be traced.
+    let recorded = match &read {
+        Ok((bundle, _)) => Some(&bundle.compatibility),
+        Err(SaveError::OtherVersionUnreadable { recorded, .. }) => Some(recorded),
+        Err(_) => None,
+    };
+    if let Some(recorded) = recorded.filter(|recorded| **recorded != running) {
+        info!(
+            "loading save {} from another build: recorded build {} on {}, \
+             running build {} on {}",
+            slot.as_str(),
+            recorded.build,
+            recorded.platform,
+            running.build,
+            running.platform
+        );
+    }
+    let (bundle, region) = read?;
+    Ok((bundle, region, running))
+}
+
+pub(super) fn discard_menu_preload(mut persistence: ResMut<Persistence>) {
+    persistence.discard_preload();
+}
+
 /// Removes the branch log, and its region archive, that a failed load created for a candidate it
 /// then abandoned, so no attempt or Retry leaves files behind. Either may not exist: the archive
 /// is written only once verification passes.
@@ -627,11 +903,32 @@ fn discard_branch_log(log: &std::path::Path) {
     }
 }
 
-pub(super) fn initialise_store(dir: Option<Res<SaveDir>>, mut persistence: ResMut<Persistence>) {
+pub(super) fn initialise_store(
+    dir: Option<Res<SaveDir>>,
+    mut persistence: ResMut<Persistence>,
+    generation: Res<SessionGeneration>,
+    state: Res<State<AppState>>,
+) {
     if persistence.store.is_none()
         && let Some(dir) = dir
     {
         persistence.store = Some(Arc::new(FileSaveStore::new(dir.0.clone())));
+    }
+    if *state.get() == AppState::Boot
+        && persistence.enabled()
+        && !persistence.listed
+        && !persistence.busy()
+    {
+        persistence.list(generation.0);
+    }
+}
+
+pub(super) fn refresh_menu_saves(
+    mut persistence: ResMut<Persistence>,
+    generation: Res<SessionGeneration>,
+) {
+    if persistence.enabled() && !persistence.listed && !persistence.busy() {
+        persistence.list(generation.0);
     }
 }
 
@@ -650,6 +947,7 @@ pub(super) fn poll_persistence(
     mut events: ResMut<Messages<DomainEventMessage>>,
     mut failures: ResMut<Messages<CommandFailed>>,
 ) {
+    persistence.poll_preload(generation.0);
     if persistence.resuming {
         *speed = SimSpeed::Paused;
         let settled = *state.get() == AppState::InGame
@@ -681,16 +979,23 @@ pub(super) fn poll_persistence(
         Completion::Failed(error) => {
             warn!("persistence worker failed: {error}");
             persistence.error = Some(error);
+            persistence.listed = true;
+            if persistence.screen == SaveScreen::Loading {
+                persistence.screen = SaveScreen::Browser;
+            }
             // A worker that died writing an autosave is a failed autosave.
             persistence.autosave_did_fail();
         }
-        Completion::Listed(result) => match result {
-            Ok(entries) => persistence.entries = entries,
-            Err(error) => {
-                warn!("persistence operation failed: {error}");
-                persistence.error = Some(error);
+        Completion::Listed(result) => {
+            persistence.listed = true;
+            match result {
+                Ok(entries) => persistence.entries = entries,
+                Err(error) => {
+                    warn!("persistence operation failed: {error}");
+                    persistence.error = Some(error);
+                }
             }
-        },
+        }
         Completion::Saved(result) => match result {
             Ok(receipt) => {
                 let Some(task) = persistence.task.take() else {
@@ -745,6 +1050,19 @@ pub(super) fn poll_persistence(
                 persistence.error = Some(error);
             }
         },
+        Completion::Deleted(result) => match result {
+            Ok(()) => {
+                if let Some(task) = persistence.deletion.take() {
+                    persistence
+                        .entries
+                        .retain(|e| e.id.as_ref() != Some(&task.slot));
+                }
+                persistence.discard_preload();
+                persistence.screen = SaveScreen::Browser;
+                persistence.list(generation.0);
+            }
+            Err(error) => persistence.error = Some(error),
+        },
         Completion::Renamed(result) => match result {
             Ok(receipt) => {
                 let Some(task) = persistence.rename.take() else {
@@ -793,6 +1111,7 @@ pub(super) fn poll_persistence(
             Err(error) => {
                 warn!("persistence operation failed: {error}");
                 persistence.error = Some(error);
+                persistence.screen = SaveScreen::Browser;
             }
         },
     }
@@ -811,5 +1130,64 @@ pub(super) fn resume_cancel_speed(
             }))
     {
         *speed = SimSpeed::Paused;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn listing(index: usize, saved_at: u64, automatic: bool) -> SaveListing {
+        let id = SaveId::new(format!("{index:032x}")).unwrap();
+        SaveListing {
+            id: Some(id.clone()),
+            file_label: id.as_str().into(),
+            modified_at: u64::MAX,
+            revision: Some(SaveRevision([0; 32])),
+            entry: Ok(SaveEntry {
+                region: domain::ids::RegionId::new("test"),
+                region_name_key: "region-test".into(),
+                metadata: SaveMetadata {
+                    slot: id.clone(),
+                    run: id,
+                    kind: if automatic {
+                        SaveKind::Automatic
+                    } else {
+                        SaveKind::Manual
+                    },
+                    name: "Test".into(),
+                    saved_at,
+                },
+                summary: CheckpointSummary {
+                    month: domain::time::SimMonth::new(2027, 1).unwrap(),
+                    tick: 1440,
+                    phase: DayPhase::Review,
+                    status: SessionStatus::Active,
+                },
+                revision: SaveRevision([0; 32]),
+                compatibility: ReplayCompatibility {
+                    build: "test".into(),
+                    platform: "test".into(),
+                },
+            }),
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn resume_uses_latest_automatic_timestamp_and_stable_ties_regardless_of_listing_order(saves in proptest::collection::vec((0_u64..100, any::<bool>()), 0..40)) {
+            let mut persistence = Persistence {
+                entries: saves.iter().enumerate().map(|(i, (at, automatic))| listing(i, *at, *automatic)).collect(),
+                ..Default::default()
+            };
+            persistence.entries.push(SaveListing { id: None, file_label: "broken".into(), modified_at: u64::MAX, revision: None, entry: Err(SaveError::ChecksumMismatch) });
+            let picked = persistence.continue_entry().map(|entry| entry.metadata.clone());
+            let expected_time = saves.iter().filter(|(_, automatic)| *automatic).map(|(at, _)| *at).max();
+            prop_assert_eq!(picked.as_ref().map(|meta| meta.saved_at), expected_time);
+            if let Some(meta) = &picked { prop_assert_eq!(meta.kind, SaveKind::Automatic); }
+            persistence.entries.reverse();
+            prop_assert_eq!(persistence.continue_entry().map(|entry| entry.metadata.clone()), picked);
+        }
     }
 }

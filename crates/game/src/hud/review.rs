@@ -1,7 +1,7 @@
 //! The Review modal (spec §8.4): the month just closed, over the dimmed map.
 //!
-//! In order: the P&L (weighted by the month's days, §2.3), the merit order used, reliability,
-//! the incidents timeline, the lessons, what the regulator did, and in December the rate review.
+//! The summary column shows P&L (weighted by the month's days, §2.3), reliability, incidents,
+//! lessons, regulation and the annual rate review. The merit order sits in its own right column.
 //! *Continue* is the way out: it sends `FinishReview`. The backdrop dims the map but not the top
 //! bar, so the menu and the milestones stay in reach.
 //!
@@ -265,7 +265,7 @@ pub fn review_rect(behind: egui::Rect) -> egui::Rect {
     )
 }
 
-/// The heading, the sections in a vertical scroll area, and its footer button pinned below it.
+/// The heading, independently scrolling report columns, and footer buttons pinned below them.
 /// Fills the height it is given, so the system sets that.
 pub fn draw_review(ui: &mut egui::Ui, model: &ReviewModel) -> Vec<UiAction> {
     let mut actions = Vec::new();
@@ -283,11 +283,30 @@ pub fn draw_review(ui: &mut egui::Ui, model: &ReviewModel) -> Vec<UiAction> {
             actions.extend(draw_supply_history(ui, history));
         });
     } else {
-        egui::ScrollArea::vertical()
-            .id_salt("review_sections")
-            .auto_shrink([false, false])
-            .max_height(content_height)
-            .show(ui, |ui| draw_sections(ui, model));
+        if ui.available_width() >= 680.0 {
+            ui.columns(2, |columns| {
+                egui::ScrollArea::vertical()
+                    .id_salt("review_sections")
+                    .auto_shrink([false, false])
+                    .max_height(content_height)
+                    .show(&mut columns[0], |ui| draw_summary(ui, model));
+                egui::ScrollArea::vertical()
+                    .id_salt("review_merit_rows")
+                    .auto_shrink([false, false])
+                    .max_height(content_height)
+                    .show(&mut columns[1], |ui| draw_merit(ui, model));
+            });
+        } else {
+            // At extreme UI zoom retain every section inside the window's width.
+            egui::ScrollArea::vertical()
+                .id_salt("review_narrow_sections")
+                .auto_shrink([false, false])
+                .max_height(content_height)
+                .show(ui, |ui| {
+                    draw_summary(ui, model);
+                    draw_merit(ui, model);
+                });
+        }
     }
     ui.add(egui::Separator::default().spacing(FOOTER_SEPARATOR));
     ui.horizontal(|ui| {
@@ -297,19 +316,22 @@ pub fn draw_review(ui: &mut egui::Ui, model: &ReviewModel) -> Vec<UiAction> {
     actions
 }
 
-fn draw_sections(ui: &mut egui::Ui, model: &ReviewModel) {
+fn draw_summary(ui: &mut egui::Ui, model: &ReviewModel) {
     let heading = |ui: &mut egui::Ui, text: &str| {
         ui.add_space(6.0);
         ui.strong(text);
     };
     let stats = |ui: &mut egui::Ui, id: &str, stats: &[Stat]| {
-        egui::Grid::new(id).num_columns(2).show(ui, |ui| {
-            for stat in stats {
-                ui.label(stat.label.as_str());
-                ui.label(stat.value.as_str());
-                ui.end_row();
-            }
-        });
+        egui::Grid::new(id)
+            .num_columns(2)
+            .max_col_width((ui.available_width() - ui.spacing().item_spacing.x) / 2.0)
+            .show(ui, |ui| {
+                for stat in stats {
+                    ui.label(stat.label.as_str());
+                    ui.label(stat.value.as_str());
+                    ui.end_row();
+                }
+            });
     };
     let lines = |ui: &mut egui::Ui, lines: &[String], empty: Option<&String>| {
         if let Some(empty) = empty {
@@ -323,24 +345,6 @@ fn draw_sections(ui: &mut egui::Ui, model: &ReviewModel) {
     heading(ui, &model.pnl_heading);
     ui.weak(model.days_note.as_str());
     stats(ui, "review_pnl", &model.pnl);
-
-    heading(ui, &model.merit_heading);
-    egui::Grid::new("review_merit")
-        .num_columns(4)
-        .striped(true)
-        .show(ui, |ui| {
-            for column in &model.merit_columns {
-                ui.weak(column.as_str());
-            }
-            ui.end_row();
-            for row in &model.merit {
-                ui.label(row.plant.as_str());
-                ui.label(row.kind.as_str());
-                ui.label(row.marginal_cost.as_str());
-                ui.label(row.energy.as_str());
-                ui.end_row();
-            }
-        });
 
     heading(ui, &model.reliability_heading);
     stats(ui, "review_reliability", &model.reliability);
@@ -360,6 +364,28 @@ fn draw_sections(ui: &mut egui::Ui, model: &ReviewModel) {
         heading(ui, &model.rate_review_heading);
         ui.label(result.as_str());
     }
+}
+
+fn draw_merit(ui: &mut egui::Ui, model: &ReviewModel) {
+    ui.add_space(6.0);
+    ui.strong(&model.merit_heading);
+    egui::Grid::new("review_merit")
+        .num_columns(4)
+        .max_col_width((ui.available_width() - 3.0 * ui.spacing().item_spacing.x) / 4.0)
+        .striped(true)
+        .show(ui, |ui| {
+            for column in &model.merit_columns {
+                ui.weak(column.as_str());
+            }
+            ui.end_row();
+            for row in &model.merit {
+                ui.label(row.plant.as_str());
+                ui.label(row.kind.as_str());
+                ui.label(row.marginal_cost.as_str());
+                ui.label(row.energy.as_str());
+                ui.end_row();
+            }
+        });
 }
 
 /// Dims the map under the top bar (a backdrop that takes clicks and does nothing with them, so

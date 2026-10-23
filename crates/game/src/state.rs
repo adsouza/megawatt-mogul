@@ -1,4 +1,4 @@
-//! App states: `Boot` → `MainMenu` → `RegionSelect` → `InGame`, with the day phase as a sub-state.
+//! App states: boot chooses the opening menu or new-game setup; play has a day-phase sub-state.
 
 use bevy::prelude::*;
 
@@ -30,7 +30,7 @@ pub enum PhaseState {
 #[derive(Resource, Debug, Clone, PartialEq, Eq)]
 pub struct BootError(pub String);
 
-/// What must exist before `Boot` moves on to `MainMenu`. Plugins add entries through
+/// What must exist before `Boot` chooses the first menu screen. Plugins add entries through
 /// [`BootChecklistAppExt::require_for_boot`], in any order.
 #[derive(Resource, Default)]
 pub struct BootChecklist {
@@ -77,7 +77,7 @@ impl BootChecklistAppExt for App {
     }
 }
 
-/// Registers the states and moves `Boot` to `MainMenu` once the boot checklist is met.
+/// Registers the states and chooses the first menu after boot resources and the save scan settle.
 ///
 /// Requires `StatesPlugin`, which `DefaultPlugins` includes and headless apps add themselves.
 pub struct AppStatePlugin;
@@ -96,13 +96,22 @@ pub(crate) fn finish_boot(world: &mut World) {
     if world.contains_resource::<BootError>() {
         return;
     }
+    let persistence = world.get_resource::<crate::sim::Persistence>();
+    if persistence.is_some_and(|p| p.enabled() && !p.menu_scanned()) {
+        return;
+    }
+    let opening = if persistence
+        .is_some_and(|p| p.menu_scanned() && p.error.is_none() && p.entries.is_empty())
+    {
+        AppState::RegionSelect
+    } else {
+        AppState::MainMenu
+    };
     let ready = world
         .get_resource::<BootChecklist>()
         .is_none_or(|checklist| checklist.unmet(world).is_empty());
     if ready {
         info!("boot complete");
-        world
-            .resource_mut::<NextState<AppState>>()
-            .set(AppState::MainMenu);
+        world.resource_mut::<NextState<AppState>>().set(opening);
     }
 }

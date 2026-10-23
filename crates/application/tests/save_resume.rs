@@ -515,3 +515,44 @@ fn save_resume_historical_errors_are_indexed_and_branch_log_failure_returns_no_g
         Err(RestoreError::RegionIdMismatch)
     ));
 }
+
+#[test]
+fn a_preloaded_game_attaches_a_new_recording_without_replaying_or_losing_projections() {
+    let (mut game, _) = game_on(tiny_region_parts(), 9);
+    game.execute(Command::BeginOperating).unwrap();
+    game.execute(Command::AdvanceTicks { n: 121 }).unwrap();
+    let candidate = restore(&game);
+    let log = InMemoryCommandLog::default();
+    let mut resumed = candidate
+        .with_recording(Box::new(log.clone()), &|| false)
+        .unwrap();
+    same(&game, &resumed);
+    let checkpoint = game.checkpoint();
+    assert_eq!(log.region_source(), checkpoint.region_source);
+    assert_eq!(log.records()[0], LogRecord::Header(checkpoint.header));
+    assert_eq!(
+        log.records()[1..],
+        checkpoint
+            .commands
+            .into_iter()
+            .map(LogRecord::Command)
+            .collect::<Vec<_>>()
+    );
+    for command in [
+        Command::AdvanceTicks { n: 63 },
+        Command::AdvanceTicks { n: 40 },
+    ] {
+        game.execute(command.clone()).unwrap();
+        resumed.execute(command.clone()).unwrap();
+        same(&game, &resumed);
+        assert_eq!(log.records().last(), Some(&LogRecord::Command(command)));
+    }
+    assert!(matches!(
+        restore(&game).with_recording(Box::new(InMemoryCommandLog::default()), &|| true),
+        Err(RestoreError::Cancelled)
+    ));
+    assert!(matches!(
+        restore(&game).with_recording(Box::new(FailingSink { accepted: 2 }), &|| false),
+        Err(RestoreError::Log(_))
+    ));
+}

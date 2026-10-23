@@ -35,6 +35,7 @@ mod prompt;
 mod ramp_warnings;
 mod region_atlas;
 mod review;
+mod title_scene;
 pub use region_atlas::RegionAtlas;
 mod saves;
 mod selection;
@@ -105,7 +106,7 @@ pub use self::map::{
 pub use self::menu::{
     BootErrorModel, MainMenuModel, MenuForm, RegionChoice, RegionListings, RegionProblem,
     RegionSelectModel, boot_error_model, draw_boot_error, draw_main_menu, draw_region_select,
-    main_menu_model, new_game_action, region_select_model,
+    main_menu_model, region_select_model,
 };
 pub use self::milestones::{
     MILESTONES_WIDTH, MilestoneRow, MilestonesModel, MilestonesOpen, draw_milestones,
@@ -234,6 +235,10 @@ impl Plugin for HudPlugin {
             )
             .add_systems(
                 OnEnter(AppState::MainMenu),
+                menu::list_regions.run_if(resource_exists::<Catalog>),
+            )
+            .add_systems(
+                OnEnter(AppState::RegionSelect),
                 menu::list_regions.run_if(resource_exists::<Catalog>),
             )
             .add_systems(

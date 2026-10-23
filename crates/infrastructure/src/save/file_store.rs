@@ -115,6 +115,21 @@ impl FileSaveStore {
     fn bytes(&self, id: &SaveId) -> Result<Vec<u8>, SaveError> {
         read_bounded(&self.path(id), MAX_SAVE_BYTES)
     }
+    fn lock_slot(&self, id: &SaveId) -> Result<File, SaveError> {
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(self.root.join(format!("{}.lock", id.as_str())))
+            .map_err(|e| io("lock", e))?;
+        lock.try_lock().map_err(|error| match error {
+            std::fs::TryLockError::WouldBlock => SaveError::SlotBusy,
+            std::fs::TryLockError::Error(error) => io("lock", error),
+        })?;
+        // Keep the lock inode after writes and deletes, so every window locks the same file.
+        Ok(lock)
+    }
     fn publish(
         &self,
         bundle: &SaveBundle,
@@ -127,21 +142,7 @@ impl FileSaveStore {
             // directories already there still finds them pending.
             make_directory(&self.root, &mut self.pending())?;
         }
-        let lock_path = self
-            .root
-            .join(format!("{}.lock", bundle.metadata.slot.as_str()));
-        let lock = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(lock_path)
-            .map_err(|e| io("lock", e))?;
-        lock.try_lock().map_err(|error| match error {
-            std::fs::TryLockError::WouldBlock => SaveError::SlotBusy,
-            std::fs::TryLockError::Error(error) => io("lock", error),
-        })?;
-        // The OS releases this lock even on process death. Keep its inode for future writers.
+        let _lock = self.lock_slot(&bundle.metadata.slot)?;
         let path = self.path(&bundle.metadata.slot);
         let current = match File::open(&path) {
             Ok(file) => {
@@ -318,11 +319,13 @@ impl SaveStore for FileSaveStore {
                 .ok()
                 .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
                 .map_or(0, |d| d.as_secs());
+            let mut revision = None;
             let item = id
                 .as_ref()
                 .ok_or(SaveError::InvalidId)
                 .and_then(|id| self.bytes(id))
                 .and_then(|bytes| {
+                    revision = Some(SaveRevision(digest(&bytes)));
                     let (bundle, loaded) = decode_save(&bytes, &self.compatibility)?;
                     if Some(&bundle.metadata.slot) != id.as_ref() {
                         return Err(SaveError::InvalidId);
@@ -340,6 +343,7 @@ impl SaveStore for FileSaveStore {
                 id,
                 file_label,
                 modified_at,
+                revision,
                 entry: item,
             });
         }
@@ -353,12 +357,56 @@ impl SaveStore for FileSaveStore {
         });
         Ok(result)
     }
+    fn revision(&self, id: &SaveId) -> Result<SaveRevision, SaveError> {
+        self.bytes(id).map(|bytes| SaveRevision(digest(&bytes)))
+    }
     fn read(&self, id: &SaveId) -> Result<(SaveBundle, LoadedRegion), SaveError> {
         let result = decode_save(&self.bytes(id)?, &self.compatibility)?;
         if &result.0.metadata.slot != id {
             return Err(SaveError::InvalidId);
         }
         Ok(result)
+    }
+    fn delete(
+        &self,
+        id: &SaveId,
+        revision: SaveRevision,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<(), SaveError> {
+        if cancelled() {
+            return Err(SaveError::Cancelled);
+        }
+        let _lock = self.lock_slot(id)?;
+        let path = self.path(id);
+        match File::open(&path) {
+            Ok(file) => {
+                let mut bytes = Vec::new();
+                file.take(MAX_SAVE_BYTES as u64 + 1)
+                    .read_to_end(&mut bytes)
+                    .map_err(|e| io("delete revision", e))?;
+                if bytes.len() > MAX_SAVE_BYTES {
+                    return Err(SaveError::SaveTooLarge);
+                }
+                if SaveRevision(digest(&bytes)) != revision {
+                    return Err(SaveError::SlotChanged);
+                }
+                (self.fault)(PublishStage::Publish)?;
+                if cancelled() {
+                    return Err(SaveError::Cancelled);
+                }
+                fs::remove_file(&path).map_err(|e| io("delete", e))?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(error) => return Err(io("delete revision", error)),
+        }
+        // Once removal is visible it cannot be cancelled; Retry re-confirms this absence but
+        // never removes a recreated slot whose bytes differ from the confirmed revision.
+        (self.fault)(PublishStage::SyncDirectory)
+            .and_then(|()| {
+                self.sync_directories()
+                    .map_err(|error| io("delete sync", error))
+            })
+            .map_err(|_| SaveError::DeleteDurabilityUnconfirmed { slot: id.clone() })
     }
     fn rename(
         &self,

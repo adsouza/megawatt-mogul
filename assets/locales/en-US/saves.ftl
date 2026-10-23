@@ -1,15 +1,23 @@
 save-title = Save game
 save-load = Load game
+save-library-label = SAVED COMPANIES
+save-named-heading = Named games
+save-automatic-heading = Automatic snapshots
+save-unreadable-heading = Unreadable saves
+save-named-empty = No named games yet.
+save-automatic-empty = No automatic monthly snapshots yet.
 save-leave-title = Return to menu?
 save-leave-body = Save your progress before leaving?
 save-overwrite-title = Overwrite this save?
 save-overwrite-body = This replaces the selected manual save. Other saves are kept.
 save-autosave = Monthly autosave
+save-resuming = Resuming game…
+save-restoring = Restoring your saved grid. The game will resume paused.
 save-working = Working…
 save-applied-only = Saves include applied changes. Unapplied schedule edits are excluded.
 save-choose = Choose a save to resume. Games resume paused.
 save-boundary = { $month } · { $phase } · { $time }
-save-details = { $region } · { $month } · { $phase } · { $time } · { $kind }
+save-details = { $region } · { $month } · { $phase } · { $time }
     Saved { $saved } UTC { $status }
 save-automatic-kind = Automatic
 save-manual-kind = Manual
@@ -48,3 +56,11 @@ save-confirmed = Save (saved)
 save-autosave-failed = Autosave failed: { $month }
 save-autosave-failed-detail = Autosave failed for { $month }. Save to keep your progress.
 save-overwrite-specific = Replace "{ $name }" ({ $month } · { $phase } · { $time })?
+
+save-delete = Delete
+save-delete-title = Delete saved game?
+save-delete-specific = Permanently delete “{ $name }”?
+    { $details }
+    This cannot be undone.
+save-delete-confirm = Delete permanently
+save-error-delete-durability = The save was removed, but disk durability is unconfirmed. Retry to confirm the deletion.

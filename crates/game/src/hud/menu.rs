@@ -1,6 +1,6 @@
 //! The screens outside a game: the boot error, the main menu and the region picker.
 
-use application::{RegionCatalog, RegionListing, RegionLoadError, auto_select_region};
+use application::{RegionCatalog, RegionListing, RegionLoadError};
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 
@@ -8,7 +8,7 @@ use super::action::{ActionSink, ButtonModel, MenuScreen, UiAction, add_enabled, 
 use super::layout::HudArea;
 use super::region_atlas::{self, RegionAtlas};
 use crate::l10n::{Localize, Localizer};
-use crate::sim::{Catalog, default_seed};
+use crate::sim::{Catalog, PersistAction, Persistence, default_seed};
 use crate::state::BootError;
 
 // ---- boot error ---------------------------------------------------------------------------
@@ -73,12 +73,11 @@ pub(super) fn boot_error_screen(
 
 // ---- main menu ----------------------------------------------------------------------------
 
-/// The regions on disk, listed on entering the main menu. Both menu screens read this one
-/// listing, so the menu's auto-skip and the picker always agree.
+/// The regions on disk, listed on entering the main menu for the new-game setup screen.
 #[derive(Resource, Debug, Clone, PartialEq)]
 pub struct RegionListings(pub Result<Vec<RegionListing>, RegionLoadError>);
 
-/// What the player has typed into the menu. It survives the trip to the region picker and back,
+/// New-game setup state. It survives Back to the opening menu and returning to setup,
 /// and is re-seeded after each game.
 #[derive(Resource, Debug, Clone, PartialEq, Eq)]
 pub struct MenuForm {
@@ -101,72 +100,190 @@ impl MenuForm {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MainMenuModel {
     pub title: String,
-    pub seed_label: String,
-    /// Shown under the seed field when it holds something that isn't a seed.
-    pub seed_error: Option<String>,
+    pub eyebrow: String,
+    pub subtitle: String,
+    pub continue_game: Option<ButtonModel>,
+    pub continue_details: Option<String>,
+    pub notice: Option<String>,
     pub new_game: ButtonModel,
     pub load_game: ButtonModel,
     pub quit: ButtonModel,
 }
 
-/// What *New game* does: start the only region straight away when there is exactly one and it is
-/// available (spec §2.6), and otherwise open the picker, which also explains a broken or empty
-/// regions folder.
-pub fn new_game_action(
-    listings: &Result<Vec<RegionListing>, RegionLoadError>,
-    seed: u64,
-) -> UiAction {
-    match listings.as_deref().ok().and_then(auto_select_region) {
-        Some(region) => UiAction::NewGame {
-            region: region.clone(),
-            seed,
-        },
-        None => UiAction::Navigate(MenuScreen::RegionSelect),
-    }
-}
-
-pub fn main_menu_model(
-    listings: &RegionListings,
-    form: &MenuForm,
-    l10n: &Localizer,
-) -> MainMenuModel {
-    let seed = form.parsed_seed();
-    // A disabled button still needs an action; it is never sent.
-    let new_game = new_game_action(&listings.0, seed.unwrap_or_default());
+/// The opening menu offers navigation; new-game settings belong to the setup screen.
+pub fn main_menu_model(persistence: &Persistence, l10n: &Localizer) -> MainMenuModel {
+    let entry = persistence.continue_entry();
+    let available = !persistence.frozen();
     MainMenuModel {
+        continue_game: entry.map(|entry| {
+            ButtonModel::new(
+                l10n.text("menu-continue"),
+                UiAction::Persistence(PersistAction::Continue(entry.metadata.slot.clone())),
+            )
+            .enabled_if(available)
+        }),
+        continue_details: entry.map(|entry| {
+            l10n.args(
+                "menu-continue-details",
+                &[
+                    (
+                        "name",
+                        super::saves::display_name(&entry.metadata, l10n).into(),
+                    ),
+                    ("region", l10n.text(&entry.region_name_key).into()),
+                    (
+                        "month",
+                        crate::l10n::format::month_year(entry.summary.month).into(),
+                    ),
+                    ("phase", entry.summary.phase.localize(l10n).into()),
+                    (
+                        "time",
+                        crate::l10n::format::clock(entry.summary.tick).into(),
+                    ),
+                ],
+            )
+        }),
+        notice: persistence
+            .error
+            .as_ref()
+            .map(|error| super::saves::save_error(error, l10n)),
         title: l10n.text("app-title"),
-        seed_label: l10n.text("menu-seed"),
-        seed_error: seed.is_none().then(|| l10n.text("menu-seed-invalid")),
-        new_game: ButtonModel::new(l10n.text("menu-new-game"), new_game).enabled_if(seed.is_some()),
+        eyebrow: l10n.text("menu-eyebrow"),
+        subtitle: l10n.text("menu-subtitle"),
+        new_game: ButtonModel::new(
+            l10n.text("menu-new-game"),
+            UiAction::Navigate(MenuScreen::RegionSelect),
+        )
+        .enabled_if(available),
         load_game: ButtonModel::new(
             l10n.text("save-load"),
-            UiAction::Persistence(crate::sim::PersistAction::OpenBrowser),
-        ),
+            UiAction::Persistence(PersistAction::OpenBrowser),
+        )
+        .enabled_if(available),
         quit: ButtonModel::new(l10n.text("ui-quit"), UiAction::Quit),
     }
 }
 
-/// The main menu. The seed field edits `form` directly: it is widget state, not a game action.
-pub fn draw_main_menu(
-    ui: &mut egui::Ui,
-    model: &MainMenuModel,
-    form: &mut MenuForm,
-) -> Vec<UiAction> {
+/// The opening menu has no new-game form state.
+pub fn draw_main_menu(ui: &mut egui::Ui, model: &MainMenuModel) -> Vec<UiAction> {
     let mut actions = Vec::new();
-    ui.vertical_centered(|ui| {
-        ui.add_space(ui.available_height() * 0.25);
-        ui.heading(model.title.as_str());
-        ui.add_space(24.0);
-        // Label above field: a horizontal row would not centre in this column.
-        ui.label(model.seed_label.as_str());
-        ui.add(egui::TextEdit::singleline(&mut form.seed).desired_width(200.0));
-        if let Some(error) = &model.seed_error {
-            ui.colored_label(ui.visuals().warn_fg_color, error.as_str());
-        }
-        ui.add_space(12.0);
-        button(ui, &model.new_game, &mut actions);
-        button(ui, &model.load_game, &mut actions);
-        button(ui, &model.quit, &mut actions);
+    let rect = ui.max_rect();
+    super::title_scene::backdrop(ui.painter(), rect);
+    let animation_time = super::title_scene::menu_elapsed(ui.ctx());
+    let wide = rect.width() >= 740.0;
+    let compact = rect.height() < 600.0;
+    let padding = (rect.width() * 0.055).clamp(20.0, 64.0);
+    let width = if wide {
+        (rect.width() * 0.38).clamp(280.0, 410.0)
+    } else {
+        (rect.width() - padding * 2.0).min(400.0)
+    };
+    let left = if wide {
+        rect.left() + padding
+    } else {
+        rect.center().x - width * 0.5
+    };
+    if wide {
+        let artwork = egui::Rect::from_min_max(
+            egui::pos2(left + width + 20.0, rect.top() + 12.0),
+            rect.right_bottom() - egui::vec2(12.0, 20.0),
+        );
+        super::title_scene::draw(ui.painter(), artwork, animation_time);
+    }
+    let content = egui::Rect::from_min_max(
+        egui::pos2(
+            left,
+            rect.top() + if compact { 20.0 } else { rect.height() * 0.1 },
+        ),
+        egui::pos2(left + width, rect.bottom() - 12.0),
+    );
+    // Artwork never sits beneath text or intercepts a menu click.
+    ui.painter()
+        .rect_filled(content.expand(8.0), 0.0, super::title_scene::BACKGROUND);
+    ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("opening_menu_content")
+            .show(ui, |ui| {
+                ui.set_width(width);
+                ui.label(
+                    egui::RichText::new(&model.eyebrow)
+                        .size(11.0)
+                        .color(super::title_scene::ACCENT)
+                        .strong(),
+                );
+                ui.add_space(if compact { 6.0 } else { 12.0 });
+                let title_size = if !wide {
+                    30.0
+                } else if compact {
+                    40.0
+                } else {
+                    54.0
+                };
+                ui.label(
+                    egui::RichText::new(&model.title)
+                        .size(title_size)
+                        .color(super::theme::TEXT)
+                        .strong(),
+                );
+                ui.add_space(if compact { 8.0 } else { 16.0 });
+                ui.label(
+                    egui::RichText::new(&model.subtitle)
+                        .size(if compact { 17.0 } else { 20.0 })
+                        .color(super::theme::TEXT),
+                );
+                ui.add_space(if compact { 18.0 } else { 28.0 });
+                if let Some(notice) = &model.notice {
+                    ui.label(egui::RichText::new(notice).color(super::theme::TEXT));
+                    ui.add_space(8.0);
+                }
+                let buttons = model
+                    .continue_game
+                    .iter()
+                    .map(|button| (button, true))
+                    .chain([
+                        (&model.new_game, model.continue_game.is_none()),
+                        (&model.load_game, false),
+                    ]);
+                for (button, primary) in buttons {
+                    let mut widget =
+                        egui::Button::new(egui::RichText::new(&button.label).size(16.0).strong())
+                            .min_size(egui::vec2(width, if primary { 46.0 } else { 40.0 }));
+                    if primary {
+                        widget = widget
+                            .fill(egui::Color32::from_rgb(18, 78, 81))
+                            .stroke(egui::Stroke::new(1.0, super::title_scene::ACCENT));
+                    }
+                    let response = add_enabled(ui, button.enabled, widget);
+                    if primary
+                        && response.enabled()
+                        && ui.memory(|memory| memory.focused().is_none())
+                    {
+                        response.request_focus();
+                    }
+                    if response.clicked() {
+                        actions.push(button.action.clone());
+                    }
+                    if primary && let Some(details) = &model.continue_details {
+                        ui.label(
+                            egui::RichText::new(details)
+                                .size(13.0)
+                                .color(super::theme::TEXT),
+                        );
+                        ui.add_space(5.0);
+                    }
+                    ui.add_space(5.0);
+                }
+                let response = add_enabled(
+                    ui,
+                    model.quit.enabled,
+                    egui::Button::new(&model.quit.label)
+                        .frame(false)
+                        .min_size(egui::vec2(width, 28.0)),
+                );
+                if response.clicked() {
+                    actions.push(model.quit.action.clone());
+                }
+            });
     });
     actions
 }
@@ -175,15 +292,20 @@ pub(super) fn main_menu_screen(
     mut contexts: EguiContexts,
     area: Res<HudArea>,
     l10n: Res<Localizer>,
-    listings: Res<RegionListings>,
-    mut form: ResMut<MenuForm>,
     mut sink: ActionSink,
 ) -> Result {
-    let model = main_menu_model(&listings, &form, &l10n);
+    let model = main_menu_model(sink.persistence(), &l10n);
     let mut ui = area.root_ui(contexts.ctx_mut()?, "main_menu");
-    let actions = egui::CentralPanel::default()
-        .show(&mut ui, |ui| draw_main_menu(ui, &model, &mut form))
+    let mut actions = egui::CentralPanel::default()
+        .show(&mut ui, |ui| draw_main_menu(ui, &model))
         .inner;
+    // The first paint has been built before speculative replay is allowed to start.
+    if actions.is_empty()
+        && sink.persistence().screen == crate::sim::SaveScreen::Closed
+        && model.continue_game.is_some()
+    {
+        actions.push(UiAction::Persistence(PersistAction::PreloadResume));
+    }
     dispatch(actions, &mut sink);
     Ok(())
 }
@@ -222,6 +344,8 @@ pub struct RegionSelectModel {
     pub subtitle: String,
     pub map_title: String,
     pub map_note: String,
+    pub seed_label: String,
+    pub seed_invalid: String,
     pub regions: Vec<RegionChoice>,
     /// Shown instead of the list when there is nothing to pick from.
     pub empty: Option<String>,
@@ -232,7 +356,7 @@ pub struct RegionSelectModel {
 
 /// The region picker. Every listing is a button; a broken one is disabled, named by its file and
 /// shows its error, and the good ones stay playable (Review Focus 3). `seed` is `None` when the
-/// menu's seed field holds no valid seed, which disables every region.
+/// setup's seed field holds no valid seed, which disables every region.
 pub fn region_select_model(
     listings: &RegionListings,
     seed: Option<u64>,
@@ -254,6 +378,8 @@ pub fn region_select_model(
         subtitle: l10n.text("region-select-subtitle"),
         map_title: l10n.text("region-select-map-title"),
         map_note: l10n.text("region-select-map-note"),
+        seed_label: l10n.text("menu-seed"),
+        seed_invalid: l10n.text("menu-seed-invalid"),
         regions,
         empty,
         folder_error,
@@ -305,12 +431,37 @@ fn region_choice(listing: &RegionListing, seed: Option<u64>, l10n: &Localizer) -
     }
 }
 
-pub fn draw_region_select(ui: &mut egui::Ui, model: &RegionSelectModel) -> Vec<UiAction> {
+pub fn draw_region_select(
+    ui: &mut egui::Ui,
+    model: &RegionSelectModel,
+    form: &mut MenuForm,
+) -> Vec<UiAction> {
     let mut actions = Vec::new();
     ui.add_space(18.0);
     ui.label(egui::RichText::new(&model.title).size(30.0).strong());
     ui.label(&model.subtitle);
-    ui.add_space(18.0);
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        ui.label(&model.seed_label);
+        ui.add(
+            egui::TextEdit::singleline(&mut form.seed)
+                .desired_width(220.0)
+                .font(egui::TextStyle::Monospace),
+        );
+    });
+    let seed = form.parsed_seed();
+    if seed.is_none() {
+        ui.colored_label(ui.visuals().warn_fg_color, &model.seed_invalid);
+    }
+    // Bind clicks to this pass's edited value, never to the seed from the previous frame.
+    let mut model = model.clone();
+    for choice in &mut model.regions {
+        choice.button.enabled = choice.problem.is_none() && seed.is_some();
+        if let UiAction::NewGame { seed: current, .. } = &mut choice.button.action {
+            *current = seed.unwrap_or_default();
+        }
+    }
+    ui.add_space(12.0);
     let content_height = (ui.available_height() - 50.0).max(80.0);
     egui::ScrollArea::vertical()
         .max_height(content_height)
@@ -401,7 +552,7 @@ pub fn draw_region_select(ui: &mut egui::Ui, model: &RegionSelectModel) -> Vec<U
                             egui::UiBuilder::new()
                                 .max_rect(map_rect)
                                 .layout(egui::Layout::top_down(egui::Align::Min)),
-                            |ui| region_atlas::draw_map(ui, model, hovered, &mut actions),
+                            |ui| region_atlas::draw_map(ui, &model, hovered, &mut actions),
                         )
                         .inner;
                     if let Some(index) = active {
@@ -415,7 +566,7 @@ pub fn draw_region_select(ui: &mut egui::Ui, model: &RegionSelectModel) -> Vec<U
                 });
             } else {
                 if has_map {
-                    region_atlas::draw_map(ui, model, None, &mut actions);
+                    region_atlas::draw_map(ui, &model, None, &mut actions);
                     ui.add_space(14.0);
                 }
                 cards(ui, &mut actions);
@@ -438,7 +589,7 @@ pub(super) fn region_select_screen(
     l10n: Res<Localizer>,
     listings: Res<RegionListings>,
     atlas: Option<Res<RegionAtlas>>,
-    form: Res<MenuForm>,
+    mut form: ResMut<MenuForm>,
     mut sink: ActionSink,
 ) -> Result {
     let mut model = region_select_model(&listings, form.parsed_seed(), &l10n);
@@ -447,7 +598,7 @@ pub(super) fn region_select_screen(
     }
     let mut ui = area.root_ui(contexts.ctx_mut()?, "region_select");
     let actions = egui::CentralPanel::default()
-        .show(&mut ui, |ui| draw_region_select(ui, &model))
+        .show(&mut ui, |ui| draw_region_select(ui, &model, &mut form))
         .inner;
     dispatch(actions, &mut sink);
     Ok(())
@@ -485,53 +636,27 @@ mod tests {
     const WEST: (&str, &str) = ("western_interconnection", "region-western-interconnection");
 
     #[test]
-    fn menu_auto_skips_with_one_available_region() {
-        let l10n = shipped_l10n();
-        let one = RegionListings(Ok(vec![available(EAST.0, EAST.1)]));
-
-        let model = main_menu_model(&one, &MenuForm::new(42), &l10n);
-
+    fn menu_always_opens_setup_before_starting_a_game() {
+        let model = main_menu_model(&Persistence::default(), &shipped_l10n());
         assert_eq!(
             model.new_game.action,
-            UiAction::NewGame {
-                region: RegionId::new(EAST.0),
-                seed: 42
-            }
+            UiAction::Navigate(MenuScreen::RegionSelect)
         );
         assert!(model.new_game.enabled);
     }
 
     #[test]
-    fn menu_opens_the_picker_unless_exactly_one_region_is_available() {
-        let picker = UiAction::Navigate(MenuScreen::RegionSelect);
-        let cases = [
-            Ok(vec![available(EAST.0, EAST.1), available(WEST.0, WEST.1)]),
-            Ok(vec![broken(EAST.0)]),
-            Ok(vec![available(EAST.0, EAST.1), broken(WEST.0)]),
-            Ok(vec![]),
-            Err(RegionLoadError::Io {
-                region: RegionId::new("assets/regions"),
-                message: "no such directory".to_owned(),
-            }),
-        ];
-
-        for listings in cases {
-            assert_eq!(new_game_action(&listings, 1), picker, "{listings:?}");
-        }
-    }
-
-    #[test]
-    fn an_invalid_seed_disables_new_game_and_says_why() {
+    fn an_invalid_seed_disables_region_selection_and_says_why() {
         let l10n = shipped_l10n();
         let one = RegionListings(Ok(vec![available(EAST.0, EAST.1)]));
         let form = MenuForm {
             seed: "not a number".to_owned(),
         };
 
-        let model = main_menu_model(&one, &form, &l10n);
+        let model = region_select_model(&one, form.parsed_seed(), &l10n);
 
-        assert!(!model.new_game.enabled);
-        assert_eq!(model.seed_error, Some(l10n.text("menu-seed-invalid")));
+        assert!(model.regions.iter().all(|r| !r.button.enabled));
+        assert_eq!(model.seed_invalid, l10n.text("menu-seed-invalid"));
         assert_eq!(MenuForm::new(7).parsed_seed(), Some(7));
         let padded = MenuForm {
             seed: " 12 ".to_owned(),

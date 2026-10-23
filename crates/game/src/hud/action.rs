@@ -326,7 +326,10 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             | UiAction::EditCommitment { .. }
             | UiAction::ToggleWarnings
             | UiAction::DiscardCommitmentDraft => {}
-            UiAction::Navigate(screen) => sink.next_state.set(screen.into()),
+            UiAction::Navigate(screen) => {
+                sink.persistence.discard_preload();
+                sink.next_state.set(screen.into());
+            }
             UiAction::Prompt(Some(Prompt::LeaveGame)) if sink.persistence.enabled() => {
                 sink.persistence.request(
                     PersistAction::OpenLeave,
@@ -340,6 +343,7 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             UiAction::ShowFinalMonth => *sink.game_over_view = GameOverView::FinalMonth,
             UiAction::ShowGameOverSummary => *sink.game_over_view = GameOverView::Summary,
             UiAction::Quit => {
+                sink.persistence.discard_preload();
                 sink.exit.write(AppExit::Success);
             }
         }

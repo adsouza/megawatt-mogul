@@ -179,8 +179,13 @@ in US$. The two regions play differently:
 - **West:** long distances, mountains, southwest solar, Pacific Northwest and BC hydro, and a steep
   evening duck curve.
 
-**The region picker is skipped automatically when exactly one region exists.** With two regions it
-is shown.
+**New game always opens setup**, including when exactly one region is installed. The editable
+seed and its validation appear only here, alongside region selection. The opening menu and Load
+game have no seed setting. Back preserves the draft seed; invalid seeds disable all region starts
+but never prevent opening setup. Region clicks use the current edited value. On launch, scan
+snapshots before choosing the first screen: an empty save directory opens this setup directly.
+Back still opens the main menu. Existing snapshots, including unreadable ones, keep the main menu
+and Load game available; a directory error must not be treated as an empty directory.
 
 The picker shows a North America overview with each available region coloured from its region
 file's geographic outline. Hovering a region highlights it and its labelled card; clicking the
@@ -193,8 +198,7 @@ preview remain selectable through their cards; broken entries retain their disab
 
 ### 3.1 In scope
 
-- Main menu, then the region picker (auto-skipped when only one region exists), then a new game
-  with a seed.
+- Main menu, then new-game setup with region selection and an editable seed, then a new game.
 - Both regions as data files (`assets/regions/*.ron`).
 - A 3D diorama map built from the region's terrain cell grid, with phase-specific overlays (§8.3).
 - Six plant types (§3.2), plant construction, and transmission-line construction for connectivity.
@@ -623,6 +627,35 @@ The presentation layer never reads aggregate internals.
 
 ### 8.2 Art direction
 
+- **Opening screen:** a dark blueprint background, prominent game title and concise premise,
+  with a decorative isometric grid at dusk: city blocks, a power station with roof-mounted
+  smokestacks, a continuous river surface and a
+  continuously turning waterwheel partially submerged in the water, with its underwater paddles
+  hidden and three concentric ripples at each waterline crossing: expanding where the wheel
+  rises out of the water, contracting where it dips in. Stagger and fade the rings for a
+  continuous cycle. The two animated power routes merge just before the city.
+  City windows start dark, switch on in shuffled order over three seconds, stay lit for two
+  seconds, then switch off in a separately shuffled order over three seconds. Hold dark briefly
+  and repeat, with fresh orders each cycle. The thermal station emits rising smoke only while
+  at least one window is lit; its power-line pulses pause while every window is dark and resume
+  without jumping as the first light returns. The hydro source and shared city feed flow
+  continuously with the waterwheel. Use resolution-independent procedural artwork consistent with the in-game
+  diorama. When a readable monthly autosave exists, put Resume game first as the primary,
+  keyboard-default action and show its name, region, month and saved phase/time. It loads the
+  newest automatic monthly snapshot by saved-at time (ties by slot ID), regardless of manual
+  saves or what was last loaded. Without one, New game is primary. Retain Load game and Quit; keep the seed field exclusively in new-game setup. At narrow widths simplify to
+  the menu column; scroll vertically if needed at extreme UI zoom. Artwork never intercepts input or
+  starts/advances a session. Text retains the minimum contrast on opaque surfaces.
+- **Save library:** carry the opening screen's navy/teal palette into Load game, with a larger
+  header and two independently scrolling columns: large named manual-save cards on the wider
+  left, and smaller cards for up to the 12 newest automatic monthly snapshots on the right.
+  Sort each group by saved-at time, ties by slot ID; renamed automatic saves remain automatic.
+  The cap filters the display only and never deletes snapshots or caps named saves. Retain
+  region/month/phase/time, saved timestamp and game-over status, with Resume beside Rename.
+  Keep Refresh/Cancel/Retry outside both scrolling columns and visible at minimum window size
+  and increased UI zoom. Corrupt entries remain visible in a separate Unreadable saves group
+  below named games, with their diagnostic and no resume/rename actions. Each column has an
+  empty state; at extreme zoom stack the groups inside one bounded scroll area.
 - **Base view:** a warm, toy-like tabletop diorama (low-poly, soft shadows, tilt-shift).
   A terrain cell is one world unit. Fit each city cluster and plant model, including its base,
   inside a centred 0.8 × 0.8-cell footprint; scale all three axes together to preserve silhouettes.
@@ -711,8 +744,10 @@ Actual per-line loading still requires a power-flow `NetworkModel`.
   When increased UI zoom leaves less height than the Operating sidebar needs, the column itself
   scrolls so the full card and plant list remain reachable.
 - **Review:** a modal filling the available window width below the top bar, with a 16-point outer
-  margin. Both the report and retrospective use this full width. It shows P&L, the merit order
-  used, an incidents timeline and the lessons. A pinned **Supply demand retrospective** button switches the modal to the complete
+  margin. Both the report and retrospective use this full width. Place the merit-order table
+  in a right-hand column beside the summary (P&L, reliability, incidents, lessons and regulation)
+  on the left. Both columns scroll independently; at extreme UI zoom, stack them in one bounded
+  scroll area. A pinned **Supply demand retrospective** button switches the modal to the complete
   finished-day graph; **Review summary** returns to the report. Continue (or Back after game over)
   remains visible in either view. Viewing a graph never advances or finishes the month.
 - **Supply history:** History tabs in Planning and Operating revisit any completed month through
@@ -1719,7 +1754,25 @@ separate autosave at each month close, as selected by the user.
   Its dialog creates a named slot or overwrites a selected manual slot after confirmation. Names
   are trimmed, contain 1–80 Unicode scalar values and no control characters. Names are display
   metadata, never file paths. Autosave slots cannot be selected for manual overwrite.
-- **Load game** on the main menu lists manual saves and autosaves, newest first, with name,
+- **Resume game** on the opening screen loads the most recent readable automatic monthly
+  snapshot through the normal verified load path, entering paused. Manual saves never determine
+  this target. It is the primary button and initial keyboard focus; Enter activates it. While
+  loading, keep the opening screen behind a compact Resuming game progress dialog with Cancel;
+  do not show the save library during a successful shortcut load. After the first opening-screen
+  paint, verify this snapshot in a background worker and retain one candidate in memory. Keep
+  the menu interactive; do not install a session, advance simulation, or create recording files
+  speculatively. Resume reuses the verified candidate without replaying it twice, waiting for
+  the same worker if necessary. Any other menu choice or cancellation drops the candidate and
+  cancels pending work; late results cannot install a game. Bind the cache to the slot revision
+  and re-check the source before opening a fresh recording on explicit Resume. A load failure opens the save browser with its normal error/cancel/retry controls and never silently
+  loads a different game. Refresh the snapshot index when returning from play. Hide Resume game
+  when no readable automatic snapshot exists. Only a successfully scanned, empty save directory
+  skips the opening screen on launch and goes directly to new-game setup; errors or unreadable
+  files preserve access to the menu and save browser. This shortcut applies only at launch.
+- **Load game** on the main menu separates named manual saves into large left-column cards and
+  the newest 12 readable automatic monthly snapshots into smaller right-column cards. Both
+  groups scroll independently; the display cap never deletes files or limits the Save dialog.
+  Entries are newest first, with name,
   region, calendar month, phase, game minute, saved-at time and game-over status. Ties sort by
   opaque slot ID. An empty list says so. A bad slot remains visible with a localised reason and
   does not hide good slots; if its metadata cannot be decoded, show its file ID and use filesystem
@@ -1734,6 +1787,16 @@ separate autosave at each month close, as selected by the user.
   the same atomic replacement, OS lock and revision check as a save; conflicts never overwrite
   another writer's change. Errors remain visible with Retry, including unconfirmed directory
   durability. A renamed active run's autosave retains its chosen name at later month closes.
+- **Delete** is available on Load game cards for manual and automatic saves. Ask for
+  confirmation with the save's name and identifying details, warn that deletion is permanent,
+  and default keyboard focus to Cancel. Choosing Delete or cancelling the confirmation changes
+  no files. Confirming removes only that snapshot, under the slot's OS lock and expected raw-byte
+  revision; a changed slot is rejected. Unreadable snapshots can also be deleted when their valid
+  slot ID and raw-byte revision are known. Keep errors visible with Retry and Cancel; disable
+  cancellation during the deletion worker. Directory-sync failure reports unconfirmed deletion
+  durability, and Retry safely confirms an absent file without deleting a replacement. Refresh
+  the library and opening screen's newest-automatic Resume choice after deletion; reveal the next
+  snapshot when a capped automatic column has more entries. Never load a game to delete it.
 - **Resume** restores the exact accepted-command boundary: all simulation state, including RNG
   progression, construction, plant overrides and hydro water remaining, plus every projection.
   An Operating save at 14:37 returns to Operating at 14:37. A Review save returns to that Review;
@@ -1853,14 +1916,14 @@ hash or a stored snapshot would remove it; both are future work.
 
 The initial implementation leaves `SIM_RULES_VERSION` at 6 and `LOG_FORMAT_VERSION` at 1. Changing
 those is justified only by an independent rule or raw-log-format change. Save codec changes use
-their own version. Raw diagnostic-log import, cloud sync, deletion/rename tools, UI-state saves,
+their own version. Raw diagnostic-log import, cloud sync, UI-state saves,
 aggregate snapshots and migration of incompatible saves are outside Plan 2b.
 
 ### 17.4 Reconstruct a runnable game, then publish it
 
 `SaveStore` is an application-owned `Send + Sync` port, implemented by infrastructure. Its typed
-operations list entries with per-slot errors, read a verified bundle, and write a new slot or
-replace an expected revision. Application types contain no serde, paths or user-facing copy;
+operations list entries with per-slot errors and optional raw-byte revisions, read a verified
+bundle, write a new slot or replace an expected revision, rename, and delete an expected revision. Application types contain no serde, paths or user-facing copy;
 infrastructure owns DTOs, bytes, hashing, IDs, filesystem paths and atomic publication. Game owns
 localised dialogs and request orchestration. No Bevy, I/O or persistence fields enter the domain.
 
@@ -1937,6 +2000,12 @@ boundary; distinguish "recording stopped" from "save failed".
 
 ### 17.6 Acceptance
 
+- Opening-screen Resume game chooses the newest automatic save despite newer manual saves,
+  stable slot-ID ties and unsorted listings; verify mouse and Enter activation, small-window
+  layout, paused restoration, empty-directory routing, manual-only/corrupt/error cases and Back.
+  Preloading starts after the first paint, stays interactive, creates no files or live session,
+  reuses in-flight verification, and discards ready/late candidates on other choices. A source
+  replaced or deleted after preloading cannot silently load the cached revision.
 - Save and resume Planning, mid-Operating, Review and game over; compare state hash **and every
   public projection/view**, not only cash or phase. Apply the same subsequent commands to an
   uninterrupted game and the resumed one; all outcomes, RNG-driven values and reports agree.

@@ -153,6 +153,14 @@ pub fn utc_stamp(unix_secs: u64) -> String {
     format!("{year:04}{month:02}{day:02}-{hour:02}{minute:02}{second:02}")
 }
 
+/// Human-readable UTC date and time for save cards; keeps filename stamps unchanged.
+pub fn utc_date_time(unix_secs: u64) -> String {
+    let (year, month, day) = civil_from_days(unix_secs / 86_400);
+    let secs = unix_secs % 86_400;
+    let (hour, minute, second) = (secs / 3_600, secs % 3_600 / 60, secs % 60);
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}")
+}
+
 /// The proleptic Gregorian (year, month, day) of a count of days since 1970-01-01. Howard
 /// Hinnant's `civil_from_days`, for days on or after the epoch: eras are 400-year cycles of
 /// 146,097 days, counted from 0000-03-01 so the leap day ends each year.
@@ -200,6 +208,13 @@ mod tests {
         assert_eq!(utc_stamp(1_234_567_890), "20090213-233130");
         assert_eq!(utc_stamp(1_700_000_000), "20231114-221320");
         assert_eq!(utc_stamp(4_102_444_799), "20991231-235959");
+    }
+
+    #[test]
+    fn display_timestamps_are_readable_and_keep_the_exact_saved_second() {
+        assert_eq!(utc_date_time(0), "1970-01-01 00:00:00");
+        assert_eq!(utc_date_time(951_782_400), "2000-02-29 00:00:00");
+        assert_eq!(utc_date_time(1_700_000_000), "2023-11-14 22:13:20");
     }
 
     #[test]

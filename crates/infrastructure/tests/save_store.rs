@@ -675,3 +675,162 @@ fn save_store_rename_leaves_corrupt_files_and_invalid_names_untouched() {
     );
     assert_eq!(std::fs::read(&path).unwrap(), b"corrupt");
 }
+
+#[test]
+fn save_delete_removes_only_the_confirmed_revision_and_can_remove_corrupt_snapshots() {
+    let root = TempDir::new().unwrap();
+    let store = FileSaveStore::new(root.path().into());
+    let chosen = bundle(&store, "Chosen");
+    let keep = bundle(&store, "Keep");
+    let receipt = store
+        .write(&chosen, &SaveTarget::Create, &|| false)
+        .unwrap();
+    store.write(&keep, &SaveTarget::Create, &|| false).unwrap();
+    let keep_bytes = std::fs::read(
+        root.path()
+            .join(format!("{}.mgsave", keep.metadata.slot.as_str())),
+    )
+    .unwrap();
+    assert_eq!(
+        store.delete(&chosen.metadata.slot, receipt.revision, &|| true),
+        Err(SaveError::Cancelled)
+    );
+    assert_eq!(store.list().unwrap().len(), 2);
+    let renamed = store
+        .rename(
+            &chosen.metadata.slot,
+            receipt.revision,
+            "Other window",
+            &|| false,
+        )
+        .unwrap();
+    assert_eq!(
+        store.delete(&chosen.metadata.slot, receipt.revision, &|| false),
+        Err(SaveError::SlotChanged)
+    );
+    store
+        .delete(&chosen.metadata.slot, renamed.revision, &|| false)
+        .unwrap();
+    assert_eq!(store.list().unwrap().len(), 1);
+    assert_eq!(
+        std::fs::read(
+            root.path()
+                .join(format!("{}.mgsave", keep.metadata.slot.as_str()))
+        )
+        .unwrap(),
+        keep_bytes
+    );
+    let corrupt = SaveId::new("f".repeat(32)).unwrap();
+    std::fs::write(
+        root.path().join(format!("{}.mgsave", corrupt.as_str())),
+        b"broken save",
+    )
+    .unwrap();
+    let listing = store
+        .list()
+        .unwrap()
+        .into_iter()
+        .find(|entry| entry.id.as_ref() == Some(&corrupt))
+        .unwrap();
+    assert!(listing.entry.is_err());
+    store
+        .delete(&corrupt, listing.revision.unwrap(), &|| false)
+        .unwrap();
+    assert_eq!(store.list().unwrap().len(), 1);
+}
+
+#[test]
+fn save_delete_uses_the_slot_lock_and_retries_uncertain_directory_durability() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let root = TempDir::new().unwrap();
+    let store = FileSaveStore::new(root.path().into());
+    let chosen = bundle(&store, "Chosen");
+    let receipt = store
+        .write(&chosen, &SaveTarget::Create, &|| false)
+        .unwrap();
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(
+            root.path()
+                .join(format!("{}.lock", chosen.metadata.slot.as_str())),
+        )
+        .unwrap();
+    lock.try_lock().unwrap();
+    assert_eq!(
+        store.delete(&chosen.metadata.slot, receipt.revision, &|| false),
+        Err(SaveError::SlotBusy)
+    );
+    drop(lock);
+    let failing = Arc::new(AtomicBool::new(true));
+    let fail = failing.clone();
+    let store = store.with_directory_sync(Arc::new(move |_| {
+        if fail.load(Ordering::Relaxed) {
+            Err(std::io::Error::other("directory unavailable"))
+        } else {
+            Ok(())
+        }
+    }));
+    assert_eq!(
+        store.delete(&chosen.metadata.slot, receipt.revision, &|| false),
+        Err(SaveError::DeleteDurabilityUnconfirmed {
+            slot: chosen.metadata.slot.clone()
+        })
+    );
+    assert!(store.list().unwrap().is_empty());
+    failing.store(false, Ordering::Relaxed);
+    store
+        .delete(&chosen.metadata.slot, receipt.revision, &|| false)
+        .unwrap();
+    assert!(store.list().unwrap().is_empty());
+    let mut replacement = chosen;
+    replacement.metadata.name = "Recreated".into();
+    store
+        .write(&replacement, &SaveTarget::Create, &|| false)
+        .unwrap();
+    assert_eq!(
+        store.delete(&replacement.metadata.slot, receipt.revision, &|| false),
+        Err(SaveError::SlotChanged)
+    );
+    assert_eq!(
+        store
+            .read(&replacement.metadata.slot)
+            .unwrap()
+            .0
+            .metadata
+            .name,
+        "Recreated"
+    );
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(16))]
+    #[test]
+    fn save_delete_preserves_every_unselected_snapshot(
+        names in proptest::collection::vec("[a-z]{1,12}", 1..6),
+        chosen in proptest::num::usize::ANY,
+    ) {
+        let dir = TempDir::new().unwrap();
+        let store = FileSaveStore::new(dir.path().into());
+        let mut b = bundle(&store, "Template");
+        let mut originals = Vec::new();
+        for name in names {
+            b.metadata.slot = store.allocate_id();
+            b.metadata.name = name;
+            let receipt = store.write(&b, &SaveTarget::Create, &|| false).unwrap();
+            let path = dir.path().join(format!("{}.mgsave", b.metadata.slot.as_str()));
+            originals.push((receipt, path.clone(), std::fs::read(path).unwrap()));
+        }
+        let selected = chosen % originals.len();
+        let receipt = &originals[selected].0;
+        store.delete(&receipt.metadata.slot, receipt.revision, &|| false).unwrap();
+        for (index, (_, path, bytes)) in originals.iter().enumerate() {
+            if index == selected {
+                proptest::prop_assert!(!path.exists());
+            } else {
+                proptest::prop_assert_eq!(std::fs::read(path).unwrap(), bytes.clone());
+            }
+        }
+        proptest::prop_assert_eq!(store.list().unwrap().len(), originals.len() - 1);
+    }
+}

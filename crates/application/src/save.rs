@@ -103,6 +103,8 @@ pub struct SaveListing {
     pub id: Option<SaveId>,
     pub file_label: String,
     pub modified_at: u64,
+    /// Digest of the listed bytes, retained even when a safely identified file cannot decode.
+    pub revision: Option<SaveRevision>,
     pub entry: Result<SaveEntry, SaveError>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,6 +142,8 @@ pub enum SaveError {
         slot: SaveId,
         revision: SaveRevision,
     },
+    #[error("deletion durability unconfirmed for {slot:?}")]
+    DeleteDurabilityUnconfirmed { slot: SaveId },
     #[error("cancelled")]
     Cancelled,
     #[error("{stage}: {message}")]
@@ -180,6 +184,16 @@ pub trait SaveStore: Send + Sync {
     fn now(&self) -> u64;
     fn list(&self) -> Result<Vec<SaveListing>, SaveError>;
     fn read(&self, id: &SaveId) -> Result<(SaveBundle, crate::LoadedRegion), SaveError>;
+    /// Re-check a preloaded source before publishing it. File stores can hash the bytes without
+    /// decoding or replaying; other adapters may use their normal listing revision.
+    fn revision(&self, id: &SaveId) -> Result<SaveRevision, SaveError> {
+        self.list()?
+            .into_iter()
+            .find(|listing| listing.id.as_ref() == Some(id))
+            .ok_or(SaveError::SlotChanged)?
+            .entry
+            .map(|entry| entry.revision)
+    }
     /// Change only the display name, preserving the recorded game, stamp and saved-at time.
     /// Reject a stale revision; publication has the same guarantees as `write`.
     fn rename(
@@ -189,6 +203,15 @@ pub trait SaveStore: Send + Sync {
         name: &str,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<SaveReceipt, SaveError>;
+    /// Delete only these confirmed bytes under the slot lock. An already absent file is an
+    /// idempotent retry; a replacement must still match `revision`. Success confirms directory
+    /// durability; a post-removal sync failure is `DeleteDurabilityUnconfirmed`.
+    fn delete(
+        &self,
+        id: &SaveId,
+        revision: SaveRevision,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<(), SaveError>;
     fn write(
         &self,
         bundle: &SaveBundle,
