@@ -203,7 +203,7 @@ fn the_real_pass_draws_each_phases_panels_and_only_those() {
     }
     assert!(!has(&widgets, review_modal), "Operating has no review");
 
-    // Review: the modal over the map, with the top bar, and neither phase's panels.
+    // Review: the opaque modal with the top bar, no map, and neither phase's panels.
     dispatch_in(
         &mut app,
         vec![UiAction::Command(Command::AdvanceTicks { n: 1_440 })],
@@ -211,7 +211,10 @@ fn the_real_pass_draws_each_phases_panels_and_only_those() {
     update_n(&mut app, 3);
     assert_eq!(phase(&app), PhaseState::Review);
     let widgets = pass.settled(&mut app, 1024.0, 640.0);
-    assert!(has(&widgets, "Map"), "the map draws behind the modal");
+    assert!(
+        !has(&widgets, "Map"),
+        "Review hides the map behind its opaque modal"
+    );
     assert!(has(&widgets, "Menu") && has(&widgets, "Milestones"));
     assert!(has(&widgets, review_modal) && has(&widgets, "Continue"));
     for text in planning_panels.iter().chain(&operating_panels) {
