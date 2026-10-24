@@ -357,6 +357,13 @@ impl GameSession {
             .collect()
     }
 
+    /// Month closes until an ordered path links this city to the home grid.
+    /// Zero for an existing connection, `None` for an unknown or unreachable city.
+    pub fn city_connection_months(&self, city: CityId) -> Option<u32> {
+        let city = self.power.cities().get(&city)?;
+        self.power.network().months_until_connected(city.node())
+    }
+
     /// The months `line` takes to build in all: what its quote said when it was ordered, by the
     /// rule [`GameSession::build_line`] charges, so a line under construction can show its total
     /// beside its months left (spec §16.9). It reads the line's stored length, as the month close

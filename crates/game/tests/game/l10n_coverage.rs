@@ -170,6 +170,10 @@ fn region_errors() -> Vec<RegionError> {
         RegionError::DuplicatePlantSpec(PlantKind::Coal),
         RegionError::CityOutOfBounds(city),
         RegionError::CityNotOnLand(city),
+        RegionError::CityCellOccupied {
+            city,
+            cell: CellCoord { x: 1, y: 1 },
+        },
         RegionError::DuplicateCity(city),
         RegionError::UnknownStartCity(city),
         RegionError::InvalidStartSite {
@@ -540,7 +544,8 @@ fn the_variant_tables_cover_every_variant() {
         DomainError::UnknownLine { .. } => 22,
         DomainError::LineNotUnderConstruction { .. } => 23,
     });
-    assert_covers_every_variant("RegionError", &region_errors(), 11, |e| match e {
+    assert_covers_every_variant("RegionError", &region_errors(), 12, |e| match e {
+        RegionError::CityCellOccupied { .. } => 11,
         RegionError::GridSizeMismatch { .. } => 0,
         RegionError::MissingPlantSpec(_) => 1,
         RegionError::DuplicatePlantSpec(_) => 2,

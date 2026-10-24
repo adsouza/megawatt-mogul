@@ -656,13 +656,29 @@ fn stopped_hydro_with_agc_enabled_does_not_starve_the_running_unit() {
     parts.demand.shoulder = [1.0; 24];
     parts.demand.monthly = [1.0; 12];
     parts.demand.forecast_error = Ratio::ZERO;
-    parts.start.fleet = vec![
-        StartPlantDef {
+    // Give the second unit its own equivalent hydro site. Both lines still price five cells.
+    let terrain = &parts.terrain;
+    let hydro_site = terrain.get(cell(10, 1)).unwrap();
+    let cells = (0..terrain.height())
+        .flat_map(|y| {
+            (0..terrain.width()).map(move |x| {
+                if (x, y) == (10, 2) {
+                    hydro_site.clone()
+                } else {
+                    terrain.get(cell(x, y)).unwrap().clone()
+                }
+            })
+        })
+        .collect();
+    parts.terrain =
+        crate::region::TerrainGrid::new(terrain.width(), terrain.height(), cells).unwrap();
+    parts.start.fleet = [cell(10, 1), cell(10, 2)]
+        .into_iter()
+        .map(|cell| StartPlantDef {
             kind: PlantKind::Hydro,
-            cell: cell(10, 1),
-        };
-        2
-    ];
+            cell,
+        })
+        .collect();
     let mut s = GameSession::new(
         Arc::new(RegionDefinition::try_from(parts).unwrap()),
         1,

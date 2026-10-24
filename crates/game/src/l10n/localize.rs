@@ -269,6 +269,14 @@ impl Localize for RegionError {
             Self::CityNotOnLand(city) => {
                 l10n.args("region-error-city-not-on-land", &[("city", id_of!(city))])
             }
+            Self::CityCellOccupied { city, cell } => l10n.args(
+                "region-error-city-cell-occupied",
+                &[
+                    ("city", id_of!(city)),
+                    ("x", cell.x.to_string().into()),
+                    ("y", cell.y.to_string().into()),
+                ],
+            ),
             Self::DuplicateCity(city) => {
                 l10n.args("region-error-duplicate-city", &[("city", id_of!(city))])
             }

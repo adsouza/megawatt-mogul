@@ -7,7 +7,6 @@
 
 use application::Game;
 use bevy_egui::egui;
-use domain::grid::LineStatus;
 use domain::ids::CityId;
 use domain::time::{SimMonth, TICKS_PER_HOUR};
 use domain::units::{Megawatts, Ratio};
@@ -94,27 +93,11 @@ pub fn city_card_model(game: &Game, l10n: &Localizer, city: CityId) -> Option<Ci
     })
 }
 
-/// The month the first line under construction to `city` enters service, if one is being built:
-/// any line that ends at the city's node, by the Construction tab's rule ([`in_service_month`]).
+/// The month a complete ordered route connects the city to the home grid.
 fn connected_from(game: &Game, city: CityId) -> Option<SimMonth> {
     let session = game.session();
-    let node = session
-        .city_views()
-        .into_iter()
-        .find(|c| c.id == city)?
-        .node;
-    let (phase, month) = (session.phase(), session.clock().month());
-    session
-        .line_views()
-        .into_iter()
-        .filter(|line| line.from == node || line.to == node)
-        .filter_map(|line| match line.status {
-            LineStatus::UnderConstruction { months_left } => {
-                Some(in_service_month(phase, month, months_left))
-            }
-            LineStatus::InService => None,
-        })
-        .min()
+    let months = session.city_connection_months(city)?;
+    (months > 0).then(|| in_service_month(session.phase(), session.clock().month(), months))
 }
 
 /// The share of `demand` not served, when any is cut: by a rotating outage, protection's shed or
@@ -153,9 +136,7 @@ mod tests {
     use domain::session::{CityDetail, DayPhase};
 
     use super::*;
-    use crate::hud::test_support::{
-        eastern_game, empty_start, order_short_line, shipped_game, shipped_l10n,
-    };
+    use crate::hud::test_support::{eastern_game, empty_start, shipped_game, shipped_l10n};
     use crate::hud::{Project, construction_model, in_service_month};
 
     fn card(game: &Game, city: CityId) -> CityCardModel {
@@ -253,6 +234,135 @@ mod tests {
             .node
     }
 
+    #[test]
+    fn connection_date_tracks_the_complete_path_and_actual_commissioning() {
+        let l10n = shipped_l10n();
+        let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let cities: Vec<_> = game
+            .session()
+            .city_views()
+            .into_iter()
+            .filter(|c| !c.connected)
+            .collect();
+        let root = game.session().anchor_node();
+        let mut paths = Vec::new();
+        for a in &cities {
+            for b in &cities {
+                if a.id == b.id {
+                    continue;
+                }
+                let feeder = game.session().line_quote(root, a.node).unwrap().months;
+                let local = game.session().line_quote(a.node, b.node).unwrap().months;
+                if feeder > local {
+                    paths.push((feeder, local, a.clone(), b.clone()));
+                }
+            }
+        }
+        let (feeder, local, a, b) = paths.into_iter().min_by_key(|p| (p.0, p.1)).unwrap();
+        game.execute(Command::BuildLine {
+            from: a.node,
+            to: b.node,
+        })
+        .unwrap();
+        assert_eq!(
+            card(&game, b.id).hint,
+            Some(l10n.text("city-connect-hint")),
+            "an isolated island has no connection date"
+        );
+        game.execute(Command::BuildLine {
+            from: root,
+            to: a.node,
+        })
+        .unwrap();
+        let mut due = game.session().clock().month();
+        for _ in 0..feeder {
+            due = due.next();
+        }
+        let expected_hint = l10n.args(
+            "city-line-under-construction",
+            &[("month", format::month_year(due).into())],
+        );
+        assert!(local < feeder);
+        for elapsed in 0..feeder {
+            assert_eq!(
+                card(&game, b.id).hint.as_deref(),
+                Some(expected_hint.as_str())
+            );
+            game.execute(Command::BeginOperating).unwrap();
+            assert_eq!(
+                card(&game, b.id).hint.as_deref(),
+                Some(expected_hint.as_str())
+            );
+            game.execute(Command::AdvanceTicks {
+                n: domain::time::TICKS_PER_DAY,
+            })
+            .unwrap();
+            assert_eq!(
+                game.session().city_detail(b.id).unwrap().connected,
+                elapsed + 1 == feeder
+            );
+            if elapsed + 1 < feeder {
+                assert_eq!(
+                    card(&game, b.id).hint.as_deref(),
+                    Some(expected_hint.as_str()),
+                    "Review must keep the same date after counting this close"
+                );
+            } else {
+                assert_eq!(card(&game, b.id).hint, None);
+            }
+            game.execute(Command::FinishReview).unwrap();
+        }
+        assert_eq!(game.session().clock().month(), due);
+        assert!(card(&game, b.id).connected);
+        assert!(l10n.problems().is_empty());
+    }
+
+    #[test]
+    fn cancelling_the_only_feeder_removes_the_islands_connection_date() {
+        let l10n = shipped_l10n();
+        let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let cities: Vec<_> = game
+            .session()
+            .city_views()
+            .into_iter()
+            .filter(|c| !c.connected)
+            .take(2)
+            .collect();
+        let root = game.session().anchor_node();
+        game.execute(Command::BuildLine {
+            from: cities[0].node,
+            to: cities[1].node,
+        })
+        .unwrap();
+        let events = game
+            .execute(Command::BuildLine {
+                from: root,
+                to: cities[0].node,
+            })
+            .unwrap();
+        let feeder = events
+            .iter()
+            .find_map(|event| match event {
+                domain::events::DomainEvent::LineConstructionStarted { line } => Some(*line),
+                _ => None,
+            })
+            .unwrap();
+        assert_ne!(
+            card(&game, cities[1].id).hint,
+            Some(l10n.text("city-connect-hint"))
+        );
+        game.execute(Command::CancelLineConstruction { line: feeder })
+            .unwrap();
+        for city in cities {
+            assert_eq!(
+                card(&game, city.id).hint,
+                Some(l10n.text("city-connect-hint"))
+            );
+            assert!(!card(&game, city.id).connected);
+        }
+        assert!(l10n.problems().is_empty());
+    }
+
     /// The hint of an unconnected city follows the lines being built to it (spec §16.8): build a
     /// line with none, the month it connects with one, and nothing once it is connected.
     #[test]
@@ -262,7 +372,23 @@ mod tests {
         let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
 
         // Unconnected, no line: build one.
-        let (line, months) = order_short_line(&mut game);
+        let session = game.session();
+        let root = session.anchor_node();
+        let (months, to) = session
+            .city_views()
+            .iter()
+            .filter(|c| !c.connected)
+            .map(|c| (session.line_quote(root, c.node).unwrap().months, c.node))
+            .min()
+            .unwrap();
+        let events = game.execute(Command::BuildLine { from: root, to }).unwrap();
+        let line = events
+            .iter()
+            .find_map(|event| match event {
+                domain::events::DomainEvent::LineConstructionStarted { line } => Some(*line),
+                _ => None,
+            })
+            .unwrap();
         let view = game
             .session()
             .line_views()
@@ -289,7 +415,7 @@ mod tests {
         let session = game.session();
         let due = in_service_month(session.phase(), session.clock().month(), months);
         let expected = format!(
-            "A line to it is under construction: connected from {}",
+            "Grid connection under construction: connected from {}",
             format::month_year(due)
         );
         let model = card(&game, target);

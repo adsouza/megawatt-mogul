@@ -241,7 +241,14 @@ fn flat_december() -> RegionDefinitionParts {
         }
     }
     let coal = parts.start.fleet[0].clone();
-    parts.start.fleet = vec![coal.clone(), coal.clone(), coal];
+    // Distinct cooled sites, each still two priced line cells from the home city.
+    parts.start.fleet = [(7, 3), (8, 4), (6, 2)]
+        .into_iter()
+        .map(|(x, y)| crate::region::StartPlantDef {
+            cell: cell(x, y),
+            ..coal.clone()
+        })
+        .collect();
     parts
 }
 

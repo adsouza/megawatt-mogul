@@ -2226,6 +2226,63 @@ fn target_slider_sends_once_on_release_within_bounds() {
     );
 }
 
+#[test]
+fn operating_start_click_only_emits_a_command_that_can_finish_by_midnight() {
+    use domain::{region::PlantKind, time::TICKS_PER_DAY};
+    let l10n = shipped_l10n();
+    for late in [false, true] {
+        let mut game = eastern_game();
+        let plant = game
+            .session()
+            .plant_views()
+            .into_iter()
+            .find(|p| p.kind == PlantKind::Peaker)
+            .unwrap()
+            .id;
+        let startup = game
+            .session()
+            .region()
+            .spec(PlantKind::Peaker)
+            .startup
+            .ticks();
+        game.execute(Command::StopPlant { plant }).unwrap();
+        game.execute(Command::BeginOperating).unwrap();
+        game.execute(Command::AdvanceTicks {
+            n: TICKS_PER_DAY - startup + u32::from(late),
+        })
+        .unwrap();
+        let model = plant_panel_model(&game, &l10n, Selection::Plant(plant));
+        let form = RefCell::new(PlantPanelForm::default());
+        let harness = Harness::new();
+        let draw = |ui: &mut egui::Ui| {
+            egui::Panel::right("operating_side")
+                .exact_size(OPERATING_SIDE_WIDTH)
+                .show(ui, |ui| {
+                    draw_plant_panel(ui, &model, &mut form.borrow_mut())
+                })
+                .inner
+        };
+        harness.draw(draw);
+        let widgets = harness.draw(draw);
+        assert_eq!(find_button(&widgets, "Start").disabled, late);
+        let before = game.checkpoint();
+        let actions = harness.click("Start", draw);
+        if late {
+            assert!(actions.is_empty());
+            assert_eq!(game.checkpoint(), before);
+        } else {
+            assert_eq!(
+                actions,
+                vec![UiAction::Command(Command::StartPlant { plant })]
+            );
+            game.execute(Command::StartPlant { plant }).unwrap();
+            let events = game.execute(Command::AdvanceTicks { n: startup }).unwrap();
+            assert!(events.iter().any(|event| matches!(event, domain::events::DomainEvent::PlantOnline { plant: id } if *id == plant)));
+        }
+    }
+    assert!(l10n.problems().is_empty());
+}
+
 /// The size [`Harness::new`] draws at, for the real pass.
 pub(crate) const WIDE: (f32, f32) = (1280.0, 800.0);
 

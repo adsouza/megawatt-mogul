@@ -52,6 +52,8 @@ pub enum RegionError {
     CityOutOfBounds(CityId),
     #[error("city {0:?} is not on land")]
     CityNotOnLand(CityId),
+    #[error("city {city:?} shares occupied cell {cell:?}")]
+    CityCellOccupied { city: CityId, cell: CellCoord },
     #[error("duplicate city {0:?}")]
     DuplicateCity(CityId),
     #[error("start connects unknown city {0:?}")]
@@ -223,6 +225,7 @@ fn order_catalog(mut catalog: Vec<PlantSpec>) -> Result<Vec<PlantSpec>, RegionEr
 
 fn validate_cities(terrain: &TerrainGrid, cities: &[CityDef]) -> Result<(), RegionError> {
     let mut seen = BTreeSet::new();
+    let mut occupied = BTreeSet::new();
     for city in cities {
         if !seen.insert(city.id) {
             return Err(RegionError::DuplicateCity(city.id));
@@ -232,6 +235,12 @@ fn validate_cities(terrain: &TerrainGrid, cities: &[CityDef]) -> Result<(), Regi
         }
         if !is_land(terrain, city.cell) {
             return Err(RegionError::CityNotOnLand(city.id));
+        }
+        if !occupied.insert(city.cell) {
+            return Err(RegionError::CityCellOccupied {
+                city: city.id,
+                cell: city.cell,
+            });
         }
     }
     Ok(())
@@ -253,17 +262,21 @@ fn validate_start(
             return Err(RegionError::UnknownStartCity(*id));
         }
     }
+    let mut occupied: BTreeSet<_> = cities.iter().map(|city| city.cell).collect();
     for plant in &start.fleet {
         let spec = catalog
             .iter()
             .find(|s| s.kind == plant.kind)
             .expect("catalog validated before start");
-        site_check(terrain, spec.siting, plant.cell).map_err(|reason| {
-            RegionError::InvalidStartSite {
-                kind: plant.kind,
-                cell: plant.cell,
-                reason,
-            }
+        let site = if occupied.insert(plant.cell) {
+            site_check(terrain, spec.siting, plant.cell)
+        } else {
+            Err(SiteError::Occupied)
+        };
+        site.map_err(|reason| RegionError::InvalidStartSite {
+            kind: plant.kind,
+            cell: plant.cell,
+            reason,
         })?;
     }
     Ok(())
@@ -494,6 +507,52 @@ mod tests {
     #[test]
     fn tiny_region_is_valid() {
         assert!(RegionDefinition::try_from(fixtures::tiny_region_parts()).is_ok());
+    }
+
+    #[test]
+    fn starting_plants_cannot_share_a_city_or_another_plant_cell() {
+        for city_site in [false, true] {
+            let mut parts = fixtures::tiny_region_parts();
+            let cell = if city_site {
+                parts.cities[0].cell
+            } else {
+                parts.start.fleet[0].cell
+            };
+            parts.start.fleet.push(StartPlantDef {
+                kind: PlantKind::Peaker,
+                cell,
+            });
+            assert_eq!(
+                RegionDefinition::try_from(parts).unwrap_err(),
+                RegionError::InvalidStartSite {
+                    kind: PlantKind::Peaker,
+                    cell,
+                    reason: SiteError::Occupied
+                }
+            );
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn starting_assets_are_valid_exactly_when_their_land_cells_are_distinct(
+            sites in proptest::collection::vec(0u16..88, 1..12), city_count in 1usize..5
+        ) {
+            let mut parts = fixtures::tiny_region_parts();
+            let cells: Vec<_> = sites.into_iter().map(|i| CellCoord { x: 1 + i % 11, y: i / 11 }).collect();
+            let city_count = city_count.min(cells.len());
+            let template = parts.cities[0].clone();
+            parts.cities = cells[..city_count].iter().enumerate().map(|(i, &cell)| CityDef {
+                id: CityId(i as u32 + 1), cell, ..template.clone()
+            }).collect();
+            parts.start.home_city = CityId(1);
+            parts.start.connected_cities = vec![CityId(1)];
+            parts.start.fleet = cells[city_count..].iter().map(|&cell| StartPlantDef {
+                kind: PlantKind::Peaker, cell
+            }).collect();
+            let unique: BTreeSet<_> = cells.iter().copied().collect();
+            proptest::prop_assert_eq!(RegionDefinition::try_from(parts).is_ok(), unique.len() == cells.len());
+        }
     }
 
     #[test]

@@ -14,14 +14,15 @@ use bevy::prelude::*;
 use bevy_egui::egui;
 use domain::generation::PlantStatus;
 use domain::ids::PlantId;
-use domain::session::PlantView;
+use domain::session::{DayPhase, PlantView};
+use domain::time::{SimDuration, TICKS_PER_DAY};
 use domain::units::{MegawattHours, Megawatts, Money};
 
 use super::action::{ButtonModel, ToggleModel, UiAction, add_enabled, button, toggle_button};
 use super::plant_list::{is_commitable, kinds_in_merit_order};
 use super::selection::Selection;
 use super::top_bar::Stat;
-use crate::l10n::{Localize, Localizer, Names, format};
+use crate::l10n::{Localize, LocalizeWith, Localizer, Names, format};
 
 /// One plant in the list.
 #[derive(Debug, Clone, PartialEq)]
@@ -81,6 +82,7 @@ pub struct SelectedPlant {
     pub storage_toggle: Option<ToggleModel>,
     pub storage_hint: Option<String>,
     pub start: ButtonModel,
+    pub start_hint: Option<String>,
     pub stop: ButtonModel,
     pub slider: TargetSlider,
     /// Grid connection, output/capacity, target, ramp, cost, energy and history, plus hydro water.
@@ -303,6 +305,8 @@ pub fn plant_panel_model(game: &Game, l10n: &Localizer, selection: Selection) ->
     };
     let spec = session.region().spec(plant.kind);
     let operable = is_commitable(&plant);
+    let too_late = session.phase() == DayPhase::Operating
+        && spec.startup.ticks() > TICKS_PER_DAY.saturating_sub(session.clock().tick());
     let target = match plant.status {
         PlantStatus::Online { target, .. } => Some(target),
         _ => None,
@@ -398,7 +402,16 @@ pub fn plant_panel_model(game: &Game, l10n: &Localizer, selection: Selection) ->
             l10n.text("plant-start"),
             UiAction::Command(Command::StartPlant { plant: plant.id }),
         )
-        .enabled_if(operable && plant.status == PlantStatus::Offline),
+        .enabled_if(operable && plant.status == PlantStatus::Offline && !too_late),
+        start_hint: (operable && plant.status == PlantStatus::Offline && too_late).then(|| {
+            domain::error::DomainError::StartUpBeyondDay {
+                remaining: SimDuration::from_ticks(
+                    TICKS_PER_DAY.saturating_sub(session.clock().tick()),
+                ),
+                startup: spec.startup,
+            }
+            .localize_with(l10n, &Names::new(l10n, session))
+        }),
         stop: ButtonModel::new(
             l10n.text("plant-stop"),
             UiAction::Command(Command::StopPlant { plant: plant.id }),
@@ -542,7 +555,10 @@ pub fn draw_plant_panel(
     } else {
         ui.horizontal(|ui| {
             toggle_button(ui, &plant.agc, &mut actions).on_hover_text(plant.agc_tip.as_str());
-            button(ui, &plant.start, &mut actions);
+            let start = button(ui, &plant.start, &mut actions);
+            if let Some(hint) = &plant.start_hint {
+                start.on_disabled_hover_text(hint);
+            }
             button(ui, &plant.stop, &mut actions);
         });
         let slider = &plant.slider;
@@ -725,6 +741,62 @@ mod tests {
         match plant_panel_model(game, &shipped_l10n(), Selection::Plant(plant)) {
             PlantPanelModel::Plant(model) => *model,
             other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn operating_start_requires_enough_time_and_accepts_an_exact_midnight_finish() {
+        use domain::time::TICKS_PER_DAY;
+        for kind in [
+            PlantKind::Nuclear,
+            PlantKind::Coal,
+            PlantKind::Ccgt,
+            PlantKind::Peaker,
+        ] {
+            for one_tick_late in [false, true] {
+                let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+                let plant = view(&game, kind).id;
+                game.execute(Command::StopPlant { plant }).unwrap();
+                let startup = game.session().region().spec(kind).startup.ticks();
+                game.execute(Command::BeginOperating).unwrap();
+                let tick = TICKS_PER_DAY.saturating_sub(startup) + u32::from(one_tick_late);
+                game.execute(Command::AdvanceTicks { n: tick }).unwrap();
+                assert_eq!(view(&game, kind).status, PlantStatus::Offline);
+                let expected = startup <= TICKS_PER_DAY - tick;
+                let model = selected(&game, plant);
+                let before = game.checkpoint();
+                let result = game.execute(Command::StartPlant { plant });
+                assert_eq!(result.is_ok(), expected, "{kind:?} at {tick}");
+                if !expected {
+                    assert_eq!(game.checkpoint(), before);
+                }
+                assert_eq!(model.start.enabled, expected, "{kind:?} at {tick}");
+                if expected {
+                    let events = game.execute(Command::AdvanceTicks { n: startup }).unwrap();
+                    assert!(events.iter().any(|e| matches!(e, domain::events::DomainEvent::PlantOnline { plant: id } if *id == plant)));
+                }
+            }
+        }
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(32))]
+        #[test]
+        fn start_availability_matches_accepted_commands_at_arbitrary_operating_times(
+            kind_index in 0usize..4, tick in 0u32..TICKS_PER_DAY
+        ) {
+            let kind = [PlantKind::Nuclear, PlantKind::Coal, PlantKind::Ccgt, PlantKind::Peaker][kind_index];
+            let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+            let plant = view(&game, kind).id;
+            game.execute(Command::StopPlant { plant }).unwrap();
+            game.execute(Command::BeginOperating).unwrap();
+            game.execute(Command::AdvanceTicks { n: tick }).unwrap();
+            proptest::prop_assert_eq!(view(&game, kind).status, PlantStatus::Offline);
+            let model = selected(&game, plant);
+            let before = game.checkpoint();
+            let result = game.execute(Command::StartPlant { plant });
+            proptest::prop_assert_eq!(model.start.enabled, result.is_ok());
+            if result.is_err() { proptest::prop_assert_eq!(game.checkpoint(), before); }
         }
     }
 
@@ -1144,9 +1216,15 @@ mod tests {
         let coal = view(&game, PlantKind::Coal);
         let nuclear = view(&game, PlantKind::Nuclear);
 
-        // An offline plant can be started, not stopped, and takes no target.
+        // Offline does not make a 48-hour nuclear start fit in the remaining day.
         let off = selected(&game, nuclear.id);
-        assert!(off.start.enabled && !off.stop.enabled);
+        assert!(!off.start.enabled && !off.stop.enabled);
+        assert!(off.start_hint.is_some());
+        assert!(
+            selected(&game, view(&game, PlantKind::Peaker).id)
+                .start
+                .enabled
+        );
         assert!(!off.slider.enabled);
         assert_eq!(off.slider.value, off.slider.min);
         assert!(off.stats.iter().any(|stat| stat.value == "none"));

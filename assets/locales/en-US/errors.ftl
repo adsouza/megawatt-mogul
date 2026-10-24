@@ -48,6 +48,7 @@ region-error-missing-plant-spec = The region has no entry for { $kind }.
 region-error-duplicate-plant-spec = The region has more than one entry for { $kind }.
 region-error-city-out-of-bounds = City #{ $city } is outside the map.
 region-error-city-not-on-land = City #{ $city } is not on land.
+region-error-city-cell-occupied = City #{ $city } shares cell ({ $x }, { $y }) with another city.
 region-error-duplicate-city = City #{ $city } is listed twice.
 region-error-unknown-start-city = The starting grid connects city #{ $city }, which does not exist.
 region-error-invalid-start-site = The starting plant ({ $kind }) cannot be built where the region puts it. { $reason }

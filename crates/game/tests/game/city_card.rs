@@ -246,7 +246,12 @@ fn a_city_with_a_line_under_construction_says_when_it_connects() {
         let mut app = hud_app(logs.path());
         request(&mut app, region_id);
         let session = app.world().resource::<Session>().0.session();
-        let nodes: Vec<_> = session.city_views().iter().map(|c| c.node).collect();
+        let nodes: Vec<_> = session
+            .city_views()
+            .iter()
+            .filter(|c| c.connected)
+            .map(|c| c.node)
+            .collect();
         let (_, city, from, to) = session
             .city_views()
             .into_iter()
@@ -272,7 +277,7 @@ fn a_city_with_a_line_under_construction_says_when_it_connects() {
             .and_then(|card| card.hint)
             .expect("an unconnected city's hint");
         assert!(
-            hint.starts_with("A line to it is under construction: connected from "),
+            hint.starts_with("Grid connection under construction: connected from "),
             "{region_id}: {hint}"
         );
         let view = game

@@ -277,8 +277,8 @@ plant-stop = Stop
 city-connected = Connected
 city-not-connected = Not connected
 city-connect-hint = Build a line to it from the build menu to connect it.
-# Instead of the hint while a line to the city is under construction: the month it enters service.
-city-line-under-construction = A line to it is under construction: connected from { $month }
+# The connection date accounts for every unfinished line on a complete route to the home grid.
+city-line-under-construction = Grid connection under construction: connected from { $month }
 city-base-load = Base load
 city-peak = Peak today
 # What an unconnected city would add to demand, at the day's peak, once a line reaches it.

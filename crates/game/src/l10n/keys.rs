@@ -10,6 +10,7 @@
 
 /// Every literal key the HUD uses, grouped as in `ui.ftl`.
 pub const ALL_UI_KEYS: &[&str] = &[
+    "region-error-city-cell-occupied",
     "site-occupied",
     "battery-enable",
     "battery-disable",

@@ -167,6 +167,42 @@ impl Network {
         self.connected.contains(&node)
     }
 
+    /// Earliest number of month closes after which a complete path reaches `node`,
+    /// assuming current construction orders finish. A path waits for its slowest line;
+    /// competing paths use the earliest such date. `None` means no ordered path exists.
+    pub fn months_until_connected(&self, node: NodeId) -> Option<u32> {
+        let mut earliest = BTreeMap::from([(self.root, 0)]);
+        let mut pending = BTreeSet::from([(0, self.root)]);
+        while let Some((months, from)) = pending.pop_first() {
+            if from == node {
+                return Some(months);
+            }
+            for line in self
+                .lines
+                .values()
+                .filter(|line| line.from == from || line.to == from)
+            {
+                let to = if line.from == from {
+                    line.to
+                } else {
+                    line.from
+                };
+                let ready = match line.status {
+                    LineStatus::InService => 0,
+                    LineStatus::UnderConstruction { months_left } => months_left.max(1),
+                };
+                let candidate = months.max(ready);
+                if earliest.get(&to).is_none_or(|&old| candidate < old) {
+                    if let Some(old) = earliest.insert(to, candidate) {
+                        pending.remove(&(old, to));
+                    }
+                    pending.insert((candidate, to));
+                }
+            }
+        }
+        None
+    }
+
     pub fn connected_nodes(&self) -> &BTreeSet<NodeId> {
         &self.connected
     }
@@ -321,6 +357,67 @@ mod tests {
         );
         assert!(n.is_connected(NodeId(0)));
         assert_eq!(n.node(NodeId(0)), Some(&city_node(0, 0)));
+    }
+
+    #[test]
+    fn connection_wait_uses_the_earliest_complete_route_and_tracks_cancellation() {
+        let mut network = net();
+        for node in 1..=5 {
+            network
+                .add_node(NodeId(node), city_node(node as u16, 0))
+                .unwrap();
+        }
+        for (id, from, to, status) in [
+            (1, 0, 1, LineStatus::UnderConstruction { months_left: 5 }),
+            (2, 1, 2, LineStatus::UnderConstruction { months_left: 1 }),
+            (3, 2, 3, LineStatus::InService),
+            (4, 0, 4, LineStatus::UnderConstruction { months_left: 3 }),
+            (5, 4, 2, LineStatus::UnderConstruction { months_left: 2 }),
+            (6, 3, 1, LineStatus::UnderConstruction { months_left: 4 }),
+        ] {
+            network
+                .add_line(LineId(id), NodeId(from), NodeId(to), status)
+                .unwrap();
+        }
+        assert_eq!(network.months_until_connected(NodeId(0)), Some(0));
+        assert_eq!(network.months_until_connected(NodeId(3)), Some(3));
+        assert_eq!(network.months_until_connected(NodeId(5)), None);
+        assert_eq!(network.months_until_connected(NodeId(99)), None);
+        network.cancel_construction(LineId(4)).unwrap();
+        assert_eq!(network.months_until_connected(NodeId(3)), Some(5));
+        network.advance_construction();
+        network.advance_construction();
+        assert_eq!(network.months_until_connected(NodeId(3)), Some(3));
+    }
+
+    proptest! {
+        #[test]
+        fn connection_wait_predicts_actual_reachability_after_month_closes(
+            edges in prop::collection::vec((0u8..7, any::<bool>()), 15)
+        ) {
+            let mut network = net();
+            for node in 1..6 { network.add_node(NodeId(node), city_node(node as u16, 0)).unwrap(); }
+            let mut index = 0;
+            for from in 0..6 { for to in from+1..6 {
+                let (code, reverse) = edges[index];
+                index += 1;
+                if code == 0 { continue; }
+                let status = if code == 1 { LineStatus::InService } else { LineStatus::UnderConstruction { months_left: u32::from(code - 2) } };
+                let (from, to) = if reverse { (to, from) } else { (from, to) };
+                network.add_line(LineId(index as u32), NodeId(from), NodeId(to), status).unwrap();
+            } }
+            let before = network.clone();
+            for target in 0..6 {
+                let predicted = network.months_until_connected(NodeId(target));
+                let mut actual = network.clone();
+                let expected = (0..=5).find(|&closes| {
+                    if closes > 0 { actual.advance_construction(); }
+                    actual.is_connected(NodeId(target))
+                });
+                prop_assert_eq!(predicted, expected);
+            }
+            prop_assert_eq!(network, before);
+        }
     }
 
     #[test]

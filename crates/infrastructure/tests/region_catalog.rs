@@ -59,6 +59,33 @@ fn home_city_must_be_known_and_connected_in_region_data() {
 }
 
 #[test]
+fn mapped_region_cells_cannot_be_shared_by_starting_assets() {
+    // Different coordinates in the same raster cell are still the same site.
+    for (from, to) in [
+        ("(Peaker, 6.5, 2.5)", "(Peaker, 7.6, 4.6)"),
+        ("(Peaker, 6.5, 2.5)", "(Peaker, 6.6, 3.6)"),
+        ("lon: 8.5, lat: 1.5", "lon: 6.6, lat: 3.6"),
+    ] {
+        assert!(MINIMAL.contains(from));
+        let error = load_edited(from, to).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                RegionLoadError::Invalid {
+                    error: RegionError::CityCellOccupied { .. }
+                        | RegionError::InvalidStartSite {
+                            reason: domain::region::SiteError::Occupied,
+                            ..
+                        },
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+    }
+}
+
+#[test]
 fn loaded_definition_fingerprint_and_archive_source_share_one_read() {
     let dir = dir_with(&[("minimal.ron", MINIMAL)]);
     let loaded = catalog(dir.path()).load(&RegionId::new("minimal")).unwrap();
