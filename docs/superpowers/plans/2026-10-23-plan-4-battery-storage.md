@@ -1,5 +1,9 @@
 # Plan 4: Daily-cycle battery storage
 
+> Historical implementation record. Pending [Plan 5](2026-10-23-plan-5-wind-farms.md) and spec
+> §25 replace daylight charging with 00:00–18:00 charging and add wind. The midnight reset and
+> evening residual-gap support remain. The decisions below describe the original Plan 4 scope.
+
 - **Date:** 2026-10-23
 - **Status:** Implemented in the current working tree; automated checks, windowed smoke and native cycle/save-resume QA on both regions pass.
 - **Depends on:** Implemented Plans 1, 2, 2b and 3.
