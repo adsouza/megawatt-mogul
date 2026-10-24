@@ -22,7 +22,7 @@ mod camera;
 pub use camera::{CameraPose, OrbitCamera, physical_viewport};
 
 mod flow;
-pub use flow::{FlowArrow, FlowDirection};
+pub use flow::{FlowDirection, FlowPulse};
 mod lighting;
 mod model;
 pub use lighting::{SunPosition, sun_position};
@@ -31,7 +31,10 @@ mod picking;
 pub use model::{
     Part, WorldCity, WorldLine, WorldModel, WorldPlant, city_parts, plant_parts, selection_parts,
 };
-pub use overlay::{TuningConfig, WorldAction, WorldControls, pillar_part, supply_fraction};
+pub use overlay::{
+    GAUGE_SEGMENTS, TuningConfig, WorldAction, WorldControls, gauge_track_parts, output_gauge_part,
+    supply_fraction,
+};
 pub use picking::{WorldHit, hit_world, pick_world, presented_hit, terrain_grid_hit, terrain_hit};
 
 mod plugins;
@@ -39,7 +42,7 @@ mod render;
 mod ui;
 mod viewport_render;
 pub use plugins::{CameraPlugin, DioramaCamera, OverlayPlugin, WorldViewPlugin};
-pub use render::{ViewSync, WorldAssets, WorldEntity, WorldScene};
+pub use render::{OutputGauge, ViewSync, WorldAssets, WorldEntity, WorldScene};
 pub use ui::{
     MapSurface, ToolbarModel, draw_surface, label_rect, mark_blocked, screen_ndc, toolbar_model,
 };

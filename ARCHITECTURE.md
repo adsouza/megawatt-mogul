@@ -482,17 +482,21 @@ follow ordered IDs. Annotation backing rectangles flip/clamp and omit overlappin
 `OverlayPlugin` follows the domain phase, including the frame before Bevy's phase mirror catches up.
 Each phase restores its default overlay; resource selection in Operating can override the hologram
 until Control room is selected. The supply overlay preserves terrain colours, directional lighting
-and building shadows; beams, the selection marker and directional chevrons are unlit. Presentation
+and building shadows; ground-level output gauges, the selection marker and flowing light pulses are
+unlit. City footprints stay fixed while their heights scale linearly with base demand in Planning
+and live demand in Operating, using the same regional base-load reference throughout the day.
+Disconnected cities retain forecast demand height; shortages affect lighting, never height.
+Rendering, picking and labels share the vertical scale. Presentation
 time animates shared city shedding, energisation pulses and illustrative source-to-city routes.
 The pure routing presenter uses current output/served demand, shortest paths over in-service
-lines with line-ID tie breaks, and net opposing transfers. Chevron entities share one mesh/material,
+lines with line-ID tie breaks, and net opposing transfers. Pulse entities share one mesh/material,
 follow the terraced line geometry and freeze while paused or persistence is frozen. Routes are
 labelled illustrative; copper-plate supply remains one common fraction, without spatial outage
 rotation or electrical per-line flow/loading. Bloom/DOF affect only the world camera and can be disabled.
 
 The optional `DevToolsPlugin` (`dev`) uses bevy-inspector-egui 0.38 with the pinned Bevy/egui stack.
 F12 opens a filtered inspector over `WorldEntity` and reflected `TuningConfig` (visual scales,
-illumination and beam colour). It exposes no aggregate, command handler or simulation tuning.
+illumination and gauge colour). It exposes no aggregate, command handler or simulation tuning.
 
 ### Fixed-step pacing
 

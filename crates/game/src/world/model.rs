@@ -192,9 +192,15 @@ pub struct WorldCity {
     pub id: CityId,
     pub cell: CellCoord,
     pub at: Vec3,
+    /// Vertical demand scale; the horizontal footprint never depends on demand.
     pub scale: f32,
     pub connected: bool,
     pub name_key: String,
+}
+impl WorldCity {
+    pub fn visual_scale(&self, model_scale: f32) -> Vec3 {
+        Vec3::new(1.0, self.scale, 1.0) * model_scale
+    }
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorldLine {
@@ -253,23 +259,41 @@ impl WorldModel {
             })
             .collect();
         let views = s.city_views();
-        let max_load = views
+        let details: BTreeMap<_, _> = views
             .iter()
             .filter_map(|c| s.city_detail(c.id))
+            .map(|d| (d.id, d))
+            .collect();
+        // Keep one reference through the day, including disconnected cities. Normalising
+        // against current demand would cancel the daily shape and hide demand growth.
+        let max_load = details
+            .values()
             .map(|d| d.base_load.value())
             .fold(1.0, f64::max);
         let cities: BTreeMap<_, _> = views
             .into_iter()
             .filter_map(|c| {
+                let detail = details.get(&c.id)?;
+                let demand = if s.phase() == DayPhase::Operating {
+                    detail.demand_now.unwrap_or_else(|| {
+                        // Disconnected cities still have demand, even when none is served.
+                        detail.base_load
+                            * domain::demand::shape_factor(
+                                region.demand(),
+                                s.clock().month(),
+                                s.clock().tick(),
+                            )
+                    })
+                } else {
+                    detail.base_load
+                };
                 Some((
                     c.id,
                     WorldCity {
                         id: c.id,
                         cell: c.cell,
                         at: coordinates.cell_center(terrain, c.cell)?,
-                        scale: (s.city_detail(c.id)?.base_load.value() / max_load).sqrt() as f32
-                            * 0.4
-                            + 0.6,
+                        scale: (3.0 * demand.value() / max_load) as f32,
                         connected: c.connected,
                         name_key: c.name_key,
                     },

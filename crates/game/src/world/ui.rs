@@ -381,7 +381,8 @@ pub fn finish_surface(
     for c in model.cities.values() {
         labels.push((
             c.at + Vec3::Y
-                * (super::model::parts_height(&super::city_parts()) * c.scale * tuning.scale()
+                * (super::model::parts_height(&super::city_parts())
+                    * c.visual_scale(tuning.scale()).y
                     + 0.15),
             l10n.text(&c.name_key),
         ));

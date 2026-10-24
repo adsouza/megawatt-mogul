@@ -44,7 +44,10 @@ pub fn terrain_hit(ray: Ray3d, geometry: &TerrainGeometry) -> Option<f32> {
         })
         .min_by(f32::total_cmp)
 }
-fn block_hit(ray: Ray3d, part: Part, at: Vec3, scale: f32) -> Option<f32> {
+fn block_hit(ray: Ray3d, part: Part, at: Vec3, scale: Vec3) -> Option<f32> {
+    if scale.min_element() <= 0.0 {
+        return None;
+    }
     let origin = part.rotation.inverse() * ((ray.origin - at) / scale - part.center);
     let direction = part.rotation.inverse() * (*ray.direction / scale);
     let half = part.size * 0.5;
@@ -83,27 +86,17 @@ pub fn hit_world(
     _geometry: &TerrainGeometry,
     model_scale: f32,
 ) -> Option<WorldHit> {
-    hit_geometry(ray, world, model_scale, None)
+    hit_geometry(ray, world, model_scale)
 }
 pub fn presented_hit(
     ray: Ray3d,
     world: &WorldModel,
-    controls: &super::WorldControls,
+    _controls: &super::WorldControls,
     tuning: &super::TuningConfig,
 ) -> Option<WorldHit> {
-    hit_geometry(
-        ray,
-        world,
-        tuning.scale(),
-        controls.hologram().then_some(tuning),
-    )
+    hit_geometry(ray, world, tuning.scale())
 }
-fn hit_geometry(
-    ray: Ray3d,
-    world: &WorldModel,
-    model_scale: f32,
-    pillars: Option<&super::TuningConfig>,
-) -> Option<WorldHit> {
+fn hit_geometry(ray: Ray3d, world: &WorldModel, model_scale: f32) -> Option<WorldHit> {
     let mut nearest = f32::INFINITY;
     let mut selection = Selection::None;
     let mut consider = |distance: Option<f32>, value| {
@@ -117,25 +110,15 @@ fn hit_geometry(
     for p in world.plants.values() {
         for part in plant_parts(p.kind) {
             consider(
-                block_hit(ray, part, p.at, model_scale),
+                block_hit(ray, part, p.at, Vec3::splat(model_scale)),
                 Selection::Plant(p.id),
             );
-        }
-    }
-    if let Some(tuning) = pillars {
-        for p in world.plants.values() {
-            if let Some(part) = super::pillar_part(p, tuning) {
-                consider(
-                    block_hit(ray, part, Vec3::ZERO, 1.0),
-                    Selection::Plant(p.id),
-                );
-            }
         }
     }
     for c in world.cities.values() {
         for part in city_parts() {
             consider(
-                block_hit(ray, part, c.at, c.scale * model_scale),
+                block_hit(ray, part, c.at, c.visual_scale(model_scale)),
                 Selection::City(c.id),
             );
         }
@@ -176,7 +159,7 @@ fn hit_geometry(
     if !matches!(selection, Selection::Plant(_) | Selection::City(_)) {
         for line in world.lines.values() {
             for part in &line.parts {
-                if let Some(d) = block_hit(ray, *part, Vec3::ZERO, 1.0)
+                if let Some(d) = block_hit(ray, *part, Vec3::ZERO, Vec3::ONE)
                     && d < nearest
                 {
                     nearest = d;

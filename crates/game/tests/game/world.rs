@@ -261,7 +261,7 @@ fn world_pointer_zoom_handles_invalid_anchors_and_extreme_input() {
 fn world_city_and_plant_models_leave_a_margin_inside_their_cell() {
     use domain::{ids::RegionId, region::PlantKind, session::GameSettings};
     use game::world::{TuningConfig, WorldModel, city_parts, plant_parts};
-    let fits = |parts: &[game::world::Part], scale: f32| {
+    let fits = |parts: &[game::world::Part], scale: Vec3| {
         for part in parts {
             for x in [-0.5, 0.5] {
                 for y in [-0.5, 0.5] {
@@ -285,7 +285,7 @@ fn world_city_and_plant_models_leave_a_margin_inside_their_cell() {
             ..Default::default()
         };
         for kind in PlantKind::ALL {
-            fits(&plant_parts(kind), tuning.scale());
+            fits(&plant_parts(kind), Vec3::splat(tuning.scale()));
         }
     }
     let catalog = infrastructure::region::RonRegionCatalog::new(
@@ -303,7 +303,7 @@ fn world_city_and_plant_models_leave_a_margin_inside_their_cell() {
         let checkpoint = game.checkpoint();
         let model = WorldModel::of(&game);
         for city in model.cities.values() {
-            fits(&city_parts(), city.scale);
+            fits(&city_parts(), city.visual_scale(1.0));
         }
         assert_eq!(game.checkpoint(), checkpoint);
     }
@@ -311,12 +311,12 @@ fn world_city_and_plant_models_leave_a_margin_inside_their_cell() {
 
 proptest! {
     #[test]
-    fn world_model_footprints_stay_bounded_at_any_visual_scale(requested in any::<f32>(), city_size in 0.6f32..=1.0) {
+    fn world_model_footprints_stay_bounded_at_any_visual_scale(requested in any::<f32>(), city_height in 0.0f32..=10.0) {
         use game::world::{TuningConfig, city_parts, plant_parts, selection_parts};
         let scale = TuningConfig { model_scale: requested, ..Default::default() }.scale();
         for (parts, factor, radius) in domain::region::PlantKind::ALL.into_iter()
-            .map(|kind| (plant_parts(kind), scale, 0.4))
-            .chain([(city_parts(), city_size * scale, 0.4), (selection_parts().to_vec(), scale, 0.45)]) {
+            .map(|kind| (plant_parts(kind), Vec3::splat(scale), 0.4))
+            .chain([(city_parts(), Vec3::new(1.0, city_height, 1.0) * scale, 0.4), (selection_parts().to_vec(), Vec3::splat(scale), 0.45)]) {
             for part in parts {
                 for x in [-0.5, 0.5] { for y in [-0.5, 0.5] { for z in [-0.5, 0.5] {
                     let corner = (part.center + part.rotation * (part.size * Vec3::new(x, y, z))) * factor;
@@ -354,6 +354,68 @@ fn world_model_preserves_identity_demand_sizes_and_simulation_checkpoint() {
         }
     }
     assert_eq!(game.checkpoint(), checkpoint);
+}
+
+#[test]
+fn world_city_heights_are_proportional_to_demand_in_planning_and_operation() {
+    use application::Command;
+    use bevy::prelude::*;
+    use game::{
+        sim::Session,
+        world::{ViewSync, WorldScene},
+    };
+    for region in ["eastern_interconnection", "western_interconnection"] {
+        let logs = tempfile::TempDir::new().unwrap();
+        let mut app = diorama_app(logs.path());
+        crate::support::request(&mut app, region);
+        let mut height_per_mw = None;
+        for advance in [None, Some(0), Some(60), Some(720)] {
+            if let Some(ticks) = advance {
+                {
+                    let mut session = app.world_mut().resource_mut::<Session>();
+                    if ticks == 0 {
+                        session.0.execute(Command::BeginOperating).unwrap();
+                    }
+                    session
+                        .0
+                        .execute(Command::AdvanceTicks { n: ticks })
+                        .unwrap();
+                }
+                app.update();
+            }
+            let world = app.world();
+            let session = &world.resource::<Session>().0;
+            let model = world.resource::<WorldScene>().model.as_ref().unwrap();
+            let views = world.resource::<ViewSync>();
+            for city in model.cities.values() {
+                let detail = session.session().city_detail(city.id).unwrap();
+                let expected = if advance.is_none() {
+                    detail.base_load
+                } else {
+                    detail.demand_now.unwrap_or_else(|| {
+                        detail.base_load
+                            * domain::demand::shape_factor(
+                                model.region.demand(),
+                                model.month,
+                                model.tick,
+                            )
+                    })
+                };
+                let demand = expected.value() as f32;
+                let scale = world
+                    .get::<Transform>(views.cities[&city.id])
+                    .unwrap()
+                    .scale;
+                assert_eq!(scale.x, 1.0, "demand changes height, not footprint");
+                assert_eq!(scale.z, 1.0);
+                let ratio = *height_per_mw.get_or_insert(scale.y / demand);
+                assert!(
+                    (scale.y / demand - ratio).abs() < 1e-6,
+                    "city heights must share one scale across cities and times"
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -511,13 +573,13 @@ fn world_picking_prefers_buildings_at_crowded_line_junctions() {
                     Selection::Plant(plant.id),
                     plant.at,
                     plant_parts(kind),
-                    scale,
+                    Vec3::splat(scale),
                 ),
                 None => (
                     Selection::City(city.id),
                     city.at,
                     city_parts(),
-                    city.scale * scale,
+                    city.visual_scale(scale),
                 ),
             };
             let mut model = original.clone();
@@ -828,7 +890,7 @@ fn world_wheel_keeps_the_point_under_the_pointer_fixed_for_cities_and_plants() {
                                     Selection::City(c.id),
                                     c.at + (part.center
                                         + part.rotation * (Vec3::Y * part.size.y / 2.0))
-                                        * c.scale,
+                                        * c.visual_scale(tuning.scale()),
                                 )
                             })
                         })
@@ -981,7 +1043,7 @@ fn world_real_pass_projects_selection_blocks_dialogs_and_drags_without_selecting
         .find_map(|c| {
             game::world::city_parts().iter().find_map(|part| {
                 let roof = part.center + part.rotation * (Vec3::Y * part.size.y / 2.0);
-                let ndc = pose.project(c.at + roof * c.scale)?;
+                let ndc = pose.project(c.at + roof * c.visual_scale(1.0))?;
                 let ray = pose.ray(ndc.truncate())?;
                 (game::world::pick_world(ray, world, scene.geometry.as_ref().unwrap(), 1.0)
                     == Selection::City(c.id))
@@ -1509,22 +1571,48 @@ fn world_dev_inspector_registers_types_without_default_bevy_features_and_preserv
 }
 
 #[test]
-fn world_visible_output_pillars_are_pickable_and_hidden_pillars_are_not() {
+fn world_output_gauges_stay_at_the_base_and_do_not_leave_tall_pick_targets() {
     use bevy::prelude::*;
     use game::{
         hud::Selection,
         sim::Session,
-        world::{TuningConfig, WorldControls, WorldModel, pillar_part, presented_hit},
+        world::{
+            OutputGauge, TuningConfig, WorldAction, WorldAssets, WorldControls, WorldScene,
+            presented_hit,
+        },
     };
     let logs = tempfile::TempDir::new().unwrap();
     let mut app = diorama_app(logs.path());
     crate::support::request(&mut app, "eastern_interconnection");
+    let visible = |app: &mut App| {
+        app.world_mut()
+            .query::<(&OutputGauge, &Transform, &Visibility)>()
+            .iter(app.world())
+            .filter(|(_, _, v)| **v == Visibility::Visible)
+            .map(|(g, t, _)| (g.plant, g.segment, *t))
+            .collect::<Vec<_>>()
+    };
+    assert!(visible(&mut app).is_empty());
     app.world_mut()
         .resource_mut::<Session>()
         .0
         .execute(application::Command::BeginOperating)
         .unwrap();
-    let mut model = WorldModel::of(&app.world().resource::<Session>().0);
+    app.update();
+    let gauges = visible(&mut app);
+    assert!(!gauges.is_empty());
+    let assets = app.world().resource::<WorldAssets>().counts();
+    let checkpoint = app.world().resource::<Session>().0.checkpoint();
+    let scene = app.world().resource::<WorldScene>();
+    let mut model = scene.model.as_ref().unwrap().clone();
+    for (id, segment, transform) in &gauges {
+        let plant = &model.plants[id];
+        if segment.is_some() {
+            let top = transform.translation.y + transform.scale.y * 0.5;
+            assert!(top < plant.at.y + 0.1, "gauges must stay on the ground");
+            assert!(plant.output > 0.0 && plant.connected && plant.building.is_none());
+        }
+    }
     let plant = model
         .plants
         .values()
@@ -1535,18 +1623,32 @@ fn world_visible_output_pillars_are_pickable_and_hidden_pillars_are_not() {
     model.cities.clear();
     model.lines.clear();
     let tuning = TuningConfig::default();
-    let part = pillar_part(&plant, &tuning).unwrap();
-    let ray = Ray3d::new(part.center + Vec3::X * 10.0, Dir3::NEG_X);
-    let mut controls = WorldControls::default();
-    controls.enter_phase(domain::session::DayPhase::Operating);
+    let controls = app.world().resource::<WorldControls>();
+    // The old beam above the roof must neither render nor intercept a click.
+    let ray = Ray3d::new(plant.at + Vec3::new(10.0, 3.0, 0.0), Dir3::NEG_X);
+    assert!(presented_hit(ray, &model, controls, &tuning).is_none());
+    // A gauge's site remains selectable via its occupied ground cell.
+    let ray = Ray3d::new(plant.at + Vec3::new(0.42, 10.0, 0.42), Dir3::NEG_Y);
     assert_eq!(
-        presented_hit(ray, &model, &controls, &tuning)
+        presented_hit(ray, &model, controls, &tuning)
             .unwrap()
             .selection,
         Selection::Plant(plant.id)
     );
-    controls.overlay = false;
-    assert!(presented_hit(ray, &model, &controls, &tuning).is_none());
+    crate::hud_smoke::dispatch_in(
+        &mut app,
+        vec![game::hud::UiAction::World(WorldAction::ToggleOverlay)],
+    );
+    app.update();
+    assert!(visible(&mut app).is_empty());
+    crate::hud_smoke::dispatch_in(
+        &mut app,
+        vec![game::hud::UiAction::World(WorldAction::ControlRoom)],
+    );
+    app.update();
+    assert_eq!(visible(&mut app), gauges);
+    assert_eq!(app.world().resource::<WorldAssets>().counts(), assets);
+    assert_eq!(app.world().resource::<Session>().0.checkpoint(), checkpoint);
 }
 
 #[test]
@@ -1915,26 +2017,26 @@ fn world_operating_overlay_preserves_lit_terrain_and_building_shading() {
 }
 
 #[test]
-fn world_flow_arrows_animate_freeze_hide_and_leave_simulation_and_assets_unchanged() {
+fn world_flow_pulses_animate_freeze_hide_and_leave_simulation_and_assets_unchanged() {
     use application::Command;
     use bevy::prelude::*;
     use game::{
         hud::UiAction,
         sim::{Session, SimSpeed},
-        world::{FlowArrow, WorldAction, WorldAssets, WorldScene},
+        world::{FlowPulse, WorldAction, WorldAssets, WorldScene},
     };
     let logs = tempfile::TempDir::new().unwrap();
     let mut app = diorama_app(logs.path());
     crate::support::request(&mut app, "western_interconnection");
     let visible = |app: &mut App| -> Vec<(Entity, Transform)> {
         app.world_mut()
-            .query_filtered::<(Entity, &Transform, &Visibility), With<FlowArrow>>()
+            .query_filtered::<(Entity, &Transform, &Visibility), With<FlowPulse>>()
             .iter(app.world())
             .filter(|(_, _, v)| **v == Visibility::Visible)
             .map(|(e, t, _)| (e, *t))
             .collect()
     };
-    assert!(visible(&mut app).is_empty(), "Planning has no arrows");
+    assert!(visible(&mut app).is_empty(), "Planning has no pulses");
     crate::hud_smoke::dispatch_in(
         &mut app,
         vec![
@@ -1946,7 +2048,7 @@ fn world_flow_arrows_animate_freeze_hide_and_leave_simulation_and_assets_unchang
     let before = visible(&mut app);
     assert!(!before.is_empty(), "generating plants supply cities");
     for (entity, _) in &before {
-        let line = app.world().get::<FlowArrow>(*entity).unwrap().line;
+        let line = app.world().get::<FlowPulse>(*entity).unwrap().line;
         let model = app.world().resource::<WorldScene>().model.as_ref().unwrap();
         assert!(
             model.lines[&line].flow.is_some()
@@ -1956,7 +2058,7 @@ fn world_flow_arrows_animate_freeze_hide_and_leave_simulation_and_assets_unchang
     }
     let checkpoint = app.world().resource::<Session>().0.checkpoint();
     let assets = app.world().resource::<WorldAssets>().counts();
-    // Presentation frames move arrows without requesting a simulation tick.
+    // Presentation frames move pulses without requesting a simulation tick.
     app.insert_resource(SimSpeed::X1);
     app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
         std::time::Duration::from_millis(100),
@@ -1967,7 +2069,7 @@ fn world_flow_arrows_animate_freeze_hide_and_leave_simulation_and_assets_unchang
     assert_eq!(app.world().resource::<Session>().0.checkpoint(), checkpoint);
     app.insert_resource(SimSpeed::Paused);
     app.update();
-    assert_eq!(visible(&mut app), moving, "pause freezes the arrows");
+    assert_eq!(visible(&mut app), moving, "pause freezes the pulses");
     crate::hud_smoke::dispatch_in(&mut app, vec![UiAction::World(WorldAction::ToggleOverlay)]);
     app.update();
     assert!(visible(&mut app).is_empty());
@@ -1981,7 +2083,7 @@ fn world_flow_arrows_animate_freeze_hide_and_leave_simulation_and_assets_unchang
     app.update();
     assert!(
         visible(&mut app).is_empty(),
-        "resource views hide flow arrows"
+        "resource views hide flow pulses"
     );
     crate::hud_smoke::dispatch_in(&mut app, vec![UiAction::World(WorldAction::ControlRoom)]);
     app.update();
@@ -2024,11 +2126,35 @@ fn world_flow_arrows_animate_freeze_hide_and_leave_simulation_and_assets_unchang
         visible(&mut app).is_empty(),
         "a blackout carries no illustrative power"
     );
+    let session = app.world().resource::<Session>().0.session();
+    let model = app.world().resource::<WorldScene>().model.as_ref().unwrap();
+    for city in model.cities.values().filter(|c| c.connected) {
+        let detail = session.city_detail(city.id).unwrap();
+        assert_eq!(detail.served_now.unwrap().value(), 0.0);
+        assert!(detail.demand_now.unwrap().value() > 0.0);
+        assert!(
+            city.scale > 0.0,
+            "a blackout dims cities without flattening demand"
+        );
+    }
+    for (gauge, visibility) in app
+        .world_mut()
+        .query::<(&game::world::OutputGauge, &Visibility)>()
+        .iter(app.world())
+    {
+        if gauge.segment.is_some() {
+            assert_eq!(
+                *visibility,
+                Visibility::Hidden,
+                "zero-output gauges are empty"
+            );
+        }
+    }
     crate::hud_smoke::dispatch_in(&mut app, vec![UiAction::ReturnToMenu]);
     crate::support::update_n(&mut app, 3);
     assert_eq!(
         app.world_mut()
-            .query_filtered::<Entity, With<FlowArrow>>()
+            .query_filtered::<Entity, With<FlowPulse>>()
             .iter(app.world())
             .count(),
         0

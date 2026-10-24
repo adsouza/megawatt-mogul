@@ -314,8 +314,8 @@ fn on_a_large_map_the_player_opens_and_closes_the_legend() {
     }
 }
 
-/// The player's choice is the game's, not the month's: it lasts through Operating, the Review
-/// and the next month's planning. (A new game starts undecided: `tests/game/hud.rs`.)
+/// The player's choice lasts through Operating and Review, where the map is hidden, then
+/// reopens the legend in the next month's planning. (A new game starts undecided: `tests/game/hud.rs`.)
 #[test]
 fn the_players_legend_choice_lasts_through_the_phases_of_a_game() {
     let logs = TempDir::new().unwrap();
@@ -334,7 +334,17 @@ fn the_players_legend_choice_lasts_through_the_phases_of_a_game() {
         assert_eq!(session(&app).phase(), phase);
         let widgets = pass.settled(&mut app, SMALL.0, SMALL.1);
         assert_eq!(choice(&app), LegendChoice(Some(true)), "{phase:?}");
-        assert!(legend(&widgets).is_some(), "{phase:?}: still open");
+        if phase == DayPhase::Review {
+            assert_eq!(legend(&widgets), None, "Review hides the map legend");
+            for label in ["Map", TOGGLE] {
+                assert!(
+                    !widgets.iter().any(|w| w.text == label),
+                    "Review hides {label}"
+                );
+            }
+        } else {
+            assert!(legend(&widgets).is_some(), "{phase:?}: still open");
+        }
     }
 }
 

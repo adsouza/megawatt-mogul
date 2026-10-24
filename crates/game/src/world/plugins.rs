@@ -46,7 +46,7 @@ impl Plugin for OverlayPlugin {
                 (
                     super::render::update_visuals,
                     super::lighting::update_sunlight,
-                    super::flow::update_arrows,
+                    super::flow::update_pulses,
                 )
                     .chain()
                     .after(EguiPostUpdateSet::EndPass)

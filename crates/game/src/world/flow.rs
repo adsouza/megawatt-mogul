@@ -82,7 +82,7 @@ pub(super) fn route_flows(
         .collect()
 }
 
-pub(super) fn arrow_transform(
+pub(super) fn pulse_transform(
     parts: &[Part],
     direction: FlowDirection,
     distance: f32,
@@ -111,28 +111,19 @@ pub(super) fn arrow_transform(
             } else {
                 part.rotation
             };
-            return Some(Transform::from_translation(center).with_rotation(rotation));
+            return Some(
+                Transform::from_translation(center)
+                    .with_rotation(rotation)
+                    .with_scale(Vec3::new(0.7, 0.7, 2.5)),
+            );
         }
         remaining -= segment;
     }
     None
 }
 
-/// A small shared chevron; +Z is its travel direction.
-pub(super) fn arrow_parts() -> [Part; 2] {
-    [-1.0, 1.0].map(|side| {
-        let mut part = Part::block(
-            Vec3::new(side * 0.07, 0.0, 0.0),
-            Vec3::new(0.045, 0.035, 0.28),
-            [1.0; 4],
-        );
-        part.rotation = Quat::from_rotation_y(-side * 0.52);
-        part
-    })
-}
-
 #[derive(Component)]
-pub struct FlowArrow {
+pub struct FlowPulse {
     pub line: LineId,
     pub(super) slot: u32,
     pub(super) count: u32,
@@ -143,14 +134,14 @@ pub(super) struct FlowAnimation {
     generation: Option<u64>,
 }
 
-pub(super) fn update_arrows(
+pub(super) fn update_pulses(
     scene: Res<super::WorldScene>,
     controls: Res<super::WorldControls>,
     speed: Option<Res<crate::sim::SimSpeed>>,
     persistence: Option<Res<crate::sim::Persistence>>,
     time: Res<Time>,
     mut animation: ResMut<FlowAnimation>,
-    mut arrows: Query<(&FlowArrow, &mut Transform, &mut Visibility)>,
+    mut pulses: Query<(&FlowPulse, &mut Transform, &mut Visibility)>,
 ) {
     if animation.generation != scene.generation {
         animation.distance = 0.0;
@@ -165,19 +156,19 @@ pub(super) fn update_arrows(
     if running {
         animation.distance += time.delta_secs() * 1.2;
     }
-    for (arrow, mut transform, mut visibility) in &mut arrows {
+    for (pulse, mut transform, mut visibility) in &mut pulses {
         let pose = scene
             .model
             .as_ref()
-            .and_then(|m| m.lines.get(&arrow.line))
+            .and_then(|m| m.lines.get(&pulse.line))
             .filter(|line| controls.hologram() && line.energized && line.building.is_none())
             .and_then(|line| {
-                arrow_transform(
+                pulse_transform(
                     &line.parts,
                     line.flow?,
                     animation.distance,
-                    arrow.slot,
-                    arrow.count,
+                    pulse.slot,
+                    pulse.count,
                 )
             });
         if let Some(pose) = pose {
@@ -277,15 +268,15 @@ mod tests {
             }
         }
         #[test]
-        fn arrow_stays_on_its_segment_and_points_in_the_travel_direction(distance in 0.0f32..10000.0, reverse in any::<bool>(), slot in 0u32..4) {
+        fn pulse_stays_on_its_segment_and_points_in_the_travel_direction(distance in 0.0f32..10000.0, reverse in any::<bool>(), slot in 0u32..4) {
             let part = Part { center: Vec3::new(0.0, 2.0, 5.0), size: Vec3::new(0.1, 0.1, 10.06), rotation: Quat::IDENTITY, color: [1.0; 4] };
             let direction = if reverse { FlowDirection::Reverse } else { FlowDirection::Forward };
-            let transform = arrow_transform(&[part], direction, distance, slot, 4).unwrap();
+            let transform = pulse_transform(&[part], direction, distance, slot, 4).unwrap();
             prop_assert!(transform.translation.is_finite());
             prop_assert!(transform.translation.z >= 0.0 && transform.translation.z <= 10.0);
             prop_assert!((transform.translation.y - 2.07).abs() < 1e-5);
             let facing = transform.rotation * Vec3::Z;
-            prop_assert!(if reverse { facing.z < -0.99 } else { facing.z > 0.99 }, "arrow faces travel direction");
+            prop_assert!(if reverse { facing.z < -0.99 } else { facing.z > 0.99 }, "pulse faces travel direction");
         }
     }
 }
