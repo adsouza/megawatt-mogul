@@ -26,6 +26,18 @@ pub struct RegionFile {
     pub irradiance: Field,
     pub cooling_water: Field,
     pub hydro_potential: Field,
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub wind_potential: Option<Field>,
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub wind: Option<WindDto>,
     pub catalog: Vec<PlantSpecDto>,
     pub cities: Vec<CityDto>,
     pub demand: DemandDto,
@@ -81,6 +93,7 @@ pub enum PlantKindDto {
     Solar,
     Hydro,
     Battery,
+    Wind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize, Serialize)]
@@ -140,6 +153,24 @@ pub struct SolarDto {
     pub daylight: Vec<(f64, f64)>,
     pub clearness_mean: Vec<f64>,
     pub clearness_sd: f64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WindDto {
+    pub monthly: Vec<f64>,
+    pub persistence: f64,
+    pub innovation_sd: f64,
+    pub initial_sd: f64,
+    pub band: f64,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct WindExtension {
+    pub potential: Field,
+    pub wind: WindDto,
+    pub plant: PlantSpecDto,
+    pub charge_end_hour: u8,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -239,6 +270,12 @@ pub struct BatteryDto {
     pub charge_efficiency: f64,
     pub discharge_efficiency: f64,
     pub discharge_start_hour: u8,
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub charge_end_hour: Option<u8>,
 }
 
 // Missing fields stay distinguishable from authored values while RON uses ordinary

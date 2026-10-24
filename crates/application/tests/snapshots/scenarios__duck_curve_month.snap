@@ -1,6 +1,6 @@
 ---
 source: crates/application/tests/scenarios.rs
-assertion_line: 119
+assertion_line: 178
 expression: report
 ---
 MonthlyReport {
@@ -10,10 +10,10 @@ MonthlyReport {
     },
     days: 30,
     revenue: Money(
-        6434688811,
+        6408059942,
     ),
     fuel: Money(
-        -1925934400,
+        -1949365479,
     ),
     start_up: Money(
         0,
@@ -25,21 +25,21 @@ MonthlyReport {
         0,
     ),
     net: Money(
-        3981754411,
+        3931694463,
     ),
     storage: {},
     energy_by_kind: {
         Coal: MegawattHours(
-            279825.7124654014,
+            287435.1066476656,
         ),
         Ccgt: MegawattHours(
-            145434.94731334332,
+            145568.92416242743,
         ),
         Peaker: MegawattHours(
             28799.99999999941,
         ),
         Solar: MegawattHours(
-            223381.52788473334,
+            212813.82226828238,
         ),
     },
     merit_order: [
@@ -52,7 +52,7 @@ MonthlyReport {
                 0.0,
             ),
             energy: MegawattHours(
-                44676.30557694667,
+                42562.76445365648,
             ),
         },
         MeritOrderEntry {
@@ -64,7 +64,7 @@ MonthlyReport {
                 0.0,
             ),
             energy: MegawattHours(
-                44676.30557694667,
+                42562.76445365648,
             ),
         },
         MeritOrderEntry {
@@ -76,7 +76,7 @@ MonthlyReport {
                 0.0,
             ),
             energy: MegawattHours(
-                44676.30557694667,
+                42562.76445365648,
             ),
         },
         MeritOrderEntry {
@@ -88,7 +88,7 @@ MonthlyReport {
                 0.0,
             ),
             energy: MegawattHours(
-                44676.30557694667,
+                42562.76445365648,
             ),
         },
         MeritOrderEntry {
@@ -100,7 +100,7 @@ MonthlyReport {
                 0.0,
             ),
             energy: MegawattHours(
-                44676.30557694667,
+                42562.76445365648,
             ),
         },
         MeritOrderEntry {
@@ -112,7 +112,7 @@ MonthlyReport {
                 30.0,
             ),
             energy: MegawattHours(
-                279825.7124654014,
+                287435.1066476656,
             ),
         },
         MeritOrderEntry {
@@ -124,7 +124,7 @@ MonthlyReport {
                 45.0,
             ),
             energy: MegawattHours(
-                145434.94731334332,
+                145568.92416242743,
             ),
         },
         MeritOrderEntry {
@@ -141,22 +141,22 @@ MonthlyReport {
         },
     ],
     demand: MegawattHours(
-        677335.6643116286,
+        674532.6254654927,
     ),
     served: MegawattHours(
-        677335.6643116286,
+        674532.6254654927,
     ),
     unserved: MegawattHours(
         0.0,
     ),
     curtailed: MegawattHours(
-        34857.521641202075,
+        45425.227257652965,
     ),
     imbalance: MegawattHours(
-        106.52335184944792,
+        85.22761288231685,
     ),
     overgeneration: MegawattHours(
-        1005.2148275469772,
+        989.383574514183,
     ),
     rotating_outage: MegawattHours(
         0.0,
@@ -165,7 +165,7 @@ MonthlyReport {
         0.0,
     ),
     peak_demand: Megawatts(
-        1188.7168137236386,
+        1204.058651968977,
     ),
     reliability: Ratio(
         1.0,
@@ -173,9 +173,14 @@ MonthlyReport {
     incidents: [],
     over_frequency_trips: 0,
     out_of_band_share: Ratio(
-        0.008333333333333333,
+        0.006944444444444444,
     ),
     frequency_failed: false,
     frequency_notice: false,
     rate_review: None,
+    curtailed_by_kind: {
+        Solar: MegawattHours(
+            45425.227257652965,
+        ),
+    },
 }

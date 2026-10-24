@@ -3,8 +3,9 @@ use crate::{
     hud_smoke::dispatch_in,
     support::{egui_harness::button, egui_pass::EguiPass, headless_app, shipped_assets, update_n},
 };
-use application::{InMemoryCommandLog, SaveStore};
+use application::{Game, GameCheckpoint, InMemoryCommandLog, SaveStore};
 use bevy::prelude::*;
+use domain::state::State;
 use game::{
     hud::UiAction,
     paths::SaveDir,
@@ -53,21 +54,48 @@ fn setup(
     update_n(&mut app, 3);
     settle(&mut app);
     update_n(&mut app, 3);
-    let mut expected = bundle.checkpoint;
+    let expected = bundle.checkpoint;
     assert_eq!(
         expected.header.sim_rules_version, 8,
         "immutable released fixture"
     );
-    // Loading changes only the rules used for future commands; all saved state/history
-    // and the actual source bytes must remain identical.
-    expected.header.sim_rules_version = domain::SIM_RULES_VERSION;
     (app, saves, logs, id, bytes, expected)
 }
+/// Compare preserved fields using the source schema. A new capture has schema 2 and its
+/// own hash, while elapsed state/history, RNG, source region and provenance remain unchanged.
+fn assert_upgraded_without_rewriting_history(game: &Game, source: &GameCheckpoint) {
+    let actual = game.checkpoint();
+    let old = source.snapshot.as_ref().unwrap();
+    let new = actual.snapshot.as_ref().unwrap();
+    assert_eq!(old.schema, 1);
+    assert_eq!(new.schema, 2);
+    let mut header = source.header.clone();
+    header.sim_rules_version = domain::SIM_RULES_VERSION;
+    assert_eq!(actual.header, header);
+    assert!(game.session().snapshot_state_schema(1) == old.session);
+    assert!(game.projections().state_bytes_schema(1) == old.projections);
+    assert_eq!(actual.commands, source.commands);
+    assert_eq!(actual.command_count, source.command_count);
+    assert_eq!(actual.summary, source.summary);
+    assert_eq!(actual.region_source, source.region_source);
+    assert_eq!(new.origin, old.origin);
+    assert_eq!(new.journal_hash, old.journal_hash);
+    assert_ne!(actual.state_hash, source.state_hash);
+    for plant in game.session().power().plants().values() {
+        if let Some(battery) = plant.spec().battery {
+            assert_eq!(battery.charge_end_hour, 18);
+        }
+    }
+}
+
 #[test]
 fn portable_resume_click_uses_normal_ui_and_restores_paused_progress() {
-    for phase in ["planning", "operating"] {
-        let (mut app, saves, _logs, id, bytes, expected) =
-            setup(&format!("schema1-migrated-{phase}.mgsave"));
+    for file in [
+        "schema1-migrated-planning.mgsave",
+        "schema1-migrated-operating.mgsave",
+        "schema1-charged-battery.mgsave",
+    ] {
+        let (mut app, saves, _logs, id, bytes, expected) = setup(file);
         dispatch_in(
             &mut app,
             vec![UiAction::Persistence(PersistAction::OpenBrowser)],
@@ -84,7 +112,21 @@ fn portable_resume_click_uses_normal_ui_and_restores_paused_progress() {
         pass.click_at(&mut app, 1280.0, 640.0, resume.rect.center());
         settle(&mut app);
         update_n(&mut app, 5);
-        assert_eq!(app.world().resource::<Session>().0.checkpoint(), expected);
+        assert_upgraded_without_rewriting_history(&app.world().resource::<Session>().0, &expected);
+        if file == "schema1-charged-battery.mgsave" {
+            assert!(
+                app.world()
+                    .resource::<Session>()
+                    .0
+                    .session()
+                    .plant_views()
+                    .iter()
+                    .any(|plant| plant
+                        .battery
+                        .as_ref()
+                        .is_some_and(|battery| battery.stored.value() > 0.0))
+            );
+        }
         assert_eq!(*app.world().resource::<SimSpeed>(), SimSpeed::Paused);
         let store = FileSaveStore::new(saves.path().into());
         let entries = store.list().unwrap();
@@ -100,7 +142,7 @@ fn portable_resume_click_uses_normal_ui_and_restores_paused_progress() {
                 &|| false,
             )
             .unwrap();
-        assert_eq!(resumed.checkpoint(), expected);
+        assert_upgraded_without_rewriting_history(&resumed, &expected);
         assert_eq!(
             std::fs::read(saves.path().join(format!("{}.mgsave", id.as_str()))).unwrap(),
             bytes
@@ -138,7 +180,7 @@ fn portable_resume_preload_and_activation_preserve_the_saved_bytes() {
     settle(&mut app);
     update_n(&mut app, 5);
     assert_eq!(files(), 1);
-    assert_eq!(app.world().resource::<Session>().0.checkpoint(), expected);
+    assert_upgraded_without_rewriting_history(&app.world().resource::<Session>().0, &expected);
     assert_eq!(
         std::fs::read(saves.path().join(format!("{}.mgsave", id.as_str()))).unwrap(),
         bytes
@@ -194,5 +236,5 @@ fn load_library_renders_cached_cards_immediately_while_refreshing_metadata() {
     );
     settle(&mut app);
     update_n(&mut app, 5);
-    assert_eq!(app.world().resource::<Session>().0.checkpoint(), expected);
+    assert_upgraded_without_rewriting_history(&app.world().resource::<Session>().0, &expected);
 }

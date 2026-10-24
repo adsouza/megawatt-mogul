@@ -181,11 +181,16 @@ impl GameSession {
     ) -> Result<Vec<DomainEvent>, DomainError> {
         self.require_phase(&PLANNING_OR_OPERATING)?;
         let target = self.operable(plant)?;
+        let before = target.clone();
         if self.phase == DayPhase::Planning {
             target.check_target(mw)?;
             self.operable_mut(plant).set_initial_target(mw);
         } else {
             self.operable_mut(plant).set_target(mw)?;
+        }
+        // A same-value command is a no-op: it must not touch the storage plan.
+        if *self.operable(plant)? != before {
+            self.power.generators_changed();
         }
         Ok(Vec::new())
     }
@@ -254,6 +259,7 @@ impl GameSession {
         let events = self.operable_mut(plant).start()?;
         self.month_to_date
             .add_command_events(self.clock.tick(), &events);
+        self.power.generators_changed();
         Ok(events)
     }
 
@@ -271,6 +277,7 @@ impl GameSession {
         }
         let events = target.stop()?;
         target.suppress_commitment_for_day();
+        self.power.generators_changed();
         Ok(events)
     }
 

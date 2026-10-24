@@ -10,6 +10,18 @@
 
 /// Every literal key the HUD uses, grouped as in `ui.ftl`.
 pub const ALL_UI_KEYS: &[&str] = &[
+    "review-curtailed-kind",
+    "plant-capacity-credit",
+    "map-layer-wind",
+    "wind-potential",
+    "wind-resource-help",
+    "wind-available",
+    "wind-delivered",
+    "wind-curtailed",
+    "wind-forecast",
+    "wind-range",
+    "wind-range-value",
+    "wind-build-help",
     "error-line-not-needed",
     "region-error-missing-field",
     "region-error-unsupported-schema",

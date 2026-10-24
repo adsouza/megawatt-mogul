@@ -9,32 +9,13 @@ OverbuildOutcome {
         (
             SimMonth {
                 year: 2027,
-                month: 7,
+                month: 8,
             },
             FrequencyNoticeIssued {
                 month: SimMonth {
                     year: 2027,
-                    month: 7,
+                    month: 8,
                 },
-            },
-        ),
-        (
-            SimMonth {
-                year: 2027,
-                month: 8,
-            },
-            StrikeIssued {
-                strikes: 1,
-                reason: UnservedEnergy,
-            },
-        ),
-        (
-            SimMonth {
-                year: 2027,
-                month: 11,
-            },
-            StrikeExpired {
-                strikes: 0,
             },
         ),
         (
@@ -44,42 +25,11 @@ OverbuildOutcome {
             },
             RateReviewCompleted {
                 tariff: Price(
-                    99.57164811398243,
+                    100.4613360521048,
                 ),
                 allowed_return: Ratio(
-                    0.09305230218900831,
+                    0.09468736188741605,
                 ),
-            },
-        ),
-        (
-            SimMonth {
-                year: 2028,
-                month: 7,
-            },
-            FrequencyNoticeIssued {
-                month: SimMonth {
-                    year: 2028,
-                    month: 7,
-                },
-            },
-        ),
-        (
-            SimMonth {
-                year: 2028,
-                month: 8,
-            },
-            StrikeIssued {
-                strikes: 1,
-                reason: FrequencyPerformance,
-            },
-        ),
-        (
-            SimMonth {
-                year: 2028,
-                month: 11,
-            },
-            StrikeExpired {
-                strikes: 0,
             },
         ),
         (
@@ -89,10 +39,10 @@ OverbuildOutcome {
             },
             RateReviewCompleted {
                 tariff: Price(
-                    99.5831851323135,
+                    99.23185797248539,
                 ),
                 allowed_return: Ratio(
-                    0.09469084326337411,
+                    0.095555068364716,
                 ),
             },
         ),
@@ -147,25 +97,6 @@ OverbuildOutcome {
         (
             SimMonth {
                 year: 2029,
-                month: 8,
-            },
-            StrikeIssued {
-                strikes: 1,
-                reason: UnservedEnergy,
-            },
-        ),
-        (
-            SimMonth {
-                year: 2029,
-                month: 11,
-            },
-            StrikeExpired {
-                strikes: 0,
-            },
-        ),
-        (
-            SimMonth {
-                year: 2029,
                 month: 12,
             },
             CapitalHeld {
@@ -175,7 +106,7 @@ OverbuildOutcome {
                     ),
                 ),
                 amount: Money(
-                    45622051826,
+                    48179390793,
                 ),
             },
         ),
@@ -191,7 +122,7 @@ OverbuildOutcome {
                     ),
                 ),
                 amount: Money(
-                    45622051826,
+                    48179390793,
                 ),
             },
         ),
@@ -207,7 +138,7 @@ OverbuildOutcome {
                     ),
                 ),
                 amount: Money(
-                    45622051826,
+                    48179390793,
                 ),
             },
         ),
@@ -223,7 +154,7 @@ OverbuildOutcome {
                     ),
                 ),
                 amount: Money(
-                    45622051826,
+                    48179390793,
                 ),
             },
         ),
@@ -234,11 +165,21 @@ OverbuildOutcome {
             },
             RateReviewCompleted {
                 tariff: Price(
-                    111.35547541790686,
+                    111.14547279515116,
                 ),
                 allowed_return: Ratio(
-                    0.09271860142721314,
+                    0.09424677945266584,
                 ),
+            },
+        ),
+        (
+            SimMonth {
+                year: 2030,
+                month: 7,
+            },
+            StrikeIssued {
+                strikes: 1,
+                reason: UnservedEnergy,
             },
         ),
         (
@@ -256,6 +197,15 @@ OverbuildOutcome {
         (
             SimMonth {
                 year: 2030,
+                month: 11,
+            },
+            StrikeExpired {
+                strikes: 0,
+            },
+        ),
+        (
+            SimMonth {
+                year: 2030,
                 month: 12,
             },
             CapitalReleased {
@@ -265,7 +215,7 @@ OverbuildOutcome {
                     ),
                 ),
                 amount: Money(
-                    2053961,
+                    2578546757,
                 ),
             },
         ),
@@ -281,7 +231,7 @@ OverbuildOutcome {
                     ),
                 ),
                 amount: Money(
-                    44069106591,
+                    43963017727,
                 ),
             },
         ),
@@ -297,7 +247,7 @@ OverbuildOutcome {
                     ),
                 ),
                 amount: Money(
-                    2053961,
+                    2578546757,
                 ),
             },
         ),
@@ -313,7 +263,7 @@ OverbuildOutcome {
                     ),
                 ),
                 amount: Money(
-                    44069106591,
+                    43963017727,
                 ),
             },
         ),
@@ -329,7 +279,7 @@ OverbuildOutcome {
                     ),
                 ),
                 amount: Money(
-                    2053961,
+                    2578546757,
                 ),
             },
         ),
@@ -345,7 +295,7 @@ OverbuildOutcome {
                     ),
                 ),
                 amount: Money(
-                    44069106591,
+                    43963017727,
                 ),
             },
         ),
@@ -361,7 +311,7 @@ OverbuildOutcome {
                     ),
                 ),
                 amount: Money(
-                    2053961,
+                    2578546757,
                 ),
             },
         ),
@@ -377,7 +327,7 @@ OverbuildOutcome {
                     ),
                 ),
                 amount: Money(
-                    44069106591,
+                    43963017727,
                 ),
             },
         ),
@@ -388,10 +338,10 @@ OverbuildOutcome {
             },
             RateReviewCompleted {
                 tariff: Price(
-                    111.9287652300921,
+                    111.04660966867604,
                 ),
                 allowed_return: Ratio(
-                    0.08322411825850175,
+                    0.08180175184151191,
                 ),
             },
         ),
@@ -404,10 +354,10 @@ OverbuildOutcome {
         },
         days: 31,
         revenue: Money(
-            8037584109,
+            7797171937,
         ),
         fuel: Money(
-            -2983369030,
+            -2871261846,
         ),
         start_up: Money(
             0,
@@ -419,18 +369,18 @@ OverbuildOutcome {
             0,
         ),
         net: Money(
-            4537215079,
+            4408910091,
         ),
         storage: {},
         energy_by_kind: {
             Coal: MegawattHours(
-                421542.1205610209,
+                421606.16892598465,
             ),
             Ccgt: MegawattHours(
-                265229.95419284306,
+                246904.81638909274,
             ),
             Peaker: MegawattHours(
-                35013.85828507165,
+                33024.777654467485,
             ),
         },
         merit_order: [
@@ -443,7 +393,7 @@ OverbuildOutcome {
                     30.0,
                 ),
                 energy: MegawattHours(
-                    421542.1205610209,
+                    421606.16892598465,
                 ),
             },
             MeritOrderEntry {
@@ -455,7 +405,7 @@ OverbuildOutcome {
                     45.0,
                 ),
                 energy: MegawattHours(
-                    265229.95419284306,
+                    246904.81638909274,
                 ),
             },
             MeritOrderEntry {
@@ -515,15 +465,15 @@ OverbuildOutcome {
                     150.0,
                 ),
                 energy: MegawattHours(
-                    35013.85828507165,
+                    33024.777654467485,
                 ),
             },
         ],
         demand: MegawattHours(
-            721795.1411207254,
+            701528.5230583285,
         ),
         served: MegawattHours(
-            721795.1411207254,
+            701528.5230583285,
         ),
         unserved: MegawattHours(
             0.0,
@@ -532,10 +482,10 @@ OverbuildOutcome {
             0.0,
         ),
         imbalance: MegawattHours(
-            -9.208081789346192,
+            7.239911219346173,
         ),
         overgeneration: MegawattHours(
-            912.4061251690006,
+            938.5058135097061,
         ),
         rotating_outage: MegawattHours(
             0.0,
@@ -544,7 +494,7 @@ OverbuildOutcome {
             0.0,
         ),
         peak_demand: Megawatts(
-            1240.8354940808579,
+            1213.6727233374975,
         ),
         reliability: Ratio(
             1.0,
@@ -559,18 +509,19 @@ OverbuildOutcome {
         rate_review: Some(
             RateReviewOutcome {
                 tariff: Price(
-                    111.9287652300921,
+                    111.04660966867604,
                 ),
                 allowed_return: Ratio(
-                    0.08322411825850175,
+                    0.08180175184151191,
                 ),
                 revenue_requirement: Money(
-                    86919692820,
+                    86701681967,
                 ),
                 cost_per_mwh: Some(
-                    49.606393622371556,
+                    49.69693044035915,
                 ),
             },
         ),
+        curtailed_by_kind: {},
     },
 }

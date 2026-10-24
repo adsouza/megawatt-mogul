@@ -75,7 +75,7 @@ impl Game {
     pub fn checkpoint(&self) -> GameCheckpoint {
         let snapshot = PortableState {
             origin: self.origin.clone(),
-            schema: 1,
+            schema: 2,
             session: self.session.snapshot_state(),
             projections: self.projections.state_bytes(),
             journal_hash: portable_hash(&self.journal.state_bytes()),
@@ -126,7 +126,7 @@ impl Game {
             if cancelled() {
                 return Err(RestoreError::Cancelled);
             }
-            if snapshot.schema != 1 {
+            if !(1..=2).contains(&snapshot.schema) {
                 return Err(RestoreError::InvalidSnapshot);
             }
             if snapshot.state_hash() != checkpoint.state_hash {
@@ -135,15 +135,19 @@ impl Game {
             if portable_hash(&checkpoint.commands.state_bytes()) != snapshot.journal_hash {
                 return Err(RestoreError::CommandCountMismatch);
             }
-            let session =
+            let mut session =
                 GameSession::from_snapshot_state(&snapshot.session, region.definition.clone())
                     .map_err(|_| RestoreError::InvalidSnapshot)?;
-            let projections = Projections::from_state_bytes(&snapshot.projections)
-                .map_err(|_| RestoreError::InvalidSnapshot)?;
-            if session.snapshot_state() != snapshot.session
-                || projections.state_bytes() != snapshot.projections
+            let projections =
+                Projections::from_state_bytes_schema(&snapshot.projections, snapshot.schema)
+                    .map_err(|_| RestoreError::InvalidSnapshot)?;
+            if session.snapshot_state_schema(snapshot.schema) != snapshot.session
+                || projections.state_bytes_schema(snapshot.schema) != snapshot.projections
             {
                 return Err(RestoreError::InvalidSnapshot);
+            }
+            if snapshot.schema == 1 {
+                session.upgrade_schema1();
             }
             (session, projections)
         } else {

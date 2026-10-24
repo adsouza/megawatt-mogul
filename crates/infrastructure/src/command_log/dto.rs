@@ -62,6 +62,7 @@ pub enum PlantKindDto {
     Solar,
     Hydro,
     Battery,
+    Wind,
 }
 
 impl From<PlantKind> for PlantKindDto {
@@ -74,6 +75,7 @@ impl From<PlantKind> for PlantKindDto {
             PlantKind::Solar => Self::Solar,
             PlantKind::Hydro => Self::Hydro,
             PlantKind::Battery => Self::Battery,
+            PlantKind::Wind => Self::Wind,
         }
     }
 }
@@ -88,6 +90,7 @@ impl From<PlantKindDto> for PlantKind {
             PlantKindDto::Solar => Self::Solar,
             PlantKindDto::Hydro => Self::Hydro,
             PlantKindDto::Battery => Self::Battery,
+            PlantKindDto::Wind => Self::Wind,
         }
     }
 }

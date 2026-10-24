@@ -7,7 +7,7 @@ use domain::ids::{CellCoord, CityId, RegionId};
 use domain::region::{
     CityDef, DemandShape, FrequencyParams, HydroParams, LineParams, PlantKind, PlantSpec,
     RegionDefinition, RegionDefinitionParts, RegionError, RegulatorParams, SatisfactionParams,
-    SitingRule, SolarParams, StartDef, StartPlantDef, StorageAccreditation,
+    SitingRule, SolarParams, StartDef, StartPlantDef, StorageAccreditation, WindParams,
 };
 use domain::time::{SimDuration, SimMonth, TICKS_PER_HOUR};
 use domain::units::{Hertz, Megawatts, Money, Price, RampRate, Ratio};
@@ -23,7 +23,23 @@ pub const MAX_CELLS: usize = 262_144;
 
 /// Rasterises the terrain, maps every DTO and validates the result through
 /// the domain constructor. Fails with the first problem found.
-pub fn map_region(file: RegionFile) -> Result<RegionDefinition> {
+pub fn map_region(mut file: RegionFile) -> Result<RegionDefinition> {
+    match file.region_schema {
+        None | Some(2) => super::legacy::extend_wind(&mut file)?,
+        Some(super::CURRENT_REGION_SCHEMA) => {}
+        Some(schema) => return Err(RegionError::UnsupportedRegionSchema(schema)),
+    }
+    let wind = file
+        .wind
+        .as_ref()
+        .ok_or(RegionError::MissingField { field: "wind" })?;
+    let potential = file
+        .wind_potential
+        .as_ref()
+        .ok_or(RegionError::MissingField {
+            field: "wind_potential",
+        })?;
+    check_field(potential, "wind_potential")?;
     check_geometry(&file)?;
     let parts = RegionDefinitionParts {
         id: RegionId::new(&file.id),
@@ -41,6 +57,13 @@ pub fn map_region(file: RegionFile) -> Result<RegionDefinition> {
             .collect::<Result<Vec<_>>>()?,
         demand: map_demand(&file.demand)?,
         solar: map_solar(&file.solar)?,
+        wind: WindParams {
+            monthly: array(&wind.monthly, "wind.monthly")?,
+            persistence: wind.persistence,
+            innovation_sd: wind.innovation_sd,
+            initial_sd: wind.initial_sd,
+            band: ratio(wind.band, "wind.band")?,
+        },
         hydro: HydroParams {
             monthly_flow: array(&file.hydro.monthly_flow, "hydro.monthly_flow")?,
         },
@@ -174,6 +197,7 @@ fn map_kind(kind: PlantKindDto) -> PlantKind {
         PlantKindDto::Solar => PlantKind::Solar,
         PlantKindDto::Hydro => PlantKind::Hydro,
         PlantKindDto::Battery => PlantKind::Battery,
+        PlantKindDto::Wind => PlantKind::Wind,
     }
 }
 
@@ -238,6 +262,9 @@ fn map_spec(spec: &PlantSpecDto) -> Result<PlantSpec> {
                         "battery.discharge_efficiency",
                     )?,
                     discharge_start_hour: b.discharge_start_hour,
+                    charge_end_hour: b.charge_end_hour.ok_or(RegionError::MissingField {
+                        field: "battery.charge_end_hour",
+                    })?,
                 })
             })
             .transpose()?,
@@ -318,7 +345,7 @@ fn map_regulator(r: &RegulatorDto, schema: Option<u32>) -> Result<RegulatorParam
                 legacy::A12_RETURN_PER_SATISFACTION_POINT,
             )
         }
-        Some(CURRENT_REGION_SCHEMA) => (
+        Some(2 | CURRENT_REGION_SCHEMA) => (
             r.storage_accreditation
                 .as_deref()
                 .ok_or_else(|| missing("regulator.storage_accreditation"))?,

@@ -106,6 +106,7 @@ pub struct MonthlyReport {
     pub frequency_notice: bool,
     /// The annual rate review, in December only.
     pub rate_review: Option<RateReviewOutcome>,
+    pub curtailed_by_kind: BTreeMap<PlantKind, MegawattHours>,
 }
 
 /// The current representative day so far, unweighted.
@@ -142,6 +143,7 @@ pub struct MonthAccumulator {
     normal_ticks: u32,
     /// Normal-mode ticks whose deviation exceeded the frequency band.
     out_of_band_ticks: u32,
+    curtailed_by_kind: BTreeMap<PlantKind, MegawattHours>,
 }
 
 impl Default for MonthAccumulator {
@@ -156,6 +158,7 @@ impl Default for MonthAccumulator {
             served: MegawattHours::ZERO,
             unserved: MegawattHours::ZERO,
             curtailed: MegawattHours::ZERO,
+            curtailed_by_kind: Default::default(),
             imbalance: MegawattHours::ZERO,
             overgeneration: MegawattHours::ZERO,
             rotating_outage: MegawattHours::ZERO,
@@ -197,6 +200,12 @@ impl MonthAccumulator {
         self.served += minute(summary.served);
         self.unserved += minute(summary.unserved);
         self.curtailed += minute(summary.curtailed);
+        for (kind, mw) in &summary.curtailed_by_kind {
+            *self
+                .curtailed_by_kind
+                .entry(*kind)
+                .or_insert(MegawattHours::ZERO) += minute(*mw);
+        }
         self.imbalance += minute(summary.imbalance);
         self.overgeneration += minute(summary.imbalance.max(Megawatts::ZERO));
         self.rotating_outage += minute(summary.demand * summary.outage.value());
@@ -309,6 +318,10 @@ impl MonthAccumulator {
         self.unserved
     }
 
+    pub fn curtailed_by_kind(&self) -> &BTreeMap<PlantKind, MegawattHours> {
+        &self.curtailed_by_kind
+    }
+
     pub fn curtailed(&self) -> MegawattHours {
         self.curtailed
     }
@@ -386,7 +399,8 @@ crate::state_record!(MonthAccumulator {
     incidents,
     normal_ticks,
     out_of_band_ticks,
-    storage
+    storage;
+    curtailed_by_kind: Default::default()
 });
 impl crate::state::State for IncidentKind {
     fn write(&self, out: &mut Vec<u8>) {
@@ -462,7 +476,8 @@ crate::state_record!(MonthlyReport {
     frequency_failed,
     frequency_notice,
     rate_review,
-    storage
+    storage;
+    curtailed_by_kind: Default::default()
 });
 
 #[cfg(test)]
@@ -489,6 +504,7 @@ mod tests {
             battery_discharge: Megawatts::ZERO,
             batteries: BTreeMap::new(),
             curtailed: Megawatts::new(6.0),
+            curtailed_by_kind: Default::default(),
             imbalance: generation - Megawatts::new(served),
             by_kind: BTreeMap::new(),
             by_plant,

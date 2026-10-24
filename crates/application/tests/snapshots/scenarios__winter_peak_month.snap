@@ -1,6 +1,6 @@
 ---
 source: crates/application/tests/scenarios.rs
-assertion_line: 96
+assertion_line: 155
 expression: g.projections().monthly_reports.latest().unwrap()
 ---
 MonthlyReport {
@@ -10,10 +10,10 @@ MonthlyReport {
     },
     days: 31,
     revenue: Money(
-        6885310386,
+        6929954529,
     ),
     fuel: Money(
-        -2999339573,
+        -3031977219,
     ),
     start_up: Money(
         0,
@@ -25,18 +25,18 @@ MonthlyReport {
         0,
     ),
     net: Money(
-        3608970813,
+        3620977310,
     ),
     storage: {},
     energy_by_kind: {
         Coal: MegawattHours(
-            424884.6399069439,
+            426209.5207936858,
         ),
         Ccgt: MegawattHours(
-            264139.853017437,
+            266233.27199678135,
         ),
         Peaker: MegawattHours(
-            35737.0876276868,
+            37019.9288635628,
         ),
     },
     merit_order: [
@@ -49,7 +49,7 @@ MonthlyReport {
                 30.0,
             ),
             energy: MegawattHours(
-                424884.6399069439,
+                426209.5207936858,
             ),
         },
         MeritOrderEntry {
@@ -61,7 +61,7 @@ MonthlyReport {
                 45.0,
             ),
             energy: MegawattHours(
-                264139.853017437,
+                266233.27199678135,
             ),
         },
         MeritOrderEntry {
@@ -73,15 +73,15 @@ MonthlyReport {
                 150.0,
             ),
             energy: MegawattHours(
-                35737.0876276868,
+                37019.9288635628,
             ),
         },
     ],
     demand: MegawattHours(
-        724769.5142838807,
+        729468.8978308962,
     ),
     served: MegawattHours(
-        724769.5142838807,
+        729468.8978308962,
     ),
     unserved: MegawattHours(
         0.0,
@@ -90,10 +90,10 @@ MonthlyReport {
         0.0,
     ),
     imbalance: MegawattHours(
-        -7.933731813090708,
+        -6.176176867406136,
     ),
     overgeneration: MegawattHours(
-        951.5401083236087,
+        928.4598721918022,
     ),
     rotating_outage: MegawattHours(
         0.0,
@@ -102,7 +102,7 @@ MonthlyReport {
         0.0,
     ),
     peak_demand: Megawatts(
-        1238.3065494334758,
+        1266.9335181449962,
     ),
     reliability: Ratio(
         1.0,
@@ -115,4 +115,5 @@ MonthlyReport {
     frequency_failed: false,
     frequency_notice: false,
     rate_review: None,
+    curtailed_by_kind: {},
 }

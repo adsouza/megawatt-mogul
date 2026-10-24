@@ -1,0 +1,2 @@
+// Frozen Plan 5 extension v1. Never retune released compatibility data.
+(potential: (base: 0.8, blobs: []), wind: (monthly: [0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6], persistence: 0.995, innovation_sd: 0.015, initial_sd: 0.15, band: 0.25), plant: (kind: Wind, capacity_mw: 300.0, min_stable: 0.0, ramp_mw_per_min: 0.0, startup_hours: 0.0, startup_cost_usd: 0, marginal_cost_usd_per_mwh: 0.0, fixed_om_usd_per_month: 500000, capital_cost_usd: 300000000, build_months: 3, capacity_credit: 0.2, book_life_months: 300, siting: Anywhere), charge_end_hour: 18)

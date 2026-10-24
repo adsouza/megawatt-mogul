@@ -9,6 +9,7 @@ use proptest::prelude::*;
 
 mod battery_bridge;
 mod transition_properties;
+mod wind;
 
 const ROOT: NodeId = NodeId(0);
 
@@ -376,6 +377,8 @@ fn automatic_black_start_respects_the_ending_instant_and_midnight_cutoff() {
         plant.initialise_pattern_day();
         let available = BTreeMap::new();
         let dispatch = Redispatch {
+            wind_fall: Megawatts::ZERO,
+            wind_horizon: 0,
             available: &available,
             to_serve: Megawatts::ZERO,
             withheld: Megawatts::ZERO,
@@ -495,7 +498,7 @@ proptest! {
                 && u64::from(instant) + u64::from(startup) <= u64::from(TICKS_PER_DAY)
         }).map(Plant::id).collect();
         let available = BTreeMap::new();
-        let redispatch = Redispatch { available: &available, to_serve: Megawatts::ZERO,
+        let redispatch = Redispatch { wind_fall: Megawatts::ZERO, wind_horizon: 0, available: &available, to_serve: Megawatts::ZERO,
             withheld: Megawatts::ZERO, curtailable: Megawatts::ZERO, effect_tick: instant };
         let mut events = Vec::new();
         sys.apply_protection(ProtectionOutcome::Blackout, Megawatts::ZERO, Megawatts::ZERO, region.frequency(), &redispatch, &mut events);
@@ -722,7 +725,10 @@ fn surplus_beyond_solar_keeps_agc_ramp_limited_and_curtails_all_solar() {
         Megawatts::ZERO,
         "curtailment acts from the next tick"
     );
-    assert!(events.contains(&DomainEvent::SolarCurtailed { mw: solar_output }));
+    assert!(events.contains(&DomainEvent::RenewableCurtailed {
+        kind: PlantKind::Solar,
+        mw: solar_output
+    }));
     let min = region.spec(PlantKind::Peaker).min_output();
     assert_eq!(
         sys.plant(peaker).unwrap().status(),
@@ -787,11 +793,13 @@ fn solar_driven_surplus_is_curtailed_until_frequency_recovers() {
         sys.deviation() > curtail_above,
         "solar surplus trips over-frequency"
     );
-    assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, DomainEvent::SolarCurtailed { .. }))
-    );
+    assert!(events.iter().any(|e| matches!(
+        e,
+        DomainEvent::RenewableCurtailed {
+            kind: PlantKind::Solar,
+            ..
+        }
+    )));
     // Solar covers the surplus, so the AGC peaker only ramps; it is not forced to minimum.
     assert_eq!(
         sys.plant(peaker).unwrap().status(),
@@ -858,7 +866,7 @@ fn curtailment_is_released_when_the_surplus_disappears() {
 }
 
 #[test]
-fn begin_day_draws_clearness_once_and_reports_boundary_starts() {
+fn begin_day_draws_clearness_then_wind_once_and_reports_boundary_starts() {
     let region = tiny_region();
     let mut sys = auto_follow_fleet(&region);
     // The peaker gets a mixed pattern, so its restart is counted by its Start action instead.
@@ -869,7 +877,12 @@ fn begin_day_draws_clearness_once_and_reports_boundary_starts() {
     p.set_commitment(schedule);
     let (mut rng, mut reference) = (SimRng::from_seed(8), SimRng::from_seed(8));
     let init = sys.begin_day(&region, april(), &mut rng);
-    reference.standard_normal();
+    let clearness = draw_clearness(region.solar(), april(), &mut reference);
+    let wind = region.wind();
+    let factor = (wind.monthly[april().index0()] + wind.initial_sd * reference.standard_normal())
+        .clamp(0.0, 1.0);
+    assert_eq!(sys.clearness, clearness);
+    assert_eq!(sys.wind_factor(), factor);
     assert_eq!(rng, reference);
     assert_eq!(
         init.boundary_starts,
@@ -880,16 +893,26 @@ fn begin_day_draws_clearness_once_and_reports_boundary_starts() {
 }
 
 #[test]
-fn each_tick_draws_exactly_one_normal() {
+fn each_tick_draws_demand_then_wind_except_minute_zero_reuses_initial_wind() {
     let region = tiny_region();
     for mut sys in [auto_follow_fleet(&region), system_with(&region, &[])] {
         let mut rng = SimRng::from_seed(6);
         sys.begin_day(&region, april(), &mut rng);
         for t in 0..5 {
             let mut reference = rng.clone();
-            reference.standard_normal();
+            reference.standard_normal(); // Demand, including at minute zero.
+            let wind = region.wind();
+            let factor = if t == 0 {
+                sys.wind_factor()
+            } else {
+                (wind.monthly[april().index0()]
+                    + wind.persistence * (sys.wind_factor() - wind.monthly[april().index0()])
+                    + wind.innovation_sd * reference.standard_normal())
+                .clamp(0.0, 1.0)
+            };
             sys.tick(&region, april(), t, &mut rng);
-            assert_eq!(rng, reference);
+            assert_eq!(rng, reference, "minute {t}");
+            assert_eq!(sys.wind_factor(), factor, "minute {t}");
         }
     }
 }
@@ -1234,17 +1257,18 @@ fn resource_limited_hydro_shutdown_tail_cannot_displace_available_midnight_gener
 }
 
 #[test]
-fn begin_day_draw_count_is_unchanged() {
+fn begin_day_draws_exactly_two_normals_without_wind_farms() {
     let region = tiny_region();
     let (mut a, mut b) = (auto_follow_fleet(&region), auto_follow_fleet(&region));
     let (mut rng_a, mut rng_b) = (SimRng::from_seed(13), SimRng::from_seed(13));
     a.begin_day(&region, april(), &mut rng_a);
     b.begin_day(&region, april(), &mut rng_b);
-    // Identical state draws identically, and the only draw is the day's clearness.
+    // Identical state draws identically, including with no wind farms built.
     assert_eq!(a, b);
     assert_eq!(rng_a, rng_b);
     let mut reference = SimRng::from_seed(13);
-    reference.standard_normal();
+    reference.standard_normal(); // Solar clearness.
+    reference.standard_normal(); // Initial regional wind, even without farms.
     assert_eq!(rng_a, reference);
 }
 
@@ -1528,11 +1552,13 @@ fn surplus_without_over_frequency_is_not_curtailed() {
 
     assert!(s.imbalance > Megawatts::new(30.0), "{:?}", s.imbalance);
     assert!(sys.deviation() < region.frequency().curtail_above);
-    assert!(
-        !events
-            .iter()
-            .any(|e| matches!(e, DomainEvent::SolarCurtailed { .. }))
-    );
+    assert!(!events.iter().any(|e| matches!(
+        e,
+        DomainEvent::RenewableCurtailed {
+            kind: PlantKind::Solar,
+            ..
+        }
+    )));
     assert_eq!(sys.curtailment, Megawatts::ZERO);
 }
 
@@ -1914,15 +1940,11 @@ fn evening_ccgt_trip(seed: u64, trip_at: u32) -> EmergencyRun {
 
 #[test]
 fn the_cap_returns_without_re_shedding_after_an_emergency() {
-    // (seed, trip instant, reference shed). The reference is this rule's own
-    // shed under staged under-frequency shedding (spec §15.4), rounded up to
-    // the next MW·tick: each trip's dip crosses two or three stages, which
-    // shed together. Under one step per tick the Plan 1a final review's
-    // counterfactual, which limited every hydro ramp-down to the others'
-    // one-tick headroom net of the shortfall, shed 4,414, 5,717 and 3,256,
-    // and this rule matched or beat it. Before the recovery phase these cases
-    // shed in 5, 14 and 8 episodes, and seed 7 blacked out.
-    let cases = [(2, 1000, 4_539.0), (11, 990, 8_255.0), (7, 1150, 3_787.0)];
+    // (seed, trip instant, reference shed). These are the rules-14 demand
+    // traces under staged under-frequency shedding (spec §15.4), rounded up
+    // to the next MW·tick. Wind draws change the demand samples even without
+    // farms; recovery must still finish in one episode with no later shedding.
+    let cases = [(2, 1000, 4_210.0), (11, 990, 5_646.0), (7, 1150, 5_474.0)];
     for (seed, trip_at, reference) in cases {
         let run = evening_ccgt_trip(seed, trip_at);
         assert_eq!(run.episodes, 1, "seed {seed}: {run:?}");
@@ -2226,14 +2248,22 @@ fn cap_is_lifted_while_shedding_or_any_load_is_shed() {
 
 #[test]
 fn manual_and_unplanned_hydro_are_uncapped() {
-    let region = fast_thermal_region();
+    // This tests the scheduling cap, independently of incidental demand-noise draws.
+    let mut parts = crate::region::fixtures::tiny_region_parts();
+    noise_free(&mut parts);
+    for spec in &mut parts.catalog {
+        if spec.kind != PlantKind::Hydro {
+            spec.ramp = crate::units::RampRate::mw_per_minute(1_000.0);
+        }
+    }
+    let region = RegionDefinition::try_from(parts).unwrap();
     let mut sys = west_like_fleet(&region);
     let mut rng = SimRng::from_seed(9);
     sys.begin_day(&region, january(), &mut rng);
     run_month(&mut sys, &region, january(), 0..1020, &mut rng);
 
     // Manual from 17:00: unscheduled, so it follows the player's target.
-    let manual = Megawatts::new(620.0);
+    let manual = Megawatts::new(700.0);
     sys.set_auto_follow(HYDRO, false).unwrap();
     sys.plant_mut(HYDRO).unwrap().set_target(manual).unwrap();
     run_month(&mut sys, &region, january(), 1020..1030, &mut rng);
@@ -2265,7 +2295,8 @@ fn manual_and_unplanned_hydro_are_uncapped() {
 
 #[test]
 fn tripped_hydro_is_unplanned_until_the_next_re_plan() {
-    let region = tiny_region();
+    // Isolate the trip/re-plan boundary from noisy restoration delays.
+    let region = region_with(noise_free);
     let mut sys = west_like_fleet(&region);
     let mut rng = SimRng::from_seed(14);
     sys.begin_day(&region, january(), &mut rng);
@@ -2301,13 +2332,13 @@ fn tripped_hydro_is_unplanned_until_the_next_re_plan() {
     let mut uncapped_after_restoration = 0;
     for t in 62..120 {
         let restored = sys.protection().mode == GridMode::Normal;
-        sys.tick(&region, january(), t, &mut rng);
+        let (summary, _) = sys.tick(&region, january(), t, &mut rng);
         assert!(!sys.hydro_ceilings(t + 1).contains_key(&HYDRO), "tick {t}");
         if restored {
-            assert!(
-                hydro_output(&sys) > hour_1 + Megawatts::new(300.0),
-                "tick {t}"
-            );
+            assert!(hydro_output(&sys) > hour_1, "tick {t}");
+            // Hydro is the sole recovered generator. Its uncapped target covers
+            // the entire served load, including any resized rotating outage.
+            assert!(close(target_of(&sys, HYDRO.0), summary.served), "tick {t}");
             uncapped_after_restoration += 1;
         }
     }
@@ -2490,20 +2521,25 @@ fn no_hour_spends_more_than_its_allocation() {
 
 #[test]
 fn the_last_hour_is_not_ramped_to_zero_before_midnight() {
-    let region = tiny_region();
+    // Constant demand can absorb the 384 MW allocation throughout the day;
+    // otherwise AGC may legitimately reduce output as customer demand falls.
+    let region = region_with(|parts| {
+        noise_free(parts);
+        parts.demand.winter = [1.0; 24];
+    });
     let mut sys = west_like_fleet(&region);
     let mut rng = SimRng::from_seed(21);
     sys.begin_day(&region, january(), &mut rng);
     let ticks = run_month(&mut sys, &region, january(), 0..TICKS_PER_DAY, &mut rng);
     let last_hour = sys.hydro_schedule().plants[&HYDRO].hourly[23];
-    assert!(last_hour > Megawatts::new(100.0));
-    // Hydro holds its last allocation to midnight (the first ticks of the hour
-    // may still follow the previous plan's figure for it, a few kW apart).
+    // 800 MW × 0.8 site potential × 0.6 January flow = 384 MW for 24 hours.
+    assert!(close(last_hour, Megawatts::new(384.0)));
     for (s, _) in &ticks[23 * 60..] {
-        let gap = (s.by_plant[&HYDRO] - last_hour).abs();
-        assert!(gap < Megawatts::new(0.1), "tick {}: {gap:?}", s.tick);
+        let gap = (s.by_plant[&HYDRO] - Megawatts::new(384.0)).abs();
+        assert!(gap < Megawatts::new(1e-6), "tick {}: {gap:?}", s.tick);
     }
-    assert!(!exhausted(&ticks));
+    // Exhausting exactly at midnight is legitimate; losing output earlier is not.
+    assert!(!exhausted(&ticks[..1439]));
 }
 
 #[test]
@@ -2613,8 +2649,13 @@ fn planning_draws_no_rng() {
     run_month(&mut sys, &region, january(), 0..120, &mut rng);
     assert!(sys.hydro_schedule().plants.contains_key(&HYDRO));
     let mut reference = SimRng::from_seed(31);
-    for _ in 0..1 + 120 {
-        reference.standard_normal();
+    reference.standard_normal(); // Solar clearness.
+    reference.standard_normal(); // Initial wind.
+    for tick in 0..120 {
+        reference.standard_normal(); // Demand.
+        if tick > 0 {
+            reference.standard_normal(); // Wind after minute zero.
+        }
     }
     assert_eq!(rng, reference);
 }
@@ -2641,6 +2682,8 @@ fn over_frequency_trip_serving(sys: &mut PowerSystem, served: Megawatts) -> Vec<
     let region = tiny_region();
     let (available, curtailable, withheld) = sys.availability(&region, april(), 0);
     let redispatch = Redispatch {
+        wind_fall: Megawatts::ZERO,
+        wind_horizon: 0,
         available: &available,
         to_serve: served,
         withheld,
@@ -3112,6 +3155,8 @@ fn a_trip_leaves_solar_curtailed_by_what_the_redispatch_cannot_absorb() {
     let (available, curtailable, withheld) = sys.availability(&region, april(), noon);
     assert!(curtailable > Megawatts::ZERO);
     let redispatch = Redispatch {
+        wind_fall: Megawatts::ZERO,
+        wind_horizon: 0,
         available: &available,
         to_serve: Megawatts::new(100.0),
         withheld,
@@ -3505,7 +3550,12 @@ fn overbuild_surplus_clears_as_far_as_safe_trips_allow() {
 fn overbuild_surplus_fully_clears_when_the_fleet_can_cover_each_trip() {
     // With every plant able to ramp 1,000 MW per tick, each trip fits the
     // rest of the fleet's headroom, so the surplus clears completely.
-    let region = fast_ramp_region();
+    let mut parts = crate::region::fixtures::tiny_region_parts();
+    noise_free(&mut parts);
+    for spec in &mut parts.catalog {
+        spec.ramp = crate::units::RampRate::mw_per_minute(1_000.0);
+    }
+    let region = RegionDefinition::try_from(parts).unwrap();
     let p = region.frequency();
     let n = p.trip_after_ticks;
     let mut sys = overbuild_fleet(&region);
@@ -3521,13 +3571,30 @@ fn overbuild_surplus_fully_clears_when_the_fleet_can_cover_each_trip() {
             (3 * n - 1, PlantId(4))
         ]
     );
-    // Bound: one window per tripped plant, then two windows for frequency to
-    // settle. The redispatch after each trip leaves no deficit to pull the
-    // deviation down, so it decays by the damping factor alone: from at most
-    // +3 Hz at the last trip, 3 × (1 − k_damping)^(2n) = 3 × 0.8^10 ≈ 0.32 Hz,
-    // below `curtail_above`.
+    // Independently integrate the three unavoidable-surplus windows: 880 MW
+    // until the peaker trips, 840 until the first CCGT trips, then 640 until
+    // the second CCGT trips. Demand is noise-free and interpolates each minute.
+    let mut expected = 0.0;
+    for tick in 0..3 * n {
+        let generation = if tick < n {
+            880.0
+        } else if tick < 2 * n {
+            840.0
+        } else {
+            640.0
+        };
+        let demand = sys
+            .connected_demand_forecast(&region, april(), tick)
+            .value();
+        expected = (1.0 - p.k_damping) * expected + p.k_inertia * (generation - demand) / demand;
+    }
     let last = devs[(3 * n - 1) as usize];
-    assert!(last <= Hertz::new(3.0), "{last:?}");
+    assert!(
+        (last.value() - expected).abs() < 1e-9,
+        "{last:?} vs {expected}"
+    );
+    // One window per trip, then two windows to settle. This bounds the actual
+    // recovery below curtail_above without an assumed, seed-sensitive 3 Hz peak.
     assert_eq!(p.k_damping, 0.2);
     let surplus_plants = 3;
     let bound = n * (surplus_plants + 2);
@@ -4241,8 +4308,13 @@ fn sizing_draws_no_rng() {
     assert!(sys.outage_target > Ratio::ZERO);
     run_ticks(&mut sys, &region, 0..120, &mut rng);
     let mut reference = SimRng::from_seed(31);
-    for _ in 0..1 + 120 {
-        reference.standard_normal();
+    reference.standard_normal(); // Solar clearness.
+    reference.standard_normal(); // Initial wind.
+    for tick in 0..120 {
+        reference.standard_normal(); // Demand.
+        if tick > 0 {
+            reference.standard_normal(); // Wind after minute zero.
+        }
     }
     assert_eq!(rng, reference);
 }
@@ -5044,4 +5116,33 @@ fn battery_trip_headroom_requires_sustained_energy_not_a_single_tick_burst() {
     assert_eq!(sys.battery_headroom(None), Megawatts::new(3.0));
     // Physically it could deliver 180 MW for one minute, but that cannot justify a generator trip.
     assert!(sys.battery_headroom(None) < Megawatts::new(180.0));
+}
+
+#[test]
+fn plan5_charging_starts_at_midnight_and_stops_at_eighteen() {
+    let (sys, region, id) = battery_fixture();
+    let spec = sys.plant(id).unwrap().spec().battery.unwrap();
+    for tick in [0, 1, 300, 1019, 1020, 1079] {
+        assert!(
+            super::battery::charging_window(&region, april(), spec, tick),
+            "minute {tick}"
+        );
+    }
+    for tick in [1080, 1081, 1439, 1440] {
+        assert!(
+            !super::battery::charging_window(&region, april(), spec, tick),
+            "minute {tick}"
+        );
+    }
+}
+
+#[test]
+fn plan5_overlap_supports_a_deficit_despite_charging_eligibility() {
+    let (mut sys, region, id) = battery_fixture();
+    charge_inventory(&mut sys, id, 20);
+    let primary = sys.primary_supply();
+    let demand = primary + Megawatts::new(100.0);
+    let flows = sys.propose_battery_flows(&region, april(), 1020, demand, demand);
+    assert_eq!(flows[&id].charge, Megawatts::ZERO);
+    assert_eq!(flows[&id].discharge, Megawatts::new(100.0));
 }

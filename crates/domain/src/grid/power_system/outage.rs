@@ -149,10 +149,15 @@ impl PowerSystem {
         region: &RegionDefinition,
         month: SimMonth,
     ) -> SupplyForecast {
-        if self.has_batteries() {
+        if self.has_batteries() || self.has_wind() {
             return SupplyForecast {
-                has_storage: true,
-                minutes: self.battery_supply_forecast(region, month),
+                has_storage: self.has_batteries(),
+                assess_every_minute: true,
+                minutes: if self.has_batteries() {
+                    self.battery_supply_forecast(region, month)
+                } else {
+                    self.wind_supply_forecast(region, month)
+                },
             };
         }
         let hours = self.planned_generation_hours(region, month);
@@ -161,11 +166,13 @@ impl PowerSystem {
                 let hour = &hours[(tick / TICKS_PER_HOUR) as usize];
                 let solar = self.expected_solar(region, month, tick);
                 let mut generation = hour.by_kind.clone();
+                let wind = self.wind_forecast(region, month, tick).0;
                 generation.insert(PlantKind::Solar, solar);
+                generation.insert(PlantKind::Wind, wind);
                 SupplyForecastPoint {
                     demand: self.connected_demand_forecast(region, month, tick),
                     generation,
-                    gross_supply: hour.total + solar,
+                    gross_supply: hour.total + solar + wind,
                     battery_charge: Megawatts::ZERO,
                     battery_discharge: Megawatts::ZERO,
                 }
@@ -173,6 +180,7 @@ impl PowerSystem {
             .collect();
         SupplyForecast {
             has_storage: false,
+            assess_every_minute: false,
             minutes,
         }
     }
@@ -214,7 +222,7 @@ impl PowerSystem {
         let start = u32::from(hour) * TICKS_PER_HOUR;
         HOUR_ENDS.map(|minute| {
             let tick = start + minute;
-            let solar = self.expected_solar(region, month, tick);
+            let solar = self.expected_variable(region, month, tick);
             HourEnd {
                 demand: self.connected_demand_forecast(region, month, tick),
                 deliverable: fleet(minute) + solar,
@@ -243,7 +251,7 @@ impl PowerSystem {
         hour: u8,
     ) -> Ratio {
         let start = u32::from(hour) * TICKS_PER_HOUR;
-        if self.has_batteries() {
+        if self.has_batteries() || self.has_wind() {
             let minutes = self.storage_forecast_minutes(
                 region,
                 month,
@@ -279,13 +287,13 @@ impl PowerSystem {
         let forecast = self.supply_forecast(region, month);
         let end = |point: &SupplyForecastPoint| HourEnd {
             demand: point.demand,
-            solar: point.generation[&PlantKind::Solar],
+            solar: point.generation[&PlantKind::Solar] + point.generation[&PlantKind::Wind],
             deliverable: point.gross_supply,
         };
         std::array::from_fn(|h| {
             let minutes =
                 &forecast.minutes[h * TICKS_PER_HOUR as usize..(h + 1) * TICKS_PER_HOUR as usize];
-            if forecast.has_storage {
+            if forecast.assess_every_minute {
                 let worst = minutes
                     .iter()
                     .map(end)

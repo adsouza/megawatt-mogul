@@ -61,18 +61,32 @@ pub enum Lesson {
     },
     /// Generation outran demand: surplus energy (positive imbalance) and/or
     /// plants tripped by over-frequency protection.
-    Overgeneration { energy: MegawattHours, trips: u32 },
+    Overgeneration {
+        energy: MegawattHours,
+        trips: u32,
+    },
     /// The month failed frequency performance; `notice` is true when it drew
     /// a formal notice rather than a strike. In a month that also failed the
     /// unserved-energy test, `notice: false` means the month's one strike was
     /// for unserved energy and frequency was not judged separately, not that
     /// frequency drew a strike of its own: the Plan 2 UI should read the
     /// strike's reason from the `StrikeIssued` event.
-    FrequencyPerformance { out_of_band: Ratio, notice: bool },
+    FrequencyPerformance {
+        out_of_band: Ratio,
+        notice: bool,
+    },
     /// Solar was curtailed because there was nowhere for it to go.
-    SolarCurtailed { energy: MegawattHours },
+    SolarCurtailed {
+        energy: MegawattHours,
+    },
+    RenewableCurtailed {
+        energy: MegawattHours,
+    },
     /// Starting plants cost a large share of operating cost.
-    StartUpCosts { total: Money, share: Ratio },
+    StartUpCosts {
+        total: Money,
+        share: Ratio,
+    },
     /// The annual rate review happened.
     RateReview {
         tariff: Price,
@@ -145,9 +159,21 @@ pub fn lessons_for(report: &MonthlyReport, region: &RegionDefinition) -> Vec<Les
     }
 
     if report.curtailed.value() > served * CURTAILED_SHARE_LIMIT {
-        lessons.push(Lesson::SolarCurtailed {
-            energy: report.curtailed,
-        });
+        lessons.push(
+            if report
+                .curtailed_by_kind
+                .get(&PlantKind::Wind)
+                .is_some_and(|e| e.value() > 0.0)
+            {
+                Lesson::RenewableCurtailed {
+                    energy: report.curtailed,
+                }
+            } else {
+                Lesson::SolarCurtailed {
+                    energy: report.curtailed,
+                }
+            },
+        );
     }
 
     let start_up = magnitude(report.start_up);
@@ -258,6 +284,10 @@ impl domain::state::State for Lesson {
                 domain::state::State::write(tariff, out);
                 domain::state::State::write(allowed_return, out);
             }
+            Self::RenewableCurtailed { energy } => {
+                domain::state::State::write(&9u8, out);
+                domain::state::State::write(energy, out);
+            }
             Self::AllClear => {
                 domain::state::State::write(&8u8, out);
             }
@@ -298,6 +328,9 @@ impl domain::state::State for Lesson {
                 allowed_return: domain::state::State::read(input)?,
             },
             8 => Self::AllClear,
+            9 if input.schema >= 2 => Self::RenewableCurtailed {
+                energy: domain::state::State::read(input)?,
+            },
             _ => return Err(domain::state::StateError::Invalid),
         })
     }

@@ -332,6 +332,7 @@ mod tests {
             battery_discharge: Megawatts::ZERO,
             batteries: Default::default(),
             curtailed: Megawatts::ZERO,
+            curtailed_by_kind: Default::default(),
             imbalance: Megawatts::new(imbalance),
             by_kind: BTreeMap::from([(PlantKind::Coal, Megawatts::new(by_plant.iter().sum()))]),
             by_plant: by_plant

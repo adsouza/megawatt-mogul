@@ -6,6 +6,7 @@ mod commitment;
 mod hydro_schedule;
 mod plant;
 mod solar;
+mod wind;
 
 pub use battery::{BatteryFlow, BatteryMode, BatteryState, BatteryTotals};
 pub(crate) use battery_schedule::fill_minutes;
@@ -13,3 +14,5 @@ pub use commitment::{BoundaryStart, CommitmentAction, CommitmentSchedule, commit
 pub use hydro_schedule::{HydroFill, water_fill};
 pub use plant::{Plant, PlantStatus};
 pub use solar::{draw_clearness, solar_available, sun_factor};
+
+pub use wind::{wind_available, wind_step};

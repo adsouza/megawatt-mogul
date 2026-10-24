@@ -351,8 +351,9 @@ show up as reviewable diffs. The overbuild cases build four surplus CCGTs and sn
 regulatory timeline as well:
 
 - `overbuild_overcommitment_loses_licence` commits them all day. Over-frequency draws a notice, then
-  three frequency-performance strikes, and the licence is revoked at the October 2029 close. This
-  is deliberately a game-over script.
+  three frequency-performance strikes, and the rules-14 trace revokes the licence at the November
+  2029 close (strikes in August, October and November; September stays below the threshold).
+  This is deliberately a game-over script.
 - `overbuild_idle_capacity_disallowance` leaves them uncommitted. The December 2029 reserve review
   holds the excess capital, and the December 2030 review disallows it.
 
@@ -577,7 +578,7 @@ those units explicitly; generic fleet tests derive expected counts from the regi
 
 ## Battery storage (Plan 4)
 
-Domain tests exercise daylight grid charging, evening discharge, efficiency and capacity limits,
+Domain tests exercise 00:00–18:00 grid charging, evening gap support, efficiency and capacity limits,
 blackout/islanding, shared-grid accounting, daily inventory close and monthly weighting. Property
 tests cover energy conservation, schedule bounds and arbitrary save boundaries. Application tests
 compare tick batches, preserved inventory, reports and completed curves after portable restore.
@@ -722,3 +723,41 @@ header: a preview uses new accreditation without changing saved profiles, which 
 December. A saved December Review continues without repeating the annual review. The shipped
 acceptance compares ten extra batteries against a baseline for both regions, seeds 0–7, across
 36 months: excess storage is held at its first review and final cash never beats the baseline.
+
+## Wind farms and revised charging (Plan 5, rules 14)
+
+`domain/grid/power_system/tests/wind.rs` independently checks 120 MW from a 300 MW farm at 80%
+site potential and 50% resource throughout a whole day, shared RNG across farm counts, correlated
+forecast bands, proportional Solar/Wind curtailment, a sudden lull with finite storage, and the
+17:00–18:00 overlap/18:00 cutoff. `generation/wind.rs` property-tests the bounded AR(1) formula.
+`session/forecast_contract_tests.rs` includes wind in the independent mixed hydro/solar/storage
+oracle. `session/wind_tests.rs` refuses thermal controls atomically and compares continuation/RNG
+at midnight, hourly, overlap, cutoff and Review save boundaries, including next-month Planning.
+
+Region adapters require schema-3 wind data and cutoff fields; frozen legacy extension RON payloads
+are pinned by independent SHA-256 values. The released schema-1 golden saves stay immutable and
+are verified against the schema-1 canonical encoder before upcasting. Tests compare old fields,
+RNG, inventory and projections rather than requiring new-schema hashes to equal old-schema hashes.
+Monthly/flat save tests round-trip wind/battery states across policy boundaries and compare the
+next command. Existing schema-1 compressed monthly charts still join to their original bytes.
+
+The single game integration binary includes `game/wind.rs`: actual build-widget clicks flow through
+dispatch, construction, a needed connection and commissioning; the forecast, world model and real
+minimum-size plant card show wind with no thermal/storage controls. Existing battery toggle, Enter
+save, resume, history and chart-layout workflows remain covered. Windowed smoke/native QA are
+recorded in Plan 5. Focused checks do not grant permission to run the full local workspace suite.
+
+### Rules-14 RNG and source-schema regression checks
+
+`grid::power_system::tests` independently pins solar then wind at day start, demand then wind per
+minute, and reuse of the initial wind sample at minute zero. Planning/outage sizing must add no
+extra draws. Hydro cap/re-plan and final-hour tests use controlled noise-free fixtures: the
+final-hour oracle is 384 MW from the authored water budget, and recovered unplanned hydro targets
+the whole served load. Noisy emergency cases separately pin one shedding episode, no blackout,
+no shedding after restoration and reviewed rules-14 energy limits. The over-frequency settling
+oracle integrates the three known surplus windows instead of assuming a 3 Hz peak.
+
+Game `save_snapshots` tests compare restored schema-2 captures to the immutable schema-1 fixtures
+using source-schema canonical gameplay/projection bytes. They also check upgraded battery cutoff,
+header rules, journal, command count, summary, archived region, provenance and unchanged disk bytes.
+A new capture's schema/hash may change; elapsed history and original save files may not.

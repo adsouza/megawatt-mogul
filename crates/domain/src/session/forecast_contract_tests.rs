@@ -93,6 +93,7 @@ proptest! {
             parts.start.fleet.extend([
                 StartPlantDef { kind: PlantKind::Hydro, cell: CellCoord { x: 10, y: 1 } },
                 StartPlantDef { kind: PlantKind::Solar, cell: CellCoord { x: 6, y: 1 } },
+                StartPlantDef { kind: PlantKind::Wind, cell: CellCoord { x: 7, y: 1 } },
             ]);
             for y in 0..count {
                 parts.start.fleet.push(StartPlantDef { kind: PlantKind::Battery, cell: CellCoord { x: 4, y: y as u16 } });
@@ -136,6 +137,11 @@ proptest! {
                 let hour = tick as f64 / 60.0;
                 let sun = if hour <= rise || hour >= set { 0.0 } else { (std::f64::consts::PI * (hour - rise) / (set - rise)).sin() };
                 prop_assert!((point.generation[&PlantKind::Solar].value() - solar_capacity * irradiance * sun * clearness).abs() < 1e-6);
+                let expected_wind = s.region.spec(PlantKind::Wind).capacity.value()
+                    * s.region.terrain().get(CellCoord { x: 7, y: 1 }).unwrap().wind_potential.value()
+                    * s.region.wind().monthly[month as usize - 1];
+                prop_assert!((point.generation[&PlantKind::Wind].value() - expected_wind).abs() < 1e-6);
+                if tick >= usize::from(limits.charge_end_hour) * 60 { prop_assert_eq!(point.battery_charge, Megawatts::ZERO); }
                 let water_mw = point.generation.get(&PlantKind::Hydro).copied().unwrap_or(Megawatts::ZERO).value();
                 hydro_used += water_mw / 60.0;
                 prop_assert!(water_mw >= 0.0 && water_mw <= s.region.spec(PlantKind::Hydro).capacity.value() + 1e-6);

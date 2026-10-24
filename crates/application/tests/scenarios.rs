@@ -590,8 +590,8 @@ fn assert_no_excess_before_commissioning(timeline: &[(SimMonth, DomainEvent)]) {
 /// all day on AGC as soon as they commission. Their minimum stable output
 /// pushes the committed minimum far above the overnight load, so frequency
 /// runs above the performance band despite the over-frequency trips: a
-/// notice in July 2029, then a FrequencyPerformance strike at each of the
-/// next three closes revokes the licence at the October 2029 close (spec
+/// notice in July 2029, then FrequencyPerformance strikes in August, October
+/// and November revoke the licence at the November 2029 close (spec
 /// §14.5: failure-path scripts may end in game over). The reserve review
 /// never sees the new plants; `overbuild_idle_capacity_disallowance` covers it.
 #[test]
@@ -600,13 +600,13 @@ fn overbuild_overcommitment_loses_licence() {
     let (timeline, status) = play_overbuild(&mut g, auto_follow_all);
     let at = |when| events_at(&timeline, when);
 
-    // The game ends cleanly at the October 2029 close and rejects commands.
+    // The game ends cleanly at the November 2029 close and rejects commands.
     assert_eq!(
         status,
         SessionStatus::GameOver(GameOverReason::LicenseRevoked)
     );
     let last_report = latest_report(&g).clone();
-    assert_eq!(last_report.month, month(2029, 10));
+    assert_eq!(last_report.month, month(2029, 11));
     assert_eq!(
         g.execute(Command::FinishReview),
         Err(CommandError::Domain(DomainError::GameOver {
@@ -636,7 +636,7 @@ fn overbuild_overcommitment_loses_licence() {
             .any(|event| matches!(event, DomainEvent::FrequencyNoticeIssued { .. })),
         "July 2029 draws a notice first"
     );
-    for strike_month in [month(2029, 8), month(2029, 9), month(2029, 10)] {
+    for strike_month in [month(2029, 8), month(2029, 10), month(2029, 11)] {
         assert!(
             at(strike_month).iter().any(|event| matches!(
                 event,
@@ -648,7 +648,14 @@ fn overbuild_overcommitment_loses_licence() {
             "{strike_month:?} draws a frequency-performance strike"
         );
     }
-    assert!(at(month(2029, 10)).contains(&&DomainEvent::LicenseRevoked));
+    // The rules-14 noise trace leaves September below the frequency failure
+    // threshold: it cannot receive an invented strike to keep the old end date.
+    assert!(
+        !at(month(2029, 9))
+            .iter()
+            .any(|event| matches!(event, DomainEvent::StrikeIssued { .. }))
+    );
+    assert!(at(month(2029, 11)).contains(&&DomainEvent::LicenseRevoked));
     assert!(last_report.frequency_failed);
     assert!(last_report.over_frequency_trips > 0);
     assert_eq!(last_report.unserved, MegawattHours::ZERO);

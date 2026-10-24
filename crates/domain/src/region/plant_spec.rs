@@ -13,10 +13,11 @@ pub enum PlantKind {
     Solar,
     Hydro,
     Battery,
+    Wind,
 }
 
 impl PlantKind {
-    pub const ALL: [PlantKind; 7] = [
+    pub const ALL: [PlantKind; 8] = [
         PlantKind::Nuclear,
         PlantKind::Coal,
         PlantKind::Ccgt,
@@ -24,12 +25,20 @@ impl PlantKind {
         PlantKind::Solar,
         PlantKind::Hydro,
         PlantKind::Battery,
+        PlantKind::Wind,
     ];
+
+    pub fn is_variable(self) -> bool {
+        matches!(self, Self::Solar | Self::Wind)
+    }
 
     /// Whether generator commitment and output controls apply.
     /// Solar follows the sun; batteries use the separate daily storage controller.
     pub fn is_dispatchable(self) -> bool {
-        !matches!(self, PlantKind::Solar | PlantKind::Battery)
+        !matches!(
+            self,
+            PlantKind::Solar | PlantKind::Wind | PlantKind::Battery
+        )
     }
 }
 
@@ -138,6 +147,7 @@ pub struct BatterySpec {
     pub charge_efficiency: Ratio,
     pub discharge_efficiency: Ratio,
     pub discharge_start_hour: u8,
+    pub charge_end_hour: u8,
 }
 
 // Portable state schema 1: explicit field order and enum tags.
@@ -210,6 +220,9 @@ impl crate::state::State for PlantKind {
             Self::Battery => {
                 crate::state::State::write(&6u8, out);
             }
+            Self::Wind => {
+                crate::state::State::write(&7u8, out);
+            }
         }
     }
     fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
@@ -221,6 +234,7 @@ impl crate::state::State for PlantKind {
             4 => Self::Solar,
             5 => Self::Hydro,
             6 => Self::Battery,
+            7 if input.schema >= 2 => Self::Wind,
             _ => return Err(crate::state::StateError::Invalid),
         })
     }
@@ -230,5 +244,6 @@ crate::state_record!(BatterySpec {
     energy_capacity,
     charge_efficiency,
     discharge_efficiency,
-    discharge_start_hour
+    discharge_start_hour;
+    charge_end_hour: 0
 });

@@ -63,7 +63,7 @@ proptest::proptest! {
             proptest::prop_assert!((schedule.plants[&id].discharge[tick].value() - expected).abs() < 1e-6);
             stored += (point.battery_charge.value() * efficiency - expected) / 60.0;
             delivered += expected / 60.0;
-            if (17 * 60..(peak - 1) * 60).contains(&tick) {
+            if (18 * 60..(peak - 1) * 60).contains(&tick) {
                 proptest::prop_assert_eq!(point.battery_discharge, Megawatts::ZERO);
                 proptest::prop_assert!((stored - energy).abs() < 1e-6);
             }
@@ -169,7 +169,6 @@ fn battery_commands_are_typed_and_atomic() {
 fn battery_cycle_charges_delivers_and_reports_then_clears_at_midnight() {
     let (mut s, id) = storage_session();
     s.begin_operating().unwrap();
-    let sunrise = s.region.solar().daylight[s.clock.month().index0()].0 * 60.0;
     let mut closed = None;
     let mut daily_close = 0;
     for tick in 0..1440 {
@@ -185,13 +184,10 @@ fn battery_cycle_charges_delivers_and_reports_then_clears_at_midnight() {
                             .abs()
                             < 1e-7
                     );
-                    if f64::from(tick) < sunrise {
-                        assert_eq!(summary.battery_charge, Megawatts::ZERO);
-                    }
                     if tick < 1020 {
                         assert_eq!(summary.battery_discharge, Megawatts::ZERO);
                     }
-                    if tick >= 1020 {
+                    if tick >= 1080 {
                         assert_eq!(summary.battery_charge, Megawatts::ZERO);
                     }
                 }
@@ -410,10 +406,9 @@ fn battery_reserve_preserves_peaker_dispatch_and_customer_revenue() {
     }
     let without = play(false);
     let with = play(true);
-    assert_eq!(
-        with.energy_by_kind[&PlantKind::Peaker],
-        without.energy_by_kind[&PlantKind::Peaker],
-        "batteries must not deliberately replace available evening generation"
+    assert!(
+        with.energy_by_kind[&PlantKind::Peaker] >= without.energy_by_kind[&PlantKind::Peaker],
+        "storage may add charging load until 18:00 but must not replace available generation"
     );
     assert!((with.served.value() - without.served.value()).abs() < 1e-6);
     assert_eq!(with.revenue, without.revenue);
@@ -421,4 +416,31 @@ fn battery_reserve_preserves_peaker_dispatch_and_customer_revenue() {
         && b.output.value() > 0.0
         && b.unused.value() > b.output.value()));
     assert_eq!(with.unserved, MegawattHours::ZERO);
+}
+
+#[test]
+fn no_op_generator_commands_change_nothing_and_real_ones_replan_storage() {
+    let (mut s, _) = storage_session();
+    s.begin_operating().unwrap();
+    s.tick().unwrap();
+    let online: Vec<_> = s
+        .plant_views()
+        .into_iter()
+        .filter(|p| p.kind.is_dispatchable() && matches!(p.status, PlantStatus::Online { .. }))
+        .collect();
+    assert!(!online.is_empty());
+    let before = s.state_hash();
+    for p in &online {
+        s.set_auto_follow(p.id, p.auto_follow).unwrap();
+        if let PlantStatus::Online { target, .. } = p.status {
+            s.set_dispatch_target(p.id, target).unwrap();
+        }
+    }
+    assert_eq!(s.state_hash(), before, "same-value commands are no-ops");
+    s.set_auto_follow(online[0].id, !online[0].auto_follow)
+        .unwrap();
+    assert!(
+        s.power.battery_plan_is_dirty(),
+        "a real generator change re-plans storage on the next tick"
+    );
 }

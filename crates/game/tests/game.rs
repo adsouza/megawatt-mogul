@@ -62,3 +62,6 @@ mod support;
 
 #[path = "game/world.rs"]
 mod world;
+
+#[path = "game/wind.rs"]
+mod wind;

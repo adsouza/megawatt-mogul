@@ -329,6 +329,7 @@ impl Localize for PlantKind {
             Self::Solar => "plant-kind-solar",
             Self::Hydro => "plant-kind-hydro",
             Self::Battery => "plant-kind-battery",
+            Self::Wind => "plant-kind-wind",
         })
     }
 }
@@ -522,6 +523,10 @@ impl Localize for Lesson {
                 },
                 &[("out_of_band", format::percent(*out_of_band).into())],
             ),
+            Self::RenewableCurtailed { energy } => l10n.args(
+                "lesson-renewable-curtailed",
+                &[("energy", format::megawatt_hours(*energy).into())],
+            ),
             Self::SolarCurtailed { energy } => l10n.args(
                 "lesson-solar-curtailed",
                 &[("energy", format::megawatt_hours(*energy).into())],
@@ -645,6 +650,7 @@ impl Toast for DomainEvent {
             | Self::FrequencyDeviated { .. }
             | Self::LoadShed { .. }
             | Self::SolarCurtailed { .. }
+            | Self::RenewableCurtailed { .. }
             | Self::LedgerEntryRecorded(_)
             | Self::CapitalHeld { .. }
             | Self::CapitalReleased { .. }

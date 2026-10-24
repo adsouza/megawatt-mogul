@@ -1,6 +1,7 @@
 //! Frozen released snapshots remain compatible without historical simulation engines.
 use application::*;
 use domain::session::DayPhase;
+use domain::state::State;
 use infrastructure::save::{decode_save, encode_save, replay_compatibility};
 use std::path::Path;
 use tempfile::TempDir;
@@ -39,12 +40,21 @@ fn released_portable_schema1_golden_saves_restore_and_continue_without_replaying
             bundle.checkpoint.header.sim_rules_version, 8,
             "released rules-8 bytes"
         );
-        let mut expected = bundle.checkpoint.clone();
-        expected.header.sim_rules_version = domain::SIM_RULES_VERSION;
-        assert_eq!(
-            before, expected,
-            "rule upgrade preserves all canonical state, RNG, history and audit commands"
+        let source = &bundle.checkpoint;
+        let snapshot = source.snapshot.as_ref().unwrap();
+        assert_eq!(before.snapshot.as_ref().unwrap().schema, 2);
+        assert!(
+            game.session().snapshot_state_schema(1) == snapshot.session,
+            "all schema-1 gameplay fields and RNG preserved"
         );
+        assert!(
+            game.projections().state_bytes_schema(1) == snapshot.projections,
+            "history and reports preserved"
+        );
+        assert_eq!(before.summary, source.summary);
+        assert_eq!(before.commands, source.commands);
+        assert_eq!(before.region_source, source.region_source);
+        assert_eq!(before.snapshot.as_ref().unwrap().origin, snapshot.origin);
         if path.file_name().unwrap() == "schema1-charged-battery.mgsave" {
             assert_eq!(before.summary.tick, 900);
             assert!(
@@ -267,10 +277,13 @@ fn an_old_battery_is_accredited_without_rewriting_the_save() {
     use domain::region::PlantKind;
     let bytes = golden_bytes("schema1-charged-battery.mgsave");
     let (bundle, _) = decode_save(&bytes, &replay_compatibility()).unwrap();
-    let mut expected = bundle.checkpoint;
-    expected.header.sim_rules_version = domain::SIM_RULES_VERSION;
+    let source = bundle.checkpoint;
     let mut game = restored(&bytes);
-    assert_eq!(game.checkpoint(), expected);
+    assert!(
+        game.session().snapshot_state_schema(1) == source.snapshot.as_ref().unwrap().session,
+        "schema migration preserves original battery profiles and all other old fields"
+    );
+    let expected = game.checkpoint();
     let batteries: Vec<_> = game
         .session()
         .plant_views()

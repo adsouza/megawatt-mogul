@@ -492,3 +492,83 @@ fn frozen_format4_charged_battery_restores_and_continues_like_the_original_forma
         "released compatibility fixtures are never rewritten"
     );
 }
+
+#[test]
+fn wind_and_overlapping_battery_policy_restore_through_flat_and_monthly_snapshots() {
+    let dir = TempDir::new().unwrap();
+    let source = include_str!("support/minimal_region.ron").replacen(
+        "fleet: [",
+        "fleet: [(Wind, 4.5, 6.5), (Battery, 4.5, 5.5),",
+        1,
+    );
+    let regions = dir.path().join("regions");
+    std::fs::create_dir(&regions).unwrap();
+    std::fs::write(regions.join("minimal.ron"), source).unwrap();
+    let catalog = RonRegionCatalog::new(regions);
+    let mut game = Game::start_new(
+        &catalog,
+        &RegionId::new("minimal"),
+        41,
+        GameSettings::default(),
+        Box::new(InMemoryCommandLog::default()),
+    )
+    .unwrap();
+    game.execute(Command::BeginOperating).unwrap();
+    let store = FileSaveStore::new(dir.path().join("saves")).with_monthly_charts();
+    let run = store.allocate_id();
+    for boundary in [0, 300, 1020, 1079, 1080, 1440] {
+        let remaining = boundary - game.session().clock().tick();
+        if remaining > 0 {
+            game.execute(Command::AdvanceTicks { n: remaining })
+                .unwrap();
+        }
+        let saved = SaveBundle {
+            compatibility: store.compatibility(),
+            metadata: SaveMetadata {
+                slot: store.allocate_id(),
+                run: run.clone(),
+                kind: SaveKind::Manual,
+                name: format!("Wind boundary {boundary}"),
+                saved_at: 42,
+            },
+            checkpoint: game.checkpoint(),
+        };
+        assert_eq!(saved.checkpoint.snapshot.as_ref().unwrap().schema, 2);
+        store.write(&saved, &SaveTarget::Create, &|| false).unwrap();
+        let (decoded, region) = store.read(&saved.metadata.slot).unwrap();
+        let mut resumed = decoded
+            .restore(
+                region,
+                &store.compatibility(),
+                Box::new(InMemoryCommandLog::default()),
+                &|| false,
+            )
+            .unwrap();
+        assert!(
+            resumed.checkpoint() == game.checkpoint(),
+            "monthly snapshot at {boundary}"
+        );
+        let flat = infrastructure::save::encode_save(&saved).unwrap();
+        let (flat, region) =
+            infrastructure::save::decode_save(&flat, &store.compatibility()).unwrap();
+        let flat = flat
+            .restore(
+                region,
+                &store.compatibility(),
+                Box::new(InMemoryCommandLog::default()),
+                &|| false,
+            )
+            .unwrap();
+        assert!(
+            flat.checkpoint() == game.checkpoint(),
+            "flat snapshot at {boundary}"
+        );
+        if boundary < 1440 {
+            assert_eq!(
+                game.execute(Command::AdvanceTicks { n: 1 }).unwrap(),
+                resumed.execute(Command::AdvanceTicks { n: 1 }).unwrap()
+            );
+            assert!(resumed.checkpoint() == game.checkpoint());
+        }
+    }
+}

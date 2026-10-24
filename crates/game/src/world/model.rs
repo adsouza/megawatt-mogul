@@ -130,6 +130,18 @@ pub fn plant_parts(kind: PlantKind) -> Vec<Part> {
                 parts.push(block(0.0, 0.35, z, 2.1, 0.18, 0.35, color));
             }
         }
+        PlantKind::Wind => {
+            for x in [-0.65, 0.65] {
+                parts.push(block(x, 1.05, 0.0, 0.12, 1.9, 0.12, pale));
+                parts.push(block(x, 2.0, 0.0, 0.25, 0.22, 0.35, color));
+                parts.push(block(x, 2.35, 0.2, 0.07, 0.65, 0.07, pale));
+                for side in [-1.0, 1.0] {
+                    let mut blade = block(x + side * 0.27, 1.84, 0.2, 0.63, 0.07, 0.07, pale);
+                    blade.rotation = Quat::from_rotation_z(side * 0.55);
+                    parts.push(blade);
+                }
+            }
+        }
         PlantKind::Battery => {
             for x in [-0.72, 0.0, 0.72] {
                 parts.push(block(x, 0.6, 0.0, 0.55, 0.95, 1.25, color));

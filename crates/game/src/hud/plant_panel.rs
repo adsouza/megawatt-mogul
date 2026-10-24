@@ -79,6 +79,7 @@ pub struct SelectedPlant {
     pub status: String,
     pub agc: ToggleModel,
     pub agc_tip: String,
+    pub variable_generation: bool,
     pub storage_toggle: Option<ToggleModel>,
     pub storage_hint: Option<String>,
     pub start: ButtonModel,
@@ -111,6 +112,30 @@ pub(super) fn grid_connection_stat(l10n: &Localizer, connected: bool) -> Stat {
             "plant-grid-disconnected"
         }),
     }
+}
+
+fn wind_stats(l10n: &Localizer, wind: &domain::session::WindView) -> Vec<Stat> {
+    let stat = |key: &str, value| Stat {
+        label: l10n.text(key),
+        value,
+    };
+    vec![
+        stat("wind-potential", format::percent(wind.potential)),
+        stat("wind-available", format::megawatts(wind.available)),
+        stat("wind-delivered", format::megawatts(wind.delivered)),
+        stat("wind-curtailed", format::megawatts(wind.curtailed)),
+        stat(
+            "wind-range",
+            l10n.args(
+                "wind-range-value",
+                &[
+                    ("central", format::megawatts(wind.forecast.0).into()),
+                    ("low", format::megawatts(wind.forecast.1).into()),
+                    ("high", format::megawatts(wind.forecast.2).into()),
+                ],
+            ),
+        ),
+    ]
 }
 
 pub fn plant_card_model(game: &Game, l10n: &Localizer, id: PlantId) -> Option<PlantCardModel> {
@@ -151,6 +176,9 @@ pub fn plant_card_model(game: &Game, l10n: &Localizer, id: PlantId) -> Option<Pl
         && let Some(cell) = session.region().terrain().get(plant.cell)
     {
         stats.push(stat("map-solar-scale", format::percent(cell.irradiance)));
+    }
+    if let Some(wind) = &plant.wind {
+        stats.extend(wind_stats(l10n, wind));
     }
     if let Some(b) = &plant.battery {
         stats = battery_stats(l10n, b, plant.connected, spec.capacity);
@@ -371,6 +399,11 @@ pub fn plant_panel_model(game: &Game, l10n: &Localizer, selection: Selection) ->
     if let Some(b) = &plant.battery {
         stats = battery_stats(l10n, b, plant.connected, spec.capacity);
     }
+    if let Some(wind) = &plant.wind {
+        stats
+            .retain(|s| s.label != l10n.text("plant-target") && s.label != l10n.text("plant-ramp"));
+        stats.extend(wind_stats(l10n, wind));
+    }
     PlantPanelModel::Plant(Box::new(SelectedPlant {
         storage_toggle: plant
             .battery
@@ -398,6 +431,7 @@ pub fn plant_panel_model(game: &Game, l10n: &Localizer, selection: Selection) ->
             on: plant.auto_follow,
         },
         agc_tip: l10n.text("commitment-agc-tip"),
+        variable_generation: plant.kind.is_variable(),
         start: ButtonModel::new(
             l10n.text("plant-start"),
             UiAction::Command(Command::StartPlant { plant: plant.id }),
@@ -552,7 +586,7 @@ pub fn draw_plant_panel(
         if let Some(hint) = &plant.storage_hint {
             ui.label(hint);
         }
-    } else {
+    } else if !plant.variable_generation {
         ui.horizontal(|ui| {
             toggle_button(ui, &plant.agc, &mut actions).on_hover_text(plant.agc_tip.as_str());
             let start = button(ui, &plant.start, &mut actions);

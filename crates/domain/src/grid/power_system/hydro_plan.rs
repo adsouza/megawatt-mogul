@@ -105,7 +105,7 @@ impl PowerSystem {
         std::array::from_fn(|h| {
             let tick = mid_hour_tick(h as u8);
             self.connected_demand_forecast(region, month, tick)
-                - self.expected_solar(region, month, tick)
+                - self.expected_variable(region, month, tick)
         })
     }
 

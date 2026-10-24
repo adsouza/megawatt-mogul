@@ -19,6 +19,7 @@ fn cell(x: u16, y: u16) -> Cell {
         land: x != 0,
         height: r(0.3),
         irradiance: r(0.8),
+        wind_potential: r(0.8),
         cooling_water: r(if x >= 6 { 1.0 } else { 0.2 }),
         hydro_potential: r(if (x, y) == (10, 1) { 0.8 } else { 0.0 }),
     }
@@ -68,6 +69,7 @@ fn spec(
             charge_efficiency: r(0.9),
             discharge_efficiency: Ratio::ONE,
             discharge_start_hour: 17,
+            charge_end_hour: 18,
         }),
     }
 }
@@ -149,6 +151,21 @@ fn catalog() -> Vec<PlantSpec> {
             dollars(400_000_000),
             12,
             0.3,
+            300,
+            SitingRule::Anywhere,
+        ),
+        spec(
+            PlantKind::Wind,
+            300.0,
+            0.0,
+            0.0,
+            SimDuration::from_ticks(0),
+            Money::ZERO,
+            0.0,
+            dollars(500_000),
+            dollars(300_000_000),
+            3,
+            0.2,
             300,
             SitingRule::Anywhere,
         ),
@@ -318,6 +335,13 @@ pub fn tiny_region_parts() -> RegionDefinitionParts {
         cities: cities(),
         demand: demand(),
         solar: solar(),
+        wind: WindParams {
+            monthly: [0.6; 12],
+            persistence: 0.995,
+            innovation_sd: 0.015,
+            initial_sd: 0.15,
+            band: r(0.25),
+        },
         hydro: HydroParams {
             monthly_flow: [0.6, 0.6, 0.9, 1.2, 1.4, 1.3, 1.0, 0.8, 0.7, 0.6, 0.6, 0.6],
         },

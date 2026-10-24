@@ -1,4 +1,4 @@
-//! Pure storage decomposition. The canonical projection state stays schema 1; joining monthly
+//! Pure storage decomposition. The canonical projection state retains its source schema; joining monthly
 //! chart blobs reconstructs precisely the same bytes before boundary verification.
 use super::{CompletedDay, Projections, TimelinePoint, TimelineProjection};
 use domain::{
@@ -29,8 +29,15 @@ domain::state_record!(ChartMonth {
 });
 impl Projections {
     pub fn split_charts(
+        self,
+        current: SimMonth,
+    ) -> Result<(Self, Vec<ArchivedChartMonth>), StateError> {
+        self.split_charts_schema(current, 2)
+    }
+    pub fn split_charts_schema(
         mut self,
         current: SimMonth,
+        schema: u32,
     ) -> Result<(Self, Vec<ArchivedChartMonth>), StateError> {
         let mut months: BTreeMap<SimMonth, ChartMonth> = BTreeMap::new();
         let timeline = std::mem::take(&mut self.timeline);
@@ -72,12 +79,19 @@ impl Projections {
             .into_iter()
             .map(|(month, data)| ArchivedChartMonth {
                 month,
-                bytes: data.state_bytes(),
+                bytes: data.state_bytes_schema(schema),
             })
             .collect();
         Ok((self, charts))
     }
-    pub fn restore_charts(mut self, charts: Vec<ArchivedChartMonth>) -> Result<Self, StateError> {
+    pub fn restore_charts(self, charts: Vec<ArchivedChartMonth>) -> Result<Self, StateError> {
+        self.restore_charts_schema(charts, 2)
+    }
+    pub fn restore_charts_schema(
+        mut self,
+        charts: Vec<ArchivedChartMonth>,
+        schema: u32,
+    ) -> Result<Self, StateError> {
         if self.timeline != TimelineProjection::default() {
             return Err(StateError::Invalid);
         }
@@ -88,7 +102,7 @@ impl Projections {
                 return Err(StateError::Invalid);
             }
             previous = Some(chart.month);
-            let data = ChartMonth::from_state_bytes(&chart.bytes)?;
+            let data = ChartMonth::from_state_bytes_schema(&chart.bytes, schema)?;
             if data.month != chart.month || data.completed.is_none() && data.live.is_none() {
                 return Err(StateError::Invalid);
             }

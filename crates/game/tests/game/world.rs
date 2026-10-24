@@ -15,6 +15,7 @@ fn grid(width: u16, height: u16, heights: &[f64]) -> TerrainGrid {
             land: *height >= 0.0,
             height: Ratio::new(height.max(0.0)).unwrap(),
             irradiance: Ratio::ZERO,
+            wind_potential: Ratio::ZERO,
             cooling_water: Ratio::ZERO,
             hydro_potential: Ratio::ZERO,
         })

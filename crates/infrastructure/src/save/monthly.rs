@@ -124,11 +124,12 @@ pub(crate) fn encode(
         .snapshot
         .as_mut()
         .ok_or(RestoreError::InvalidSnapshot)?;
-    let p = Projections::from_state_bytes(&snapshot.projections).map_err(malformed)?;
-    let (rest, charts) = p
-        .split_charts(bundle.checkpoint.summary.month)
+    let p = Projections::from_state_bytes_schema(&snapshot.projections, snapshot.schema)
         .map_err(malformed)?;
-    snapshot.projections = rest.state_bytes();
+    let (rest, charts) = p
+        .split_charts_schema(bundle.checkpoint.summary.month, snapshot.schema)
+        .map_err(malformed)?;
+    snapshot.projections = rest.state_bytes_schema(snapshot.schema);
     if charts.len() > MAX_MONTHS {
         return Err(SaveError::SaveTooLarge);
     }
@@ -241,11 +242,12 @@ pub(crate) fn read(
         .snapshot
         .as_mut()
         .ok_or(RestoreError::InvalidSnapshot)?;
-    snapshot.projections = Projections::from_state_bytes(&snapshot.projections)
-        .map_err(malformed)?
-        .restore_charts(charts)
-        .map_err(malformed)?
-        .state_bytes();
+    snapshot.projections =
+        Projections::from_state_bytes_schema(&snapshot.projections, snapshot.schema)
+            .map_err(malformed)?
+            .restore_charts_schema(charts, snapshot.schema)
+            .map_err(malformed)?
+            .state_bytes_schema(snapshot.schema);
     if snapshot.projections.len() > MAX_SAVE_BYTES {
         return Err(SaveError::SaveTooLarge);
     }

@@ -415,6 +415,11 @@ impl GameSession {
             served,
             unserved: acc.unserved() * weight,
             curtailed: acc.curtailed() * weight,
+            curtailed_by_kind: acc
+                .curtailed_by_kind()
+                .iter()
+                .map(|(kind, energy)| (*kind, *energy * weight))
+                .collect(),
             imbalance: acc.imbalance() * weight,
             overgeneration: acc.overgeneration() * weight,
             rotating_outage: acc.rotating_outage() * weight,

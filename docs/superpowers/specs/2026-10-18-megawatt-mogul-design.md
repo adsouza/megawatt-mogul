@@ -11,7 +11,7 @@
   A7, faster expansion pacing (§18, 2026-10-22); A8, automatic AGC recovery (§19, 2026-10-22);
   A9, daily-cycle battery storage (§20, 2026-10-23, implemented); A10, portable saved games
   (§21, 2026-10-23, implemented); A11, wind farms and midnight-to-18:00 battery charging
-  (§25, 2026-10-23, specified; implementation pending); A12, closing the rate-base loophole and
+  (§25, 2026-10-23, implemented under rules 14); A12, closing the rate-base loophole and
   making satisfaction count (§26, 2026-10-23, implemented under rules 13; lands before A11)
 - **Engine:** Rust 1.98, Bevy 0.20, bevy_egui 0.43, bevy-inspector-egui 0.38
 
@@ -233,7 +233,7 @@ preview remain selectable through their cards; broken entries retain their disab
 | Combined-cycle gas (CCGT) | 500 MW | 30% (40% in the test fixture) | 25 MW/min | 2 h | $40k | $45/MWh | $0.3B | 4 | The flexible middle |
 | Gas peaker | 200 MW | 20% | 40 MW/min | 10 min | $5k | $150/MWh | $0.1B | 2 | Pay dearly for agility |
 | Solar | 300 MW | 0% | n/a (weather) | n/a | n/a | $0/MWh | $0.15B | 2 | The duck curve |
-| Wind (§25, pending) | 300 MW | 0% | n/a (resource) | n/a | n/a | $0/MWh | $0.30B | 3 | Correlated variability and overnight generation |
+| Wind (§25) | 300 MW | 0% | n/a (resource) | n/a | n/a | $0/MWh | $0.30B | 3 | Correlated variability and overnight generation |
 | Hydro | 800 MW | 0% | 100 MW/min | 5 min | $1k | $0/MWh | $1.2B | 12 | Energy-limited dispatch |
 
 - **Battery storage** is a buildable asset kind alongside the seven generators: separate
@@ -1304,8 +1304,9 @@ The builder's calls below keep protection from tripping the grid into a deficit:
     four CCGTs built since 2020 in the same footprint, leaving four coal and nine CCGT units.)*
   - *(Builder's call: the overbuild scenario is split in two.*
     - *`overbuild_overcommitment_loses_licence` commits the four new CCGTs. The licence is revoked
-      at the October 2029 close, after a notice and three FrequencyPerformance strikes, before any
-      December review sees the new plants.*
+      at the November 2029 close under rules 14, after a notice and FrequencyPerformance strikes
+      in August, October and November (September stays below the failure threshold), before any
+      December review sees the new plants. The original Plan 1 trace ended in October.*
     - *`overbuild_idle_capacity_disallowance` builds the same CCGTs but leaves them uncommitted. The
       December 2029 review holds the excess capital, and the December 2030 review disallows it.)*
 - **Delivery.** A1, A2 and A3 are implemented together as Plan 1a, before Plan 2, with a single
@@ -2260,9 +2261,8 @@ windowed launch and native cycle/save-resume checks on both regions pass. See th
 Plans 1, 2, 2b and 3. This amendment governs storage wherever earlier sections assume every plant
 only generates electricity. It does not turn hydro water into stored electrical energy.
 
-**Pending amendment:** §25 supersedes this section's daylight charging window and adds wind to
-generation forecasts. Until Plan 5 is implemented, the code still uses the original daylight
-window. The 17:00 discharge start, residual-gap support (§23), energy conservation, customer
+**Implemented amendment:** §25 supersedes this section's daylight charging window with
+00:00–18:00 charging and adds wind to generation forecasts under rules 14. The 17:00 discharge start, residual-gap support (§23), energy conservation, customer
 priority and midnight reset remain binding. Read the daylight-only rules below as the historical
 Plan 4 contract wherever §25 explicitly replaces them.
 
@@ -2854,13 +2854,14 @@ windowed launch smoke and native idle-performance measurement.
 
 ## 25. Amendment A11: Wind farms and midnight-to-18:00 battery charging (2026-10-23)
 
-**Status:** Specified, not implemented. Implementation is tracked in
+**Status:** Implemented under `SIM_RULES_VERSION` **14**, portable state schema **2** and
+region schema **3**. Focused automated checks and isolated native playtests are recorded in
 [Plan 5: Wind farms and revised battery charging](../plans/2026-10-23-plan-5-wind-farms.md).
 This amendment supersedes the daylight-only charging rules in §20 and the daytime-charging
 preservation clause in §23. The latest user decision sets a hard **18:00 charging cutoff**.
 The midnight inventory reset, 17:00 discharge start and residual-gap support of §23 remain.
-Amendment A12 (§26) lands first as rules 11, so this amendment's rules version is 12 and its
-legacy region defaults use `region_schema: 3` (§26.6).
+Amendment A12 and its interaction fixes (§26) are implemented as rules 13. Plan 5 advances
+to rules 14 and region schema 3, retaining A12 storage accreditation and regulator defaults.
 
 ### 25.1 Player contract and scope
 
@@ -3011,7 +3012,8 @@ Never cap the entire day's cumulative input by one battery capacity when earlier
 legitimately freed room. At every minute all batteries use the same pre-storage bus sign; shared
 surplus/deficit is allocated once in ascending PlantId order. Histories before a re-plan stay frozen.
 
-Re-plan at day start, hourly, 17:00, 18:00 and after enable/recovery/primary-supply mode changes;
+Re-plan at day start, hourly, 17:00, 18:00 and after enable/recovery or a feasible storage flow
+changes direction during the overlapping window;
 ordinary thermal controls invalidate affected future plans on the next tick. Pure Planning
 previews start empty and may include feasible forecast receipts before later discharge, labelled
 expected. Operating outage/restoration/headroom calculations spend only energy already stored;
@@ -3072,7 +3074,7 @@ post-protection energy settlement of §20.4, including the last minute before mi
 
 ### 25.6 Persistence and compatibility
 
-Advance simulation rules **11 → 12** (after A12, §26) with the first behavior-changing implementation. Introduce
+Advance simulation rules **13 → 14** (after A12 and its interaction fixes, §26) with the first behavior-changing implementation. Introduce
 portable state **schema 2** for wind resource/state, the added battery field, forecast/curtailment
 records and any projection changes. Directory format 4, flat envelope 3 and snapshot-rooted
 command-log format 2 need not change merely for a new state schema; retain all existing readers.

@@ -59,6 +59,7 @@ pub struct TickSummary {
     pub shed: Ratio,
     /// The rotating-outage share of demand cut on purpose (spec §15.3).
     pub outage: Ratio,
+    pub curtailed_by_kind: BTreeMap<PlantKind, Megawatts>,
 }
 
 // Portable state schema 1: explicit field order and enum tags.
@@ -78,5 +79,6 @@ crate::state_record!(TickSummary {
     outage,
     battery_charge,
     battery_discharge,
-    batteries
+    batteries;
+    curtailed_by_kind: Default::default()
 });

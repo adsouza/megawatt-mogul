@@ -246,7 +246,16 @@ pub fn review_model_for(
                 "review-out-of-band",
                 format::percent(report.out_of_band_share),
             ),
-        ],
+        ]
+        .into_iter()
+        .chain(report.curtailed_by_kind.iter().map(|(kind, energy)| Stat {
+            label: l10n.args(
+                "review-curtailed-kind",
+                &[("kind", kind.localize(l10n).into())],
+            ),
+            value: format::megawatt_hours(*energy),
+        }))
+        .collect(),
         incidents_heading: l10n.text("review-incidents"),
         incidents_empty: incidents
             .is_empty()
@@ -602,6 +611,7 @@ mod tests {
             served: MegawattHours::new(99_900.0),
             unserved: MegawattHours::new(100.0),
             curtailed: MegawattHours::ZERO,
+            curtailed_by_kind: Default::default(),
             imbalance: MegawattHours::ZERO,
             overgeneration: MegawattHours::ZERO,
             rotating_outage: MegawattHours::new(40.0),

@@ -262,7 +262,11 @@ fn decode_card(
         })
         .into());
     }
-    if card.snapshot.as_ref().is_some_and(|s| s.schema != 1) {
+    if card
+        .snapshot
+        .as_ref()
+        .is_some_and(|s| !(1..=2).contains(&s.schema))
+    {
         return Err(RestoreError::InvalidSnapshot.into());
     }
     let actual = RegionFingerprint::new(digest(&card.region));

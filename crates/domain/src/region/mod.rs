@@ -17,7 +17,7 @@ use crate::ids::{CellCoord, CityId, RegionId};
 
 pub use params::{
     CityDef, DemandShape, FrequencyParams, HydroParams, LineParams, RegulatorParams,
-    SatisfactionParams, SolarParams, StartDef, StartPlantDef, StorageAccreditation,
+    SatisfactionParams, SolarParams, StartDef, StartPlantDef, StorageAccreditation, WindParams,
 };
 pub use plant_spec::{BatterySpec, PlantKind, PlantSpec, SitingRule};
 pub use terrain::{Cell, TerrainGrid};
@@ -86,6 +86,7 @@ pub struct RegionDefinitionParts {
     pub cities: Vec<CityDef>,
     pub demand: DemandShape,
     pub solar: SolarParams,
+    pub wind: WindParams,
     pub hydro: HydroParams,
     pub frequency: FrequencyParams,
     pub regulator: RegulatorParams,
@@ -105,6 +106,7 @@ pub struct RegionDefinition {
     cities: Vec<CityDef>,
     demand: DemandShape,
     solar: SolarParams,
+    wind: WindParams,
     hydro: HydroParams,
     frequency: FrequencyParams,
     regulator: RegulatorParams,
@@ -141,6 +143,10 @@ impl RegionDefinition {
 
     pub fn solar(&self) -> &SolarParams {
         &self.solar
+    }
+
+    pub fn wind(&self) -> &WindParams {
+        &self.wind
     }
 
     pub fn hydro(&self) -> &HydroParams {
@@ -304,6 +310,18 @@ fn validate_shapes(parts: &RegionDefinitionParts) -> Result<(), RegionError> {
     check_shape(all_positive(&d.summer), "demand.summer")?;
     check_shape(all_positive(&d.shoulder), "demand.shoulder")?;
     check_shape(all_positive(&d.monthly), "demand.monthly")?;
+    let w = &parts.wind;
+    check_shape(
+        w.monthly
+            .iter()
+            .all(|v| v.is_finite() && (0.0..=1.0).contains(v))
+            && (0.0..1.0).contains(&w.persistence)
+            && w.innovation_sd.is_finite()
+            && w.innovation_sd >= 0.0
+            && w.initial_sd.is_finite()
+            && w.initial_sd >= 0.0,
+        "wind",
+    )?;
     let s = &parts.solar;
     // NaN and infinities fail these comparisons, so no separate finiteness check is needed.
     let daylight_ok = s
@@ -382,7 +400,9 @@ fn validate_catalog_values(catalog: &[PlantSpec]) -> Result<(), RegionError> {
                     && finite_positive(b.energy_capacity.value())
                     && b.charge_efficiency.value() > 0.0
                     && b.discharge_efficiency.value() > 0.0
-                    && (1..24).contains(&b.discharge_start_hour),
+                    && b.discharge_start_hour >= 1
+                    && b.discharge_start_hour <= b.charge_end_hour
+                    && b.charge_end_hour <= 24,
                 "catalog.battery.ratings",
             )?;
             check_band(
@@ -392,6 +412,15 @@ fn validate_catalog_values(catalog: &[PlantSpec]) -> Result<(), RegionError> {
                     && spec.marginal_cost.value() == 0.0
                     && spec.capacity_credit == Ratio::ZERO,
                 "catalog.battery.generator_fields",
+            )?;
+        }
+        if spec.kind == PlantKind::Wind {
+            check_band(
+                spec.min_stable == Ratio::ZERO
+                    && spec.startup.ticks() == 0
+                    && spec.startup_cost == crate::units::Money::ZERO
+                    && spec.marginal_cost.value() == 0.0,
+                "catalog.wind.generator_fields",
             )?;
         }
         // Solar output follows the sun, so only dispatchable kinds need a ramp.
@@ -466,18 +495,6 @@ impl TryFrom<RegionDefinitionParts> for RegionDefinition {
         validate_shapes(&parts)?;
         validate_bands(&parts.regulator)?;
         validate_catalog_values(&catalog)?;
-        for spec in &catalog {
-            if let Some(b) = spec.battery {
-                check_shape(
-                    parts
-                        .solar
-                        .daylight
-                        .iter()
-                        .all(|&(rise, set)| rise < set.min(f64::from(b.discharge_start_hour))),
-                    "catalog.battery.daylight",
-                )?;
-            }
-        }
         validate_frequency(&parts.frequency)?;
         validate_lines(&parts.lines)?;
         Ok(Self {
@@ -488,6 +505,7 @@ impl TryFrom<RegionDefinitionParts> for RegionDefinition {
             cities: parts.cities,
             demand: parts.demand,
             solar: parts.solar,
+            wind: parts.wind,
             hydro: parts.hydro,
             frequency: parts.frequency,
             regulator: parts.regulator,
@@ -1259,6 +1277,8 @@ mod battery_validation_tests {
             |p| p.battery.as_mut().unwrap().discharge_efficiency = Ratio::ZERO,
             |p| p.battery.as_mut().unwrap().discharge_start_hour = 0,
             |p| p.battery.as_mut().unwrap().discharge_start_hour = 24,
+            |p| p.battery.as_mut().unwrap().charge_end_hour = 0,
+            |p| p.battery.as_mut().unwrap().charge_end_hour = 25,
             |p| p.min_stable = Ratio::ONE,
             |p| p.startup = SimDuration::from_minutes(1),
             |p| p.startup_cost = crate::units::Money::from_cents(1),
@@ -1277,7 +1297,10 @@ mod battery_validation_tests {
         }
         let mut p = fixtures::tiny_region_parts();
         p.solar.daylight[0] = (18.0, 20.0);
-        assert!(RegionDefinition::try_from(p).is_err());
+        assert!(
+            RegionDefinition::try_from(p).is_ok(),
+            "storage eligibility is independent of daylight"
+        );
         let mut p = fixtures::tiny_region_parts();
         let spec = p
             .catalog

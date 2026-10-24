@@ -265,6 +265,7 @@ fn lessons() -> Vec<Lesson> {
             notice: false,
         },
         Lesson::SolarCurtailed { energy: mwh },
+        Lesson::RenewableCurtailed { energy: mwh },
         Lesson::StartUpCosts {
             total: Money::from_dollars(420_000),
             share: ratio(0.15),
@@ -348,6 +349,7 @@ fn month_report() -> MonthlyReport {
         served: zero,
         unserved: zero,
         curtailed: zero,
+        curtailed_by_kind: Default::default(),
         imbalance: zero,
         overgeneration: zero,
         rotating_outage: zero,
@@ -374,6 +376,7 @@ fn tick_summary() -> TickSummary {
         battery_discharge: Megawatts::ZERO,
         batteries: Default::default(),
         curtailed: Megawatts::ZERO,
+        curtailed_by_kind: Default::default(),
         imbalance: Megawatts::ZERO,
         by_kind: BTreeMap::new(),
         by_plant: BTreeMap::new(),
@@ -416,6 +419,13 @@ fn events() -> Vec<(DomainEvent, bool)> {
         (
             DomainEvent::SolarCurtailed {
                 mw: megawatts(300.0),
+            },
+            false,
+        ),
+        (
+            DomainEvent::RenewableCurtailed {
+                kind: PlantKind::Wind,
+                mw: megawatts(50.0),
             },
             false,
         ),
@@ -588,7 +598,7 @@ fn the_variant_tables_cover_every_variant() {
         SiteError::InsufficientCoolingWater { .. } => 2,
         SiteError::NoHydroSite => 3,
     });
-    assert_covers_every_variant("Lesson", &lessons(), 9, |l| match l {
+    assert_covers_every_variant("Lesson", &lessons(), 10, |l| match l {
         Lesson::ExpensivePeaking { .. } => 0,
         Lesson::RotatingOutages { .. } => 1,
         Lesson::UnservedEnergy { .. } => 2,
@@ -598,6 +608,7 @@ fn the_variant_tables_cover_every_variant() {
         Lesson::StartUpCosts { .. } => 6,
         Lesson::RateReview { .. } => 7,
         Lesson::AllClear => 8,
+        Lesson::RenewableCurtailed { .. } => 9,
     });
     assert_covers_every_variant("IncidentKind", &incidents(), 5, |i| match i {
         IncidentKind::LoadShed { .. } => 0,
@@ -624,7 +635,7 @@ fn the_variant_tables_cover_every_variant() {
         MilestoneProgress::Cities { .. } => 2,
     });
     let events: Vec<DomainEvent> = events().into_iter().map(|(event, _)| event).collect();
-    assert_covers_every_variant("DomainEvent", &events, 32, |e| match e {
+    assert_covers_every_variant("DomainEvent", &events, 33, |e| match e {
         DomainEvent::PlantStarting { .. } => 0,
         DomainEvent::PlantOnline { .. } => 1,
         DomainEvent::PlantStopped { .. } => 2,
@@ -635,6 +646,7 @@ fn the_variant_tables_cover_every_variant() {
         DomainEvent::FrequencyDeviated { .. } => 7,
         DomainEvent::LoadShed { .. } => 8,
         DomainEvent::SolarCurtailed { .. } => 9,
+        DomainEvent::RenewableCurtailed { .. } => 32,
         DomainEvent::OverFrequencyTrip { .. } => 10,
         DomainEvent::Blackout => 11,
         DomainEvent::BlackoutRestored => 12,

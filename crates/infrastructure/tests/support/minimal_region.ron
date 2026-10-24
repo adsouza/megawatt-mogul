@@ -3,7 +3,7 @@
 // Mirrors the domain's `tiny_region` fixture apart from the terrain layers,
 // which are expressed as bases plus Gaussian blobs.
 (
-    region_schema: 2,
+    region_schema: 3,
     id: "minimal",
     name_key: "region-minimal",
     bounds: (west: 0.0, east: 12.0, south: 0.0, north: 8.0),
@@ -20,7 +20,10 @@
         base: 0.0,
         blobs: [(lon: 10.5, lat: 6.5, radius_deg: 0.5, value: 0.8)],
     ),
+    wind_potential: (base: 0.8, blobs: []),
+    wind: (monthly: [0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6], persistence: 0.995, innovation_sd: 0.015, initial_sd: 0.15, band: 0.25),
     catalog: [
+        (kind: Wind, capacity_mw: 300.0, min_stable: 0.0, ramp_mw_per_min: 0.0, startup_hours: 0.0, startup_cost_usd: 0, marginal_cost_usd_per_mwh: 0.0, fixed_om_usd_per_month: 500000, capital_cost_usd: 300000000, build_months: 3, capacity_credit: 0.2, book_life_months: 300, siting: Anywhere),
         (
             kind: Nuclear,
             capacity_mw: 1100.0,
@@ -116,7 +119,7 @@
          fixed_om_usd_per_month: 100000, capital_cost_usd: 100000000, build_months: 2,
          capacity_credit: 0.0, book_life_months: 180, siting: Anywhere,
          battery: Some((charge_mw: 200.0, energy_mwh: 800.0, charge_efficiency: 0.9,
-                        discharge_efficiency: 1.0, discharge_start_hour: 17))),
+                        discharge_efficiency: 1.0, discharge_start_hour: 17, charge_end_hour: 18))),
     ],
     cities: [
         (id: 1, name_key: "city-tiny-1", lon: 6.5, lat: 3.5, base_load_mw: 600.0),

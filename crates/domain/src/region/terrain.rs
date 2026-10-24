@@ -10,6 +10,7 @@ pub struct Cell {
     pub land: bool,
     pub height: Ratio,
     pub irradiance: Ratio,
+    pub wind_potential: Ratio,
     pub cooling_water: Ratio,
     pub hydro_potential: Ratio,
 }

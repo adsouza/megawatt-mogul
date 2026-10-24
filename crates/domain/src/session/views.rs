@@ -29,6 +29,7 @@ pub struct PlantView {
     pub commitment: [bool; 24],
     pub hydro_budget: Option<MegawattHours>,
     pub battery: Option<BatteryView>,
+    pub wind: Option<WindView>,
     /// The water a commissioned hydro plant starts the day of the current
     /// month with (spec §2.2): what Planning shows, since until the day
     /// begins `hydro_budget` is still the empty or leftover level. `None` for
@@ -38,6 +39,16 @@ pub struct PlantView {
     /// what Planning's `SetDispatchTarget` sets, minimum stable output until
     /// then.
     pub initial_target: Megawatts,
+}
+
+/// Resource and forecast of one wind farm, with no assumed statistical confidence level.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WindView {
+    pub potential: Ratio,
+    pub available: Megawatts,
+    pub delivered: Megawatts,
+    pub curtailed: Megawatts,
+    pub forecast: (Megawatts, Megawatts, Megawatts),
 }
 
 /// All storage values are physical daily quantities; costs are in the plant specification.
@@ -214,7 +225,6 @@ impl GameSession {
         } else {
             BatteryMode::Holding
         };
-        let (rise, set) = self.region.solar().daylight[self.clock.month().index0()];
         Some(BatteryView {
             enabled: b.enabled(),
             mode,
@@ -227,7 +237,7 @@ impl GameSession {
                 .get(&p.id())
                 .copied()
                 .unwrap_or_default(),
-            charge_window: (rise, set.min(f64::from(spec.discharge_start_hour))),
+            charge_window: (0.0, f64::from(spec.charge_end_hour)),
         })
     }
     pub fn battery_schedule(&self) -> crate::grid::BatteryScheduleView {
@@ -280,6 +290,36 @@ impl GameSession {
             commitment: plant.commitment().hours(),
             hydro_budget: plant.hydro_budget(),
             battery: self.battery_view(plant),
+            wind: (plant.kind() == PlantKind::Wind).then(|| {
+                let potential = self
+                    .region
+                    .terrain()
+                    .get(plant.cell())
+                    .map_or(Ratio::ZERO, |c| c.wind_potential);
+                let rating = plant.spec().capacity * potential.value();
+                let (central, low, high) = self.power.wind_factor_forecast(
+                    &self.region,
+                    self.clock.month(),
+                    self.clock.tick(),
+                );
+                let available = rating * self.power.wind_factor();
+                let online = plant.is_online() && self.power.network().is_connected(plant.node());
+                WindView {
+                    potential,
+                    available,
+                    delivered: if online {
+                        plant.output()
+                    } else {
+                        Megawatts::ZERO
+                    },
+                    curtailed: if online {
+                        (available - plant.output()).max(Megawatts::ZERO)
+                    } else {
+                        Megawatts::ZERO
+                    },
+                    forecast: (rating * central, rating * low, rating * high),
+                }
+            }),
             hydro_day_budget: (plant.kind() == PlantKind::Hydro
                 && !matches!(plant.status(), PlantStatus::UnderConstruction { .. }))
             .then(|| day_hydro_budget(&self.region, self.clock.month(), plant)),
@@ -456,7 +496,7 @@ impl GameSession {
         let month = self.clock.month();
         self.power
             .connected_demand_forecast(&self.region, month, tick)
-            - self.power.expected_solar(&self.region, month, tick)
+            - self.power.expected_variable(&self.region, month, tick)
     }
 
     /// The generators' dispatch requirement, including planned charging.

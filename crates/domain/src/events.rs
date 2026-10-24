@@ -15,17 +15,30 @@ use crate::units::{MegawattHours, Megawatts, Money, Price, Ratio};
 #[derive(Debug, Clone, PartialEq)]
 pub enum DomainEvent {
     /// A plant began its start-up sequence.
-    PlantStarting { plant: PlantId },
+    PlantStarting {
+        plant: PlantId,
+    },
     /// A plant finished starting and is now online.
-    PlantOnline { plant: PlantId },
+    PlantOnline {
+        plant: PlantId,
+    },
     /// A plant finished ramping down (or cancelled its start) and is now offline.
-    PlantStopped { plant: PlantId },
+    PlantStopped {
+        plant: PlantId,
+    },
     /// A plant went offline unplanned.
-    PlantTripped { plant: PlantId },
+    PlantTripped {
+        plant: PlantId,
+    },
     /// A plant finished construction.
-    PlantCommissioned { plant: PlantId, kind: PlantKind },
+    PlantCommissioned {
+        plant: PlantId,
+        kind: PlantKind,
+    },
     /// A hydro plant's energy budget just ran out.
-    HydroBudgetExhausted { plant: PlantId },
+    HydroBudgetExhausted {
+        plant: PlantId,
+    },
     /// Daily inventory measured before the midnight reset (unweighted).
     BatteryDayClosed {
         plant: PlantId,
@@ -34,40 +47,71 @@ pub enum DomainEvent {
     /// The power system finished a tick.
     TickCompleted(TickSummary),
     /// The frequency deviation moved into a different band.
-    FrequencyDeviated { band: FrequencyBand },
+    FrequencyDeviated {
+        band: FrequencyBand,
+    },
     /// Under-frequency protection shed more load; `mw` is the total now shed.
-    LoadShed { mw: Megawatts },
+    LoadShed {
+        mw: Megawatts,
+    },
     /// Over-frequency protection set solar curtailment to `mw`, withheld from
     /// solar availability from the next tick.
-    SolarCurtailed { mw: Megawatts },
+    SolarCurtailed {
+        mw: Megawatts,
+    },
+    RenewableCurtailed {
+        kind: PlantKind,
+        mw: Megawatts,
+    },
     /// Over-frequency protection tripped `plant` (emitted alongside its
     /// `PlantTripped`).
-    OverFrequencyTrip { plant: PlantId },
+    OverFrequencyTrip {
+        plant: PlantId,
+    },
     /// Protection blacked out the grid: every plant tripped.
     Blackout,
     /// Black-start restoration reconnected the last of the load.
     BlackoutRestored,
     /// A rotating outage of `share` of demand was ordered for `hour` (spec
     /// §15.3), including a change to zero ("outage lifted").
-    RotatingOutageOrdered { hour: u8, share: Ratio },
+    RotatingOutageOrdered {
+        hour: u8,
+        share: Ratio,
+    },
     /// A cash movement was booked to the company ledger.
     LedgerEntryRecorded(LedgerEntry),
     /// A reserve review held `amount` of an asset's book value out of the
     /// eligible rate base as plant held for future use (non-cash).
-    CapitalHeld { asset: AssetRef, amount: Money },
+    CapitalHeld {
+        asset: AssetRef,
+        amount: Money,
+    },
     /// A reserve review returned `amount` of held book value to the eligible
     /// rate base because the capacity became useful (non-cash).
-    CapitalReleased { asset: AssetRef, amount: Money },
+    CapitalReleased {
+        asset: AssetRef,
+        amount: Money,
+    },
     /// A reserve review permanently wrote off `amount` of held book value
     /// still excess at its second consecutive review (non-cash).
-    CapitalDisallowed { asset: AssetRef, amount: Money },
+    CapitalDisallowed {
+        asset: AssetRef,
+        amount: Money,
+    },
     /// The company took a strike for `reason`; `strikes` is the new total.
-    StrikeIssued { strikes: u8, reason: StrikeReason },
+    StrikeIssued {
+        strikes: u8,
+        reason: StrikeReason,
+    },
     /// A month failed only frequency performance and drew a formal notice
     /// instead of a strike; `month` is the failing month.
-    FrequencyNoticeIssued { month: SimMonth },
+    FrequencyNoticeIssued {
+        month: SimMonth,
+    },
     /// A strike lapsed after clean months; `strikes` is the new total.
-    StrikeExpired { strikes: u8 },
+    StrikeExpired {
+        strikes: u8,
+    },
     /// Too many strikes: the company lost its licence.
     LicenseRevoked,
     /// A rate review set a new tariff and allowed return.
@@ -76,7 +120,10 @@ pub enum DomainEvent {
         allowed_return: Ratio,
     },
     /// The session moved from one day phase to the next.
-    PhaseChanged { from: DayPhase, to: DayPhase },
+    PhaseChanged {
+        from: DayPhase,
+        to: DayPhase,
+    },
     /// The player ordered a plant; it is now under construction.
     PlantConstructionStarted {
         plant: PlantId,
@@ -84,160 +131,176 @@ pub enum DomainEvent {
         cell: CellCoord,
     },
     /// The player ordered a transmission line; it is now under construction.
-    LineConstructionStarted { line: LineId },
+    LineConstructionStarted {
+        line: LineId,
+    },
     /// A transmission line finished construction and is in service.
-    LineCommissioned { line: LineId },
+    LineCommissioned {
+        line: LineId,
+    },
     /// A city became energised from the home city and is now a customer.
-    CityConnected { city: CityId },
+    CityConnected {
+        city: CityId,
+    },
     /// The played month closed; boxed because the report is large.
     MonthClosed(Box<MonthlyReport>),
     /// Cash was negative at too many consecutive month closes: game over.
     Bankrupt,
     /// An unfinished transmission line was cancelled; future instalments stop.
-    LineConstructionCancelled { line: LineId },
+    LineConstructionCancelled {
+        line: LineId,
+    },
 }
 
 // Portable state schema 1: explicit field order and enum tags.
 impl crate::state::State for DomainEvent {
     fn write(&self, out: &mut Vec<u8>) {
+        self.write_schema(out, 2);
+    }
+    fn write_schema(&self, out: &mut Vec<u8>, schema: u32) {
         match self {
             Self::PlantStarting { plant } => {
-                crate::state::State::write(&0u8, out);
-                crate::state::State::write(plant, out);
+                crate::state::State::write_schema(&0u8, out, schema);
+                crate::state::State::write_schema(plant, out, schema);
             }
             Self::PlantOnline { plant } => {
-                crate::state::State::write(&1u8, out);
-                crate::state::State::write(plant, out);
+                crate::state::State::write_schema(&1u8, out, schema);
+                crate::state::State::write_schema(plant, out, schema);
             }
             Self::PlantStopped { plant } => {
-                crate::state::State::write(&2u8, out);
-                crate::state::State::write(plant, out);
+                crate::state::State::write_schema(&2u8, out, schema);
+                crate::state::State::write_schema(plant, out, schema);
             }
             Self::PlantTripped { plant } => {
-                crate::state::State::write(&3u8, out);
-                crate::state::State::write(plant, out);
+                crate::state::State::write_schema(&3u8, out, schema);
+                crate::state::State::write_schema(plant, out, schema);
             }
             Self::PlantCommissioned { plant, kind } => {
-                crate::state::State::write(&4u8, out);
-                crate::state::State::write(plant, out);
-                crate::state::State::write(kind, out);
+                crate::state::State::write_schema(&4u8, out, schema);
+                crate::state::State::write_schema(plant, out, schema);
+                crate::state::State::write_schema(kind, out, schema);
             }
             Self::HydroBudgetExhausted { plant } => {
-                crate::state::State::write(&5u8, out);
-                crate::state::State::write(plant, out);
+                crate::state::State::write_schema(&5u8, out, schema);
+                crate::state::State::write_schema(plant, out, schema);
             }
             Self::BatteryDayClosed { plant, unused } => {
-                crate::state::State::write(&6u8, out);
-                crate::state::State::write(plant, out);
-                crate::state::State::write(unused, out);
+                crate::state::State::write_schema(&6u8, out, schema);
+                crate::state::State::write_schema(plant, out, schema);
+                crate::state::State::write_schema(unused, out, schema);
             }
             Self::TickCompleted(v0) => {
-                crate::state::State::write(&7u8, out);
-                crate::state::State::write(v0, out);
+                crate::state::State::write_schema(&7u8, out, schema);
+                crate::state::State::write_schema(v0, out, schema);
             }
             Self::FrequencyDeviated { band } => {
-                crate::state::State::write(&8u8, out);
-                crate::state::State::write(band, out);
+                crate::state::State::write_schema(&8u8, out, schema);
+                crate::state::State::write_schema(band, out, schema);
             }
             Self::LoadShed { mw } => {
-                crate::state::State::write(&9u8, out);
-                crate::state::State::write(mw, out);
+                crate::state::State::write_schema(&9u8, out, schema);
+                crate::state::State::write_schema(mw, out, schema);
             }
             Self::SolarCurtailed { mw } => {
-                crate::state::State::write(&10u8, out);
-                crate::state::State::write(mw, out);
+                crate::state::State::write_schema(&10u8, out, schema);
+                crate::state::State::write_schema(mw, out, schema);
             }
             Self::OverFrequencyTrip { plant } => {
-                crate::state::State::write(&11u8, out);
-                crate::state::State::write(plant, out);
+                crate::state::State::write_schema(&11u8, out, schema);
+                crate::state::State::write_schema(plant, out, schema);
             }
             Self::Blackout => {
-                crate::state::State::write(&12u8, out);
+                crate::state::State::write_schema(&12u8, out, schema);
             }
             Self::BlackoutRestored => {
-                crate::state::State::write(&13u8, out);
+                crate::state::State::write_schema(&13u8, out, schema);
             }
             Self::RotatingOutageOrdered { hour, share } => {
-                crate::state::State::write(&14u8, out);
-                crate::state::State::write(hour, out);
-                crate::state::State::write(share, out);
+                crate::state::State::write_schema(&14u8, out, schema);
+                crate::state::State::write_schema(hour, out, schema);
+                crate::state::State::write_schema(share, out, schema);
             }
             Self::LedgerEntryRecorded(v0) => {
-                crate::state::State::write(&15u8, out);
-                crate::state::State::write(v0, out);
+                crate::state::State::write_schema(&15u8, out, schema);
+                crate::state::State::write_schema(v0, out, schema);
             }
             Self::CapitalHeld { asset, amount } => {
-                crate::state::State::write(&16u8, out);
-                crate::state::State::write(asset, out);
-                crate::state::State::write(amount, out);
+                crate::state::State::write_schema(&16u8, out, schema);
+                crate::state::State::write_schema(asset, out, schema);
+                crate::state::State::write_schema(amount, out, schema);
             }
             Self::CapitalReleased { asset, amount } => {
-                crate::state::State::write(&17u8, out);
-                crate::state::State::write(asset, out);
-                crate::state::State::write(amount, out);
+                crate::state::State::write_schema(&17u8, out, schema);
+                crate::state::State::write_schema(asset, out, schema);
+                crate::state::State::write_schema(amount, out, schema);
             }
             Self::CapitalDisallowed { asset, amount } => {
-                crate::state::State::write(&18u8, out);
-                crate::state::State::write(asset, out);
-                crate::state::State::write(amount, out);
+                crate::state::State::write_schema(&18u8, out, schema);
+                crate::state::State::write_schema(asset, out, schema);
+                crate::state::State::write_schema(amount, out, schema);
             }
             Self::StrikeIssued { strikes, reason } => {
-                crate::state::State::write(&19u8, out);
-                crate::state::State::write(strikes, out);
-                crate::state::State::write(reason, out);
+                crate::state::State::write_schema(&19u8, out, schema);
+                crate::state::State::write_schema(strikes, out, schema);
+                crate::state::State::write_schema(reason, out, schema);
             }
             Self::FrequencyNoticeIssued { month } => {
-                crate::state::State::write(&20u8, out);
-                crate::state::State::write(month, out);
+                crate::state::State::write_schema(&20u8, out, schema);
+                crate::state::State::write_schema(month, out, schema);
             }
             Self::StrikeExpired { strikes } => {
-                crate::state::State::write(&21u8, out);
-                crate::state::State::write(strikes, out);
+                crate::state::State::write_schema(&21u8, out, schema);
+                crate::state::State::write_schema(strikes, out, schema);
             }
             Self::LicenseRevoked => {
-                crate::state::State::write(&22u8, out);
+                crate::state::State::write_schema(&22u8, out, schema);
             }
             Self::RateReviewCompleted {
                 tariff,
                 allowed_return,
             } => {
-                crate::state::State::write(&23u8, out);
-                crate::state::State::write(tariff, out);
-                crate::state::State::write(allowed_return, out);
+                crate::state::State::write_schema(&23u8, out, schema);
+                crate::state::State::write_schema(tariff, out, schema);
+                crate::state::State::write_schema(allowed_return, out, schema);
             }
             Self::PhaseChanged { from, to } => {
-                crate::state::State::write(&24u8, out);
-                crate::state::State::write(from, out);
-                crate::state::State::write(to, out);
+                crate::state::State::write_schema(&24u8, out, schema);
+                crate::state::State::write_schema(from, out, schema);
+                crate::state::State::write_schema(to, out, schema);
             }
             Self::PlantConstructionStarted { plant, kind, cell } => {
-                crate::state::State::write(&25u8, out);
-                crate::state::State::write(plant, out);
-                crate::state::State::write(kind, out);
-                crate::state::State::write(cell, out);
+                crate::state::State::write_schema(&25u8, out, schema);
+                crate::state::State::write_schema(plant, out, schema);
+                crate::state::State::write_schema(kind, out, schema);
+                crate::state::State::write_schema(cell, out, schema);
             }
             Self::LineConstructionStarted { line } => {
-                crate::state::State::write(&26u8, out);
-                crate::state::State::write(line, out);
+                crate::state::State::write_schema(&26u8, out, schema);
+                crate::state::State::write_schema(line, out, schema);
             }
             Self::LineCommissioned { line } => {
-                crate::state::State::write(&27u8, out);
-                crate::state::State::write(line, out);
+                crate::state::State::write_schema(&27u8, out, schema);
+                crate::state::State::write_schema(line, out, schema);
             }
             Self::CityConnected { city } => {
-                crate::state::State::write(&28u8, out);
-                crate::state::State::write(city, out);
+                crate::state::State::write_schema(&28u8, out, schema);
+                crate::state::State::write_schema(city, out, schema);
             }
             Self::MonthClosed(v0) => {
-                crate::state::State::write(&29u8, out);
-                crate::state::State::write(v0, out);
+                crate::state::State::write_schema(&29u8, out, schema);
+                crate::state::State::write_schema(v0, out, schema);
             }
             Self::Bankrupt => {
-                crate::state::State::write(&30u8, out);
+                crate::state::State::write_schema(&30u8, out, schema);
             }
             Self::LineConstructionCancelled { line } => {
-                crate::state::State::write(&31u8, out);
-                crate::state::State::write(line, out);
+                crate::state::State::write_schema(&31u8, out, schema);
+                crate::state::State::write_schema(line, out, schema);
+            }
+            Self::RenewableCurtailed { kind, mw } => {
+                crate::state::State::write_schema(&32u8, out, schema);
+                crate::state::State::write_schema(kind, out, schema);
+                crate::state::State::write_schema(mw, out, schema);
             }
         }
     }
@@ -335,6 +398,10 @@ impl crate::state::State for DomainEvent {
             30 => Self::Bankrupt,
             31 => Self::LineConstructionCancelled {
                 line: crate::state::State::read(input)?,
+            },
+            32 if input.schema >= 2 => Self::RenewableCurtailed {
+                kind: crate::state::State::read(input)?,
+                mw: crate::state::State::read(input)?,
             },
             _ => return Err(crate::state::StateError::Invalid),
         })

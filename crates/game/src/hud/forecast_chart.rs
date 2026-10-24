@@ -36,7 +36,17 @@ pub struct StackModel {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct WindForecastModel {
+    pub label: String,
+    pub range_label: String,
+    pub central: [f64; 24],
+    pub low: [f64; 24],
+    pub high: [f64; 24],
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct ForecastModel {
+    pub wind: Option<WindForecastModel>,
     pub hour_axis: String,
     pub power_axis: String,
     pub forecast_label: String,
@@ -88,7 +98,7 @@ fn stacked_supply(game: &Game, l10n: &Localizer, forecast: &SupplyForecast) -> V
         .filter(|_| forecast.has_storage)
         .chain(order.into_iter().filter(|kind| {
             groups.iter().any(|group| group.kind == *kind)
-                || (*kind == PlantKind::Solar
+                || (kind.is_variable()
                     && storage.iter().any(|p| p.generation[kind] > Megawatts::ZERO))
         }));
     let mut below = [0.0; 24];
@@ -162,6 +172,26 @@ pub(super) fn forecast_model_for(
             .collect()
     };
     ForecastModel {
+        wind: session
+            .plant_views()
+            .iter()
+            .any(|p| p.kind == PlantKind::Wind && p.connected)
+            .then(|| {
+                let forecasts: [(Megawatts, Megawatts, Megawatts); 24] = std::array::from_fn(|h| {
+                    session.power().wind_forecast(
+                        session.region(),
+                        session.clock().month(),
+                        (h as u32 * 60) + 30,
+                    )
+                });
+                WindForecastModel {
+                    label: l10n.text("wind-forecast"),
+                    range_label: l10n.text("wind-range"),
+                    central: forecasts.map(|f| f.0.value()),
+                    low: forecasts.map(|f| f.1.value()),
+                    high: forecasts.map(|f| f.2.value()),
+                }
+            }),
         net_supply_label: l10n.text("forecast-net-supply"),
         net_supply: forecast_supply
             .assessed_minutes()
@@ -258,6 +288,13 @@ pub fn draw_forecast_chart(ui: &mut egui::Ui, model: &ForecastModel) -> Vec<UiAc
             ),
         ]);
     }
+    if let Some(wind) = &model.wind {
+        let color = color32(kind_color(PlantKind::Wind));
+        entries.extend([
+            (wind.label.as_str(), color, KeyMark::Line),
+            (wind.range_label.as_str(), color, KeyMark::Band),
+        ]);
+    }
     let hovered = super::chart_style::draw_key(ui, id, entries);
     Plot::new("planning_forecast")
         .id(id)
@@ -338,6 +375,19 @@ pub fn draw_forecast_chart(ui: &mut egui::Ui, model: &ForecastModel) -> Vec<UiAc
                     .width(2.0)
                     .highlight(hovered == Some(egui::Id::new(&model.net_supply_label))),
             );
+            if let Some(wind) = &model.wind {
+                let color = color32(kind_color(PlantKind::Wind));
+                plot.add(
+                    FilledArea::new(&wind.range_label, &model.x, &wind.low, &wind.high)
+                        .fill_color(color.gamma_multiply(0.2))
+                        .highlight(hovered == Some(egui::Id::new(&wind.range_label))),
+                );
+                plot.line(
+                    Line::new(&wind.label, points(&wind.central))
+                        .color(color)
+                        .highlight(hovered == Some(egui::Id::new(&wind.label))),
+                );
+            }
             if !model.storage_charge.is_empty() {
                 plot.line(
                     Line::new(&model.storage_charge_label, model.storage_charge.clone())

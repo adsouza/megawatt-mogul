@@ -393,7 +393,7 @@ battery-mode-full = Full
 battery-mode-suspended = Grid suspended
 battery-enable = Enable storage
 battery-disable = Disable storage
-battery-grid-charging-hint = Daylight grid charging may use thermal power. Evening discharge covers supply gaps while generators catch up; otherwise energy is held.
+battery-grid-charging-hint = Grid charging runs 00:00–18:00 and may use wind, solar or thermal power. From 17:00–24:00, discharge covers generation gaps. No simultaneous charging and discharge; unused energy resets at midnight.
 battery-stored = Stored energy
 battery-charging = Charging now
 battery-discharging = Discharging now
@@ -410,7 +410,7 @@ battery-charge-window = Charging window
 battery-evening-window = Discharge window
 battery-window-value = { $start }–{ $end }
 battery-cycle = Daily cycle
-battery-cycle-hint = Empty at dawn; daylight charge, evening discharge, remainder cleared at midnight.
+battery-cycle-hint = Starts empty at midnight; charges 00:00–18:00, supports generation gaps 17:00–24:00, and clears unused energy at midnight.
 battery-total-load = Demand + battery charging
 battery-stored-axis = Stored energy (MWh)
 battery-midnight-marker = Unused energy cleared at midnight
@@ -429,3 +429,20 @@ supply-chart-unit-energy = MWh
 
 tariff-satisfaction-adjustment = Satisfaction adjustment
 review-satisfaction-adjustment = Satisfaction moved your allowed return by { $points }.
+
+plant-kind-wind = Wind farm
+plant-glyph-wind = W
+map-layer-wind = Wind potential
+wind-potential = Wind potential
+wind-resource-help = Site quality scales wind output. Farms share regional lulls and surges; this map shows potential, not current weather.
+wind-available = Available wind
+wind-delivered = Delivered wind
+wind-curtailed = Curtailed wind
+wind-forecast = Wind forecast
+wind-range = Wind indicative range
+wind-range-value = { $low }–{ $high } (central { $central })
+wind-build-help = Generates at any hour when wind is available. Nearby farms share the regional wind; forecast output is not guaranteed.
+
+plant-capacity-credit = Regulatory capacity credit
+
+review-curtailed-kind = Curtailed { $kind }

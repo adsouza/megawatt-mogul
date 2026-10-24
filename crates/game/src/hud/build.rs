@@ -193,10 +193,34 @@ fn plant_section(game: &Game, l10n: &Localizer, selection: Selection) -> PlantSe
                     format::price(spec.marginal_cost),
                 ));
             }
+            if kind == PlantKind::Wind {
+                let potential = region
+                    .terrain()
+                    .get(cell)
+                    .expect("selected cell exists")
+                    .wind_potential;
+                stats.push(stat("wind-potential", format::percent(potential)));
+                stats.push(stat(
+                    "wind-forecast",
+                    format::megawatts(
+                        spec.capacity
+                            * potential.value()
+                            * region.wind().monthly[game.session().clock().month().index0()],
+                    ),
+                ));
+                stats.push(stat(
+                    "plant-capacity-credit",
+                    format::percent(spec.capacity_credit),
+                ));
+            }
             PlantRow {
                 kind,
                 name: kind.localize(l10n),
-                help: spec.battery.map(|_| l10n.text("battery-cycle-hint")),
+                help: if kind == PlantKind::Wind {
+                    Some(l10n.text("wind-build-help"))
+                } else {
+                    spec.battery.map(|_| l10n.text("battery-cycle-hint"))
+                },
                 stats,
                 blocked: site.as_ref().err().map(|error| error.localize(l10n)),
                 build: ButtonModel::new(

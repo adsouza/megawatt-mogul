@@ -17,10 +17,15 @@ pub enum StateError {
 pub struct StateReader<'a> {
     bytes: &'a [u8],
     at: usize,
+    pub schema: u32,
 }
 impl<'a> StateReader<'a> {
     pub fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, at: 0 }
+        Self {
+            bytes,
+            at: 0,
+            schema: 2,
+        }
     }
     pub fn take(&mut self, n: usize) -> Result<&'a [u8], StateError> {
         let end = self.at.checked_add(n).ok_or(StateError::Limit)?;
@@ -46,6 +51,24 @@ impl<'a> StateReader<'a> {
 pub trait State: Sized {
     fn write(&self, out: &mut Vec<u8>);
     fn read(input: &mut StateReader<'_>) -> Result<Self, StateError>;
+    fn write_schema(&self, out: &mut Vec<u8>, _schema: u32) {
+        self.write(out);
+    }
+    fn state_bytes_schema(&self, schema: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        self.write_schema(&mut out, schema);
+        out
+    }
+    fn from_state_bytes_schema(bytes: &[u8], schema: u32) -> Result<Self, StateError> {
+        if !(1..=2).contains(&schema) {
+            return Err(StateError::Version);
+        }
+        let mut input = StateReader::new(bytes);
+        input.schema = schema;
+        let state = Self::read(&mut input)?;
+        input.finish()?;
+        Ok(state)
+    }
     fn state_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
         self.write(&mut out);
@@ -98,6 +121,12 @@ impl<T: State> State for Option<T> {
             v.write(out);
         }
     }
+    fn write_schema(&self, out: &mut Vec<u8>, schema: u32) {
+        self.is_some().write_schema(out, schema);
+        if let Some(v) = self {
+            v.write_schema(out, schema);
+        }
+    }
     fn read(input: &mut StateReader<'_>) -> Result<Self, StateError> {
         if bool::read(input)? {
             Ok(Some(T::read(input)?))
@@ -110,6 +139,9 @@ impl<T: State> State for Box<T> {
     fn write(&self, out: &mut Vec<u8>) {
         self.as_ref().write(out);
     }
+    fn write_schema(&self, out: &mut Vec<u8>, schema: u32) {
+        self.as_ref().write_schema(out, schema);
+    }
     fn read(input: &mut StateReader<'_>) -> Result<Self, StateError> {
         Ok(Box::new(T::read(input)?))
     }
@@ -119,6 +151,12 @@ impl<T: State> State for Vec<T> {
         (self.len() as u32).write(out);
         for v in self {
             v.write(out);
+        }
+    }
+    fn write_schema(&self, out: &mut Vec<u8>, schema: u32) {
+        (self.len() as u32).write_schema(out, schema);
+        for v in self {
+            v.write_schema(out, schema);
         }
     }
     fn read(input: &mut StateReader<'_>) -> Result<Self, StateError> {
@@ -133,6 +171,12 @@ impl<T: State> State for VecDeque<T> {
             v.write(out);
         }
     }
+    fn write_schema(&self, out: &mut Vec<u8>, schema: u32) {
+        (self.len() as u32).write_schema(out, schema);
+        for v in self {
+            v.write_schema(out, schema);
+        }
+    }
     fn read(input: &mut StateReader<'_>) -> Result<Self, StateError> {
         Ok(Vec::read(input)?.into())
     }
@@ -143,6 +187,13 @@ impl<K: State + Ord, V: State> State for BTreeMap<K, V> {
         for (k, v) in self {
             k.write(out);
             v.write(out);
+        }
+    }
+    fn write_schema(&self, out: &mut Vec<u8>, schema: u32) {
+        (self.len() as u32).write_schema(out, schema);
+        for (k, v) in self {
+            k.write_schema(out, schema);
+            v.write_schema(out, schema);
         }
     }
     fn read(input: &mut StateReader<'_>) -> Result<Self, StateError> {
@@ -165,6 +216,12 @@ impl<T: State + Ord> State for BTreeSet<T> {
             v.write(out);
         }
     }
+    fn write_schema(&self, out: &mut Vec<u8>, schema: u32) {
+        (self.len() as u32).write_schema(out, schema);
+        for v in self {
+            v.write_schema(out, schema);
+        }
+    }
     fn read(input: &mut StateReader<'_>) -> Result<Self, StateError> {
         let n = input.length()?;
         let mut set = Self::new();
@@ -184,6 +241,11 @@ impl<T: State, const N: usize> State for [T; N] {
             v.write(out);
         }
     }
+    fn write_schema(&self, out: &mut Vec<u8>, schema: u32) {
+        for v in self {
+            v.write_schema(out, schema);
+        }
+    }
     fn read(input: &mut StateReader<'_>) -> Result<Self, StateError> {
         (0..N)
             .map(|_| T::read(input))
@@ -196,6 +258,10 @@ impl<A: State, B: State> State for (A, B) {
     fn write(&self, out: &mut Vec<u8>) {
         self.0.write(out);
         self.1.write(out);
+    }
+    fn write_schema(&self, out: &mut Vec<u8>, schema: u32) {
+        self.0.write_schema(out, schema);
+        self.1.write_schema(out, schema);
     }
     fn read(input: &mut StateReader<'_>) -> Result<Self, StateError> {
         Ok((A::read(input)?, B::read(input)?))
@@ -214,9 +280,23 @@ impl State for String {
 /// Explicit schema-1 field order; adding a Rust field must require an explicit default/migration.
 #[macro_export]
 macro_rules! state_record {
+    ($ty:ty { $($field:ident),* ; $($added:ident : $default:expr),* $(,)? }) => {
+        impl $crate::state::State for $ty {
+            fn write(&self, out: &mut Vec<u8>) { self.write_schema(out, 2); }
+            fn write_schema(&self, out: &mut Vec<u8>, schema: u32) {
+                $( $crate::state::State::write_schema(&self.$field, out, schema); )*
+                if schema >= 2 { $( $crate::state::State::write_schema(&self.$added, out, schema); )* }
+            }
+            fn read(input: &mut $crate::state::StateReader<'_>) -> Result<Self, $crate::state::StateError> {
+                Ok(Self { $( $field: $crate::state::State::read(input)?, )*
+                    $( $added: if input.schema >= 2 { $crate::state::State::read(input)? } else { $default }, )* })
+            }
+        }
+    };
     ($ty:ty { $($field:ident),* $(,)? }) => {
         impl $crate::state::State for $ty {
-            fn write(&self, out: &mut Vec<u8>) { $( $crate::state::State::write(&self.$field, out); )* }
+            fn write(&self, out: &mut Vec<u8>) { self.write_schema(out, 2); }
+            fn write_schema(&self, out: &mut Vec<u8>, schema: u32) { $( $crate::state::State::write_schema(&self.$field, out, schema); )* }
             fn read(input: &mut $crate::state::StateReader<'_>) -> Result<Self, $crate::state::StateError> {
                 Ok(Self { $( $field: $crate::state::State::read(input)?, )* })
             }

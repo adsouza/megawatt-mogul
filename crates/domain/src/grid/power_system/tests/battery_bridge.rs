@@ -27,10 +27,10 @@ fn flat_system(demand: f64) -> (PowerSystem, RegionDefinition, SimRng) {
 }
 
 #[test]
-fn charged_battery_holds_at_five_pm_when_generators_already_meet_demand() {
+fn charged_battery_holds_after_six_pm_when_generators_already_meet_demand() {
     let (mut sys, region, mut rng) = flat_system(400.0);
     let opening = sys.plant(PlantId(2)).unwrap().battery().unwrap().stored();
-    for tick in 1020..1140 {
+    for tick in 1080..1200 {
         let (summary, _) = sys.tick(&region, april(), tick, &mut rng);
         assert_eq!(summary.battery_discharge, Megawatts::ZERO, "minute {tick}");
         assert!((sys.primary_supply().value() - 400.0).abs() < 1e-7);
@@ -50,15 +50,15 @@ proptest! {
         sys.set_auto_follow(PlantId(1), true).unwrap();
         let opening = sys.plant(PlantId(2)).unwrap().battery().unwrap().stored().value();
         let mut delivered = 0.0;
-        for tick in 1020..1080 {
+        for tick in 1080..1140 {
             let (summary, events) = sys.tick(&region, april(), tick, &mut rng);
-            if tick == 1020 { prop_assert!(summary.battery_discharge.value() > 0.0); }
+            if tick == 1080 { prop_assert!(summary.battery_discharge.value() > 0.0); }
             let deficit = (summary.served.value() - sys.primary_supply().value()).max(0.0);
             prop_assert!((summary.battery_discharge.value() - deficit).abs() < 1e-6);
             prop_assert_eq!(summary.unserved, Megawatts::ZERO);
             prop_assert!(!events.iter().any(|e| matches!(e, DomainEvent::LoadShed { .. } | DomainEvent::Blackout)), "battery covers the ramp without shedding");
             delivered += summary.battery_discharge.value() / 60.0;
-            if tick >= 1050 {
+            if tick >= 1110 {
                 prop_assert!(summary.battery_discharge.value() < 1e-6);
                 prop_assert!((sys.primary_supply().value() - demand).abs() < 1e-6);
             }

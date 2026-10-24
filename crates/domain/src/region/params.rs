@@ -33,6 +33,16 @@ pub struct SolarParams {
     pub clearness_sd: f64,
 }
 
+/// Correlated regional wind resource. All parameters are authored region data.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WindParams {
+    pub monthly: [f64; 12],
+    pub persistence: f64,
+    pub innovation_sd: f64,
+    pub initial_sd: f64,
+    pub band: Ratio,
+}
+
 /// Hydro resource parameters.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HydroParams {

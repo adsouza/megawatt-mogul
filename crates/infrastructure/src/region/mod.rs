@@ -14,4 +14,4 @@ pub use mapping::map_region;
 pub use outline::{RegionOutline, region_outline};
 pub use raster::{rasterize, to_cell};
 
-pub const CURRENT_REGION_SCHEMA: u32 = 2;
+pub const CURRENT_REGION_SCHEMA: u32 = 3;

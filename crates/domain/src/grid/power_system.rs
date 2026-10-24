@@ -13,6 +13,7 @@ pub use battery::{
 };
 mod hydro_plan;
 mod outage;
+mod wind;
 
 use hydro_plan::{HydroOverride, PlantHydroPlan};
 pub use hydro_plan::{HydroScheduleView, PlantHydroScheduleView};
@@ -71,6 +72,19 @@ struct Redispatch<'a> {
     curtailable: Megawatts,
     /// The tick the new targets first act on.
     effect_tick: u32,
+    /// Connected wind's foreseen fall by the end of this hour (see
+    /// [`PowerSystem::wind_fall`]), and the ticks the fleet has to replace it.
+    wind_fall: Megawatts,
+    wind_horizon: u32,
+}
+
+/// Whether, after an over-frequency trip loses `lost` (net of the surplus it
+/// clears; negative when the surplus exceeds the tripped output), the rest of
+/// the AGC fleet's `reach` over the wind horizon is too small to replace a
+/// foreseen wind `fall` as well. Without a fall the one-tick headroom gate
+/// decides alone, so wind-free fleets behave exactly as before.
+fn wind_fall_uncovered(lost: Megawatts, fall: Megawatts, reach: Megawatts) -> bool {
+    fall > Megawatts::ZERO && lost + fall > reach
 }
 
 /// The physical grid: every plant and city, the network joining them, and the
@@ -84,6 +98,11 @@ pub struct PowerSystem {
     noise: DemandNoise,
     /// Today's cloud cover; clear sky until the first [`PowerSystem::begin_day`].
     clearness: f64,
+    wind_factor: f64,
+    wind_tick: Option<u32>,
+    wind_month: Option<SimMonth>,
+    battery_bus_surplus: Option<bool>,
+    wind_needs_replan: bool,
     deviation: Hertz,
     /// The band last reported, so `FrequencyDeviated` fires only on a change.
     band: FrequencyBand,
@@ -112,7 +131,7 @@ pub struct PowerSystem {
 }
 
 fn is_curtailable(plant: &Plant) -> bool {
-    plant.kind() == PlantKind::Solar && plant.is_online()
+    plant.kind().is_variable() && plant.is_online()
 }
 
 fn is_commissioned(plant: &Plant) -> bool {
@@ -158,6 +177,11 @@ impl PowerSystem {
             model,
             noise: DemandNoise::default(),
             clearness: 1.0,
+            wind_factor: 0.0,
+            wind_tick: None,
+            wind_month: None,
+            battery_bus_surplus: None,
+            wind_needs_replan: false,
             deviation: Hertz::ZERO,
             band: FrequencyBand::Normal,
             protection: ProtectionState::default(),
@@ -258,7 +282,7 @@ impl PowerSystem {
     /// Starts a representative day of `month`. Nothing physical carries over
     /// from the previous day: each commissioned hydro plant's budget is reset
     /// to `capacity × 24 h × hydro_potential(cell) × monthly_flow[month]`, the
-    /// day's clearness is drawn (exactly one normal), every plant is
+    /// day's clearness and initial regional wind are drawn (one normal each), every plant is
     /// initialised from its cyclic pattern (clearing operating overrides),
     /// frequency and protection return to nominal and `Normal`, the demand
     /// forecast error and solar curtailment return to zero, and any hydro
@@ -294,6 +318,13 @@ impl PowerSystem {
             }
         }
         self.clearness = draw_clearness(region.solar(), month, rng);
+        let wind = region.wind();
+        self.wind_factor = (wind.monthly[month.index0()] + wind.initial_sd * rng.standard_normal())
+            .clamp(0.0, 1.0);
+        self.wind_tick = Some(0);
+        self.wind_month = Some(month);
+        self.battery_bus_surplus = None;
+        self.wind_needs_replan = false;
         let boundary_starts = self
             .plants
             .iter_mut()
@@ -344,7 +375,7 @@ impl PowerSystem {
             .map(Plant::output)
             .sum();
         let forecast = self.connected_demand_forecast(region, month, 0);
-        let solar = self.expected_solar(region, month, 0);
+        let solar = self.expected_variable(region, month, 0);
         let load = forecast * (1.0 - self.outage.value()) - solar - fixed;
         let (mut available, _, _) = self.availability(region, month, 0);
         for (id, ceiling) in self.hydro_ceilings(0) {
@@ -368,6 +399,11 @@ impl PowerSystem {
                 let irradiance = cell_ratio(region, plant.cell(), |c| c.irradiance);
                 solar_available(plant.spec().capacity, irradiance, sun, self.clearness)
             }
+            PlantKind::Wind => crate::generation::wind_available(
+                plant.spec().capacity,
+                cell_ratio(region, plant.cell(), |c| c.wind_potential),
+                self.wind_factor,
+            ),
             PlantKind::Hydro => plant.hydro_available(),
             _ => plant.spec().capacity,
         }
@@ -467,23 +503,37 @@ impl PowerSystem {
         let params = region.frequency();
         let mut events = Vec::new();
         let hour = u8::try_from(tick / TICKS_PER_HOUR).unwrap_or(u8::MAX);
+        let error = self.noise.step(region.demand(), rng);
+        if tick > 0 {
+            let w = region.wind();
+            self.wind_factor = crate::generation::wind_step(
+                self.wind_factor,
+                w.monthly[month.index0()],
+                w.persistence,
+                w.innovation_sd,
+                rng.standard_normal(),
+            );
+        }
+        self.wind_tick = Some(tick);
+        self.wind_month = Some(month);
+        let demand = (self.connected_demand_forecast(region, month, tick) * (1.0 + error))
+            .max(Megawatts::ZERO);
+
         let ordered = self.outage_target;
         let hour_boundary = tick > 0 && tick.is_multiple_of(TICKS_PER_HOUR);
         if hour_boundary {
             self.plan_hydro(region, month, hour);
         }
-        if self.battery_plan_dirty || hour_boundary {
+        if self.battery_plan_dirty || self.wind_needs_replan || hour_boundary {
+            self.wind_needs_replan = false;
             self.plan_batteries(region, month, tick);
         }
         if hour_boundary && self.protection.mode == GridMode::Normal {
             self.resize_outage(region, month, hour);
         }
 
-        let error = self.noise.step(region.demand(), rng);
-        let demand = (self.connected_demand_forecast(region, month, tick) * (1.0 + error))
-            .max(Megawatts::ZERO);
-
         let (available, curtailable, withheld) = self.availability(region, month, tick);
+        let curtailed_by_kind = self.withheld_by_kind(region, month, tick, withheld);
 
         self.apply_commitment(tick, &mut events);
         let mut came_online = false;
@@ -503,6 +553,26 @@ impl PowerSystem {
 
         let served_before =
             demand * (1.0 - self.outage.value()) * (1.0 - self.protection.shed.value());
+        let surplus = self.primary_supply() >= demand;
+        // A raw sign change outside the bidirectional window cannot create charging room.
+        // Only an actual storage flow changing direction needs an extra intra-hour plan.
+        if self.battery_bus_surplus != Some(surplus)
+            && self.connected_plants().any(|p| {
+                p.battery().zip(p.spec().battery).is_some_and(|(b, spec)| {
+                    b.enabled()
+                        && battery::charging_window(region, month, spec, tick)
+                        && tick >= u32::from(spec.discharge_start_hour) * TICKS_PER_HOUR
+                        && if surplus {
+                            b.flow().discharge > Megawatts::ZERO
+                        } else {
+                            b.flow().charge > Megawatts::ZERO
+                        }
+                })
+            })
+        {
+            self.plan_batteries(region, month, tick);
+        }
+        self.battery_bus_surplus = Some(surplus);
         let provisional = self.propose_battery_flows(region, month, tick, demand, served_before);
         self.stage_batteries(&provisional);
         let charging: Megawatts = provisional.values().map(|f| f.charge).sum();
@@ -512,6 +582,7 @@ impl PowerSystem {
         let shed = self.protection.shed.value();
         // The targets AGC sets now first act on the next tick's step.
         let effect_tick = tick + 1;
+        let (wind_fall, wind_horizon) = self.wind_fall(region, month, tick);
         let load = demand * (1.0 - self.outage.value());
         // No load energised this tick: fully cut by the outage in effect.
         let dark = mode == GridMode::Normal && load <= Megawatts::ZERO;
@@ -527,11 +598,13 @@ impl PowerSystem {
             // hold, judged as at the trip gate. The surplus is over the
             // outage's load, so protection's own restoration does not stack
             // on it. `next_outage` asks for it only on a restoring tick.
+            // A foreseen wind fall is about to take that much of the surplus
+            // away, so only the rest may be restored as load.
             let surplus = || {
                 if self.has_unrecoverable_ramp_down(None, &self.foreseen_ceilings(effect_tick)) {
                     Megawatts::ZERO
                 } else {
-                    (supply - charging - load).max(Megawatts::ZERO)
+                    (supply - charging - load - wind_fall).max(Megawatts::ZERO)
                 }
             };
             self.outage = self.next_outage(params.shed_step, demand, cover, surplus);
@@ -560,6 +633,8 @@ impl PowerSystem {
             withheld,
             curtailable,
             effect_tick,
+            wind_fall,
+            wind_horizon,
         };
         let leftover = self.redispatch(&redispatch);
 
@@ -664,6 +739,7 @@ impl PowerSystem {
             battery_discharge,
             batteries: final_flows,
             curtailed: withheld,
+            curtailed_by_kind,
             imbalance: generation - served - battery_charge,
             by_kind,
             by_plant,
@@ -672,6 +748,13 @@ impl PowerSystem {
             shed,
             outage: self.outage,
         };
+        // New records identify each renewable kind; historical SolarCurtailed stays readable.
+        events.retain(|e| !matches!(e, DomainEvent::SolarCurtailed { .. }));
+        for (kind, mw) in self.withheld_by_kind(region, month, tick, self.curtailment) {
+            if mw > Megawatts::ZERO {
+                events.push(DomainEvent::RenewableCurtailed { kind, mw });
+            }
+        }
         events.push(DomainEvent::TickCompleted(summary.clone()));
         (summary, events)
     }
@@ -866,6 +949,25 @@ impl PowerSystem {
         generation + self.battery_headroom(except)
     }
 
+    /// How far the connected auto-follow generators other than `except` could
+    /// rise over `ticks` ticks: [`Plant::headroom_up_within`], summed. The
+    /// multi-tick counterpart of [`PowerSystem::agc_headroom`], used to judge
+    /// whether the fleet can replace a foreseen wind fall after a trip.
+    /// Storage is left out: its energy, not its power, limits how long it can
+    /// stand in.
+    fn agc_reach(
+        &self,
+        available: &BTreeMap<PlantId, Megawatts>,
+        ceilings: &BTreeMap<PlantId, Megawatts>,
+        except: PlantId,
+        ticks: u32,
+    ) -> Megawatts {
+        self.connected_plants()
+            .filter(|p| p.id() != except && p.auto_follow())
+            .map(|p| p.headroom_up_within(agc_cap(available, ceilings, p.id()), ticks))
+            .sum()
+    }
+
     /// The one-tick ramp-down room of the connected auto-follow plants: for
     /// each, `min(ramp, output − min_output)` (see [`Plant::headroom_down`]),
     /// summed; offline and non-dispatchable plants have none. Hydro ceilings
@@ -1025,7 +1127,10 @@ impl PowerSystem {
             - served;
         let ceilings = self.agc_ceilings(redispatch.effect_tick);
         let headroom = self.agc_headroom(redispatch.available, &ceilings, Some(id));
-        if self.plants[&id].output() - surplus > headroom
+        let lost = self.plants[&id].output() - surplus;
+        let reach = self.agc_reach(redispatch.available, &ceilings, id, redispatch.wind_horizon);
+        if lost > headroom
+            || wind_fall_uncovered(lost, redispatch.wind_fall, reach)
             || self.has_unrecoverable_ramp_down(
                 Some(id),
                 &self.foreseen_ceilings(redispatch.effect_tick),
@@ -1139,9 +1244,14 @@ impl PowerSystem {
             .plants
             .get_mut(&id)
             .ok_or(DomainError::UnknownPlant { plant: id })?;
+        let changed = plant.auto_follow() != on;
         plant.set_auto_follow(on)?;
         if !on {
             self.unplan_hydro(id);
+        }
+        // A same-value command is a no-op: it must not touch the storage plan.
+        if changed {
+            self.generators_changed();
         }
         Ok(())
     }
@@ -1158,6 +1268,7 @@ impl PowerSystem {
             .unwrap_or_default();
         if !events.is_empty() {
             self.unplan_hydro(id);
+            self.generators_changed();
         }
         events
     }
@@ -1284,7 +1395,12 @@ crate::state_record!(PowerSystem {
     outage_target,
     battery_plan,
     battery_plan_dirty,
-    battery_tick
+    battery_tick;
+    wind_factor: 0.0,
+    wind_tick: None,
+    wind_month: None,
+    battery_bus_surplus: None,
+    wind_needs_replan: false
 });
 
 #[cfg(test)]

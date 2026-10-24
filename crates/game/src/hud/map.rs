@@ -29,6 +29,7 @@ pub enum MapLayer {
     #[default]
     Terrain,
     Irradiance,
+    WindPotential,
     CoolingWater,
     HydroPotential,
     /// Where a plant of this kind may be built (the region's siting rule).
@@ -42,6 +43,7 @@ impl MapLayer {
         [
             Self::Terrain,
             Self::Irradiance,
+            Self::WindPotential,
             Self::CoolingWater,
             Self::HydroPotential,
         ]
@@ -397,6 +399,8 @@ pub fn cell_color(layer: MapLayer, region: &RegionDefinition, at: CellCoord) -> 
         MapLayer::Terrain => WATER,
         MapLayer::Irradiance if cell.land => solar_color(cell.irradiance.value()),
         MapLayer::Irradiance => WATER,
+        MapLayer::WindPotential if cell.land => solar_color(cell.wind_potential.value()),
+        MapLayer::WindPotential => WATER,
         MapLayer::CoolingWater => lerp(DARK, COOL, cell.cooling_water.value()),
         MapLayer::HydroPotential => land_shaded(cell.hydro_potential.value(), HYDRO),
         MapLayer::Suitability(_) if !cell.land => WATER,
@@ -415,6 +419,7 @@ pub fn kind_color(kind: PlantKind) -> Rgb {
         PlantKind::Solar => [245, 215, 70],
         PlantKind::Hydro => [80, 170, 235],
         PlantKind::Battery => [45, 225, 195],
+        PlantKind::Wind => [120, 190, 245],
     }
 }
 
@@ -447,6 +452,7 @@ fn glyph_key(kind: PlantKind) -> &'static str {
         PlantKind::Solar => "plant-glyph-solar",
         PlantKind::Hydro => "plant-glyph-hydro",
         PlantKind::Battery => "plant-glyph-battery",
+        PlantKind::Wind => "plant-glyph-wind",
     }
 }
 
@@ -794,6 +800,7 @@ fn layer_label(layer: MapLayer, l10n: &Localizer) -> String {
     match layer {
         MapLayer::Terrain => l10n.text("map-layer-terrain"),
         MapLayer::Irradiance => l10n.text("map-layer-irradiance"),
+        MapLayer::WindPotential => l10n.text("map-layer-wind"),
         MapLayer::CoolingWater => l10n.text("map-layer-cooling-water"),
         MapLayer::HydroPotential => l10n.text("map-layer-hydro-potential"),
         MapLayer::Suitability(kind) => l10n.args(
@@ -820,15 +827,25 @@ pub fn map_model(
             })
             .collect(),
         layer,
-        resource_scale: (layer == MapLayer::Irradiance).then(|| ResourceScaleModel {
-            label: l10n.text("map-solar-scale"),
-            ticks: [
-                l10n.text("map-solar-low"),
-                l10n.text("map-solar-mid"),
-                l10n.text("map-solar-high"),
-            ],
-            help: l10n.text("map-solar-help"),
-        }),
+        resource_scale: matches!(layer, MapLayer::Irradiance | MapLayer::WindPotential).then(
+            || ResourceScaleModel {
+                label: l10n.text(if layer == MapLayer::WindPotential {
+                    "wind-potential"
+                } else {
+                    "map-solar-scale"
+                }),
+                ticks: [
+                    l10n.text("map-solar-low"),
+                    l10n.text("map-solar-mid"),
+                    l10n.text("map-solar-high"),
+                ],
+                help: l10n.text(if layer == MapLayer::WindPotential {
+                    "wind-resource-help"
+                } else {
+                    "map-solar-help"
+                }),
+            },
+        ),
         region: Arc::clone(game.session().region()),
         months_left: months_left_of(&objects, l10n),
         objects,
@@ -1885,6 +1902,7 @@ mod tests {
             [
                 MapLayer::Terrain,
                 MapLayer::Irradiance,
+                MapLayer::WindPotential,
                 MapLayer::CoolingWater,
                 MapLayer::HydroPotential,
                 MapLayer::Suitability(PlantKind::Nuclear),
@@ -1911,12 +1929,13 @@ mod tests {
             .collect();
         assert_eq!(labels[0], l10n.text("map-layer-terrain"));
         assert_eq!(labels[1], "Sunshine");
-        assert_eq!(labels[2], "Cooling water");
-        assert_eq!(labels[3], "Hydro potential");
-        assert_eq!(labels[4], "Suitability: Nuclear plant");
-        assert_eq!(labels[5], "Suitability: Coal plant");
-        assert_eq!(labels[6], "Suitability: Solar farm");
-        assert_eq!(labels[7], "Suitability: Hydro plant");
+        assert_eq!(labels[2], "Wind potential");
+        assert_eq!(labels[3], "Cooling water");
+        assert_eq!(labels[4], "Hydro potential");
+        assert_eq!(labels[5], "Suitability: Nuclear plant");
+        assert_eq!(labels[6], "Suitability: Coal plant");
+        assert_eq!(labels[7], "Suitability: Solar farm");
+        assert_eq!(labels[8], "Suitability: Hydro plant");
         assert_eq!(model.layer, MapLayer::Terrain);
         assert_eq!(l10n.problems(), vec![]);
 
@@ -2074,6 +2093,7 @@ mod tests {
             PlantKind::Solar => 4,
             PlantKind::Hydro => 5,
             PlantKind::Battery => 6,
+            PlantKind::Wind => 7,
         }
     }
 

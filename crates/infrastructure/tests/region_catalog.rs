@@ -7,8 +7,8 @@ use std::path::Path;
 
 use application::{RegionCatalog, RegionLoadError, RegionSummary};
 use domain::ids::{CellCoord, CityId, RegionId};
-use domain::region::RegionError;
 use domain::region::fixtures::tiny_region;
+use domain::region::{PlantKind, RegionError};
 use infrastructure::region::{RonRegionCatalog, load_region_bytes};
 use proptest::prelude::*;
 use tempfile::TempDir;
@@ -17,7 +17,7 @@ const MINIMAL: &str = include_str!("support/minimal_region.ron");
 
 /// SHA-256 of `support/minimal_region.ron`, computed independently with
 /// `shasum -a 256`.
-const MINIMAL_SHA256: &str = "992fb6c49c13a25f4356c7f7a2ca8fa479483c9433cdbfd2ca21af6e12e204c2";
+const MINIMAL_SHA256: &str = "7d9ca2f90e73162f06b112f28151ecb3f78699f25dcef9f4b7832257b20457a0";
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
@@ -68,7 +68,7 @@ fn schema_fields_round_trip_with_the_region_dto() {
     let file: infrastructure::region::RegionFile = ron::de::from_str(MINIMAL).unwrap();
     let encoded = ron::ser::to_string(&file).unwrap();
     let decoded: infrastructure::region::RegionFile = ron::de::from_str(&encoded).unwrap();
-    assert_eq!(decoded.region_schema, Some(2));
+    assert_eq!(decoded.region_schema, Some(3));
     assert_eq!(
         decoded.regulator.storage_accreditation,
         file.regulator.storage_accreditation
@@ -101,12 +101,20 @@ fn a_schema1_region_gets_the_frozen_a12_defaults() {
     let mut text = MINIMAL.to_owned();
     for field in [
         "region_schema",
+        "wind",
+        "wind_potential",
         "storage_accreditation",
         "satisfaction_target",
         "return_per_satisfaction_point",
     ] {
         text = without_field(&text, field);
     }
+    text = text
+        .lines()
+        .filter(|line| !line.contains("kind: Wind,"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    text = text.replace(", charge_end_hour: 18", "");
     let dir = dir_with(&[("minimal.ron", &text)]);
     let loaded = catalog(dir.path()).load(&RegionId::new("minimal")).unwrap();
     let params = loaded.definition.regulator();
@@ -137,7 +145,7 @@ fn a_schema1_file_with_a12_fields_is_rejected() {
 
 #[test]
 fn an_unknown_region_schema_is_rejected() {
-    let text = MINIMAL.replace("region_schema: 2", "region_schema: 9");
+    let text = MINIMAL.replace("region_schema: 3", "region_schema: 9");
     let dir = dir_with(&[("minimal.ron", &text)]);
     assert!(matches!(
         catalog(dir.path()).load(&RegionId::new("minimal")),
@@ -612,4 +620,64 @@ fn points_exactly_on_the_upper_or_lower_bound_still_map() {
             ..
         }
     ));
+}
+
+#[test]
+fn schema3_requires_explicit_wind_and_battery_cutoff_fields() {
+    for field in ["wind", "wind_potential"] {
+        let text = without_field(MINIMAL, field);
+        let error = load_region_bytes(text.into_bytes(), &RegionId::new("minimal")).unwrap_err();
+        assert!(
+            matches!(error, RegionLoadError::Invalid { error: RegionError::MissingField { field: missing }, .. } if missing == field)
+        );
+    }
+    let text = MINIMAL.replace(", charge_end_hour: 18", "");
+    let error = load_region_bytes(text.into_bytes(), &RegionId::new("minimal")).unwrap_err();
+    assert!(matches!(
+        error,
+        RegionLoadError::Invalid {
+            error: RegionError::MissingField {
+                field: "battery.charge_end_hour"
+            },
+            ..
+        }
+    ));
+}
+
+#[test]
+fn wind_map_and_catalog_are_authored_and_the_band_is_validated() {
+    let loaded = load_region_bytes(MINIMAL.as_bytes().to_vec(), &RegionId::new("minimal")).unwrap();
+    let wind = loaded.definition.spec(PlantKind::Wind);
+    assert_eq!(wind.capacity.value(), 300.0);
+    assert_eq!(wind.capital_cost.cents(), 30_000_000_000);
+    assert_eq!(wind.build_months, 3);
+    assert!(!PlantKind::Wind.is_dispatchable());
+    assert!(!PlantKind::Battery.is_variable());
+    let text = MINIMAL.replace("band: 0.25", "band: 1.1");
+    assert!(load_region_bytes(text.into_bytes(), &RegionId::new("minimal")).is_err());
+    let text = MINIMAL.replace("persistence: 0.995", "persistence: 1.0");
+    assert!(load_region_bytes(text.into_bytes(), &RegionId::new("minimal")).is_err());
+}
+
+#[test]
+fn legacy_wind_extension_payloads_are_frozen() {
+    use sha2::{Digest, Sha256};
+    assert_eq!(
+        hex(&Sha256::digest(include_bytes!(
+            "../src/region/wind_east_v1.ron"
+        ))),
+        "3a2099ade97ec96b2b1d2a528639227efd97280c3653608d3e303df27a5ee713"
+    );
+    assert_eq!(
+        hex(&Sha256::digest(include_bytes!(
+            "../src/region/wind_west_v1.ron"
+        ))),
+        "d1f9c72b29d08ee94e9696116e91573f9267df8173e13c80c4c8fd8583788d5d"
+    );
+    assert_eq!(
+        hex(&Sha256::digest(include_bytes!(
+            "../src/region/wind_other_v1.ron"
+        ))),
+        "27a82606b9e94372fce6c3b7a1f27d0b5b2bb1c5daa16c95f580e579ed7ec0a2"
+    );
 }

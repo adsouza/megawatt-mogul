@@ -43,11 +43,13 @@ never compile Bevy, so feedback takes seconds.
 | Rendering, input, UI and localised text | `game` (see [The game crate](#the-game-crate)) |
 
 Region data (plant tuning numbers, cities, regulator parameters) lives in `assets/regions/*.ron`,
-never as code constants. Shipped files declare `region_schema: 2`. Schema 2 requires the
-storage-accreditation ladder and both satisfaction-return parameters. An archived file without a
-marker is schema 1: only `infrastructure::region::legacy` supplies its frozen A12 defaults; a
-markerless file containing any A12 field is rejected rather than silently defaulted. Unknown
-schemas return typed errors. Region schema versions are independent of portable state schema 1.
+never as code constants. Shipped files declare `region_schema: 3`, requiring explicit wind
+resource fields/parameters/catalog entries and the battery charge-end hour, in addition to the
+schema-2 storage-accreditation ladder and satisfaction-return parameters. Pre-wind archives
+(schema 1 without a marker, or schema 2) receive only the frozen version-1 wind extension from
+`infrastructure::region::legacy`; schema 1 also receives the frozen A12 regulator defaults.
+Unexpected new fields on legacy sources and unsupported schemas fail with typed errors.
+Region schema versions are independent of portable state schema 2, whose reader retains schema 1.
 
 Rules 13 accredit commissioned storage by deliverable duration (including disabled batteries),
 refresh rate-base firm MW only at annual review, and adjust allowed return by post-close customer
@@ -254,9 +256,11 @@ only eligible remaining book value earns return. Holding and write-off do not ch
    sizing draw no randomness.
 2. Demand of connected cities: forecast × (1 + forecast error). The AR(1) error advances by exactly
    one normal draw every tick, in any state.
-3. Solar and hydro availability for every plant (hydro from the day's remaining energy budget, reset
-   at `BeginOperating`). The standing solar curtailment is withheld from connected online solar, pro
-   rata to availability.
+3. Wind advances once per minute after the demand draw (minute 0 uses its initial day sample,
+   drawn after solar clearness). The bounded regional AR(1) factor is shared across all farms;
+   output is nameplate × authored site potential × factor, including at night. Solar and hydro
+   availability retain their resource rules. Standing renewable curtailment is withheld from
+   connected online Solar/Wind in proportion to available MW. Queries never draw weather.
 4. The commitment actions due at this tick; plants suppressed for the day get none.
 5. Every plant steps once: start-up progress, ramp toward target, hydro budget use. If a connected
    dispatchable plant came online in Normal mode, the current hour's outage is re-sized: a tick
@@ -276,11 +280,13 @@ only eligible remaining book value earns return. Holding and write-off do not ch
    never lifts it. When the lift ends, a recovery phase lets hydro above its ceiling ramp down only
    as fast as the other AGC plants' one-tick headroom (net of the shortfall) can follow, until it is
    at or below every ceiling it meets before the next re-plan.
-8. Stage storage flows from actual generation after customer demand: daylight charging absorbs
-   surplus, evening discharge fills deficits, each limited by power and finite inventory. Cancel
-   charging before shedding or below the normal frequency band. AGC requests take effect next tick,
-   include optional charging load and subtract energy-backed discharge. Charging waits for cheaper
-   generation to ramp and tapers before full inventory/daylight cutoff to absorb ramp-down tails.
+8. Stage storage flows from actual generation after full customer demand: charging is eligible
+   from 00:00 until the authored 18:00 cutoff; gap support remains eligible 17:00–24:00. During
+   the overlap, primary surplus chooses charge and deficit chooses discharge, with one inventory
+   and no simultaneous/cross-battery flows. Cancel charging before shedding or below the normal
+   band. AGC targets full served customer load plus feasible charging, never subtracting battery
+   output: storage bridges generator gaps. Requests take effect next tick, wait for generation
+   and taper before full inventory/18:00 to absorb thermal ramp-down tails.
    Imbalance is connected supply (including storage discharge) minus charging and served city load,
    `load × (1 − shed)`.
 9. Frequency update, with the load as the system size. It is held at nominal during a blackout and
@@ -295,12 +301,12 @@ only eligible remaining book value earns return. Holding and write-off do not ch
     outage at 0 with its target frozen; black-start restoration steps to
     `max(snapped(shed − step), target)`, each step needing supply, so it ends exactly at the frozen
     target, where Normal mode resumes with the outage at the target and the hour is re-sized.
-    Protection also curtails solar for the next tick and trips the most expensive online producer
+    Protection also curtails Solar/Wind for the next tick and trips the most expensive online producer
     once frequency has stayed high for `trip_after_ticks`. A trip waits while there is no physical
     surplus, while the rest of the fleet could not cover the lost output within one tick, or while
     another plant is already losing output AGC cannot reverse, so protection does not trip the grid
     into a deficit. After a trip AGC re-targets again in the same tick, so the rest of the fleet
-    responds on the next step. Tripped solar reconnects once restoration re-energises the grid.
+    responds on the next step. Tripped variable generators reconnect once restoration re-energises the grid.
 11. Re-evaluate storage flows after protection and settle inventory once. The `TickSummary` of
     that post-protection state includes separate charging/discharge and per-battery flow records,
     and is emitted last as `TickCompleted`. Storage cannot black-start; blackout retains inventory
@@ -593,3 +599,20 @@ Personal flat-save conversion was performed once with local ignored tooling. Ori
 are preserved outside the repository; `/tools/archive/` is ignored and contains no shipped code.
 No converter, archived recovery source, staged library or backup is added to Git. New games and
 monthly/manual saves use the directory store; metadata rename never saves a different live boundary.
+
+## Wind and snapshot evolution (Plan 5, rules 14)
+
+`generation::wind` owns the pure resource transition; `grid::power_system::wind` owns shared
+central/indicative forecasts. Planning uses the nominal monthly factor; Operating conditions the
+forecast on the latest observation without looking at future RNG. Hydro, battery requests,
+shortfall/ramp checks and charts use the same Solar + Wind net load. Wind/storage fleets assess
+all minutes; shared weather uncertainty is not reduced as farms are added. Wind is excluded
+from thermal commands, commitment, start-up billing and AGC. The 3D model is presentation only.
+
+Portable schema 2 appends regional wind state, battery charge-end ratings and per-kind curtailed
+energy. `StateReader` and schema-aware collection/record codecs retain schema-1 field order and
+canonical encoding. Restore verifies the source hash, journal, canonical bytes and invariants
+before applying in-memory defaults; original files, RNG, inventory, reports and old history remain
+intact. New wind fields are neutral and future plans are marked stale separately from legacy
+fields. New captures write schema 2; monthly chart split/join carries the source schema until
+verification. Directory 4, flat envelope 3 and diagnostic log 2 remain independent and unchanged.

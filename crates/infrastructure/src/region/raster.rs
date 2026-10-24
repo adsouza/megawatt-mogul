@@ -27,6 +27,10 @@ pub fn rasterize(file: &RegionFile) -> TerrainGrid {
                 land,
                 height: sample(&file.height, lon, lat),
                 irradiance: sample(&file.irradiance, lon, lat),
+                wind_potential: file
+                    .wind_potential
+                    .as_ref()
+                    .map_or(Ratio::ZERO, |f| sample(f, lon, lat)),
                 cooling_water: sample(&file.cooling_water, lon, lat),
                 hydro_potential: sample(&file.hydro_potential, lon, lat),
             });

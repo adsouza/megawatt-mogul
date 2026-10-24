@@ -18,6 +18,8 @@ mod month_close;
 mod report;
 mod settings;
 mod views;
+#[cfg(test)]
+mod wind_tests;
 
 #[cfg(test)]
 mod tests;
@@ -28,7 +30,7 @@ pub use report::{Incident, IncidentKind, MeritOrderEntry, MonthAccumulator, Mont
 pub use settings::{GameSettings, SimulationFidelity};
 pub use views::{
     BatteryView, CapacityShortfallWarning, CityDetail, CityView, CompanyView, GridSnapshot,
-    LineView, MinimumGenerationWarning, PlantView, RateReviewEstimate,
+    LineView, MinimumGenerationWarning, PlantView, RateReviewEstimate, WindView,
 };
 
 use std::collections::{BTreeMap, VecDeque};
@@ -459,32 +461,46 @@ fn line_cost(params: &LineParams, cells: u32) -> Money {
 
 impl GameSession {
     pub fn snapshot_state(&self) -> Vec<u8> {
+        self.snapshot_state_schema(2)
+    }
+
+    pub fn snapshot_state_schema(&self, schema: u32) -> Vec<u8> {
         use crate::state::State;
         let mut out = Vec::new();
-        1u32.write(&mut out);
-        self.settings.write(&mut out);
-        self.clock.write(&mut out);
-        self.phase.write(&mut out);
-        self.status.write(&mut out);
-        self.rng.write(&mut out);
-        self.ids.write(&mut out);
-        self.anchor.write(&mut out);
-        self.power.write(&mut out);
-        self.company.write(&mut out);
-        self.regulator.write(&mut out);
-        self.instalments.write(&mut out);
-        self.month_to_date.write(&mut out);
-        self.year_depreciation.write(&mut out);
-        self.day_ticks.write(&mut out);
+        schema.write_schema(&mut out, schema);
+        self.settings.write_schema(&mut out, schema);
+        self.clock.write_schema(&mut out, schema);
+        self.phase.write_schema(&mut out, schema);
+        self.status.write_schema(&mut out, schema);
+        self.rng.write_schema(&mut out, schema);
+        self.ids.write_schema(&mut out, schema);
+        self.anchor.write_schema(&mut out, schema);
+        self.power.write_schema(&mut out, schema);
+        self.company.write_schema(&mut out, schema);
+        self.regulator.write_schema(&mut out, schema);
+        self.instalments.write_schema(&mut out, schema);
+        self.month_to_date.write_schema(&mut out, schema);
+        self.year_depreciation.write_schema(&mut out, schema);
+        self.day_ticks.write_schema(&mut out, schema);
         out
     }
+    /// Invoked only after verifying the original schema-1 canonical boundary.
+    pub fn upgrade_schema1(&mut self) {
+        let tick =
+            (self.phase == DayPhase::Operating).then_some(self.clock.tick().saturating_sub(1));
+        self.power
+            .upgrade_schema1(&self.region, self.clock.month(), tick);
+    }
+
     pub fn from_snapshot_state(
         bytes: &[u8],
         region: Arc<RegionDefinition>,
     ) -> Result<Self, crate::state::StateError> {
         use crate::state::{State, StateError, StateReader};
         let mut input = StateReader::new(bytes);
-        if u32::read(&mut input)? != 1 {
+        let schema = u32::read(&mut input)?;
+        input.schema = schema;
+        if !(1..=2).contains(&schema) {
             return Err(StateError::Version);
         }
         let session = Self {
@@ -505,7 +521,7 @@ impl GameSession {
             day_ticks: State::read(&mut input)?,
         };
         input.finish()?;
-        session.validate_snapshot()?;
+        session.validate_snapshot(schema)?;
         session
             .check_invariants()
             .map_err(|_| StateError::Invalid)?;
@@ -579,8 +595,17 @@ impl crate::state::State for GameOverReason {
 }
 
 impl GameSession {
-    fn validate_snapshot(&self) -> Result<(), crate::state::StateError> {
+    fn validate_snapshot(&self, schema: u32) -> Result<(), crate::state::StateError> {
+        use crate::state::State;
         use crate::state::StateError;
+        if schema >= 2
+            && (!(0.0..=1.0).contains(&self.power.wind_factor())
+                || self
+                    .power
+                    .wind_state_invalid(self.clock.month(), self.clock.tick()))
+        {
+            return Err(StateError::Invalid);
+        }
         match self.phase {
             DayPhase::Planning if self.clock.tick() != 0 => return Err(StateError::Invalid),
             DayPhase::Operating if self.clock.tick() >= crate::time::TICKS_PER_DAY => {
@@ -640,7 +665,10 @@ impl GameSession {
         }
         for (id, plant) in self.power.plants() {
             max_id = max_id.max(id.0);
-            if *id != plant.id() || plant.spec() != self.region.spec(plant.kind()) {
+            if *id != plant.id()
+                || plant.spec().state_bytes_schema(schema)
+                    != self.region.spec(plant.kind()).state_bytes_schema(schema)
+            {
                 return Err(StateError::Invalid);
             }
         }

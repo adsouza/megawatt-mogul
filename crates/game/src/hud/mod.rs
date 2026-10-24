@@ -72,7 +72,8 @@ pub use self::construction::{
     in_service_month,
 };
 pub use self::forecast_chart::{
-    ForecastModel, StackModel, draw_forecast_chart, forecast_model, stacked_committed_capacity,
+    ForecastModel, StackModel, WindForecastModel, draw_forecast_chart, forecast_model,
+    stacked_committed_capacity,
 };
 pub use self::frequency::{
     DialModel, DialZone, FrequencyModel, HIGH_COLOR, LOW_COLOR, NORMAL_COLOR, OutageModel,

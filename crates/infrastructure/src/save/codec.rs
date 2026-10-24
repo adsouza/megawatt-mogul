@@ -268,7 +268,10 @@ fn decode_payload<C: Into<super::journal::JournalRecord>>(
     }
     // Metadata-only scans must reject unknown schemas too. Otherwise a future converted copy
     // could suppress the still-usable legacy original without being restorable by this build.
-    if p.snapshot.as_ref().is_some_and(|s| s.schema != 1) {
+    if p.snapshot
+        .as_ref()
+        .is_some_and(|s| !(1..=2).contains(&s.schema))
+    {
         return Err(SaveError::Restore(RestoreError::InvalidSnapshot));
     }
     let actual = RegionFingerprint::new(digest(&p.region));
@@ -385,7 +388,7 @@ impl SnapshotDto {
             }
             Ok(out)
         }
-        if self.schema != 1 {
+        if !(1..=2).contains(&self.schema) {
             return Err(SaveError::Restore(RestoreError::InvalidSnapshot));
         }
         Ok(PortableState {

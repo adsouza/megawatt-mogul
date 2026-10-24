@@ -203,6 +203,16 @@ impl Plant {
         self.commitment_suppressed
     }
 
+    pub(crate) fn upgrade_schema1(&mut self, region: &crate::region::RegionDefinition) {
+        if let Some(b) = &mut self.spec.battery {
+            b.charge_end_hour = region
+                .spec(self.spec.kind)
+                .battery
+                .expect("validated battery")
+                .charge_end_hour;
+        }
+    }
+
     fn require_dispatchable(&self) -> Result<(), DomainError> {
         if self.spec.kind.is_dispatchable() {
             Ok(())
@@ -482,10 +492,21 @@ impl Plant {
     /// How much output could rise next tick: one tick of ramp, bounded by
     /// `min(available, capacity) - output`. Zero unless online and dispatchable.
     pub fn headroom_up(&self, available: Megawatts) -> Megawatts {
+        self.headroom_up_within(available, 1)
+    }
+
+    /// How much output could rise within `ticks` ticks: that many ticks of
+    /// ramp, bounded by `min(available, capacity) - output`. Zero unless online
+    /// and dispatchable.
+    pub fn headroom_up_within(&self, available: Megawatts, ticks: u32) -> Megawatts {
         match self.status {
             PlantStatus::Online { output, .. } if self.spec.kind.is_dispatchable() => {
                 let room = available.min(self.spec.capacity) - output;
-                self.spec.ramp.per_tick().min(room).max(Megawatts::ZERO)
+                self.spec
+                    .ramp
+                    .over_ticks(ticks)
+                    .min(room)
+                    .max(Megawatts::ZERO)
             }
             _ => Megawatts::ZERO,
         }
@@ -521,11 +542,11 @@ impl Plant {
         }
     }
 
-    /// A tripped solar plant re-synchronises with a re-energised grid: `Offline`
+    /// A tripped variable generator re-synchronises with a re-energised grid: `Offline`
     /// becomes `Online` at 0 MW. No effect on any other kind or state, since
     /// dispatchable plants must be restarted.
     pub fn reconnect(&mut self) {
-        if !self.spec.kind.is_dispatchable() && self.status == PlantStatus::Offline {
+        if self.spec.kind.is_variable() && self.status == PlantStatus::Offline {
             self.status = PlantStatus::Online {
                 output: Megawatts::ZERO,
                 target: Megawatts::ZERO,
