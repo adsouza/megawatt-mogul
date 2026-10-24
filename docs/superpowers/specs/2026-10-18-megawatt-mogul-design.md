@@ -1,4 +1,4 @@
-# Megawatt Mogul: Design Spec (Milestone 1)
+# Megawatt Mogul: Design Spec (Milestone 1; Milestone 2 begins at §28)
 
 - **Date:** 2026-10-18
 - **Status:** Draft for review
@@ -12,7 +12,9 @@
   A9, daily-cycle battery storage (§20, 2026-10-23, implemented); A10, portable saved games
   (§21, 2026-10-23, implemented); A11, wind farms and midnight-to-18:00 battery charging
   (§25, 2026-10-23, implemented under rules 14); A12, closing the rate-base loophole and
-  making satisfaction count (§26, 2026-10-23, implemented under rules 13; lands before A11)
+  making satisfaction count (§26, 2026-10-23, implemented under rules 13; lands before A11);
+  A13, battery discharge from 16:00 (§27, 2026-10-24, implemented under rules 15); A14, global
+  regions, the first Milestone 2 amendment (§28, 2026-10-24, specified)
 - **Engine:** Rust 1.98, Bevy 0.20, bevy_egui 0.43, bevy-inspector-egui 0.38
 
 ## 1. Vision and goals
@@ -175,7 +177,10 @@ reliability, and building only what the reserve margin justifies.
 
 ### 2.6 Regions
 
-The player chooses a region when starting a new game. Milestone 1 ships two:
+The player chooses a region when starting a new game. Milestone 1 ships two. Milestone 2
+(Amendment A14, §28) adds six more worldwide, with time zones, computed sun, southern and monsoon seasons,
+local currencies, a multi-area SGCC region, and a world picker that replaces the North America
+overview below:
 
 - **Eastern Interconnection (North America):** the US east of the Rockies plus central and eastern
   Canada, **excluding Quebec** (its own interconnection) and **ERCOT**. The Texas Panhandle belongs
@@ -185,7 +190,8 @@ The player chooses a region when starting a new game. Milestone 1 ships two:
   El Paso belongs here. Baja California Sur is not included; in reality it is an isolated system.
 
 Each region is a **single balancing area** (copper plate, §5.4). Both run at 60 Hz, and money is
-in US$. The two regions play differently:
+in US$. (Under A14, a multi-area region balances each synchronous island separately, §28.9.)
+The two regions play differently:
 
 - **East:** about 4× the load, dense cities, a legacy coal and nuclear fleet, and Great Lakes
   cooling water.
@@ -268,7 +274,7 @@ preview remain selectable through their cards; broken entries retain their disab
 - Cross-platform command replay. Portable state and supported save migrations are defined in §21.
 - Audio.
 - A tutorial campaign.
-- More regions.
+- More regions (Milestone 2: Amendment A14, §28).
 - Separate minimum-on/minimum-off dwell timers. Existing commitment feasibility already requires
   each recurring off-gap to fit shutdown ramping plus start-up (§6.1); these restrictions remain.
 - Hydro reservoir carry-over.
@@ -413,7 +419,8 @@ built. No placeholder exists today; `Plant::commissioned_on` is the only seam.
 
 - **Copper plate.** Every plant and city connected to the grid shares a single bus with unlimited
   line capacity. Lines matter only for connectivity. Unconnected plants contribute nothing, and
-  unconnected cities are not customers.
+  unconnected cities are not customers. Under A14 the copper plate is each synchronous island:
+  a component joined by AC lines. HVDC links move scheduled power between islands (§28.9).
 - **Home-city anchor.** Region data specifies `start.home_city: CityId`, which must identify an
   existing city in `start.connected_cities`; otherwise loading returns
   `RegionError::InvalidHomeCity(CityId)`. The home city's existing node is the network root and is always connected. At game creation, completed lines join it to every other
@@ -946,7 +953,7 @@ Test-driven development throughout: failing test → minimal code → refactor.
 | Transmission congestion | A new `NetworkModel::DcPowerFlow` variant; a settings toggle once it exists |
 | Equipment ageing and maintenance | `Plant::commissioned_on`; a new field in `SimulationFidelity` |
 | Further save-schema migrations | Portable snapshots and retained schema readers/golden fixtures (§21) |
-| More regions | A new `.ron` file; the picker already appears for two or more regions |
+| More regions | A new `.ron` file; the picker already appears for two or more regions (Milestone 2, A14, §28, specifies eight) |
 | More plant types (beyond §25; storage beyond §20) | `PlantSpec` is data-driven; new behaviour goes in the `generation` module |
 | More languages | New `assets/locales/<lang>/` folder |
 
@@ -3348,3 +3355,442 @@ fixtures author `discharge_start_hour: 16`.
   17:00 window where that was saved. Loading does not silently rewrite tuning or recorded
   state. Battery cards and build help render their actual configured charging and discharge
   times, so both old saves and custom regions show accurate windows.
+
+## 28. Amendment A14: Global regions (Milestone 2, 2026-10-24)
+
+**Milestone:** A14 opens **Milestone 2**. Milestone 1 remains as §3 scopes it: the two North
+American interconnections, each one 60 Hz copper plate priced in US$. Every earlier amendment
+(A1–A13) belongs to Milestone 1.
+
+**Status:** Specified, not implemented. It lands as three plans, in order: **Plan 6**, global
+foundations (§28.4–§28.8, §28.10–§28.11, and the North American migration); **Plan 7**, five
+single-area regions (B, D, E, F, H in §28.3); **Plan 8**, multi-area regions with HVDC links and
+the SGCC region (§28.9). Each plan bumps `SIM_RULES_VERSION` once, from whatever the previous
+implemented amendment left. The source for boundaries, inclusions and exclusions is the research
+edition of 18 October 2026, copied to
+[docs/research/2026-10-18-world-power-grids-top-8.md](../../research/2026-10-18-world-power-grids-top-8.md).
+Its capacity figures set relative region scale only; no capacity label migrates into game data.
+
+### 28.1 Why
+
+Milestone 1 ships the two North American interconnections. The research map identifies the
+world's eight leading power systems, and six of them are outside North America. Adding them
+teaches lessons that North America cannot:
+
+- **Time zones.** IPS/UPS runs one synchronous grid from Belarus (UTC+3) to Zabaykalsky Krai
+  (UTC+9). Its cities peak at different dispatcher hours, so the system peak is flatter than any
+  city's peak. Continental Europe spans Lisbon to Istanbul.
+- **Southern seasons.** Brazil's summer peak falls in January, and its wet season fills
+  reservoirs from December to April.
+- **The tropics and the monsoon.** India's demand peaks before the monsoon. During the monsoon,
+  wind and hydro rise while solar falls.
+- **Polar light.** Murmansk, in the first IPS zone, has polar night in December and midnight sun
+  in June.
+- **Asynchronous grids.** The five SGCC components exchange power through HVDC links. Each keeps
+  its own frequency, and each link carries a scheduled amount, not whatever copper plate allows.
+- **Undersea links.** Morocco, Algeria and Tunisia are synchronous with Europe through the
+  Spain–Morocco AC cable under the Strait of Gibraltar.
+
+The current model assumes one clock for every city, one regional sun table, northern-hemisphere
+seasons (`SimMonth::season()` selects demand shapes), US$ and one frequency per region. Each
+assumption is wrong for at least one new region.
+
+### 28.2 Goals, non-goals, anti-goals
+
+- **Goals:**
+  - Ship eight map entries (A–H) as playable regions, including the two existing ones.
+  - One model of local time, sun and seasons serves every region, including North America for new
+    games.
+  - Copper plate still decides balancing. Local time enters only through the two physical drivers
+    that depend on place: when people use power, and where the sun is.
+  - A multi-area region balances each synchronous island separately and moves power between them
+    only through player-scheduled HVDC links.
+  - Every existing save keeps its archived behaviour exactly.
+- **Non-goals:**
+  - power flow, congestion or AC transfer limits, including on the Gibraltar cable (§3.3, §11);
+  - per-city weather, several wind processes in one region, or basin-specific river regimes;
+  - reservoir carry-over between months, which is still out of scope even for Brazil;
+  - HVDC links between regions, imports from outside a region, or markets;
+  - Morocco's Ramadan clock change, the equation of time, refraction and terrain shading;
+  - automatic HVDC frequency support beyond the runback in §28.9.
+- **Anti-goals:**
+  - a sovereignty position: a region's footprint follows which grid actually operates an area,
+    as the research notes record it, never a claim about who governs it (§28.3);
+  - presenting the SGCC group as one synchronous machine;
+  - tuning numbers in code, except the frozen legacy defaults of §28.11;
+  - a silent default for a field that a schema-4 region file must author.
+
+### 28.3 The regions
+
+The map letter is a stable identifier, not a rank. Footprints follow the research notes; the
+"excludes" column lists what the notes exclude, not everything outside.
+
+| Map | Region id | Footprint | Excludes | Hz | Currency | System clock |
+|---|---|---|---|---|---|---|
+| A | `sgcc` | Five areas: North–Central (Beijing, Tianjin, Hebei, Shanxi, Shandong, western Inner Mongolia, Henan, Hubei, Hunan, Jiangxi), East (Shanghai, Jiangsu, Zhejiang, Anhui, Fujian), Northwest (Shaanxi, Gansu, Ningxia, Qinghai, Xinjiang), Northeast (Liaoning, Jilin, Heilongjiang; Hulunbuir, Xing'an, Tongliao, Chifeng), Southwest (Sichuan, Chongqing, Tibet) | Yunnan, region E, Mongolia | 50 | CNY | CST (UTC+8) |
+| B | `continental_europe_maghreb` | Continental Europe synchronous area, including DK1, Türkiye, Ukraine and Moldova, the Baltic states, Sicily, Malta and Crete; Morocco, northern Algeria, Tunisia | Nordic area, DK2, Great Britain, Ireland, Sardinia, Corsica, the Balearics, isolated southern Algeria | 50 | EUR | CET/CEST |
+| C | `eastern_interconnection` | As §2.6 | As §2.6 | 60 | USD | ET |
+| D | `india_nepal_bhutan` | Mainland India, Nepal, Bhutan | Bangladesh, Sri Lanka, Myanmar, isolated systems | 50 | INR | IST (UTC+5:30) |
+| E | `southern_china` | Guangdong, Guangxi, Guizhou, Hainan, Hong Kong, Macao | Yunnan | 50 | CNY | CST (UTC+8) |
+| F | `ips_ups` | Russia's first synchronous zone, Belarus, Kazakhstan, Uzbekistan, mainland Azerbaijan, Kyrgyzstan, main Tajikistan, Georgia | Russian Far East, Kaliningrad, Armenia, Iran, Turkmenistan, Nakhchivan, Pamir systems, Afghanistan, Mongolia | 50 | RUB | MSK (UTC+3) |
+| G | `western_interconnection` | As §2.6 | As §2.6 | 60 | USD | PT |
+| H | `brazil_sin` | Brazil's main 60 Hz component, including Roraima, Itaipu's 60 Hz units and Santo Antônio's AC-connected units | Paraguay, Argentina, Uruguay, Venezuela, Jirau and other asynchronous generator groups, isolated Amazon systems | 60 | BRL | BRT (UTC−3) |
+
+- **Disputed territory.** The grid-operation rule decides: an area belongs to the region whose
+  grid operates it, as the research notes record, whatever its sovereignty status. The notes'
+  generalised mainland footprints settle most cases. For example, D includes the Indian-operated
+  north.
+- **Areas the notes don't address.** These include Western Sahara, Abkhazia, South Ossetia,
+  Transnistria and Kosovo. The region-data task settles each one by the same rule, records the
+  operator source in the region file's comments, and never infers membership from a border.
+- **The one exception.** Crimea and the occupied parts of Ukraine are left out of both B and F,
+  with no cities and no buildable cells. Their boundary is the notes' schematic Ukraine–IPS
+  operating extent, which does not follow complete oblasts. Region B's and F's data tasks each
+  author that same exclusion polygon once, and the two regions must not overlap.
+- **Borders.** The base map's borders express no sovereignty position (research notes,
+  cartographic method).
+- **Starting territories** (*builder's calls*; each is a few cities with a compact starter fleet,
+  as §2.4 requires):
+
+  | Region | Home city | Other starter cities |
+  |---|---|---|
+  | A | Beijing | Tianjin, Langfang |
+  | B | Seville | Málaga, Tangier (joined by the pre-built Gibraltar link, §28.8) |
+  | D | Delhi | Gurugram, Noida |
+  | E | Guangzhou | Foshan, Dongguan |
+  | F | Moscow | Tula, Tver |
+  | H | São Paulo | Campinas, Santos |
+
+- **Scale.** City base loads keep their real relative sizes inside a region. A region's total base
+  load scales with its capacity relative to the Eastern Interconnection, compressed so that no
+  region needs more than about 40 cities. *(Builder's call.)* Plant catalogs use local unit sizes
+  and costs, and starter fleets follow each region's real mix.
+- **Grids.** Cells stay equirectangular in longitude and latitude. Choose each region's bounds
+  and grid so that cells are within 25% of square in kilometres at its middle latitude. Grids can
+  be up to 256 × 128 cells. IPS/UPS uses about 1.0° × 0.5° cells. Line costs remain per cell and
+  are authored per region.
+- **Region lessons.** Each region's description card names its distinctive lessons: HVDC
+  scheduling and Northwest curtailment (A), a three-hour time-zone spread and Maghreb solar (B),
+  the monsoon and the evening solar ramp (D), Guizhou and Guangxi hydro with coastal nuclear (E),
+  six time zones, Siberian hydro and polar light (F), and a hydro system with wet and dry seasons
+  plus northeastern wind (H).
+
+### 28.4 Local time: one system clock, a clock per city
+
+- **The system clock.** Every region names one `system_zone`: the dispatcher's clock. The
+  representative day runs from 00:00 to 24:00 on this clock. Commitment hours, AGC, the hydro
+  schedule, battery windows (§25, §27), outage sizing, charts, the rate review and all reports use
+  it. Copper plate has no local deficit: a battery in Novosibirsk covers a Moscow deficit as well
+  as one next door. So system-level rules belong on the system clock, and region data authors
+  battery windows against the system's aggregate net-load shape.
+- **Zones.** Region data lists `time_zones`. Each zone has an id, a short-name key (for example
+  `zone-msk`), a standard UTC offset in minutes (a multiple of 15, from −720 to +840) and
+  `dst_months: [bool; 12]`. A DST month adds 60 minutes. Mark a month as DST when most of its days
+  observe DST under the start year's rules (North America: March to October; the EU: April to
+  October). Each city names a zone, and the system zone is one of them. An offset is constant for
+  a whole month, so no played day has 23 or 25 hours.
+- **A city's local minute.** `local(t) = (t + city_offset(month) − system_offset(month)) mod 1440`.
+  The city's demand shape (§28.6) is evaluated at `local(t)`. The regional demand noise is
+  unchanged: one AR(1) error for all cities, one normal draw per tick.
+- **Zones are civil time, not longitude.** Spain keeps CET at Greenwich longitude, China keeps
+  UTC+8 across five solar hours, and Arizona keeps MST all year. Authored zones carry these
+  differences, while the sun (§28.5) follows longitude.
+- **Shipped zones:**
+  - C: ET, CT (with Regina on CST all year) and AT (Nova Scotia, New Brunswick, Prince Edward
+    Island);
+  - G: PT (including Baja California), MT and Arizona MST without DST;
+  - B: WET (Portugal), CET (most of Europe; Morocco, Algeria and Tunisia on UTC+1 without DST),
+    EET (Greece, Bulgaria, Romania, Ukraine, Moldova, the Baltic states) and TRT (UTC+3 without
+    DST);
+  - F: MSK (+3, including Belarus), +4 (Samara, Azerbaijan, Georgia), +5 (Yekaterinburg,
+    Kazakhstan, Uzbekistan, Tajikistan), +6 (Omsk, Kyrgyzstan), +7 (Novosibirsk, Krasnoyarsk),
+    +8 (Irkutsk, Buryatia) and +9 (Zabaykalsky);
+  - D: IST, NPT (+5:45) and BTT (+6);
+  - H: BRT (−3), AMT (−4) and ACT (−5), without DST;
+  - A and E: CST (+8).
+- **Display.** The top bar shows system time with its zone name ("14:20 MSK"). City cards show the
+  city's local time and zone, and the commitment grid's hour axis names the system zone.
+- **Planning samples.** Shapes are linear between whole local hours, so aggregate demand bends
+  wherever any connected city's local hour begins. With +30 and +45 offsets these bends fall at
+  :15, :30 and :45. Planning's shortfall check and supply chart, which sample minutes 0 and 59
+  without storage (§8.4), also sample every minute where a connected city's local hour begins.
+
+### 28.5 The computed sun
+
+- **Model.** Schema-4 regions drop the authored `daylight` table. The domain computes the sun for
+  each cell from its centre's latitude φ and longitude λ, which come from the region's bounds and
+  grid:
+  - the representative date is the 15th of the month, as a day of a non-leap year `n`;
+  - declination `δ = −23.44° × cos(2π(n + 10)/365)`;
+  - for system minute `t`, UTC hours are `(t − system_offset(month))/60`;
+  - local solar time is `UTC hours + λ/15`, and the hour angle is `H = 15° × (solar time − 12)`;
+  - `sun = max(0, sin φ sin δ + cos φ cos δ cos H)`, which is the sine of the solar elevation.
+- **What follows from it.** The sun is up at a cell's own solar times, so eastern farms in a wide
+  region start earlier on the system clock. Southern-hemisphere days are longest in December.
+  Near the equator, day length barely changes. Above the Arctic Circle, a December day can have
+  zero sun and a June day can have no sunset. No special cases are needed.
+- **Inputs.** Available solar is `capacity × irradiance × sun × clearness`, as in §3.2, with the
+  per-cell `sun`. Irradiance now rates site quality without latitude, because latitude is in
+  `sun`. Re-author it for every schema-4 region. Clearness stays regional, as one draw per day.
+- **Determinism.** The formula is pure. Implementations may cache one 1,440-minute table per cell
+  and month. The libm caveat in §5.7 applies.
+- **Overlay.** The sunshine overlay shows annual solar potential: irradiance × the annual mean
+  daily sun integral at the cell's latitude ÷ the same integral at the equator. It keeps one
+  absolute 0–100% scale across regions (§8.2).
+- **Lighting.** The diorama sun uses the computed azimuth and elevation at the home city. It sits
+  north at solar noon in the southern hemisphere, overhead in the tropics, and stays low all night
+  under the midnight sun. During polar night only ambient light remains. Planning previews the
+  home city's solar noon. This supersedes the northern-hemisphere arc in §8.2 for schema-4 regions.
+
+### 28.6 Demand climates and the region calendar
+
+- **Climates.** Schema 4 replaces the single `demand` block with `climates`. Each climate has an id
+  and 1–4 named hourly shapes (24 values each), `month_shapes: [shape; 12]` and `monthly: [f64; 12]`.
+  Each city names a climate. `forecast_error` and `error_persistence` move to a region-level
+  `demand_noise` block. A climate lets Porto Alegre have a winter while Manaus has none, and lets
+  Tashkent have an air-conditioning summer while Moscow has a heating winter.
+- **Season labels.** The region authors `calendar.seasons: [Season; 12]`. `Season` gains
+  `Monsoon` (portable tag 4) and `PostMonsoon` (tag 5), appended after Winter, Spring, Summer and
+  Autumn. Every reader of `SimMonth::season()` takes the region calendar instead: the HUD label,
+  milestones (a "full season" is a maximal run of consecutive months with one label) and lessons.
+- **Shipped calendars:**
+  - northern regions use meteorological seasons;
+  - Brazil uses southern ones (summer from December to February, winter from June to August);
+  - India uses the IMD scheme: Winter in January and February, Summer from March to May, Monsoon
+    from June to September and PostMonsoon from October to December.
+- **Resources.** Monthly wind factors, clearness and hydro flow are already region data. Brazil
+  authors its wet season (high flow from December to April) and northeastern wind peaking from
+  August to October. India authors monsoon wind and hydro highs alongside low clearness.
+
+### 28.7 Local currency
+
+- **The currency.** Schema-4 regions declare `currency`, one of USD, EUR, CNY, INR, RUB or BRL.
+  All six use two minor units, so `Money` stays `i64` minor units, rounded once per ledger entry.
+  Any other code fails to load with a typed error until minor-unit exponents are supported.
+- **Field names.** Schema-4 money fields lose their `_usd` suffix, for example `capital_cost`,
+  `cash`, `cost_per_cell` and `reference_tariff_per_mwh`. Values are in major units of the
+  region's currency.
+- **Price levels.** Money values (capital, O&M, fuel, start-up, tariffs, cash) come from local
+  sources at local price levels, not from converted US figures. Pacing does not: build months,
+  line `cells_per_month` and starting-cash headroom follow A7's compressed tycoon pacing (§18),
+  so every region plays at North America's tempo. Every value is game tuning, pinned in that
+  region's data task. The beginner checks (§26.7) and the early-expansion acceptance (§18.3) are
+  the acceptance tests. *(Builder's call: "local" applies to prices, not to real construction
+  schedules.)*
+- **Display.** `format::money` takes the currency. The symbol and its placement come from Fluent
+  (`currency-eur`, …). Compact suffixes stay k, M and B in en-US. Tariffs read "₹/MWh" and so on.
+  A glyph test paints each symbol (€ ¥ ₹ ₽ R$) with the shipped fonts. If a glyph is missing, the
+  formatter falls back to the ISO code ("INR 1.20M"), never a missing-glyph box.
+- **Ratios are unchanged.** Satisfaction's price factor, the PBR terms and cost performance
+  compare like with like, so they are currency-neutral.
+
+### 28.8 The Gibraltar link and water crossings
+
+- **Pre-built.** Region B's start network includes the Spain–Morocco interconnector. Tangier is a
+  starter city, and its starter line from Seville is the link. It is ordinary: in service from the
+  start, in the legacy rate base at its distance (§5.4), and with unlimited capacity under copper
+  plate.
+- **Naming.** `start.line_names` may give a starter city's line a name key. The Gibraltar link is
+  `line-spain-morocco`, so its card and map label read "Spain–Morocco interconnector".
+- **Line rules are unchanged.** A player-ordered line may still cross water at the land price.
+  That covers Messina, Malta and Crete in B and the Qiongzhou Strait to Hainan in E.
+- **Presentation.** Any line whose straight path crosses water cells is drawn as a submarine
+  cable over those cells. The cable is a darker, dashed segment that keeps the line's energised
+  pulses. A line card shows "Submarine cable" with its water length. A line card states that
+  transfer limits are not simulated under copper plate (§8.3).
+
+### 28.9 Multi-area regions: synchronous islands and HVDC links
+
+**The unit of balancing.** A synchronous island is a connected component of energised nodes
+joined by in-service AC lines. A node is energised when a path of in-service AC lines and
+in-service HVDC links joins it to the home city. Copper plate (§5.4) applies within each island:
+its own frequency, imbalance, AGC, merit order, protection, hydro schedule, battery plans, outage
+sizing and §19 recovery. A single-area region without HVDC always has exactly one island, the
+home city's, so the existing rules are the one-island case and must behave identically. Islands
+are recomputed only where topology can change: at month close and at `BeginOperating`. An island's
+id is its lowest NodeId, and islands step in ascending id order. Each played day starts every
+island at nominal frequency.
+
+**Areas.** Region data may author `areas`: id, name key and polygons. Rasterised, the areas
+partition the region's land cells exactly; an overlap or gap fails to load. Each city and starter
+plant lies in one area. A region without areas has one implicit area covering its land.
+
+- **No AC between areas.** `BuildLine` between nodes in different areas returns
+  `DomainError::LineCrossesAreas` and leaves the session unchanged. Copper plate cannot represent
+  the stability limits that make long AC ties between these grids hard. An unlimited AC tie would
+  always beat an HVDC link and collapse the region into one bus. So the boundary is a rule, and the
+  endpoint picker marks such endpoints unavailable with that reason.
+- **AC need test.** §26.4 now counts AC paths only. A path that joins two nodes only through HVDC
+  does not make an AC line between them redundant, because the AC line would synchronise them.
+
+**HVDC links.** These are a buildable asset where region data authors an `hvdc` catalog entry. Its
+fields are `rating_mw`, `converter_cost` (for both ends), `cost_per_cell`, `converter_build_months`,
+`ramp_mw_per_min`, `converter_loss` (per end), `loss_per_cell`, `book_life_months` and
+`designed_hours_per_year`. Shipped SGCC values are game tuning pinned in the Plan 8 data task.
+
+- **Build.** `BuildLink { from, to }` works in Planning between two existing nodes. It costs
+  `converter_cost + cost_per_cell × cells` in equal instalments over
+  `max(converter_build_months, line months)`, and `link_quote` reports exactly that.
+- **Need test.** A link's ends must lie in different areas; otherwise `BuildLink` returns
+  `LinkWithinArea`. AC lines never cross areas, so a link's terminals can never end up in one
+  island, and the case of a link inside one island cannot arise. *(Builder's call: this makes HVDC
+  an inter-area asset only, so a region without `areas` can author `hvdc` but never build one.)*
+  Parallel links between two areas are allowed, because links have finite ratings. Cancelling an
+  unfinished link follows §16.9.
+- **Schedule.** In Planning, `SetLinkSchedule { link, mw: [f64; 24] }` sets a signed MW value for
+  each hour, positive from `from` to `to`, finite and within ±rating. The default is zero.
+- **Override.** In Operating, `SetLinkTarget { link, mw }` overrides the schedule for the rest of
+  the day, and `ClearLinkOverride` returns to it. Refused commands leave the session unchanged.
+- **Flow.** Each tick, before the islands step, every link's flow ramps toward its target at
+  `ramp_mw_per_min`. The receiving island gets
+  `flow × (1 − 2 × converter_loss − loss_per_cell × cells)`. Validation keeps that factor at or
+  above 0.5. Losses are reported energy; no fuel or revenue entry is created.
+- **Blocking.** A link's flow drops to zero, and it resumes at its ramp, while either terminal
+  island is blacked out or has no online synchronous generator (thermal, nuclear or hydro). A
+  line-commutated converter needs a strong AC grid at both ends. Batteries, solar and wind do not
+  count.
+- **Runback.** While the sending island is below its under-frequency shedding threshold, the
+  link's flow ramps toward zero. It never reverses automatically, and it releases once the island
+  is back inside its normal band.
+- **Timing.** Blocking and runback read the previous tick's island states and take effect this
+  tick, in ascending LinkId order.
+- **Balance per island.** Supply is generation, battery discharge and received link energy. Load is
+  served customer demand, battery charging and sent link flow. The signed imbalance absorbs the
+  difference, and the frequency step uses the island's own system size.
+
+**Protection, reliability and strikes.** Shedding, curtailment, blackout and over-frequency trips
+act within one island. A blackout in East China trips only East China's plants and blocks its
+links. Reliability and the unserved-energy strike test sum over islands. The frequency-performance
+test (§14.4) counts each minute as the demand-weighted share of islands outside their band, so a
+one-island region is unchanged.
+
+**Forecasts and warnings.** Each island's forecasts, shortfall checks, rotating outages and
+battery and hydro plans treat the scheduled link flows as known injections. A link schedule never
+assumes another island's spare capacity. If a schedule exports more than the sender can supply,
+the sender's warnings show it, and it is the player's call.
+
+**Regulation.** The company holds one licence and faces one regulator.
+
+- **Reserve assessment.** The §2.5 reserve test stays region-wide: total firm capacity against the
+  coincident peak. *(Builder's call: one licence, one test. Reliability penalises a starved island
+  directly.)*
+- **Links hold no firm MW.** They are judged by use, not by firm capacity. At each December review,
+  a link's utilisation is `u = sent MWh in the review period ÷ (rating × designed_hours_per_year ×
+  months ÷ 12)`, using weighted monthly energy, and its excess fraction is `1 − min(1, u)`. Here
+  `months` counts the link's whole months in service within the review period, its commissioning
+  month included, so a link commissioned in November is judged on November and December alone.
+  *(Builder's call: this prorates like A2, §13, so a new link is not held for months it could not
+  run.)*
+- **Hold, release, write-off.** The §2.5 and §26 history applies unchanged: hold, re-test, release,
+  and write off a portion only when it is excess at two consecutive reviews.
+- **Why.** This follows China's pricing of cross-regional dedicated transmission, which is set from
+  each project's costs and a designed annual transfer volume, so an underused line under-recovers.
+  *(Builder's call: the hold-and-write-off adaptation is ours.)*
+
+**HUD and map.**
+
+- **Island chips.** A row of chips in the top bar shows each island's area name, with a suffix when
+  an area has more than one island, plus a frequency dot. Selecting a chip scopes the frequency
+  gauge, supply charts, warnings and incidents. "All" shows region totals and no gauge.
+- **Link card.** It shows rating, current flow and target, a 24-hour signed schedule editor, the
+  blocked or runback state, losses, and year-to-date utilisation against the designed hours.
+- **Map.** Area boundaries are drawn on the terrain. Links are drawn as DC corridors with converter
+  glyphs at both ends. Link pulses show actual DC flow and direction, which is exact, unlike the
+  illustrative AC routes of §8.3, and the legend says so.
+- **Conventions.** The presenter and dispatch rules, Fluent coverage, Enter and Escape handling and
+  the minimum-window layout rules apply.
+
+**Persistence.** Plan 8 adds island frequency states, link assets, schedules, overrides and flows,
+plus each island's report rows (served, unserved, imports, exports, losses and minutes outside the
+band) to portable state. It bumps the state schema once, with readers for every earlier schema. An
+upcast gives an older save one island with its existing frequency and no links. Region totals in
+old reports stay as recorded.
+
+### 28.10 The world picker
+
+- **Map.** The region picker becomes a world map in the Equal Earth projection, cropped to
+  60°S–75°N. Each shipped region is filled from its own outline with the research legend's colour
+  and letter: A `#CF414C`, B `#226EC7`, C `#E4832F`, D `#B29400`, E `#008F9D`, F `#7652B2`,
+  G `#936A45`, H `#1E8F59`.
+- **Atlas metadata.** The letter and colour are optional `atlas` metadata in region RON. Only the
+  infrastructure outline reader uses them; the domain never sees them. A custom region without
+  them takes the next colour from the fallback palette.
+- **Areas.** SGCC is one entry. Its area boundaries are drawn, and hovering shows the area names.
+- **Text.** Letters and labels sit on opaque backings at the 4.5:1 contrast floor (§8.4).
+- **Region cards.** Each card adds frequency, currency, time-zone span and hemisphere to the
+  existing description and home city.
+- **Unchanged behaviour.** Hover, click, keyboard start buttons, the seed rules and disabled entries
+  stay as in §2.6. Grey land is unselectable, and the picker does not imply that grey land lacks
+  electricity.
+- **Small windows.** At the minimum window size, Europe and the Chinese regions are too small to
+  aim at. The picker may zoom or show an inset, but every region stays startable from its card.
+
+### 28.11 Region schema 4, compatibility and versioning
+
+- **Schema 4.** New authored fields: `system_zone`, `time_zones`, a zone per city, `climates`,
+  `demand_noise`, `calendar`, the computed-sun `solar` block (no `daylight`), `currency` with
+  unsuffixed money fields, optional `areas`, optional `hvdc`, optional `start.line_names` and
+  optional `atlas`. A schema-4 file missing a required field fails to load with a typed error that
+  names the field.
+- **Schemas 3 and earlier.** Version-aware mapping supplies frozen legacy behaviour: one zone at
+  offset zero without DST, the authored `daylight` table (the domain keeps
+  `SolarModel::DaylightTable` beside `SolarModel::Astronomical`), one climate with northern
+  meteorological seasons, USD, one area and no HVDC. These defaults live only in the legacy
+  mapping and never apply to a schema-4 file.
+- **North America.** Both shipped North American files move to schema 4 for new games, with zones
+  (§28.4), the computed sun, re-authored irradiance and climates. Their balance changes. Fix any
+  failing beginner check by retuning region data, never the rules. Their fingerprints change.
+  Archived bytes do not, so existing saves keep their single clock and daylight table.
+- **Portable state.**
+  - **Plan 6:** the new `Season` tags enter persisted milestone state, so it bumps the state schema
+    once.
+  - **Plan 8:** bumps it again (§28.9).
+  - **Both:** keep every older reader. Verify old bytes with old semantics before any upcast, and
+    never rewrite history (§21, §25.6).
+- **Rules versions.** Each plan bumps `SIM_RULES_VERSION` once and regenerates the rules guard and
+  the scenario snapshots, reviewing every diff. Command-only logs stay fenced by
+  `RulesVersionMismatch`.
+
+### 28.12 Acceptance
+
+- **Time.**
+  - A city's demand at system minute `t` equals its climate shape at `local(t)` for every shipped
+    zone, including +5:30, +5:45, −3 and Arizona.
+  - DST months shift by exactly 60 minutes, and no month has a mid-day change.
+  - Demand noise draws exactly one normal per tick, whatever the number of cities or zones.
+  - Planning samples hit every quarter-hour bend that offset cities create.
+- **Sun.**
+  - Hand-computed elevations agree at Quito, Murmansk (December zero and June positive at local
+    midnight), São Paulo (December longer than June) and Novosibirsk (sunrise earlier than
+    Moscow's on MSK).
+  - Overlay potential is monotone in irradiance and stays within [0, 1].
+  - Lighting points north at solar noon in Brazil.
+- **Seasons.** Brazil's January uses its summer shape. India's labels and milestones follow its
+  calendar. Legacy regions reproduce `SimMonth::season()` exactly.
+- **Currency.** Every shipped currency formats with its glyph or the ISO fallback, and cash change
+  still equals the ledger sum exactly. A schema-4 file with a `_usd` field or an unknown currency
+  fails with a typed error.
+- **Gibraltar.** Region B starts with Seville, Málaga and Tangier served, and the named cable is
+  drawn as a submarine segment.
+- **Islands.**
+  - Every existing property and scenario holds unchanged in one-island regions; the rules guard
+    shows only intended changes.
+  - Over generated networks, islands equal the AC components of the energised graph.
+  - AC lines never cross areas, links never stay within one, and a refused `BuildLine` or
+    `BuildLink` changes nothing.
+- **Links.**
+  - Flow stays within ±rating and its ramp.
+  - Received energy equals sent energy minus losses.
+  - Blocking, runback and next-tick timing behave as §28.9 says.
+  - A blackout in one island leaves the other islands' plants untouched.
+  - Island and total conservation hold: generation = served + charging + imbalance + link losses.
+  - Utilisation holding matches a hand-computed review and its two-review write-off.
+- **Saves.** Golden saves from every supported state schema and from schema-3 regions restore
+  byte-identically under their archived behaviour, continue, and re-save under the new schema. A
+  new game saved mid-day in each new region resumes identically to uninterrupted play.
+- **Regions.**
+  - Every shipped region loads, and its starter territory passes the no-command and hands-off
+    year-one runs (§26.7) and the early-expansion acceptance (§18.3) on seeds 0–7.
+  - The terrain mesh, picking and the world picker meet frame budgets at 256 × 128 cells.
+  - Native launch smoke passes, and an isolated full-day playtest runs in IPS/UPS, Brazil and
+    SGCC (with one scheduled link).
