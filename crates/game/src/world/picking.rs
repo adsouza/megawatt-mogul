@@ -1,4 +1,4 @@
-//! Picking uses the same triangles and block bounds as the rendered world.
+//! Picking uses the world's triangles and block bounds, with forgiving cable hit targets.
 use super::{
     GridTransform, TerrainGeometry,
     model::{Part, WorldModel, city_parts, plant_parts},
@@ -67,7 +67,8 @@ fn block_hit(ray: Ray3d, part: Part, at: Vec3, scale: f32) -> Option<f32> {
     }
     Some(near)
 }
-/// Stable tie order is plants, cities, lines, then terrain; IDs are ordered by the model maps.
+/// Visible buildings take priority over cables. Within each class the nearest hit wins;
+/// ties use model ID order, with plants before cities. Terrain still occludes all objects.
 pub fn pick_world(
     ray: Ray3d,
     world: &WorldModel,
@@ -139,11 +140,6 @@ fn hit_geometry(
             );
         }
     }
-    for line in world.lines.values() {
-        for part in &line.parts {
-            consider(block_hit(ray, *part, Vec3::ZERO, 1.0), line.selection);
-        }
-    }
     if let Some(d) = terrain_grid_hit(ray, world.region.terrain())
         && d < nearest
     {
@@ -152,6 +148,20 @@ fn hit_geometry(
         let grid = world.region.terrain();
         let cell = GridTransform::new(grid.width(), grid.height()).cell_at(p.x, p.z);
         selection = cell.map_or(Selection::None, Selection::Cell);
+    }
+    // At junctions a cable's forgiving hit box can sit in front of the building.
+    // Prefer the visible building, but leave cables selectable away from its silhouette.
+    if !matches!(selection, Selection::Plant(_) | Selection::City(_)) {
+        for line in world.lines.values() {
+            for part in &line.parts {
+                if let Some(d) = block_hit(ray, *part, Vec3::ZERO, 1.0)
+                    && d < nearest
+                {
+                    nearest = d;
+                    selection = line.selection;
+                }
+            }
+        }
     }
     nearest.is_finite().then_some(WorldHit {
         distance: nearest,

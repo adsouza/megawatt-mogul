@@ -128,7 +128,7 @@ impl OrbitCamera {
         }
     }
 }
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CameraPose {
     pub eye: Vec3,
     pub target: Vec3,

@@ -381,10 +381,193 @@ fn world_picking_uses_elevated_terrain_and_object_bounds_and_rejects_sky() {
     assert_eq!(pick_world(ray, &model, &geometry, 1.0), Selection::None);
 }
 
+#[test]
+fn world_picking_prefers_buildings_at_crowded_line_junctions() {
+    use bevy::prelude::*;
+    use game::{
+        hud::Selection,
+        world::{
+            Part, TuningConfig, WorldControls, WorldModel, city_parts, plant_parts, presented_hit,
+        },
+    };
+    let logs = tempfile::TempDir::new().unwrap();
+    let mut app = crate::support::hud_app(logs.path());
+    crate::support::request(&mut app, "eastern_interconnection");
+    let game = &app.world().resource::<game::sim::Session>().0;
+    let original = WorldModel::of(game);
+    let plant = original.plants.values().next().unwrap();
+    let city = original.cities.values().next().unwrap();
+    for scale in [0.4, 1.0] {
+        let tuning = TuningConfig {
+            model_scale: scale,
+            ..default()
+        };
+        let controls = WorldControls::default();
+        for kind in domain::region::PlantKind::ALL
+            .into_iter()
+            .map(Some)
+            .chain([None])
+        {
+            let (selection, at, parts, size) = match kind {
+                Some(kind) => (
+                    Selection::Plant(plant.id),
+                    plant.at,
+                    plant_parts(kind),
+                    scale,
+                ),
+                None => (
+                    Selection::City(city.id),
+                    city.at,
+                    city_parts(),
+                    city.scale * scale,
+                ),
+            };
+            let mut model = original.clone();
+            model
+                .plants
+                .retain(|id, _| selection == Selection::Plant(*id));
+            model
+                .cities
+                .retain(|id, _| selection == Selection::City(*id));
+            if let Some(kind) = kind {
+                model.plants.get_mut(&plant.id).unwrap().kind = kind;
+            }
+            let roof = parts
+                .iter()
+                .max_by(|a, b| a.bounds().1.y.total_cmp(&b.bounds().1.y))
+                .unwrap();
+            let point = at + (roof.center + Vec3::Y * roof.size.y * 0.5) * size;
+            let ray = Ray3d::new(point + Vec3::Y * 3.0, Dir3::NEG_Y);
+            model.lines.clear();
+            let building = presented_hit(ray, &model, &controls, &tuning).unwrap();
+            assert_eq!(building.selection, selection);
+            let mut line = original.lines.values().next().unwrap().clone();
+            line.parts = (0..8)
+                .map(|i| Part {
+                    rotation: Quat::from_rotation_y(i as f32 * std::f32::consts::PI / 8.0),
+                    ..Part::block(point + Vec3::Y * 0.5, Vec3::new(0.1, 0.1, 2.0), [1.0; 4])
+                })
+                .collect();
+            let line_selection = line.selection;
+            model.lines.insert(line.id, line);
+            let hit = presented_hit(ray, &model, &controls, &tuning).unwrap();
+            assert_eq!(hit.selection, selection, "cables intercepted {selection:?}");
+            assert_eq!(hit.distance, building.distance);
+            // The same cables remain selectable where no building is under the pointer.
+            model.plants.clear();
+            model.cities.clear();
+            assert_eq!(
+                presented_hit(ray, &model, &controls, &tuning)
+                    .unwrap()
+                    .selection,
+                line_selection
+            );
+            // Prioritizing a building must still respect terrain in front of it.
+            assert!(matches!(
+                presented_hit(
+                    Ray3d::new(at - Vec3::Y, Dir3::Y),
+                    &original,
+                    &controls,
+                    &tuning
+                )
+                .unwrap()
+                .selection,
+                Selection::Cell(_)
+            ));
+        }
+    }
+}
+
 fn diorama_app(logs: &std::path::Path) -> bevy::prelude::App {
     let mut app = crate::support::hud_app(logs);
     app.add_plugins(game::world::WorldViewPlugin);
     app
+}
+
+#[test]
+fn world_power_lines_stay_fine_when_zoomed_in() {
+    use bevy::prelude::*;
+    use bevy_egui::egui;
+    use game::world::{MapSurface, OrbitCamera, ViewSync, WorldAssets, WorldScene};
+    for region in ["eastern_interconnection", "western_interconnection"] {
+        let logs = tempfile::TempDir::new().unwrap();
+        let mut app = diorama_app(logs.path());
+        crate::support::request(&mut app, region);
+        let checkpoint = app.world().resource::<game::sim::Session>().0.checkpoint();
+        let counts = app.world().resource::<WorldAssets>().counts();
+        for height in [600.0, 1200.0] {
+            for zoom in [1.0, 0.3, 0.08, 1.0] {
+                let model = app.world().resource::<WorldScene>().model.as_ref().unwrap();
+                let pose = OrbitCamera {
+                    zoom,
+                    target: model.lines.values().next().unwrap().midpoint.xz(),
+                    ..default()
+                }
+                .pose(model.size(), 1.6);
+                let mut surface = app.world_mut().resource_mut::<MapSurface>();
+                surface.pose = Some(pose);
+                surface.rect = Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(height * 1.6, height),
+                ));
+                app.update();
+                let world = app.world();
+                let model = world.resource::<WorldScene>().model.as_ref().unwrap();
+                let mut checked = 0;
+                for (id, entity) in &world.resource::<ViewSync>().lines {
+                    let mesh = world
+                        .resource::<Assets<Mesh>>()
+                        .get(&world.get::<Mesh3d>(*entity).unwrap().0)
+                        .unwrap();
+                    let vertices = mesh
+                        .attribute(Mesh::ATTRIBUTE_POSITION)
+                        .unwrap()
+                        .as_float3()
+                        .unwrap();
+                    for (part, vertices) in model.lines[id]
+                        .parts
+                        .iter()
+                        .zip(vertices.as_chunks::<24>().0)
+                    {
+                        let Some(center) = pose.project(part.center) else {
+                            continue;
+                        };
+                        if center.x.abs() > 0.9 || center.y.abs() > 0.9 {
+                            continue;
+                        }
+                        // Compare corners at the same end: measure the cable's cross section,
+                        // excluding its length along the terrain route.
+                        for a in vertices {
+                            for b in vertices {
+                                let a = Vec3::from_array(*a);
+                                let b = Vec3::from_array(*b);
+                                if (part.rotation.inverse() * (a - b)).z.abs() > 1e-4 {
+                                    continue;
+                                }
+                                let (Some(a), Some(b)) = (pose.project(a), pose.project(b)) else {
+                                    continue;
+                                };
+                                let pixels =
+                                    ((a - b).truncate() * Vec2::new(height * 1.6, height) * 0.5)
+                                        .length();
+                                assert!(
+                                    pixels <= 2.8,
+                                    "thick cable: {pixels} points at zoom {zoom}, height {height}"
+                                );
+                            }
+                        }
+                        checked += 1;
+                    }
+                }
+                assert!(checked > 0);
+                assert_eq!(world.resource::<WorldAssets>().counts(), counts);
+                assert_eq!(
+                    world.resource::<game::sim::Session>().0.checkpoint(),
+                    checkpoint
+                );
+            }
+        }
+    }
 }
 
 #[test]

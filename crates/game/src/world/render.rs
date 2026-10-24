@@ -1,6 +1,7 @@
 //! Session-scoped render assets and ID-based reconciliation. Headless-safe; no GPU reads.
 use super::{
-    Part, TerrainGeometry, TuningConfig, WorldControls, WorldModel, city_parts, plant_parts,
+    CameraPose, MapSurface, Part, TerrainGeometry, TuningConfig, WorldControls, WorldModel,
+    city_parts, plant_parts,
 };
 use crate::{
     hud::{MapLayer, Selection},
@@ -50,6 +51,7 @@ pub struct WorldAssets {
     ring: Handle<Mesh>,
     arrow: Handle<Mesh>,
     line_meshes: BTreeMap<LineId, Handle<Mesh>>,
+    line_view: Option<(CameraPose, f32)>,
     layer: Option<MapLayer>,
 }
 impl WorldAssets {
@@ -143,6 +145,30 @@ fn parts_geometry(parts: &[Part]) -> TerrainGeometry {
 }
 fn parts_mesh(parts: &[Part]) -> Mesh {
     mesh_of(&parts_geometry(parts))
+}
+
+fn line_mesh(parts: &[Part], view: Option<(CameraPose, f32)>) -> Mesh {
+    let Some((pose, height)) = view else {
+        return parts_mesh(parts);
+    };
+    let forward = (pose.target - pose.eye).normalize();
+    let units_per_point = 2.0 * (super::camera::FOV / 2.0).tan() / height;
+    let parts: Vec<_> = parts
+        .iter()
+        .map(|part| {
+            // Keep the overview width, but limit the square cross section to roughly
+            // two logical screen points when close. Use the nearer end's depth so
+            // sloped segments also stay fine. Route positions/lengths never change.
+            let along = part.rotation * Vec3::Z * part.size.z * 0.5;
+            let depth = (part.center - pose.eye).dot(forward) - along.dot(forward).abs();
+            let width = (1.5 * units_per_point * depth.max(0.1)).min(part.size.x);
+            Part {
+                size: Vec3::new(width, width, part.size.z),
+                ..*part
+            }
+        })
+        .collect();
+    parts_mesh(&parts)
 }
 
 fn initialise(
@@ -356,6 +382,7 @@ pub fn reconcile(
             && let Some(mut mesh) = store.meshes.get_mut(handle)
         {
             *mesh = parts_mesh(&line.parts);
+            assets.line_view = None;
         }
         views.arrows.entry(line.id).or_insert_with(|| {
             let length: f32 = line.parts.iter().map(|p| p.size.z).sum();
@@ -383,6 +410,7 @@ pub fn reconcile(
         views.lines.entry(line.id).or_insert_with(|| {
             let h = store.meshes.add(parts_mesh(&line.parts));
             assets.line_meshes.insert(line.id, h.clone());
+            assets.line_view = None;
             commands
                 .spawn((
                     WorldEntity,
@@ -445,6 +473,7 @@ pub fn reconcile(
 #[derive(SystemParam)]
 pub(super) struct VisualInputs<'w> {
     scene: Res<'w, WorldScene>,
+    surface: Res<'w, MapSurface>,
     controls: Res<'w, WorldControls>,
     layer: Res<'w, MapLayer>,
     selection: Res<'w, Selection>,
@@ -462,6 +491,7 @@ pub fn update_visuals(
 ) {
     let VisualInputs {
         scene,
+        surface,
         controls,
         layer,
         selection,
@@ -473,6 +503,19 @@ pub fn update_visuals(
     };
     if store.assets.materials.is_empty() {
         return;
+    }
+    let line_view = surface.pose.zip(surface.rect).and_then(|(pose, rect)| {
+        (rect.is_finite() && rect.is_positive()).then_some((pose, rect.height()))
+    });
+    if store.assets.line_view != line_view {
+        for line in model.lines.values() {
+            if let Some(handle) = store.assets.line_meshes.get(&line.id).cloned()
+                && let Some(mut mesh) = store.meshes.get_mut(&handle)
+            {
+                *mesh = line_mesh(&line.parts, line_view);
+            }
+        }
+        store.assets.line_view = line_view;
     }
     let holo = controls.hologram();
     let chosen = if controls.overlay && !holo {
