@@ -37,6 +37,7 @@ use super::layout::{Edge, HudArea, OuterPanel};
 use super::planning_cache::{PlanningForecast, PlanningForecastCache};
 use super::planning_warnings::{WarningsModel, draw_warnings, warnings_for};
 use super::tariff::{TariffModel, draw_tariff, tariff_model};
+use super::theme::TextTone;
 use super::ui_state::{CommitmentForm, PlanningTab, UiState};
 use super::{SupplyHistoryModel, draw_supply_history, supply_history_model};
 use crate::l10n::Localizer;
@@ -174,7 +175,7 @@ pub fn draw_planning(
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             button(ui, &model.begin, &mut actions);
             if let Some(hint) = &model.begin_hint {
-                ui.colored_label(ui.visuals().warn_fg_color, hint.as_str());
+                ui.colored_label(TextTone::Caution.color(), hint);
             }
         });
     });

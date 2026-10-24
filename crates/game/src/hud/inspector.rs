@@ -18,6 +18,7 @@ use super::construction::{
 use super::layout::{Edge, HudArea, OuterPanel};
 use super::plant_panel::{PlantCardModel, draw_plant_card, plant_card_model};
 use super::selection::Selection;
+use super::theme::{TextTone, heading_color};
 use super::top_bar::Stat;
 use crate::l10n::{Localize, Localizer, Names, format};
 use crate::sim::Session;
@@ -205,10 +206,15 @@ pub fn draw_inspector(ui: &mut egui::Ui, model: &InspectorModel) -> Vec<UiAction
         .auto_shrink([false, false])
         .show(ui, |ui| match model {
             InspectorModel::Line(line) => {
-                ui.heading(&line.title);
-                ui.label(&line.status);
+                ui.heading(egui::RichText::new(&line.title).color(heading_color()));
+                let tone = if line.in_service.is_some() {
+                    TextTone::Information
+                } else {
+                    TextTone::Positive
+                };
+                ui.colored_label(tone.color(), &line.status);
                 if let Some(in_service) = &line.in_service {
-                    ui.label(in_service);
+                    ui.colored_label(TextTone::Caution.color(), in_service);
                 }
                 if let Some(cancel) = &line.cancel {
                     button(ui, cancel, &mut actions);
@@ -227,28 +233,29 @@ pub fn draw_inspector(ui: &mut egui::Ui, model: &InspectorModel) -> Vec<UiAction
 }
 
 fn draw_cell(ui: &mut egui::Ui, model: &CellInspector, actions: &mut Vec<UiAction>) {
-    ui.heading(model.title.as_str());
-    ui.label(model.terrain.as_str());
+    ui.heading(egui::RichText::new(&model.title).color(heading_color()));
+    ui.colored_label(TextTone::Information.color(), &model.terrain);
     egui::Grid::new("inspector_readings").show(ui, |ui| {
         for stat in &model.readings {
-            ui.weak(stat.label.as_str());
-            ui.label(stat.value.as_str());
+            ui.colored_label(TextTone::Neutral.color(), &stat.label);
+            ui.colored_label(TextTone::Information.color(), &stat.value);
             ui.end_row();
         }
     });
     ui.separator();
-    ui.strong(model.suitability_heading.as_str());
+    ui.label(
+        egui::RichText::new(&model.suitability_heading)
+            .strong()
+            .color(heading_color()),
+    );
     for row in &model.suitability {
         // Wrapped, not a grid: a siting error is a sentence, and the panel is a fixed width.
         ui.horizontal_wrapped(|ui| {
-            ui.label(row.label.as_str());
+            ui.colored_label(TextTone::Neutral.color(), &row.label);
             if row.ok {
-                ui.colored_label(
-                    super::theme::status_color(egui::Color32::from_rgb(90, 190, 110)),
-                    row.verdict.as_str(),
-                );
+                ui.colored_label(TextTone::Positive.color(), row.verdict.as_str());
             } else {
-                ui.weak(row.verdict.as_str());
+                ui.colored_label(TextTone::Caution.color(), &row.verdict);
             }
         });
     }

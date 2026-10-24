@@ -309,6 +309,188 @@ pub(crate) fn button_look(painted: &[egui::epaint::ClippedShape], rect: egui::Re
 }
 
 #[test]
+fn plant_card_colors_distinguish_fast_response_and_costly_generation() {
+    use crate::support::{request, shipped_l10n};
+    use domain::region::PlantKind;
+    use game::hud::{draw_plant_card, plant_card_model};
+
+    let logs = TempDir::new().unwrap();
+    let mut app = hud_app(logs.path());
+    request(&mut app, "eastern_interconnection");
+    let game = &app.world().resource::<game::sim::Session>().0;
+    let l10n = shipped_l10n();
+    let mut rendered = Vec::new();
+    for kind in [PlantKind::Nuclear, PlantKind::Peaker] {
+        let id = game
+            .session()
+            .plant_views()
+            .iter()
+            .find(|plant| plant.kind == kind)
+            .unwrap()
+            .id;
+        let card = plant_card_model(game, &l10n, id).unwrap();
+        let ctx = egui::Context::default();
+        ctx.set_visuals(game::hud::theme::visuals());
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(600.0, 1200.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                draw_plant_card(ui, &card);
+            },
+        );
+        let texts = painted_texts(&output.shapes);
+        assert!(check_paint(output) > 0);
+        let value_color = |label: &str| {
+            let value = &card
+                .stats
+                .iter()
+                .find(|stat| stat.label == label)
+                .unwrap()
+                .value;
+            texts.iter().find(|text| &text.text == value).unwrap().color
+        };
+        let ramp = value_color("Ramp rate");
+        let startup = value_color("Start-up time");
+        let startup_cost = value_color("Start-up cost");
+        if kind == PlantKind::Nuclear {
+            assert!(
+                ramp.r() > ramp.g(),
+                "slow ramping should use a warning color"
+            );
+            assert!(
+                startup.r() > startup.g(),
+                "long starts should use a warning color"
+            );
+            assert!(
+                startup_cost.r() > startup_cost.g(),
+                "expensive starts should be red"
+            );
+        } else {
+            assert!(ramp.g() > ramp.r(), "fast ramping should be green");
+            assert!(startup.g() > startup.r(), "short starts should be green");
+            assert!(
+                startup_cost.g() > startup_cost.r(),
+                "cheap starts should be green"
+            );
+        }
+        rendered.push(value_color("Marginal cost"));
+    }
+    assert!(
+        rendered[0].g() > rendered[0].r(),
+        "cheap generation should be green"
+    );
+    assert!(
+        rendered[1].r() > rendered[1].g(),
+        "expensive generation should be red"
+    );
+    assert!(l10n.problems().is_empty());
+}
+
+#[test]
+fn planning_and_operating_panels_use_semantic_text_colors() {
+    use crate::support::{request, shipped_l10n};
+    use domain::{
+        session::{Incident, IncidentKind},
+        units::Ratio,
+    };
+    use game::hud::{
+        draw_incidents, draw_ramp_warnings, draw_tariff, draw_warnings, incidents_for,
+        ramp_warnings_for, tariff_model, warnings_for,
+    };
+    let logs = TempDir::new().unwrap();
+    let mut app = hud_app(logs.path());
+    request(&mut app, "eastern_interconnection");
+    let l10n = shipped_l10n();
+    let game = &app.world().resource::<game::sim::Session>().0;
+    fn render(mut draw: impl FnMut(&mut egui::Ui)) -> Vec<PaintedText> {
+        let ctx = egui::Context::default();
+        ctx.set_visuals(game::hud::theme::visuals());
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1280.0, 800.0),
+                )),
+                ..Default::default()
+            },
+            |ui| draw(ui),
+        );
+        let texts = painted_texts(&output.shapes);
+        assert!(check_paint(output) > 0);
+        texts
+    }
+    let color = |texts: &[PaintedText], label: &str| {
+        texts
+            .iter()
+            .find(|text| text.text == label)
+            .unwrap_or_else(|| panic!("missing {label}"))
+            .color
+    };
+    let warnings = warnings_for(None, None, &[], false, &l10n);
+    let texts = render(|ui| {
+        draw_warnings(ui, &warnings);
+    });
+    let heading = color(&texts, &warnings.heading);
+    assert!(
+        heading.b() > heading.r(),
+        "Planning headings need the blue accent"
+    );
+    let healthy = color(&texts, warnings.none.as_ref().unwrap());
+    assert!(healthy.g() > healthy.r(), "a sound plan is good news");
+
+    let tariff = tariff_model(game, &l10n);
+    let texts = render(|ui| {
+        draw_tariff(ui, &tariff);
+    });
+    let value = color(&texts, &tariff.current[0].value);
+    assert!(value.g() > value.r(), "tariff figures need the teal accent");
+    assert_ne!(value, color(&texts, &tariff.current[0].label));
+
+    let ramp = ramp_warnings_for(None, 0, &l10n);
+    let texts = render(|ui| {
+        draw_ramp_warnings(ui, &ramp);
+    });
+    let healthy = color(&texts, ramp.empty.as_ref().unwrap());
+    assert!(healthy.g() > healthy.r(), "no ramp warning is good news");
+
+    let incidents = incidents_for(
+        &[
+            Incident {
+                tick: 1,
+                kind: IncidentKind::Blackout,
+            },
+            Incident {
+                tick: 2,
+                kind: IncidentKind::RotatingOutage {
+                    share: Ratio::new(0.1).unwrap(),
+                },
+            },
+            Incident {
+                tick: 3,
+                kind: IncidentKind::BlackoutRestored,
+            },
+        ],
+        &game::l10n::Names::empty(&l10n),
+        &l10n,
+    );
+    let texts = render(|ui| {
+        draw_incidents(ui, &incidents);
+    });
+    let restored = color(&texts, &incidents.rows[0]);
+    let outage = color(&texts, &incidents.rows[1]);
+    let blackout = color(&texts, &incidents.rows[2]);
+    assert!(restored.g() > restored.r());
+    assert!(outage.r() > outage.b());
+    assert!(blackout.r() > blackout.g());
+    assert_ne!(outage, blackout);
+}
+
+#[test]
 fn painted_planning_text_keeps_contrast_including_chart_ticks() {
     use crate::support::request;
     use game::hud::{PlanningTab, UiState};
@@ -423,7 +605,13 @@ fn semantic_status_text_stays_readable_including_emergencies_and_reached_milesto
     frequency.mode = "Blackout".into();
     frequency.shed = Some("Protection has shed 5% of the load".into());
     let mut milestones = milestones_model(game, &l10n);
-    milestones.rows[0].reached = true;
+    milestones.rows[0] = game::hud::milestone_row(
+        application::projections::MILESTONES[0],
+        application::projections::MilestoneStatus::Reached {
+            month: game.session().clock().month(),
+        },
+        &l10n,
+    );
     let ctx = egui::Context::default();
     ctx.set_visuals(game::hud::theme::visuals());
     for color in [NORMAL_COLOR, LOW_COLOR, HIGH_COLOR, SHEDDING_COLOR] {
@@ -438,7 +626,22 @@ fn semantic_status_text_stays_readable_including_emergencies_and_reached_milesto
             .enabled_if(false);
             game::hud::button(ui, &unavailable, &mut Vec::new());
         });
+        let texts = painted_texts(&output.shapes);
         assert!(check_paint(output) > 5);
+        let color = |label: &str| texts.iter().find(|text| text.text == label).unwrap().color;
+        let reached = &milestones.rows[0];
+        let green = color(&reached.status);
+        assert!(green.g() > green.r(), "reached milestones should be green");
+        assert_eq!(color(&reached.name), green);
+        assert_eq!(color(&reached.detail), green);
+        let progress = &milestones.rows[1];
+        let heading = color(&progress.name);
+        assert!(
+            heading.b() > heading.r(),
+            "milestone headings need the blue accent"
+        );
+        assert_ne!(color(&progress.status), green);
+        assert_ne!(color(&progress.detail), green);
     }
 }
 

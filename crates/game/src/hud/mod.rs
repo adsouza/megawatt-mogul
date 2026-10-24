@@ -130,17 +130,17 @@ pub use self::planning_warnings::{
 pub use self::plant_list::{KindPlants, is_commitable, kinds_in_merit_order, plants_by_kind};
 pub use self::plant_panel::{
     MOST_PLANT_STATS, PLANT_LIST_MIN_ROWS, PlantCardModel, PlantListModel, PlantListRow,
-    PlantPanelForm, PlantPanelModel, SelectedPlant, TargetSlider, draw_plant_card, draw_plant_list,
-    draw_plant_panel, plant_card_model, plant_details_height, plant_list_min_height,
-    plant_list_model, plant_panel_model,
+    PlantPanelForm, PlantPanelModel, PlantStat, SelectedPlant, TargetSlider, draw_plant_card,
+    draw_plant_list, draw_plant_panel, plant_card_model, plant_details_height,
+    plant_list_min_height, plant_list_model, plant_panel_model,
 };
 pub use self::prompt::{PromptModel, draw_prompt, prompt_after, prompt_in_phase, prompt_model};
 pub use self::ramp_warnings::{
     RampWarningsModel, draw_ramp_warnings, ramp_warnings_for, ramp_warnings_model,
 };
 pub use self::review::{
-    MeritRow, REVIEW_MARGIN, ReviewModel, draw_review, review_applies, review_model,
-    review_model_for, review_rect,
+    MeritRow, REVIEW_MARGIN, ReviewModel, ReviewStat, ReviewTone, draw_review, review_applies,
+    review_model, review_model_for, review_rect,
 };
 pub use self::selection::Selection;
 pub use self::speed::{LastSpeed, SpeedModel, draw_speed, space_action, speed_model};

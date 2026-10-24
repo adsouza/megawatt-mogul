@@ -15,6 +15,7 @@ use domain::units::MegawattHours;
 
 use super::action::{ButtonModel, ToggleModel, UiAction, button, toggle_button};
 use super::plant_list::is_commitable;
+use super::theme::{TextTone, heading_color};
 use super::ui_state::UiState;
 use crate::l10n::{Localizer, Names, format};
 
@@ -167,9 +168,13 @@ pub fn draw_warnings(ui: &mut egui::Ui, model: &WarningsModel) -> Vec<UiAction> 
     let mut actions = Vec::new();
     let mut more_at = None;
     ui.horizontal(|ui| {
-        ui.strong(model.heading.as_str());
+        ui.label(
+            egui::RichText::new(&model.heading)
+                .strong()
+                .color(heading_color()),
+        );
         if let Some(none) = &model.none {
-            ui.weak(none.as_str());
+            ui.colored_label(TextTone::Positive.color(), none);
         }
         if let Some(first) = model.rows.first() {
             draw_row(ui, first, &mut actions);
@@ -195,7 +200,11 @@ pub fn draw_warnings(ui: &mut egui::Ui, model: &WarningsModel) -> Vec<UiAction> 
 }
 
 fn draw_row(ui: &mut egui::Ui, row: &WarningRow, actions: &mut Vec<UiAction>) {
-    ui.colored_label(ui.visuals().warn_fg_color, row.text.as_str());
+    let tone = match row.kind {
+        WarningKind::Shortfall => TextTone::Negative,
+        WarningKind::MinimumGeneration | WarningKind::DryHydro => TextTone::Caution,
+    };
+    ui.colored_label(tone.color(), &row.text);
     if let Some(show) = &row.show_hour {
         button(ui, show, actions);
     }

@@ -19,6 +19,7 @@ use domain::ids::{LineId, PlantId};
 use domain::session::DayPhase;
 use domain::time::SimMonth;
 
+use super::theme::{TextTone, heading_color};
 use super::top_bar::Stat;
 use crate::l10n::{Localizer, Names, format};
 
@@ -274,10 +275,10 @@ pub fn draw_construction(ui: &mut egui::Ui, model: &ConstructionModel) {
                 .spacing(egui::vec2(16.0, 4.0))
                 .show(ui, |ui| {
                     for row in &model.rows {
-                        ui.label(row.name.as_str());
+                        ui.colored_label(heading_color(), &row.name);
                         progress_bar(ui, row.progress);
-                        ui.label(row.months.as_str());
-                        ui.weak(row.in_service_text.as_str());
+                        ui.colored_label(TextTone::Information.color(), &row.months);
+                        ui.colored_label(TextTone::Caution.color(), &row.in_service_text);
                         ui.end_row();
                     }
                 });
@@ -293,22 +294,22 @@ fn progress_bar(ui: &mut egui::Ui, share: f32) {
 
 /// The card: the name as a heading, its status, the capacity, then the progress. No controls.
 pub fn draw_construction_card(ui: &mut egui::Ui, model: &ConstructionCardModel) {
-    ui.heading(model.name.as_str());
-    ui.weak(model.status.as_str());
+    ui.heading(egui::RichText::new(&model.name).color(heading_color()));
+    ui.colored_label(TextTone::Information.color(), &model.status);
     egui::Grid::new("construction_card_stats")
         .num_columns(2)
         .spacing(egui::vec2(8.0, 1.0))
         .min_row_height(0.0)
         .show(ui, |ui| {
             for stat in &model.stats {
-                ui.weak(stat.label.as_str());
-                ui.label(stat.value.as_str());
+                ui.colored_label(TextTone::Neutral.color(), &stat.label);
+                ui.colored_label(TextTone::Information.color(), &stat.value);
                 ui.end_row();
             }
         });
-    ui.label(model.months.as_str());
+    ui.colored_label(TextTone::Information.color(), &model.months);
     progress_bar(ui, model.progress);
-    ui.label(model.in_service.as_str());
+    ui.colored_label(TextTone::Caution.color(), &model.in_service);
 }
 
 #[cfg(test)]

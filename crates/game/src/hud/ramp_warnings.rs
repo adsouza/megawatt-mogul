@@ -8,6 +8,7 @@ use application::projections::RampWarning;
 use bevy_egui::egui;
 
 use super::action::UiAction;
+use super::theme::{TextTone, heading_color};
 use crate::l10n::{Localize, Localizer, format};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -54,12 +55,16 @@ pub fn ramp_warnings_for(
 
 /// The heading and the warnings, which wrap. It asks for nothing.
 pub fn draw_ramp_warnings(ui: &mut egui::Ui, model: &RampWarningsModel) -> Vec<UiAction> {
-    ui.strong(model.title.as_str());
+    ui.label(
+        egui::RichText::new(&model.title)
+            .strong()
+            .color(heading_color()),
+    );
     if let Some(empty) = &model.empty {
-        ui.weak(empty.as_str());
+        ui.colored_label(TextTone::Positive.color(), empty);
     }
     for row in &model.rows {
-        ui.colored_label(ui.visuals().warn_fg_color, row.as_str());
+        ui.colored_label(TextTone::Caution.color(), row);
     }
     Vec::new()
 }

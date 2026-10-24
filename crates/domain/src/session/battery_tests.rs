@@ -30,7 +30,7 @@ proptest::proptest! {
     #![proptest_config(proptest::test_runner::Config::with_cases(24))]
     #[test]
     fn battery_preview_preserves_reserves_for_a_later_generation_shortfall(
-        peak in 19usize..22,
+        peak in 16usize..22,
         energy in 10.0f64..120.0,
     ) {
         let mut parts = fixtures::tiny_region_parts();
@@ -58,7 +58,8 @@ proptest::proptest! {
         let mut worst = (0.0, 0u8);
         for (tick, point) in forecast.minutes.iter().enumerate() {
             let deficit = (point.demand.value() - thermal_capacity).max(0.0);
-            let expected = if tick >= 17 * 60 { deficit.min(storage_power).min(stored.max(0.0) * 60.0) } else { 0.0 };
+            let discharge_start = usize::from(storage_spec.battery.unwrap().discharge_start_hour) * 60;
+            let expected = if tick >= discharge_start { deficit.min(storage_power).min(stored.max(0.0) * 60.0) } else { 0.0 };
             proptest::prop_assert!((point.battery_discharge.value() - expected).abs() < 1e-6);
             proptest::prop_assert!((schedule.plants[&id].discharge[tick].value() - expected).abs() < 1e-6);
             stored += (point.battery_charge.value() * efficiency - expected) / 60.0;
@@ -168,6 +169,9 @@ fn battery_commands_are_typed_and_atomic() {
 #[test]
 fn battery_cycle_charges_delivers_and_reports_then_clears_at_midnight() {
     let (mut s, id) = storage_session();
+    let limits = s.region().spec(PlantKind::Battery).battery.unwrap();
+    let discharge_start = u32::from(limits.discharge_start_hour) * 60;
+    let charge_end = u32::from(limits.charge_end_hour) * 60;
     s.begin_operating().unwrap();
     let mut closed = None;
     let mut daily_close = 0;
@@ -184,10 +188,10 @@ fn battery_cycle_charges_delivers_and_reports_then_clears_at_midnight() {
                             .abs()
                             < 1e-7
                     );
-                    if tick < 1020 {
+                    if tick < discharge_start {
                         assert_eq!(summary.battery_discharge, Megawatts::ZERO);
                     }
-                    if tick >= 1080 {
+                    if tick >= charge_end {
                         assert_eq!(summary.battery_charge, Megawatts::ZERO);
                     }
                 }

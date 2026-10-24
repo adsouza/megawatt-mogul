@@ -69,6 +69,127 @@ fn context() -> egui::Context {
     ctx
 }
 
+fn hour_ticks(shapes: &[egui::epaint::ClippedShape], frame: Rect) -> Vec<(u32, Rect)> {
+    fn collect(shape: &egui::Shape, frame: Rect, ticks: &mut Vec<(u32, Rect)>) {
+        match shape {
+            egui::Shape::Vec(children) => {
+                for child in children {
+                    collect(child, frame, ticks);
+                }
+            }
+            egui::Shape::Text(text) => {
+                let rect = text.visual_bounding_rect();
+                if rect.top() >= frame.bottom()
+                    && rect.center().x >= frame.left() - 1.0
+                    && rect.center().x <= frame.right() + 1.0
+                    && let Ok(hour) = text.galley.text().parse::<u32>()
+                {
+                    assert!(hour <= 24, "unexpected hour {hour}");
+                    ticks.push((hour, rect));
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut ticks = Vec::new();
+    for clipped in shapes {
+        collect(&clipped.shape, frame, &mut ticks);
+    }
+    ticks.sort_by_key(|(hour, _)| *hour);
+    ticks
+}
+
+#[test]
+fn daily_chart_labels_every_hour_when_wide_and_keeps_narrow_ticks_apart() {
+    let model = full_key();
+    for width in [420.0, 1280.0] {
+        let ctx = context();
+        for _ in 0..3 {
+            paint(&ctx, &model, width, vec![])
+                .0
+                .drop_without_applying_deltas();
+        }
+        let (output, id) = paint(&ctx, &model, width, vec![]);
+        let frame = *PlotMemory::load(&ctx, id).unwrap().transform().frame();
+        let ticks = hour_ticks(&output.shapes, frame);
+        output.drop_without_applying_deltas();
+        if width == 1280.0 {
+            assert_eq!(
+                ticks.iter().map(|(hour, _)| *hour).collect::<Vec<_>>(),
+                (0..=24).collect::<Vec<_>>()
+            );
+        } else {
+            assert!(ticks.len() >= 3);
+        }
+        for pair in ticks.windows(2) {
+            assert!(
+                pair[0].1.right() + 4.0 < pair[1].1.left(),
+                "{width}: overlapping ticks {pair:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn operating_supply_labels_every_hour_beside_the_incident_column_and_battery_plot() {
+    use game::hud::{OperatingContent, OperatingTab, draw_operating_panel, operating_panel_model};
+
+    let logs = TempDir::new().unwrap();
+    let app = operating_hour_app(&logs, WESTERN);
+    let l10n = shipped_l10n();
+    let mut model = operating_panel_model(
+        &app.world().resource::<Session>().0,
+        &l10n,
+        OperatingTab::Supply,
+    )
+    .unwrap();
+    for has_storage in [false, true] {
+        let OperatingContent::Supply(chart) = &mut model.content else {
+            unreachable!()
+        };
+        chart.has_storage = has_storage;
+        chart.stored = vec![400.0; chart.x.len()];
+        let ctx = context();
+        let mut id = None;
+        let mut shapes = Vec::new();
+        for _ in 0..4 {
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1280.0, 200.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        id = Some(ui.make_persistent_id(Id::new("operating_supply")));
+                        assert!(draw_operating_panel(ui, &model).is_empty());
+                    });
+                },
+            );
+            shapes = output.shapes.clone();
+            output.drop_without_applying_deltas();
+        }
+        let frame = *PlotMemory::load(&ctx, id.unwrap())
+            .unwrap()
+            .transform()
+            .frame();
+        let ticks = hour_ticks(&shapes, frame);
+        assert_eq!(
+            ticks.iter().map(|(hour, _)| *hour).collect::<Vec<_>>(),
+            (0..=24).collect::<Vec<_>>(),
+            "has_storage={has_storage}, frame={frame:?}"
+        );
+        for pair in ticks.windows(2) {
+            assert!(
+                pair[0].1.right() < pair[1].1.left(),
+                "overlapping hour labels: {pair:?}"
+            );
+        }
+    }
+}
+
 fn assert_key_fits(model: &SupplyModel, width: f32) {
     let ctx = context();
     for _ in 0..3 {

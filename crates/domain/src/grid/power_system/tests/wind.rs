@@ -136,11 +136,11 @@ fn overlap_can_discharge_then_recharge_but_never_after_eighteen() {
     charge_inventory(&mut sys, id, 20);
     let p = sys.primary_supply();
     let deficit = p + Megawatts::new(100.0);
-    let flow = sys.propose_battery_flows(&region, april(), 1020, deficit, deficit);
+    let flow = sys.propose_battery_flows(&region, april(), 960, deficit, deficit);
     assert_eq!(flow[&id].discharge, Megawatts::new(100.0));
     sys.settle_batteries(&flow);
     let surplus_demand = (p - Megawatts::new(50.0)).max(Megawatts::ZERO);
-    for tick in [0, 1021, 1079] {
+    for tick in [0, 961, 1020, 1079] {
         let flow =
             sys.propose_battery_flows(&region, april(), tick, surplus_demand, surplus_demand);
         assert!(flow[&id].charge > Megawatts::ZERO);

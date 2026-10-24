@@ -127,7 +127,7 @@ fn charged_battery_toggle_save_with_enter_leave_load_and_resume_is_a_complete_pl
     use crate::player_workflows::{click, settle_save};
     use bevy_egui::egui;
     let (mut app, dir, id) = app_with_battery();
-    // Leave a real evening supply gap: reserve mode must not discharge just because it is 17:00.
+    // Leave a real evening supply gap: reserve mode must not discharge just because it is 16:00.
     let thermal: Vec<_> = app
         .world()
         .resource::<Session>()

@@ -1,9 +1,8 @@
 ---
 source: crates/application/tests/rules_version_guard.rs
-assertion_line: 204
 expression: "format!(\"SIM_RULES_VERSION={}\\n{}{}\", domain::SIM_RULES_VERSION,\noutcome_digest(), battery_outcome_digest())"
 ---
-SIM_RULES_VERSION=14
+SIM_RULES_VERSION=15
 month 2027-04 days=30 revenue=5122032993 fuel=-2182165733 start_up=0 fixed_om=-277000000 construction=-2000000000 net=662867260
   mwh demand=539161.368 served=539161.368 unserved=0.000 curtailed=0.000 imbalance=5.990 peak_mw=890.463 reliability=1.000000
   energy Coal=364324.918
@@ -142,4 +141,4 @@ ledger
   2027-12 FixedOm plant 10 -17000000
   2027-12 Construction plant 13 -2000000000
 company cash=210614334710 reliability=1.000000 satisfaction=93.9816 tariff=92.2219 strikes=1
-battery month_mwh input=26699.888 delivered=155.288 charge_loss=2669.989 discharge_loss=0.000 unused=23874.612 served=539161.368 fuel_cents=-2262367764
+battery month_mwh input=26734.066 delivered=186.031 charge_loss=2673.407 discharge_loss=0.000 unused=23874.629 served=539161.368 fuel_cents=-2262435978

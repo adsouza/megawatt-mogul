@@ -75,7 +75,7 @@ stands for.
   construction, company and regulator state still advances by calendar month.
 - **Batteries use a daily cycle (§20, amended by §25).** Every played day starts empty. They may
   charge immediately from 00:00 until 18:00, independently of daylight, cover evening generation
-  gaps from 17:00, and report then clear
+  gaps from 16:00 (§27), and report then clear
   unused energy at midnight. Their energy flows and midnight remainder receive the daily accounting
   weight; instantaneous power, energy capacity and state of charge do not.
 - **Seasons change visibly every few played days.** Months drive the demand shape, solar
@@ -3323,3 +3323,28 @@ design goal of building only what the reserve margin justifies.
 - **HUD.** The endpoint picker's unavailable state, the toast and the satisfaction term display
   through the real dispatch and egui passes, at the minimum window size and above the 4.5:1
   contrast floor. Localisation coverage passes.
+
+
+## 27. Amendment A13: Battery discharge from 16:00 (2026-10-24)
+
+**Status:** Implemented under `SIM_RULES_VERSION` **15**. This supersedes the default
+17:00 discharge start in §§20, 23 and 25 for new games. Both shipped regions and the current
+fixtures author `discharge_start_hour: 16`.
+
+- A charged, connected, enabled battery may cover a real generation deficit from **16:00
+  exactly** through 24:00. It cannot discharge at 15:59. Having available generation still
+  means holding reserves rather than displacing that generation.
+- Charging stays eligible from 00:00 until **18:00 exactly**. During 16:00–18:00, charging
+  and discharging remain mutually exclusive, chosen from the real primary-generation balance.
+  The midnight inventory report/reset, efficiencies, ratings and reserve accreditation stay
+  as specified previously.
+- Live dispatch, Planning forecasts and shortfall checks read the same configured boundary.
+  Regression checks cover 15:59/16:00, an actual ramp gap at 16:00, early-evening forecast
+  deficits and discharge followed by recharging before the existing 18:00 cutoff.
+- This is a region-data tuning change; the generalized battery-window algorithm and region/
+  portable schemas are unchanged. The rules guard records the changed storage energy and fuel
+  outcomes under rules 15.
+- Existing saves retain their exact archived region bytes and battery timings, including a
+  17:00 window where that was saved. Loading does not silently rewrite tuning or recorded
+  state. Battery cards and build help render their actual configured charging and discharge
+  times, so both old saves and custom regions show accurate windows.

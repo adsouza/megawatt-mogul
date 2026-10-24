@@ -12,6 +12,7 @@ use domain::time::{SimMonth, TICKS_PER_HOUR};
 use domain::units::{Megawatts, Ratio};
 
 use super::construction::in_service_month;
+use super::theme::{TextTone, heading_color};
 use super::top_bar::Stat;
 use crate::l10n::{Localizer, Names, format};
 
@@ -27,6 +28,7 @@ pub struct CityCardModel {
     /// `Connected` or `Not connected`.
     pub connection: String,
     pub connected: bool,
+    pub cutting_load: bool,
     /// Base load and the peak; in Operating, for a connected city, the demand and the load served
     /// now, and the share cut while an outage or a shed is on.
     pub stats: Vec<Stat>,
@@ -82,6 +84,10 @@ pub fn city_card_model(game: &Game, l10n: &Localizer, city: CityId) -> Option<Ci
             "city-not-connected"
         }),
         connected: detail.connected,
+        cutting_load: detail
+            .demand_now
+            .zip(detail.served_now)
+            .is_some_and(|(demand, served)| cut_share(demand, served).is_some()),
         stats,
         hint: (!detail.connected).then(|| match connected_from(game, city) {
             Some(month) => l10n.args(
@@ -111,16 +117,27 @@ fn cut_share(demand: Megawatts, served: Megawatts) -> Option<Ratio> {
 /// The card: the name as a heading, the connection, then the figures and the hint. It has no
 /// controls.
 pub fn draw_city_card(ui: &mut egui::Ui, model: &CityCardModel) {
-    ui.heading(model.name.as_str());
-    ui.weak(model.connection.as_str());
+    ui.heading(egui::RichText::new(&model.name).color(heading_color()));
+    let connection = if model.connected {
+        TextTone::Positive
+    } else {
+        TextTone::Neutral
+    };
+    ui.colored_label(connection.color(), &model.connection);
     egui::Grid::new("city_card_stats")
         .num_columns(2)
         .spacing(egui::vec2(8.0, 1.0))
         .min_row_height(0.0)
         .show(ui, |ui| {
-            for stat in &model.stats {
-                ui.weak(stat.label.as_str());
-                ui.label(stat.value.as_str());
+            for (index, stat) in model.stats.iter().enumerate() {
+                ui.colored_label(TextTone::Neutral.color(), &stat.label);
+                let tone = match index {
+                    4 if model.cutting_load => TextTone::Negative,
+                    3 if model.cutting_load => TextTone::Caution,
+                    3 => TextTone::Positive,
+                    _ => TextTone::Information,
+                };
+                ui.colored_label(tone.color(), &stat.value);
                 ui.end_row();
             }
         });

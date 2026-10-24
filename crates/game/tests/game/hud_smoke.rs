@@ -311,6 +311,52 @@ fn an_empty_or_missing_regions_folder_offers_back() {
 }
 
 #[test]
+fn top_bar_colors_show_standing_and_keep_labels_readable() {
+    let l10n = shipped_l10n();
+    let game = eastern_game();
+    let mut model = top_bar_model(&game, &Persistence::default(), &l10n);
+    let ctx = egui::Context::default();
+    ctx.set_visuals(game::hud::theme::visuals());
+    let mut rendered = Vec::new();
+    for tone in [
+        game::hud::theme::TextTone::Positive,
+        game::hud::theme::TextTone::Caution,
+        game::hud::theme::TextTone::Negative,
+    ] {
+        model.score_tones = [tone; 4];
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1920.0, 800.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                draw_top_bar(ui, &model);
+            },
+        );
+        let texts = crate::contrast::painted_texts(&output.shapes);
+        assert!(crate::contrast::check_paint(output) > 0);
+        let color = |label: &str| texts.iter().find(|text| text.text == label).unwrap().color;
+        let status_color = color(&model.cash.value);
+        for stat in [
+            &model.cash,
+            &model.reliability,
+            &model.satisfaction,
+            &model.strikes,
+        ] {
+            assert_eq!(color(&stat.value), status_color);
+            assert_ne!(color(&stat.label), status_color);
+        }
+        rendered.push(status_color);
+    }
+    assert_ne!(rendered[0], rendered[1]);
+    assert_ne!(rendered[1], rendered[2]);
+    assert_ne!(rendered[0], rendered[2]);
+}
+
+#[test]
 fn the_top_bar_draws_a_real_game_and_its_menu_button_asks_first() {
     let l10n = shipped_l10n();
     let game = eastern_game();

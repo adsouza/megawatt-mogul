@@ -35,6 +35,47 @@ fn review_app(logs: &TempDir, region: &str) -> App {
 }
 
 #[test]
+fn review_colors_distinguish_headings_income_costs_and_supporting_text() {
+    let logs = TempDir::new().unwrap();
+    let mut app = review_app(&logs, EASTERN);
+    let pass = EguiPass::attach(&mut app);
+    pass.settled(&mut app, 1920.0, 1080.0);
+    let model = review_model(
+        &app.world().resource::<Session>().0,
+        GameOverView::Summary,
+        &shipped_l10n(),
+    )
+    .unwrap();
+    let output = pass.paint_with(&mut app, 1920.0, 1080.0, vec![]);
+    let texts = crate::contrast::painted_texts(&output.shapes);
+    let color = |label: &str| {
+        texts
+            .iter()
+            .find(|text| text.text == label)
+            .unwrap_or_else(|| panic!("missing painted text {label}"))
+            .color
+    };
+    let heading = color(&model.pnl_heading);
+    let label = color(&model.pnl[0].label);
+    let income = color(&model.pnl[0].value);
+    let cost = color(&model.pnl[1].value);
+    let note = color(&model.days_note);
+    let month = color(&model.month);
+    // Consume texture deltas before making assertions, including contrast failures.
+    assert!(crate::contrast::check_paint(output) > 0);
+    assert_ne!(heading, label, "headings need an accent color");
+    assert_ne!(
+        income, cost,
+        "cash inflows and outflows need distinct colors"
+    );
+    assert_ne!(
+        heading, note,
+        "supporting notes should recede from headings"
+    );
+    assert_ne!(heading, month, "the date should have its own accent");
+}
+
+#[test]
 fn review_has_an_opaque_background_and_no_hidden_map_controls() {
     let logs = TempDir::new().unwrap();
     let mut app = review_app(&logs, EASTERN);

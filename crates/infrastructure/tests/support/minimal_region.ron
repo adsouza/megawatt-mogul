@@ -119,7 +119,7 @@
          fixed_om_usd_per_month: 100000, capital_cost_usd: 100000000, build_months: 2,
          capacity_credit: 0.0, book_life_months: 180, siting: Anywhere,
          battery: Some((charge_mw: 200.0, energy_mwh: 800.0, charge_efficiency: 0.9,
-                        discharge_efficiency: 1.0, discharge_start_hour: 17, charge_end_hour: 18))),
+                        discharge_efficiency: 1.0, discharge_start_hour: 16, charge_end_hour: 18))),
     ],
     cities: [
         (id: 1, name_key: "city-tiny-1", lon: 6.5, lat: 3.5, base_load_mw: 600.0),

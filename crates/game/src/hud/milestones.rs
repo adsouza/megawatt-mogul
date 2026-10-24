@@ -9,6 +9,7 @@ use bevy_egui::{EguiContexts, egui};
 
 use super::action::{ActionSink, ButtonModel, UiAction, button, dispatch};
 use super::layout::HudArea;
+use super::theme::{TextTone, heading_color};
 use crate::l10n::{Localize, Localizer, format};
 use crate::sim::Session;
 
@@ -87,17 +88,25 @@ pub fn draw_milestones(ui: &mut egui::Ui, model: &MilestonesModel) -> Vec<UiActi
     let mut actions = Vec::new();
     ui.set_width(MILESTONES_WIDTH);
     for row in &model.rows {
-        ui.strong(row.name.as_str());
+        let name_color = if row.reached {
+            TextTone::Positive.color()
+        } else {
+            heading_color()
+        };
+        let status = if row.reached {
+            TextTone::Positive
+        } else {
+            TextTone::Neutral
+        };
+        let detail = if row.reached {
+            TextTone::Positive
+        } else {
+            TextTone::Information
+        };
+        ui.label(egui::RichText::new(&row.name).strong().color(name_color));
         ui.horizontal_wrapped(|ui| {
-            if row.reached {
-                ui.colored_label(
-                    super::theme::status_color(ui.visuals().selection.bg_fill),
-                    row.status.as_str(),
-                );
-            } else {
-                ui.label(row.status.as_str());
-            }
-            ui.weak(row.detail.as_str());
+            ui.colored_label(status.color(), &row.status);
+            ui.colored_label(detail.color(), &row.detail);
         });
         ui.add_space(4.0);
     }
@@ -140,7 +149,7 @@ pub(super) fn milestones_overlay(
                 v[1].clamp(0.0, (ctx.content_rect().bottom() - 80.0).max(0.0)),
             )
         });
-    let actions = egui::Window::new(model.title.as_str())
+    let actions = egui::Window::new(egui::RichText::new(&model.title).color(heading_color()))
         .id(egui::Id::new("milestones"))
         .order(egui::Order::Foreground)
         .collapsible(false)

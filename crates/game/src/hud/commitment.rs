@@ -18,6 +18,7 @@ use domain::units::Megawatts;
 use super::action::{ButtonModel, ToggleModel, UiAction, button, toggle_button};
 use super::map::{Rgb, color32, kind_color};
 use super::plant_list::plants_by_kind;
+use super::theme::{TextTone, heading_color};
 use super::ui_state::{CommitDraft, CommitmentForm, UiState};
 use crate::l10n::{Localizer, Names, format};
 
@@ -441,7 +442,7 @@ fn draw_row(
         ui.spacing_mut().item_spacing.x = 4.0;
         ui.add_sized(
             [NAME_WIDTH, ROW_HEIGHT],
-            egui::Label::new(row.name.as_str()).truncate(),
+            egui::Label::new(egui::RichText::new(&row.name).color(heading_color())).truncate(),
         );
         ui.scope(|ui| {
             ui.spacing_mut().item_spacing.x = 1.0;
@@ -478,9 +479,9 @@ fn draw_row(
         }
         let range = egui::RichText::new(target.range.as_str());
         if target.valid {
-            ui.weak(range);
+            ui.colored_label(TextTone::Information.color(), range);
         } else {
-            ui.colored_label(ui.visuals().warn_fg_color, range);
+            ui.colored_label(TextTone::Negative.color(), range);
         }
         if row.dirty {
             button(ui, &row.apply, actions);
@@ -490,7 +491,7 @@ fn draw_row(
     if let Some(budget) = &row.budget {
         ui.horizontal(|ui| {
             ui.add_space(NAME_WIDTH + 4.0);
-            ui.weak(budget.as_str());
+            ui.colored_label(TextTone::Information.color(), budget);
         });
     }
 }

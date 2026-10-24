@@ -14,6 +14,7 @@ use domain::units::{Hertz, Megawatts};
 
 use super::action::UiAction;
 use super::map::{Rgb, color32};
+use super::theme::{TextTone, heading_color};
 use super::top_bar::Stat;
 use crate::l10n::{Localizer, format};
 
@@ -216,41 +217,45 @@ fn draw_dial(ui: &mut egui::Ui, model: &FrequencyModel) {
 
 /// The gauge. It asks for nothing.
 pub fn draw_frequency(ui: &mut egui::Ui, model: &FrequencyModel) -> Vec<UiAction> {
+    let tone = if model.blackout {
+        TextTone::Negative
+    } else {
+        match model.dial.band {
+            FrequencyBand::Normal => TextTone::Positive,
+            FrequencyBand::Low | FrequencyBand::High => TextTone::Caution,
+            FrequencyBand::Shedding => TextTone::Negative,
+        }
+    };
     ui.horizontal(|ui| {
-        ui.strong(model.title.as_str());
-        ui.colored_label(
-            super::theme::status_color(color32(model.dial.color)),
-            model.deviation.as_str(),
+        ui.label(
+            egui::RichText::new(&model.title)
+                .strong()
+                .color(heading_color()),
         );
+        ui.colored_label(tone.color(), model.deviation.as_str());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if model.blackout {
-                ui.colored_label(
-                    super::theme::status_color(color32(SHEDDING_COLOR)),
-                    model.mode.as_str(),
-                );
+                ui.colored_label(TextTone::Negative.color(), model.mode.as_str());
             } else {
-                ui.label(model.mode.as_str());
+                ui.colored_label(TextTone::Positive.color(), &model.mode);
             }
         });
     });
     draw_dial(ui, model);
     ui.horizontal(|ui| {
-        ui.weak(model.imbalance.label.as_str());
-        ui.label(model.imbalance.value.as_str());
+        ui.colored_label(TextTone::Neutral.color(), &model.imbalance.label);
+        ui.colored_label(tone.color(), &model.imbalance.value);
     });
     if let Some(outage) = &model.outage {
         ui.horizontal_wrapped(|ui| {
-            ui.colored_label(ui.visuals().warn_fg_color, outage.text.as_str());
+            ui.colored_label(TextTone::Caution.color(), &outage.text);
             if let Some(ordered) = &outage.ordered {
                 ui.weak(ordered.as_str());
             }
         });
     }
     if let Some(shed) = &model.shed {
-        ui.colored_label(
-            super::theme::status_color(color32(SHEDDING_COLOR)),
-            shed.as_str(),
-        );
+        ui.colored_label(TextTone::Negative.color(), shed.as_str());
     }
     Vec::new()
 }

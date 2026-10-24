@@ -7,6 +7,7 @@ use bevy_egui::egui;
 use domain::session::Incident;
 
 use super::action::UiAction;
+use super::theme::{TextTone, heading_color};
 use crate::l10n::{LocalizeWith, Localizer, Names, format};
 
 /// The most incidents the ticker lists.
@@ -17,6 +18,7 @@ pub struct IncidentsModel {
     pub title: String,
     /// `06:12: Protection shed 300 MW of load ...`, newest first.
     pub rows: Vec<String>,
+    pub row_tones: Vec<TextTone>,
     /// Shown when nothing has happened yet.
     pub empty: Option<String>,
 }
@@ -35,39 +37,56 @@ pub fn incidents_model(game: &Game, l10n: &Localizer) -> IncidentsModel {
 
 /// The ticker for `incidents`, oldest first as the day recorded them.
 pub fn incidents_for(incidents: &[Incident], names: &Names, l10n: &Localizer) -> IncidentsModel {
-    let rows: Vec<String> = incidents
+    let (rows, row_tones): (Vec<_>, Vec<_>) = incidents
         .iter()
         .rev()
         .take(MAX_INCIDENTS)
         .map(|incident| {
-            l10n.args(
+            let text = l10n.args(
                 "incident-row",
                 &[
                     ("time", format::clock(incident.tick).into()),
                     ("incident", incident.kind.localize_with(l10n, names).into()),
                 ],
-            )
+            );
+            (text, incident_tone(incident.kind))
         })
-        .collect();
+        .unzip();
     IncidentsModel {
         title: l10n.text("incidents-title"),
         empty: rows.is_empty().then(|| l10n.text("incidents-none")),
         rows,
+        row_tones,
+    }
+}
+
+pub(crate) fn incident_tone(kind: domain::session::IncidentKind) -> TextTone {
+    use domain::session::IncidentKind;
+    match kind {
+        IncidentKind::BlackoutRestored => TextTone::Positive,
+        IncidentKind::RotatingOutage { .. } => TextTone::Caution,
+        IncidentKind::Blackout
+        | IncidentKind::LoadShed { .. }
+        | IncidentKind::OverFrequencyTrip { .. } => TextTone::Negative,
     }
 }
 
 /// The heading and the incidents. It asks for nothing.
 pub fn draw_incidents(ui: &mut egui::Ui, model: &IncidentsModel) -> Vec<UiAction> {
-    ui.strong(model.title.as_str());
+    ui.label(
+        egui::RichText::new(&model.title)
+            .strong()
+            .color(heading_color()),
+    );
     egui::ScrollArea::vertical()
         .id_salt("operating_incidents")
         .auto_shrink([false, false])
         .show(ui, |ui| {
             if let Some(empty) = &model.empty {
-                ui.weak(empty.as_str());
+                ui.colored_label(TextTone::Positive.color(), empty);
             }
-            for row in &model.rows {
-                ui.label(row.as_str());
+            for (row, tone) in model.rows.iter().zip(&model.row_tones) {
+                ui.colored_label(tone.color(), row);
             }
         });
     Vec::new()

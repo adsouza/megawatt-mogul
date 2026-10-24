@@ -52,17 +52,21 @@ pub fn supply_history_model(
 pub fn draw_supply_history(ui: &mut egui::Ui, model: &SupplyHistoryModel) -> Vec<UiAction> {
     let mut actions = Vec::new();
     let Some(chart) = &model.chart else {
-        ui.label(&model.empty);
+        ui.colored_label(super::theme::TextTone::Neutral.color(), &model.empty);
         return actions;
     };
     ui.horizontal(|ui| {
-        ui.label(&model.month_label).on_hover_text(&model.note);
+        ui.colored_label(super::theme::TextTone::Neutral.color(), &model.month_label)
+            .on_hover_text(&model.note);
         let selected = model
             .months
             .iter()
             .find(|(month, _)| Some(*month) == model.selected);
         egui::ComboBox::from_id_salt("supply_history_month")
-            .selected_text(selected.map_or("", |(_, label)| label.as_str()))
+            .selected_text(
+                egui::RichText::new(selected.map_or("", |(_, label)| label.as_str()))
+                    .color(super::theme::TextTone::Caution.color()),
+            )
             .show_ui(ui, |ui| {
                 for (month, label) in &model.months {
                     if ui

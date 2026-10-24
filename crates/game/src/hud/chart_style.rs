@@ -4,8 +4,8 @@ use std::ops::RangeInclusive;
 
 use bevy_egui::egui::{self, Color32, Pos2, Shape, Ui};
 use egui_plot::{
-    AxisHints, BarChart, ClosestElem, Cursor, LabelFormatterFn, PlotBounds, PlotConfig,
-    PlotGeometry, PlotItem, PlotItemBase, PlotMemory, PlotTransform,
+    AxisHints, BarChart, ClosestElem, Cursor, GridInput, GridMark, LabelFormatterFn, PlotBounds,
+    PlotConfig, PlotGeometry, PlotItem, PlotItemBase, PlotMemory, PlotTransform,
 };
 
 use super::theme::{LABEL_BACKING, LABEL_TEXT, TEXT};
@@ -15,6 +15,37 @@ pub(super) fn x_axis(label: &str) -> AxisHints<'static> {
         .label(label.to_owned())
         .tick_label_color(TEXT)
         .label_spacing(egui::emath::Rangef::new(60.0, 60.0))
+}
+
+/// A day uses hours rather than decimal grid intervals. Measure a two-digit label so adjacent
+/// hourly numbers appear whenever they fit, at full contrast. Extra padding would hide alternate
+/// hours in the live chart when its battery plot and incident column are both visible.
+pub(super) fn hour_axis(ui: &Ui, label: &str) -> AxisHints<'static> {
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let width = ui
+        .painter()
+        .layout_no_wrap("24".to_owned(), font, TEXT)
+        .size()
+        .x;
+    x_axis(label).label_spacing(egui::emath::Rangef::new(width, width))
+}
+
+pub(super) fn hour_grid(_input: GridInput) -> Vec<GridMark> {
+    (0..=24)
+        .map(|hour| GridMark {
+            value: f64::from(hour),
+            // Coarser marks keep useful labels visible as the plot narrows.
+            step_size: if hour % 12 == 0 {
+                12.0
+            } else if hour % 6 == 0 {
+                6.0
+            } else if hour % 2 == 0 {
+                2.0
+            } else {
+                1.0
+            },
+        })
+        .collect()
 }
 
 pub(super) fn y_axis(label: &str) -> AxisHints<'static> {

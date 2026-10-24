@@ -9,6 +9,7 @@ use domain::time::SimMonth;
 
 use super::action::{ActionSink, ButtonModel, Prompt, UiAction, button, dispatch};
 use super::layout::HudArea;
+use super::theme::{TextTone, heading_color};
 use crate::l10n::{Localize, Localizer, format};
 use crate::sim::{PersistAction, Persistence, Session};
 
@@ -39,6 +40,8 @@ pub struct TopBarModel {
     pub reliability: Stat,
     pub satisfaction: Stat,
     pub strikes: Stat,
+    /// Cash, reliability, satisfaction and strikes, classified against this region's rules.
+    pub score_tones: [TextTone; 4],
     /// Set once the command log has failed: the game goes on, but its recording is incomplete
     /// (Review Focus 4). It stays for the rest of the game.
     pub recording_stopped: Option<String>,
@@ -115,6 +118,7 @@ pub fn top_bar_model(game: &Game, persistence: &Persistence, l10n: &Localizer) -
                 ],
             ),
         ),
+        score_tones: score_tones(&company, session.region().regulator()),
         recording_stopped,
         autosave_failed,
         warnings,
@@ -145,6 +149,50 @@ pub fn top_bar_model(game: &Game, persistence: &Persistence, l10n: &Localizer) -
             UiAction::Prompt(Some(Prompt::LeaveGame)),
         ),
     }
+}
+
+fn score_tones(
+    company: &domain::session::CompanyView,
+    regulator: &domain::region::RegulatorParams,
+) -> [TextTone; 4] {
+    let cash = if company.cash.is_negative() {
+        TextTone::Negative
+    } else if company.cash == domain::units::Money::ZERO {
+        TextTone::Caution
+    } else {
+        TextTone::Positive
+    };
+    // The rolling score uses the region's target and monthly shortfall threshold as signposts.
+    // A red score signals poor standing; it does not claim a new strike has been issued.
+    let reliability = if company.reliability >= regulator.reliability_target {
+        TextTone::Positive
+    } else if company.reliability.value() < 1.0 - regulator.strike_threshold.value() {
+        TextTone::Negative
+    } else {
+        TextTone::Caution
+    };
+    // Serious dissatisfaction consumes all the base return's headroom above its minimum,
+    // considering the satisfaction contribution alone.
+    let satisfaction = if company.satisfaction >= regulator.satisfaction_target {
+        TextTone::Positive
+    } else if regulator.base_return.value()
+        + domain::regulation::satisfaction_adjustment(company.satisfaction, regulator)
+        <= regulator.min_return.value()
+    {
+        TextTone::Negative
+    } else {
+        TextTone::Caution
+    };
+    let strikes = if company.licence == domain::regulation::Licence::Revoked {
+        TextTone::Negative
+    } else if company.strikes == 0 {
+        TextTone::Positive
+    } else if company.strikes.saturating_add(1) >= regulator.strikes_to_revoke {
+        TextTone::Negative
+    } else {
+        TextTone::Caution
+    };
+    [cash, reliability, satisfaction, strikes]
 }
 
 /// One warning is shown as itself; two or more as a count. Each warning is the short form the
@@ -178,19 +226,30 @@ fn warnings_banner(
 pub fn draw_top_bar(ui: &mut egui::Ui, model: &TopBarModel) -> Vec<UiAction> {
     let mut actions = Vec::new();
     ui.horizontal(|ui| {
-        ui.strong(model.date.as_str());
-        ui.label(model.season.as_str());
+        ui.label(
+            egui::RichText::new(&model.date)
+                .strong()
+                .color(TextTone::Caution.color()),
+        );
+        ui.colored_label(TextTone::Neutral.color(), &model.season);
         ui.separator();
-        ui.label(model.phase.as_str());
-        for stat in [
+        ui.colored_label(heading_color(), &model.phase);
+        for (stat, tone) in [
             &model.cash,
             &model.reliability,
             &model.satisfaction,
             &model.strikes,
-        ] {
+        ]
+        .into_iter()
+        .zip(model.score_tones)
+        {
             ui.separator();
-            ui.weak(stat.label.as_str());
-            ui.strong(stat.value.as_str());
+            ui.colored_label(TextTone::Neutral.color(), &stat.label);
+            ui.label(
+                egui::RichText::new(&stat.value)
+                    .strong()
+                    .color(tone.color()),
+            );
         }
         // Right to left: Menu and Milestones are laid out first, so they always keep their
         // place, and the warning takes only the space between them and the scores. It is cut
@@ -205,7 +264,7 @@ pub fn draw_top_bar(ui: &mut egui::Ui, model: &TopBarModel) -> Vec<UiAction> {
             button(ui, &model.milestones, &mut actions);
             if let Some(warnings) = &model.warnings {
                 let text =
-                    egui::RichText::new(warnings.text.as_str()).color(ui.visuals().warn_fg_color);
+                    egui::RichText::new(warnings.text.as_str()).color(TextTone::Caution.color());
                 ui.add(
                     egui::Label::new(text)
                         .truncate()
@@ -268,8 +327,90 @@ mod tests {
             model.satisfaction.value,
             format::score(company.satisfaction)
         );
+        assert_eq!(
+            model.score_tones,
+            [
+                TextTone::Positive,
+                TextTone::Positive,
+                TextTone::Caution,
+                TextTone::Positive
+            ]
+        );
         assert_eq!(model.recording_stopped, None);
         assert_eq!(l10n.problems(), vec![]);
+    }
+
+    #[test]
+    fn top_bar_scores_use_region_targets_and_remaining_strikes() {
+        use domain::{
+            regulation::Licence,
+            units::{Money, Ratio},
+        };
+
+        let game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let mut company = game.session().company_view();
+        let mut regulator = game.session().region().regulator().clone();
+        // Different targets prove these are region data, not shipped constants.
+        regulator.reliability_target = Ratio::new(0.98).unwrap();
+        regulator.strike_threshold = Ratio::new(0.04).unwrap();
+        regulator.satisfaction_target = 80.0;
+        regulator.strikes_to_revoke = 5;
+        company.cash = Money::ZERO;
+        company.reliability = Ratio::new(0.97).unwrap();
+        company.satisfaction = 70.0;
+        company.strikes = 3;
+        assert_eq!(score_tones(&company, &regulator), [TextTone::Caution; 4]);
+
+        company.cash = Money::from_cents(-1);
+        company.reliability = Ratio::new(0.95).unwrap();
+        company.satisfaction = 0.0;
+        company.strikes = 4;
+        assert_eq!(score_tones(&company, &regulator), [TextTone::Negative; 4]);
+
+        company.cash = Money::from_cents(1);
+        company.reliability = regulator.reliability_target;
+        company.satisfaction = regulator.satisfaction_target;
+        company.strikes = 0;
+        assert_eq!(score_tones(&company, &regulator), [TextTone::Positive; 4]);
+        company.licence = Licence::Revoked;
+        assert_eq!(score_tones(&company, &regulator)[3], TextTone::Negative);
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(32))]
+        #[test]
+        fn worsening_top_bar_scores_never_improves_their_color(
+            cash in -1_000_000i64..1_000_000,
+            loss in 0i64..1_000_000,
+            reliability in 0.0f64..=1.0,
+            other_reliability in 0.0f64..=1.0,
+            satisfaction in 0.0f64..=100.0,
+            other_satisfaction in 0.0f64..=100.0,
+            strikes in 0u8..=3,
+            other_strikes in 0u8..=3,
+        ) {
+            let game = eastern_game(Box::new(InMemoryCommandLog::default()));
+            let mut company = game.session().company_view();
+            company.cash = domain::units::Money::from_cents(cash);
+            company.reliability = domain::units::Ratio::new(reliability).unwrap();
+            company.satisfaction = satisfaction;
+            company.strikes = strikes;
+            let regulator = game.session().region().regulator();
+            let before = score_tones(&company, regulator);
+            company.cash = domain::units::Money::from_cents(cash - loss);
+            company.reliability = domain::units::Ratio::new(reliability.min(other_reliability)).unwrap();
+            company.satisfaction = satisfaction.min(other_satisfaction);
+            company.strikes = strikes.max(other_strikes);
+            let rank = |tone| match tone {
+                TextTone::Positive => 0,
+                TextTone::Caution => 1,
+                TextTone::Negative => 2,
+                _ => panic!("scores need a status color"),
+            };
+            for (before, after) in before.into_iter().zip(score_tones(&company, regulator)) {
+                proptest::prop_assert!(rank(after) >= rank(before));
+            }
+        }
     }
 
     #[test]

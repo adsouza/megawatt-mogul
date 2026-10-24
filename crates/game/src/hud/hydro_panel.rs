@@ -13,6 +13,7 @@ use egui_plot::{Bar, BarChart, Legend, Plot};
 
 use super::action::UiAction;
 use super::map::{Rgb, color32, kind_color};
+use super::theme::TextTone;
 use crate::l10n::{Localizer, Names, format};
 
 /// One scheduled plant.
@@ -113,9 +114,9 @@ pub fn draw_hydro(ui: &mut egui::Ui, model: &HydroModel) -> Vec<UiAction> {
                 .show(ui, |ui| {
                     for row in &model.rows {
                         if row.has_level {
-                            ui.label(row.level.as_str());
+                            ui.colored_label(TextTone::Information.color(), &row.level);
                         } else {
-                            ui.colored_label(ui.visuals().warn_fg_color, row.level.as_str());
+                            ui.colored_label(TextTone::Caution.color(), &row.level);
                         }
                     }
                     ui.weak(model.frozen_note.as_str());

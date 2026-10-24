@@ -7,6 +7,7 @@ use bevy_egui::egui;
 use domain::time::SimMonth;
 
 use super::action::UiAction;
+use super::theme::{TextTone, heading_color};
 use super::top_bar::Stat;
 use crate::l10n::{Localizer, format};
 
@@ -15,10 +16,12 @@ pub struct TariffModel {
     pub title: String,
     /// The tariff and the allowed return in force now.
     pub current: Vec<Stat>,
+    pub current_tones: [TextTone; 2],
     pub review_heading: String,
     /// The projected review: allowed return, reserve margin, and the capital it would hold,
     /// release or write off.
     pub review: Vec<Stat>,
+    pub review_tones: [TextTone; 6],
     /// How long until the review runs: `The December review is 9 months away.`
     pub timing: String,
 }
@@ -32,6 +35,7 @@ pub fn months_until_review(month: SimMonth) -> u32 {
 pub fn tariff_model(game: &Game, l10n: &Localizer) -> TariffModel {
     let session = game.session();
     let company = session.company_view();
+    let regulator = session.region().regulator();
     // The projection is refreshed after every command that moves the estimate; the query is the
     // same figure, so it only stands in if the projection has not been seeded.
     let estimate = game
@@ -44,6 +48,22 @@ pub fn tariff_model(game: &Game, l10n: &Localizer) -> TariffModel {
         label: l10n.text(key),
         value,
     };
+    let return_tone = |value: domain::units::Ratio| {
+        if value <= regulator.min_return {
+            TextTone::Negative
+        } else if value < regulator.base_return {
+            TextTone::Caution
+        } else {
+            TextTone::Positive
+        }
+    };
+    let nonzero = |amount: domain::units::Money, tone| {
+        if amount > domain::units::Money::ZERO {
+            tone
+        } else {
+            TextTone::Neutral
+        }
+    };
     TariffModel {
         title: l10n.text("tariff-title"),
         current: vec![
@@ -53,6 +73,7 @@ pub fn tariff_model(game: &Game, l10n: &Localizer) -> TariffModel {
                 format::percent(company.allowed_return),
             ),
         ],
+        current_tones: [TextTone::Information, return_tone(company.allowed_return)],
         review_heading: l10n.text("tariff-review-heading"),
         review: vec![
             stat(
@@ -80,6 +101,26 @@ pub fn tariff_model(game: &Game, l10n: &Localizer) -> TariffModel {
                 format::money(estimate.capital_at_risk),
             ),
         ],
+        review_tones: [
+            return_tone(estimate.projected_return),
+            if session.satisfaction_return_adjustment() > 0.0 {
+                TextTone::Positive
+            } else if session.satisfaction_return_adjustment() < 0.0 {
+                TextTone::Caution
+            } else {
+                TextTone::Neutral
+            },
+            if estimate.reserve_margin >= regulator.reserve_margin.value() {
+                TextTone::Positive
+            } else if estimate.reserve_margin < 0.0 {
+                TextTone::Negative
+            } else {
+                TextTone::Caution
+            },
+            nonzero(estimate.capital_to_hold, TextTone::Caution),
+            nonzero(estimate.capital_to_release, TextTone::Positive),
+            nonzero(estimate.capital_at_risk, TextTone::Negative),
+        ],
         timing: l10n.args(
             "tariff-review-months",
             &[(
@@ -93,24 +134,36 @@ pub fn tariff_model(game: &Game, l10n: &Localizer) -> TariffModel {
 pub fn draw_tariff(ui: &mut egui::Ui, model: &TariffModel) -> Vec<UiAction> {
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
-            ui.strong(model.title.as_str());
-            stat_grid(ui, "tariff_current", &model.current);
+            ui.label(
+                egui::RichText::new(&model.title)
+                    .strong()
+                    .color(heading_color()),
+            );
+            stat_grid(ui, "tariff_current", &model.current, &model.current_tones);
         });
         ui.add_space(24.0);
         ui.vertical(|ui| {
-            ui.strong(model.review_heading.as_str());
-            stat_grid(ui, "tariff_review", &model.review);
+            ui.label(
+                egui::RichText::new(&model.review_heading)
+                    .strong()
+                    .color(heading_color()),
+            );
+            stat_grid(ui, "tariff_review", &model.review, &model.review_tones);
             ui.weak(model.timing.as_str());
         });
     });
     Vec::new()
 }
 
-fn stat_grid(ui: &mut egui::Ui, id: &str, stats: &[Stat]) {
+fn stat_grid(ui: &mut egui::Ui, id: &str, stats: &[Stat], tones: &[TextTone]) {
     egui::Grid::new(id).show(ui, |ui| {
-        for stat in stats {
-            ui.weak(stat.label.as_str());
-            ui.strong(stat.value.as_str());
+        for (stat, tone) in stats.iter().zip(tones) {
+            ui.colored_label(TextTone::Neutral.color(), &stat.label);
+            ui.label(
+                egui::RichText::new(&stat.value)
+                    .strong()
+                    .color(tone.color()),
+            );
             ui.end_row();
         }
     });

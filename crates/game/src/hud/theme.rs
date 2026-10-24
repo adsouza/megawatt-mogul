@@ -10,6 +10,86 @@ pub const LABEL_BACKING: Color32 = Color32::from_gray(24);
 /// The brightest text-bearing surface in the HUD palette, including hovered widgets.
 const LIGHTEST_SURFACE: Color32 = Color32::from_gray(70);
 
+/// Semantic text colors shared by the HUD. Presenters choose meaning before localization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextTone {
+    Neutral,
+    Information,
+    Positive,
+    Caution,
+    Negative,
+}
+
+/// A categorical tone or a continuous scale from favorable (0) to unfavorable (1).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ValueColor {
+    Tone(TextTone),
+    Scale(f32),
+}
+
+impl ValueColor {
+    pub(crate) fn color(self) -> Color32 {
+        match self {
+            Self::Tone(tone) => tone.color(),
+            Self::Scale(fraction) => severity_color(fraction),
+        }
+    }
+}
+
+pub(crate) fn severity_color(fraction: f32) -> Color32 {
+    let green = TextTone::Positive.color();
+    let amber = TextTone::Caution.color();
+    let red = TextTone::Negative.color();
+    let fraction = fraction.clamp(0.0, 1.0);
+    let color = if fraction <= 0.5 {
+        green.lerp_to_gamma(amber, fraction * 2.0)
+    } else {
+        amber.lerp_to_gamma(red, (fraction - 0.5) * 2.0)
+    };
+    status_color(color)
+}
+
+pub(crate) fn marginal_cost_fraction(
+    region: &domain::region::RegionDefinition,
+    cost: domain::units::Price,
+) -> f32 {
+    let ceiling = region
+        .catalog()
+        .iter()
+        .map(|spec| spec.marginal_cost.value())
+        .fold(0.0, f64::max);
+    if ceiling > 0.0 {
+        (cost.value() / ceiling).clamp(0.0, 1.0) as f32
+    } else {
+        0.0
+    }
+}
+
+impl TextTone {
+    pub(crate) fn color(self) -> Color32 {
+        let preferred = match self {
+            Self::Neutral => Color32::from_rgb(178, 190, 207),
+            Self::Information => Color32::from_rgb(116, 216, 210),
+            Self::Positive => Color32::from_rgb(141, 222, 164),
+            Self::Caution => Color32::from_rgb(244, 201, 120),
+            Self::Negative => Color32::from_rgb(255, 159, 150),
+        };
+        status_color(preferred)
+    }
+
+    pub(crate) fn cash(cents: i64) -> Self {
+        match cents.cmp(&0) {
+            std::cmp::Ordering::Less => Self::Negative,
+            std::cmp::Ordering::Equal => Self::Neutral,
+            std::cmp::Ordering::Greater => Self::Positive,
+        }
+    }
+}
+
+pub(crate) fn heading_color() -> Color32 {
+    status_color(Color32::from_rgb(145, 195, 255))
+}
+
 fn luminance(color: Color32) -> f64 {
     let linear = |value: u8| {
         let value = f64::from(value) / 255.0;

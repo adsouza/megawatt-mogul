@@ -376,6 +376,8 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "review-title",
     "review-net-cash",
     "review-demand-served",
+    "review-demand-served-full",
+    "review-demand-served-below-full",
     "review-pnl",
     "review-days-note",
     "review-revenue",

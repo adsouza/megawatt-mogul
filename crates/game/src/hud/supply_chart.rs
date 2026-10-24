@@ -257,11 +257,19 @@ pub fn draw_supply_chart(ui: &mut egui::Ui, model: &SupplyModel) -> Vec<UiAction
     });
     if model.has_storage && midnight {
         let unused = model.stored.last().copied().unwrap_or(0.0);
-        ui.label(format!(
-            "{}: {}",
-            model.storage_unused_label,
-            crate::l10n::format::megawatt_hours(domain::units::MegawattHours::new(unused))
-        ));
+        let tone = if unused > 0.0 {
+            super::theme::TextTone::Caution
+        } else {
+            super::theme::TextTone::Neutral
+        };
+        ui.colored_label(
+            tone.color(),
+            format!(
+                "{}: {}",
+                model.storage_unused_label,
+                crate::l10n::format::megawatt_hours(domain::units::MegawattHours::new(unused))
+            ),
+        );
     }
     // The marginal cost shares the power axis's space: the highest cost reaches the top of the
     // power data, and the right-hand axis reads it back in $/MWh.
@@ -335,7 +343,8 @@ pub fn draw_supply_chart(ui: &mut egui::Ui, model: &SupplyModel) -> Vec<UiAction
             .include_x(0.0)
             .include_x(24.0)
             .include_y(0.0)
-            .custom_x_axes(vec![super::chart_style::x_axis(&model.hour_axis)])
+            .x_grid_spacer(super::chart_style::hour_grid)
+            .custom_x_axes(vec![super::chart_style::hour_axis(ui, &model.hour_axis)])
             .custom_y_axes(axes)
             .label_formatter(|position| {
                 let HoverPosition::NearDataPoint {
@@ -454,7 +463,8 @@ pub fn draw_supply_chart(ui: &mut egui::Ui, model: &SupplyModel) -> Vec<UiAction
                         .include_x(24.0)
                         .include_y(0.0)
                         .include_y(energy_peak)
-                        .custom_x_axes(vec![super::chart_style::x_axis(&model.hour_axis)])
+                        .x_grid_spacer(super::chart_style::hour_grid)
+                        .custom_x_axes(vec![super::chart_style::hour_axis(ui, &model.hour_axis)])
                         .custom_y_axes(vec![super::chart_style::y_axis(energy_label)])
                         .show(ui, |plot| {
                             if !hidden {

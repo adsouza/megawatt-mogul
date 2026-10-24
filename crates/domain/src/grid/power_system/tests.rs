@@ -5142,7 +5142,7 @@ fn plan5_overlap_supports_a_deficit_despite_charging_eligibility() {
     charge_inventory(&mut sys, id, 20);
     let primary = sys.primary_supply();
     let demand = primary + Megawatts::new(100.0);
-    let flows = sys.propose_battery_flows(&region, april(), 1020, demand, demand);
+    let flows = sys.propose_battery_flows(&region, april(), 960, demand, demand);
     assert_eq!(flows[&id].charge, Megawatts::ZERO);
     assert_eq!(flows[&id].discharge, Megawatts::new(100.0));
 }

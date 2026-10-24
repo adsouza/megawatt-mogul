@@ -418,11 +418,9 @@ fn unknown_rules_are_rejected_before_mapping_their_archived_region() {
 #[test]
 fn battery_codec_restores_mid_charge_with_exact_archived_tuning_and_continuation() {
     let dir = tempfile::TempDir::new().unwrap();
-    let source = include_str!("support/minimal_region.ron").replacen(
-        "fleet: [",
-        "fleet: [(Battery, 5.5, 6.5),",
-        1,
-    );
+    let source = include_str!("support/minimal_region.ron")
+        .replace("discharge_start_hour: 16", "discharge_start_hour: 17")
+        .replacen("fleet: [", "fleet: [(Battery, 5.5, 6.5),", 1);
     std::fs::write(dir.path().join("minimal.ron"), &source).unwrap();
     let catalog = RonRegionCatalog::new(dir.path());
     let mut live = Game::start_new(
@@ -448,7 +446,9 @@ fn battery_codec_restores_mid_charge_with_exact_archived_tuning_and_continuation
     // Installed data, diagnostic logs and source directory are not dependencies of a save.
     std::fs::write(
         dir.path().join("minimal.ron"),
-        source.replace("energy_mwh: 800.0", "energy_mwh: 1.0"),
+        source
+            .replace("energy_mwh: 800.0", "energy_mwh: 1.0")
+            .replace("discharge_start_hour: 17", "discharge_start_hour: 16"),
     )
     .unwrap();
     let (decoded, loaded) = decode_save(&bytes, &identity()).unwrap();
@@ -463,6 +463,20 @@ fn battery_codec_restores_mid_charge_with_exact_archived_tuning_and_continuation
     assert_eq!(
         resumed.session().plant_views(),
         live.session().plant_views()
+    );
+    assert_eq!(
+        resumed
+            .session()
+            .plant_views()
+            .into_iter()
+            .find(|p| p.id == battery.id)
+            .unwrap()
+            .battery
+            .unwrap()
+            .spec
+            .discharge_start_hour,
+        17,
+        "resume preserves the archived battery window instead of installed defaults"
     );
     assert_eq!(resumed.projections(), live.projections());
     for command in [

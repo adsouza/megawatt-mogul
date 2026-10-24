@@ -73,6 +73,16 @@ fn max_shape_factor(region: &RegionDefinition) -> f64 {
 }
 
 #[test]
+fn both_regions_allow_battery_discharge_from_four_pm() {
+    for id in [EAST, WEST] {
+        let region = region(id);
+        let battery = region.spec(PlantKind::Battery).battery.unwrap();
+        assert_eq!(battery.discharge_start_hour, 16, "{id}");
+        assert_eq!(battery.charge_end_hour, 18, "{id}");
+    }
+}
+
+#[test]
 fn both_regions_carry_the_frequency_protection_and_performance_defaults() {
     for id in [EAST, WEST] {
         let region = region(id);

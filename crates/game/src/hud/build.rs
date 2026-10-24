@@ -7,14 +7,15 @@ use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 use domain::grid::distance_cells;
 use domain::ids::{CellCoord, NodeId};
-use domain::region::PlantKind;
+use domain::region::{PlantKind, RegionDefinition};
 use domain::session::DayPhase;
 use domain::units::Money;
 
 use super::action::{ActionSink, ButtonModel, UiAction, button, dispatch};
 use super::layout::{Edge, HudArea, OuterPanel};
+use super::plant_panel::PlantStat;
 use super::selection::Selection;
-use super::top_bar::Stat;
+use super::theme::{TextTone, ValueColor, heading_color, marginal_cost_fraction};
 use crate::l10n::{Localize, LocalizeWith, Localizer, Names, format};
 use crate::sim::Session;
 
@@ -34,7 +35,7 @@ pub struct PlantRow {
     pub name: String,
     pub help: Option<String>,
     /// Capacity, capital cost, build time and fuel cost, from the region's spec.
-    pub stats: Vec<Stat>,
+    pub stats: Vec<PlantStat>,
     /// Why the plant can't go on this cell: the localised siting error.
     pub blocked: Option<String>,
     /// Enabled only when the siting rule passes.
@@ -57,7 +58,7 @@ pub enum PlantSection {
 #[derive(Debug, Clone, PartialEq)]
 pub enum LinePreview {
     /// Length, capital cost and build time, from `line_quote`.
-    Quote(Vec<Stat>),
+    Quote(Vec<PlantStat>),
     /// The localised error `line_quote` returned.
     Rejected(String),
 }
@@ -151,6 +152,54 @@ pub(super) fn monthly_payment(capital: Money, months: u32) -> String {
     format::money(Money::from_cents(capital.cents() / i64::from(months)))
 }
 
+fn construction_values(capital: Money, months: u32) -> [f64; 3] {
+    [
+        capital.cents() as f64,
+        capital.cents() as f64 / f64::from(months),
+        f64::from(months),
+    ]
+}
+
+/// Each metric has its own regional reference, so monthly affordability reflects the payment
+/// schedule. Line quotes use the same references as plants; changing the selected site or line
+/// origin doesn't change what a colour means.
+fn construction_stats(
+    region: &RegionDefinition,
+    l10n: &Localizer,
+    capital: Money,
+    months: u32,
+) -> Vec<PlantStat> {
+    let (minimum, maximum) = region.catalog().iter().fold(
+        ([f64::INFINITY; 3], [0.0_f64; 3]),
+        |(minimum, maximum), spec| {
+            let values = construction_values(spec.capital_cost, spec.build_months);
+            (
+                std::array::from_fn(|i| minimum[i].min(values[i])),
+                std::array::from_fn(|i| maximum[i].max(values[i])),
+            )
+        },
+    );
+    let values = construction_values(capital, months);
+    [
+        ("build-capital", format::money(capital)),
+        ("build-monthly-payment", monthly_payment(capital, months)),
+        ("build-months", months_value(l10n, months)),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, (key, value))| {
+        let fraction = if maximum[i] > minimum[i] {
+            ((values[i] - minimum[i]) / (maximum[i] - minimum[i])).clamp(0.0, 1.0) as f32
+        } else if values[i] > maximum[i] {
+            1.0
+        } else {
+            0.0
+        };
+        PlantStat::new(l10n, key, value).with_color(ValueColor::Scale(fraction))
+    })
+    .collect()
+}
+
 fn plant_section(game: &Game, l10n: &Localizer, selection: Selection) -> PlantSection {
     let region = game.session().region();
     let cell = match selection {
@@ -161,24 +210,19 @@ fn plant_section(game: &Game, l10n: &Localizer, selection: Selection) -> PlantSe
             };
         }
     };
-    let stat = |key: &str, value: String| Stat {
-        label: l10n.text(key),
-        value,
-    };
+    let stat = |key: &str, value: String| PlantStat::new(l10n, key, value);
     let rows = PlantKind::ALL
         .into_iter()
         .map(|kind| {
             let spec = region.spec(kind);
             let site = game.session().plant_site_check(kind, cell);
-            let mut stats = vec![
-                stat("build-capacity", format::megawatts(spec.capacity)),
-                stat("build-capital", format::money(spec.capital_cost)),
-                stat(
-                    "build-monthly-payment",
-                    monthly_payment(spec.capital_cost, spec.build_months),
-                ),
-                stat("build-months", months_value(l10n, spec.build_months)),
-            ];
+            let mut stats = vec![stat("build-capacity", format::megawatts(spec.capacity))];
+            stats.extend(construction_stats(
+                region,
+                l10n,
+                spec.capital_cost,
+                spec.build_months,
+            ));
             if let Some(b) = spec.battery {
                 stats.extend([
                     stat("battery-charge-rating", format::megawatts(b.charge_power)),
@@ -188,10 +232,11 @@ fn plant_section(game: &Game, l10n: &Localizer, selection: Selection) -> PlantSe
                     ),
                 ]);
             } else {
-                stats.push(stat(
-                    "build-marginal-cost",
-                    format::price(spec.marginal_cost),
-                ));
+                stats.push(
+                    stat("build-marginal-cost", format::price(spec.marginal_cost)).with_color(
+                        ValueColor::Scale(marginal_cost_fraction(region, spec.marginal_cost)),
+                    ),
+                );
             }
             if kind == PlantKind::Wind {
                 let potential = region
@@ -219,7 +264,8 @@ fn plant_section(game: &Game, l10n: &Localizer, selection: Selection) -> PlantSe
                 help: if kind == PlantKind::Wind {
                     Some(l10n.text("wind-build-help"))
                 } else {
-                    spec.battery.map(|_| l10n.text("battery-cycle-hint"))
+                    spec.battery
+                        .map(|b| super::plant_panel::battery_hint(l10n, "battery-cycle-hint", b))
                 },
                 stats,
                 blocked: site.as_ref().err().map(|error| error.localize(l10n)),
@@ -318,10 +364,7 @@ fn line_end_section(
         .map(|choice| (distance_cells(from.cell, choice.cell), choice))
         .collect();
     others.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let stat = |key: &str, value: String| Stat {
-        label: l10n.text(key),
-        value,
-    };
+    let stat = |key: &str, value: String| PlantStat::new(l10n, key, value);
     let mut targets: Vec<LineTarget> = others
         .into_iter()
         .map(|(_, to)| {
@@ -335,18 +378,19 @@ fn line_end_section(
             )
             .enabled_if(quote.is_ok());
             let preview = match quote {
-                Ok(quote) => LinePreview::Quote(vec![
-                    stat(
+                Ok(quote) => {
+                    let mut stats = vec![stat(
                         "build-line-cells",
                         l10n.args("build-cells-value", &[("cells", quote.cells.into())]),
-                    ),
-                    stat("build-capital", format::money(quote.capital)),
-                    stat(
-                        "build-monthly-payment",
-                        monthly_payment(quote.capital, quote.months),
-                    ),
-                    stat("build-months", months_value(l10n, quote.months)),
-                ]),
+                    )];
+                    stats.extend(construction_stats(
+                        session.region(),
+                        l10n,
+                        quote.capital,
+                        quote.months,
+                    ));
+                    LinePreview::Quote(stats)
+                }
                 Err(error) => LinePreview::Rejected(error.localize_with(l10n, &names)),
             };
             LineTarget {
@@ -372,7 +416,7 @@ fn line_end_section(
 
 pub fn draw_build(ui: &mut egui::Ui, model: &BuildModel) -> Vec<UiAction> {
     let mut actions = Vec::new();
-    ui.heading(model.title.as_str());
+    ui.heading(egui::RichText::new(&model.title).color(heading_color()));
     // Each line stage scrolls on its own, so switching stage starts at the top.
     let stage = match model.line {
         LineSection::Start { .. } => "build_line_start",
@@ -392,14 +436,14 @@ fn draw_plant_section(ui: &mut egui::Ui, section: &PlantSection, actions: &mut V
             ui.weak(hint.as_str());
         }
         PlantSection::Kinds { heading, rows, .. } => {
-            ui.strong(heading.as_str());
+            ui.label(egui::RichText::new(heading).strong().color(heading_color()));
             for row in rows {
                 ui.group(|ui| {
-                    ui.label(row.name.as_str());
+                    ui.colored_label(heading_color(), &row.name);
                     egui::Grid::new(("plant_stats", row.kind as u8)).show(ui, |ui| {
                         for stat in &row.stats {
-                            ui.weak(stat.label.as_str());
-                            ui.label(stat.value.as_str());
+                            ui.colored_label(TextTone::Neutral.color(), &stat.label);
+                            ui.colored_label(stat.color.color(), &stat.value);
                             ui.end_row();
                         }
                     });
@@ -407,7 +451,7 @@ fn draw_plant_section(ui: &mut egui::Ui, section: &PlantSection, actions: &mut V
                         ui.add(egui::Label::new(help).wrap());
                     }
                     if let Some(reason) = &row.blocked {
-                        ui.colored_label(ui.visuals().warn_fg_color, reason.as_str());
+                        ui.colored_label(TextTone::Caution.color(), reason);
                     }
                     button(ui, &row.build, actions);
                 });
@@ -423,7 +467,7 @@ fn draw_line_section(ui: &mut egui::Ui, section: &LineSection, actions: &mut Vec
             hint,
             from,
         } => {
-            ui.strong(heading.as_str());
+            ui.label(egui::RichText::new(heading).strong().color(heading_color()));
             ui.weak(hint.as_str());
             for choice in from {
                 button(ui, choice, actions);
@@ -435,23 +479,23 @@ fn draw_line_section(ui: &mut egui::Ui, section: &LineSection, actions: &mut Vec
             targets,
             cancel,
         } => {
-            ui.strong(heading.as_str());
+            ui.label(egui::RichText::new(heading).strong().color(heading_color()));
             ui.weak(hint.as_str());
             button(ui, cancel, actions);
             for target in targets {
                 ui.group(|ui| {
-                    ui.label(target.name.as_str());
+                    ui.colored_label(heading_color(), &target.name);
                     match &target.preview {
                         LinePreview::Quote(stats) => {
                             for stat in stats {
                                 ui.horizontal(|ui| {
-                                    ui.weak(stat.label.as_str());
-                                    ui.label(stat.value.as_str());
+                                    ui.colored_label(TextTone::Neutral.color(), &stat.label);
+                                    ui.colored_label(stat.color.color(), &stat.value);
                                 });
                             }
                         }
                         LinePreview::Rejected(reason) => {
-                            ui.colored_label(ui.visuals().warn_fg_color, reason.as_str());
+                            ui.colored_label(TextTone::Caution.color(), reason);
                         }
                     }
                     button(ui, &target.build, actions);
@@ -572,6 +616,69 @@ mod tests {
         match &model.plant {
             PlantSection::Kinds { rows, .. } => rows,
             PlantSection::PickCell { .. } => panic!("no cell is selected: {model:?}"),
+        }
+    }
+
+    #[test]
+    fn construction_values_use_independent_cost_and_time_scales() {
+        let l10n = shipped_l10n();
+        for region_name in ["eastern_interconnection", "western_interconnection"] {
+            let game = crate::hud::test_support::shipped_game(
+                region_name,
+                Box::new(InMemoryCommandLog::default()),
+            );
+            let region = game.session().region();
+            let model =
+                build_model(&game, &l10n, Selection::Cell(CellCoord { x: 0, y: 0 })).unwrap();
+            let values: Vec<_> = PlantKind::ALL
+                .into_iter()
+                .map(|kind| {
+                    let spec = region.spec(kind);
+                    (
+                        kind,
+                        [
+                            spec.capital_cost.cents() as f64,
+                            spec.capital_cost.cents() as f64 / f64::from(spec.build_months),
+                            f64::from(spec.build_months),
+                        ],
+                    )
+                })
+                .collect();
+            for index in 0..3 {
+                let mut ratings = Vec::new();
+                for row in rows(&model) {
+                    let ValueColor::Scale(fraction) = row.stats[index + 1].color else {
+                        panic!("{} needs a cost/time scale", row.stats[index + 1].label)
+                    };
+                    let value = values.iter().find(|(kind, _)| *kind == row.kind).unwrap().1[index];
+                    assert!((0.0..=1.0).contains(&fraction));
+                    ratings.push((value, fraction, row.stats[index + 1].color.color()));
+                }
+                ratings.sort_by(|a, b| a.0.total_cmp(&b.0));
+                for pair in ratings.windows(2) {
+                    assert!(
+                        pair[0].1 <= pair[1].1,
+                        "more expensive/slower must not look better"
+                    );
+                }
+                let cheapest = ratings.first().unwrap().2;
+                let dearest = ratings.last().unwrap().2;
+                assert!(
+                    cheapest.g() > cheapest.r(),
+                    "cheapest/fastest should be green"
+                );
+                assert!(dearest.r() > dearest.g(), "dearest/slowest should be red");
+            }
+            let row = |kind| rows(&model).iter().find(|row| row.kind == kind).unwrap();
+            // The same capital spread over different schedules must give different payment colours.
+            assert_eq!(
+                row(PlantKind::Wind).stats[1].color,
+                row(PlantKind::Ccgt).stats[1].color
+            );
+            assert_ne!(
+                row(PlantKind::Wind).stats[2].color,
+                row(PlantKind::Ccgt).stats[2].color
+            );
         }
     }
 
@@ -745,6 +852,11 @@ mod tests {
                 (Ok(quote), LinePreview::Quote(stats)) => {
                     quoted += 1;
                     assert!(target.build.enabled);
+                    assert!(
+                        stats[1..]
+                            .iter()
+                            .all(|stat| matches!(stat.color, ValueColor::Scale(_)))
+                    );
                     let stats: Vec<(&str, &str)> = stats
                         .iter()
                         .map(|s| (s.label.as_str(), s.value.as_str()))

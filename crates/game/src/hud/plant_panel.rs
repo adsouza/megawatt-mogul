@@ -14,6 +14,7 @@ use bevy::prelude::*;
 use bevy_egui::egui;
 use domain::generation::PlantStatus;
 use domain::ids::PlantId;
+use domain::region::{PlantSpec, RegionDefinition};
 use domain::session::{DayPhase, PlantView};
 use domain::time::{SimDuration, TICKS_PER_DAY};
 use domain::units::{MegawattHours, Megawatts, Money};
@@ -21,8 +22,110 @@ use domain::units::{MegawattHours, Megawatts, Money};
 use super::action::{ButtonModel, ToggleModel, UiAction, add_enabled, button, toggle_button};
 use super::plant_list::{is_commitable, kinds_in_merit_order};
 use super::selection::Selection;
+use super::theme::{TextTone, ValueColor, heading_color, marginal_cost_fraction};
 use super::top_bar::Stat;
 use crate::l10n::{Localize, LocalizeWith, Localizer, Names, format};
+
+/// A plant figure with its value-based color selected before formatting.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlantStat {
+    pub label: String,
+    pub value: String,
+    pub color: ValueColor,
+}
+
+impl PlantStat {
+    pub(super) fn new(l10n: &Localizer, key: &str, value: String) -> Self {
+        Self {
+            label: l10n.text(key),
+            value,
+            color: ValueColor::Tone(TextTone::Information),
+        }
+    }
+
+    pub(super) fn with_color(mut self, color: ValueColor) -> Self {
+        self.color = color;
+        self
+    }
+}
+
+impl From<Stat> for PlantStat {
+    fn from(stat: Stat) -> Self {
+        Self {
+            label: stat.label,
+            value: stat.value,
+            color: ValueColor::Tone(TextTone::Information),
+        }
+    }
+}
+
+struct PlantValueColors {
+    cost: ValueColor,
+    ramp: ValueColor,
+    startup: ValueColor,
+    startup_cost: ValueColor,
+}
+
+fn plant_value_colors(region: &RegionDefinition, spec: &PlantSpec) -> PlantValueColors {
+    let same = |a: f64, b: f64| {
+        a == b
+            || (a.is_finite()
+                && b.is_finite()
+                && (a - b).abs() <= 1e-12 * a.abs().max(b.abs()).max(1.0))
+    };
+    let rank = |value: f64, metric: fn(&PlantSpec) -> f64| {
+        let mut values: Vec<_> = region
+            .catalog()
+            .iter()
+            .filter(|candidate| candidate.kind.is_dispatchable())
+            .map(metric)
+            .collect();
+        values.sort_by(f64::total_cmp);
+        values.dedup_by(|a, b| same(*a, *b));
+        let below = values
+            .iter()
+            .filter(|&&candidate| candidate < value && !same(candidate, value))
+            .count();
+        ValueColor::Scale(
+            (below as f32 / values.len().saturating_sub(1).max(1) as f32).clamp(0.0, 1.0),
+        )
+    };
+    // Capacity / ramp measures how long a plant needs to change its own full output.
+    // It avoids treating a large plant as responsive merely because its MW/min is large.
+    let response = |spec: &PlantSpec| {
+        if spec.ramp.value() > 0.0 {
+            spec.capacity.value() / spec.ramp.value()
+        } else {
+            f64::INFINITY
+        }
+    };
+    let startup_cost_ceiling = region
+        .catalog()
+        .iter()
+        .map(|candidate| candidate.startup_cost.cents())
+        .max()
+        .unwrap_or(0);
+    PlantValueColors {
+        cost: ValueColor::Scale(marginal_cost_fraction(region, spec.marginal_cost)),
+        ramp: if spec.kind.is_dispatchable() {
+            rank(response(spec), response)
+        } else {
+            ValueColor::Tone(TextTone::Neutral)
+        },
+        startup: if spec.kind.is_dispatchable() {
+            rank(f64::from(spec.startup.ticks()), |spec| {
+                f64::from(spec.startup.ticks())
+            })
+        } else {
+            ValueColor::Tone(TextTone::Neutral)
+        },
+        startup_cost: ValueColor::Scale(if startup_cost_ceiling > 0 {
+            (spec.startup_cost.cents() as f64 / startup_cost_ceiling as f64).clamp(0.0, 1.0) as f32
+        } else {
+            0.0
+        }),
+    }
+}
 
 /// One plant in the list.
 #[derive(Debug, Clone, PartialEq)]
@@ -32,6 +135,7 @@ pub struct PlantListRow {
     pub select: ToggleModel,
     /// `Online`, `Starting: 40 min left`, ...
     pub status: String,
+    pub status_tone: TextTone,
     /// `1,050 MW`.
     pub output: String,
     /// `AGC` while the plant follows the load by itself.
@@ -77,6 +181,8 @@ pub struct SelectedPlant {
     /// `Coal plant 3`.
     pub name: String,
     pub status: String,
+    pub status_tone: TextTone,
+    pub connected: bool,
     pub agc: ToggleModel,
     pub agc_tip: String,
     pub variable_generation: bool,
@@ -87,9 +193,9 @@ pub struct SelectedPlant {
     pub stop: ButtonModel,
     pub slider: TargetSlider,
     /// Grid connection, output/capacity, target, ramp, cost, energy and history, plus hydro water.
-    pub stats: Vec<Stat>,
+    pub stats: Vec<PlantStat>,
     pub specifications_heading: String,
-    pub specifications: Vec<Stat>,
+    pub specifications: Vec<PlantStat>,
 }
 
 /// Read-only Planning details for a commissioned plant.
@@ -100,7 +206,60 @@ pub struct PlantCardModel {
     pub plant: PlantId,
     pub name: String,
     pub status: String,
-    pub stats: Vec<Stat>,
+    pub status_tone: TextTone,
+    pub connected: bool,
+    pub stats: Vec<PlantStat>,
+}
+
+fn plant_status_tone(plant: &PlantView) -> TextTone {
+    use domain::generation::BatteryMode;
+    if let Some(battery) = &plant.battery {
+        return match battery.mode {
+            BatteryMode::GridSuspended => TextTone::Negative,
+            BatteryMode::Disconnected => TextTone::Caution,
+            BatteryMode::Charging | BatteryMode::Discharging | BatteryMode::Full => {
+                TextTone::Positive
+            }
+            BatteryMode::Disabled | BatteryMode::Holding | BatteryMode::Empty => TextTone::Neutral,
+        };
+    }
+    if !plant.connected {
+        return TextTone::Caution;
+    }
+    match plant.status {
+        PlantStatus::UnderConstruction { .. } => TextTone::Information,
+        PlantStatus::Online { .. } => TextTone::Positive,
+        PlantStatus::Starting { .. } | PlantStatus::Stopping { .. } => TextTone::Caution,
+        PlantStatus::Offline => TextTone::Neutral,
+    }
+}
+
+fn connection_tone(connected: bool) -> TextTone {
+    if connected {
+        TextTone::Positive
+    } else {
+        TextTone::Caution
+    }
+}
+
+pub(super) fn battery_hint(
+    l10n: &Localizer,
+    key: &str,
+    spec: domain::region::BatterySpec,
+) -> String {
+    l10n.args(
+        key,
+        &[
+            (
+                "charge_end",
+                format::clock(u32::from(spec.charge_end_hour) * 60).into(),
+            ),
+            (
+                "discharge_start",
+                format::clock(u32::from(spec.discharge_start_hour) * 60).into(),
+            ),
+        ],
+    )
 }
 
 pub(super) fn grid_connection_stat(l10n: &Localizer, connected: bool) -> Stat {
@@ -114,11 +273,8 @@ pub(super) fn grid_connection_stat(l10n: &Localizer, connected: bool) -> Stat {
     }
 }
 
-fn wind_stats(l10n: &Localizer, wind: &domain::session::WindView) -> Vec<Stat> {
-    let stat = |key: &str, value| Stat {
-        label: l10n.text(key),
-        value,
-    };
+fn wind_stats(l10n: &Localizer, wind: &domain::session::WindView) -> Vec<PlantStat> {
+    let stat = |key: &str, value| PlantStat::new(l10n, key, value);
     vec![
         stat("wind-potential", format::percent(wind.potential)),
         stat("wind-available", format::megawatts(wind.available)),
@@ -145,12 +301,11 @@ pub fn plant_card_model(game: &Game, l10n: &Localizer, id: PlantId) -> Option<Pl
         return None;
     }
     let spec = session.region().spec(plant.kind);
-    let stat = |key: &str, value| Stat {
-        label: l10n.text(key),
-        value,
-    };
+    let colors = plant_value_colors(session.region(), spec);
+    let stat = |key: &str, value| PlantStat::new(l10n, key, value);
     let mut stats = vec![
-        grid_connection_stat(l10n, plant.connected),
+        PlantStat::from(grid_connection_stat(l10n, plant.connected))
+            .with_color(ValueColor::Tone(connection_tone(plant.connected))),
         stat("build-capacity", format::megawatts(spec.capacity)),
     ];
     if plant.kind.is_dispatchable() {
@@ -160,13 +315,14 @@ pub fn plant_card_model(game: &Game, l10n: &Localizer, id: PlantId) -> Option<Pl
                 "plant-initial-target",
                 format::megawatts(plant.initial_target),
             ),
-            stat("plant-ramp", format::ramp_rate(spec.ramp)),
-            stat("plant-startup-time", format::duration(spec.startup)),
-            stat("plant-startup-cost", format::money(spec.startup_cost)),
+            stat("plant-ramp", format::ramp_rate(spec.ramp)).with_color(colors.ramp),
+            stat("plant-startup-time", format::duration(spec.startup)).with_color(colors.startup),
+            stat("plant-startup-cost", format::money(spec.startup_cost))
+                .with_color(colors.startup_cost),
         ]);
     }
     stats.extend([
-        stat("plant-marginal-cost", format::price(spec.marginal_cost)),
+        stat("plant-marginal-cost", format::price(spec.marginal_cost)).with_color(colors.cost),
         stat("plant-fixed-om", format::money(spec.fixed_om_per_month)),
     ]);
     if let Some(water) = plant.hydro_day_budget {
@@ -195,26 +351,28 @@ pub fn plant_card_model(game: &Game, l10n: &Localizer, id: PlantId) -> Option<Pl
         storage_hint: plant
             .battery
             .as_ref()
-            .map(|_| l10n.text("battery-grid-charging-hint")),
+            .map(|b| battery_hint(l10n, "battery-grid-charging-hint", b.spec)),
         plant: id,
         name: Names::new(l10n, session).plant(id),
         status: plant
             .battery
             .as_ref()
             .map_or_else(|| plant.status.localize(l10n), |b| b.mode.localize(l10n)),
+        status_tone: plant_status_tone(&plant),
+        connected: plant.connected,
         stats,
     })
 }
 
 pub fn draw_plant_card(ui: &mut egui::Ui, model: &PlantCardModel) -> Vec<UiAction> {
     let mut actions = Vec::new();
-    ui.heading(&model.name);
-    ui.weak(&model.status);
+    ui.heading(egui::RichText::new(&model.name).color(heading_color()));
+    ui.colored_label(model.status_tone.color(), &model.status);
     if let Some(toggle) = &model.storage_toggle {
         toggle_button(ui, toggle, &mut actions);
     }
     if let Some(hint) = &model.storage_hint {
-        ui.label(hint);
+        ui.colored_label(TextTone::Neutral.color(), hint);
     }
     egui::Grid::new("plant_card_stats")
         .num_columns(2)
@@ -222,8 +380,8 @@ pub fn draw_plant_card(ui: &mut egui::Ui, model: &PlantCardModel) -> Vec<UiActio
         .min_row_height(0.0)
         .show(ui, |ui| {
             for stat in &model.stats {
-                ui.weak(&stat.label);
-                ui.label(&stat.value);
+                ui.colored_label(TextTone::Neutral.color(), &stat.label);
+                ui.colored_label(stat.color.color(), &stat.value);
                 ui.end_row();
             }
         });
@@ -310,6 +468,7 @@ pub fn plant_list_model(game: &Game, l10n: &Localizer, selection: Selection) -> 
                     .battery
                     .as_ref()
                     .map_or_else(|| plant.status.localize(l10n), |b| b.mode.localize(l10n)),
+                status_tone: plant_status_tone(&plant),
                 output: format::megawatts(plant.output),
                 agc: plant.auto_follow.then(|| agc.clone()),
             })
@@ -341,12 +500,11 @@ pub fn plant_panel_model(game: &Game, l10n: &Localizer, selection: Selection) ->
     };
     let (min, capacity) = (spec.min_output(), spec.capacity);
     let history = game.projections().plant_history.get(plant.id);
-    let stat = |key: &str, value: String| Stat {
-        label: l10n.text(key),
-        value,
-    };
+    let colors = plant_value_colors(session.region(), spec);
+    let stat = |key: &str, value: String| PlantStat::new(l10n, key, value);
     let mut stats = vec![
-        grid_connection_stat(l10n, plant.connected),
+        PlantStat::from(grid_connection_stat(l10n, plant.connected))
+            .with_color(ValueColor::Tone(connection_tone(plant.connected))),
         stat(
             "plant-output-capacity",
             l10n.args(
@@ -361,8 +519,8 @@ pub fn plant_panel_model(game: &Game, l10n: &Localizer, selection: Selection) ->
             "plant-target",
             target.map_or_else(|| l10n.text("plant-target-none"), format::megawatts),
         ),
-        stat("plant-ramp", format::ramp_rate(spec.ramp)),
-        stat("plant-marginal-cost", format::price(spec.marginal_cost)),
+        stat("plant-ramp", format::ramp_rate(spec.ramp)).with_color(colors.ramp),
+        stat("plant-marginal-cost", format::price(spec.marginal_cost)).with_color(colors.cost),
         // The played day's energy, as it happens. It is not priced: revenue is booked once, at
         // the month close, so the money figure covers closed months only.
         stat(
@@ -412,13 +570,15 @@ pub fn plant_panel_model(game: &Game, l10n: &Localizer, selection: Selection) ->
         storage_hint: plant
             .battery
             .as_ref()
-            .map(|_| l10n.text("battery-grid-charging-hint")),
+            .map(|b| battery_hint(l10n, "battery-grid-charging-hint", b.spec)),
         plant: plant.id,
         name: Names::new(l10n, session).plant(plant.id),
         status: plant
             .battery
             .as_ref()
             .map_or_else(|| plant.status.localize(l10n), |b| b.mode.localize(l10n)),
+        status_tone: plant_status_tone(&plant),
+        connected: plant.connected,
         agc: ToggleModel {
             button: ButtonModel::new(
                 l10n.text("plant-list-agc"),
@@ -537,7 +697,11 @@ pub(super) fn named_region(response: &egui::Response, name: &str) {
 }
 
 fn draw_plant_rows(ui: &mut egui::Ui, model: &PlantListModel, actions: &mut Vec<UiAction>) {
-    ui.strong(model.title.as_str());
+    ui.label(
+        egui::RichText::new(&model.title)
+            .strong()
+            .color(heading_color()),
+    );
     let rows = PLANT_LIST_MIN_ROWS as f32 * list_row(ui.ctx());
     egui::ScrollArea::vertical()
         .id_salt("operating_plant_list")
@@ -553,9 +717,12 @@ fn draw_plant_rows(ui: &mut egui::Ui, model: &PlantListModel, actions: &mut Vec<
                             ui.spacing_mut().button_padding = egui::vec2(4.0, 0.0);
                             toggle_button(ui, &row.select, actions);
                         });
-                        ui.weak(row.status.as_str());
-                        ui.label(row.output.as_str());
-                        ui.label(row.agc.as_deref().unwrap_or(""));
+                        ui.colored_label(row.status_tone.color(), &row.status);
+                        ui.colored_label(TextTone::Information.color(), &row.output);
+                        ui.colored_label(
+                            TextTone::Positive.color(),
+                            row.agc.as_deref().unwrap_or(""),
+                        );
                         ui.end_row();
                     }
                 });
@@ -578,13 +745,17 @@ pub fn draw_plant_panel(
         PlantPanelModel::Plant(plant) => plant,
     };
     ui.horizontal(|ui| {
-        ui.strong(plant.name.as_str());
-        ui.weak(plant.status.as_str());
+        ui.label(
+            egui::RichText::new(&plant.name)
+                .strong()
+                .color(heading_color()),
+        );
+        ui.colored_label(plant.status_tone.color(), &plant.status);
     });
     if let Some(toggle) = &plant.storage_toggle {
         toggle_button(ui, toggle, &mut actions);
         if let Some(hint) = &plant.storage_hint {
-            ui.label(hint);
+            ui.colored_label(TextTone::Neutral.color(), hint);
         }
     } else if !plant.variable_generation {
         ui.horizontal(|ui| {
@@ -623,24 +794,27 @@ pub fn draw_plant_panel(
                 .min_row_height(0.0)
                 .show(ui, |ui| {
                     for stat in &plant.stats {
-                        ui.weak(stat.label.as_str());
-                        ui.label(stat.value.as_str());
+                        ui.colored_label(TextTone::Neutral.color(), &stat.label);
+                        ui.colored_label(stat.color.color(), &stat.value);
                         ui.end_row();
                     }
                 });
-            ui.collapsing(&plant.specifications_heading, |ui| {
-                egui::Grid::new(("operating_plant_specifications", plant.plant.0))
-                    .num_columns(2)
-                    .spacing(egui::vec2(8.0, 1.0))
-                    .min_row_height(0.0)
-                    .show(ui, |ui| {
-                        for stat in &plant.specifications {
-                            ui.weak(&stat.label);
-                            ui.label(&stat.value);
-                            ui.end_row();
-                        }
-                    });
-            });
+            ui.collapsing(
+                egui::RichText::new(&plant.specifications_heading).color(heading_color()),
+                |ui| {
+                    egui::Grid::new(("operating_plant_specifications", plant.plant.0))
+                        .num_columns(2)
+                        .spacing(egui::vec2(8.0, 1.0))
+                        .min_row_height(0.0)
+                        .show(ui, |ui| {
+                            for stat in &plant.specifications {
+                                ui.colored_label(TextTone::Neutral.color(), &stat.label);
+                                ui.colored_label(stat.color.color(), &stat.value);
+                                ui.end_row();
+                            }
+                        });
+                },
+            );
         });
     actions
 }
@@ -666,13 +840,11 @@ fn battery_stats(
     b: &domain::session::BatteryView,
     connected: bool,
     discharge: Megawatts,
-) -> Vec<Stat> {
-    let stat = |key: &str, value: String| Stat {
-        label: l10n.text(key),
-        value,
-    };
+) -> Vec<PlantStat> {
+    let stat = |key: &str, value: String| PlantStat::new(l10n, key, value);
     vec![
-        grid_connection_stat(l10n, connected),
+        PlantStat::from(grid_connection_stat(l10n, connected))
+            .with_color(ValueColor::Tone(connection_tone(connected))),
         stat(
             "battery-stored",
             format!(
@@ -746,6 +918,56 @@ mod tests {
 
     use super::*;
     use crate::hud::test_support::{eastern_game, empty_start, shipped_game, shipped_l10n};
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(32))]
+        #[test]
+        fn plant_responsiveness_colors_ignore_capacity_scale_and_penalize_slower_response(
+            scale in 1.0f64..100.0,
+            delay in 1u32..8,
+        ) {
+            let game = eastern_game(Box::new(InMemoryCommandLog::default()));
+            let region = game.session().region();
+            let mut spec = region.spec(PlantKind::Ccgt).clone();
+            let original = plant_value_colors(region, &spec);
+            spec.capacity = spec.capacity * scale;
+            spec.ramp = domain::units::RampRate::mw_per_minute(spec.ramp.value() * scale);
+            proptest::prop_assert_eq!(plant_value_colors(region, &spec).ramp, original.ramp);
+            spec.ramp = domain::units::RampRate::mw_per_minute(spec.ramp.value() / f64::from(delay));
+            spec.startup = SimDuration::from_ticks(spec.startup.ticks() * delay);
+            spec.startup_cost = Money::from_cents(spec.startup_cost.cents() * i64::from(delay));
+            let slower = plant_value_colors(region, &spec);
+            for (before, after) in [(original.ramp, slower.ramp), (original.startup, slower.startup), (original.startup_cost, slower.startup_cost)] {
+                let (ValueColor::Scale(before), ValueColor::Scale(after)) = (before, after) else {
+                    panic!("dispatchable responsiveness needs a comparable scale");
+                };
+                proptest::prop_assert!(after >= before && after <= 1.0);
+            }
+            spec.ramp = domain::units::RampRate::mw_per_minute(0.0);
+            proptest::prop_assert_eq!(plant_value_colors(region, &spec).ramp, ValueColor::Scale(1.0));
+        }
+    }
+
+    #[test]
+    fn battery_hints_show_current_and_archived_discharge_windows() {
+        let l10n = shipped_l10n();
+        let game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let mut spec = game
+            .session()
+            .region()
+            .spec(PlantKind::Battery)
+            .battery
+            .unwrap();
+        assert_eq!(spec.discharge_start_hour, 16);
+        for key in ["battery-grid-charging-hint", "battery-cycle-hint"] {
+            assert!(battery_hint(&l10n, key, spec).contains("16:00–24:00"));
+            let archived_start = spec.discharge_start_hour;
+            spec.discharge_start_hour = 17;
+            assert!(battery_hint(&l10n, key, spec).contains("17:00–24:00"));
+            spec.discharge_start_hour = archived_start;
+        }
+        assert!(l10n.problems().is_empty());
+    }
 
     /// A game a few minutes into the day, with the eastern coal fleet alone committed all day,
     /// under manual control.
@@ -897,7 +1119,7 @@ mod tests {
                 );
                 let stats =
                     super::super::construction::construction_card_model(game, &l10n, plant.id)
-                        .map(|card| card.stats)
+                        .map(|card| card.stats.into_iter().map(PlantStat::from).collect())
                         .unwrap_or_else(|| plant_card_model(game, &l10n, plant.id).unwrap().stats);
                 assert_eq!(
                     stats
@@ -977,6 +1199,7 @@ mod tests {
         for view in game.session().plant_views() {
             let spec = game.session().region().spec(view.kind);
             let card = plant_card_model(&game, &l10n, view.id).unwrap();
+            assert_eq!(selected(&game, view.id).specifications, card.stats);
             let stat = |label| &card.stats.iter().find(|s| s.label == label).unwrap().value;
             assert_eq!(stat("Capacity"), &format::megawatts(spec.capacity));
             assert_eq!(
