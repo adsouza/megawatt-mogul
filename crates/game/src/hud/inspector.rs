@@ -5,8 +5,8 @@ use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 use domain::grid::LineStatus;
 use domain::ids::{CellCoord, LineId};
-use domain::region::{PlantKind, RegionDefinition};
-use domain::session::DayPhase;
+use domain::region::PlantKind;
+use domain::session::{DayPhase, GameSession};
 
 use super::action::{ActionSink, ButtonModel, Prompt, UiAction, button, dispatch};
 use super::build::BUILD_PANEL;
@@ -164,20 +164,20 @@ fn cell_inspector(game: &Game, l10n: &Localizer, at: CellCoord) -> Option<CellIn
         suitability_heading: l10n.text("inspector-can-build"),
         suitability: PlantKind::ALL
             .into_iter()
-            .map(|kind| suitability_row(region, kind, at, l10n))
+            .map(|kind| suitability_row(game.session(), kind, at, l10n))
             .collect(),
         close: ButtonModel::new(l10n.text("ui-close"), UiAction::Select(Selection::None)),
     })
 }
 
-/// One kind's verdict on `at`, from the region's siting rule.
+/// One kind's verdict on `at`, including the session's current land occupancy.
 pub fn suitability_row(
-    region: &RegionDefinition,
+    session: &GameSession,
     kind: PlantKind,
     at: CellCoord,
     l10n: &Localizer,
 ) -> SuitabilityRow {
-    let site = region.site_check(kind, at);
+    let site = session.plant_site_check(kind, at);
     SuitabilityRow {
         kind,
         label: kind.localize(l10n),
@@ -279,7 +279,7 @@ pub(super) fn inspector_panel(
 #[cfg(test)]
 mod tests {
     use application::{Command, InMemoryCommandLog};
-    use domain::region::SiteError;
+    use domain::region::{RegionDefinition, SiteError};
 
     use super::*;
     use crate::hud::test_support::{eastern_game, order_plant, shipped_l10n};
@@ -302,7 +302,7 @@ mod tests {
             .find(|at| !region.terrain().get(*at).unwrap().land)
             .expect("the region has water");
         for kind in PlantKind::ALL {
-            let row = suitability_row(region, kind, water, &l10n);
+            let row = suitability_row(game.session(), kind, water, &l10n);
             assert_eq!(row.kind, kind);
             assert_eq!(row.label, kind.localize(&l10n));
             assert_eq!(row.verdict, SiteError::NotLand.localize(&l10n));
@@ -319,7 +319,7 @@ mod tests {
                 )
             })
             .expect("some land is too dry for a nuclear plant");
-        let row = suitability_row(region, PlantKind::Nuclear, dry, &l10n);
+        let row = suitability_row(game.session(), PlantKind::Nuclear, dry, &l10n);
         let Err(error) = region.site_check(PlantKind::Nuclear, dry) else {
             unreachable!()
         };
@@ -332,14 +332,34 @@ mod tests {
             .find(|at| region.site_check(PlantKind::Hydro, *at) == Err(SiteError::NoHydroSite))
             .expect("some land has no hydro site");
         assert_eq!(
-            suitability_row(region, PlantKind::Hydro, no_river, &l10n).verdict,
+            suitability_row(game.session(), PlantKind::Hydro, no_river, &l10n).verdict,
             SiteError::NoHydroSite.localize(&l10n)
         );
-        let peaker = suitability_row(region, PlantKind::Peaker, no_river, &l10n);
+        let peaker = suitability_row(game.session(), PlantKind::Peaker, no_river, &l10n);
         assert_eq!(peaker.verdict, l10n.text("inspector-site-ok"));
         assert_eq!(peaker.verdict, "✓");
         assert!(peaker.ok);
         assert_eq!(l10n.problems(), vec![]);
+    }
+
+    #[test]
+    fn occupied_cells_are_unsuitable_in_the_inspector_even_for_a_stale_cell_selection() {
+        let l10n = shipped_l10n();
+        let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        order_plant(&mut game, PlantKind::Peaker, 0);
+        for at in game
+            .session()
+            .city_views()
+            .iter()
+            .map(|c| c.cell)
+            .chain(game.session().plant_views().iter().map(|p| p.cell))
+        {
+            for row in cell_model(&game, &l10n, at).suitability {
+                assert!(!row.ok);
+                assert_eq!(row.verdict, SiteError::Occupied.localize(&l10n));
+            }
+        }
+        assert!(l10n.problems().is_empty());
     }
 
     #[test]
@@ -383,7 +403,7 @@ mod tests {
         let kinds: Vec<PlantKind> = model.suitability.iter().map(|row| row.kind).collect();
         assert_eq!(kinds, PlantKind::ALL);
         for row in &model.suitability {
-            assert_eq!(row, &suitability_row(region, row.kind, at, &l10n));
+            assert_eq!(row, &suitability_row(game.session(), row.kind, at, &l10n));
         }
         assert_eq!(model.close.action, UiAction::Select(Selection::None));
         assert_eq!(l10n.problems(), vec![]);

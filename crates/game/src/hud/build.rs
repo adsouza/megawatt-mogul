@@ -169,7 +169,7 @@ fn plant_section(game: &Game, l10n: &Localizer, selection: Selection) -> PlantSe
         .into_iter()
         .map(|kind| {
             let spec = region.spec(kind);
-            let site = region.site_check(kind, cell);
+            let site = game.session().plant_site_check(kind, cell);
             let mut stats = vec![
                 stat("build-capacity", format::megawatts(spec.capacity)),
                 stat("build-capital", format::money(spec.capital_cost)),
@@ -562,6 +562,31 @@ mod tests {
         assert!(by_kind(PlantKind::Peaker).build.enabled);
         assert_eq!(by_kind(PlantKind::Peaker).blocked, None);
         assert_eq!(l10n.problems(), vec![]);
+    }
+
+    #[test]
+    fn occupied_cells_never_offer_enabled_plant_construction() {
+        let l10n = shipped_l10n();
+        let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        crate::hud::test_support::order_plant(&mut game, PlantKind::Peaker, 0);
+        for at in game
+            .session()
+            .city_views()
+            .iter()
+            .map(|c| c.cell)
+            .chain(game.session().plant_views().iter().map(|p| p.cell))
+        {
+            let model = build_model(&game, &l10n, Selection::Cell(at)).unwrap();
+            for row in rows(&model) {
+                assert!(
+                    !row.build.enabled,
+                    "offered {:?} on occupied {at:?}",
+                    row.kind
+                );
+                assert_eq!(row.blocked, Some(SiteError::Occupied.localize(&l10n)));
+            }
+        }
+        assert!(l10n.problems().is_empty());
     }
 
     #[test]

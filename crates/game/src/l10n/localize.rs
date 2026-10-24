@@ -191,6 +191,7 @@ impl LocalizeWith for DomainError {
 impl Localize for SiteError {
     fn localize(&self, l10n: &Localizer) -> String {
         match self {
+            Self::Occupied => l10n.text("site-occupied"),
             Self::OutOfBounds => l10n.text("site-out-of-bounds"),
             Self::NotLand => l10n.text("site-not-land"),
             Self::InsufficientCoolingWater { have, need } => l10n.args(

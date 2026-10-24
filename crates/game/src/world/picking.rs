@@ -147,7 +147,29 @@ fn hit_geometry(
         let p = ray.get_point(d);
         let grid = world.region.terrain();
         let cell = GridTransform::new(grid.width(), grid.height()).cell_at(p.x, p.z);
-        selection = cell.map_or(Selection::None, Selection::Cell);
+        selection = cell.map_or(Selection::None, |cell| {
+            // Bare ground around a model belongs to the same site. Only resolve the
+            // top surface: hitting a cliff or the underside must not pick through it.
+            let on_top =
+                super::surface_height(grid, cell).is_some_and(|height| (p.y - height).abs() < 1e-3);
+            if on_top && ray.direction.y < 0.0 {
+                world
+                    .plants
+                    .values()
+                    .find(|plant| plant.cell == cell)
+                    .map(|plant| Selection::Plant(plant.id))
+                    .or_else(|| {
+                        world
+                            .cities
+                            .values()
+                            .find(|city| city.cell == cell)
+                            .map(|city| Selection::City(city.id))
+                    })
+                    .unwrap_or(Selection::Cell(cell))
+            } else {
+                Selection::Cell(cell)
+            }
+        });
     }
     // At junctions a cable's forgiving hit box can sit in front of the building.
     // Prefer the visible building, but leave cables selectable away from its silhouette.

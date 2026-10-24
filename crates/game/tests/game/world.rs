@@ -382,6 +382,103 @@ fn world_picking_uses_elevated_terrain_and_object_bounds_and_rejects_sky() {
 }
 
 #[test]
+fn world_ground_in_an_occupied_cell_selects_its_building() {
+    use bevy::prelude::*;
+    use game::{
+        hud::Selection,
+        world::{TuningConfig, WorldControls, WorldModel, presented_hit},
+    };
+    for region in ["eastern_interconnection", "western_interconnection"] {
+        let logs = tempfile::TempDir::new().unwrap();
+        let mut app = crate::support::hud_app(logs.path());
+        crate::support::request(&mut app, region);
+        let mut model = WorldModel::of(&app.world().resource::<game::sim::Session>().0);
+        model.lines.clear();
+        for (at, expected) in model
+            .plants
+            .values()
+            .map(|p| (p.at, Selection::Plant(p.id)))
+            .chain(model.cities.values().map(|c| (c.at, Selection::City(c.id))))
+        {
+            // All four bare corners lie outside the fitted 0.8-cell model footprint.
+            for x in [-0.45, 0.45] {
+                for z in [-0.45, 0.45] {
+                    let ray = Ray3d::new(at + Vec3::new(x, 10.0, z), Dir3::NEG_Y);
+                    assert_eq!(
+                        presented_hit(
+                            ray,
+                            &model,
+                            &WorldControls::default(),
+                            &TuningConfig::default()
+                        )
+                        .unwrap()
+                        .selection,
+                        expected
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn world_real_click_on_site_ground_opens_the_building_instead_of_plant_construction() {
+    use bevy::prelude::*;
+    use bevy_egui::egui;
+    use game::{
+        hud::{PlantSection, Selection, build_model},
+        l10n::Localizer,
+        sim::Session,
+        world::{MapSurface, OrbitCamera, WorldControls, WorldScene},
+    };
+    for region in ["eastern_interconnection", "western_interconnection"] {
+        let logs = tempfile::TempDir::new().unwrap();
+        let mut app = diorama_app(logs.path());
+        crate::support::request(&mut app, region);
+        let pass = crate::support::egui_pass::EguiPass::attach(&mut app);
+        let model = app.world().resource::<WorldScene>().model.as_ref().unwrap();
+        let plant = model.plants.values().next().unwrap();
+        let city = model.cities.values().next().unwrap();
+        let sites = [
+            (plant.at, Selection::Plant(plant.id)),
+            (city.at, Selection::City(city.id)),
+        ];
+        let checkpoint = app.world().resource::<Session>().0.checkpoint();
+        for (at, expected) in sites {
+            app.world_mut().resource_mut::<WorldControls>().orbit = OrbitCamera {
+                target: at.xz(),
+                zoom: 0.3,
+                elevation: 1.42,
+                ..Default::default()
+            };
+            pass.settled(&mut app, 1280.0, 800.0);
+            let surface = app.world().resource::<MapSurface>();
+            let rect = surface.rect.unwrap();
+            let ndc = surface
+                .pose
+                .unwrap()
+                .project(at + Vec3::new(0.45, 0.0, 0.45))
+                .unwrap();
+            let pointer = egui::pos2(
+                rect.left() + (ndc.x + 1.0) * rect.width() / 2.0,
+                rect.top() + (1.0 - ndc.y) * rect.height() / 2.0,
+            );
+            pass.click_at(&mut app, 1280.0, 800.0, pointer);
+            assert_eq!(*app.world().resource::<Selection>(), expected);
+            let world = app.world();
+            let model = build_model(
+                &world.resource::<Session>().0,
+                world.resource::<Localizer>(),
+                expected,
+            )
+            .unwrap();
+            assert!(matches!(model.plant, PlantSection::PickCell { .. }));
+            assert_eq!(world.resource::<Session>().0.checkpoint(), checkpoint);
+        }
+    }
+}
+
+#[test]
 fn world_picking_prefers_buildings_at_crowded_line_junctions() {
     use bevy::prelude::*;
     use game::{
@@ -571,7 +668,7 @@ fn world_power_lines_stay_fine_when_zoomed_in() {
 }
 
 #[test]
-fn world_rendered_meshes_and_picking_share_the_fitted_footprints() {
+fn world_rendered_models_fit_their_cells_and_bare_margins_select_their_occupants() {
     use bevy::prelude::*;
     use game::{
         hud::Selection,
@@ -618,7 +715,7 @@ fn world_rendered_meshes_and_picking_share_the_fitted_footprints() {
                     );
                 }
             }
-            // The old oversized hit boxes must not intercept clicks in the clear cell margin.
+            // The whole occupied site selects its plant, including the bare cell margin.
             let mut isolated = model.clone();
             isolated.cities.clear();
             isolated.lines.clear();
@@ -636,7 +733,7 @@ fn world_rendered_meshes_and_picking_share_the_fitted_footprints() {
                     )
                     .unwrap()
                     .selection,
-                    Selection::Cell(plant.cell)
+                    Selection::Plant(plant.id)
                 );
             }
             assert_eq!(world.resource::<Session>().0.checkpoint(), checkpoint);

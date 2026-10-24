@@ -478,7 +478,7 @@ fn save_resume_reconstructs_year_end_reports_construction_and_a_terminal_review(
     .unwrap();
     live.execute(Command::BuildPlant {
         kind: PlantKind::Peaker,
-        cell: CellCoord { x: 8, y: 4 },
+        cell: CellCoord { x: 9, y: 4 },
     })
     .unwrap();
     for _ in 0..4 {
@@ -731,6 +731,34 @@ fn portable_snapshots_allow_rule_upgrades_and_cover_history_without_debug_hashes
     .unwrap();
     assert_eq!(restored.session().state_hash(), game.session().state_hash());
     assert_eq!(restored.projections(), game.projections());
+}
+
+#[test]
+fn rules_ten_snapshot_keeps_its_state_and_blocks_new_builds_on_occupied_cells() {
+    use domain::region::PlantKind;
+    let (game, _) = game_on(tiny_region_parts(), 7);
+    let mut checkpoint = game.checkpoint();
+    checkpoint.header.sim_rules_version = 10;
+    let mut restored = Game::restore(
+        tiny_loaded_region(),
+        checkpoint,
+        Box::new(InMemoryCommandLog::default()),
+        &|| false,
+    )
+    .unwrap();
+    assert_eq!(restored.session().state_hash(), game.session().state_hash());
+    assert_eq!(restored.projections(), game.projections());
+    let at = restored.session().city_views()[0].cell;
+    let before = restored.checkpoint();
+    assert!(
+        restored
+            .execute(Command::BuildPlant {
+                kind: PlantKind::Peaker,
+                cell: at
+            })
+            .is_err()
+    );
+    assert_eq!(restored.checkpoint(), before);
 }
 
 #[test]

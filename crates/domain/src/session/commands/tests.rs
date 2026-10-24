@@ -81,6 +81,55 @@ fn invalid_sites_are_rejected_with_reason() {
 }
 
 #[test]
+fn occupied_city_plant_and_construction_sites_reject_building_without_mutation() {
+    let mut s = session();
+    let mut sites: Vec<_> = s
+        .city_views()
+        .iter()
+        .map(|c| c.cell)
+        .chain(s.plant_views().iter().map(|p| p.cell))
+        .collect();
+    let at = cell(4, 5);
+    s.build_plant(PlantKind::Peaker, at).unwrap();
+    sites.push(at);
+    for at in sites {
+        for kind in PlantKind::ALL {
+            let before = s.state_hash();
+            assert_eq!(
+                s.build_plant(kind, at),
+                Err(DomainError::InvalidSite {
+                    kind,
+                    cell: at,
+                    reason: SiteError::Occupied
+                })
+            );
+            assert_eq!(s.state_hash(), before);
+        }
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn arbitrary_build_orders_never_share_a_city_or_plant_cell(
+        orders in proptest::collection::vec((0usize..PlantKind::ALL.len(), 0u16..12, 0u16..8), 1..50)
+    ) {
+        let mut s = session();
+        for (kind, x, y) in orders {
+            let at = cell(x, y);
+            let occupied = s.city_views().iter().any(|c| c.cell == at)
+                || s.plant_views().iter().any(|p| p.cell == at);
+            let before = s.state_hash();
+            let result = s.build_plant(PlantKind::ALL[kind], at);
+            proptest::prop_assert!(!occupied || result.is_err());
+            if result.is_err() { proptest::prop_assert_eq!(s.state_hash(), before); }
+            let sites: std::collections::BTreeSet<_> = s.city_views().iter().map(|c| c.cell)
+                .chain(s.plant_views().iter().map(|p| p.cell)).collect();
+            proptest::prop_assert_eq!(sites.len(), s.city_views().len() + s.plant_views().len());
+        }
+    }
+}
+
+#[test]
 fn failed_command_leaves_state_unchanged() {
     let mut s = empty_session();
     let coal = plant_of(&s, PlantKind::Coal);
@@ -274,7 +323,7 @@ fn line_build_months_is_what_the_quote_said() {
     let mut s = session();
     let root = s.anchor;
     let (far, _) = s.build_plant(PlantKind::Peaker, cell(4, 5)).unwrap();
-    let (near, _) = s.build_plant(PlantKind::Peaker, cell(6, 5)).unwrap();
+    let (near, _) = s.build_plant(PlantKind::Peaker, cell(5, 4)).unwrap();
     let far = s.power().plant(far).unwrap().node();
     let near = s.power().plant(near).unwrap().node();
     let far_quote = s.line_quote(root, far).unwrap();
@@ -320,7 +369,7 @@ fn line_build_months_is_what_the_quote_said() {
 #[test]
 fn line_quote_floors_a_short_line_at_one_month() {
     let mut s = session();
-    let (plant, _) = s.build_plant(PlantKind::Peaker, cell(6, 5)).unwrap();
+    let (plant, _) = s.build_plant(PlantKind::Peaker, cell(5, 4)).unwrap();
     let node = s.power().plant(plant).unwrap().node();
     // One cell: one month at 40 M.
     assert_eq!(
@@ -377,7 +426,7 @@ fn line_quote_returns_the_errors_build_line_would() {
 #[test]
 fn short_line_takes_at_least_one_month() {
     let mut s = session();
-    let (plant, _) = s.build_plant(PlantKind::Peaker, cell(6, 5)).unwrap();
+    let (plant, _) = s.build_plant(PlantKind::Peaker, cell(5, 4)).unwrap();
     let node = s.power().plant(plant).unwrap().node();
     let (line, _) = s.build_line(node, s.anchor).unwrap();
     let built = s.power().network().lines().find(|l| l.id == line).unwrap();

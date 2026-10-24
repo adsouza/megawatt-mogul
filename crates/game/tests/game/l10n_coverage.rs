@@ -95,6 +95,7 @@ fn ratio(v: f64) -> Ratio {
 
 fn site_errors() -> Vec<SiteError> {
     vec![
+        SiteError::Occupied,
         SiteError::OutOfBounds,
         SiteError::NotLand,
         SiteError::InsufficientCoolingWater {
@@ -564,7 +565,8 @@ fn the_variant_tables_cover_every_variant() {
         CommandError::Region(_) => 1,
         CommandError::Log(_) => 2,
     });
-    assert_covers_every_variant("SiteError", &site_errors(), 4, |e| match e {
+    assert_covers_every_variant("SiteError", &site_errors(), 5, |e| match e {
+        SiteError::Occupied => 4,
         SiteError::OutOfBounds => 0,
         SiteError::NotLand => 1,
         SiteError::InsufficientCoolingWater { .. } => 2,

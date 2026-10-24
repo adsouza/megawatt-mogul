@@ -8,7 +8,7 @@ use crate::events::DomainEvent;
 use crate::generation::{CommitmentSchedule, Plant, PlantStatus};
 use crate::grid::{LineStatus, Node, NodeKind, distance_cells};
 use crate::ids::{CellCoord, LineId, NodeId, PlantId};
-use crate::region::PlantKind;
+use crate::region::{PlantKind, SiteError};
 use crate::time::{SimDuration, TICKS_PER_DAY};
 use crate::units::{Megawatts, Money};
 
@@ -27,6 +27,20 @@ pub struct LineQuote {
 }
 
 impl GameSession {
+    /// The current siting verdict, including cities and plants still under construction.
+    /// Region resource suitability alone does not establish that a site is available.
+    pub fn plant_site_check(&self, kind: PlantKind, cell: CellCoord) -> Result<(), SiteError> {
+        if self
+            .power
+            .network()
+            .nodes()
+            .any(|(_, node)| node.cell == cell)
+        {
+            return Err(SiteError::Occupied);
+        }
+        self.region.site_check(kind, cell)
+    }
+
     /// Cancels an unfinished line in Planning. Paid instalments remain spent;
     /// future instalments are removed and the line can never commission.
     pub fn cancel_line_construction(
@@ -48,8 +62,7 @@ impl GameSession {
         cell: CellCoord,
     ) -> Result<(PlantId, Vec<DomainEvent>), DomainError> {
         self.require_phase(&[DayPhase::Planning])?;
-        self.region
-            .site_check(kind, cell)
+        self.plant_site_check(kind, cell)
             .map_err(|reason| DomainError::InvalidSite { kind, cell, reason })?;
         let spec = self.region.spec(kind).clone();
         let plant: PlantId = self.ids.next();

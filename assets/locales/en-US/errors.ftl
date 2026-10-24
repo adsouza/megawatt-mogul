@@ -28,6 +28,7 @@ error-start-up-beyond-day = That start-up takes { $startup }, but only { $remain
 ## Why a cell cannot host a plant
 
 site-out-of-bounds = That spot is outside the map.
+site-occupied = This cell is already occupied by a city or plant. Choose an empty land cell.
 site-not-land = That spot is water, and plants need land.
 site-insufficient-cooling-water = Cooling water here is { $have }, but this plant needs at least { $need }. Look near a river, lake or coast.
 site-no-hydro-site = There is no river here to dam. Hydro needs a cell with hydro potential.

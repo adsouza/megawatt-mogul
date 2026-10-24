@@ -268,7 +268,8 @@ pub fn city_radius(layout: &MapLayout) -> f32 {
 }
 
 /// What a click at `pos` selects: what is drawn there, topmost first. That is a plant (its drawn
-/// square), else a city (its drawn circle), else the nearest line, else the cell, else nothing.
+/// square), else a city (its drawn circle), else the nearest line, else the cell's occupant,
+/// else the empty cell, else nothing.
 /// Among markers drawn on top of each other, the one drawn last is on top.
 pub fn pick(layout: &MapLayout, pos: Pos2, objects: &MapObjects) -> Selection {
     if layout.cell_size() <= 0.0 {
@@ -305,7 +306,23 @@ pub fn pick(layout: &MapLayout, pos: Pos2, objects: &MapObjects) -> Selection {
                 .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))
                 .map(|(id, _)| Selection::Line(id))
         })
-        .or_else(|| layout.cell_at(pos).map(Selection::Cell))
+        .or_else(|| {
+            layout.cell_at(pos).map(|cell| {
+                objects
+                    .plants
+                    .iter()
+                    .find(|plant| plant.cell == cell)
+                    .map(|plant| Selection::Plant(plant.id))
+                    .or_else(|| {
+                        objects
+                            .cities
+                            .iter()
+                            .find(|city| city.cell == cell)
+                            .map(|city| Selection::City(city.id))
+                    })
+                    .unwrap_or(Selection::Cell(cell))
+            })
+        })
         .unwrap_or(Selection::None)
 }
 
@@ -1438,7 +1455,7 @@ mod tests {
     }
 
     #[test]
-    fn a_marker_is_hit_only_where_it_is_drawn() {
+    fn a_marker_and_the_ground_of_its_site_select_the_same_occupant() {
         let layout = MapLayout::fit(area(0.0, 0.0, 1000.0, 600.0), 100, 60);
         let plant = plant_at(1, cell(40, 20));
         let city = CityMarker {
@@ -1470,7 +1487,7 @@ mod tests {
                 Selection::Plant(plant.id)
             );
         }
-        // Just outside the square, still inside the plant's own cell, is the cell.
+        // Bare ground inside the plant's cell still belongs to its occupied site.
         for outside in [
             vec2(half + 0.2, 0.0),
             vec2(0.0, -half - 0.2),
@@ -1478,12 +1495,11 @@ mod tests {
         ] {
             assert_eq!(
                 pick(&layout, centre + outside, &objects),
-                Selection::Cell(plant.cell),
+                Selection::Plant(plant.id),
                 "{outside:?}"
             );
         }
-        // The city is its drawn circle: inside the radius it is the city, in the cell's corner
-        // beyond it, the cell.
+        // Both the city model and the bare corners of its site select the city.
         let city_centre = layout.cell_center(city.cell);
         assert_eq!(
             pick(&layout, city_centre + vec2(radius * 0.99, 0.0), &objects),
@@ -1496,7 +1512,7 @@ mod tests {
         );
         assert_eq!(
             pick(&layout, city_centre + diagonal * 1.2, &objects),
-            Selection::Cell(city.cell)
+            Selection::City(city.id)
         );
         // The next cell over, between the two, is just a cell.
         let between = layout.cell_center(cell(41, 20));
@@ -1638,11 +1654,11 @@ mod tests {
             "{checked} neighbouring cells checked around {} plants",
             objects.plants.len()
         );
-        // The corner of a plant's own cell, outside its square, is the cell too.
+        // The corner of a plant's own cell selects its site without extending into neighbours.
         let plant = &objects.plants[0];
         let corner = layout.cell_rect(plant.cell).max - vec2(0.1, 0.1);
         assert!(!covers(&layout, plant, corner));
-        assert_eq!(pick(&layout, corner, &objects), Selection::Cell(plant.cell));
+        assert_eq!(pick(&layout, corner, &objects), Selection::Plant(plant.id));
     }
 
     #[test]

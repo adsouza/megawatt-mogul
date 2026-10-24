@@ -27,6 +27,8 @@ use crate::units::Ratio;
 /// Why a cell cannot host a plant.
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
 pub enum SiteError {
+    #[error("cell is already occupied by a city or plant")]
+    Occupied,
     #[error("cell is outside the grid")]
     OutOfBounds,
     #[error("cell is not land")]
