@@ -214,6 +214,10 @@ pub fn finish_surface(
         surface.clear();
         return Ok(());
     };
+    if session.0.session().phase() == DayPhase::Review {
+        surface.clear();
+        return Ok(());
+    }
     let (Some(model), Some(response)) = (&scene.model, surface.response.clone()) else {
         return Ok(());
     };

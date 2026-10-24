@@ -458,6 +458,19 @@ and explicitly alpha-composites the HUD; retaining its previous texture would co
 the previous menu. World viewport/pose updates run after egui and before camera calculations and
 transform propagation. The same pose and rounded rectangle project labels and generate picking rays.
 
+In the render world, `viewport_render` allocates the diorama's HDR/depth intermediates at the
+map's physical pixel size and rebases their origin to zero. A final one-to-one blit places the
+result in the original window rectangle before the HUD; it adds no image asset or resolution
+scaling. Bloom sampling uses the local rectangle, and depth-of-field aperture compensates for
+the smaller buffer height to retain its blur radius in pixels. The final scissor intersects the
+actual output attachment, protecting a frame with stale viewport metadata during a window shrink.
+The main-world camera, projection, labels and picking keep their original window coordinates.
+Review fills the area below the top bar with an opaque background and omits the map controls.
+Its 3D camera is despawned, and the compositor drops its cached texture binding so unused view
+targets can be reclaimed. Continue recreates the camera from the preserved orbit and effects
+settings when Planning draws its map again. The opaque background also remains behind Save,
+Menu and game-over dialogs.
+
 Map controls use the normal presenter/action funnel. Selection, orbit, pan, zoom and toggles pass
 through `UiAction`/`dispatch`; systems read those resources through `ActionSink`. Map gestures are
 processed after all floating windows register their current layers. The response must own the

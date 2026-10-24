@@ -407,7 +407,10 @@ fn the_map_never_moves_on_its_own_after_a_resize() {
             );
             update_n(&mut screen.app, 3);
             assert_eq!(phase(&screen.app), DayPhase::Review, "{what}");
-            screen.map();
+            let widgets = screen
+                .pass
+                .settled(&mut screen.app, screen.width, screen.height);
+            assert!(!widgets.iter().any(|w| w.text == "Map"));
             dispatch_in(
                 &mut screen.app,
                 vec![UiAction::Command(Command::FinishReview)],

@@ -37,6 +37,7 @@ pub use picking::{WorldHit, hit_world, pick_world, presented_hit, terrain_grid_h
 mod plugins;
 mod render;
 mod ui;
+mod viewport_render;
 pub use plugins::{CameraPlugin, DioramaCamera, OverlayPlugin, WorldViewPlugin};
 pub use render::{ViewSync, WorldAssets, WorldEntity, WorldScene};
 pub use ui::{

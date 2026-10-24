@@ -14,7 +14,7 @@ use game::state::PhaseState;
 use tempfile::TempDir;
 
 use crate::hud_smoke::{EASTERN, WESTERN, WIDE, dispatch_in, operating_hour_app, sent};
-use crate::support::egui_harness::{button as find_button, buttons, has, shows, widget};
+use crate::support::egui_harness::{button as find_button, buttons, has, shows};
 use crate::support::egui_pass::EguiPass;
 use crate::support::{empty_start_in, hud_app, request, shipped_l10n, update_n};
 
@@ -32,6 +32,144 @@ fn review_app(logs: &TempDir, region: &str) -> App {
     update_n(&mut app, 3);
     assert_eq!(phase(&app), PhaseState::Review);
     app
+}
+
+#[test]
+fn review_has_an_opaque_background_and_no_hidden_map_controls() {
+    let logs = TempDir::new().unwrap();
+    let mut app = review_app(&logs, EASTERN);
+    let pass = EguiPass::attach(&mut app);
+    let widgets = pass.settled(&mut app, 1280.0, 720.0);
+    assert!(!has(&widgets, "Map"));
+    assert!(
+        app.world()
+            .get_resource::<game::world::MapSurface>()
+            .is_none_or(|s| s.rect.is_none())
+    );
+    let point = egui::pos2(2.0, 718.0);
+    let output = pass.paint_with(&mut app, 1280.0, 720.0, vec![]);
+    fn opaque_at(shape: &egui::Shape, point: egui::Pos2) -> bool {
+        match shape {
+            egui::Shape::Rect(rect) => rect.rect.contains(point) && rect.fill.a() == 255,
+            egui::Shape::Vec(shapes) => shapes.iter().any(|s| opaque_at(s, point)),
+            _ => false,
+        }
+    }
+    assert!(
+        output
+            .shapes
+            .iter()
+            .any(|s| s.clip_rect.contains(point) && opaque_at(&s.shape, point))
+    );
+    output.drop_without_applying_deltas();
+}
+
+#[test]
+fn review_save_and_menu_controls_work_above_the_opaque_background() {
+    use game::{
+        paths::SaveDir,
+        sim::{Persistence, SaveScreen},
+    };
+    let logs = TempDir::new().unwrap();
+    let saves = TempDir::new().unwrap();
+    let mut app = hud_app(logs.path());
+    app.insert_resource(SaveDir(saves.path().into()));
+    request(&mut app, EASTERN);
+    dispatch_in(
+        &mut app,
+        vec![
+            UiAction::Command(Command::BeginOperating),
+            UiAction::Command(Command::AdvanceTicks { n: 1440 }),
+        ],
+    );
+    let settle = |app: &mut App| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            app.update();
+            if !app.world().resource::<Persistence>().busy() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "save worker timed out"
+            );
+            std::thread::yield_now();
+        }
+    };
+    update_n(&mut app, 3);
+    settle(&mut app);
+    assert_eq!(phase(&app), PhaseState::Review);
+    let checkpoint = app.world().resource::<Session>().0.checkpoint();
+    let pass = EguiPass::attach(&mut app);
+    let (width, height) = (1280.0, 720.0);
+    let widgets = pass.settled(&mut app, width, height);
+    let save = widgets
+        .iter()
+        .find(|w| w.role == egui::accesskit::Role::Button && w.text.starts_with("Save"))
+        .unwrap();
+    assert!(!save.disabled);
+    pass.click_at(&mut app, width, height, save.rect.center());
+    settle(&mut app);
+    let widgets = pass.settled(&mut app, width, height);
+    assert_eq!(
+        app.world().resource::<Persistence>().screen,
+        SaveScreen::Save
+    );
+    assert!(!has(&widgets, "Continue"));
+    let field = widgets
+        .iter()
+        .find(|w| w.role == egui::accesskit::Role::TextInput)
+        .unwrap();
+    pass.click_at(&mut app, width, height, field.rect.center());
+    let enter = |pressed| egui::Event::Key {
+        key: egui::Key::Enter,
+        physical_key: None,
+        pressed,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    };
+    pass.run_with(
+        &mut app,
+        width,
+        height,
+        vec![
+            egui::Event::Text("Review save".into()),
+            enter(true),
+            enter(false),
+        ],
+    );
+    settle(&mut app);
+    let persistence = app.world().resource::<Persistence>();
+    assert_eq!(
+        persistence.last_saved().unwrap().metadata.name,
+        "Review save"
+    );
+    assert_eq!(persistence.screen, SaveScreen::Closed);
+    let widgets = pass.settled(&mut app, width, height);
+    assert!(has(&widgets, "Continue"));
+    pass.click_at(
+        &mut app,
+        width,
+        height,
+        find_button(&widgets, "Menu").rect.center(),
+    );
+    settle(&mut app);
+    let widgets = pass.settled(&mut app, width, height);
+    assert_eq!(
+        app.world().resource::<Persistence>().screen,
+        SaveScreen::Leave
+    );
+    assert!(has(&widgets, "Save and return to menu"));
+    pass.click_at(
+        &mut app,
+        width,
+        height,
+        find_button(&widgets, "Cancel").rect.center(),
+    );
+    let widgets = pass.settled(&mut app, width, height);
+    assert!(has(&widgets, "Continue"));
+    assert_eq!(phase(&app), PhaseState::Review);
+    assert_eq!(app.world().resource::<Session>().0.checkpoint(), checkpoint);
 }
 
 #[test]
@@ -236,11 +374,10 @@ fn the_review_modal_draws_every_section_after_a_full_day() {
             "Incidents",
             "Lessons",
             "Regulator",
-            // Behind the modal: the map and the top bar.
-            "Map",
         ] {
             assert!(has(&widgets, text), "{region}: {text} is not shown");
         }
+        assert!(!has(&widgets, "Map"));
         let game = &app.world().resource::<Session>().0;
         let report = game.projections().monthly_reports.latest().unwrap();
         let l10n = shipped_l10n();
@@ -410,18 +547,16 @@ fn continue_finishes_the_review_through_the_real_pass() {
     assert!(has(&widgets, "Start the day"));
 }
 
-/// The backdrop dims the map and takes its clicks, and a click there doesn't leave Review: only
+/// The opaque margin takes clicks without leaving Review: only
 /// Continue does.
 #[test]
-fn a_click_on_the_dimmed_map_does_nothing() {
+fn a_click_on_the_opaque_review_margin_does_nothing() {
     let logs = TempDir::new().unwrap();
     let mut app = review_app(&logs, EASTERN);
     let pass = EguiPass::attach(&mut app);
     let widgets = pass.settled(&mut app, 1024.0, 640.0);
-    let map = widget(&widgets, "Map").rect;
-    // Left of the modal, on the map.
-    let at = egui::pos2(map.left() + REVIEW_MARGIN / 4.0, map.center().y);
-    assert!(at.x < REVIEW_MARGIN && map.contains(at));
+    assert!(!has(&widgets, "Map"));
+    let at = egui::pos2(REVIEW_MARGIN / 4.0, 320.0);
     let before = *app.world().resource::<Selection>();
     let commands = sent::<PlayerCommand>(&app).len();
 

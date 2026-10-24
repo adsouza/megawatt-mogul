@@ -1,10 +1,10 @@
-//! The Review modal (spec §8.4): the month just closed, over the dimmed map.
+//! The Review screen (spec §8.4): the month just closed, on an opaque background.
 //!
 //! Three headline figures lead the report. The summary column puts regulation, the annual rate
 //! review and lessons before the detailed P&L (weighted by the month's days, §2.3), reliability
 //! and incidents. Merit order and battery storage have their own independently scrolling columns.
-//! *Continue* is the way out: it sends `FinishReview`. The backdrop dims the map but not the top
-//! bar, so the menu and the milestones stay in reach.
+//! *Continue* is the way out: it sends `FinishReview`. The top bar stays visible, so the menu
+//! and the milestones stay in reach. The 3D scene is not rendered during Review.
 //!
 //! A game that ended at this month close shows this modal only when the player asks for it from
 //! the game-over modal (*See the month*, [`GameOverView::FinalMonth`]). Then the footer is *Back*,
@@ -30,8 +30,6 @@ use crate::sim::Session;
 pub const REVIEW_MARGIN: f32 = 16.0;
 /// The height of the separator above the footer button, reserved under the scroll area.
 const FOOTER_SEPARATOR: f32 = 6.0;
-/// How much the backdrop darkens the map.
-const BACKDROP: egui::Color32 = egui::Color32::from_black_alpha(100);
 
 /// One plant's line in the merit order used.
 #[derive(Debug, Clone, PartialEq)]
@@ -466,9 +464,12 @@ fn draw_storage(ui: &mut egui::Ui, model: &ReviewModel) {
 fn draw_merit(ui: &mut egui::Ui, model: &ReviewModel) {
     ui.add_space(6.0);
     ui.strong(&model.merit_heading);
+    let content_width = (ui.available_width() - 3.0 * ui.spacing().item_spacing.x).max(0.0);
+    // Plant names include the kind and ID; give them twice the room of the other columns.
+    let plant_width = content_width * 0.4;
     egui::Grid::new("review_merit")
         .num_columns(4)
-        .max_col_width((ui.available_width() - 3.0 * ui.spacing().item_spacing.x) / 4.0)
+        .max_col_width(content_width * 0.2)
         .striped(true)
         .show(ui, |ui| {
             for column in &model.merit_columns {
@@ -476,7 +477,11 @@ fn draw_merit(ui: &mut egui::Ui, model: &ReviewModel) {
             }
             ui.end_row();
             for row in &model.merit {
-                ui.label(row.plant.as_str());
+                ui.allocate_ui_with_layout(
+                    egui::vec2(plant_width, 0.0),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| ui.add(egui::Label::new(row.plant.as_str()).wrap()),
+                );
                 ui.label(row.kind.as_str());
                 ui.label(row.marginal_cost.as_str());
                 ui.label(row.energy.as_str());
@@ -485,9 +490,18 @@ fn draw_merit(ui: &mut egui::Ui, model: &ReviewModel) {
         });
 }
 
-/// Dims the map under the top bar (a backdrop that takes clicks and does nothing with them, so
-/// only the footer button leaves Review) and draws the modal over it, in one layer under the
-/// floating windows.
+/// Opaque even while a save dialog or the game-over summary covers the report.
+pub(super) fn review_background(mut contexts: EguiContexts, area: Res<HudArea>) -> Result {
+    let ctx = contexts.ctx_mut()?;
+    ctx.layer_painter(egui::LayerId::background()).rect_filled(
+        area.free_rect(ctx),
+        0.0,
+        ctx.global_style().visuals.panel_fill,
+    );
+    Ok(())
+}
+
+/// The report takes background clicks without leaving Review and stays below floating windows.
 pub(super) fn review_modal(
     mut contexts: EguiContexts,
     area: Res<HudArea>,
@@ -512,8 +526,7 @@ pub(super) fn review_modal(
         .order(egui::Order::Middle)
         .fixed_pos(behind.min)
         .show(ctx, |ui| {
-            let (rect, _) = ui.allocate_exact_size(behind.size(), egui::Sense::click_and_drag());
-            ui.painter().rect_filled(rect, 0.0, BACKDROP);
+            ui.allocate_exact_size(behind.size(), egui::Sense::click_and_drag());
             let mut modal_ui = ui.new_child(egui::UiBuilder::new().max_rect(modal));
             frame
                 .show(&mut modal_ui, |ui| {

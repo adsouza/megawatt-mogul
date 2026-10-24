@@ -183,7 +183,7 @@ pub enum HudSet {
 /// game-over modal; the planning screen's map, cell inspector, build menu and bottom panel
 /// (commitment grid, forecast chart, tariff); the operating screen's speed controls, side panel
 /// (frequency gauge, plant list, selected plant) and bottom panel (supply chart, hydro schedule,
-/// ramp warnings, incidents); and the Review modal over the dimmed map.
+/// ramp warnings, incidents); and the opaque Review screen.
 pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
@@ -196,8 +196,10 @@ impl Plugin for HudPlugin {
 
         let has_l10n = resource_exists::<Localizer>;
         let in_game = in_state(AppState::InGame).and_then(resource_exists::<Session>);
-        // The map draws in every in-game phase: in Review it is the dimmed diorama behind the modal.
-        let on_the_map = in_game.clone().and_then(has_l10n);
+        let on_the_map = in_game
+            .clone()
+            .and_then(has_l10n)
+            .and_then(not(in_phase(DayPhase::Review)));
         app.init_resource::<crate::world::WorldControls>()
             .init_resource::<Selection>()
             .init_resource::<MapLayer>()
@@ -329,6 +331,12 @@ impl Plugin for HudPlugin {
                     top_bar::top_bar_panel
                         .in_set(HudSet::Bars)
                         .run_if(in_game.clone().and_then(has_l10n)),
+                    review::review_background.in_set(HudSet::Panels).run_if(
+                        in_game
+                            .clone()
+                            .and_then(has_l10n)
+                            .and_then(in_phase(DayPhase::Review)),
+                    ),
                     speed::speed_bar
                         .in_set(HudSet::Bars)
                         .after(top_bar::top_bar_panel)

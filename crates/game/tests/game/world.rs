@@ -1050,7 +1050,7 @@ proptest! {
 #[test]
 fn world_camera_keeps_a_full_window_transparent_hud_and_a_separate_hdr_view() {
     use bevy::{
-        camera::{CameraOutputMode, Hdr},
+        camera::{CameraOutputMode, Hdr, visibility::RenderLayers},
         prelude::*,
     };
     use bevy_egui::{EguiGlobalSettings, PrimaryEguiContext};
@@ -1063,13 +1063,22 @@ fn world_camera_keeps_a_full_window_transparent_hud_and_a_separate_hdr_view() {
     app.update();
     let ui = app
         .world_mut()
-        .query_filtered::<&Camera, With<PrimaryEguiContext>>()
+        .query_filtered::<Entity, With<PrimaryEguiContext>>()
         .single(app.world())
         .unwrap();
-    assert!(ui.viewport.is_none());
-    assert!(matches!(ui.clear_color,ClearColorConfig::Custom(c) if c==Color::NONE));
+    let camera = app.world().get::<Camera>(ui).unwrap();
+    assert_eq!(app.world().get::<Msaa>(ui), Some(&Msaa::Off));
+    // Only the separate 3D camera participates in Bevy's shadow-map preparation.
+    assert!(app.world().get::<Camera2d>(ui).is_some());
+    assert!(app.world().get::<Camera3d>(ui).is_none());
+    assert_eq!(
+        app.world().get::<RenderLayers>(ui),
+        Some(&RenderLayers::none())
+    );
+    assert!(camera.viewport.is_none());
+    assert!(matches!(camera.clear_color,ClearColorConfig::Custom(c) if c==Color::NONE));
     assert!(matches!(
-        ui.output_mode,
+        camera.output_mode,
         CameraOutputMode::Write {
             blend_state: Some(_),
             clear_color: ClearColorConfig::None
@@ -1082,6 +1091,91 @@ fn world_camera_keeps_a_full_window_transparent_hud_and_a_separate_hdr_view() {
         .unwrap();
     assert!(!camera.1.is_active);
     assert!(app.world().get::<Hdr>(camera.0).is_some());
+}
+
+#[test]
+fn world_camera_is_removed_in_review_and_recreated_on_continue() {
+    use bevy::prelude::*;
+    use bevy_egui::{EguiGlobalSettings, egui};
+    use game::{
+        hud::UiAction,
+        world::{CameraPlugin, DioramaCamera, MapSurface, OrbitCamera, WorldScene},
+    };
+    let logs = tempfile::TempDir::new().unwrap();
+    let mut app = crate::support::headless_app(&crate::support::shipped_assets(), logs.path());
+    app.init_resource::<EguiGlobalSettings>().add_plugins((
+        game::hud::HudPlugin,
+        game::world::WorldViewPlugin,
+        CameraPlugin,
+    ));
+    crate::support::update_n(&mut app, 3);
+    app.world_mut().spawn((
+        Window {
+            resolution: (1280, 720).into(),
+            ..default()
+        },
+        bevy::window::PrimaryWindow,
+    ));
+    crate::support::request(&mut app, "eastern_interconnection");
+    let size = app
+        .world()
+        .resource::<WorldScene>()
+        .model
+        .as_ref()
+        .unwrap()
+        .size();
+    {
+        let mut surface = app.world_mut().resource_mut::<MapSurface>();
+        surface.rect = Some(egui::Rect::from_min_size(
+            egui::pos2(260.0, 65.0),
+            egui::vec2(720.0, 394.0),
+        ));
+        surface.scale = 1.0;
+        surface.pose = Some(OrbitCamera::default().pose(size, 720.0 / 394.0));
+    }
+    app.update();
+    let old = app
+        .world_mut()
+        .query_filtered::<Entity, With<DioramaCamera>>()
+        .single(app.world())
+        .unwrap();
+    assert!(app.world().get::<Camera>(old).unwrap().is_active);
+    crate::hud_smoke::dispatch_in(
+        &mut app,
+        vec![
+            UiAction::Command(application::Command::BeginOperating),
+            UiAction::Command(application::Command::AdvanceTicks { n: 1440 }),
+        ],
+    );
+    app.update();
+    assert_eq!(
+        app.world()
+            .resource::<WorldScene>()
+            .model
+            .as_ref()
+            .unwrap()
+            .phase,
+        domain::session::DayPhase::Review
+    );
+    assert_eq!(
+        app.world_mut()
+            .query_filtered::<Entity, With<DioramaCamera>>()
+            .iter(app.world())
+            .count(),
+        0
+    );
+    crate::hud_smoke::dispatch_in(
+        &mut app,
+        vec![UiAction::Command(application::Command::FinishReview)],
+    );
+    app.update();
+    let next = app
+        .world_mut()
+        .query_filtered::<Entity, With<DioramaCamera>>()
+        .single(app.world())
+        .unwrap();
+    assert_ne!(next, old);
+    assert!(app.world().get::<Camera>(next).unwrap().is_active);
 }
 
 proptest! {
@@ -1356,13 +1450,14 @@ fn world_real_pass_blocks_legends_panels_and_review_and_checks_all_layers_contra
         );
         pass.settled(&mut app, 1280.0, 800.0);
         let before = app.world().resource::<WorldControls>().orbit;
-        let rect = app.world().resource::<MapSurface>().rect.unwrap();
+        assert!(app.world().resource::<MapSurface>().rect.is_none());
+        assert!(app.world().resource::<MapSurface>().pose.is_none());
         pass.drag(
             &mut app,
             1280.0,
             800.0,
-            rect.left_top() + egui::vec2(20.0, 20.0),
-            rect.left_top() + egui::vec2(40.0, 40.0),
+            egui::pos2(4.0, 100.0),
+            egui::pos2(8.0, 140.0),
         );
         assert_eq!(
             app.world().resource::<WorldControls>().orbit,

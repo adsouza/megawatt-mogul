@@ -1,7 +1,9 @@
-use super::{MapSurface, TuningConfig, ViewSync, WorldAssets, WorldControls, WorldScene};
+use super::{
+    CameraPose, MapSurface, TuningConfig, ViewSync, WorldAssets, WorldControls, WorldScene,
+};
 use crate::{hud::HudSet, sim::SimSet};
 use bevy::{
-    camera::{CameraOutputMode, CameraUpdateSystems, Hdr, visibility::RenderLayers},
+    camera::{CameraOutputMode, CameraUpdateSystems, Hdr, Viewport, visibility::RenderLayers},
     post_process::{bloom::Bloom, dof::DepthOfField},
     prelude::*,
     transform::TransformSystems,
@@ -63,6 +65,7 @@ impl Plugin for CameraPlugin {
             brightness: 350.0,
             ..default()
         })
+        .add_plugins(super::viewport_render::ViewportTargetPlugin)
         .add_systems(Startup, setup)
         .add_systems(
             PostUpdate,
@@ -87,27 +90,44 @@ fn setup(mut commands: Commands, mut settings: ResMut<EguiGlobalSettings>) {
             },
             ..default()
         },
+        // egui supplies its own edge antialiasing. Multisampling this otherwise empty 2D
+        // pass only allocates large color/depth buffers; Camera2d and empty render layers
+        // also keep the HUD out of the 3D shadow pipeline.
+        Msaa::Off,
         RenderLayers::none(),
     ));
-    commands.spawn((
-        DioramaCamera,
-        Camera3d::default(),
-        Hdr,
-        bevy::core_pipeline::tonemapping::Tonemapping::ReinhardLuminance,
-        Camera {
-            is_active: false,
-            clear_color: ClearColorConfig::Custom(Color::srgb(0.14, 0.18, 0.23)),
-            ..default()
-        },
-        Projection::Perspective(PerspectiveProjection {
-            fov: super::camera::FOV,
-            near: 0.1,
-            far: 2000.0,
-            ..default()
-        }),
-        Msaa::Off,
-        bevy::light::ShadowFilteringMethod::Gaussian,
-    ));
+    spawn_diorama_camera(&mut commands, None, None);
+}
+
+fn spawn_diorama_camera(
+    commands: &mut Commands,
+    viewport: Option<Viewport>,
+    pose: Option<CameraPose>,
+) -> Entity {
+    commands
+        .spawn((
+            DioramaCamera,
+            Camera3d::default(),
+            Hdr,
+            bevy::core_pipeline::tonemapping::Tonemapping::ReinhardLuminance,
+            Camera {
+                is_active: viewport.is_some() && pose.is_some(),
+                viewport,
+                clear_color: ClearColorConfig::Custom(Color::srgb(0.14, 0.18, 0.23)),
+                ..default()
+            },
+            Projection::Perspective(PerspectiveProjection {
+                fov: super::camera::FOV,
+                aspect_ratio: pose.map_or(1.0, |p| p.aspect),
+                near: 0.1,
+                far: 2000.0,
+                ..default()
+            }),
+            pose.map_or_else(Transform::default, |p| p.transform()),
+            Msaa::Off,
+            bevy::light::ShadowFilteringMethod::Gaussian,
+        ))
+        .id()
 }
 fn update_camera(
     mut commands: Commands,
@@ -118,46 +138,93 @@ fn update_camera(
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut cameras: Query<(Entity, &mut Camera, &mut Transform, &mut Projection), With<DioramaCamera>>,
 ) {
+    if scene
+        .model
+        .as_ref()
+        .is_some_and(|m| m.phase == domain::session::DayPhase::Review)
+    {
+        for (entity, _, _, _) in &mut cameras {
+            commands.entity(entity).despawn();
+        }
+        return;
+    }
     let Some(window) = windows.iter().next() else {
         return;
     };
-    for (e, mut camera, mut transform, mut projection) in &mut cameras {
-        let view = surface.rect.and_then(|r| {
-            super::physical_viewport(
-                r,
-                surface.scale,
-                UVec2::new(window.physical_width(), window.physical_height()),
-            )
-        });
-        let active = scene.model.is_some() && view.is_some() && surface.pose.is_some();
+    let view = surface.rect.and_then(|rect| {
+        super::physical_viewport(
+            rect,
+            surface.scale,
+            UVec2::new(window.physical_width(), window.physical_height()),
+        )
+    });
+    let active = scene.model.is_some() && view.is_some() && surface.pose.is_some();
+    if cameras.is_empty() && active {
+        let entity = spawn_diorama_camera(&mut commands, view.clone(), surface.pose);
+        set_effects(
+            &mut commands,
+            entity,
+            &controls,
+            &tuning,
+            &surface,
+            window,
+            view.as_ref(),
+        );
+    }
+    for (entity, mut camera, mut transform, mut projection) in &mut cameras {
         camera.is_active = active;
         if !active {
             continue;
         }
-        camera.viewport = view;
+        camera.viewport = view.clone();
         if let Some(pose) = surface.pose {
             *transform = pose.transform();
             if let Projection::Perspective(p) = &mut *projection {
                 p.aspect_ratio = pose.aspect;
             }
         }
-        if controls.effects {
-            let distance = surface.pose.map_or(100.0, |p| p.eye.distance(p.target));
-            commands.entity(e).insert((
-                Bloom {
-                    intensity: tuning.bloom_intensity(),
-                    ..Bloom::NATURAL
-                },
-                DepthOfField {
-                    focal_distance: distance,
-                    aperture_f_stops: 0.06,
-                    max_circle_of_confusion_diameter: 3.0,
-                    max_depth: 500.0,
-                    ..default()
-                },
-            ));
-        } else {
-            commands.entity(e).remove::<(Bloom, DepthOfField)>();
-        }
+        set_effects(
+            &mut commands,
+            entity,
+            &controls,
+            &tuning,
+            &surface,
+            window,
+            camera.viewport.as_ref(),
+        );
+    }
+}
+
+fn set_effects(
+    commands: &mut Commands,
+    entity: Entity,
+    controls: &WorldControls,
+    tuning: &TuningConfig,
+    surface: &MapSurface,
+    window: &Window,
+    viewport: Option<&Viewport>,
+) {
+    if controls.effects {
+        let distance = surface.pose.map_or(100.0, |p| p.eye.distance(p.target));
+        // Compensate for the smaller target height to preserve blur radius in map pixels.
+        let aperture = super::viewport_render::depth_of_field_aperture(
+            viewport.map_or(window.physical_height(), |v| v.physical_size.y),
+            window.physical_height(),
+        );
+        commands.entity(entity).insert((
+            Bloom {
+                intensity: tuning.bloom_intensity(),
+                ..Bloom::NATURAL
+            },
+            DepthOfField {
+                focal_distance: distance,
+                aperture_f_stops: aperture,
+                max_circle_of_confusion_diameter: 3.0,
+                max_depth: 500.0,
+                ..default()
+            },
+        ));
+    } else {
+        commands.entity(entity).remove::<(Bloom, DepthOfField)>();
     }
 }
