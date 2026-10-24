@@ -245,7 +245,15 @@ pub fn saves_model(p: &Persistence, form: &SaveForm, l10n: &Localizer) -> SavesM
         let entries = if p.screen == SaveScreen::Browser {
             library_entries(&p.entries)
         } else {
-            p.entries.iter().collect()
+            p.entries
+                .iter()
+                .filter(|listing| {
+                    listing
+                        .entry
+                        .as_ref()
+                        .is_ok_and(|entry| entry.metadata.kind == SaveKind::Manual)
+                })
+                .collect()
         };
         entries
             .into_iter()
@@ -968,6 +976,49 @@ mod tests {
                     platform: "test".into(),
                 },
             }),
+        }
+    }
+
+    #[test]
+    fn only_autosaves_leave_the_save_dialog_empty() {
+        let mut persistence = Persistence::default();
+        persistence.screen = SaveScreen::Save;
+        persistence.entries = vec![listing(0, 1, true), listing(1, 2, true)];
+        let model = saves_model(&persistence, &SaveForm::default(), &shipped_l10n());
+        assert!(model.rows.is_empty());
+        assert!(model.empty.is_some());
+        assert_eq!(persistence.entries.len(), 2);
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn save_dialog_lists_exactly_the_readable_manual_games(
+            saves in proptest::collection::vec((proptest::bool::ANY, proptest::bool::ANY), 0..40)
+        ) {
+            let l10n = shipped_l10n();
+            let mut persistence = Persistence::default();
+            persistence.screen = SaveScreen::Save;
+            persistence.entries = saves.iter().enumerate().map(|(index, &(automatic, readable))| {
+                let mut entry = listing(index, index as u64, automatic);
+                if readable {
+                    entry.entry.as_mut().unwrap().region_name_key = "region-eastern-interconnection".into();
+                } else {
+                    entry.entry = Err(SaveError::ChecksumMismatch);
+                }
+                entry
+            }).collect();
+            let before = persistence.entries.clone();
+            let model = saves_model(&persistence, &SaveForm::default(), &l10n);
+            let expected: Vec<_> = saves.iter().enumerate()
+                .filter(|(_, (automatic, readable))| !automatic && *readable)
+                .map(|(index, _)| format!("Save {index}"))
+                .collect();
+            let actual: Vec<_> = model.rows.iter().map(|row| row.name.clone()).collect();
+            proptest::prop_assert_eq!(&actual, &expected);
+            proptest::prop_assert!(model.rows.iter().all(|row| !row.automatic && row.action.is_some()));
+            proptest::prop_assert_eq!(model.empty.is_some(), expected.is_empty());
+            proptest::prop_assert_eq!(persistence.entries, before);
+            proptest::prop_assert!(l10n.problems().is_empty());
         }
     }
 

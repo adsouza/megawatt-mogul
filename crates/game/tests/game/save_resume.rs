@@ -1815,7 +1815,7 @@ fn save_rename_preserves_the_active_autosave_name_and_revision_at_the_next_month
         .unwrap()
         .clone();
     assert_eq!(original.metadata.kind, SaveKind::Automatic);
-    action(&mut app, PersistAction::OpenSave { leave: false });
+    action(&mut app, PersistAction::OpenBrowser);
     settle(&mut app);
     let checkpoint = app.world().resource::<Session>().0.checkpoint();
     let summary = app.world().resource::<Persistence>().last_summary.clone();
@@ -1832,7 +1832,7 @@ fn save_rename_preserves_the_active_autosave_name_and_revision_at_the_next_month
     assert_eq!(app.world().resource::<Persistence>().last_summary, summary);
     assert_eq!(
         app.world().resource::<Persistence>().screen,
-        game::sim::SaveScreen::Save
+        game::sim::SaveScreen::Browser
     );
     assert_eq!(browser_model(&app).rows[0].name, "My monthly checkpoint");
     action(&mut app, PersistAction::Cancel);
@@ -3128,4 +3128,66 @@ fn cancelling_a_manual_dialog_does_not_cancel_the_background_month_close_save() 
             .checkpoint,
         closed
     );
+}
+
+#[test]
+fn save_game_shows_only_manual_games_while_load_keeps_monthly_snapshots() {
+    use application::{SaveKind, SaveStore};
+    let logs = TempDir::new().unwrap();
+    let saves = TempDir::new().unwrap();
+    let mut app = operating(&logs, &saves);
+    let checkpoint = app.world().resource::<Session>().0.checkpoint();
+    let store = infrastructure::save::FileSaveStore::new(saves.path().into());
+    let automatic = write_snapshot(
+        &store,
+        "Renamed monthly checkpoint",
+        SaveKind::Automatic,
+        2,
+        checkpoint.clone(),
+    );
+    let manual = write_snapshot(&store, "My saved company", SaveKind::Manual, 1, checkpoint);
+    std::fs::write(saves.path().join("broken.mgsave"), "broken").unwrap();
+    let original_automatic = store.read(&automatic).unwrap().0;
+
+    action(&mut app, PersistAction::OpenSave { leave: false });
+    settle(&mut app);
+    let model = browser_model(&app);
+    assert_eq!(model.rows.len(), 1);
+    assert_eq!(model.rows[0].name, "My saved company");
+    assert_eq!(
+        model.rows[0].action.as_ref().unwrap().action,
+        UiAction::Persistence(PersistAction::ChooseOverwrite {
+            slot: manual,
+            name: "My saved company".into()
+        })
+    );
+    let pass = crate::support::egui_pass::EguiPass::attach(&mut app);
+    let widgets = pass.settled(&mut app, 1280.0, 800.0);
+    assert!(
+        widgets
+            .iter()
+            .any(|widget| widget.text == "My saved company")
+    );
+    assert!(widgets.iter().any(|widget| widget.text == "Overwrite"));
+    assert!(
+        !widgets
+            .iter()
+            .any(|widget| widget.text == "Renamed monthly checkpoint")
+    );
+    assert!(!widgets.iter().any(|widget| widget.text == "broken.mgsave"));
+
+    action(&mut app, PersistAction::Cancel);
+    action(&mut app, PersistAction::OpenBrowser);
+    settle(&mut app);
+    let model = browser_model(&app);
+    assert_eq!(model.rows.len(), 3);
+    assert!(
+        model
+            .rows
+            .iter()
+            .any(|row| row.automatic && row.name == "Renamed monthly checkpoint")
+    );
+    assert!(model.rows.iter().any(|row| row.problem.is_some()));
+    assert_eq!(store.read(&automatic).unwrap().0, original_automatic);
+    assert_eq!(store.list().unwrap().len(), 3);
 }
