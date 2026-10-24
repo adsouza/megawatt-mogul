@@ -3,6 +3,7 @@
 // Mirrors the domain's `tiny_region` fixture apart from the terrain layers,
 // which are expressed as bases plus Gaussian blobs.
 (
+    region_schema: 2,
     id: "minimal",
     name_key: "region-minimal",
     bounds: (west: 0.0, east: 12.0, south: 0.0, north: 8.0),
@@ -154,6 +155,9 @@
         shed_step: 0.05,
     ),
     regulator: (
+        storage_accreditation: [(2.0, 0.65), (4.0, 0.85), (6.0, 0.93), (8.0, 0.96)],
+        satisfaction_target: 90.0,
+        return_per_satisfaction_point: 0.0005,
         starting_tariff_usd_per_mwh: 95.0,
         reference_tariff_usd_per_mwh: 100.0,
         base_return: 0.09,

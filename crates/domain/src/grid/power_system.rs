@@ -1216,12 +1216,12 @@ impl PowerSystem {
             .sum()
     }
 
-    /// Σ capacity × capacity credit over commissioned plants.
-    pub fn firm_capacity(&self) -> Megawatts {
+    /// Accredited firm MW over commissioned plants, independent of dispatch/storage toggles.
+    pub fn firm_capacity(&self, accreditation: &crate::region::StorageAccreditation) -> Megawatts {
         self.plants
             .values()
             .filter(|p| is_commissioned(p))
-            .map(|p| p.spec().capacity_credit.of(p.spec().capacity))
+            .map(|p| p.spec().firm_capacity(accreditation))
             .sum()
     }
 

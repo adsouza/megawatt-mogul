@@ -1,6 +1,6 @@
 //! Region tuning parameters and the starting scenario.
 
-use super::plant_spec::PlantKind;
+use super::{RegionError, plant_spec::PlantKind};
 use crate::ids::{CellCoord, CityId};
 use crate::time::SimMonth;
 use crate::units::{Hertz, Megawatts, Money, Price, Ratio};
@@ -59,9 +59,59 @@ pub struct FrequencyParams {
     pub shed_step: Ratio,
 }
 
-/// The rate regulator's rules.
+/// A validated, monotone storage-capacity accreditation ladder.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StorageAccreditation {
+    points: Vec<(f64, Ratio)>,
+}
+
+impl StorageAccreditation {
+    pub fn new(points: Vec<(f64, Ratio)>) -> Result<Self, RegionError> {
+        let valid = !points.is_empty()
+            && points.iter().all(|(h, _)| h.is_finite() && *h > 0.0)
+            && points
+                .windows(2)
+                .all(|p| p[0].0 < p[1].0 && p[0].1 <= p[1].1);
+        if !valid {
+            return Err(RegionError::InvalidShape {
+                field: "regulator.storage_accreditation",
+            });
+        }
+        Ok(Self { points })
+    }
+
+    pub fn points(&self) -> &[(f64, Ratio)] {
+        &self.points
+    }
+
+    pub fn credit(&self, hours: f64) -> Ratio {
+        if hours.is_nan() || hours <= 0.0 {
+            return Ratio::ZERO;
+        }
+        let (mut previous_hours, mut previous_credit) = (0.0, Ratio::ZERO);
+        for &(end, credit) in &self.points {
+            if hours == end {
+                return credit;
+            }
+            if hours < end {
+                let fraction = (hours - previous_hours) / (end - previous_hours);
+                return Ratio::new(
+                    previous_credit.value() + fraction * (credit.value() - previous_credit.value()),
+                )
+                .expect("interpolation between validated credits remains a ratio");
+            }
+            (previous_hours, previous_credit) = (end, credit);
+        }
+        previous_credit
+    }
+}
+
+/// Region configuration is reconstructed from archived data, never persisted in a snapshot.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RegulatorParams {
+    pub storage_accreditation: StorageAccreditation,
+    pub satisfaction_target: f64,
+    pub return_per_satisfaction_point: f64,
     pub starting_tariff: Price,
     pub reference_tariff: Price,
     pub base_return: Ratio,
@@ -122,3 +172,69 @@ crate::state_record!(CityDef {
     cell,
     base_load
 });
+
+#[cfg(test)]
+mod storage_accreditation_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn shipped() -> StorageAccreditation {
+        StorageAccreditation::new(
+            vec![(2.0, 0.65), (4.0, 0.85), (6.0, 0.93), (8.0, 0.96)]
+                .into_iter()
+                .map(|(h, c)| (h, Ratio::new(c).unwrap()))
+                .collect(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn credit_is_exact_at_points_linear_between_and_flat_beyond() {
+        let ladder = shipped();
+        for &(hours, credit) in ladder.points() {
+            assert_eq!(ladder.credit(hours), credit);
+        }
+        for (hours, expected) in [(1.0, 0.325), (3.0, 0.75), (5.0, 0.89), (7.0, 0.945)] {
+            assert!((ladder.credit(hours).value() - expected).abs() < 1e-12);
+        }
+        for hours in [0.0, -1.0, f64::NAN, f64::NEG_INFINITY] {
+            assert_eq!(ladder.credit(hours), Ratio::ZERO);
+        }
+        for hours in [10.0, f64::INFINITY] {
+            assert_eq!(ladder.credit(hours), Ratio::new(0.96).unwrap());
+        }
+    }
+
+    #[test]
+    fn malformed_ladders_are_rejected() {
+        for points in [
+            vec![],
+            vec![(0.0, 0.5)],
+            vec![(-1.0, 0.5)],
+            vec![(4.0, 0.8), (2.0, 0.9)],
+            vec![(2.0, 0.8), (2.0, 0.9)],
+            vec![(2.0, 0.9), (4.0, 0.8)],
+            vec![(f64::NAN, 0.5)],
+            vec![(f64::INFINITY, 0.5)],
+        ] {
+            assert!(
+                StorageAccreditation::new(
+                    points
+                        .into_iter()
+                        .map(|(h, c)| (h, Ratio::new(c).unwrap()))
+                        .collect()
+                )
+                .is_err()
+            );
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn credit_is_monotone_in_duration(a in 0.0f64..20.0, b in 0.0f64..20.0) {
+            let ladder = shipped();
+            let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+            prop_assert!(ladder.credit(lo) <= ladder.credit(hi));
+        }
+    }
+}

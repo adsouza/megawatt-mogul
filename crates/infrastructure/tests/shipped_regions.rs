@@ -736,3 +736,127 @@ proptest::proptest! {
         }
     }
 }
+
+/// Extra idle storage and its lines cannot beat a baseline across three annual reviews.
+/// Separate cases let nextest parallelize independent seeds and name any failure.
+mod gold_plated_batteries_do_not_raise_cash_over_three_reviews {
+    use super::*;
+    use domain::company::AssetRef;
+    use domain::error::DomainError;
+    use domain::ids::CellCoord;
+
+    fn compare(region_id: &str, seed: u64) {
+        let mut baseline = hands_off_game(&catalog(), region_id, seed);
+        let mut gold = hands_off_game(&catalog(), region_id, seed);
+        let home = gold.session().anchor_node();
+        let home_cell = gold.session().power().network().node(home).unwrap().cell;
+        let other = gold.session().plant_views()[0].node;
+        let terrain = gold.session().region().terrain();
+        let mut sites: Vec<_> = (0..terrain.height())
+            .flat_map(|y| (0..terrain.width()).map(move |x| CellCoord { x, y }))
+            .filter(|cell| {
+                gold.session()
+                    .plant_site_check(PlantKind::Battery, *cell)
+                    .is_ok()
+            })
+            .collect();
+        sites.sort_by_key(|cell| {
+            (
+                i32::from(cell.x).abs_diff(i32::from(home_cell.x)).pow(2)
+                    + i32::from(cell.y).abs_diff(i32::from(home_cell.y)).pow(2),
+                *cell,
+            )
+        });
+        assert!(sites.len() >= 10);
+        let mut batteries = Vec::new();
+        for cell in sites.into_iter().take(10) {
+            let events = gold
+                .execute(Command::BuildPlant {
+                    kind: PlantKind::Battery,
+                    cell,
+                })
+                .unwrap();
+            let plant = events
+                .iter()
+                .find_map(|e| {
+                    if let DomainEvent::PlantConstructionStarted { plant, .. } = e {
+                        Some(*plant)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+            let node = gold
+                .session()
+                .plant_views()
+                .iter()
+                .find(|p| p.id == plant)
+                .unwrap()
+                .node;
+            gold.execute(Command::BuildLine {
+                from: home,
+                to: node,
+            })
+            .unwrap();
+            assert!(matches!(
+                gold.session().line_quote(node, other),
+                Err(DomainError::LineNotNeeded { .. })
+            ));
+            batteries.push(plant);
+        }
+        let mut first_december_held = false;
+        let mut first_commission = None;
+        for month in 0..36 {
+            play_month(&mut baseline);
+            gold.execute(Command::BeginOperating).unwrap();
+            let events = gold
+                .execute(Command::AdvanceTicks { n: TICKS_PER_DAY })
+                .unwrap();
+            let now = gold.session().clock().month();
+            if events.iter().any(|e| matches!(e, DomainEvent::PlantCommissioned { plant, .. } if batteries.contains(plant))) { first_commission.get_or_insert(now); }
+            if now.month() == 12 && first_commission.is_some_and(|first| first.year() == now.year())
+            {
+                first_december_held = events.iter().any(|e| matches!(e, DomainEvent::CapitalHeld { asset: AssetRef::Plant(plant), .. } if batteries.contains(plant)));
+            }
+            if month < 35 {
+                baseline.execute(Command::FinishReview).unwrap();
+                gold.execute(Command::FinishReview).unwrap();
+            }
+        }
+        assert!(
+            first_december_held,
+            "{region_id} seed {seed}: first review must hold excess storage"
+        );
+        assert!(
+            gold.session().company_view().cash <= baseline.session().company_view().cash,
+            "{region_id} seed {seed}: gold {:?} > baseline {:?}",
+            gold.session().company_view().cash,
+            baseline.session().company_view().cash
+        );
+    }
+
+    macro_rules! case {
+        ($name:ident, $region:expr, $seed:expr) => {
+            #[test]
+            fn $name() {
+                compare($region, $seed);
+            }
+        };
+    }
+    case!(eastern_0, EAST, 0);
+    case!(eastern_1, EAST, 1);
+    case!(eastern_2, EAST, 2);
+    case!(eastern_3, EAST, 3);
+    case!(eastern_4, EAST, 4);
+    case!(eastern_5, EAST, 5);
+    case!(eastern_6, EAST, 6);
+    case!(eastern_7, EAST, 7);
+    case!(western_0, WEST, 0);
+    case!(western_1, WEST, 1);
+    case!(western_2, WEST, 2);
+    case!(western_3, WEST, 3);
+    case!(western_4, WEST, 4);
+    case!(western_5, WEST, 5);
+    case!(western_6, WEST, 6);
+    case!(western_7, WEST, 7);
+}

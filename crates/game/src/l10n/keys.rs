@@ -10,6 +10,9 @@
 
 /// Every literal key the HUD uses, grouped as in `ui.ftl`.
 pub const ALL_UI_KEYS: &[&str] = &[
+    "error-line-not-needed",
+    "region-error-missing-field",
+    "region-error-unsupported-schema",
     "region-error-city-cell-occupied",
     "site-occupied",
     "battery-enable",
@@ -228,6 +231,8 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "tariff-allowed-return",
     "tariff-review-heading",
     "tariff-projected-return",
+    "tariff-satisfaction-adjustment",
+    "review-satisfaction-adjustment",
     "tariff-reserve-margin",
     "tariff-held-capital",
     "tariff-capital-release",

@@ -552,10 +552,17 @@ impl GameSession {
     /// December's real review, with the projection starting next month.
     pub fn rate_review_estimate(&self) -> RateReviewEstimate {
         let inputs = self.review_inputs(self.clock.month());
-        let capital = self
-            .company
-            .rate_base()
-            .preview_reserve_review(&inputs.reserve);
+        let mut rate_base = self.company.rate_base().clone();
+        rate_base.refresh_plant_firm(|id| {
+            self.power
+                .plant(id)
+                .filter(|p| !matches!(p.status(), PlantStatus::UnderConstruction { .. }))
+                .map(|p| {
+                    p.spec()
+                        .firm_capacity(&self.region.regulator().storage_accreditation)
+                })
+        });
+        let capital = rate_base.preview_reserve_review(&inputs.reserve);
         let (firm, review_peak) = (inputs.firm_capacity(), inputs.review_peak());
         let outcome = compute_rate_review(
             &inputs.rate_review(capital.eligible_total),
@@ -581,6 +588,14 @@ impl GameSession {
             capital_to_release: release,
             capital_at_risk: at_risk,
         }
+    }
+
+    /// Current satisfaction's contribution to the next allowed return; never persisted.
+    pub fn satisfaction_return_adjustment(&self) -> f64 {
+        crate::regulation::satisfaction_adjustment(
+            self.company.satisfaction(),
+            self.region.regulator(),
+        )
     }
 }
 

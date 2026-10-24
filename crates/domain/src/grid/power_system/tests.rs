@@ -983,7 +983,38 @@ fn firm_capacity_counts_commissioned_plants_by_credit() {
         cell(9, 2),
         spec,
     ));
-    assert!((sys.firm_capacity().value() - (1300.0 * 0.95 + 300.0 * 0.3)).abs() < 1e-9);
+    assert!(
+        (sys.firm_capacity(&region.regulator().storage_accreditation)
+            .value()
+            - (1300.0 * 0.95 + 300.0 * 0.3))
+            .abs()
+            < 1e-9
+    );
+}
+
+#[test]
+fn firm_capacity_counts_commissioned_batteries_only() {
+    let region = tiny_region();
+    let ladder = &region.regulator().storage_accreditation;
+    let mut sys = system_with(&region, &[]);
+    let id = PlantId(50);
+    sys.insert_plant(Plant::new_under_construction(
+        id,
+        NodeId(50),
+        cell(5, 1),
+        region.spec(PlantKind::Battery).clone(),
+    ));
+    assert_eq!(sys.firm_capacity(ladder), Megawatts::ZERO);
+    for _ in 0..region.spec(PlantKind::Battery).build_months {
+        sys.plant_mut(id).unwrap().advance_construction(april());
+    }
+    assert_eq!(sys.firm_capacity(ladder), Megawatts::new(170.0));
+    sys.plant_mut(id)
+        .unwrap()
+        .battery_mut()
+        .unwrap()
+        .set_enabled(false);
+    assert_eq!(sys.firm_capacity(ladder), Megawatts::new(170.0));
 }
 
 #[test]

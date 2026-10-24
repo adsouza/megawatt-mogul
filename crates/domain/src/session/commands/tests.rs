@@ -11,6 +11,156 @@ fn session() -> GameSession {
     GameSession::new(Arc::new(tiny_region()), 1, GameSettings::default())
 }
 
+mod line_need_tests {
+    use super::*;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    fn components(s: &GameSession) -> BTreeMap<NodeId, NodeId> {
+        let mut labels: BTreeMap<_, _> = s
+            .power()
+            .network()
+            .nodes()
+            .map(|(id, _)| (id, id))
+            .collect();
+        for line in s.line_views() {
+            let (from, to) = (labels[&line.from], labels[&line.to]);
+            for label in labels.values_mut() {
+                if *label == to {
+                    *label = from;
+                }
+            }
+        }
+        labels
+    }
+
+    #[test]
+    fn a_line_between_joined_nodes_is_refused_and_duplicates_keep_their_error() {
+        let mut s = session();
+        let from = s.city_views()[1].node;
+        let to = s.plant_views()[0].node;
+        rejected(&mut s, DomainError::LineNotNeeded { from, to }, |s| {
+            s.build_line(from, to)
+        });
+        let root = s.anchor_node();
+        rejected(
+            &mut s,
+            DomainError::DuplicateLine {
+                from: root,
+                to: from,
+            },
+            |s| s.build_line(root, from),
+        );
+    }
+
+    #[test]
+    fn an_ordered_line_already_joins_its_ends_and_cancel_frees_the_route() {
+        let mut s = session();
+        let (plant, _) = s.build_plant(PlantKind::Peaker, cell(7, 2)).unwrap();
+        let to = s.power().plant(plant).unwrap().node();
+        let root = s.anchor_node();
+        let other = s
+            .plant_views()
+            .into_iter()
+            .find(|p| p.kind == PlantKind::Coal)
+            .unwrap()
+            .node;
+        let old_months = s.line_quote(root, to).unwrap().months;
+        let (line, _) = s.build_line(root, to).unwrap();
+        rejected(
+            &mut s,
+            DomainError::LineNotNeeded { from: other, to },
+            |s| s.build_line(other, to),
+        );
+        s.cancel_line_construction(line).unwrap();
+        assert!(s.line_quote(other, to).unwrap().months < old_months);
+        s.build_line(other, to).unwrap();
+    }
+
+    #[test]
+    fn islands_are_joined_too_but_can_join_the_home_network() {
+        let mut s = session();
+        let city = s
+            .city_views()
+            .into_iter()
+            .find(|c| !c.connected)
+            .unwrap()
+            .node;
+        let (a, _) = s.build_plant(PlantKind::Peaker, cell(7, 2)).unwrap();
+        let (b, _) = s.build_plant(PlantKind::Peaker, cell(7, 1)).unwrap();
+        let (a, b) = (
+            s.power().plant(a).unwrap().node(),
+            s.power().plant(b).unwrap().node(),
+        );
+        s.build_line(city, a).unwrap();
+        s.build_line(a, b).unwrap();
+        rejected(
+            &mut s,
+            DomainError::LineNotNeeded { from: city, to: b },
+            |s| s.build_line(city, b),
+        );
+        assert!(s.line_quote(s.anchor_node(), b).is_ok());
+    }
+
+    #[test]
+    fn grandfathered_cycles_still_commission_and_enter_the_rate_base() {
+        let mut s = session();
+        let from = s.city_views()[1].node;
+        let to = s.plant_views()[0].node;
+        let connected = s.power().network().connected_nodes().clone();
+        let line: LineId = s.ids.next();
+        s.power
+            .network_mut()
+            .add_line(
+                line,
+                from,
+                to,
+                LineStatus::UnderConstruction { months_left: 1 },
+            )
+            .unwrap();
+        let length = s.power().network().line(line).unwrap().length_cells;
+        let cost = line_cost(s.region().lines(), whole_cells(length));
+        s.instalments
+            .insert(AssetRef::Line(line), vec![cost].into());
+        s.begin_operating().unwrap();
+        let events = run_ticks(&mut s, TICKS_PER_DAY);
+        assert!(events.contains(&DomainEvent::LineCommissioned { line }));
+        assert!(
+            s.company()
+                .rate_base()
+                .asset(AssetRef::Line(line))
+                .is_some()
+        );
+        assert_eq!(s.power().network().connected_nodes(), &connected);
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn accepted_orders_never_close_a_cycle(actions in proptest::collection::vec((proptest::bool::ANY, 0usize..16, 0usize..16), 1..60)) {
+            let mut s = session();
+            for at in [cell(7, 2), cell(7, 1)] { s.build_plant(PlantKind::Peaker, at).unwrap(); }
+            let nodes: Vec<_> = s.power().network().nodes().map(|(id, _)| id).chain([NodeId(99_999)]).collect();
+            for (cancel, a, b) in actions {
+                let before = s.state_hash();
+                if cancel {
+                    let lines: Vec<_> = s.line_views().into_iter().filter(|l| matches!(l.status, LineStatus::UnderConstruction { .. })).collect();
+                    let line = lines.get(a % lines.len().max(1)).map_or(LineId(99_999), |l| l.id);
+                    if s.cancel_line_construction(line).is_err() { proptest::prop_assert_eq!(s.state_hash(), before); }
+                } else {
+                    let (from, to) = (nodes[a % nodes.len()], nodes[b % nodes.len()]);
+                    let labels = components(&s);
+                    let expected = from != to && labels.contains_key(&from) && labels.contains_key(&to) && labels[&from] != labels[&to];
+                    let result = s.build_line(from, to);
+                    proptest::prop_assert_eq!(result.is_ok(), expected);
+                    if result.is_err() { proptest::prop_assert_eq!(s.state_hash(), before); }
+                }
+                let labels = components(&s);
+                let count = labels.values().copied().collect::<BTreeSet<_>>().len();
+                proptest::prop_assert_eq!(s.line_views().len(), labels.len() - count);
+            }
+        }
+    }
+}
+
 /// A new game with the inherited schedule undone: every plant offline all
 /// day, none on AGC.
 fn empty_session() -> GameSession {

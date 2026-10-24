@@ -140,6 +140,13 @@ impl LocalizeWith for DomainError {
                     ("to", names.node(*to).into()),
                 ],
             ),
+            Self::LineNotNeeded { from, to } => l10n.args(
+                "error-line-not-needed",
+                &[
+                    ("from", names.node(*from).into()),
+                    ("to", names.node(*to).into()),
+                ],
+            ),
             Self::DuplicateLineId { line } => l10n.args(
                 "error-duplicate-line-id",
                 &[("line", names.line(*line).into())],
@@ -248,6 +255,13 @@ impl Localize for RegionLoadError {
 impl Localize for RegionError {
     fn localize(&self, l10n: &Localizer) -> String {
         match self {
+            Self::MissingField { field } => {
+                l10n.args("region-error-missing-field", &[("field", (*field).into())])
+            }
+            Self::UnsupportedRegionSchema(schema) => l10n.args(
+                "region-error-unsupported-schema",
+                &[("schema", schema.to_string().into())],
+            ),
             Self::GridSizeMismatch { expected, actual } => l10n.args(
                 "region-error-grid-size-mismatch",
                 &[

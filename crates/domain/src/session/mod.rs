@@ -181,7 +181,7 @@ impl GameSession {
                 spec.book_life_months,
                 month,
                 AssetProfile::Plant {
-                    firm: spec.capacity_credit.of(spec.capacity),
+                    firm: spec.firm_capacity(&region.regulator().storage_accreditation),
                     node: plant.node(),
                 },
             );

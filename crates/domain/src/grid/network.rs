@@ -77,8 +77,34 @@ impl Network {
         Ok(())
     }
 
+    /// Whether any existing or ordered path joins two known nodes, including islands.
+    /// This need test is separate from `add_line`, so archived cycles remain valid.
+    pub fn joined(&self, a: NodeId, b: NodeId) -> bool {
+        if !self.nodes.contains_key(&a) || !self.nodes.contains_key(&b) {
+            return false;
+        }
+        let mut adjacency: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
+        for line in self.lines.values() {
+            adjacency.entry(line.from).or_default().push(line.to);
+            adjacency.entry(line.to).or_default().push(line.from);
+        }
+        let mut seen = BTreeSet::from([a]);
+        let mut queue = VecDeque::from([a]);
+        while let Some(node) = queue.pop_front() {
+            if node == b {
+                return true;
+            }
+            for &next in adjacency.get(&node).into_iter().flatten() {
+                if seen.insert(next) {
+                    queue.push_back(next);
+                }
+            }
+        }
+        false
+    }
+
     /// Whether a line could be added between `from` and `to`: two distinct,
-    /// existing nodes that are not already joined (in either direction, in any
+    /// existing nodes that are not directly linked (in either direction, in any
     /// status). The checks [`Network::add_line`] makes about the endpoints, so
     /// a quote and the order itself cannot disagree. Pure.
     pub fn check_line(&self, from: NodeId, to: NodeId) -> Result<(), DomainError> {
@@ -357,6 +383,39 @@ mod tests {
         );
         assert!(n.is_connected(NodeId(0)));
         assert_eq!(n.node(NodeId(0)), Some(&city_node(0, 0)));
+    }
+
+    #[test]
+    fn joined_includes_ordered_islands_and_only_known_nodes_without_mutating() {
+        let mut network = net();
+        for id in 1..=3 {
+            network
+                .add_node(NodeId(id), city_node(id as u16, 0))
+                .unwrap();
+        }
+        network
+            .add_line(
+                LineId(1),
+                NodeId(1),
+                NodeId(2),
+                LineStatus::UnderConstruction { months_left: 2 },
+            )
+            .unwrap();
+        network
+            .add_line(LineId(2), NodeId(2), NodeId(3), LineStatus::InService)
+            .unwrap();
+        let before = network.clone();
+        assert!(network.joined(NodeId(1), NodeId(3)));
+        assert!(network.joined(NodeId(3), NodeId(1)));
+        assert!(network.joined(NodeId(1), NodeId(1)));
+        assert!(!network.is_connected(NodeId(3)));
+        assert!(!network.joined(NodeId(0), NodeId(3)));
+        assert!(!network.joined(NodeId(99), NodeId(99)));
+        assert!(!network.joined(NodeId(1), NodeId(99)));
+        assert_eq!(network, before);
+        network.cancel_construction(LineId(1)).unwrap();
+        assert!(!network.joined(NodeId(1), NodeId(3)));
+        assert!(network.joined(NodeId(2), NodeId(3)));
     }
 
     #[test]

@@ -464,6 +464,33 @@ mod tests {
     use crate::hud::test_support::{eastern_game, shipped_l10n};
 
     #[test]
+    fn a_joined_target_shows_the_need_test_reason() {
+        let l10n = shipped_l10n();
+        let game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let session = game.session();
+        let from = session.plant_views()[0].node;
+        let to = session.plant_views()[1].node;
+        assert!(matches!(
+            session.line_quote(from, to),
+            Err(domain::error::DomainError::LineNotNeeded { .. })
+        ));
+        let model = build_model(&game, &l10n, Selection::LineFrom(from)).unwrap();
+        let target = targets(&model)
+            .iter()
+            .find(|target| target.node == to)
+            .unwrap();
+        assert!(!target.build.enabled);
+        let names = Names::new(&l10n, session);
+        let expected = format!(
+            "{} and {} are already joined by lines in service or under construction, so the regulator won't approve another line between them.",
+            names.node(from),
+            names.node(to)
+        );
+        assert_eq!(target.preview, LinePreview::Rejected(expected));
+        assert!(l10n.problems().is_empty());
+    }
+
+    #[test]
     fn each_home_city_is_one_named_line_origin() {
         let l10n = shipped_l10n();
         for (region, home) in [

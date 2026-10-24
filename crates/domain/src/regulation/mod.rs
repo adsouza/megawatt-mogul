@@ -4,7 +4,10 @@
 
 pub mod rate_review;
 
-pub use rate_review::{RateReviewInputs, RateReviewOutcome, compute_rate_review, reserve_excess};
+pub use rate_review::{
+    RateReviewInputs, RateReviewOutcome, compute_rate_review, reserve_excess,
+    satisfaction_adjustment,
+};
 
 use crate::events::DomainEvent;
 use crate::region::RegulatorParams;

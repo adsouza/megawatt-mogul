@@ -265,6 +265,15 @@ fn frequency() -> FrequencyParams {
 
 fn regulator() -> RegulatorParams {
     RegulatorParams {
+        storage_accreditation: StorageAccreditation::new(vec![
+            (2.0, r(0.65)),
+            (4.0, r(0.85)),
+            (6.0, r(0.93)),
+            (8.0, r(0.96)),
+        ])
+        .expect("fixture accreditation is ordered"),
+        satisfaction_target: 90.0,
+        return_per_satisfaction_point: 0.0005,
         starting_tariff: Price::per_mwh(95.0),
         reference_tariff: Price::per_mwh(100.0),
         base_return: r(0.09),

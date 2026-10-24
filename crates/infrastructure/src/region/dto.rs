@@ -8,6 +8,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RegionFile {
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub region_schema: Option<u32>,
     pub id: String,
     pub name_key: String,
     pub bounds: Bounds,
@@ -162,6 +168,24 @@ pub struct FrequencyDto {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RegulatorDto {
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub storage_accreditation: Option<Vec<(f64, f64)>>,
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub satisfaction_target: Option<f64>,
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub return_per_satisfaction_point: Option<f64>,
     pub starting_tariff_usd_per_mwh: f64,
     pub reference_tariff_usd_per_mwh: f64,
     pub base_return: f64,
@@ -215,4 +239,24 @@ pub struct BatteryDto {
     pub charge_efficiency: f64,
     pub discharge_efficiency: f64,
     pub discharge_start_hour: u8,
+}
+
+// Missing fields stay distinguishable from authored values while RON uses ordinary
+// `region_schema: 2` / `satisfaction_target: 90.0` syntax, including on DTO round trips.
+mod present_option {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    pub fn deserialize<'de, T: Deserialize<'de>, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<Option<T>, D::Error> {
+        T::deserialize(d).map(Some)
+    }
+    pub fn serialize<T: Serialize, S: Serializer>(
+        value: &Option<T>,
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
+        match value {
+            Some(value) => value.serialize(s),
+            None => s.serialize_none(),
+        }
+    }
 }

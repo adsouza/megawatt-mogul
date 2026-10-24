@@ -122,11 +122,14 @@ impl GameSession {
     /// by the rule [`GameSession::build_line`] charges (the one place the
     /// length and cost are worked out), with the errors it would return for
     /// an unknown node, a line to the node itself, or two nodes already
-    /// joined. Pure: no phase check and no state change, so the player can
+    /// joined by any in-service or ordered path. Pure: no phase check and no state change, so the player can
     /// price a line at any time; only ordering one needs Planning.
     pub fn line_quote(&self, from: NodeId, to: NodeId) -> Result<LineQuote, DomainError> {
         let cells = whole_cells(self.line_length(from, to)?);
         self.power.network().check_line(from, to)?;
+        if self.power.network().joined(from, to) {
+            return Err(DomainError::LineNotNeeded { from, to });
+        }
         let params = self.region.lines();
         Ok(LineQuote {
             cells,

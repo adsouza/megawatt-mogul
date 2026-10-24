@@ -252,6 +252,78 @@ fn flat_december() -> RegionDefinitionParts {
     parts
 }
 
+fn storage_need_session(batteries: usize, reserve_gap: bool) -> (GameSession, Vec<PlantId>) {
+    let mut parts = flat_december();
+    parts.start.month = SimMonth::new(2027, 10).unwrap();
+    if reserve_gap {
+        parts.start.fleet.truncate(2);
+        parts
+            .catalog
+            .iter_mut()
+            .find(|spec| spec.kind == PlantKind::Coal)
+            .unwrap()
+            .capacity = Megawatts::new(500.0);
+    }
+    let mut session = session_from(parts, 7);
+    auto_fleet(&mut session);
+    let mut ids = Vec::new();
+    for y in 0..batteries {
+        let (plant, _) = session
+            .build_plant(PlantKind::Battery, cell(5, y as u16))
+            .unwrap();
+        let node = session.power().plant(plant).unwrap().node();
+        session.build_line(session.anchor_node(), node).unwrap();
+        ids.push(plant);
+    }
+    (session, ids)
+}
+
+#[test]
+fn excess_batteries_are_held_then_written_off() {
+    let (mut s, batteries) = storage_need_session(2, false);
+    for year in [2027, 2028] {
+        while s.clock().month().month() != 12 || s.clock().month().year() != year {
+            play_day(&mut s);
+            s.finish_review().unwrap();
+        }
+        let events = play_day(&mut s);
+        for id in &batteries {
+            assert!(
+                events.iter().any(|e| match e {
+                    DomainEvent::CapitalHeld { asset, amount } if year == 2027 =>
+                        *asset == AssetRef::Plant(*id) && *amount > Money::ZERO,
+                    DomainEvent::CapitalDisallowed { asset, amount } if year == 2028 =>
+                        *asset == AssetRef::Plant(*id) && *amount > Money::ZERO,
+                    _ => false,
+                }),
+                "battery {id:?}, review {year}"
+            );
+        }
+        s.finish_review().unwrap();
+    }
+}
+
+#[test]
+fn a_battery_that_fills_a_reserve_gap_is_not_held() {
+    let (mut s, batteries) = storage_need_session(1, true);
+    for _ in 0..2 {
+        play_day(&mut s);
+        s.finish_review().unwrap();
+    }
+    let events = play_day(&mut s);
+    assert_eq!(s.clock().month().month(), 12);
+    assert!(!events.iter().any(|e| matches!(e, DomainEvent::CapitalHeld { asset: AssetRef::Plant(id), .. } if batteries.contains(id))));
+    let asset = s
+        .company()
+        .rate_base()
+        .asset(AssetRef::Plant(batteries[0]))
+        .unwrap();
+    assert_eq!(asset.held(), Money::ZERO);
+    assert!(
+        matches!(asset.profile, AssetProfile::Plant { firm, .. } if firm == Megawatts::new(170.0))
+    );
+}
+
 fn city_node(s: &GameSession, city: CityId) -> NodeId {
     s.city_views()
         .into_iter()
@@ -300,6 +372,27 @@ fn december_runs_rate_review() {
 }
 
 #[test]
+fn december_uses_the_updated_satisfaction_without_repricing_the_closed_month() {
+    let mut parts = flat_december();
+    parts.regulator.return_per_reliability = 0.0;
+    parts.regulator.return_per_cost_improvement = 0.0;
+    let tariff = parts.regulator.starting_tariff;
+    let mut s = session_from(parts, 7);
+    auto_fleet(&mut s);
+    let before = s.company().satisfaction();
+    let events = play_day(&mut s);
+    let after = s.company().satisfaction();
+    assert_ne!(before, after);
+    let p = s.region().regulator();
+    let expected = (p.base_return.value()
+        + p.return_per_satisfaction_point * (after - p.satisfaction_target))
+        .clamp(p.min_return.value(), p.max_return.value());
+    let report = report_in(&events);
+    assert!((report.rate_review.as_ref().unwrap().allowed_return.value() - expected).abs() < 1e-12);
+    assert_eq!(report.revenue, tariff.cost_of(report.served, 1));
+}
+
+#[test]
 fn december_capacity_and_city_connection_are_assessed_together() {
     let (s, peaker, events) = december_with_new_peaker(true);
     let report = report_in(&events);
@@ -309,7 +402,9 @@ fn december_capacity_and_city_connection_are_assessed_together() {
         plant: peaker,
         kind: PlantKind::Peaker
     }));
-    let firm = s.power().firm_capacity();
+    let firm = s
+        .power()
+        .firm_capacity(&s.region().regulator().storage_accreditation);
     assert_eq!(firm, Megawatts::new(2300.0));
     let next = SimMonth::new(2028, 1).unwrap();
     let projected = s.power().projected_connected_peak(s.region(), next);

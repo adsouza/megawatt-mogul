@@ -48,6 +48,19 @@ fn game() -> Game {
     game_with_log(InMemoryCommandLog::default())
 }
 
+#[test]
+fn a_redundant_line_refusal_preserves_the_complete_checkpoint_and_journal() {
+    let mut g = game();
+    let from = g.session().city_views()[1].node;
+    let to = g.session().plant_views()[0].node;
+    let before = g.checkpoint();
+    assert!(matches!(
+        g.execute(Command::BuildLine { from, to }),
+        Err(CommandError::Domain(DomainError::LineNotNeeded { .. }))
+    ));
+    assert_eq!(g.checkpoint(), before);
+}
+
 fn plant_of(g: &Game, kind: PlantKind) -> PlantId {
     g.session()
         .plant_views()

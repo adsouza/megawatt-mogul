@@ -17,7 +17,7 @@ const MINIMAL: &str = include_str!("support/minimal_region.ron");
 
 /// SHA-256 of `support/minimal_region.ron`, computed independently with
 /// `shasum -a 256`.
-const MINIMAL_SHA256: &str = "ff39c85ab9324ffc3e7fc6c372baca18128568dc9abbe808d2d558cf7352c458";
+const MINIMAL_SHA256: &str = "992fb6c49c13a25f4356c7f7a2ca8fa479483c9433cdbfd2ca21af6e12e204c2";
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
@@ -43,6 +43,129 @@ fn loads_a_valid_region() {
     assert_eq!(loaded.definition.terrain().width(), 12);
     assert_eq!(loaded.definition.terrain().height(), 8);
     assert_eq!(loaded.definition.start().home_city, CityId(1));
+}
+
+fn without_field(source: &str, field: &str) -> String {
+    source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with(&format!("{field}:")))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn a_schema2_region_maps_the_a12_fields() {
+    let dir = dir_with(&[("minimal.ron", MINIMAL)]);
+    let loaded = catalog(dir.path()).load(&RegionId::new("minimal")).unwrap();
+    let params = loaded.definition.regulator();
+    assert_eq!(params.storage_accreditation.credit(4.0).value(), 0.85);
+    assert_eq!(params.satisfaction_target, 90.0);
+    assert_eq!(params.return_per_satisfaction_point, 0.0005);
+}
+
+#[test]
+fn schema_fields_round_trip_with_the_region_dto() {
+    let file: infrastructure::region::RegionFile = ron::de::from_str(MINIMAL).unwrap();
+    let encoded = ron::ser::to_string(&file).unwrap();
+    let decoded: infrastructure::region::RegionFile = ron::de::from_str(&encoded).unwrap();
+    assert_eq!(decoded.region_schema, Some(2));
+    assert_eq!(
+        decoded.regulator.storage_accreditation,
+        file.regulator.storage_accreditation
+    );
+    assert_eq!(decoded.regulator.satisfaction_target, Some(90.0));
+}
+
+#[test]
+fn a_schema2_region_missing_an_a12_field_names_it() {
+    for field in [
+        "storage_accreditation",
+        "satisfaction_target",
+        "return_per_satisfaction_point",
+    ] {
+        let text = without_field(MINIMAL, field);
+        let dir = dir_with(&[("minimal.ron", &text)]);
+        let error = catalog(dir.path())
+            .load(&RegionId::new("minimal"))
+            .unwrap_err();
+        assert!(
+            matches!(error, RegionLoadError::Invalid { error: RegionError::MissingField { field: missing }, .. } if missing == format!("regulator.{field}")),
+            "{error:?}"
+        );
+    }
+}
+
+#[test]
+fn a_schema1_region_gets_the_frozen_a12_defaults() {
+    use infrastructure::region::legacy;
+    let mut text = MINIMAL.to_owned();
+    for field in [
+        "region_schema",
+        "storage_accreditation",
+        "satisfaction_target",
+        "return_per_satisfaction_point",
+    ] {
+        text = without_field(&text, field);
+    }
+    let dir = dir_with(&[("minimal.ron", &text)]);
+    let loaded = catalog(dir.path()).load(&RegionId::new("minimal")).unwrap();
+    let params = loaded.definition.regulator();
+    for &(hours, credit) in &legacy::A12_STORAGE_ACCREDITATION {
+        assert_eq!(params.storage_accreditation.credit(hours).value(), credit);
+    }
+    assert_eq!(params.satisfaction_target, legacy::A12_SATISFACTION_TARGET);
+    assert_eq!(
+        params.return_per_satisfaction_point,
+        legacy::A12_RETURN_PER_SATISFACTION_POINT
+    );
+}
+
+#[test]
+fn a_schema1_file_with_a12_fields_is_rejected() {
+    let text = without_field(MINIMAL, "region_schema");
+    let dir = dir_with(&[("minimal.ron", &text)]);
+    assert!(matches!(
+        catalog(dir.path()).load(&RegionId::new("minimal")),
+        Err(RegionLoadError::Invalid {
+            error: RegionError::MissingField {
+                field: "region_schema"
+            },
+            ..
+        })
+    ));
+}
+
+#[test]
+fn an_unknown_region_schema_is_rejected() {
+    let text = MINIMAL.replace("region_schema: 2", "region_schema: 9");
+    let dir = dir_with(&[("minimal.ron", &text)]);
+    assert!(matches!(
+        catalog(dir.path()).load(&RegionId::new("minimal")),
+        Err(RegionLoadError::Invalid {
+            error: RegionError::UnsupportedRegionSchema(9),
+            ..
+        })
+    ));
+}
+
+#[test]
+fn satisfaction_parameters_are_validated() {
+    for (field, old, value) in [
+        ("satisfaction_target", "90.0", "101.0"),
+        ("satisfaction_target", "90.0", "-1.0"),
+        ("satisfaction_target", "90.0", "NaN"),
+        ("return_per_satisfaction_point", "0.0005", "inf"),
+    ] {
+        let text = MINIMAL.replace(&format!("{field}: {old}"), &format!("{field}: {value}"));
+        let dir = dir_with(&[("minimal.ron", &text)]);
+        let error = catalog(dir.path())
+            .load(&RegionId::new("minimal"))
+            .unwrap_err();
+        assert!(
+            matches!(error, RegionLoadError::Invalid { error: RegionError::InvalidShape { field: invalid }, .. } if invalid == format!("regulator.{field}")),
+            "{error:?}"
+        );
+    }
 }
 
 #[test]

@@ -17,7 +17,7 @@ use crate::ids::{CellCoord, CityId, RegionId};
 
 pub use params::{
     CityDef, DemandShape, FrequencyParams, HydroParams, LineParams, RegulatorParams,
-    SatisfactionParams, SolarParams, StartDef, StartPlantDef,
+    SatisfactionParams, SolarParams, StartDef, StartPlantDef, StorageAccreditation,
 };
 pub use plant_spec::{BatterySpec, PlantKind, PlantSpec, SitingRule};
 pub use terrain::{Cell, TerrainGrid};
@@ -42,6 +42,10 @@ pub enum SiteError {
 /// Why a region definition was rejected.
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum RegionError {
+    #[error("missing region field {field}")]
+    MissingField { field: &'static str },
+    #[error("unsupported region schema {0}")]
+    UnsupportedRegionSchema(u32),
     #[error("grid has {actual} cells, expected {expected}")]
     GridSizeMismatch { expected: usize, actual: usize },
     #[error("no plant spec for {0:?}")]
@@ -336,6 +340,15 @@ fn finite_positive(value: f64) -> bool {
 }
 
 fn validate_bands(regulator: &RegulatorParams) -> Result<(), RegionError> {
+    check_shape(
+        regulator.satisfaction_target.is_finite()
+            && (0.0..=100.0).contains(&regulator.satisfaction_target),
+        "regulator.satisfaction_target",
+    )?;
+    check_shape(
+        regulator.return_per_satisfaction_point.is_finite(),
+        "regulator.return_per_satisfaction_point",
+    )?;
     let (min, base, max) = (
         regulator.min_return,
         regulator.base_return,

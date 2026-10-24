@@ -76,11 +76,12 @@ When adding a regression, ensure it fails for the faulty behavior independently 
 For example, removing a midnight dispatch error must not hide unsafe surplus protection. Prefer
 small physical oracles and explicit transition coverage over blessing changed snapshot numbers.
 
-The whole workspace runs in about 23 s in a debug build. Most of that is the three year-long
-acceptance runs in `infrastructure::shipped_regions`, `hands_off_plan_survives_year_one`,
-`no_commands_survive_year_one` and `shipped_regions_never_order_outages_hands_off` (about 18 s
-each, side by side: two regions × eight seeds × twelve months); every other test finishes in under
-3 s.
+The three year-one checks in `infrastructure::shipped_regions`—
+`hands_off_plan_survives_year_one`, `no_commands_survive_year_one` and
+`shipped_regions_never_order_outages_hands_off`—each take about 18 s (two regions × eight seeds ×
+twelve months). A12's three-review battery comparison is longer: sixteen independent region/seed
+tests each play two companies for 36 months. Nextest can schedule those cases in parallel; use a
+focused filter when changing a rule unrelated to that acceptance.
 
 ## The game crate
 
@@ -699,3 +700,25 @@ copies to Resume, inspect retrospective curves, save and reload directory snapsh
 paired with the older charged-battery format-2 save. Its original bytes are immutable; tests load,
 compare exact canonical state, continue, and re-save a temporary copy. This fixture is part of the
 normal tests and is distinct from Git-ignored personal recovery tools and backups.
+
+## Rate-base need tests (A12, rules 13)
+
+Region-catalog tests distinguish schema 2's required accreditation and satisfaction fields from
+schema 1's frozen compatibility defaults. They reject markerless A12 fields, unsupported versions,
+malformed ladders and invalid satisfaction parameters, and cover DTO round trips. The duration
+ladder and allowed-return formula have property tests; session tests compare accreditation across
+commissioning, stored profiles, total firm MW and pure estimates. Excess batteries are held and
+then written off; useful storage is retained.
+
+Generated line build/cancel sequences use an independent component model to check the forest
+invariant and exact refusal conditions. Rejections preserve the complete application checkpoint
+and audit journal; cancelling an unfinished line frees its route. Directly restored cycles remain
+valid and commission. HUD checks distinguish the need-test reason from an exact duplicate and
+paint the satisfaction row whole with 4.5:1 contrast at 1280×640. Only a live December Review shows
+its current satisfaction contribution.
+
+The frozen schema-1 battery save remains byte-equivalent after restore apart from the rules
+header: a preview uses new accreditation without changing saved profiles, which refresh in
+December. A saved December Review continues without repeating the annual review. The shipped
+acceptance compares ten extra batteries against a baseline for both regions, seeds 0–7, across
+36 months: excess storage is held at its first review and final cash never beats the baseline.

@@ -43,7 +43,17 @@ never compile Bevy, so feedback takes seconds.
 | Rendering, input, UI and localised text | `game` (see [The game crate](#the-game-crate)) |
 
 Region data (plant tuning numbers, cities, regulator parameters) lives in `assets/regions/*.ron`,
-never as code constants.
+never as code constants. Shipped files declare `region_schema: 2`. Schema 2 requires the
+storage-accreditation ladder and both satisfaction-return parameters. An archived file without a
+marker is schema 1: only `infrastructure::region::legacy` supplies its frozen A12 defaults; a
+markerless file containing any A12 field is rejected rather than silently defaulted. Unknown
+schemas return typed errors. Region schema versions are independent of portable state schema 1.
+
+Rules 13 accredit commissioned storage by deliverable duration (including disabled batteries),
+refresh rate-base firm MW only at annual review, and adjust allowed return by post-close customer
+satisfaction. Estimates refresh a clone; restoring a snapshot never refreshes its saved profiles.
+New line orders must join separate components across all in-service and ordered lines. This rule
+lives in the session quote, so pre-existing cycles can still restore and commission normally.
 
 ## Write side: commands
 

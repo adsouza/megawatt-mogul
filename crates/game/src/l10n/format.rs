@@ -98,6 +98,19 @@ pub fn signed_percent(fraction: f64) -> String {
     format!("{sign}{:.1}%", tenths.abs() / 10.0)
 }
 
+/// A return adjustment in percentage points, with no sign on rounded zero.
+pub fn signed_points(fraction: f64) -> String {
+    let hundredths = (fraction * 10_000.0).round();
+    let sign = if hundredths > 0.0 {
+        "+"
+    } else if hundredths < 0.0 {
+        MINUS
+    } else {
+        ""
+    };
+    format!("{sign}{:.2} pp", hundredths.abs() / 100.0)
+}
+
 /// A power as the bare number an edit field holds: `300`, or `301.5` when it has a fraction. No
 /// unit and no separators, so what is shown can be typed back.
 pub fn plain_megawatts(power: Megawatts) -> String {
@@ -505,5 +518,20 @@ mod tests {
                 (2_880, "48 h"),
             ],
         );
+    }
+}
+
+#[cfg(test)]
+mod points_tests {
+    #[test]
+    fn signed_points_formats_percentage_points() {
+        for (input, expected) in [
+            (0.005, "+0.50 pp"),
+            (-0.01, "−1.00 pp"),
+            (-0.000001, "0.00 pp"),
+            (0.000001, "0.00 pp"),
+        ] {
+            assert_eq!(super::signed_points(input), expected);
+        }
     }
 }

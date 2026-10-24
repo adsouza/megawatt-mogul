@@ -136,6 +136,10 @@ fn domain_errors() -> Vec<DomainError> {
             from: NodeId(3),
             to: NodeId(4),
         },
+        DomainError::LineNotNeeded {
+            from: NodeId(3),
+            to: NodeId(4),
+        },
         DomainError::DuplicateLineId { line: LineId(9) },
         DomainError::UnknownLine { line: LineId(9) },
         DomainError::LineNotUnderConstruction { line: LineId(4) },
@@ -162,6 +166,10 @@ fn domain_errors() -> Vec<DomainError> {
 fn region_errors() -> Vec<RegionError> {
     let city = CityId(2);
     vec![
+        RegionError::MissingField {
+            field: "regulator.satisfaction_target",
+        },
+        RegionError::UnsupportedRegionSchema(9),
         RegionError::GridSizeMismatch {
             expected: 6000,
             actual: 5999,
@@ -518,7 +526,7 @@ fn events() -> Vec<(DomainEvent, bool)> {
 
 #[test]
 fn the_variant_tables_cover_every_variant() {
-    assert_covers_every_variant("DomainError", &domain_errors(), 24, |e| match e {
+    assert_covers_every_variant("DomainError", &domain_errors(), 25, |e| match e {
         DomainError::InvalidRatio { .. } => 0,
         DomainError::InvalidMonth { .. } => 1,
         DomainError::PlantNotDispatchable { .. } => 2,
@@ -533,6 +541,7 @@ fn the_variant_tables_cover_every_variant() {
         DomainError::UnknownNode { .. } => 11,
         DomainError::LineToSelf { .. } => 12,
         DomainError::DuplicateLine { .. } => 13,
+        DomainError::LineNotNeeded { .. } => 24,
         DomainError::DuplicateLineId { .. } => 14,
         DomainError::UnknownPlant { .. } => 15,
         DomainError::WrongPhase { .. } => 16,
@@ -544,7 +553,9 @@ fn the_variant_tables_cover_every_variant() {
         DomainError::UnknownLine { .. } => 22,
         DomainError::LineNotUnderConstruction { .. } => 23,
     });
-    assert_covers_every_variant("RegionError", &region_errors(), 12, |e| match e {
+    assert_covers_every_variant("RegionError", &region_errors(), 14, |e| match e {
+        RegionError::MissingField { .. } => 12,
+        RegionError::UnsupportedRegionSchema(_) => 13,
         RegionError::CityCellOccupied { .. } => 11,
         RegionError::GridSizeMismatch { .. } => 0,
         RegionError::MissingPlantSpec(_) => 1,

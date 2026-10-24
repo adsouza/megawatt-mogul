@@ -15,6 +15,7 @@
 // line, the Colorado border, then south through eastern New Mexico along
 // 104.5 W to the Rio Grande.
 (
+    region_schema: 2,
     id: "western_interconnection",
     name_key: "region-western-interconnection",
     bounds: (west: -125.5, east: -102.0, south: 28.0, north: 60.0),
@@ -383,6 +384,9 @@
         shed_step: 0.05,
     ),
     regulator: (
+        storage_accreditation: [(2.0, 0.65), (4.0, 0.85), (6.0, 0.93), (8.0, 0.96)],
+        satisfaction_target: 90.0,
+        return_per_satisfaction_point: 0.0005,
         starting_tariff_usd_per_mwh: 95.0,
         reference_tariff_usd_per_mwh: 100.0,
         base_return: 0.09,

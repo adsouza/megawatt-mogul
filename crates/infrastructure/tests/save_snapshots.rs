@@ -238,3 +238,159 @@ fn prepared_recording_is_memory_only_bound_to_the_exact_game_and_replayable() {
     );
     assert!(PreparedRecording::new(restored(&bytes).checkpoint(), &|| true).is_err());
 }
+
+fn golden_bytes(name: &str) -> Vec<u8> {
+    std::fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/support/portable-saves")
+            .join(name),
+    )
+    .unwrap()
+}
+
+fn close_current_month(game: &mut Game) -> Vec<domain::events::DomainEvent> {
+    if game.session().phase() == DayPhase::Review {
+        game.execute(Command::FinishReview).unwrap();
+    }
+    if game.session().phase() == DayPhase::Planning {
+        game.execute(Command::BeginOperating).unwrap();
+    }
+    game.execute(Command::AdvanceTicks {
+        n: domain::time::TICKS_PER_DAY,
+    })
+    .unwrap()
+}
+
+#[test]
+fn an_old_battery_is_accredited_without_rewriting_the_save() {
+    use domain::company::{AssetProfile, AssetRef};
+    use domain::region::PlantKind;
+    let bytes = golden_bytes("schema1-charged-battery.mgsave");
+    let (bundle, _) = decode_save(&bytes, &replay_compatibility()).unwrap();
+    let mut expected = bundle.checkpoint;
+    expected.header.sim_rules_version = domain::SIM_RULES_VERSION;
+    let mut game = restored(&bytes);
+    assert_eq!(game.checkpoint(), expected);
+    let batteries: Vec<_> = game
+        .session()
+        .plant_views()
+        .into_iter()
+        .filter(|p| p.kind == PlantKind::Battery)
+        .map(|p| p.id)
+        .collect();
+    assert!(!batteries.is_empty());
+    let firm = |game: &Game, id| match game
+        .session()
+        .company()
+        .rate_base()
+        .asset(AssetRef::Plant(id))
+        .unwrap()
+        .profile
+    {
+        AssetProfile::Plant { firm, .. } => firm.value(),
+        _ => panic!("plant profile"),
+    };
+    for &id in &batteries {
+        assert_eq!(firm(&game, id), 0.0);
+    }
+    let estimate = game.session().rate_review_estimate();
+    let session = game.session();
+    let accreditation = &session.region().regulator().storage_accreditation;
+    let total = session.power().firm_capacity(accreditation).value();
+    // Independently add the shipped 170 MW for each commissioned battery to the generator credits.
+    let expected_total: f64 = session
+        .plant_views()
+        .iter()
+        .filter(|p| {
+            !matches!(
+                p.status,
+                domain::generation::PlantStatus::UnderConstruction { .. }
+            )
+        })
+        .map(|p| {
+            if p.kind == PlantKind::Battery {
+                170.0
+            } else {
+                let spec = session.region().spec(p.kind);
+                spec.capacity_credit.of(spec.capacity).value()
+            }
+        })
+        .sum();
+    assert!((total - expected_total).abs() < 1e-8);
+    assert!(
+        (estimate.reserve_margin
+            - (total
+                / session
+                    .regulator()
+                    .tally()
+                    .peak_demand
+                    .max(
+                        session.power().projected_connected_peak(
+                            session.region(),
+                            session.clock().month().next()
+                        )
+                    )
+                    .value()
+                - 1.0))
+            .abs()
+            < 1e-12
+    );
+    assert_eq!(
+        game.checkpoint(),
+        expected,
+        "a preview must not refresh saved profiles"
+    );
+    loop {
+        close_current_month(&mut game);
+        if game.session().clock().month().month() == 12 {
+            break;
+        }
+    }
+    for &id in &batteries {
+        assert_eq!(firm(&game, id), 170.0);
+    }
+}
+
+#[test]
+fn a_resumed_december_review_is_not_reviewed_again() {
+    let bytes = golden_bytes("schema1-migrated-review.mgsave");
+    let (mut bundle, _) = decode_save(&bytes, &replay_compatibility()).unwrap();
+    let mut game = restored(&bytes);
+    loop {
+        close_current_month(&mut game);
+        if game.session().clock().month().month() == 12 {
+            break;
+        }
+    }
+    let december = game.projections().monthly_reports.latest().unwrap().clone();
+    assert!(december.rate_review.is_some());
+    bundle.checkpoint = game.checkpoint();
+    bundle.compatibility = replay_compatibility();
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("december.mgsave");
+    std::fs::write(&path, encode_save(&bundle).unwrap()).unwrap();
+    let mut resumed = restored(&std::fs::read(path).unwrap());
+    assert_eq!(resumed.checkpoint(), game.checkpoint());
+    let mut events = resumed.execute(Command::FinishReview).unwrap();
+    events.extend(resumed.execute(Command::BeginOperating).unwrap());
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e, domain::events::DomainEvent::RateReviewCompleted { .. }))
+            .count(),
+        0
+    );
+    assert_eq!(
+        resumed
+            .projections()
+            .monthly_reports
+            .latest()
+            .unwrap()
+            .rate_review,
+        december.rate_review
+    );
+    assert_eq!(
+        resumed.session().company().rate_base(),
+        game.session().company().rate_base()
+    );
+}

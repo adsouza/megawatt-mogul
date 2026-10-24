@@ -60,6 +60,10 @@ pub fn tariff_model(game: &Game, l10n: &Localizer) -> TariffModel {
                 format::percent(estimate.projected_return),
             ),
             stat(
+                "tariff-satisfaction-adjustment",
+                format::signed_points(session.satisfaction_return_adjustment()),
+            ),
+            stat(
                 "tariff-reserve-margin",
                 format::signed_percent(estimate.reserve_margin),
             ),
@@ -173,6 +177,7 @@ mod tests {
                     "Projected allowed return".to_owned(),
                     format::percent(estimate.projected_return)
                 ),
+                ("Satisfaction adjustment".to_owned(), "−1.00 pp".to_owned()),
                 (
                     "Reserve margin".to_owned(),
                     format::signed_percent(estimate.reserve_margin)

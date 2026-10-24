@@ -9,7 +9,10 @@
   confirmation, window and panel sizing, the city card and
   construction progress (§16, 2026-10-20); A6, save/resume before Plan 3 (§17, 2026-10-20);
   A7, faster expansion pacing (§18, 2026-10-22); A8, automatic AGC recovery (§19, 2026-10-22);
-  A9, daily-cycle battery storage (§20, 2026-10-23, specified; implementation pending)
+  A9, daily-cycle battery storage (§20, 2026-10-23, implemented); A10, portable saved games
+  (§21, 2026-10-23, implemented); A11, wind farms and midnight-to-18:00 battery charging
+  (§25, 2026-10-23, specified; implementation pending); A12, closing the rate-base loophole and
+  making satisfaction count (§26, 2026-10-23, implemented under rules 13; lands before A11)
 - **Engine:** Rust 1.98, Bevy 0.20, bevy_egui 0.43, bevy-inspector-egui 0.38
 
 ## 1. Vision and goals
@@ -41,7 +44,7 @@ Each played day is the **representative day of one calendar month** (§2.3) and 
 modelled as the domain state machine `DayPhase`:
 
 1. **Planning** (paused). The player sees the coming month's hourly demand forecast with an uncertainty
-   band, the solar forecast, each hydro plant's water budget and the battery charge/discharge
+   band, the solar and wind forecasts, each hydro plant's water budget and the battery charge/discharge
    preview (§20). They **commit** generating plants hour by hour, queue construction and build lines to connect cities. The current regulated tariff and a
    projection of the next rate review are shown, but the player does not set them (§2.5).
 2. **Operating** (runs). The 24 game hours run as 1,440 ticks (1 tick = 1 game minute) at a
@@ -70,12 +73,13 @@ stands for.
   implied by that month's pattern, including any start-up already in progress across midnight.
   Physical plant state never carries from March's representative day into April's. Persistent
   construction, company and regulator state still advances by calendar month.
-- **Batteries use a daily cycle (§20).** Every played day starts empty. They may charge during
-  daylight, including the morning, hold energy for evening peak discharge, and report then clear
+- **Batteries use a daily cycle (§20, amended by §25).** Every played day starts empty. They may
+  charge immediately from 00:00 until 18:00, independently of daylight, cover evening generation
+  gaps from 17:00, and report then clear
   unused energy at midnight. Their energy flows and midnight remainder receive the daily accounting
   weight; instantaneous power, energy capacity and state of charge do not.
 - **Seasons change visibly every few played days.** Months drive the demand shape, solar
-  irradiance and hydro water budgets, so seasonal swings become central to play.
+  irradiance, wind availability and hydro water budgets, so seasonal swings become central to play.
 - **Build times are counted in months** (= played days, §3.2). They are compressed for tycoon
   pacing (§18), while nuclear and hydro remain longer-term bets than gas or solar.
 - One game year takes about 72 minutes of operating at 1×.
@@ -134,16 +138,16 @@ ratemaking (PBR)**:
   equal monthly instalments over the build. It enters the rate base when the asset is commissioned.
 - **Performance-based return.** The allowed return starts from a base (e.g. 9%). It is adjusted up
   or down by the year's **reliability** (against a target, e.g. 99.9% served) and **cost
-  performance** (operating cost per MWh served against the previous year), within a band (e.g.
-  7–11%).
+  performance** (operating cost per MWh served against the previous year), and by customer
+  **satisfaction** against a target (Amendment A12, §26.5), within a band (e.g. 7–11%).
 - **Forward-looking reserve assessment.** The review peak is the higher of the past year's actual
   peak and the projected coincident peak over the next 12 calendar months of all cities connected
   at review time, including connections commissioned at that month's close. The projection uses
   the sum of their hourly mean load profiles, with seasonal/monthly factors and no random noise;
   it is not the sum of individual cities' separate peaks. Unbuilt connections do not count.
   Firm capacity is the sum of `capacity × capacity_credit` (§3.2), and the allowed **planning
-  reserve margin** (e.g. 20%) is applied to this review peak. Batteries initially have zero
-  regulatory capacity credit (§20.6); their nameplate MW is not guaranteed firm generation.
+  reserve margin** (e.g. 20%) is applied to this review peak. Batteries count by accredited
+  duration, `discharge MW × ladder(hours)`, not by nameplate MW (Amendment A12, §26.3).
 - **"Plant held for future use" before disallowance.** Excess capacity is assessed against newly
   added capital and capital already held from the previous review. The excess portion earns no
   return in the tariff set by that review, but is re-tested at the next annual review. A held
@@ -160,9 +164,11 @@ ratemaking (PBR)**:
   remaining book value excluding held and written-off portions. A plant's **associated line capital**
   is every line commissioned in the same review year with an endpoint at that plant's node; it is
   allocated the plant's assessed excess fraction, while held line portions keep their own history.
-  Lines with no plant endpoint (city-to-city) are never held.
+  Lines with no plant endpoint (city-to-city) are never held: each passed the need test when it
+  was ordered, because a line whose ends are already joined is refused (Amendment A12, §26.4).
 - **Satisfaction** depends on reliability and on the tariff relative to the region's reference
-  tariff. Overbuilding therefore hurts twice: through disallowance and through a higher tariff.
+  tariff, and it adjusts the allowed return (§26.5). Overbuilding that raises the tariff above the
+  reference therefore hurts twice: through disallowance and through a lower allowed return.
 
 The player profits by running *better than the formula expects*: cheap dispatch, high
 reliability, and building only what the reserve margin justifies.
@@ -208,8 +214,9 @@ preview remain selectable through their cards; broken entries retain their disab
 - Main menu, then new-game setup with region selection and an editable seed, then a new game.
 - Both regions as data files (`assets/regions/*.ron`).
 - A 3D diorama map built from the region's terrain cell grid, with phase-specific overlays (§8.3).
-- Six generating plant types plus battery storage (§3.2, §20), plant construction, and
-  transmission-line construction for connectivity. Battery implementation is Plan 4, after Plan 3.
+- Seven generating plant types plus battery storage (§3.2, §20, §25), plant construction, and
+  transmission-line construction for connectivity. Batteries are implemented under Plan 4;
+  wind and the revised charging window are specified under Plan 5, not yet implemented.
 - Demand centres with daily, seasonal and noise profiles, plus forecasts.
 - The full day cycle (one representative day per month), frequency model, protection, economics, regulator, scoring and failure.
 - An egui HUD for every phase, and dev tools behind a `dev` feature.
@@ -226,11 +233,13 @@ preview remain selectable through their cards; broken entries retain their disab
 | Combined-cycle gas (CCGT) | 500 MW | 30% (40% in the test fixture) | 25 MW/min | 2 h | $40k | $45/MWh | $0.3B | 4 | The flexible middle |
 | Gas peaker | 200 MW | 20% | 40 MW/min | 10 min | $5k | $150/MWh | $0.1B | 2 | Pay dearly for agility |
 | Solar | 300 MW | 0% | n/a (weather) | n/a | n/a | $0/MWh | $0.15B | 2 | The duck curve |
+| Wind (§25, pending) | 300 MW | 0% | n/a (resource) | n/a | n/a | $0/MWh | $0.30B | 3 | Correlated variability and overnight generation |
 | Hydro | 800 MW | 0% | 100 MW/min | 5 min | $1k | $0/MWh | $1.2B | 12 | Energy-limited dispatch |
 
-- **Battery storage** is a buildable seventh asset kind: separate charge/discharge MW and stored
-  MWh, automatic daylight charging and evening discharge, and no energy carried overnight. Its
-  initial tuning and operating contract are in §20; it is not a primary energy source.
+- **Battery storage** is a buildable asset kind alongside the seven generators: separate
+  charge/discharge MW and stored MWh, automatic 00:00–18:00 charging and evening gap support,
+  and no energy carried past midnight. Its initial tuning is in §20; §25 amends its charging
+  contract. It is not a primary energy source.
 - **Hydro** has a **daily water budget** (MWh per day, varying by month and site). Output stops when
   the budget runs out, and unused water does not carry over to the next month in milestone 1. Under
   AGC, hydro follows a **peak-shaving schedule** that spends its water on the day's highest net
@@ -238,25 +247,30 @@ preview remain selectable through their cards; broken entries retain their disab
   only be built on cells with a hydro resource.
 - **Solar** output is irradiance × sun angle × cloud noise. Protection can curtail it but nobody can
   dispatch it up.
+- **Wind** output is capacity × site wind potential × the shared regional wind factor (§25).
+  It can generate at any hour. Protection can curtail it; thermal dispatch controls do not apply.
 - **Regulatory accounting values** (region data): capacity credit, which is the share of capacity
-  the regulator counts as firm (thermal 0.95, hydro 0.8, solar 0.3); and book life in months
-  (nuclear 480, coal 480, CCGT 360, peaker 360, solar 300, hydro 600).
+  the regulator counts as firm (thermal 0.95, hydro 0.8, solar 0.3, wind 0.2 under §25; batteries
+  by accredited duration under §26.3, 0.85 for the shipped four-hour battery); and book
+  life in months (nuclear 480, coal 480, CCGT 360, peaker 360, solar 300, hydro 600, wind 300).
 - **Siting constraints** come from cell resources. Nuclear and coal need cooling water, solar output
-  scales with irradiance, and hydro needs a hydro site.
+  scales with irradiance, wind output scales with wind potential, and hydro needs a hydro site.
 
 ### 3.3 Out of scope for Milestone 1
 
 - Transmission congestion and power-flow physics.
-- Wind and other generating plant types; storage beyond the daily battery cycle of §20
+- Generating plant types beyond the seven in §3.2; storage beyond the daily battery cycle of §20
   (including pumped hydro, overnight/seasonal carry-over and degradation).
-- Weather events.
+- Discrete weather events (storms, damage and weather outages). Ordinary solar clouds and the
+  correlated wind availability process in §25 are in scope.
 - Competitors and markets.
 - Loans.
 - Cross-platform command replay. Portable state and supported save migrations are defined in §21.
 - Audio.
 - A tutorial campaign.
 - More regions.
-- Minimum up/down times.
+- Separate minimum-on/minimum-off dwell timers. Existing commitment feasibility already requires
+  each recurring off-gap to fit shutdown ramping plus start-up (§6.1); these restrictions remain.
 - Hydro reservoir carry-over.
 - Per-city satisfaction.
 - Equipment ageing and maintenance.
@@ -493,6 +507,20 @@ plant's output at shutdown, reserve the worst-case shutdown duration
 `CommitmentInfeasible { gap, shutdown, startup }`, without changing the session. A gap equal to the
 required sum is valid. All-day and all-off patterns have no daily restart and are valid; nuclear's
 48 h start-up therefore makes it must-run for the month or off for the month.
+
+This already creates effective minimum off-gaps for both coal and CCGT in the shipped regions:
+
+| Plant | Worst-case shutdown | Start-up | Required off-gap | Shortest gap with hourly commitment flags |
+|---|---|---|---|---|
+| Coal | 600 MW / 6 MW/min = 100 min | 480 min | 580 min (9 h 40 min) | 10 hours |
+| CCGT | 500 MW / 25 MW/min = 20 min | 120 min | 140 min (2 h 20 min) | 3 hours |
+
+These gaps include ramp-down and restarting; they are not periods spent fully offline before
+starting again. A two-hour CCGT off-gap is infeasible even though its start-up alone takes two
+hours. The same feasibility formula applies to other dispatchable kinds using their region data.
+There is no independent minimum-on timer or additional minimum-off dwell after shutdown; those
+separate constraints remain out of scope. Start-up, minimum stable output, ramp limits and
+commitment feasibility are distinct rules.
 
 **Initial state comes from the pattern.** At `BeginOperating`, a plant committed at hour 0 is
 already online at its selected initial target (minimum stable output by default). An off plant
@@ -919,7 +947,7 @@ Test-driven development throughout: failing test → minimal code → refactor.
 | Equipment ageing and maintenance | `Plant::commissioned_on`; a new field in `SimulationFidelity` |
 | Further save-schema migrations | Portable snapshots and retained schema readers/golden fixtures (§21) |
 | More regions | A new `.ron` file; the picker already appears for two or more regions |
-| More plant types (wind; storage beyond §20) | `PlantSpec` is data-driven; new behaviour goes in the `generation` module |
+| More plant types (beyond §25; storage beyond §20) | `PlantSpec` is data-driven; new behaviour goes in the `generation` module |
 | More languages | New `assets/locales/<lang>/` folder |
 
 ## 12. Amendment A1: Hydro peak-shaving schedule (2026-10-18)
@@ -2232,6 +2260,12 @@ windowed launch and native cycle/save-resume checks on both regions pass. See th
 Plans 1, 2, 2b and 3. This amendment governs storage wherever earlier sections assume every plant
 only generates electricity. It does not turn hydro water into stored electrical energy.
 
+**Pending amendment:** §25 supersedes this section's daylight charging window and adds wind to
+generation forecasts. Until Plan 5 is implemented, the code still uses the original daylight
+window. The 17:00 discharge start, residual-gap support (§23), energy conservation, customer
+priority and midnight reset remain binding. Read the daylight-only rules below as the historical
+Plan 4 contract wherever §25 explicitly replaces them.
+
 ### 20.1 Player contract and scope
 
 - Build and connect batteries through the existing plant/line workflow. No battery is added to
@@ -2285,7 +2319,7 @@ Initial shipped tuning, authored in **both region RON files** and the `test-fixt
 | Capital cost / build time | $100M / 2 months |
 | Fixed O&M / book life | $100k per month / 180 months |
 | Start-up time and cost / minimum stable / marginal fuel cost | Zero |
-| Regulatory capacity credit | Zero (§20.6) |
+| Regulatory capacity credit | Generic field zero; firm MW by accredited duration from rules 13 (§26.3) |
 | Siting | Any otherwise buildable, unoccupied land cell |
 
 This is 90% round-trip efficiency: apply the loss once, not once on each side. The model supports
@@ -2299,6 +2333,7 @@ Validating domain constructors reject missing/extraneous battery data, non-finit
 power or energy ratings, efficiencies outside `(0, 1]`, an evening hour outside `1..24`, or a
 month with no daylight charging interval before it. Generic costs/lifetime/build validation still
 applies; require the battery's generic minimum, start-up, fuel cost and capacity credit to be zero.
+The generic credit stays zero under §26.3, which derives battery firm MW from duration instead.
 New tuning stays in region data/fixtures, never in simulation constants.
 
 `SetBatteryEnabled { plant, on }` is accepted in Planning and Operating for a commissioned battery,
@@ -2488,7 +2523,10 @@ Do not present a battery's discharge × tariff as extra company revenue. Its ben
 supply, avoided expensive generation and potentially improved reliability, with charging costs
 and losses visible in company totals. Profitable operation is not guaranteed by enabling it.
 
-For this release, battery **regulatory capacity credit is zero**: a plant that starts empty and
+*Superseded by Amendment A12 (§26.3) from rules 13: batteries are accredited by duration, hold and
+write-off apply to them and to their lines, and the exemption below is the rules 8–10 history.*
+
+Under rules 8–10, battery **regulatory capacity credit is zero**: a plant that starts empty and
 needs same-day charging is not guaranteed firm supply. Its MW is excluded from the annual reserve
 capacity sum, while its commissioned capital and line capital enter normal eligible rate base.
 The existing MW-based excess assessment does not hold/write off a zero-firm battery or a line
@@ -2813,3 +2851,473 @@ continuous focused rendering and original fixed-step simulation timing. Input-dr
 scrolling, dialogs, save/load completion and phase transitions must remain responsive. Retain
 focused tests of repeated real HUD passes, cache invalidation and shortfall confirmation, plus a
 windowed launch smoke and native idle-performance measurement.
+
+## 25. Amendment A11: Wind farms and midnight-to-18:00 battery charging (2026-10-23)
+
+**Status:** Specified, not implemented. Implementation is tracked in
+[Plan 5: Wind farms and revised battery charging](../plans/2026-10-23-plan-5-wind-farms.md).
+This amendment supersedes the daylight-only charging rules in §20 and the daytime-charging
+preservation clause in §23. The latest user decision sets a hard **18:00 charging cutoff**.
+The midnight inventory reset, 17:00 discharge start and residual-gap support of §23 remain.
+Amendment A12 (§26) lands first as rules 11, so this amendment's rules version is 12 and its
+legacy region defaults use `region_schema: 3` (§26.6).
+
+### 25.1 Player contract and scope
+
+- Add buildable **onshore wind farms** in both shipped regions. They use ordinary plant IDs,
+  construction, land occupancy, transmission connectivity, selection and rate-base accounting.
+  Neither starter fleet changes; wind is a player investment, not free starting capacity.
+- Wind can generate throughout the representative day, including at midnight and overnight.
+  Site quality and month affect availability. Output changes with a seeded, persistent regional
+  wind process; farms share its lulls and surges. More farms add energy, not independent weather.
+- Wind follows the available resource. No hourly commitment, dispatch target, thermal start/stop
+  or AGC toggle applies. Protection can curtail output, trip a farm and reconnect it under the
+  existing variable-generation recovery policy. Low wind is not a thermal shutdown or start.
+- A connected, enabled, commissioned battery starts empty and is **eligible to charge immediately
+  at 00:00**, on its first operating minute. Eligibility is `0 <= tick < 1080` (18:00), unrelated
+  to sunrise, sunset, cloud cover or installed solar/wind. Eligible does not mean guaranteed
+  charging: customer priority, available surplus, inverter power and free space still apply.
+- Charging stops at **18:00 exactly**. The minute `[17:59,18:00)` can charge; `[18:00,18:01)`
+  cannot. Solar sunset does not stop charging early. Grid charging may use thermal generation.
+- Evening discharge remains eligible from **17:00 to 24:00**, only into a real primary-generation
+  deficit. Between 17:00 and 18:00, surplus permits charging and deficit permits discharge.
+  Choose the mode from the bus balance before battery flows; never charge and discharge in the
+  same minute, discharge to feed another battery, or reduce generators to manufacture a gap.
+- All batteries report and clear unused inventory at midnight exactly as in §20.6. Overnight
+  wind after the next 00:00 can charge the newly empty battery; it does not carry yesterday's
+  stored energy forward. No charging after 18:00, morning discharge, manual battery schedules,
+  price arbitrage, degradation or reservoir/energy carry-over is added.
+- Offshore wind, turbine wakes, individual turbine failures, wind-speed/cut-out physics, moving
+  weather fronts and discrete storms remain out of scope. The first model is explicitly a
+  resource/availability abstraction, not a meteorological or power-flow simulator.
+
+### 25.2 Wind model, region data and validation
+
+Add `PlantKind::Wind` as the eighth asset kind (seven primary generators and Battery), appending
+its stable portable enum tag **7** without changing tags 0–6 or existing kind ordering. Explicit
+classification distinguishes variable generators (Solar/Wind), dispatchable generators and
+storage; `!is_dispatchable()` alone must never classify a battery as a renewable generator.
+
+Add `Cell.wind_potential: Ratio`, a geographic wind-potential field rasterised by infrastructure,
+and validated regional `WindParams`. Land with zero potential is a valid but unproductive wind
+site; the build overlay/card must make that visible before purchase. Water and occupied cells
+remain invalid. Resource maps express game site quality, not measured wind speeds.
+
+Initial wind-farm tuning in both region RON files and the test fixture:
+
+| Field | Initial value |
+|---|---:|
+| Nameplate capacity | 300 MW |
+| Capital cost / build time | $300M / 3 months |
+| Fixed O&M / book life | $500k per month / 300 months |
+| Minimum stable / start-up time and cost / marginal fuel cost | Zero |
+| Regulatory capacity credit | 0.20 |
+| Siting | Any otherwise buildable, unoccupied land cell |
+| Thermal ramp | Unused; resource availability sets the output limit |
+
+These are game tuning values. Wind's capacity credit is an authored regulator simplification,
+not a guarantee of output or an input to instantaneous shortfall sizing. Normal construction,
+O&M, depreciation, reserve assessment and line-capital attribution apply; no wind fuel/start-up
+entry is created. Delivered primary energy includes wind exactly once. Battery receipts and
+discharge never create additional customer revenue or a second primary-energy entry.
+
+Regional parameters contain 12 nominal monthly availability factors `m`, minute persistence
+`rho`, innovation standard deviation `sigma`, initial-day standard deviation `initial_sd` and
+an indicative forecast-band half-width `band`. Initial authored values:
+
+| Parameter | East | West |
+|---|---|---|
+| `m`, January–December | .65, .65, .65, .60, .55, .50, .45, .45, .50, .55, .60, .65 | .60, .60, .65, .65, .60, .55, .50, .50, .55, .60, .60, .60 |
+| `rho` / `sigma` / `initial_sd` / `band` | .995 / .015 / .15 / .25 | .995 / .015 / .15 / .25 |
+
+Both maps author a 0.4 base potential plus Gaussian resource blobs using the existing geographic
+field mechanism, clipped to `[0,1]`: East highlights the Great Plains/Upper Midwest and West
+highlights the Columbia Basin and inland plains/ridges. These are illustrative game resources.
+Exact blob coordinates/radii are authored and pinned during the region-data task, not inferred
+from terrain height at runtime. The tiny fixture uses uniform potential 0.8 and a flat monthly
+factor 0.6; deterministic scenarios may set both standard deviations to zero and choose their
+own authored profiles. Freeze the first released map/parameter payload for old-save upcasting.
+
+Constructors reject non-finite values, a monthly array of the wrong length, factors/potential
+outside `[0,1]`, persistence outside `[0,1)`, negative standard deviations, band outside `[0,1]`,
+missing Wind catalog entries and extraneous battery data on Wind. Validate generic positive
+capacity/build/lifetime, nonnegative costs, capacity credit and zero thermal minimum/start/fuel
+fields. All tuning lives in region RON data and `test-fixtures`, never simulation constants.
+
+### 25.3 Actual availability, forecasts and determinism
+
+Use one regional factor `w` for all farms. At `BeginOperating`, after the existing solar
+clearness draw, initialise `w_0 = clamp(m + initial_sd * z_0, 0, 1)`. For minutes `t = 1..1439`:
+
+```
+w_t = clamp(m + rho * (w_(t-1) - m) + sigma * z_t, 0, 1)
+available_wind(plant, t) = capacity * wind_potential(cell) * w_t
+```
+
+Each `z` is exactly one `SimRng::standard_normal()` from the session RNG, including when its
+coefficient is zero. Draw once at day initialisation and once before variable generation steps
+in each minute after minute 0; the ordinary per-tick demand draw precedes that minute's wind
+draw. Draw independently of plant count, connectivity, construction, curtailment, blackout or
+whether wind has been built. Pin this ordering with tests. This introduces new random draws
+under the new rules; it does not promise identical old-rule demand noise in future play.
+
+Keep factor, initialisation/minute boundary and RNG position in portable state. A new
+representative day starts a new regional wind day; resuming a day never reinitialises it.
+Paused frames, pure queries, forecast sampling, chart drawing and refused commands draw nothing.
+AdvanceTicks batching and speed do not change the sequence. Availability is capped before
+curtailment and disconnected/unfinished plants contribute no supply.
+
+Planning uses the month's nominal factor; Operating's central forecast at horizon `h` uses
+`m + rho^h * (current_factor - m)`. This is a deterministic central scenario, not a claim to be
+the exact statistical mean of a clipped process. Show the resource-factor range central ± band,
+clipped to `[0,1]` and scaled by each site's potential/capacity. Aggregate the shared regional
+range directly; do not shrink uncertainty as if farms' errors were independent. Label it an
+indicative range, with no unsupported confidence percentage. Forecasts never inspect future
+random draws. The current-minute point uses the already sampled factor.
+
+Introduce a shared variable-generation forecast (Solar + Wind) while retaining per-kind values.
+Every consumer uses it: boundary dispatch, net-load views, hydro allocation, battery charging,
+Planning supply/shortfall analysis, operating outage sizing, ramp/headroom warnings and recovery.
+Use the same central assumptions in the supply chart and warning, with finite battery inventory;
+wind nameplate or regulator credit must never substitute for forecast output. An expected wind
+forecast is not guaranteed firm generation. Test unexpected lulls through actual protection too.
+For wind fleets, assess all minute points for shortages even without batteries: a conditioned
+wind forecast can fall between an hour's endpoints. Retain the generator reach-by-hour-end rule
+for outage sizing and actual stored-energy-only cover in Operating (§20.5).
+
+Hydro schedules against customer demand minus expected variable generation, without subtracting
+battery discharge (§23). Wind changes residual load, not the water budget. Hourly re-planning
+uses the latest wind observation; no player action, forecast or cache can freeze the weather.
+
+### 25.4 Charging plans, overlapping modes and protection
+
+Replace the shared daylight predicate in live flows, previews, validation, headroom and UI
+with `0 <= tick < charge_end_hour * 60`. Add `BatterySpec.charge_end_hour`, authored as **18** in
+both regions and fixtures; retain `discharge_start_hour = 17`. Require integer hours with
+`1 <= discharge_start_hour <= charge_end_hour <= 24`. Equality is valid for custom regions;
+overlap is explicitly supported. No solar-daylight validation applies to storage eligibility.
+
+Valley-fill remaining eligible minutes using customer net load after expected Solar + Wind,
+bounded by reachable committed non-hydro generation plus variable supply after all customers
+and earlier batteries' requests. Request additional thermal generation only through the existing
+AGC timing. Do not request extra hydro for charging, count a request as received energy, or
+subtract anticipated discharge from the generators' customer-load target.
+
+The old one-fill-then-discharge shortcut is insufficient during 17:00–18:00. Project charge and
+discharge chronologically against **one inventory per battery**, using actual stored energy as
+the live starting point. Charge may resume after a discharge creates room, until 18:00. Requests
+may be conservative about future room; they cannot assume a future discharge has happened.
+Never cap the entire day's cumulative input by one battery capacity when earlier discharge has
+legitimately freed room. At every minute all batteries use the same pre-storage bus sign; shared
+surplus/deficit is allocated once in ascending PlantId order. Histories before a re-plan stay frozen.
+
+Re-plan at day start, hourly, 17:00, 18:00 and after enable/recovery/primary-supply mode changes;
+ordinary thermal controls invalidate affected future plans on the next tick. Pure Planning
+previews start empty and may include feasible forecast receipts before later discharge, labelled
+expected. Operating outage/restoration/headroom calculations spend only energy already stored;
+they cannot borrow from later wind or charge requests. Forecasts remain pure and share the
+physical inventory transition with actual settlement, with independent contract tests.
+
+During the overlapping hour, choose discharge first when an eligible positive customer deficit
+exists, even though charging is also eligible. A charging-window `if ... else if discharge`
+must not suppress deficit support. Charge only on surplus after **full** customer demand,
+not on surplus manufactured by planned shedding. Charging remains zero during any shedding,
+blackout/restoration or below-normal frequency. An enabled battery can charge at 00:00 on
+existing surplus, but an AGC charge request still needs generation to arrive before receiving it.
+
+Taper AGC charging requests before full inventory and the **18:00 cutoff**, reserving room for
+the reachable thermal ramp-down tail as in §20.4. Absorbing already available renewable surplus
+does not justify creating an avoidable thermal surplus when storage fills. At/after 18:00,
+cancel every charge request/receipt even if wind is abundant or the battery has room. Do not
+move the cutoff to sunset or extend it to absorb a ramp tail. If inflexible excess is unavoidable,
+ordinary curtailment/protection handles it rather than violating eligibility.
+
+Generalise standing solar curtailment to variable-generation curtailment. The same curtailed
+fraction applies to each connected, available Solar/Wind plant, so withheld MW is proportional
+to current resource availability. Apply it once, retain next-tick application and the existing
+release timing, and expose per-kind withheld MW plus the total. Retain historical solar-only
+event records; new events distinguish Solar and Wind with typed kind/MW data. A calm farm
+contributes neither supply nor fictitious curtailed energy. Full/no-room batteries are not
+downward headroom; after 18:00 no battery is charging headroom. Before curtailment, reduce
+discharge and absorb eligible safe surplus under the existing protection ordering.
+
+Wind rejoins through the same renewable reconnection policy as solar after a trip; it does not
+join thermal merit-order targeting, start-up billing or AGC restart candidates. Blackout still
+suspends battery flows without losing inventory. Resume actual renewable availability only when
+the grid's ordinary recovery policy permits it. Preserve the signed balance and once-only,
+post-protection energy settlement of §20.4, including the last minute before midnight.
+
+### 25.5 HUD, map and reporting
+
+- Construction offers Wind with cost, lead time, nameplate MW, local potential, expected seasonal
+  output and regulatory capacity credit. A wind-resource overlay shows static site potential,
+  not a promise of current output; use the same legend/contrast conventions as solar.
+- A commissioned farm's card shows connection, current available/delivered MW, curtailment,
+  site potential and the wind forecast/range. Omit thermal and battery controls. Add Wind to
+  build lists, selection, supply-stack keys, plant histories, reports, event translations and
+  the actual-generation review table, consistently distinguishing it from dispatchable capacity.
+- Add a recognisable small turbine group to the 3D diorama within the existing 0.8-cell footprint,
+  with construction/selection/picking/connection behavior. Any rotor animation is visual only,
+  driven by sampled view data and visual-effects settings; it does not advance time or RNG.
+- Battery cards and build help say **Charge 00:00–18:00; support generation gaps 17:00–24:00;
+  unused energy resets at midnight**. Show current mode and expected versus actual receipts;
+  remove daylight/sunrise/sunset implications. Grid energy may come from wind, solar or thermal.
+- Supply charts show Wind separately; retain separate battery input, output and MWh axes. Review
+  still reports all losses and unused inventory, including late receipts that were discarded.
+  Saved earlier charts/reports retain their original recorded values and solar-only event labels.
+- Planning analysis caching (§24) includes wind forecasts and invalidates on relevant applied
+  commands, session/phase/month/localiser changes and load. Operating observations must not reuse
+  a stale Planning result. Keep pure presenter → draw → UiAction → dispatch, ActionSink getters,
+  Fluent keys/coverage, Enter/Escape handling and reachable small-window/zoom layouts.
+
+### 25.6 Persistence and compatibility
+
+Advance simulation rules **11 → 12** (after A12, §26) with the first behavior-changing implementation. Introduce
+portable state **schema 2** for wind resource/state, the added battery field, forecast/curtailment
+records and any projection changes. Directory format 4, flat envelope 3 and snapshot-rooted
+command-log format 2 need not change merely for a new state schema; retain all existing readers.
+Chart split/join and every metadata/schema gate must recognise both supported schemas.
+
+Keep a schema-1 wire reader and canonical encoder. First verify old state/projection bytes,
+journal hash, boundary, original archived region and checksums with schema-1 semantics; only
+then upcast in memory. Never compare newly encoded schema-2 bytes to a schema-1 boundary hash.
+Upcast original tags unchanged; add zero historical wind output/curtailment, the charge-end
+field 18 and a neutral wind state at the saved month's nominal factor without drawing RNG.
+Preserve cash, assets, IDs, connectivity, commitments, inventory, water, clock, RNG position,
+history and every recorded report. Invalidate future derived plans for recomputation before
+the next tick/Planning draw; never rewrite elapsed history or initialise/empty a loaded battery.
+An already saved last-minute charge is history even if new rules would forbid it; future flows
+obey the new window. Review stays closed and does not reset or bill anything twice.
+
+Pre-wind archived regions require explicit, frozen compatibility defaults for the Wind catalog,
+resource map and parameters, preserving every existing tuning value and original source byte.
+Carry the extension identity/data in schema 2; do not reread mutable shipped tuning on later loads.
+Normal new-format region authoring requires the Wind fields/catalog. Legacy mapping/validation
+is version-aware and cannot become a general silent-default escape for malformed new content.
+Old games gain the ability to build wind in future Planning without changing their starter fleet.
+
+Loading is a read-only candidate build, with no rewrite, publication over the original, special
+upgrade screen or historical gameplay replay. Ordinary future saves encode schema 2 and retain
+source/provenance under §21. Protect converted source slots as before. Historical command-only
+logs remain version-fenced; unsupported/future schemas fail safely with originals intact.
+
+### 25.7 Acceptance
+
+Required unit/property, independent behavioral, adapter and real-widget coverage includes:
+
+- Coal's 580-minute shutdown/start-up off-gap accepts 10 hourly off flags and rejects nine;
+  CCGT's 140-minute off-gap accepts three hourly off flags and rejects two, including a gap
+  across midnight. No additional dwell timer is introduced or implied by the documentation
+  correction.
+- Wind at midnight/noon/night, potential zero/one, shared lulls/surges across multiple farms,
+  disconnection/construction, curtailment/trip/reconnection, bounded output and exact RNG ordering.
+  Queries/UI/refused commands do not alter state; batch size, speed and resume do not alter ticks.
+- Independently computed variable net load, wind supply/indicative ranges, hydro allocation,
+  chart/warning agreement and minute-shortage selection, with and without storage. A sustained
+  lull and unexpected wind loss exhaust real reserves and engage ordinary protection fairly.
+- Battery charging at 00:00, before sunrise, after sunset but before 18:00, and at 17:59; zero
+  charging at/after 18:00. Discharge at 17:00 during a deficit, surplus charging during the
+  overlap, full/empty/fractional ticks and multiple batteries. No simultaneous or cross-battery
+  flows, future-energy borrowing, customer-funded shedding or missed 18:00 ramp-down taper.
+- A battery can charge, discharge, then recharge before 18:00 with finite inventory throughout;
+  final-minute settlement and exactly-once midnight close obey daily/monthly conservation.
+- Schema-1 golden saves for all phases/charged inventory restore without changing originals,
+  RNG/history or archived tuning, then continue/re-save under schema 2. Schema-2 wind/overlap/
+  cutoff/blackout/Review saves resume identically to uninterrupted new-rule play. Split/join
+  chart bytes, unknown schemas, corruption, provenance and read-only preload remain protected.
+- Both shipped regions retain hands-off starter service under noise-free contract fixtures;
+  do not hide defects by retuning starter fleets/cash. Wind build/connect/select, forecasts,
+  battery copy/modes, resource overlay, review and save/resume work at minimum supported size.
+  Native launch smoke and an isolated full representative-day wind/battery playtest pass.
+
+## 26. Amendment A12: Close the rate-base loophole and make satisfaction count (2026-10-23)
+
+**Status:** Implemented under `SIM_RULES_VERSION` **13**, after the rules-11/12 interaction fixes;
+lands before Plan 5 (§25), which must advance from rules 13.
+
+### 26.1 Why
+
+The tariff includes `allowed_return × eligible_rate_base`, so every dollar of capital that enters
+the rate base earns the allowed return (about 9%) for its book life. The only check on overbuilding
+is the forward reserve assessment (§2.5). It holds, and after two reviews writes off, capital whose
+**firm MW** exceeds the planning reserve margin. Three kinds of capital escape that test:
+
+- **Batteries.** Their regulatory capacity credit is zero (§20.6), so they have no firm MW to be
+  excess, and the assessment never holds them or the lines that serve only them.
+- **City-to-city lines.** They are never held (§2.5). A line between two already-connected cities
+  has no function under copper plate (§5.4), yet it earns the full return.
+- **Redundant plant lines.** A second line to a connected plant also adds nothing, and it is held
+  only in proportion to that plant's own excess.
+
+Satisfaction, which §2.5 said made overbuilding "hurt twice", is computed and shown but feeds no
+rule: no failure test, return, tariff or demand reads it. Together these make building batteries
+or redundant lines a guaranteed return for any player with cash. That contradicts the stated
+design goal of building only what the reserve margin justifies.
+
+### 26.2 Goals, non-goals, anti-goals
+
+- **Goals:**
+  - Every capital asset that earns a return either passes a regulatory need test or can be held.
+  - Batteries count toward reserve adequacy by how long they can discharge, as real accreditation
+    does, and excess battery capital is held and written off like any other.
+  - A redundant line is refused when ordered, with a clear reason, rather than disallowed later.
+  - Satisfaction changes the allowed return, so a tariff pushed above the reference costs return
+    on the whole rate base.
+  - The rules apply to games already in progress from the next command after resume, without a
+    save-schema change.
+- **Non-goals:**
+  - effective-load-carrying-capability (ELCC) studies, or credits that fall as storage
+    penetration rises;
+  - a full prudence review of operating decisions;
+  - revisiting solar or wind credits (§3.2, §25.2);
+  - transmission redundancy value, which needs a power-flow `NetworkModel` (§11).
+- **Anti-goals:**
+  - a new route to a strike or to licence revocation;
+  - rewriting saved history, reports or held-capital records on load;
+  - silent defaults for region files authored under the new schema.
+
+### 26.3 Battery accreditation by duration
+
+- **Duration.** A battery's accredited duration is the hours it can deliver its full discharge
+  rating from full: `energy_mwh × discharge_efficiency / discharge_mw`. The shipped battery
+  (800 MWh, 100%, 200 MW) has four hours.
+- **The ladder.** `RegulatorParams` gains `storage_accreditation`: a list of
+  `(hours, credit)` points, region data. Validation requires at least one point, strictly
+  increasing positive finite hours, credits in `[0, 1]` and non-decreasing. A duration is
+  interpolated linearly between points, linearly from `(0, 0)` up to the first point, and held
+  at the last point's credit beyond it.
+- **Shipped values** (both regions and the test fixture). These are the NYISO Final Capacity
+  Accreditation Factors for the 2026–2027 Capability Year, Rest of State, CHPE-In, rounded to two
+  places: 2 h → 0.65, 4 h → 0.85, 6 h → 0.93, 8 h → 0.96. The shipped battery's credit is
+  therefore 0.85, or 170 MW firm. These are real published factors, not a claim that this game's
+  daily-cycle battery behaves like a New York resource.
+- **One derivation.** A plant's firm capacity is `capacity × capacity_credit` for generating
+  kinds and `discharge_mw × ladder(duration)` for Battery. Every consumer uses one domain function:
+  the start fleet, commissioning, the fleet's firm capacity, the year's firm additions, held-share
+  arithmetic and the rate-review estimate. Battery's generic `capacity_credit` field stays
+  required at zero and unused, so archived region bytes still parse. This supersedes §20.2's
+  zero-credit rationale and §20.6's battery and battery-line exemptions. With positive firm MW,
+  §20.6's line rule associates a battery-endpoint line with that battery like any plant, using
+  the lowest positive-firm PlantId among the line's plant endpoints.
+- **Assets recorded under rules 10 or earlier.** Batteries commissioned before this amendment
+  recorded zero firm MW in their rate-base profile and in the year's tally. Restore keeps those
+  bytes unchanged. The first December review under rules 11, and every estimate, derives each plant
+  asset's firm MW from its archived spec, and refreshes the stored profile at that December close.
+  The year tally's `firm_added` is informational: no review decision reads it. Held-share history is
+  otherwise unchanged. *(Builder's call: re-deriving at the review, inside the closing command, applies the
+  new rule to subsequent play without changing a restored boundary's hash.)*
+- **Why not hold excess storage separately.** Batteries join the existing assessment as new
+  additions: existing held portions are re-tested first, then remaining excess is spread across
+  the year's additions in proportion and by ID. Nothing else in §2.5 changes.
+
+### 26.4 Line need: a certificate before construction
+
+- **The rule.** `BuildLine { from, to }` is refused when `from` and `to` are already joined by a
+  path of lines that are in service or under construction. It returns
+  `DomainError::LineNotNeeded { from, to }` and leaves the session and journal unchanged. An exact
+  repeat of an existing line keeps returning `DuplicateLine`, which is checked first. The rule
+  covers every line, including plant lines, because under copper plate a line's only function is
+  connectivity.
+- **Islands count.** Two nodes joined to each other but not yet to the home city are still joined:
+  a second line between them is refused. A line that joins an island to the rest is allowed.
+- **Ordered lines count.** An unfinished route already joins its ends for this test, so the
+  player cannot order a parallel route to beat it. To choose a faster route, the player cancels the
+  unfinished line (§16.9) and then orders the new one. *(Builder's call: counting ordered lines
+  stops a stack of parallel orders, each of which would otherwise look needed.)*
+- **Consequence.** New networks are forests: no order can close a cycle. A future
+  `NetworkModel::DcPowerFlow` must revisit this rule, because redundancy has value under power
+  flow.
+- **Grandfathering.** Lines already in service or ordered at resume keep their status, rate base
+  and construction schedule. The rule applies only to new orders.
+- **City-to-city holding.** §2.5's rule that city-to-city lines are never held stays. Each such
+  line passed the need test when it was ordered, so it is never redundant capital.
+- **HUD.** The endpoint picker marks endpoints already joined to the chosen origin as unavailable,
+  with a one-line reason that both ends are already connected. The quote is not offered. The
+  error's toast uses the same copy. Strings go in `ui.ftl` and `errors.ftl`, and new literal keys go
+  in `keys.rs`.
+
+### 26.5 Satisfaction as a performance-based return metric
+
+- **The term.** `RegulatorParams` gains `satisfaction_target` (0–100) and
+  `return_per_satisfaction_point` (a finite ratio per point). `compute_rate_review` adds
+  `return_per_satisfaction_point × (satisfaction − satisfaction_target)` to the raw allowed return,
+  alongside the reliability and cost terms, before the existing clamp to the PBR band.
+- **Which satisfaction.** The company's satisfaction after December's month-close update, in the
+  same closing command, before the review runs. It is already a smoothed EMA, so no new tally is
+  added. The estimate (§2.5, Task 19) uses the current value, from the same review inputs.
+- **No circularity.** Satisfaction responds to the tariff in force during the year. The new tariff
+  takes effect after the review.
+- **Shipped values** (our tuning, not a published figure): `satisfaction_target = 90` and
+  `return_per_satisfaction_point = 0.0005`, that is 0.05 percentage points per point. Steady good
+  service at or below the reference tariff (satisfaction near 100) adds about 0.5 pp. A tariff 10%
+  above the reference, with perfect reliability, settles near 80 and costs about 0.5 pp across the
+  whole eligible rate base. The PBR band still bounds the total. Retune these values in region
+  data if the acceptance runs below fail. Never retune the rule.
+- **§2.5 claim, corrected.** Overbuilding hurts twice once it raises the tariff above the
+  reference: through disallowance, and through a lower allowed return via satisfaction. Below the
+  reference tariff, the satisfaction curve has no price penalty, so only the need tests limit
+  overbuilding there.
+- **Visibility.** The Planning tariff panel's projected return, the rate-review estimate and the
+  Review's rate-review section show the satisfaction term next to the reliability and cost terms.
+  It is computed on read, from public state. No new projection field or event field is persisted.
+
+### 26.6 Region schema and compatibility defaults
+
+- **Region schema marker.** Region RON gains `region_schema: 2`. Shipped regions and fixtures
+  declare it and must author `storage_accreditation`, `satisfaction_target` and
+  `return_per_satisfaction_point`. A schema-2 file missing any of them fails to load with a typed
+  error naming the field.
+- **Legacy archives.** A region file without the marker is schema 1, as in every existing save and
+  log archive. Mapping supplies frozen A12 compatibility defaults equal to the shipped values
+  above. The defaults are fixed in the version-aware mapping, never read from current shipped
+  files, and are never applied to a schema-2 file. Plan 5 reuses this marker for its own legacy
+  defaults (§25.6), as `region_schema: 3`. *(Builder's call: this extends §25.6's frozen-default
+  rule. It is the one place where tuning numbers live in code, and only for archives that predate
+  the fields.)*
+- **Fingerprints.** Shipped files change, so new games get a new region fingerprint. Archived bytes
+  are unchanged, so existing saves still match their embedded region.
+- **Portable state.** Schema 1 is unchanged: no new session or projection fields. In particular
+  `RateReviewEstimate` and `RateReviewOutcome` gain no fields, because both are persisted. Restore
+  verifies every saved byte, report and held-capital record. The new rules apply from the next
+  accepted command. A saved Review whose December review already ran is not reviewed again.
+  A restored checkpoint still equals the saved one byte for byte (§21). So the persisted rate-review
+  estimate (`RateReviewProjection`) of a snapshot from an older rules version keeps its old
+  figures until its next refresh event, at the latest the next phase change. The satisfaction
+  term's own display is a direct query and is current at once. *(Builder's call: refreshing on
+  restore would break the restore-equals-save invariant that preload, provenance deduplication and
+  the golden-save tests rely on, for a figure that corrects itself within one phase.)*
+- **Rules version.** Outcomes change, so bump `SIM_RULES_VERSION` from 12 to 13 (after the interaction fixes). Portable
+  snapshots from rules 8–10 restore and continue under rules 11, as §22 and §23 do. Command-only
+  recordings stay fenced by `RulesVersionMismatch`. Regenerate the rules-version guard and scenario
+  snapshots once, reviewing every diff.
+
+### 26.7 Properties and acceptance
+
+- **Ladder.** Validation rejects each malformed ladder. Interpolation is exact at the points,
+  linear between them, linear from zero and flat beyond. The credit is monotone in duration.
+  The shipped battery's firm capacity is 170 MW.
+- **One derivation.** Commissioning, the fleet's firm capacity, the year's additions and the
+  estimate agree for every kind (property test over generated specs).
+- **Batteries are tested.** In a fixture whose generating fleet already meets the reserve margin,
+  added batteries are held at the next review and written off if still excess at the following
+  one. A battery that fills a real reserve gap is not held.
+- **Old batteries.** A rules-10 snapshot with a commissioned battery restores byte-identically,
+  continues, and at the next December review assesses that battery at 170 MW.
+- **Lines.** Over generated networks, `BuildLine` succeeds exactly when the endpoints are in
+  different components of the in-service plus under-construction graph. A refusal changes nothing.
+  Islands, plant lines, exact duplicates and cancel-then-reorder behave as §26.4 says, and no
+  accepted sequence of commands ever creates a cycle. Grandfathered cycles from older saves
+  survive resume.
+- **Satisfaction term.** The return equals the hand-computed sum of the base and the three terms,
+  clamped to the band (property test). Satisfaction at the target adds nothing. Every A2 proration
+  and band property still holds.
+- **The loophole is closed.** Scripted gold-plating, using batteries or lines beyond what
+  reserves or connectivity need, does not raise cumulative cash over three review years compared
+  with the same game without it, on both regions, seeds 0–7. With the tariff above the reference,
+  the satisfaction term is negative.
+- **Beginner checks still pass.** The no-command and hands-off year-one runs (§14.5, §16.5,
+  §18.1) stay Active on both regions, seeds 0–7. The §18.3 early-expansion acceptance still passes.
+  Fix a failure by retuning region data, never the rules.
+- **HUD.** The endpoint picker's unavailable state, the toast and the satisfaction term display
+  through the real dispatch and egui passes, at the minimum window size and above the 4.5:1
+  contrast floor. Localisation coverage passes.

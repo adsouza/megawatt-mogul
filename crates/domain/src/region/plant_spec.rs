@@ -61,9 +61,72 @@ pub struct PlantSpec {
 }
 
 impl PlantSpec {
+    /// Regulatory firm MW: generators use their credit; storage uses deliverable duration.
+    pub fn firm_capacity(&self, accreditation: &super::StorageAccreditation) -> Megawatts {
+        match self.battery {
+            Some(battery) if self.kind == PlantKind::Battery => {
+                let hours = battery.energy_capacity.value() * battery.discharge_efficiency.value()
+                    / self.capacity.value();
+                accreditation.credit(hours).of(self.capacity)
+            }
+            _ => self.capacity_credit.of(self.capacity),
+        }
+    }
+
     /// Lowest stable output while online.
     pub fn min_output(&self) -> Megawatts {
         self.capacity * self.min_stable.value()
+    }
+}
+
+#[cfg(test)]
+mod accreditation_tests {
+    use super::*;
+    use crate::region::fixtures::tiny_region;
+
+    #[test]
+    fn the_shipped_battery_is_accredited_at_170_mw() {
+        let region = tiny_region();
+        let ladder = &region.regulator().storage_accreditation;
+        assert_eq!(
+            region.spec(PlantKind::Battery).firm_capacity(ladder),
+            Megawatts::new(170.0)
+        );
+        for spec in region
+            .catalog()
+            .iter()
+            .filter(|s| s.kind != PlantKind::Battery)
+        {
+            assert_eq!(
+                spec.firm_capacity(ladder),
+                spec.capacity_credit.of(spec.capacity)
+            );
+        }
+    }
+
+    #[test]
+    fn storage_firm_uses_deliverable_energy_and_discharge_rating() {
+        let region = tiny_region();
+        for (energy, efficiency, discharge, expected) in [
+            (800.0, 0.5, 200.0, 130.0),
+            (600.0, 1.0, 200.0, 150.0),
+            (800.0, 1.0, 100.0, 96.0),
+            (10_000.0, 1.0, 200.0, 192.0),
+        ] {
+            let mut spec = region.spec(PlantKind::Battery).clone();
+            spec.capacity = Megawatts::new(discharge);
+            let battery = spec.battery.as_mut().unwrap();
+            battery.energy_capacity = MegawattHours::new(energy);
+            battery.discharge_efficiency = Ratio::new(efficiency).unwrap();
+            assert!(
+                (spec
+                    .firm_capacity(&region.regulator().storage_accreditation)
+                    .value()
+                    - expected)
+                    .abs()
+                    < 1e-9
+            );
+        }
     }
 }
 

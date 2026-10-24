@@ -81,6 +81,35 @@ fn depreciation_puts_remainder_in_final_month() {
     assert_eq!(rb.total(), Money::ZERO);
 }
 
+#[test]
+fn refresh_rewrites_only_plant_firm() {
+    let mut rb = RateBase::default();
+    rb.add(
+        plant(1),
+        cents(100_000),
+        120,
+        month(2028, 1),
+        plant_at(100.0, 1),
+    );
+    rb.add(
+        line(2),
+        cents(10_000),
+        120,
+        month(2028, 1),
+        line_between(0, 1),
+    );
+    rb.apply_reserve_review(&review(2028, 50.0));
+    let before = rb.clone();
+    rb.refresh_plant_firm(|id| (id == PlantId(1)).then_some(Megawatts::new(170.0)));
+    let mut expected = before;
+    if let AssetProfile::Plant { firm, .. } =
+        &mut expected.assets.get_mut(&plant(1)).unwrap().profile
+    {
+        *firm = Megawatts::new(170.0);
+    }
+    assert_eq!(rb, expected);
+}
+
 proptest! {
     #[test]
     fn depreciation_over_life_equals_original(cents_in in 1i64..10_000_000_000, life in 1u32..600) {

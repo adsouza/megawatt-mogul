@@ -426,3 +426,6 @@ supply-chart-combine = Combine graphs
 supply-chart-unit-power = MW
 supply-chart-unit-cost = $/MWh
 supply-chart-unit-energy = MWh
+
+tariff-satisfaction-adjustment = Satisfaction adjustment
+review-satisfaction-adjustment = Satisfaction moved your allowed return by { $points }.

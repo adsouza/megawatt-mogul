@@ -106,7 +106,7 @@ mod tests {
     /// net load climbs steeply as the sun sets into the evening peak.
     fn duck_curve_session() -> GameSession {
         let mut parts = tiny_region_parts();
-        for (x, y) in [(7, 1), (8, 1), (9, 1), (7, 6), (8, 6)] {
+        for (x, y) in [(7, 1), (8, 1), (9, 1), (7, 6), (8, 5)] {
             parts.start.fleet.push(StartPlantDef {
                 kind: PlantKind::Solar,
                 cell: CellCoord { x, y },

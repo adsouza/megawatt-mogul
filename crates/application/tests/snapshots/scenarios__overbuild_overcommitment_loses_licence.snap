@@ -1,6 +1,6 @@
 ---
 source: crates/application/tests/scenarios.rs
-assertion_line: 606
+assertion_line: 665
 expression: "OverbuildOutcome { status, timeline, minimum_generation, last_report, }"
 ---
 OverbuildOutcome {
@@ -46,10 +46,10 @@ OverbuildOutcome {
             },
             RateReviewCompleted {
                 tariff: Price(
-                    98.13878722015085,
+                    99.57164811398243,
                 ),
                 allowed_return: Ratio(
-                    0.08987483044305425,
+                    0.09305230218900831,
                 ),
             },
         ),
@@ -91,10 +91,10 @@ OverbuildOutcome {
             },
             RateReviewCompleted {
                 tariff: Price(
-                    97.61463875805276,
+                    99.5831851323135,
                 ),
                 allowed_return: Ratio(
-                    0.09021092583666727,
+                    0.09469084326337411,
                 ),
             },
         ),
@@ -217,7 +217,7 @@ OverbuildOutcome {
         },
         days: 31,
         revenue: Money(
-            5556475161,
+            5668529860,
         ),
         fuel: Money(
             -2186168245,
@@ -232,7 +232,7 @@ OverbuildOutcome {
             0,
         ),
         net: Money(
-            2853306916,
+            2965361615,
         ),
         storage: {},
         energy_by_kind: {

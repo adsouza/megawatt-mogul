@@ -13,6 +13,49 @@ fn session() -> GameSession {
 }
 
 #[test]
+fn a_session_reports_its_satisfaction_adjustment() {
+    let s = session();
+    assert!((s.satisfaction_return_adjustment() + 0.01).abs() < 1e-12);
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(24))]
+    #[test]
+    fn one_firm_derivation_everywhere(orders in proptest::collection::vec(0usize..7, 1..6), seed in proptest::prelude::any::<u64>()) {
+        let mut parts = crate::region::fixtures::tiny_region_parts();
+        for spec in &mut parts.catalog { spec.build_months = 1; }
+        parts.start.fleet.push(crate::region::StartPlantDef { kind: PlantKind::Battery, cell: CellCoord { x: 5, y: 1 } });
+        let mut s = GameSession::new(Arc::new(crate::region::RegionDefinition::try_from(parts).unwrap()), seed, GameSettings::default());
+        let battery = s.plant_views().into_iter().find(|p| p.kind == PlantKind::Battery).unwrap().id;
+        s.set_battery_enabled(battery, false).unwrap();
+        for index in orders {
+            let kind = PlantKind::ALL[index];
+            let terrain = s.region().terrain();
+            let site = (0..terrain.height()).flat_map(|y| (0..terrain.width()).map(move |x| CellCoord { x, y }))
+                .find(|&cell| s.plant_site_check(kind, cell).is_ok());
+            if let Some(cell) = site { s.build_plant(kind, cell).unwrap(); }
+        }
+        s.begin_operating().unwrap();
+        run_ticks(&mut s, TICKS_PER_DAY);
+        let mut expected = Megawatts::ZERO;
+        for plant in s.power().plants().values() {
+            let spec = plant.spec();
+            let firm = if spec.kind == PlantKind::Battery { Megawatts::new(170.0) } else { spec.capacity_credit.of(spec.capacity) };
+            expected += firm;
+            let asset = s.company().rate_base().asset(AssetRef::Plant(plant.id())).unwrap();
+            proptest::prop_assert!(matches!(asset.profile, AssetProfile::Plant { firm: stored, .. } if stored == firm), "stored firm differs from the independent fixture expectation");
+            proptest::prop_assert_eq!(spec.firm_capacity(&s.region().regulator().storage_accreditation), firm);
+        }
+        proptest::prop_assert_eq!(s.power().firm_capacity(&s.region().regulator().storage_accreditation), expected);
+        let inputs = s.review_inputs(s.clock().month());
+        let peak = inputs.review_peak();
+        let before = s.state_hash();
+        proptest::prop_assert!((s.rate_review_estimate().reserve_margin - (expected / peak - 1.0)).abs() < 1e-12);
+        proptest::prop_assert_eq!(s.state_hash(), before);
+    }
+}
+
+#[test]
 fn cancel_line_construction_removes_the_order_and_future_payments_without_refunding_paid_costs() {
     use crate::state::State;
     let mut s = session();
@@ -1036,7 +1079,9 @@ fn rate_review_estimate_of_a_fresh_game_holds_nothing() {
     let peak = s
         .power()
         .projected_connected_peak(&region, s.clock().month().next());
-    let firm = s.power().firm_capacity();
+    let firm = s
+        .power()
+        .firm_capacity(&s.region().regulator().storage_accreditation);
     assert_eq!(estimate.reserve_margin, firm / peak - 1.0);
     assert!(estimate.projected_return.value() > 0.0);
 }
@@ -1083,7 +1128,9 @@ fn rate_review_estimate_holds_new_capital_when_there_is_excess() {
             city.base_load = Megawatts::ZERO;
         }
     });
-    let firm = s.power().firm_capacity();
+    let firm = s
+        .power()
+        .firm_capacity(&s.region().regulator().storage_accreditation);
     let asset = AssetRef::Plant(PlantId(900));
     let cost = Money::from_cents(1_000_000);
     s.company.rate_base_mut().add(

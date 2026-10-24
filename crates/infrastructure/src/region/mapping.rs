@@ -7,7 +7,7 @@ use domain::ids::{CellCoord, CityId, RegionId};
 use domain::region::{
     CityDef, DemandShape, FrequencyParams, HydroParams, LineParams, PlantKind, PlantSpec,
     RegionDefinition, RegionDefinitionParts, RegionError, RegulatorParams, SatisfactionParams,
-    SitingRule, SolarParams, StartDef, StartPlantDef,
+    SitingRule, SolarParams, StartDef, StartPlantDef, StorageAccreditation,
 };
 use domain::time::{SimDuration, SimMonth, TICKS_PER_HOUR};
 use domain::units::{Hertz, Megawatts, Money, Price, RampRate, Ratio};
@@ -45,7 +45,7 @@ pub fn map_region(file: RegionFile) -> Result<RegionDefinition> {
             monthly_flow: array(&file.hydro.monthly_flow, "hydro.monthly_flow")?,
         },
         frequency: map_frequency(&file.frequency)?,
-        regulator: map_regulator(&file.regulator)?,
+        regulator: map_regulator(&file.regulator, file.region_schema)?,
         satisfaction: map_satisfaction(&file.satisfaction)?,
         lines: map_lines(&file.lines)?,
         start: map_start(&file)?,
@@ -301,9 +301,48 @@ fn map_frequency(f: &FrequencyDto) -> Result<FrequencyParams> {
     })
 }
 
-fn map_regulator(r: &RegulatorDto) -> Result<RegulatorParams> {
+fn map_regulator(r: &RegulatorDto, schema: Option<u32>) -> Result<RegulatorParams> {
+    use super::{CURRENT_REGION_SCHEMA, legacy};
+    let missing = |field| RegionError::MissingField { field };
+    let (ladder, target, per_point) = match schema {
+        None => {
+            if r.storage_accreditation.is_some()
+                || r.satisfaction_target.is_some()
+                || r.return_per_satisfaction_point.is_some()
+            {
+                return Err(missing("region_schema"));
+            }
+            (
+                legacy::A12_STORAGE_ACCREDITATION.as_slice(),
+                legacy::A12_SATISFACTION_TARGET,
+                legacy::A12_RETURN_PER_SATISFACTION_POINT,
+            )
+        }
+        Some(CURRENT_REGION_SCHEMA) => (
+            r.storage_accreditation
+                .as_deref()
+                .ok_or_else(|| missing("regulator.storage_accreditation"))?,
+            r.satisfaction_target
+                .ok_or_else(|| missing("regulator.satisfaction_target"))?,
+            r.return_per_satisfaction_point
+                .ok_or_else(|| missing("regulator.return_per_satisfaction_point"))?,
+        ),
+        Some(schema) => return Err(RegionError::UnsupportedRegionSchema(schema)),
+    };
+    let storage_accreditation = StorageAccreditation::new(
+        ladder
+            .iter()
+            .map(|&(h, c)| ratio(c, "regulator.storage_accreditation").map(|credit| (h, credit)))
+            .collect::<Result<Vec<_>>>()?,
+    )?;
     let price = |value, field| finite(value, field).map(Price::per_mwh);
     Ok(RegulatorParams {
+        storage_accreditation,
+        satisfaction_target: finite(target, "regulator.satisfaction_target")?,
+        return_per_satisfaction_point: finite(
+            per_point,
+            "regulator.return_per_satisfaction_point",
+        )?,
         starting_tariff: price(
             r.starting_tariff_usd_per_mwh,
             "regulator.starting_tariff_usd_per_mwh",

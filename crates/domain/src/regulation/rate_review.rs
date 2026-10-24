@@ -8,6 +8,7 @@ use crate::units::{Megawatts, Money, Price, Ratio};
 /// Everything the regulator weighs at a rate review.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RateReviewInputs {
+    pub satisfaction: f64,
     pub tally: YearTally,
     pub depreciation: Money,
     /// Rate base excluding held and disallowed capital.
@@ -49,6 +50,7 @@ pub fn reserve_excess(
 /// - `reliability = served / demand` (the target when nothing was demanded);
 /// - `cost_per_mwh = operating cost / served` (`None` when nothing was served);
 /// - `return = base + per_reliability × (reliability − target)
+///   + per_satisfaction_point × (satisfaction − target)
 ///   + per_cost_improvement × (prev − cur) / prev`, the last term only when
 ///   both costs exist, clamped to `[min, max]`;
 /// - `revenue requirement = operating cost + depreciation + return × eligible
@@ -69,7 +71,8 @@ pub fn compute_rate_review(i: &RateReviewInputs, p: &RegulatorParams) -> RateRev
     let cost_per_mwh = (served > 0.0).then(|| operating_dollars / served);
 
     let mut raw = p.base_return.value()
-        + p.return_per_reliability * (reliability - p.reliability_target.value());
+        + p.return_per_reliability * (reliability - p.reliability_target.value())
+        + satisfaction_adjustment(i.satisfaction, p);
     if let (Some(prev), Some(cur)) = (i.previous_cost_per_mwh, cost_per_mwh)
         && prev > 0.0
     {
@@ -104,6 +107,11 @@ pub fn compute_rate_review(i: &RateReviewInputs, p: &RegulatorParams) -> RateRev
         revenue_requirement,
         cost_per_mwh,
     }
+}
+
+/// The unclamped satisfaction contribution, expressed as a fraction of allowed return.
+pub fn satisfaction_adjustment(satisfaction: f64, p: &RegulatorParams) -> f64 {
+    p.return_per_satisfaction_point * (satisfaction - p.satisfaction_target)
 }
 
 /// Clamps into `[min, max]`; NaN falls back to the base return.
@@ -145,6 +153,7 @@ mod tests {
 
     fn inputs(served: f64, cost_cents: i64, rate_base_cents: i64) -> RateReviewInputs {
         RateReviewInputs {
+            satisfaction: tiny_region().regulator().satisfaction_target,
             tally: tally(served, served, cost_cents),
             depreciation: Money::ZERO,
             eligible_rate_base: Money::from_cents(rate_base_cents),
@@ -152,6 +161,39 @@ mod tests {
             projected_peak: Megawatts::new(100.0),
             previous_tariff: Price::per_mwh(95.0),
             previous_cost_per_mwh: None,
+        }
+    }
+
+    #[test]
+    fn satisfaction_moves_the_allowed_return() {
+        let region = tiny_region();
+        let p = region.regulator();
+        for (satisfaction, expected) in [(90.0, 0.09), (100.0, 0.095), (80.0, 0.085)] {
+            let mut input = inputs(0.0, 0, 0);
+            input.satisfaction = satisfaction;
+            let output = compute_rate_review(&input, p);
+            assert!((output.allowed_return.value() - expected).abs() < 1e-12);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn return_is_the_clamped_sum_of_its_terms(satisfaction in 0.0f64..=100.0, served in 0.0f64..1e9, demand in 0.0f64..1e9, prior in proptest::option::of(1.0f64..500.0)) {
+            let region = tiny_region();
+            let p = region.regulator();
+            let mut input = inputs(served, 10_000_000, 0);
+            input.satisfaction = satisfaction;
+            input.tally.demand = MegawattHours::new(demand);
+            input.previous_cost_per_mwh = prior;
+            let reliability = if demand > 0.0 { served / demand } else { p.reliability_target.value() };
+            let cost_term = match (prior, served > 0.0) {
+                (Some(old), true) => p.return_per_cost_improvement * (old - 100_000.0 / served) / old,
+                _ => 0.0,
+            };
+            let raw = p.base_return.value() + p.return_per_reliability * (reliability - p.reliability_target.value())
+                + p.return_per_satisfaction_point * (satisfaction - p.satisfaction_target) + cost_term;
+            let expected = raw.clamp(p.min_return.value(), p.max_return.value());
+            prop_assert!((compute_rate_review(&input, p).allowed_return.value() - expected).abs() < 1e-12);
         }
     }
 

@@ -78,6 +78,7 @@ pub struct ReviewModel {
     pub rate_review_heading: String,
     /// The annual review's result, in December only.
     pub rate_review: Option<String>,
+    pub satisfaction_adjustment: Option<String>,
     /// *Continue*, which sends `FinishReview`; after game over, *Back*, which returns to the
     /// game-over modal.
     pub footer_button: ButtonModel,
@@ -111,6 +112,7 @@ fn review_model_with_history(
         session.status() != SessionStatus::Active,
         l10n,
     );
+    model.satisfaction_adjustment = current_satisfaction_adjustment(session, report, l10n);
     if ui.review_supply {
         model.supply = Some(
             supply_history_model(game, ui.supply_month, l10n).with_layout(ui.supply_chart_layout),
@@ -121,6 +123,26 @@ fn review_model_with_history(
         );
     }
     Some(model)
+}
+
+/// Only the live closed month has a current adjustment; archived outcomes keep their own copy.
+fn current_satisfaction_adjustment(
+    session: &domain::session::GameSession,
+    report: &MonthlyReport,
+    l10n: &Localizer,
+) -> Option<String> {
+    (report.rate_review.is_some()
+        && session.phase() == DayPhase::Review
+        && report.month == session.clock().month())
+    .then(|| {
+        l10n.args(
+            "review-satisfaction-adjustment",
+            &[(
+                "points",
+                format::signed_points(session.satisfaction_return_adjustment()).into(),
+            )],
+        )
+    })
 }
 
 /// Whether the Review modal shows for a game in `status` and `phase`, with `view` the finished
@@ -237,6 +259,7 @@ pub fn review_model_for(
             .is_empty()
             .then(|| l10n.text("review-regulatory-none")),
         regulatory,
+        satisfaction_adjustment: None,
         rate_review_heading: l10n.text("review-rate-review"),
         rate_review: report.rate_review.as_ref().map(|outcome| {
             l10n.args(
@@ -368,6 +391,9 @@ fn draw_summary(ui: &mut egui::Ui, model: &ReviewModel) {
     if let Some(result) = &model.rate_review {
         heading(ui, &model.rate_review_heading);
         ui.label(result.as_str());
+        if let Some(adjustment) = &model.satisfaction_adjustment {
+            ui.label(adjustment);
+        }
     }
 }
 
@@ -604,6 +630,53 @@ mod tests {
             false,
             l10n,
         )
+    }
+
+    #[test]
+    fn a_december_review_shows_its_satisfaction_adjustment_only_while_current() {
+        let l10n = shipped_l10n();
+        let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        for month in 1..=12 {
+            game.execute(Command::BeginOperating).unwrap();
+            game.execute(Command::AdvanceTicks {
+                n: domain::time::TICKS_PER_DAY,
+            })
+            .unwrap();
+            if month != 12 {
+                game.execute(Command::FinishReview).unwrap();
+            }
+        }
+        let december = game.projections().monthly_reports.latest().unwrap().clone();
+        let model = review_model(&game, GameOverView::Summary, &l10n).unwrap();
+        let expected = format!(
+            "Satisfaction moved your allowed return by {}.",
+            format::signed_points(game.session().satisfaction_return_adjustment())
+        );
+        assert_eq!(
+            model.satisfaction_adjustment.as_deref(),
+            Some(expected.as_str())
+        );
+        game.execute(Command::FinishReview).unwrap();
+        assert_eq!(
+            current_satisfaction_adjustment(game.session(), &december, &l10n),
+            None
+        );
+        game.execute(Command::BeginOperating).unwrap();
+        game.execute(Command::AdvanceTicks {
+            n: domain::time::TICKS_PER_DAY,
+        })
+        .unwrap();
+        assert_eq!(
+            current_satisfaction_adjustment(game.session(), &december, &l10n),
+            None
+        );
+        assert_eq!(
+            review_model(&game, GameOverView::Summary, &l10n)
+                .unwrap()
+                .satisfaction_adjustment,
+            None
+        );
+        assert!(l10n.problems().is_empty());
     }
 
     #[test]

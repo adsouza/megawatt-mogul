@@ -39,7 +39,7 @@ const WRITE_OFF_AT_REVIEW: u8 = 2;
 /// What a reserve review needs to know about the physical asset.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AssetProfile {
-    /// A plant: its firm capacity (`capacity × capacity_credit`) and its node.
+    /// A plant: its accredited firm capacity and its node.
     Plant { firm: Megawatts, node: NodeId },
     /// A line and the nodes it joins.
     Line { from: NodeId, to: NodeId },
@@ -377,6 +377,19 @@ impl RateBase {
     /// Every asset, plants then lines, each in id order.
     pub fn assets(&self) -> impl Iterator<Item = &RateBaseAsset> {
         self.assets.values()
+    }
+
+    /// Refreshes derived plant accreditation without changing book values or held-share history.
+    /// Call inside a closing command, or on a clone for a pure estimate; never during restore.
+    pub fn refresh_plant_firm(&mut self, firm_of: impl Fn(PlantId) -> Option<Megawatts>) {
+        for (id, asset) in &mut self.assets {
+            if let (AssetRef::Plant(id), AssetProfile::Plant { firm, .. }) =
+                (id, &mut asset.profile)
+                && let Some(current) = firm_of(*id)
+            {
+                *firm = current;
+            }
+        }
     }
 
     /// The year of the last applied reserve review.

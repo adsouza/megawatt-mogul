@@ -56,7 +56,7 @@ impl GameSession {
     /// `month`: the projection of connected peak demand starts the month after.
     pub(super) fn review_inputs(&self, month: SimMonth) -> ReviewInputs {
         let params = self.region.regulator();
-        let firm = self.power.firm_capacity();
+        let firm = self.power.firm_capacity(&params.storage_accreditation);
         let projected = self
             .power
             .projected_connected_peak(&self.region, month.next());
@@ -68,6 +68,7 @@ impl GameSession {
                 excess,
             },
             rate: RateReviewInputs {
+                satisfaction: self.company.satisfaction(),
                 tally,
                 depreciation: self.year_depreciation,
                 eligible_rate_base: Money::ZERO,
@@ -246,7 +247,7 @@ impl GameSession {
                 continue;
             }
             let spec = plant.spec();
-            let firm = spec.capacity_credit.of(spec.capacity);
+            let firm = spec.firm_capacity(&self.region.regulator().storage_accreditation);
             self.company.rate_base_mut().add(
                 AssetRef::Plant(id),
                 spec.capital_cost,
@@ -309,6 +310,14 @@ impl GameSession {
         month: SimMonth,
         events: &mut Vec<DomainEvent>,
     ) -> RateReviewOutcome {
+        let power = &self.power;
+        let accreditation = &self.region.regulator().storage_accreditation;
+        self.company.rate_base_mut().refresh_plant_firm(|id| {
+            power
+                .plant(id)
+                .filter(|p| !matches!(p.status(), PlantStatus::UnderConstruction { .. }))
+                .map(|p| p.spec().firm_capacity(accreditation))
+        });
         // Connectivity is already this close's: December's new cities count.
         let inputs = self.review_inputs(month);
         let capital = self

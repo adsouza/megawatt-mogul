@@ -1,6 +1,6 @@
 ---
 source: crates/application/tests/scenarios.rs
-assertion_line: 697
+assertion_line: 756
 expression: "OverbuildOutcome { status, timeline, minimum_generation, last_report, }"
 ---
 OverbuildOutcome {
@@ -44,10 +44,10 @@ OverbuildOutcome {
             },
             RateReviewCompleted {
                 tariff: Price(
-                    98.13878722015085,
+                    99.57164811398243,
                 ),
                 allowed_return: Ratio(
-                    0.08987483044305425,
+                    0.09305230218900831,
                 ),
             },
         ),
@@ -89,10 +89,10 @@ OverbuildOutcome {
             },
             RateReviewCompleted {
                 tariff: Price(
-                    97.61463875805276,
+                    99.5831851323135,
                 ),
                 allowed_return: Ratio(
-                    0.09021092583666727,
+                    0.09469084326337411,
                 ),
             },
         ),
@@ -234,10 +234,10 @@ OverbuildOutcome {
             },
             RateReviewCompleted {
                 tariff: Price(
-                    109.19755847772055,
+                    111.35547541790686,
                 ),
                 allowed_return: Ratio(
-                    0.0883382212623021,
+                    0.09271860142721314,
                 ),
             },
         ),
@@ -388,10 +388,10 @@ OverbuildOutcome {
             },
             RateReviewCompleted {
                 tariff: Price(
-                    114.7280115253011,
+                    111.9287652300921,
                 ),
                 allowed_return: Ratio(
-                    0.08903550667463007,
+                    0.08322411825850175,
                 ),
             },
         ),
@@ -404,7 +404,7 @@ OverbuildOutcome {
         },
         days: 31,
         revenue: Money(
-            7881826713,
+            8037584109,
         ),
         fuel: Money(
             -2983369030,
@@ -419,7 +419,7 @@ OverbuildOutcome {
             0,
         ),
         net: Money(
-            4381457683,
+            4537215079,
         ),
         storage: {},
         energy_by_kind: {
@@ -559,13 +559,13 @@ OverbuildOutcome {
         rate_review: Some(
             RateReviewOutcome {
                 tariff: Price(
-                    114.7280115253011,
+                    111.9287652300921,
                 ),
                 allowed_return: Ratio(
-                    0.08903550667463007,
+                    0.08322411825850175,
                 ),
                 revenue_requirement: Money(
-                    89093482798,
+                    86919692820,
                 ),
                 cost_per_mwh: Some(
                     49.606393622371556,

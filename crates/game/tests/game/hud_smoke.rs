@@ -2814,3 +2814,36 @@ fn navigating_moves_between_the_menu_screens() {
     app.update();
     assert_eq!(state(&app), AppState::MainMenu);
 }
+
+#[test]
+fn the_satisfaction_adjustment_paints_whole_and_readably_at_minimum_height() {
+    for region in [EASTERN, WESTERN] {
+        let logs = TempDir::new().unwrap();
+        let mut app = hud_app(logs.path());
+        request(&mut app, region);
+        update_n(&mut app, 3);
+        app.world_mut().resource_mut::<UiState>().tab = PlanningTab::Tariff;
+        let pass = EguiPass::attach(&mut app);
+        pass.settled(&mut app, 1280.0, 640.0);
+        let output = pass.paint_with(&mut app, 1280.0, 640.0, vec![]);
+        for text in [
+            "Satisfaction adjustment",
+            "−1.00 pp",
+            "Capital at risk of write-off",
+            "The December review is 11 months away.",
+        ] {
+            assert_eq!(
+                super::contrast::painted_glyphs(&output.shapes, text).as_deref(),
+                Some(text),
+                "{region}: {text}"
+            );
+        }
+        assert!(super::contrast::check_paint(output) > 0);
+        assert!(
+            app.world()
+                .resource::<game::l10n::Localizer>()
+                .problems()
+                .is_empty()
+        );
+    }
+}

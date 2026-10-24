@@ -63,6 +63,8 @@ pub enum DomainError {
     /// The two nodes are already joined by a line, in either direction.
     #[error("nodes {from:?} and {to:?} are already joined by a line")]
     DuplicateLine { from: NodeId, to: NodeId },
+    #[error("nodes {from:?} and {to:?} are already joined by existing or ordered lines")]
+    LineNotNeeded { from: NodeId, to: NodeId },
     /// A line id is already present in the network.
     #[error("duplicate line id {line:?}")]
     DuplicateLineId { line: LineId },
