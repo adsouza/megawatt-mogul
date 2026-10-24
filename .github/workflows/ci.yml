@@ -1,40 +1,45 @@
 name: CI
 
+# Pull requests run on their own event; pushes run only on main, whose runs save the cache that
+# every pull request restores. (Running on every push as well duplicated each PR's checks.)
 on:
   push:
+    branches: [main]
   pull_request:
+
+# A new push to a pull request cancels its superseded run. Runs on main always finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
+  # No debug info in CI: it multiplies the size of target/, and so of the cache to save and
+  # restore, for backtraces that CI logs do not need. Dependencies already build without it.
+  CARGO_PROFILE_DEV_DEBUG: "0"
 
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      # Bevy's Linux build dependencies, from Bevy 0.20's docs/linux_dependencies.md (Ubuntu), plus
-      # the XCB libraries bevy_egui's docs list for its clipboard support. The game tests run
-      # headless (MinimalPlugins, no window or GPU), so no display server is needed.
-      - name: Install Bevy's Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y \
-            g++ pkg-config libx11-dev libasound2-dev libudev-dev libxkbcommon-x11-0 \
-            libwayland-dev libxkbcommon-dev \
-            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/rust-setup
         with:
-          toolchain: "1.98.1"
           components: clippy, rustfmt
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo nextest run --workspace --profile ci
+
+  # The `dev` feature changes the game crate's dependency graph, so it builds separately anyway;
+  # as its own job it runs in parallel with `check`, with its own cache.
+  dev-tools:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/rust-setup
       - name: Clippy (development tools)
         run: cargo clippy -p game --all-targets --features dev -- -D warnings
       - name: Test (development tools)
