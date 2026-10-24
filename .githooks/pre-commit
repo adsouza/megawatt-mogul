@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Rejects a commit whose Rust code isn't rustfmt-clean (the same check CI runs).
+# Enable once per clone: git config core.hooksPath .githooks
+# Bypass in an emergency: git commit --no-verify
+set -euo pipefail
+
+if ! cargo fmt --all --check >/dev/null 2>&1; then
+    echo "pre-commit: code is not formatted. Run 'cargo fmt --all', re-stage, and commit again." >&2
+    cargo fmt --all --check >&2 || true
+    exit 1
+fi

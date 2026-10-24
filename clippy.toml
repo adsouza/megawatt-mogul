@@ -1,0 +1,11 @@
+# The HUD theme turns egui's disabled fade (`disabled_alpha`) off, so a control disabled through
+# egui's own API would look enabled. Panels disable controls through the HUD's helper instead.
+disallowed-methods = [
+    { path = "egui::Ui::add_enabled", reason = "draws a disabled control like an enabled one; use game::hud::add_enabled" },
+    { path = "egui::Ui::add_enabled_ui", reason = "draws disabled controls like enabled ones; use game::hud::add_enabled for each control" },
+    { path = "egui::Ui::disable", reason = "draws disabled controls like enabled ones; use game::hud::add_enabled for each control" },
+    { path = "egui::UiBuilder::disabled", reason = "draws disabled controls like enabled ones; use game::hud::add_enabled for each control" },
+    { path = "egui::Area::enabled", reason = "with false, draws disabled controls like enabled ones; use game::hud::add_enabled for each control" },
+    { path = "egui::Window::enabled", reason = "with false, draws disabled controls like enabled ones; use game::hud::add_enabled for each control" },
+    { path = "egui::CollapsingHeader::enabled", reason = "with false, draws a disabled header like an enabled one; use game::hud::add_enabled for its controls" },
+]

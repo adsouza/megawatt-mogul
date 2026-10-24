@@ -1,0 +1,40 @@
+name: Rust setup
+description: >
+  Bevy's Linux libraries, the mold linker, the pinned toolchain, cargo-nextest and the Cargo
+  cache, shared by every CI job so they cannot drift apart.
+
+inputs:
+  components:
+    description: Extra toolchain components, comma separated.
+    default: clippy
+
+runs:
+  using: composite
+  steps:
+    # Bevy's Linux build dependencies, from Bevy 0.20's docs/linux_dependencies.md (Ubuntu), plus
+    # the XCB libraries bevy_egui's docs list for its clipboard support. The game tests run
+    # headless (MinimalPlugins, no window or GPU), so no display server is needed. Cached, so a
+    # warm run skips apt-get entirely; bump `version` to refresh the cached packages.
+    - uses: awalsh128/cache-apt-pkgs-action@v1
+      with:
+        packages: >-
+          g++ pkg-config libx11-dev libasound2-dev libudev-dev libxkbcommon-x11-0
+          libwayland-dev libxkbcommon-dev
+          libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+        version: "1"
+    # Linking the large game test binary dominates a warm build; mold is much faster than ld.
+    - uses: rui314/setup-mold@v1
+    - uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: "1.98.1"
+        components: ${{ inputs.components }}
+    - uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-nextest
+    # Caches ~/.cargo and the compiled dependencies in target/, keyed per job, toolchain and
+    # Cargo.lock. GitHub scopes caches by branch: a PR restores its own or main's, never another
+    # PR's, and the repository holds 10 GB in total. So only main saves, and every PR starts from
+    # main's cache instead of evicting it.
+    - uses: Swatinem/rust-cache@v2
+      with:
+        save-if: ${{ github.ref == 'refs/heads/main' }}

@@ -1,0 +1,97 @@
+# cargo-mutants configuration. See TESTING.md ("Mutation testing") for how to run and read it.
+#
+# Run: cargo mutants -p domain -p application -j 4
+# Target: zero missed mutants in `domain`. Every entry in `exclude_re` below is a provably
+# equivalent mutant (no observable behaviour change) or genuinely untestable code, and says why.
+
+examine_globs = ["crates/domain/src/**/*.rs", "crates/application/src/**/*.rs"]
+test_tool = "nextest"
+timeout_multiplier = 3.0
+
+# Stop at the first failing test and terminate running tests at once (see
+# `[profile.mutants]` in .config/nextest.toml), so a mutant that makes a loop spin forever is
+# caught by the first failing test instead of timing out.
+additional_cargo_test_args = ["--profile", "mutants"]
+
+# Patterns match the mutant name as printed by `cargo mutants --list`:
+# "<file>:<line>:<col>: replace <old> with <new> in <function>". Line numbers drift, so they
+# are matched with `\d+`; where one function has both an equivalent and a killable mutant of
+# the same operator, the column pins the equivalent one.
+exclude_re = [
+    # GameSettings and NetworkModel each have a single value today (CopperPlate), so
+    # `Default::default()` is indistinguishable from the real field. Revisit when a second
+    # NetworkModel variant exists.
+    'replace GameSession::settings -> &GameSettings with Box::leak\(Box::new\(Default::default\(\)\)\)',
+    'replace PowerSystem::model -> NetworkModel with Default::default\(\)',
+
+    # balance_boundary is only ever evaluated at tick 0 (midnight), where expected solar is
+    # exactly zero (region validation requires sunrise >= 0 and sun_factor is 0 at midnight),
+    # so adding solar equals subtracting it. Column 59 is the `- solar` operator in
+    # `let load = forecast * (1.0 - self.outage.value()) - solar - manual;`; the `1.0 - outage`
+    # (column 36) and `- manual` operators are not excluded and are covered by tests.
+    'power_system\.rs:\d+:59: replace - with \+ in PowerSystem::balance_boundary',
+
+    # begin_day re-runs balance_boundary only when hour 0 orders an outage. Running it with
+    # no outage too changes nothing: boundary_dispatch overwrites every participant's output
+    # from inputs the first run did not change (the load, availability and hydro ceilings),
+    # so a second run gives the same state. Column 24 is `self.outage > Ratio::ZERO`; `==`
+    # and `<` skip a needed re-run and are covered by a test.
+    'power_system\.rs:\d+:24: replace > with >= in PowerSystem::begin_day',
+
+    # tick passes `after_outage * (1.0 - shed)` to apply_protection as the served load, which
+    # only the OverFrequencyTrip outcome reads. protection::evaluate returns that outcome only
+    # when shed is zero (any shed above zero takes the Restored branch first), so
+    # `1.0 + shed` is the same 1.0. Column 33 is that operator.
+    'power_system\.rs:\d+:33: replace - with \+ in PowerSystem::tick',
+
+    # outage_cover is only called when the outage differs from its target, so
+    # `outage > target` and `outage >= target` agree on every call.
+    'replace > with >= in PowerSystem::outage_cover',
+
+    # next_outage returns early when the outage is within SNAP of its target, so past that
+    # test the outage never equals its target and `now < target` (column 27) and
+    # `now <= target` agree.
+    'outage\.rs:\d+:27: replace < with <= in PowerSystem::next_outage',
+
+    # restoration_step: when the stepped shed equals the floor exactly, returning the floor
+    # and returning the stepped shed give the same value.
+    'replace < with <= in restoration_step',
+
+    # add_events: a share equal to the peak so far replaces it with the same value.
+    'report\.rs:\d+:31: replace > with >= in MonthAccumulator::add_events',
+
+    # agc_retarget: a shortfall (or remaining allocation) of exactly zero allocates exactly
+    # zero either way, so `> 0.0` and `>= 0.0` behave identically.
+    'replace > with >= in agc_retarget',
+
+    # reset_hydro_budget: a budget of exactly 0.0 and MegawattHours::ZERO compare equal.
+    'replace > with >= in Plant::reset_hydro_budget',
+
+    # off_gaps walks the circle from `first_on + 1`; starting at `first_on` instead only
+    # revisits a committed hour first, which closes no gap. Column 31 is that start.
+    'commitment\.rs:\d+:31: replace \+ with \* in CommitmentSchedule::off_gaps',
+
+    # action_for: `on()` reduces hours modulo 24 and a day is exactly 24 hours, so adding a day
+    # of ticks instead of taking the remainder selects the same hour of the pattern.
+    'replace % with \+ in action_for',
+
+    # snapped: |value - 1.0| equals SNAP (1e-9) exactly for no f64 (spacing near 1.0 is
+    # 2.2e-16 and 1e-9 is not a multiple of it), so `<` and `<=` agree on every input.
+    'protection\.rs:\d+:35: replace < with <= in snapped',
+
+    # A held slice that survives a review is always one created this year (anything older is
+    # either released or, on its second review, written off), so its stored count is always 1.
+    # The counter is vestigial state the write-off rule never reads past 1.
+    'replace HeldSlice::consecutive_excess_reviews -> u8 with 1',
+
+    # review: a new plant with zero live firm capacity contributes weight 0 to the
+    # proportional allocation and holds nothing, so filtering it out or not is unobservable.
+    'replace > with >= in RateBase::review',
+
+    # water_fill: with a capacity of exactly 0 (callers always pass a validated positive
+    # one), every eligible hour's spill allocation is min(0, ·) = 0 and any positive budget
+    # covers that zero spill, so the spill branch returns level None and all zeros, the same
+    # as the early return. Column 33 is `cap > 0.0` in the guard; `budget > 0.0` (column 71)
+    # is not excluded and is covered by a test.
+    'hydro_schedule\.rs:\d+:33: replace > with >= in water_fill',
+]

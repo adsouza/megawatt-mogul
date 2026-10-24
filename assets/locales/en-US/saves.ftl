@@ -1,0 +1,67 @@
+save-title = Save game
+save-load = Load game
+save-library-label = SAVED COMPANIES
+save-named-heading = Named games
+save-automatic-heading = Automatic snapshots
+save-unreadable-heading = Unreadable saves
+save-named-empty = No named games yet.
+save-automatic-empty = No automatic monthly snapshots yet.
+save-leave-title = Return to menu?
+save-leave-body = Save your progress before leaving?
+save-overwrite-title = Overwrite this save?
+save-overwrite-body = This replaces the selected manual save. Other saves are kept.
+save-autosave = Monthly autosave
+save-resuming = Resuming game…
+save-restoring = Restoring your saved grid. The game will resume paused.
+save-working = Working…
+save-loading-list = Loading saved games…
+save-applied-only = Saves include applied changes. Unapplied schedule edits are excluded.
+save-choose = Choose a save to resume. Games resume paused.
+save-boundary = { $month } · { $phase } · { $time }
+save-details = { $region } · { $month } · { $phase } · { $time }
+    Saved { $saved } UTC { $status }
+save-automatic-kind = Automatic
+save-manual-kind = Manual
+save-empty = No saves found.
+save-overwrite = Overwrite
+save-resume = Resume
+save-retry = Retry
+save-continue-unsaved = Continue without saving
+save-new = Save new slot
+save-refresh = Refresh
+save-and-menu = Save and return to menu
+save-leave-unsaved = Leave without saving
+save-cancel = Cancel
+save-name = Save name
+save-error-id = The save slot has an invalid identity.
+save-error-name = Enter a name of 1–80 characters without control characters.
+save-error-version = This save uses an unsupported file format.
+save-error-checksum = This save is incomplete or its checksum does not match.
+save-error-size = This save exceeds the storage limit. No history was truncated.
+save-error-malformed = This save could not be decoded.
+save-error-changed = This slot changed. Cancel and refresh before choosing it again.
+save-error-busy = Another writer is using this slot. Try again shortly.
+save-error-durability = The new save is visible, but disk durability is unconfirmed. Retry to confirm it; your game is still open.
+save-error-cancelled = The operation was cancelled.
+save-error-io = The save operation could not access storage. Check the save directory and retry.
+save-error-rules = The simulation rules or region content do not match this save.
+save-error-region = The embedded region does not match the original game.
+save-error-state = The restored game does not match the saved boundary.
+save-error-replay = A recorded command could not be restored.
+save-error-other-version = This save was made by a different version of the game, and this version doesn't reproduce it. Your save file is unchanged.
+save-error-log = A fresh recording could not be created. Your source save is unchanged.
+save-last = Saved { $month } · { $phase } · { $time }
+save-confirmed = Save (saved)
+# The top bar's warning. It must fit whole at the smallest window, so the month is abbreviated
+# ("Sep 2027"). Its tooltip, `save-autosave-failed-detail`, names the month in full.
+save-autosave-failed = Autosave failed: { $month }
+save-autosave-failed-detail = Autosave failed for { $month }. Save to keep your progress.
+save-overwrite-specific = Replace "{ $name }" ({ $month } · { $phase } · { $time })?
+
+save-delete = Delete
+save-delete-title = Delete saved game?
+save-delete-specific = Permanently delete “{ $name }”?
+    { $details }
+    This cannot be undone.
+save-delete-confirm = Delete permanently
+save-error-delete-durability = The save was removed, but disk durability is unconfirmed. Retry to confirm the deletion.

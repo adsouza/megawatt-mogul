@@ -1,0 +1,11 @@
+[profile.default]
+fail-fast = false
+
+[profile.ci]
+retries = 0
+
+# Used by cargo-mutants (see .cargo/mutants.toml): stop at the first failing test and terminate
+# running tests immediately, so a mutant that makes a loop spin forever is caught by the
+# first failure instead of waiting out the timeout.
+[profile.mutants]
+fail-fast = { max-fail = 1, terminate = "immediate" }

@@ -1,0 +1,46 @@
+name: CI
+
+# Pull requests run on their own event; pushes run only on main, whose runs save the cache that
+# every pull request restores. (Running on every push as well duplicated each PR's checks.)
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push to a pull request cancels its superseded run. Runs on main always finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  # No debug info in CI: it multiplies the size of target/, and so of the cache to save and
+  # restore, for backtraces that CI logs do not need. Dependencies already build without it.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/rust-setup
+        with:
+          components: clippy, rustfmt
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo nextest run --workspace --profile ci
+
+  # The `dev` feature changes the game crate's dependency graph, so it builds separately anyway;
+  # as its own job it runs in parallel with `check`, with its own cache.
+  dev-tools:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/rust-setup
+      - name: Clippy (development tools)
+        run: cargo clippy -p game --all-targets --features dev -- -D warnings
+      - name: Test (development tools)
+        run: cargo nextest run -p game --features dev --profile ci

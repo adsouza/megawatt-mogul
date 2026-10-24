@@ -1,0 +1,437 @@
+// The Western Interconnection: the western United States, British Columbia,
+// Alberta, the El Paso area and Baja California, the northern Mexican state
+// synchronised with the Western grid. Baja California Sur (south of 28 N)
+// is an isolated system and lies outside the bounds; Sonora is on Mexico's
+// national grid and is left out.
+//
+// Geography is at diorama fidelity: polygons follow the real coastlines and
+// interconnection seams closely enough to read on a 60 x 80 grid (about 0.4
+// degrees per cell), and a few shores are smoothed where an inlet is
+// narrower than a cell. Points are (lon, lat) in degrees.
+//
+// Seam with the Eastern Interconnection (shared with
+// eastern_interconnection.ron): the Alberta-Saskatchewan line (110 W) to the
+// 49th parallel, the Montana-Dakota line (104.05 W) to the Nebraska-Colorado
+// line, the Colorado border, then south through eastern New Mexico along
+// 104.5 W to the Rio Grande.
+(
+    region_schema: 3,
+    id: "western_interconnection",
+    name_key: "region-western-interconnection",
+    bounds: (west: -125.5, east: -102.0, south: 28.0, north: 60.0),
+    grid: (width: 60, height: 80),
+    land: [
+        // The mainland: the seam south to the Rio Grande, the Rio Grande up
+        // to El Paso, the Mexican border west to the Colorado River, the
+        // Gulf of California shore of Baja California to 28 N, then north
+        // along the Pacific coast of Baja, California, Oregon and Washington
+        // (with Puget Sound as an inlet) and the British Columbia coast. North
+        // of about 50.5 N the BC coast lies west of the bounds.
+        [
+            (-110.0, 60.5), (-110.0, 49.0), (-104.05, 49.0), (-104.05, 45.0),
+            (-104.05, 41.0), (-102.05, 41.0), (-102.05, 37.0), (-103.0, 37.0),
+            (-103.04, 36.0), (-104.0, 35.0), (-104.5, 34.0), (-104.5, 32.0),
+            (-104.5, 29.6), (-104.75, 30.0), (-105.2, 30.6), (-105.6, 31.05),
+            (-106.0, 31.4), (-106.53, 31.78), (-108.21, 31.78), (-108.21, 31.33),
+            (-111.07, 31.33), (-114.81, 32.49), (-114.95, 32.2), (-114.85, 31.85),
+            (-114.85, 31.0), (-114.65, 30.35), (-114.4, 29.8), (-113.55, 28.95),
+            (-113.1, 28.4), (-112.8, 28.0), (-112.8, 27.7), (-114.3, 27.7),
+            (-114.15, 28.0), (-114.6, 29.0), (-115.2, 29.5), (-115.75, 30.05),
+            (-116.05, 30.5), (-116.6, 31.85), (-117.05, 32.35), (-117.12, 32.53),
+            (-117.25, 32.7), (-117.38, 33.2), (-117.75, 33.5), (-118.3, 33.72),
+            (-118.52, 34.03), (-119.2, 34.15), (-119.7, 34.4), (-120.47, 34.45),
+            (-120.65, 34.9), (-120.87, 35.4), (-121.5, 36.0), (-121.95, 36.55),
+            (-122.05, 36.95), (-122.5, 37.5), (-123.0, 38.0), (-123.7, 38.95),
+            (-124.4, 40.44), (-124.2, 41.75), (-124.56, 42.84), (-124.05, 44.6),
+            (-123.95, 46.2), (-124.1, 46.9), (-124.73, 48.38), (-123.4, 48.15),
+            (-122.75, 48.1), (-122.65, 47.6), (-122.9, 47.1), (-122.45, 47.25),
+            (-122.38, 47.6), (-122.3, 48.0), (-122.55, 48.5), (-122.75, 49.0),
+            (-123.1, 49.0), (-123.26, 49.27), (-123.75, 49.5), (-124.55, 49.85),
+            (-125.3, 50.3), (-126.0, 50.6), (-126.0, 60.5),
+        ],
+        // Vancouver Island. Only its eastern half lies inside the bounds, a
+        // few cells across, so it needs no more detail.
+        [
+            (-123.3, 48.4), (-123.55, 48.33), (-124.05, 48.42), (-124.4, 48.55),
+            (-125.13, 48.83), (-125.55, 48.95), (-126.0, 49.2), (-126.0, 50.7),
+            (-125.45, 50.45), (-125.25, 50.05), (-124.95, 49.7), (-124.45, 49.4),
+            (-123.95, 49.17), (-123.7, 48.85), (-123.5, 48.65),
+        ],
+    ],
+    exclude: [],
+    // Relief: the Rockies from New Mexico to northern BC, the Wasatch, the
+    // Sierra Nevada, the Cascades and the Coast Mountains, the Colorado
+    // Plateau and Great Basin, with the Central Valley and Columbia Basin
+    // low.
+    height: (
+        base: 0.2,
+        blobs: [
+            // The Rockies, south to north.
+            (lon: -106.0, lat: 36.0, radius_deg: 0.9, value: 0.5),
+            (lon: -107.5, lat: 37.8, radius_deg: 0.8, value: 0.6),
+            (lon: -106.0, lat: 39.0, radius_deg: 0.9, value: 0.65),
+            (lon: -108.5, lat: 42.8, radius_deg: 1.0, value: 0.6),
+            (lon: -110.6, lat: 43.8, radius_deg: 1.0, value: 0.6),
+            (lon: -113.5, lat: 47.5, radius_deg: 1.2, value: 0.5),
+            (lon: -116.5, lat: 51.0, radius_deg: 1.0, value: 0.7),
+            (lon: -118.5, lat: 53.0, radius_deg: 1.0, value: 0.6),
+            (lon: -121.5, lat: 55.5, radius_deg: 1.2, value: 0.4),
+            // The Wasatch and the Idaho batholith.
+            (lon: -111.6, lat: 40.6, radius_deg: 0.7, value: 0.5),
+            (lon: -115.0, lat: 45.0, radius_deg: 1.3, value: 0.4),
+            // The Sierra Nevada.
+            (lon: -119.5, lat: 37.8, radius_deg: 0.8, value: 0.7),
+            (lon: -118.5, lat: 36.5, radius_deg: 0.7, value: 0.6),
+            // The Cascades.
+            (lon: -122.2, lat: 41.4, radius_deg: 0.6, value: 0.4),
+            (lon: -121.8, lat: 44.0, radius_deg: 0.7, value: 0.4),
+            (lon: -121.7, lat: 46.8, radius_deg: 0.7, value: 0.5),
+            (lon: -121.2, lat: 48.6, radius_deg: 0.7, value: 0.5),
+            // The BC Coast Mountains.
+            (lon: -124.0, lat: 51.5, radius_deg: 1.0, value: 0.5),
+            (lon: -125.0, lat: 53.5, radius_deg: 1.0, value: 0.4),
+            // Plateaus and basins.
+            (lon: -110.5, lat: 37.0, radius_deg: 1.8, value: 0.3),
+            (lon: -116.5, lat: 40.0, radius_deg: 2.5, value: 0.3),
+            (lon: -103.5, lat: 40.0, radius_deg: 1.5, value: 0.15),
+            (lon: -115.8, lat: 31.0, radius_deg: 0.7, value: 0.3),
+            // Lowlands: the Central Valley, the Columbia Basin and the
+            // Alberta prairie.
+            (lon: -120.5, lat: 37.0, radius_deg: 0.8, value: -0.2),
+            (lon: -121.8, lat: 39.5, radius_deg: 0.7, value: -0.2),
+            (lon: -119.5, lat: 46.5, radius_deg: 1.0, value: -0.15),
+            (lon: -112.0, lat: 53.0, radius_deg: 3.0, value: -0.05),
+        ],
+    ),
+    // Sunshine: highest in the desert Southwest (Mojave, Sonoran and Baja
+    // deserts, New Mexico), lowest on the cloudy Pacific Northwest and BC
+    // coast.
+    irradiance: (
+        base: 0.5,
+        blobs: [
+            (lon: -114.5, lat: 34.5, radius_deg: 2.5, value: 0.45),
+            (lon: -111.5, lat: 33.0, radius_deg: 2.0, value: 0.4),
+            (lon: -116.0, lat: 31.0, radius_deg: 2.0, value: 0.35),
+            (lon: -106.5, lat: 33.5, radius_deg: 2.0, value: 0.3),
+            (lon: -119.5, lat: 36.0, radius_deg: 1.5, value: 0.15),
+            (lon: -123.5, lat: 47.5, radius_deg: 2.5, value: -0.2),
+            (lon: -123.0, lat: 53.0, radius_deg: 3.0, value: -0.2),
+        ],
+    ),
+    // Water for thermal plants: the Pacific coast and Puget Sound, the
+    // Columbia and Snake, the Sacramento delta, the Colorado River, the Rio
+    // Grande and Alberta's Lake Wabamun.
+    cooling_water: (
+        base: 0.08,
+        blobs: [
+            // The Pacific coast, Baja to the Strait of Georgia.
+            (lon: -115.9, lat: 30.4, radius_deg: 0.5, value: 0.7),
+            (lon: -116.6, lat: 31.8, radius_deg: 0.5, value: 0.7),
+            (lon: -117.2, lat: 32.8, radius_deg: 0.5, value: 0.7),
+            (lon: -118.3, lat: 33.8, radius_deg: 0.5, value: 0.7),
+            (lon: -119.6, lat: 34.35, radius_deg: 0.5, value: 0.7),
+            (lon: -120.7, lat: 35.1, radius_deg: 0.5, value: 0.7),
+            (lon: -121.9, lat: 36.6, radius_deg: 0.5, value: 0.7),
+            (lon: -122.5, lat: 37.6, radius_deg: 0.5, value: 0.7),
+            (lon: -123.7, lat: 39.0, radius_deg: 0.5, value: 0.7),
+            (lon: -124.2, lat: 40.8, radius_deg: 0.5, value: 0.7),
+            (lon: -124.3, lat: 43.0, radius_deg: 0.5, value: 0.7),
+            (lon: -124.0, lat: 45.0, radius_deg: 0.5, value: 0.7),
+            (lon: -123.9, lat: 46.6, radius_deg: 0.5, value: 0.7),
+            (lon: -122.5, lat: 47.6, radius_deg: 0.5, value: 0.7),
+            (lon: -122.7, lat: 48.5, radius_deg: 0.5, value: 0.7),
+            (lon: -123.2, lat: 49.2, radius_deg: 0.5, value: 0.7),
+            // The Columbia, Grand Coulee to Astoria, and the lower Snake.
+            (lon: -119.0, lat: 47.95, radius_deg: 0.45, value: 0.7),
+            (lon: -119.9, lat: 47.3, radius_deg: 0.45, value: 0.7),
+            (lon: -119.3, lat: 46.2, radius_deg: 0.45, value: 0.7),
+            (lon: -120.6, lat: 45.7, radius_deg: 0.45, value: 0.7),
+            (lon: -121.9, lat: 45.6, radius_deg: 0.45, value: 0.7),
+            (lon: -123.0, lat: 46.15, radius_deg: 0.45, value: 0.7),
+            (lon: -117.0, lat: 46.4, radius_deg: 0.45, value: 0.6),
+            (lon: -118.5, lat: 46.6, radius_deg: 0.45, value: 0.6),
+            // The Sacramento-San Joaquin delta.
+            (lon: -121.7, lat: 38.1, radius_deg: 0.45, value: 0.7),
+            // The Colorado River.
+            (lon: -114.6, lat: 35.0, radius_deg: 0.4, value: 0.6),
+            (lon: -114.6, lat: 33.4, radius_deg: 0.4, value: 0.6),
+            (lon: -114.7, lat: 32.7, radius_deg: 0.4, value: 0.6),
+            // The Rio Grande near El Paso.
+            (lon: -106.7, lat: 32.3, radius_deg: 0.4, value: 0.4),
+            // Lake Wabamun, west of Edmonton.
+            (lon: -114.5, lat: 53.55, radius_deg: 0.4, value: 0.7),
+        ],
+    ),
+    // Hydro sites: the Columbia and Snake, British Columbia's Columbia and
+    // Peace rivers and Bridge River, and the Sierra Nevada's west slope.
+    hydro_potential: (
+        base: 0.0,
+        blobs: [
+            // The Columbia: Grand Coulee, Chief Joseph, Rocky Reach, Priest
+            // Rapids, McNary, John Day, The Dalles and Bonneville.
+            (lon: -118.98, lat: 47.95, radius_deg: 0.35, value: 0.9),
+            (lon: -119.63, lat: 47.99, radius_deg: 0.35, value: 0.9),
+            (lon: -119.9, lat: 47.4, radius_deg: 0.35, value: 0.8),
+            (lon: -119.95, lat: 46.65, radius_deg: 0.35, value: 0.8),
+            (lon: -119.3, lat: 45.95, radius_deg: 0.35, value: 0.8),
+            (lon: -120.69, lat: 45.72, radius_deg: 0.35, value: 0.9),
+            (lon: -121.13, lat: 45.61, radius_deg: 0.35, value: 0.8),
+            (lon: -121.94, lat: 45.64, radius_deg: 0.35, value: 0.8),
+            // The Snake: Lower Granite, Ice Harbor and Hells Canyon.
+            (lon: -117.2, lat: 46.5, radius_deg: 0.35, value: 0.6),
+            (lon: -118.0, lat: 46.6, radius_deg: 0.35, value: 0.6),
+            (lon: -116.7, lat: 45.2, radius_deg: 0.4, value: 0.8),
+            // British Columbia: Mica, Revelstoke, Keenleyside, the Peace
+            // (W.A.C. Bennett and Site C) and Bridge River.
+            (lon: -118.57, lat: 52.08, radius_deg: 0.4, value: 0.9),
+            (lon: -118.19, lat: 51.05, radius_deg: 0.4, value: 0.8),
+            (lon: -117.77, lat: 49.34, radius_deg: 0.4, value: 0.7),
+            (lon: -122.2, lat: 56.0, radius_deg: 0.5, value: 0.95),
+            (lon: -120.9, lat: 56.2, radius_deg: 0.4, value: 0.8),
+            (lon: -122.2, lat: 50.8, radius_deg: 0.4, value: 0.6),
+            // The Sierra Nevada and southern Cascades: Shasta, Oroville,
+            // the Mokelumne and Big Creek.
+            (lon: -122.42, lat: 40.72, radius_deg: 0.35, value: 0.7),
+            (lon: -121.48, lat: 39.54, radius_deg: 0.35, value: 0.7),
+            (lon: -120.4, lat: 38.6, radius_deg: 0.4, value: 0.5),
+            (lon: -119.3, lat: 37.2, radius_deg: 0.4, value: 0.6),
+        ],
+    ),
+    // Spec section 3.2 values, except the combined cycle's minimum stable
+    // level: 30%, the emissions-compliant turndown of a modern F- or H-class
+    // plant (a 2x1 block can run on one gas turbine), rather than 40%. Fixed
+    // O&M is per month; book life in months.
+    // Capital costs and lead times are tuned for tycoon pacing, not literal project forecasts.
+    wind_potential: (base: 0.4, blobs: [(lon: -119.5, lat: 46.0, radius_deg: 2.0, value: 0.45), (lon: -107.0, lat: 44.0, radius_deg: 3.0, value: 0.4)]),
+    wind: (monthly: [0.6, 0.6, 0.65, 0.65, 0.6, 0.55, 0.5, 0.5, 0.55, 0.6, 0.6, 0.6], persistence: 0.995, innovation_sd: 0.015, initial_sd: 0.15, band: 0.25),
+    catalog: [
+        (kind: Wind, capacity_mw: 300.0, min_stable: 0.0, ramp_mw_per_min: 0.0, startup_hours: 0.0, startup_cost_usd: 0, marginal_cost_usd_per_mwh: 0.0, fixed_om_usd_per_month: 500000, capital_cost_usd: 300000000, build_months: 3, capacity_credit: 0.2, book_life_months: 300, siting: Anywhere),
+        (
+            kind: Nuclear,
+            capacity_mw: 1100.0,
+            min_stable: 0.7,
+            ramp_mw_per_min: 5.0,
+            startup_hours: 48.0,
+            startup_cost_usd: 1000000,
+            marginal_cost_usd_per_mwh: 10.0,
+            fixed_om_usd_per_month: 11000000,
+            capital_cost_usd: 2400000000,
+            build_months: 18,
+            capacity_credit: 0.95,
+            book_life_months: 480,
+            siting: CoolingWater(0.5),
+        ),
+        (
+            kind: Coal,
+            capacity_mw: 600.0,
+            min_stable: 0.4,
+            ramp_mw_per_min: 6.0,
+            startup_hours: 8.0,
+            startup_cost_usd: 150000,
+            marginal_cost_usd_per_mwh: 30.0,
+            fixed_om_usd_per_month: 2000000,
+            capital_cost_usd: 700000000,
+            build_months: 8,
+            capacity_credit: 0.95,
+            book_life_months: 480,
+            siting: CoolingWater(0.5),
+        ),
+        (
+            kind: Ccgt,
+            capacity_mw: 500.0,
+            min_stable: 0.3,
+            ramp_mw_per_min: 25.0,
+            startup_hours: 2.0,
+            startup_cost_usd: 40000,
+            marginal_cost_usd_per_mwh: 45.0,
+            fixed_om_usd_per_month: 600000,
+            capital_cost_usd: 300000000,
+            build_months: 4,
+            capacity_credit: 0.95,
+            book_life_months: 360,
+            siting: Anywhere,
+        ),
+        (
+            kind: Peaker,
+            capacity_mw: 200.0,
+            min_stable: 0.2,
+            ramp_mw_per_min: 40.0,
+            startup_hours: 0.16666666666666666,
+            startup_cost_usd: 5000,
+            marginal_cost_usd_per_mwh: 150.0,
+            fixed_om_usd_per_month: 170000,
+            capital_cost_usd: 100000000,
+            build_months: 2,
+            capacity_credit: 0.95,
+            book_life_months: 360,
+            siting: Anywhere,
+        ),
+        (
+            kind: Solar,
+            capacity_mw: 300.0,
+            min_stable: 0.0,
+            ramp_mw_per_min: 300.0,
+            startup_hours: 0.0,
+            startup_cost_usd: 0,
+            marginal_cost_usd_per_mwh: 0.0,
+            fixed_om_usd_per_month: 500000,
+            capital_cost_usd: 150000000,
+            build_months: 2,
+            capacity_credit: 0.3,
+            book_life_months: 300,
+            siting: Anywhere,
+        ),
+        (
+            kind: Hydro,
+            capacity_mw: 800.0,
+            min_stable: 0.0,
+            ramp_mw_per_min: 100.0,
+            startup_hours: 0.08333333333333333,
+            startup_cost_usd: 1000,
+            marginal_cost_usd_per_mwh: 0.0,
+            fixed_om_usd_per_month: 2700000,
+            capital_cost_usd: 1200000000,
+            build_months: 12,
+            capacity_credit: 0.8,
+            book_life_months: 600,
+            siting: HydroSite(0.5),
+        ),
+        (kind: Battery, capacity_mw: 200.0, min_stable: 0.0, ramp_mw_per_min: 0.0,
+         startup_hours: 0.0, startup_cost_usd: 0, marginal_cost_usd_per_mwh: 0.0,
+         fixed_om_usd_per_month: 100000, capital_cost_usd: 100000000, build_months: 2,
+         capacity_credit: 0.0, book_life_months: 180, siting: Anywhere,
+         battery: Some((charge_mw: 200.0, energy_mwh: 800.0, charge_efficiency: 0.9,
+                        discharge_efficiency: 1.0, discharge_start_hour: 16, charge_end_hour: 18))),
+    ],
+    // Each city is a demand centre for its metro and the hinterland it
+    // anchors; base loads are proportional to that demand at the game's
+    // scale (the same scale as the East, whose anchors also absorb its much
+    // larger load outside the big metros).
+    // Demand is scaled for expansion in a few plant-sized steps; locations and relative sizes stay intact.
+    cities: [
+        (id: 1, name_key: "city-los-angeles", lon: -118.244, lat: 34.052, base_load_mw: 1450.0),
+        (id: 2, name_key: "city-riverside", lon: -117.396, lat: 33.953, base_load_mw: 650.0),
+        // North of downtown, so that it does not share Tijuana's cell.
+        (id: 3, name_key: "city-san-diego", lon: -117.150, lat: 32.830, base_load_mw: 400.0),
+        (id: 4, name_key: "city-san-francisco", lon: -122.419, lat: 37.775, base_load_mw: 650.0),
+        (id: 5, name_key: "city-san-jose", lon: -121.886, lat: 37.338, base_load_mw: 350.0),
+        (id: 6, name_key: "city-sacramento", lon: -121.494, lat: 38.582, base_load_mw: 350.0),
+        (id: 7, name_key: "city-fresno", lon: -119.787, lat: 36.738, base_load_mw: 400.0),
+        (id: 8, name_key: "city-phoenix", lon: -112.074, lat: 33.448, base_load_mw: 800.0),
+        (id: 9, name_key: "city-tucson", lon: -110.975, lat: 32.222, base_load_mw: 200.0),
+        (id: 10, name_key: "city-las-vegas", lon: -115.140, lat: 36.170, base_load_mw: 500.0),
+        (id: 11, name_key: "city-salt-lake-city", lon: -111.891, lat: 40.761, base_load_mw: 500.0),
+        (id: 12, name_key: "city-denver", lon: -104.990, lat: 39.739, base_load_mw: 700.0),
+        (id: 13, name_key: "city-albuquerque", lon: -106.650, lat: 35.084, base_load_mw: 200.0),
+        (id: 14, name_key: "city-el-paso", lon: -106.442, lat: 31.759, base_load_mw: 150.0),
+        (id: 15, name_key: "city-seattle", lon: -122.332, lat: 47.606, base_load_mw: 700.0),
+        (id: 16, name_key: "city-portland", lon: -122.676, lat: 45.515, base_load_mw: 500.0),
+        (id: 17, name_key: "city-spokane", lon: -117.426, lat: 47.659, base_load_mw: 200.0),
+        (id: 18, name_key: "city-boise", lon: -116.202, lat: 43.615, base_load_mw: 250.0),
+        (id: 19, name_key: "city-vancouver", lon: -123.121, lat: 49.283, base_load_mw: 800.0),
+        (id: 20, name_key: "city-calgary", lon: -114.071, lat: 51.045, base_load_mw: 700.0),
+        (id: 21, name_key: "city-edmonton", lon: -113.494, lat: 53.546, base_load_mw: 800.0),
+        (id: 22, name_key: "city-tijuana", lon: -117.038, lat: 32.514, base_load_mw: 150.0),
+        (id: 23, name_key: "city-mexicali", lon: -115.453, lat: 32.624, base_load_mw: 150.0),
+    ],
+    // A summer peak late in the afternoon, and a steep evening ramp in every
+    // season: as solar fades from about 15:00 to 19:00, net load climbs
+    // sharply (the duck curve).
+    demand: (
+        winter: [
+            0.82, 0.78, 0.76, 0.75, 0.76, 0.80, 0.89, 0.98, 1.01, 1.00, 0.98, 0.96,
+            0.94, 0.93, 0.93, 0.95, 1.01, 1.10, 1.14, 1.12, 1.08, 1.02, 0.94, 0.87,
+        ],
+        summer: [
+            0.80, 0.75, 0.72, 0.70, 0.70, 0.72, 0.77, 0.83, 0.89, 0.95, 1.00, 1.05,
+            1.09, 1.13, 1.17, 1.20, 1.23, 1.25, 1.25, 1.20, 1.12, 1.03, 0.93, 0.85,
+        ],
+        shoulder: [
+            0.78, 0.74, 0.72, 0.71, 0.72, 0.76, 0.85, 0.93, 0.96, 0.96, 0.95, 0.94,
+            0.93, 0.92, 0.92, 0.94, 0.98, 1.05, 1.12, 1.13, 1.08, 1.00, 0.91, 0.83,
+        ],
+        monthly: [1.02, 0.97, 0.92, 0.88, 0.92, 1.02, 1.14, 1.14, 1.03, 0.92, 0.95, 1.03],
+        forecast_error: 0.03,
+        error_persistence: 0.995,
+    ),
+    // Daylight at about 40 N in local standard time; much clearer skies than
+    // the East, especially from spring to autumn.
+    solar: (
+        daylight: [
+            (7.3, 17.0), (6.9, 17.6), (6.3, 18.1), (5.6, 18.6), (5.0, 19.1), (4.7, 19.4),
+            (4.9, 19.3), (5.3, 18.9), (5.8, 18.2), (6.3, 17.5), (6.8, 16.9), (7.2, 16.7),
+        ],
+        clearness_mean: [0.58, 0.62, 0.68, 0.73, 0.77, 0.81, 0.80, 0.79, 0.78, 0.72, 0.62, 0.56],
+        clearness_sd: 0.13,
+    ),
+    // Usable river flow, the Pacific Northwest hydrograph: the Columbia is a
+    // snowmelt river, so flow climbs through April to the spring freshet in
+    // May and June, recedes through July and bottoms out from late summer
+    // into autumn (September and October), before autumn rain and the
+    // drafting of the storage reservoirs give moderate winter flows. Winter
+    // water does not cover a full day at capacity, so the hydro schedule
+    // (spec section 12) spends it on the evening peak.
+    hydro: (monthly_flow: [0.85, 0.85, 0.95, 1.15, 1.45, 1.55, 1.2, 0.85, 0.65, 0.65, 0.75, 0.8]),
+    frequency: (
+        nominal_hz: 60.0,
+        k_inertia: 5.0,
+        k_damping: 0.2,
+        normal_band_hz: 0.05,
+        shed_below_hz: -0.5,
+        blackout_below_hz: -1.5,
+        blackout_after_shed_ticks: 30,
+        curtail_above_hz: 0.5,
+        trip_above_hz: 1.5,
+        trip_after_ticks: 5,
+        shed_stage_spacing_hz: 0.2,
+        shed_step: 0.05,
+    ),
+    regulator: (
+        storage_accreditation: [(2.0, 0.65), (4.0, 0.85), (6.0, 0.93), (8.0, 0.96)],
+        satisfaction_target: 90.0,
+        return_per_satisfaction_point: 0.0005,
+        starting_tariff_usd_per_mwh: 95.0,
+        reference_tariff_usd_per_mwh: 100.0,
+        base_return: 0.09,
+        min_return: 0.07,
+        max_return: 0.11,
+        reliability_target: 0.999,
+        return_per_reliability: 2.0,
+        return_per_cost_improvement: 0.05,
+        reserve_margin: 0.2,
+        strike_threshold: 0.005,
+        strikes_to_revoke: 3,
+        clean_months_to_expire: 3,
+        frequency_band_hz: 0.2,
+        frequency_violation_share: 0.05,
+    ),
+    satisfaction: (
+        starting: 70.0,
+        reliability_floor: 0.95,
+        price_sensitivity: 2.0,
+        smoothing: 0.2,
+    ),
+    lines: (cost_per_cell_usd: 20000000, cells_per_month: 4, book_life_months: 600),
+    // The Pacific Northwest: Seattle, Portland and Spokane, served by
+    // Columbia River hydro, combined cycle and peakers.
+    start: (
+        year: 2027,
+        month: 1,
+        cash_usd: 3000000000,
+        // Seattle anchors the starting service territory.
+        home_city: 15,
+        connected_cities: [15, 16, 17],
+        fleet: [
+            // Grand Coulee anchors a compact, hydro-led starting fleet.
+            (Hydro, -118.98, 47.95),
+            // Combined cycle: Port Westward and Chehalis.
+            (Ccgt, -123.05, 46.18),
+            (Ccgt, -122.93, 46.66),
+            // Peakers near Seattle, Portland and Spokane cover seasonal peaks.
+            (Peaker, -122.20, 47.30),
+            (Peaker, -121.80, 47.50),
+            (Peaker, -122.90, 45.30),
+            (Peaker, -117.20, 47.40),
+        ],
+    ),
+)

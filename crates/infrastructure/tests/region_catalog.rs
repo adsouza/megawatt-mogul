@@ -1,0 +1,683 @@
+//! Integration tests for `RonRegionCatalog`. Every test works in its own
+//! `TempDir` with a copy of the minimal region; nothing touches the cwd or
+//! environment.
+
+use std::fs;
+use std::path::Path;
+
+use application::{RegionCatalog, RegionLoadError, RegionSummary};
+use domain::ids::{CellCoord, CityId, RegionId};
+use domain::region::fixtures::tiny_region;
+use domain::region::{PlantKind, RegionError};
+use infrastructure::region::{RonRegionCatalog, load_region_bytes};
+use proptest::prelude::*;
+use tempfile::TempDir;
+
+const MINIMAL: &str = include_str!("support/minimal_region.ron");
+
+/// SHA-256 of `support/minimal_region.ron`, computed independently with
+/// `shasum -a 256`.
+const MINIMAL_SHA256: &str = "f22797b2b053776ece7f9503b54d8691c454f86f8aad00a78efd024ee0d7567e";
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn dir_with(files: &[(&str, &str)]) -> TempDir {
+    let dir = TempDir::new().unwrap();
+    for (name, contents) in files {
+        fs::write(dir.path().join(name), contents).unwrap();
+    }
+    dir
+}
+
+fn catalog(dir: &Path) -> RonRegionCatalog {
+    RonRegionCatalog::new(dir)
+}
+
+#[test]
+fn loads_a_valid_region() {
+    let dir = dir_with(&[("minimal.ron", MINIMAL)]);
+    let loaded = catalog(dir.path()).load(&RegionId::new("minimal")).unwrap();
+    assert_eq!(loaded.definition.id().as_str(), "minimal");
+    assert_eq!(loaded.definition.terrain().width(), 12);
+    assert_eq!(loaded.definition.terrain().height(), 8);
+    assert_eq!(loaded.definition.start().home_city, CityId(1));
+}
+
+fn without_field(source: &str, field: &str) -> String {
+    source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with(&format!("{field}:")))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn a_schema2_region_maps_the_a12_fields() {
+    let dir = dir_with(&[("minimal.ron", MINIMAL)]);
+    let loaded = catalog(dir.path()).load(&RegionId::new("minimal")).unwrap();
+    let params = loaded.definition.regulator();
+    assert_eq!(params.storage_accreditation.credit(4.0).value(), 0.85);
+    assert_eq!(params.satisfaction_target, 90.0);
+    assert_eq!(params.return_per_satisfaction_point, 0.0005);
+}
+
+#[test]
+fn schema_fields_round_trip_with_the_region_dto() {
+    let file: infrastructure::region::RegionFile = ron::de::from_str(MINIMAL).unwrap();
+    let encoded = ron::ser::to_string(&file).unwrap();
+    let decoded: infrastructure::region::RegionFile = ron::de::from_str(&encoded).unwrap();
+    assert_eq!(decoded.region_schema, Some(3));
+    assert_eq!(
+        decoded.regulator.storage_accreditation,
+        file.regulator.storage_accreditation
+    );
+    assert_eq!(decoded.regulator.satisfaction_target, Some(90.0));
+}
+
+#[test]
+fn a_schema2_region_missing_an_a12_field_names_it() {
+    for field in [
+        "storage_accreditation",
+        "satisfaction_target",
+        "return_per_satisfaction_point",
+    ] {
+        let text = without_field(MINIMAL, field);
+        let dir = dir_with(&[("minimal.ron", &text)]);
+        let error = catalog(dir.path())
+            .load(&RegionId::new("minimal"))
+            .unwrap_err();
+        assert!(
+            matches!(error, RegionLoadError::Invalid { error: RegionError::MissingField { field: missing }, .. } if missing == format!("regulator.{field}")),
+            "{error:?}"
+        );
+    }
+}
+
+#[test]
+fn a_schema1_region_gets_the_frozen_a12_defaults() {
+    use infrastructure::region::legacy;
+    let mut text = MINIMAL.to_owned();
+    for field in [
+        "region_schema",
+        "wind",
+        "wind_potential",
+        "storage_accreditation",
+        "satisfaction_target",
+        "return_per_satisfaction_point",
+    ] {
+        text = without_field(&text, field);
+    }
+    text = text
+        .lines()
+        .filter(|line| !line.contains("kind: Wind,"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    text = text.replace(", charge_end_hour: 18", "");
+    let dir = dir_with(&[("minimal.ron", &text)]);
+    let loaded = catalog(dir.path()).load(&RegionId::new("minimal")).unwrap();
+    let params = loaded.definition.regulator();
+    for &(hours, credit) in &legacy::A12_STORAGE_ACCREDITATION {
+        assert_eq!(params.storage_accreditation.credit(hours).value(), credit);
+    }
+    assert_eq!(params.satisfaction_target, legacy::A12_SATISFACTION_TARGET);
+    assert_eq!(
+        params.return_per_satisfaction_point,
+        legacy::A12_RETURN_PER_SATISFACTION_POINT
+    );
+}
+
+#[test]
+fn a_schema1_file_with_a12_fields_is_rejected() {
+    let text = without_field(MINIMAL, "region_schema");
+    let dir = dir_with(&[("minimal.ron", &text)]);
+    assert!(matches!(
+        catalog(dir.path()).load(&RegionId::new("minimal")),
+        Err(RegionLoadError::Invalid {
+            error: RegionError::MissingField {
+                field: "region_schema"
+            },
+            ..
+        })
+    ));
+}
+
+#[test]
+fn an_unknown_region_schema_is_rejected() {
+    let text = MINIMAL.replace("region_schema: 3", "region_schema: 9");
+    let dir = dir_with(&[("minimal.ron", &text)]);
+    assert!(matches!(
+        catalog(dir.path()).load(&RegionId::new("minimal")),
+        Err(RegionLoadError::Invalid {
+            error: RegionError::UnsupportedRegionSchema(9),
+            ..
+        })
+    ));
+}
+
+#[test]
+fn satisfaction_parameters_are_validated() {
+    for (field, old, value) in [
+        ("satisfaction_target", "90.0", "101.0"),
+        ("satisfaction_target", "90.0", "-1.0"),
+        ("satisfaction_target", "90.0", "NaN"),
+        ("return_per_satisfaction_point", "0.0005", "inf"),
+    ] {
+        let text = MINIMAL.replace(&format!("{field}: {old}"), &format!("{field}: {value}"));
+        let dir = dir_with(&[("minimal.ron", &text)]);
+        let error = catalog(dir.path())
+            .load(&RegionId::new("minimal"))
+            .unwrap_err();
+        assert!(
+            matches!(error, RegionLoadError::Invalid { error: RegionError::InvalidShape { field: invalid }, .. } if invalid == format!("regulator.{field}")),
+            "{error:?}"
+        );
+    }
+}
+
+#[test]
+fn home_city_must_be_known_and_connected_in_region_data() {
+    for id in [3, 99] {
+        let err = load_edited("home_city: 1", &format!("home_city: {id}")).unwrap_err();
+        assert!(
+            matches!(err, RegionLoadError::Invalid {
+            error: RegionError::InvalidHomeCity(city), ..
+        } if city == CityId(id)),
+            "{err:?}"
+        );
+    }
+}
+
+#[test]
+fn mapped_region_cells_cannot_be_shared_by_starting_assets() {
+    // Different coordinates in the same raster cell are still the same site.
+    for (from, to) in [
+        ("(Peaker, 6.5, 2.5)", "(Peaker, 7.6, 4.6)"),
+        ("(Peaker, 6.5, 2.5)", "(Peaker, 6.6, 3.6)"),
+        ("lon: 8.5, lat: 1.5", "lon: 6.6, lat: 3.6"),
+    ] {
+        assert!(MINIMAL.contains(from));
+        let error = load_edited(from, to).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                RegionLoadError::Invalid {
+                    error: RegionError::CityCellOccupied { .. }
+                        | RegionError::InvalidStartSite {
+                            reason: domain::region::SiteError::Occupied,
+                            ..
+                        },
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+    }
+}
+
+#[test]
+fn loaded_definition_fingerprint_and_archive_source_share_one_read() {
+    let dir = dir_with(&[("minimal.ron", MINIMAL)]);
+    let loaded = catalog(dir.path()).load(&RegionId::new("minimal")).unwrap();
+    assert_eq!(loaded.source_bytes, MINIMAL.as_bytes());
+    assert_eq!(hex(loaded.fingerprint.as_bytes()), MINIMAL_SHA256);
+
+    // Editing the file afterwards must not reach the already-loaded region.
+    fs::write(dir.path().join("minimal.ron"), "changed").unwrap();
+    assert_eq!(loaded.source_bytes, MINIMAL.as_bytes());
+    assert_eq!(hex(loaded.fingerprint.as_bytes()), MINIMAL_SHA256);
+    assert_eq!(loaded.definition.name_key(), "region-minimal");
+
+    // A formatting-only change is different content and a different fingerprint.
+    let reformatted = format!("{MINIMAL}\n");
+    let reloaded = load_region_bytes(reformatted.into_bytes(), &RegionId::new("minimal")).unwrap();
+    assert_ne!(reloaded.fingerprint, loaded.fingerprint);
+}
+
+#[test]
+fn maps_the_same_values_as_the_domain_fixture() {
+    let dir = dir_with(&[("minimal.ron", MINIMAL)]);
+    let def = catalog(dir.path())
+        .load(&RegionId::new("minimal"))
+        .unwrap()
+        .definition;
+    let tiny = tiny_region();
+    assert_eq!(def.catalog(), tiny.catalog());
+    assert_eq!(def.cities(), tiny.cities());
+    assert_eq!(def.demand(), tiny.demand());
+    assert_eq!(def.solar(), tiny.solar());
+    assert_eq!(def.hydro(), tiny.hydro());
+    assert_eq!(def.frequency(), tiny.frequency());
+    assert_eq!(def.regulator(), tiny.regulator());
+    assert_eq!(def.satisfaction(), tiny.satisfaction());
+    assert_eq!(def.lines(), tiny.lines());
+    assert_eq!(def.start(), tiny.start());
+    for y in 0..8 {
+        for x in 0..12 {
+            let at = CellCoord { x, y };
+            assert_eq!(
+                def.terrain().get(at).unwrap().land,
+                tiny.terrain().get(at).unwrap().land,
+                "land at {at:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn lists_regions_sorted_by_file_name() {
+    // Written b first so directory order is unlikely to match name order.
+    let b = MINIMAL
+        .replace("id: \"minimal\"", "id: \"b\"")
+        .replace("region-minimal", "region-b");
+    let a = MINIMAL
+        .replace("id: \"minimal\"", "id: \"a\"")
+        .replace("region-minimal", "region-a");
+    let dir = dir_with(&[("b.ron", &b), ("a.ron", &a), ("notes.txt", "ignored")]);
+    let listed = catalog(dir.path()).list().unwrap();
+    let ids: Vec<_> = listed.iter().map(|l| l.id.as_str()).collect();
+    assert_eq!(ids, ["a", "b"]);
+    assert_eq!(
+        listed[0].entry,
+        Ok(RegionSummary {
+            id: RegionId::new("a"),
+            name_key: "region-a".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn a_broken_region_file_is_listed_as_unavailable() {
+    let dir = dir_with(&[
+        ("a.ron", &MINIMAL.replace("\"minimal\"", "\"a\"")),
+        ("b.ron", "("),
+    ]);
+    let listed = catalog(dir.path()).list().unwrap();
+    assert_eq!(listed.len(), 2, "the good file is still listed");
+    assert_eq!(listed[0].id, RegionId::new("a"));
+    assert!(listed[0].entry.is_ok());
+    assert_eq!(listed[1].id, RegionId::new("b"));
+    assert!(matches!(
+        &listed[1].entry,
+        Err(RegionLoadError::Parse { region, .. }) if *region == RegionId::new("b")
+    ));
+}
+
+#[test]
+fn a_file_declaring_another_id_is_listed_as_a_mismatch() {
+    // `load` would refuse this file by its name; so does the listing.
+    let dir = dir_with(&[("b.ron", MINIMAL)]);
+    let listed = catalog(dir.path()).list().unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, RegionId::new("b"));
+    assert_eq!(
+        listed[0].entry,
+        Err(RegionLoadError::IdMismatch {
+            requested: RegionId::new("b"),
+            found: RegionId::new("minimal"),
+        })
+    );
+}
+
+#[test]
+fn listing_does_not_rasterise() {
+    // A city in water parses as a DTO but fails mapping and rasterisation.
+    let wet = MINIMAL.replace(
+        "(id: 1, name_key: \"city-tiny-1\", lon: 6.5,",
+        "(id: 1, name_key: \"city-tiny-1\", lon: 0.5,",
+    );
+    assert_ne!(wet, MINIMAL);
+    let dir = dir_with(&[("minimal.ron", &wet)]);
+    let listed = catalog(dir.path()).list().unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(
+        listed[0].entry,
+        Ok(RegionSummary {
+            id: RegionId::new("minimal"),
+            name_key: "region-minimal".to_owned(),
+        })
+    );
+    // Only loading, which validates in full, finds the problem.
+    assert!(matches!(
+        catalog(dir.path()).load(&RegionId::new("minimal")),
+        Err(RegionLoadError::Invalid { .. })
+    ));
+}
+
+#[test]
+fn list_of_a_missing_directory_is_an_io_error() {
+    let dir = TempDir::new().unwrap();
+    let missing = dir.path().join("nope");
+    assert!(matches!(
+        catalog(&missing).list(),
+        Err(RegionLoadError::Io { .. })
+    ));
+}
+
+#[test]
+fn missing_region_is_not_found() {
+    let dir = TempDir::new().unwrap();
+    let err = catalog(dir.path())
+        .load(&RegionId::new("absent"))
+        .unwrap_err();
+    assert_eq!(err, RegionLoadError::NotFound(RegionId::new("absent")));
+}
+
+#[test]
+fn ids_that_could_escape_the_directory_are_not_found() {
+    let dir = dir_with(&[("minimal.ron", MINIMAL)]);
+    let nested = dir.path().join("sub");
+    fs::create_dir(&nested).unwrap();
+    fs::write(nested.join("minimal.ron"), MINIMAL).unwrap();
+    for bad in ["../minimal", "sub/minimal", "", ".", "a\\b"] {
+        let id = RegionId::new(bad);
+        assert_eq!(
+            catalog(&nested).load(&id).unwrap_err(),
+            RegionLoadError::NotFound(id),
+            "{bad:?}"
+        );
+    }
+}
+
+#[test]
+fn malformed_ron_reports_position() {
+    let truncated = &MINIMAL[..MINIMAL.len() / 2];
+    let dir = dir_with(&[("minimal.ron", truncated)]);
+    let err = catalog(dir.path())
+        .load(&RegionId::new("minimal"))
+        .unwrap_err();
+    let RegionLoadError::Parse { region, message } = err else {
+        panic!("expected a parse error, got {err:?}");
+    };
+    assert_eq!(region, RegionId::new("minimal"));
+    // The message leads with `line:col`.
+    let (line, rest) = message.split_once(':').unwrap();
+    assert!(line.parse::<usize>().is_ok(), "no line number in {message}");
+    let col: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    assert!(!col.is_empty(), "no column in {message}");
+}
+
+#[test]
+fn unknown_fields_are_rejected_with_a_position() {
+    let typo = MINIMAL.replace(
+        "name_key: \"region-minimal\",",
+        "name_kee: \"region-minimal\",",
+    );
+    let err = load_region_bytes(typo.into_bytes(), &RegionId::new("minimal")).unwrap_err();
+    assert!(matches!(err, RegionLoadError::Parse { .. }), "{err:?}");
+}
+
+#[test]
+fn invalid_utf8_is_a_parse_error() {
+    let mut bytes = MINIMAL.as_bytes().to_vec();
+    bytes.push(0xFF);
+    let err = load_region_bytes(bytes, &RegionId::new("minimal")).unwrap_err();
+    assert!(matches!(err, RegionLoadError::Parse { .. }), "{err:?}");
+}
+
+#[test]
+fn city_in_water_is_invalid() {
+    let wet = MINIMAL.replace(
+        "(id: 1, name_key: \"city-tiny-1\", lon: 6.5,",
+        "(id: 1, name_key: \"city-tiny-1\", lon: 0.5,",
+    );
+    assert_ne!(wet, MINIMAL);
+    let dir = dir_with(&[("minimal.ron", &wet)]);
+    let err = catalog(dir.path())
+        .load(&RegionId::new("minimal"))
+        .unwrap_err();
+    assert_eq!(
+        err,
+        RegionLoadError::Invalid {
+            region: RegionId::new("minimal"),
+            error: RegionError::CityNotOnLand(CityId(1)),
+        }
+    );
+}
+
+#[test]
+fn new_frequency_parameters_are_validated_when_loaded() {
+    let bad_band = |from: &str, to: &str, field: &'static str| {
+        let edited = MINIMAL.replace(from, to);
+        assert_ne!(edited, MINIMAL);
+        let dir = dir_with(&[("minimal.ron", &edited)]);
+        let err = catalog(dir.path())
+            .load(&RegionId::new("minimal"))
+            .unwrap_err();
+        assert_eq!(
+            err,
+            RegionLoadError::Invalid {
+                region: RegionId::new("minimal"),
+                error: RegionError::InvalidBand { field },
+            }
+        );
+    };
+    bad_band(
+        "trip_above_hz: 1.5",
+        "trip_above_hz: 0.5",
+        "frequency.trip_above",
+    );
+    bad_band(
+        "trip_after_ticks: 5",
+        "trip_after_ticks: 0",
+        "frequency.trip_after_ticks",
+    );
+    bad_band(
+        "shed_stage_spacing_hz: 0.2",
+        "shed_stage_spacing_hz: 0.0",
+        "frequency.shed_stage_spacing",
+    );
+    bad_band(
+        "frequency_band_hz: 0.2",
+        "frequency_band_hz: 0.0",
+        "regulator.frequency_band",
+    );
+}
+
+#[test]
+fn an_out_of_range_violation_share_is_rejected_when_loaded() {
+    let edited = MINIMAL.replace(
+        "frequency_violation_share: 0.05",
+        "frequency_violation_share: 1.5",
+    );
+    assert_ne!(edited, MINIMAL);
+    let err = load_region_bytes(edited.into_bytes(), &RegionId::new("minimal")).unwrap_err();
+    assert!(
+        format!("{err:?}").contains("regulator.frequency_violation_share"),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn a_file_declaring_another_id_is_an_id_mismatch() {
+    let dir = dir_with(&[("other.ron", MINIMAL)]);
+    let err = catalog(dir.path())
+        .load(&RegionId::new("other"))
+        .unwrap_err();
+    assert_eq!(
+        err,
+        RegionLoadError::IdMismatch {
+            requested: RegionId::new("other"),
+            found: RegionId::new("minimal"),
+        }
+    );
+}
+
+#[test]
+fn out_of_range_numbers_are_invalid_not_panics() {
+    let cases = [
+        (
+            "startup_cost_usd: 1000000,",
+            "startup_cost_usd: 9223372036854775807,",
+        ),
+        ("capacity_mw: 1100.0,", "capacity_mw: inf,"),
+        ("capacity_credit: 0.95,", "capacity_credit: 1.5,"),
+        ("startup_hours: 48.0,", "startup_hours: 1e30,"),
+        (
+            "grid: (width: 12, height: 8)",
+            "grid: (width: 0, height: 8)",
+        ),
+        (
+            "grid: (width: 12, height: 8)",
+            "grid: (width: 65535, height: 65535)",
+        ),
+        ("east: 12.0", "east: -3.0"),
+        ("radius_deg: 0.5", "radius_deg: 0.0"),
+        ("month: 4,", "month: 13,"),
+    ];
+    for (from, to) in cases {
+        assert!(MINIMAL.contains(from), "{from}");
+        let edited = MINIMAL.replacen(from, to, 1);
+        let err = load_region_bytes(edited.into_bytes(), &RegionId::new("minimal")).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                RegionLoadError::Invalid { .. } | RegionLoadError::Parse { .. }
+            ),
+            "{to}: {err:?}"
+        );
+    }
+}
+
+proptest! {
+    #[test]
+    fn garbage_never_panics(s in "\\PC{0,400}") {
+        let dir = dir_with(&[("x.ron", &s)]);
+        let result = catalog(dir.path()).load(&RegionId::new("x"));
+        prop_assert!(result.is_err());
+    }
+
+    #[test]
+    fn corrupted_valid_file_never_panics(pos in 0..MINIMAL.len(), byte in any::<u8>()) {
+        let mut bytes = MINIMAL.as_bytes().to_vec();
+        bytes[pos] = byte;
+        // Either outcome is fine; the property is that it returns at all.
+        let _ = load_region_bytes(bytes, &RegionId::new("minimal"));
+    }
+}
+
+fn load_edited(from: &str, to: &str) -> Result<application::LoadedRegion, RegionLoadError> {
+    assert!(MINIMAL.contains(from), "{from}");
+    load_region_bytes(
+        MINIMAL.replacen(from, to, 1).into_bytes(),
+        &RegionId::new("minimal"),
+    )
+}
+
+fn invalid_field(result: Result<application::LoadedRegion, RegionLoadError>) -> &'static str {
+    match result {
+        Err(RegionLoadError::Invalid {
+            error: RegionError::InvalidShape { field },
+            ..
+        }) => field,
+        other => panic!("expected InvalidShape, got {other:?}"),
+    }
+}
+
+#[test]
+fn points_outside_the_bounds_are_rejected_not_snapped_to_an_edge() {
+    let city_lon = "(id: 1, name_key: \"city-tiny-1\", lon: 6.5,";
+    assert_eq!(
+        invalid_field(load_edited(
+            city_lon,
+            "(id: 1, name_key: \"city-tiny-1\", lon: 50.0,"
+        )),
+        "cities.lon"
+    );
+    assert_eq!(
+        invalid_field(load_edited("lon: 8.5, lat: 1.5,", "lon: 8.5, lat: -1.0,")),
+        "cities.lat"
+    );
+    assert_eq!(
+        invalid_field(load_edited("(Coal, 7.5, 4.5)", "(Coal, 7.5, 45.0)")),
+        "start.fleet"
+    );
+}
+
+#[test]
+fn points_exactly_on_the_upper_or_lower_bound_still_map() {
+    // lon == east maps to the last column (land); lat == south to the last row.
+    let loaded = load_edited("(Peaker, 6.5, 2.5)", "(Peaker, 12.0, 0.0)").unwrap();
+    let peaker = loaded
+        .definition
+        .start()
+        .fleet
+        .iter()
+        .find(|p| p.kind == domain::region::PlantKind::Peaker)
+        .unwrap();
+    assert_eq!(peaker.cell, CellCoord { x: 11, y: 7 });
+    // lon == west is the water column, so a city there is a land error, not a bounds error.
+    let err = load_edited(
+        "(id: 1, name_key: \"city-tiny-1\", lon: 6.5,",
+        "(id: 1, name_key: \"city-tiny-1\", lon: 0.0,",
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        RegionLoadError::Invalid {
+            error: RegionError::CityNotOnLand(CityId(1)),
+            ..
+        }
+    ));
+}
+
+#[test]
+fn schema3_requires_explicit_wind_and_battery_cutoff_fields() {
+    for field in ["wind", "wind_potential"] {
+        let text = without_field(MINIMAL, field);
+        let error = load_region_bytes(text.into_bytes(), &RegionId::new("minimal")).unwrap_err();
+        assert!(
+            matches!(error, RegionLoadError::Invalid { error: RegionError::MissingField { field: missing }, .. } if missing == field)
+        );
+    }
+    let text = MINIMAL.replace(", charge_end_hour: 18", "");
+    let error = load_region_bytes(text.into_bytes(), &RegionId::new("minimal")).unwrap_err();
+    assert!(matches!(
+        error,
+        RegionLoadError::Invalid {
+            error: RegionError::MissingField {
+                field: "battery.charge_end_hour"
+            },
+            ..
+        }
+    ));
+}
+
+#[test]
+fn wind_map_and_catalog_are_authored_and_the_band_is_validated() {
+    let loaded = load_region_bytes(MINIMAL.as_bytes().to_vec(), &RegionId::new("minimal")).unwrap();
+    let wind = loaded.definition.spec(PlantKind::Wind);
+    assert_eq!(wind.capacity.value(), 300.0);
+    assert_eq!(wind.capital_cost.cents(), 30_000_000_000);
+    assert_eq!(wind.build_months, 3);
+    assert!(!PlantKind::Wind.is_dispatchable());
+    assert!(!PlantKind::Battery.is_variable());
+    let text = MINIMAL.replace("band: 0.25", "band: 1.1");
+    assert!(load_region_bytes(text.into_bytes(), &RegionId::new("minimal")).is_err());
+    let text = MINIMAL.replace("persistence: 0.995", "persistence: 1.0");
+    assert!(load_region_bytes(text.into_bytes(), &RegionId::new("minimal")).is_err());
+}
+
+#[test]
+fn legacy_wind_extension_payloads_are_frozen() {
+    use sha2::{Digest, Sha256};
+    assert_eq!(
+        hex(&Sha256::digest(include_bytes!(
+            "../src/region/wind_east_v1.ron"
+        ))),
+        "3a2099ade97ec96b2b1d2a528639227efd97280c3653608d3e303df27a5ee713"
+    );
+    assert_eq!(
+        hex(&Sha256::digest(include_bytes!(
+            "../src/region/wind_west_v1.ron"
+        ))),
+        "d1f9c72b29d08ee94e9696116e91573f9267df8173e13c80c4c8fd8583788d5d"
+    );
+    assert_eq!(
+        hex(&Sha256::digest(include_bytes!(
+            "../src/region/wind_other_v1.ron"
+        ))),
+        "27a82606b9e94372fce6c3b7a1f27d0b5b2bb1c5daa16c95f580e579ed7ec0a2"
+    );
+}
