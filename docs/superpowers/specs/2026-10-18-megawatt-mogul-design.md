@@ -730,11 +730,14 @@ run through the ordinary generating-plant step or acquire synthetic opening outp
   empty state; at extreme zoom stack the groups inside one bounded scroll area.
 - **Base view:** a warm, toy-like tabletop diorama (low-poly, soft shadows, tilt-shift).
   A terrain cell is one world unit. Fit each city cluster and plant model, including its base,
-  inside a centred 0.8 × 0.8-cell footprint; scale all three axes together to preserve silhouettes.
-  Demand may shrink a city's model relative to the largest city, but never enlarge it beyond this
-  footprint. Visual tuning may shrink models (40–100%) and cannot expand them outside their cell.
+  inside a centred 0.8 × 0.8-cell footprint. Plant models scale uniformly. Cities retain a fixed
+  footprint and scale only their height, linearly with base demand in Planning and live demand
+  in Operating. Use the largest regional base load as a stable reference: its base demand gives
+  a vertical model scale of 3, and live demand can grow above this. Disconnected cities retain
+  the current forecast demand height; supply shortages change lights, not height. Visual tuning
+  may shrink models (40–100%) and cannot expand them outside their cell.
   Selection outlines occupy at most 0.9 × 0.9 of a cell and sit just above the terrain. Rendering
-  and picking use the same fitted geometry; labels and output pillars follow its actual roof height.
+  and picking use the same fitted geometry; labels follow the actual scaled roof height.
   Keep the default whole-region framing and allow close zoom to inspect individual cell-sized sites.
 - **Planning overlay:** a grounded terrain and resource view (irradiance, cooling water, hydro
   sites, siting suitability). Sunshine uses a sequential purple/blue → teal/green → yellow scale
@@ -746,8 +749,9 @@ run through the ordinary generating-plant step or acquire synthetic opening outp
   plants accept any land cell, so separate overlays add no siting information. Batteries likewise
   have no suitability overlay (§20.7). The cell inspector
   still reports suitability for every plant kind.
-- **Operating overlay:** supply indicators over the warm, lit diorama: glowing plant output
-  pillars, city lights showing supply status and energised lines. Retain terrain colours, building
+- **Operating overlay:** supply indicators over the warm, lit diorama: subtle segmented output
+  gauges around plant bases, city lights showing supply status and energised lines with flowing
+  light pulses. Retain terrain colours, building
   face shading and cast shadows; the overlay must not blacken the map or flatten the buildings.
 - **Sunlight and shadows:** use the region's monthly sunrise/sunset times and the simulation
   clock. Sunlight comes from the east in the morning, south at solar noon and west in the evening;
@@ -765,7 +769,10 @@ run through the ordinary generating-plant step or acquire synthetic opening outp
   operate while pointing at the map without taking keyboard focus from text entry. HUD panels,
   legends and modals capture their own input.
 - Each phase restores its default overlay. Choosing a resource layer in Operating shows resource
-  colours; Control room restores its hologram. Pillar height represents output/capacity. Effects
+  colours; Control room restores its hologram. Gauge fill represents output/capacity, including
+  a fractional final segment; an empty track indicates zero output. Gauges stay below 0.1 cell
+  above the terrain, inside the selection outline, and hide outside the Operating control-room
+  overlay or for disconnected/unfinished plants. Effects
   add bloom (a soft glow around bright objects) and a subtle camera-focus blur, capped at three
   pixels. They default on. The button names its action explicitly: **Disable effects** while on,
   **Enable effects** while off, with a hover explanation. Remember this application preference
@@ -780,14 +787,14 @@ run through the ordinary generating-plant step or acquire synthetic opening outp
 The operating overlay shows **plant output** and **city supply status** (lit, or flickering when load
 is shed). Every connected city's lights show the same served fraction, dimming/flickering together;
 there is no invented geographic rotation. Energised lines retain their pulse and show moving
-chevrons along **illustrative supply routes**, labelled explicitly as such. Route each producing,
+light pulses along **illustrative supply routes**, labelled explicitly as such. Route each producing,
 connected plant's proportional contribution toward cities with positive served demand over
 in-service lines, using shortest paths by hop count with line-ID tie breaks. Net opposing
-transfers before choosing an arrow direction; unused or balanced lines have no arrows. These
+transfers before choosing a travel direction; unused or balanced lines have no pulses. These
 routes are a presentation aid, not electrical load flow or a per-line MW/loading estimate.
 Recompute directions from current output and served demand. Under §20, discharging batteries
 are sources and charging batteries are sinks; these routes do not identify which generator
-charged a battery. Hide arrows outside the Operating
+charged a battery. Hide pulses outside the Operating
 control-room overlay and on unfinished/disconnected lines, during blackouts, or without supply
 or served demand. Use a steady visual travel speed, freeze during pause/save dialogs, and reuse
 render entities/assets across frames. The effects toggle controls bloom/DOF, not these indicators.
