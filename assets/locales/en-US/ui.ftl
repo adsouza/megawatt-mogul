@@ -317,6 +317,8 @@ incident-row = { $time }: { $incident }
 ## Review
 
 review-title = Month in review
+review-net-cash = Net cash change
+review-demand-served = Demand served
 review-pnl = Profit and loss
 review-days-note = Each played day stands for { $days } days of the month.
 review-revenue = Revenue

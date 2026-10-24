@@ -374,6 +374,8 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "incident-row",
     // Review
     "review-title",
+    "review-net-cash",
+    "review-demand-served",
     "review-pnl",
     "review-days-note",
     "review-revenue",

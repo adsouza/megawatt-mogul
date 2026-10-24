@@ -55,6 +55,36 @@ fn the_completed_supply_curve_can_be_opened_from_review() {
                     "the report must begin at the window margin: {:?}",
                     title.rect
                 );
+                let model = review_model(
+                    &app.world().resource::<Session>().0,
+                    GameOverView::Summary,
+                    &shipped_l10n(),
+                )
+                .unwrap();
+                let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, height));
+                let label = |text: &str| {
+                    widgets
+                        .iter()
+                        .filter(|w| {
+                            w.text == text
+                                && w.role == egui::accesskit::Role::Label
+                                && w.rect.top() > title.rect.bottom()
+                        })
+                        .min_by(|a, b| a.rect.top().total_cmp(&b.rect.top()))
+                        .unwrap_or_else(|| panic!("missing report label {text}"))
+                        .rect
+                };
+                let regulator = label("Regulator");
+                for stat in &model.highlights {
+                    for text in [&stat.label, &stat.value] {
+                        let rect = label(text);
+                        assert!(
+                            screen.contains_rect(rect),
+                            "{region} {zoom}: {text} {rect:?}"
+                        );
+                        assert!(rect.bottom() < regulator.top());
+                    }
+                }
                 let chart = find_button(&widgets, "Supply demand retrospective");
                 pass.click_at(&mut app, width, height, chart.rect.center());
                 let widgets = pass.settled(&mut app, width, height);

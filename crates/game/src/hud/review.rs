@@ -1,8 +1,8 @@
 //! The Review modal (spec §8.4): the month just closed, over the dimmed map.
 //!
-//! The summary column shows P&L (weighted by the month's days, §2.3), reliability, incidents,
-//! lessons, regulation and the annual rate review. Merit order and battery storage have their
-//! own independently scrolling columns.
+//! Three headline figures lead the report. The summary column puts regulation, the annual rate
+//! review and lessons before the detailed P&L (weighted by the month's days, §2.3), reliability
+//! and incidents. Merit order and battery storage have their own independently scrolling columns.
 //! *Continue* is the way out: it sends `FinishReview`. The backdrop dims the map but not the top
 //! bar, so the menu and the milestones stay in reach.
 //!
@@ -50,6 +50,8 @@ pub struct ReviewModel {
     pub title: String,
     /// `March 2027`.
     pub month: String,
+    /// Net cash change, share of demand served, and time out of frequency band, for this month.
+    pub highlights: [Stat; 3],
     pub pnl_heading: String,
     /// The month's figures are one played day times the month's days (§2.3).
     pub days_note: String,
@@ -200,6 +202,14 @@ pub fn review_model_for(
         storage: storage_review_rows(report, names, l10n),
         title: l10n.text("review-title"),
         month: format::month_year(report.month),
+        highlights: [
+            stat("review-net-cash", format::money(report.net)),
+            stat("review-demand-served", format::percent(report.reliability)),
+            stat(
+                "review-out-of-band",
+                format::percent(report.out_of_band_share),
+            ),
+        ],
         pnl_heading: l10n.text("review-pnl"),
         days_note: l10n.args(
             "review-days-note",
@@ -315,6 +325,21 @@ pub fn draw_review(ui: &mut egui::Ui, model: &ReviewModel) -> Vec<UiAction> {
         ui.label(model.month.as_str());
     });
     ui.separator();
+    if model.supply.is_none() {
+        ui.columns(model.highlights.len(), |columns| {
+            for (column, stat) in columns.iter_mut().zip(&model.highlights) {
+                egui::Frame::group(column.style()).show(column, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(egui::RichText::new(&stat.label).strong());
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(&stat.value).size(24.0).strong())
+                            .wrap(),
+                    );
+                });
+            }
+        });
+        ui.add_space(6.0);
+    }
     let spacing = ui.spacing();
     // The separator and the footer button's row below the scroll area, with the gaps between them.
     let footer = FOOTER_SEPARATOR + spacing.interact_size.y + 3.0 * spacing.item_spacing.y;
@@ -380,6 +405,28 @@ fn draw_summary(ui: &mut egui::Ui, model: &ReviewModel) {
         }
     };
 
+    heading(ui, &model.regulatory_heading);
+    if let Some(empty) = &model.regulatory_empty {
+        ui.weak(empty);
+    }
+    for action in &model.regulatory {
+        ui.strong(action);
+    }
+
+    if let Some(result) = &model.rate_review {
+        heading(ui, &model.rate_review_heading);
+        ui.strong(result);
+        if let Some(adjustment) = &model.satisfaction_adjustment {
+            ui.label(adjustment);
+        }
+    }
+
+    heading(ui, &model.lessons_heading);
+    for lesson in &model.lessons {
+        ui.label(lesson.as_str());
+    }
+
+    ui.separator();
     heading(ui, &model.pnl_heading);
     ui.weak(model.days_note.as_str());
     draw_stats(ui, "review_pnl", &model.pnl);
@@ -388,22 +435,6 @@ fn draw_summary(ui: &mut egui::Ui, model: &ReviewModel) {
 
     heading(ui, &model.incidents_heading);
     lines(ui, &model.incidents, model.incidents_empty.as_ref());
-
-    heading(ui, &model.lessons_heading);
-    for lesson in &model.lessons {
-        ui.label(lesson.as_str());
-    }
-
-    heading(ui, &model.regulatory_heading);
-    lines(ui, &model.regulatory, model.regulatory_empty.as_ref());
-
-    if let Some(result) = &model.rate_review {
-        heading(ui, &model.rate_review_heading);
-        ui.label(result.as_str());
-        if let Some(adjustment) = &model.satisfaction_adjustment {
-            ui.label(adjustment);
-        }
-    }
 }
 
 fn draw_stats(ui: &mut egui::Ui, id: &str, stats: &[Stat]) {
@@ -643,6 +674,28 @@ mod tests {
     }
 
     #[test]
+    fn review_highlights_the_months_cash_and_grid_outcomes() {
+        let l10n = shipped_l10n();
+        let mut report = report();
+        report.net = -Money::from_dollars(500_000);
+        let model = model_of(&report, &[], &l10n);
+        let highlights: Vec<_> = model
+            .highlights
+            .iter()
+            .map(|stat| (stat.label.as_str(), stat.value.as_str()))
+            .collect();
+        assert_eq!(
+            highlights,
+            [
+                ("Net cash change", "−$500k"),
+                ("Demand served", "99.9%"),
+                ("Time out of frequency band", "2.0%"),
+            ]
+        );
+        assert!(l10n.problems().is_empty());
+    }
+
+    #[test]
     fn a_december_review_shows_its_satisfaction_adjustment_only_while_current() {
         let l10n = shipped_l10n();
         let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
@@ -729,7 +782,7 @@ mod tests {
                             .find_map(|shape| text_rect(&shape.shape, text))
                             .unwrap_or_else(|| panic!("missing {text}"))
                     };
-                    let summary = at(&model.pnl_heading);
+                    let summary = at(&model.regulatory_heading);
                     let merit = at(&model.merit_heading);
                     let storage = at(&model.storage_heading);
                     assert!(
@@ -741,6 +794,17 @@ mod tests {
                         "{width}: summary {summary:?}, storage {storage:?}"
                     );
                     assert!(screen.contains_rect(at(&model.footer_button.label)));
+                    let pnl = at(&model.pnl_heading);
+                    assert!(summary.bottom() < pnl.top(), "regulation leads the detail");
+                    assert!(at(&model.lessons_heading).bottom() < pnl.top());
+                    for stat in &model.highlights {
+                        let label = at(&stat.label);
+                        let value = at(&stat.value);
+                        assert!(screen.contains_rect(label), "{width}: {label:?}");
+                        assert!(screen.contains_rect(value), "{width}: {value:?}");
+                        assert!(value.bottom() < summary.top());
+                        assert!(value.height() > summary.height());
+                    }
                 }
                 output.drop_without_applying_deltas();
             }
