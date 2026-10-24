@@ -1,0 +1,798 @@
+use super::{
+    MAX_SAVE_BYTES,
+    codec::{digest, encode_save_as},
+    decode_save, replay_compatibility,
+};
+use application::*;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs::{self, File, OpenOptions},
+    io::{Read, Write},
+    path::{Path, PathBuf},
+    sync::{
+        Arc, Mutex, MutexGuard, PoisonError,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublishStage {
+    CreateTemp,
+    PartialWrite,
+    Flush,
+    SyncFile,
+    Publish,
+    SyncDirectory,
+}
+impl PublishStage {
+    pub const ALL: [Self; 6] = [
+        Self::CreateTemp,
+        Self::PartialWrite,
+        Self::Flush,
+        Self::SyncFile,
+        Self::Publish,
+        Self::SyncDirectory,
+    ];
+}
+type Fault = Arc<dyn Fn(PublishStage) -> Result<(), SaveError> + Send + Sync>;
+type ListingReader = Arc<dyn Fn(&Path) -> Result<Vec<u8>, SaveError> + Send + Sync>;
+
+/// File identity is a cache hint, never proof that a selected save is valid.
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ListingStamp {
+    len: u64,
+    pub(super) modified: Option<SystemTime>,
+    created: Option<SystemTime>,
+    #[serde(default)]
+    parts: Vec<(String, Box<ListingStamp>)>,
+    #[cfg(unix)]
+    identity: (u64, u64, i64, i64),
+}
+impl ListingStamp {
+    fn of(metadata: &fs::Metadata) -> Self {
+        #[cfg(unix)]
+        use std::os::unix::fs::MetadataExt;
+        Self {
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+            created: metadata.created().ok(),
+            parts: Vec::new(),
+            #[cfg(unix)]
+            identity: (
+                metadata.dev(),
+                metadata.ino(),
+                metadata.ctime(),
+                metadata.ctime_nsec(),
+            ),
+        }
+    }
+}
+fn source_stamp(path: &Path) -> Option<ListingStamp> {
+    let metadata = fs::symlink_metadata(path).ok()?;
+    if metadata.is_symlink() {
+        return None;
+    }
+    let mut stamp = ListingStamp::of(&metadata);
+    if metadata.is_dir() {
+        let mut parts = BTreeMap::new();
+        for entry in fs::read_dir(path).ok()? {
+            let entry = entry.ok()?;
+            let label = entry.file_name().to_string_lossy().into_owned();
+            if label == super::monthly::MANIFEST || label.ends_with(".bin.z") {
+                let m = fs::symlink_metadata(entry.path()).ok()?;
+                parts.insert(label, Box::new(ListingStamp::of(&m)));
+            }
+        }
+        stamp.parts = parts.into_iter().collect();
+    }
+    Some(stamp)
+}
+
+#[derive(Clone)]
+pub(super) struct CachedListing {
+    pub(super) stamp: ListingStamp,
+    pub(super) row: SaveListing,
+    pub(super) original: Option<(SaveId, SaveRevision)>,
+}
+/// Test seam: synchronises one directory. The store's default is [`sync_directory`]; tests inject
+/// a recorder to see which directories a write synchronises.
+#[doc(hidden)]
+pub type DirectorySync = Arc<dyn Fn(&Path) -> std::io::Result<()> + Send + Sync>;
+
+pub struct FileSaveStore {
+    pub(super) root: PathBuf,
+    compatibility: ReplayCompatibility,
+    clock: Arc<dyn Fn() -> u64 + Send + Sync>,
+    ids: Arc<dyn Fn() -> SaveId + Send + Sync>,
+    pub(super) fault: Fault,
+    pub(super) sync: DirectorySync,
+    /// Directories that gained an entry when this store created a directory, and whose sync has
+    /// not yet succeeded. A later write, Retry included, syncs them before it reports success.
+    ///
+    /// The set is per store instance and in memory: a restart loses it, and a second
+    /// `FileSaveStore` on the same root doesn't inherit it. So directories created by an earlier
+    /// process that crashed or quit may still be unsynced when a later process reports a durable
+    /// receipt. That gap is negligible in practice, because filesystem journals commit within
+    /// seconds.
+    pending: Mutex<BTreeSet<PathBuf>>,
+    monthly_charts: bool,
+    listing_cache: Mutex<BTreeMap<PathBuf, CachedListing>>,
+    listing_reader: ListingReader,
+    listing_loaded: Mutex<bool>,
+    listing_dirty: AtomicBool,
+}
+impl FileSaveStore {
+    pub fn new(root: PathBuf) -> Self {
+        let counter = AtomicU64::new(0);
+        Self::with_sources(
+            root,
+            replay_compatibility(),
+            Arc::new(|| now_nanos() as u64 / 1_000_000_000),
+            Arc::new(move || {
+                let value = format!(
+                    "{}:{}:{}",
+                    std::process::id(),
+                    now_nanos(),
+                    counter.fetch_add(1, Ordering::Relaxed)
+                );
+                let id: String = digest(value.as_bytes())[..16]
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect();
+                SaveId::new(id).expect("generated lowercase hex id")
+            }),
+        )
+    }
+    pub fn with_sources(
+        root: PathBuf,
+        compatibility: ReplayCompatibility,
+        clock: Arc<dyn Fn() -> u64 + Send + Sync>,
+        ids: Arc<dyn Fn() -> SaveId + Send + Sync>,
+    ) -> Self {
+        Self {
+            root,
+            compatibility,
+            clock,
+            ids,
+            fault: Arc::new(|_| Ok(())),
+            sync: Arc::new(sync_directory),
+            pending: Mutex::new(BTreeSet::new()),
+            monthly_charts: false,
+            listing_cache: Mutex::new(BTreeMap::new()),
+            listing_reader: Arc::new(|path| read_bounded(path, MAX_SAVE_BYTES)),
+            listing_loaded: Mutex::new(false),
+            listing_dirty: AtomicBool::new(false),
+        }
+    }
+    /// Store new snapshots as self-contained directories with monthly binary chart files.
+    /// Existing flat snapshots remain readable; this never migrates them implicitly.
+    pub fn with_monthly_charts(mut self) -> Self {
+        self.monthly_charts = true;
+        self
+    }
+    /// Test seam: inject a failure at a publication stage.
+    #[doc(hidden)]
+    pub fn with_fault(mut self, fault: Fault) -> Self {
+        self.fault = fault;
+        self
+    }
+    /// Test seam: replace the directory sync, so a test can see which directories a write
+    /// synchronises.
+    #[doc(hidden)]
+    pub fn with_directory_sync(mut self, sync: DirectorySync) -> Self {
+        self.sync = sync;
+        self
+    }
+    /// Test seam: observe cache misses independently of full selected-save reads.
+    #[doc(hidden)]
+    pub fn with_listing_reader(mut self, read: ListingReader) -> Self {
+        self.listing_reader = read;
+        self
+    }
+    fn load_listing_cache(&self) {
+        let mut loaded = self
+            .listing_loaded
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if !*loaded {
+            if let Some(rows) = super::listing_cache::read(&self.root, &self.compatibility) {
+                *self
+                    .listing_cache
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner) = rows;
+            }
+            *loaded = true;
+        }
+    }
+    fn persist_listing_cache(&self, seen: &BTreeSet<PathBuf>) {
+        let mut rows = self
+            .listing_cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let before = rows.len();
+        rows.retain(|path, _| seen.contains(path));
+        if self.listing_dirty.swap(false, Ordering::Relaxed) || before != rows.len() {
+            super::listing_cache::write(&self.root, &self.compatibility, &rows);
+        }
+    }
+    fn listing(
+        &self,
+        path: &Path,
+        label: String,
+        stamp: Option<ListingStamp>,
+    ) -> (SaveListing, Option<(SaveId, SaveRevision)>) {
+        if let Some(cached) = self
+            .listing_cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(path)
+            .filter(|entry| Some(&entry.stamp) == stamp.as_ref())
+            .cloned()
+        {
+            return (cached.row, cached.original);
+        }
+        let id = SaveId::new(label.clone()).ok();
+        let mut revision = None;
+        let mut original = None;
+        let item = id.as_ref().ok_or(SaveError::InvalidId).and_then(|id| {
+            let directory = path.is_dir();
+            let bytes = (self.listing_reader)(&if directory {
+                path.join(super::monthly::MANIFEST)
+            } else {
+                path.to_path_buf()
+            })?;
+            let digest = SaveRevision(digest(&bytes));
+            revision = Some(digest);
+            let (entry, origin) = if directory {
+                super::monthly::inspect(&bytes, path, digest, &self.compatibility)?
+            } else {
+                super::listing::inspect(&bytes, digest, &self.compatibility)?
+            };
+            if &entry.metadata.slot != id {
+                return Err(SaveError::InvalidId);
+            }
+            original = origin.map(|o| (o.slot, o.revision));
+            Ok(entry)
+        });
+        let row = SaveListing {
+            id,
+            file_label: label,
+            modified_at: stamp
+                .as_ref()
+                .and_then(|s| s.modified)
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_secs()),
+            revision,
+            entry: item,
+        };
+        // Do not cache a read raced by an external edit, rename or replacement.
+        if let Some(stamp) = stamp.filter(|before| {
+            if matches!(row.entry, Err(SaveError::Io { .. })) {
+                return false;
+            }
+            source_stamp(path).as_ref() == Some(before)
+        }) {
+            self.listing_cache
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(
+                    path.into(),
+                    CachedListing {
+                        stamp,
+                        row: row.clone(),
+                        original: original.clone(),
+                    },
+                );
+        }
+        self.listing_dirty.store(true, Ordering::Relaxed);
+        (row, original)
+    }
+    pub(super) fn path(&self, id: &SaveId) -> PathBuf {
+        self.root.join(format!("{}.mgsave", id.as_str()))
+    }
+    fn bytes(&self, id: &SaveId) -> Result<Vec<u8>, SaveError> {
+        read_bounded(&self.path(id), MAX_SAVE_BYTES)
+    }
+    pub(super) fn lock_slot(&self, id: &SaveId) -> Result<File, SaveError> {
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(self.root.join(format!("{}.lock", id.as_str())))
+            .map_err(|e| io("lock", e))?;
+        lock.try_lock().map_err(|error| match error {
+            std::fs::TryLockError::WouldBlock => SaveError::SlotBusy,
+            std::fs::TryLockError::Error(error) => io("lock", error),
+        })?;
+        // Keep the lock inode after writes and deletes, so every window locks the same file.
+        Ok(lock)
+    }
+    fn publish(
+        &self,
+        bundle: &SaveBundle,
+        bytes: &[u8],
+        target: &SaveTarget,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<SaveReceipt, SaveError> {
+        {
+            // Create under the lock, so a concurrent write on this store that finds the new
+            // directories already there still finds them pending.
+            make_directory(&self.root, &mut self.pending())?;
+        }
+        let _lock = self.lock_slot(&bundle.metadata.slot)?;
+        let path = self.path(&bundle.metadata.slot);
+        let current = match File::open(&path) {
+            Ok(file) => {
+                let mut data = Vec::new();
+                file.take(MAX_SAVE_BYTES as u64 + 1)
+                    .read_to_end(&mut data)
+                    .map_err(|e| io("revision", e))?;
+                Some(SaveRevision(digest(&data)))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(io("revision", e)),
+        };
+        match target {
+            SaveTarget::Create if current.is_none() => (),
+            SaveTarget::Replace(expected) | SaveTarget::ConfirmDurability(expected)
+                if Some(*expected) == current => {}
+            _ => return Err(SaveError::SlotChanged),
+        }
+        let revision = if let SaveTarget::ConfirmDurability(revision) = target {
+            if digest(bytes) != revision.0 {
+                return Err(SaveError::SlotChanged);
+            }
+            *revision
+        } else {
+            (self.fault)(PublishStage::CreateTemp)?;
+            let mut temp =
+                tempfile::NamedTempFile::new_in(&self.root).map_err(|e| io("temporary file", e))?;
+            let half = bytes.len() / 2;
+            temp.write_all(&bytes[..half]).map_err(|e| io("write", e))?;
+            (self.fault)(PublishStage::PartialWrite)?;
+            temp.write_all(&bytes[half..]).map_err(|e| io("write", e))?;
+            (self.fault)(PublishStage::Flush)?;
+            temp.flush().map_err(|e| io("flush", e))?;
+            (self.fault)(PublishStage::SyncFile)?;
+            temp.as_file().sync_all().map_err(|e| io("sync file", e))?;
+            if cancelled() {
+                return Err(SaveError::Cancelled);
+            }
+            (self.fault)(PublishStage::Publish)?;
+            temp.persist(&path).map_err(|e| io("publish", e))?;
+            SaveRevision(digest(bytes))
+        };
+        let unconfirmed = || SaveError::DurabilityUnconfirmed {
+            slot: bundle.metadata.slot.clone(),
+            revision,
+        };
+        (self.fault)(PublishStage::SyncDirectory).map_err(|_| unconfirmed())?;
+        self.sync_directories().map_err(|_| unconfirmed())?;
+        Ok(SaveReceipt {
+            metadata: bundle.metadata.clone(),
+            revision,
+        })
+    }
+    pub(super) fn pending(&self) -> MutexGuard<'_, BTreeSet<PathBuf>> {
+        self.pending.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+    /// Sync the destination's parent, then every pending directory, deepest first. Each pending
+    /// directory leaves the set only once its own sync succeeds.
+    pub(super) fn sync_directories(&self) -> std::io::Result<()> {
+        (self.sync)(&self.root)?;
+        let pending: Vec<PathBuf> = self.pending().iter().rev().cloned().collect();
+        for dir in pending {
+            (self.sync)(&dir)?;
+            self.pending().remove(&dir);
+        }
+        Ok(())
+    }
+}
+fn now_nanos() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
+}
+pub(super) fn io(stage: &'static str, error: impl std::fmt::Display) -> SaveError {
+    SaveError::Io {
+        stage,
+        message: error.to_string(),
+    }
+}
+pub(crate) fn read_bounded(path: &Path, limit: usize) -> Result<Vec<u8>, SaveError> {
+    let file = File::open(path).map_err(|e| io("read", e))?;
+    let mut bytes = Vec::new();
+    file.take(limit as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| io("read", e))?;
+    if bytes.len() > limit {
+        return Err(SaveError::SaveTooLarge);
+    }
+    Ok(bytes)
+}
+
+/// Synchronise one directory, so the entries added to it survive a crash. A failed platform
+/// operation is reported, never treated as durability.
+#[cfg(not(windows))]
+pub(crate) fn sync_directory(path: &Path) -> std::io::Result<()> {
+    File::open(path)?.sync_all()
+}
+/// On Windows there is no directory sync, and this opens nothing.
+///
+/// On NTFS the rename is journaled, so a crash leaves either the previous or the new complete
+/// file. The rename reaches disk when NTFS commits its log, so a receipt on Windows means the
+/// contents were flushed and publication was atomic, not that the directory entry is synced.
+/// Non-journaled volumes such as FAT32 or exFAT get neither guarantee. `FlushFileBuffers` on a
+/// directory needs `GENERIC_WRITE`, which is why this path doesn't attempt it.
+#[cfg(windows)]
+pub(crate) fn sync_directory(_path: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+/// Create `root` and any missing ancestors. Adds to `gained` the directories that gained an
+/// entry: the parent of each directory this call created. `root` itself is not added, as the
+/// caller syncs the destination's parent on every publication.
+///
+/// A failed creation can still have made some directories (`a` of `a/<a name too long>`), so
+/// those are added whatever `create_dir_all` returns: a later save must sync their parents too.
+pub(crate) fn make_directory(root: &Path, gained: &mut BTreeSet<PathBuf>) -> Result<(), SaveError> {
+    let mut missing = Vec::new();
+    let mut at = root;
+    while !at.exists() {
+        missing.push(at);
+        let parent = entry_parent(at);
+        if parent == at {
+            break;
+        }
+        at = parent;
+    }
+    let result = fs::create_dir_all(root).map_err(|e| io("directory", e));
+    gained.extend(
+        missing
+            .into_iter()
+            .filter(|dir| dir.exists())
+            .map(|dir| entry_parent(dir).to_path_buf()),
+    );
+    result
+}
+/// The directory that holds `dir`'s entry: a bare relative name lives in the current directory.
+fn entry_parent(dir: &Path) -> &Path {
+    dir.parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+}
+
+impl SaveStore for FileSaveStore {
+    fn compatibility(&self) -> ReplayCompatibility {
+        self.compatibility.clone()
+    }
+    fn allocate_id(&self) -> SaveId {
+        (self.ids)()
+    }
+    fn now(&self) -> u64 {
+        (self.clock)()
+    }
+    fn list(&self) -> Result<Vec<SaveListing>, SaveError> {
+        self.load_listing_cache();
+        let entries = match fs::read_dir(&self.root) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                self.listing_cache
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .clear();
+                return Ok(Vec::new());
+            }
+            Err(e) => return Err(io("list", e)),
+        };
+        let mut result = Vec::new();
+        let mut migrated = Vec::new();
+        let mut seen = BTreeSet::new();
+        for entry in entries {
+            let entry = entry.map_err(|e| io("list", e))?;
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("mgsave") {
+                continue;
+            }
+            seen.insert(path.clone());
+            let label = path
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let stamp = source_stamp(&path);
+            let (row, original) = self.listing(&path, label, stamp);
+            migrated.extend(original);
+            result.push(row);
+        }
+        self.persist_listing_cache(&seen);
+        // Suppress exact originals only while a compatible converted card still exists.
+        result.retain(|row| {
+            !migrated.iter().any(|(id, revision)| {
+                row.id.as_ref() == Some(id) && row.revision == Some(*revision)
+            })
+        });
+        result.sort_by(|a, b| {
+            let time = |e: &SaveListing| {
+                e.entry
+                    .as_ref()
+                    .map_or(e.modified_at, |e| e.metadata.saved_at)
+            };
+            time(b).cmp(&time(a)).then(a.file_label.cmp(&b.file_label))
+        });
+        Ok(result)
+    }
+    fn revision(&self, id: &SaveId) -> Result<SaveRevision, SaveError> {
+        if self.path(id).is_dir() {
+            return super::monthly::verify_revision(&self.path(id));
+        }
+        self.bytes(id).map(|bytes| SaveRevision(digest(&bytes)))
+    }
+    fn read(&self, id: &SaveId) -> Result<(SaveBundle, LoadedRegion), SaveError> {
+        if self.path(id).is_dir() {
+            return self.read_cancellable(id, &|| false);
+        }
+        let result = decode_save(&self.bytes(id)?, &self.compatibility)?;
+        if &result.0.metadata.slot != id {
+            return Err(SaveError::InvalidId);
+        }
+        Ok(result)
+    }
+    fn read_cancellable(
+        &self,
+        id: &SaveId,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<(SaveBundle, LoadedRegion), SaveError> {
+        let result = if self.path(id).is_dir() {
+            super::monthly::read(&self.path(id), &self.compatibility, cancelled)?
+        } else {
+            super::codec::decode_save_cancellable(&self.bytes(id)?, &self.compatibility, cancelled)?
+        };
+        if &result.0.metadata.slot != id {
+            return Err(SaveError::InvalidId);
+        }
+        Ok(result)
+    }
+    fn delete(
+        &self,
+        id: &SaveId,
+        revision: SaveRevision,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<(), SaveError> {
+        if cancelled() {
+            return Err(SaveError::Cancelled);
+        }
+        if self.path(id).is_dir() || self.has_deleted_directory(id, revision) {
+            return self.delete_directory(id, revision, cancelled);
+        }
+        let _lock = self.lock_slot(id)?;
+        let path = self.path(id);
+        match File::open(&path) {
+            Ok(file) => {
+                let mut bytes = Vec::new();
+                file.take(MAX_SAVE_BYTES as u64 + 1)
+                    .read_to_end(&mut bytes)
+                    .map_err(|e| io("delete revision", e))?;
+                if bytes.len() > MAX_SAVE_BYTES {
+                    return Err(SaveError::SaveTooLarge);
+                }
+                if SaveRevision(digest(&bytes)) != revision {
+                    return Err(SaveError::SlotChanged);
+                }
+                (self.fault)(PublishStage::Publish)?;
+                if cancelled() {
+                    return Err(SaveError::Cancelled);
+                }
+                fs::remove_file(&path).map_err(|e| io("delete", e))?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(error) => return Err(io("delete revision", error)),
+        }
+        // Once removal is visible it cannot be cancelled; Retry re-confirms this absence but
+        // never removes a recreated slot whose bytes differ from the confirmed revision.
+        (self.fault)(PublishStage::SyncDirectory)
+            .and_then(|()| {
+                self.sync_directories()
+                    .map_err(|error| io("delete sync", error))
+            })
+            .map_err(|_| SaveError::DeleteDurabilityUnconfirmed { slot: id.clone() })
+    }
+    fn rename(
+        &self,
+        id: &SaveId,
+        revision: SaveRevision,
+        name: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<SaveReceipt, SaveError> {
+        if cancelled() {
+            return Err(SaveError::Cancelled);
+        }
+        if self.path(id).is_dir() {
+            let (mut bundle, _) = self.read_cancellable(id, cancelled)?;
+            bundle.metadata.name = name.into();
+            let archive = super::monthly::encode(&bundle, &bundle.compatibility)?;
+            return self.publish_directory(
+                &bundle,
+                &archive,
+                &SaveTarget::Replace(revision),
+                cancelled,
+            );
+        }
+        let original = self.bytes(id)?;
+        if SaveRevision(digest(&original)) != revision {
+            return Err(SaveError::SlotChanged);
+        }
+        let (mut bundle, _) = super::codec::decode_preserving(&original, &self.compatibility)?;
+        if &bundle.metadata.slot != id {
+            return Err(SaveError::InvalidId);
+        }
+        bundle.metadata.name = name.into();
+        // Renaming is metadata maintenance, not a save made by the running simulation build.
+        let bytes = encode_save_as(&bundle, &bundle.compatibility)?;
+        self.publish(&bundle, &bytes, &SaveTarget::Replace(revision), cancelled)
+    }
+    fn write(
+        &self,
+        bundle: &SaveBundle,
+        target: &SaveTarget,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<SaveReceipt, SaveError> {
+        if cancelled() {
+            return Err(SaveError::Cancelled);
+        }
+        if bundle
+            .checkpoint
+            .snapshot
+            .as_ref()
+            .and_then(|s| s.origin.as_ref())
+            .is_some_and(|o| o.slot == bundle.metadata.slot)
+        {
+            return Err(SaveError::SlotChanged);
+        }
+        // A store stamps only its own build, so a game resumed from another build's save saves
+        // as this one. A bundle stamped elsewhere is a caller bug.
+        debug_assert_eq!(
+            bundle.compatibility, self.compatibility,
+            "a store stamps only its own build"
+        );
+        if self.monthly_charts && !self.path(&bundle.metadata.slot).is_file()
+            || self.path(&bundle.metadata.slot).is_dir()
+        {
+            let archive = super::monthly::encode(bundle, &self.compatibility)?;
+            return self.publish_directory(bundle, &archive, target, cancelled);
+        }
+        let bytes = encode_save_as(bundle, &self.compatibility)?;
+        self.publish(bundle, &bytes, target, cancelled)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn make_directory_adds_the_parent_of_each_directory_it_created() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("a/b");
+        let mut gained = BTreeSet::new();
+        make_directory(&root, &mut gained).unwrap();
+        assert_eq!(
+            gained,
+            BTreeSet::from([dir.path().join("a"), dir.path().to_path_buf()])
+        );
+        assert!(root.is_dir());
+        let mut again = BTreeSet::new();
+        make_directory(&root, &mut again).unwrap();
+        assert!(again.is_empty(), "an existing root gains nothing");
+    }
+
+    #[test]
+    fn make_directory_adds_what_a_failed_creation_left_behind() {
+        let dir = TempDir::new().unwrap();
+        let mut gained = BTreeSet::new();
+        let root = dir.path().join("a").join("n".repeat(300));
+        assert!(make_directory(&root, &mut gained).is_err());
+        assert!(dir.path().join("a").is_dir());
+        assert_eq!(gained, BTreeSet::from([dir.path().to_path_buf()]));
+    }
+
+    #[test]
+    fn a_bare_relative_directory_has_its_entry_in_the_current_directory() {
+        assert_eq!(entry_parent(Path::new("saves")), Path::new("."));
+        assert_eq!(entry_parent(Path::new("saves/slot")), Path::new("saves"));
+        assert_eq!(entry_parent(Path::new(".")), Path::new("."));
+    }
+
+    fn bundle(store: &FileSaveStore) -> SaveBundle {
+        let catalog = crate::region::RonRegionCatalog::new(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/regions"),
+        );
+        let game = Game::start_new(
+            &catalog,
+            &domain::ids::RegionId::new("eastern_interconnection"),
+            3,
+            domain::session::GameSettings::default(),
+            Box::new(InMemoryCommandLog::default()),
+        )
+        .unwrap();
+        SaveBundle {
+            compatibility: store.compatibility(),
+            metadata: SaveMetadata {
+                slot: store.allocate_id(),
+                run: store.allocate_id(),
+                kind: SaveKind::Manual,
+                name: "Partial".into(),
+                saved_at: store.now(),
+            },
+            checkpoint: game.checkpoint(),
+        }
+    }
+
+    /// The stamp is structural: what a store writes carries its own build, whatever the bundle
+    /// says. (Debug builds also catch the mismatch; see `save_store.rs`.)
+    #[test]
+    fn a_store_encodes_with_its_own_stamp() {
+        let dir = TempDir::new().unwrap();
+        let store = FileSaveStore::new(dir.path().into());
+        let mut b = bundle(&store);
+        b.compatibility.build = "older".into();
+        let bytes = super::super::codec::encode_save_as(&b, &store.compatibility).unwrap();
+        let (decoded, _) = decode_save(&bytes, &store.compatibility).unwrap();
+        assert_eq!(decoded.compatibility, store.compatibility);
+    }
+
+    #[test]
+    fn a_directory_left_behind_by_a_failed_creation_stays_pending_until_a_save_syncs_it() {
+        let dir = TempDir::new().unwrap();
+        // create_dir_all makes `a`, then fails on a name longer than NAME_MAX.
+        let mut store = FileSaveStore::new(dir.path().join("a").join("n".repeat(300)));
+        let synced = Arc::new(Mutex::new(Vec::<PathBuf>::new()));
+        let record = synced.clone();
+        store = store.with_directory_sync(Arc::new(move |d: &Path| {
+            record.lock().unwrap().push(d.to_path_buf());
+            Ok(())
+        }));
+        let b = bundle(&store);
+        assert!(matches!(
+            store.write(&b, &SaveTarget::Create, &|| false),
+            Err(SaveError::Io {
+                stage: "directory",
+                ..
+            })
+        ));
+        assert!(dir.path().join("a").is_dir(), "the failure left `a` behind");
+        assert_eq!(
+            *store.pending(),
+            BTreeSet::from([dir.path().to_path_buf()]),
+            "the entry for `a` is not yet durable"
+        );
+        // A transient failure clears on the next attempt; here the store moves to a root that
+        // creates nothing new, so only the earlier failure can make the TempDir pending.
+        store.root = dir.path().join("a");
+        store.write(&b, &SaveTarget::Create, &|| false).unwrap();
+        assert_eq!(
+            *synced.lock().unwrap(),
+            vec![dir.path().join("a"), dir.path().to_path_buf()]
+        );
+        assert!(store.pending().is_empty());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn sync_directory_opens_the_directory_and_reports_a_failure() {
+        let dir = TempDir::new().unwrap();
+        sync_directory(dir.path()).unwrap();
+        assert!(sync_directory(&dir.path().join("missing")).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn sync_directory_on_windows_returns_ok_without_opening_the_directory() {
+        let dir = TempDir::new().unwrap();
+        // A missing directory can't be opened, so Ok shows that nothing was opened.
+        sync_directory(&dir.path().join("missing")).unwrap();
+    }
+}

@@ -1,0 +1,1043 @@
+use std::sync::Arc;
+
+use super::super::GameSettings;
+use super::*;
+use crate::company::{AssetRef, LedgerCategory};
+use crate::region::SiteError;
+use crate::region::fixtures::tiny_region;
+use crate::units::Money;
+
+fn session() -> GameSession {
+    GameSession::new(Arc::new(tiny_region()), 1, GameSettings::default())
+}
+
+mod line_need_tests {
+    use super::*;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    fn components(s: &GameSession) -> BTreeMap<NodeId, NodeId> {
+        let mut labels: BTreeMap<_, _> = s
+            .power()
+            .network()
+            .nodes()
+            .map(|(id, _)| (id, id))
+            .collect();
+        for line in s.line_views() {
+            let (from, to) = (labels[&line.from], labels[&line.to]);
+            for label in labels.values_mut() {
+                if *label == to {
+                    *label = from;
+                }
+            }
+        }
+        labels
+    }
+
+    #[test]
+    fn a_line_between_joined_nodes_is_refused_and_duplicates_keep_their_error() {
+        let mut s = session();
+        let from = s.city_views()[1].node;
+        let to = s.plant_views()[0].node;
+        rejected(&mut s, DomainError::LineNotNeeded { from, to }, |s| {
+            s.build_line(from, to)
+        });
+        let root = s.anchor_node();
+        rejected(
+            &mut s,
+            DomainError::DuplicateLine {
+                from: root,
+                to: from,
+            },
+            |s| s.build_line(root, from),
+        );
+    }
+
+    #[test]
+    fn an_ordered_line_already_joins_its_ends_and_cancel_frees_the_route() {
+        let mut s = session();
+        let (plant, _) = s.build_plant(PlantKind::Peaker, cell(7, 2)).unwrap();
+        let to = s.power().plant(plant).unwrap().node();
+        let root = s.anchor_node();
+        let other = s
+            .plant_views()
+            .into_iter()
+            .find(|p| p.kind == PlantKind::Coal)
+            .unwrap()
+            .node;
+        let old_months = s.line_quote(root, to).unwrap().months;
+        let (line, _) = s.build_line(root, to).unwrap();
+        rejected(
+            &mut s,
+            DomainError::LineNotNeeded { from: other, to },
+            |s| s.build_line(other, to),
+        );
+        s.cancel_line_construction(line).unwrap();
+        assert!(s.line_quote(other, to).unwrap().months < old_months);
+        s.build_line(other, to).unwrap();
+    }
+
+    #[test]
+    fn islands_are_joined_too_but_can_join_the_home_network() {
+        let mut s = session();
+        let city = s
+            .city_views()
+            .into_iter()
+            .find(|c| !c.connected)
+            .unwrap()
+            .node;
+        let (a, _) = s.build_plant(PlantKind::Peaker, cell(7, 2)).unwrap();
+        let (b, _) = s.build_plant(PlantKind::Peaker, cell(7, 1)).unwrap();
+        let (a, b) = (
+            s.power().plant(a).unwrap().node(),
+            s.power().plant(b).unwrap().node(),
+        );
+        s.build_line(city, a).unwrap();
+        s.build_line(a, b).unwrap();
+        rejected(
+            &mut s,
+            DomainError::LineNotNeeded { from: city, to: b },
+            |s| s.build_line(city, b),
+        );
+        assert!(s.line_quote(s.anchor_node(), b).is_ok());
+    }
+
+    #[test]
+    fn grandfathered_cycles_still_commission_and_enter_the_rate_base() {
+        let mut s = session();
+        let from = s.city_views()[1].node;
+        let to = s.plant_views()[0].node;
+        let connected = s.power().network().connected_nodes().clone();
+        let line: LineId = s.ids.next();
+        s.power
+            .network_mut()
+            .add_line(
+                line,
+                from,
+                to,
+                LineStatus::UnderConstruction { months_left: 1 },
+            )
+            .unwrap();
+        let length = s.power().network().line(line).unwrap().length_cells;
+        let cost = line_cost(s.region().lines(), whole_cells(length));
+        s.instalments
+            .insert(AssetRef::Line(line), vec![cost].into());
+        s.begin_operating().unwrap();
+        let events = run_ticks(&mut s, TICKS_PER_DAY);
+        assert!(events.contains(&DomainEvent::LineCommissioned { line }));
+        assert!(
+            s.company()
+                .rate_base()
+                .asset(AssetRef::Line(line))
+                .is_some()
+        );
+        assert_eq!(s.power().network().connected_nodes(), &connected);
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn accepted_orders_never_close_a_cycle(actions in proptest::collection::vec((proptest::bool::ANY, 0usize..16, 0usize..16), 1..60)) {
+            let mut s = session();
+            for at in [cell(7, 2), cell(7, 1)] { s.build_plant(PlantKind::Peaker, at).unwrap(); }
+            let nodes: Vec<_> = s.power().network().nodes().map(|(id, _)| id).chain([NodeId(99_999)]).collect();
+            for (cancel, a, b) in actions {
+                let before = s.state_hash();
+                if cancel {
+                    let lines: Vec<_> = s.line_views().into_iter().filter(|l| matches!(l.status, LineStatus::UnderConstruction { .. })).collect();
+                    let line = lines.get(a % lines.len().max(1)).map_or(LineId(99_999), |l| l.id);
+                    if s.cancel_line_construction(line).is_err() { proptest::prop_assert_eq!(s.state_hash(), before); }
+                } else {
+                    let (from, to) = (nodes[a % nodes.len()], nodes[b % nodes.len()]);
+                    let labels = components(&s);
+                    let expected = from != to && labels.contains_key(&from) && labels.contains_key(&to) && labels[&from] != labels[&to];
+                    let result = s.build_line(from, to);
+                    proptest::prop_assert_eq!(result.is_ok(), expected);
+                    if result.is_err() { proptest::prop_assert_eq!(s.state_hash(), before); }
+                }
+                let labels = components(&s);
+                let count = labels.values().copied().collect::<BTreeSet<_>>().len();
+                proptest::prop_assert_eq!(s.line_views().len(), labels.len() - count);
+            }
+        }
+    }
+}
+
+/// A new game with the inherited schedule undone: every plant offline all
+/// day, none on AGC.
+fn empty_session() -> GameSession {
+    let mut s = session();
+    s.empty_start();
+    s
+}
+
+fn plant_of(s: &GameSession, kind: PlantKind) -> PlantId {
+    s.plant_views()
+        .iter()
+        .find(|p| p.kind == kind)
+        .expect("plant of kind")
+        .id
+}
+
+fn run_ticks(s: &mut GameSession, n: u32) -> Vec<DomainEvent> {
+    (0..n).flat_map(|_| s.tick().unwrap()).collect()
+}
+
+fn cell(x: u16, y: u16) -> CellCoord {
+    CellCoord { x, y }
+}
+
+/// Asserts `result` is `Err(expected)` and the session hash did not move.
+fn rejected<T: std::fmt::Debug>(
+    s: &mut GameSession,
+    expected: DomainError,
+    command: impl FnOnce(&mut GameSession) -> Result<T, DomainError>,
+) {
+    let before = s.state_hash();
+    assert_eq!(command(s).unwrap_err(), expected);
+    assert_eq!(s.state_hash(), before, "rejected command changed state");
+}
+
+#[test]
+fn invalid_sites_are_rejected_with_reason() {
+    let mut s = session();
+    for (kind, cell, reason) in [
+        (
+            PlantKind::Peaker,
+            CellCoord { x: 0, y: 1 },
+            SiteError::NotLand,
+        ),
+        (
+            PlantKind::Peaker,
+            CellCoord { x: 99, y: 1 },
+            SiteError::OutOfBounds,
+        ),
+        (
+            PlantKind::Hydro,
+            CellCoord { x: 9, y: 1 },
+            SiteError::NoHydroSite,
+        ),
+    ] {
+        assert_eq!(
+            s.build_plant(kind, cell).unwrap_err(),
+            DomainError::InvalidSite { kind, cell, reason }
+        );
+    }
+    assert!(matches!(
+        s.build_plant(PlantKind::Nuclear, CellCoord { x: 2, y: 1 }),
+        Err(DomainError::InvalidSite {
+            reason: SiteError::InsufficientCoolingWater { .. },
+            ..
+        })
+    ));
+}
+
+#[test]
+fn occupied_city_plant_and_construction_sites_reject_building_without_mutation() {
+    let mut s = session();
+    let mut sites: Vec<_> = s
+        .city_views()
+        .iter()
+        .map(|c| c.cell)
+        .chain(s.plant_views().iter().map(|p| p.cell))
+        .collect();
+    let at = cell(4, 5);
+    s.build_plant(PlantKind::Peaker, at).unwrap();
+    sites.push(at);
+    for at in sites {
+        for kind in PlantKind::ALL {
+            let before = s.state_hash();
+            assert_eq!(
+                s.build_plant(kind, at),
+                Err(DomainError::InvalidSite {
+                    kind,
+                    cell: at,
+                    reason: SiteError::Occupied
+                })
+            );
+            assert_eq!(s.state_hash(), before);
+        }
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn arbitrary_build_orders_never_share_a_city_or_plant_cell(
+        orders in proptest::collection::vec((0usize..PlantKind::ALL.len(), 0u16..12, 0u16..8), 1..50)
+    ) {
+        let mut s = session();
+        for (kind, x, y) in orders {
+            let at = cell(x, y);
+            let occupied = s.city_views().iter().any(|c| c.cell == at)
+                || s.plant_views().iter().any(|p| p.cell == at);
+            let before = s.state_hash();
+            let result = s.build_plant(PlantKind::ALL[kind], at);
+            proptest::prop_assert!(!occupied || result.is_err());
+            if result.is_err() { proptest::prop_assert_eq!(s.state_hash(), before); }
+            let sites: std::collections::BTreeSet<_> = s.city_views().iter().map(|c| c.cell)
+                .chain(s.plant_views().iter().map(|p| p.cell)).collect();
+            proptest::prop_assert_eq!(sites.len(), s.city_views().len() + s.plant_views().len());
+        }
+    }
+}
+
+#[test]
+fn failed_command_leaves_state_unchanged() {
+    let mut s = empty_session();
+    let coal = plant_of(&s, PlantKind::Coal);
+    let root = s.anchor;
+    let city1 = s.city_views()[1].node;
+    rejected(
+        &mut s,
+        DomainError::InvalidSite {
+            kind: PlantKind::Peaker,
+            cell: cell(0, 1),
+            reason: SiteError::NotLand,
+        },
+        |s| s.build_plant(PlantKind::Peaker, cell(0, 1)),
+    );
+    rejected(
+        &mut s,
+        DomainError::UnknownNode { node: NodeId(999) },
+        |s| s.build_line(root, NodeId(999)),
+    );
+    rejected(
+        &mut s,
+        DomainError::DuplicateLine {
+            from: city1,
+            to: root,
+        },
+        |s| s.build_line(city1, root),
+    );
+    rejected(&mut s, DomainError::LineToSelf { node: root }, |s| {
+        s.build_line(root, root)
+    });
+    rejected(
+        &mut s,
+        DomainError::UnknownPlant {
+            plant: PlantId(999),
+        },
+        |s| s.start_plant(PlantId(999)),
+    );
+    let mut hours = [true; 24];
+    hours[12] = false;
+    rejected(
+        &mut s,
+        DomainError::CommitmentInfeasible {
+            gap: SimDuration::from_hours(1),
+            shutdown: SimDuration::from_ticks(100),
+            startup: SimDuration::from_hours(8),
+        },
+        |s| s.commit_plant(coal, hours),
+    );
+    rejected(
+        &mut s,
+        DomainError::AboveCapacity {
+            plant: coal,
+            max: Megawatts::new(600.0),
+        },
+        |s| s.set_dispatch_target(coal, Megawatts::new(700.0)),
+    );
+    s.begin_operating().unwrap();
+    rejected(&mut s, DomainError::PlantNotRunning { plant: coal }, |s| {
+        s.stop_plant(coal)
+    });
+}
+
+#[test]
+fn build_plant_starts_construction_on_an_unconnected_node() {
+    let mut s = session();
+    let at = cell(5, 5);
+    let (plant, events) = s.build_plant(PlantKind::Peaker, at).unwrap();
+    assert_eq!(
+        events,
+        vec![DomainEvent::PlantConstructionStarted {
+            plant,
+            kind: PlantKind::Peaker,
+            cell: at
+        }]
+    );
+    let view = s.plant_views().into_iter().find(|p| p.id == plant).unwrap();
+    assert_eq!(
+        view.status,
+        PlantStatus::UnderConstruction { months_left: 12 }
+    );
+    assert!(!view.connected);
+    assert_eq!(view.cell, at);
+    let node = s.power().network().node(view.node).unwrap();
+    assert_eq!(node.kind, NodeKind::Plant(plant));
+    let instalments: Vec<Money> = s
+        .pending_instalments(AssetRef::Plant(plant))
+        .unwrap()
+        .iter()
+        .copied()
+        .collect();
+    assert_eq!(instalments, Money::from_dollars(200_000_000).split_even(12));
+    // Construction is not yet capital in the rate base.
+    assert!(
+        s.company()
+            .rate_base()
+            .asset(AssetRef::Plant(plant))
+            .is_none()
+    );
+}
+
+#[test]
+fn build_line_prices_whole_cells_and_schedules_months() {
+    let mut s = session();
+    let (plant, _) = s.build_plant(PlantKind::Peaker, cell(4, 5)).unwrap();
+    let node = s.power().plant(plant).unwrap().node();
+    let root = s.anchor;
+    // (6, 4) to (4, 5) is sqrt(5) cells: 3 whole cells, 2 months at 2 cells a month.
+    let (line, events) = s.build_line(root, node).unwrap();
+    assert_eq!(events, vec![DomainEvent::LineConstructionStarted { line }]);
+    let built = s.power().network().lines().find(|l| l.id == line).unwrap();
+    assert_eq!(
+        built.status,
+        LineStatus::UnderConstruction { months_left: 2 }
+    );
+    let instalments: Vec<Money> = s
+        .pending_instalments(AssetRef::Line(line))
+        .unwrap()
+        .iter()
+        .copied()
+        .collect();
+    assert_eq!(instalments, vec![Money::from_dollars(60_000_000); 2]);
+}
+
+#[test]
+fn line_quote_matches_what_build_line_charges() {
+    let mut s = session();
+    let (plant, _) = s.build_plant(PlantKind::Peaker, cell(4, 5)).unwrap();
+    let node = s.power().plant(plant).unwrap().node();
+    let root = s.anchor;
+
+    // (6, 4) to (4, 5) is sqrt(5) cells: 3 whole cells, 2 months.
+    let before = s.state_hash();
+    let quote = s.line_quote(root, node).unwrap();
+    assert_eq!(
+        s.state_hash(),
+        before,
+        "a quote must not change the session"
+    );
+    assert_eq!(
+        s.line_quote(node, root).unwrap(),
+        quote,
+        "direction is free"
+    );
+    assert_eq!(
+        quote,
+        LineQuote {
+            cells: 3,
+            capital: Money::from_dollars(120_000_000),
+            months: 2,
+        }
+    );
+
+    let (line, events) = s.build_line(root, node).unwrap();
+    assert_eq!(events, vec![DomainEvent::LineConstructionStarted { line }]);
+    let built = s.power().network().lines().find(|l| l.id == line).unwrap();
+    assert_eq!(
+        built.status,
+        LineStatus::UnderConstruction {
+            months_left: quote.months
+        }
+    );
+    let queued = s
+        .pending_instalments(AssetRef::Line(line))
+        .unwrap()
+        .iter()
+        .fold(Money::ZERO, |total, instalment| total + *instalment);
+    assert_eq!(queued, quote.capital);
+
+    // The ledger books exactly the quoted capital, one instalment a month.
+    for month in 0..quote.months {
+        if month > 0 {
+            s.finish_review().unwrap();
+        }
+        s.begin_operating().unwrap();
+        run_ticks(&mut s, TICKS_PER_DAY);
+    }
+    let booked = s
+        .company()
+        .ledger()
+        .iter()
+        .filter(|e| e.category == LedgerCategory::Construction)
+        .filter(|e| e.subject == Some(AssetRef::Line(line)))
+        .fold(Money::ZERO, |total, e| total - e.amount);
+    assert_eq!(booked, quote.capital);
+}
+
+/// A line's total build time is its quote's months, and stays so while it is built and after it
+/// enters service (spec §16.9).
+#[test]
+fn line_build_months_is_what_the_quote_said() {
+    let mut s = session();
+    let root = s.anchor;
+    let (far, _) = s.build_plant(PlantKind::Peaker, cell(4, 5)).unwrap();
+    let (near, _) = s.build_plant(PlantKind::Peaker, cell(5, 4)).unwrap();
+    let far = s.power().plant(far).unwrap().node();
+    let near = s.power().plant(near).unwrap().node();
+    let far_quote = s.line_quote(root, far).unwrap();
+    assert_eq!(
+        far_quote.months, 2,
+        "sqrt(5) cells: 3 whole cells, 2 months"
+    );
+    let near_quote = s.line_quote(near, root).unwrap();
+    assert_eq!(near_quote.months, 1);
+
+    let (far_line, _) = s.build_line(root, far).unwrap();
+    let (near_line, _) = s.build_line(near, root).unwrap();
+    let before = s.state_hash();
+    assert_eq!(s.line_build_months(far_line), Some(far_quote.months));
+    assert_eq!(s.line_build_months(near_line), Some(near_quote.months));
+    assert_eq!(s.state_hash(), before, "a pure query");
+    assert_eq!(s.line_build_months(LineId(9_999)), None);
+
+    // A month on, the far line has a month left of its two, and the near one is in service.
+    s.begin_operating().unwrap();
+    run_ticks(&mut s, TICKS_PER_DAY);
+    let status = |line| {
+        s.line_views()
+            .into_iter()
+            .find(|l| l.id == line)
+            .unwrap()
+            .status
+    };
+    assert_eq!(
+        status(far_line),
+        LineStatus::UnderConstruction { months_left: 1 }
+    );
+    assert_eq!(status(near_line), LineStatus::InService);
+    assert_eq!(s.line_build_months(far_line), Some(2));
+    assert_eq!(s.line_build_months(near_line), Some(1));
+    // The start network's lines answer by the same rule.
+    for line in s.line_views() {
+        let months = s.line_build_months(line.id).expect("a known line");
+        assert!(months >= 1, "{line:?}");
+    }
+}
+
+#[test]
+fn line_quote_floors_a_short_line_at_one_month() {
+    let mut s = session();
+    let (plant, _) = s.build_plant(PlantKind::Peaker, cell(5, 4)).unwrap();
+    let node = s.power().plant(plant).unwrap().node();
+    // One cell: one month at 40 M.
+    assert_eq!(
+        s.line_quote(s.anchor, node).unwrap(),
+        LineQuote {
+            cells: 1,
+            capital: Money::from_dollars(40_000_000),
+            months: 1,
+        }
+    );
+}
+
+#[test]
+fn line_quote_returns_the_errors_build_line_would() {
+    let mut s = session();
+    let root = s.anchor;
+    let city1 = s.city_views()[1].node;
+    for (from, to, expected) in [
+        (
+            root,
+            NodeId(999),
+            DomainError::UnknownNode { node: NodeId(999) },
+        ),
+        (
+            NodeId(999),
+            root,
+            DomainError::UnknownNode { node: NodeId(999) },
+        ),
+        (root, root, DomainError::LineToSelf { node: root }),
+        (
+            city1,
+            root,
+            DomainError::DuplicateLine {
+                from: city1,
+                to: root,
+            },
+        ),
+        (
+            root,
+            city1,
+            DomainError::DuplicateLine {
+                from: root,
+                to: city1,
+            },
+        ),
+    ] {
+        let before = s.state_hash();
+        assert_eq!(s.line_quote(from, to), Err(expected.clone()));
+        assert_eq!(s.build_line(from, to).unwrap_err(), expected);
+        assert_eq!(s.state_hash(), before);
+    }
+}
+
+#[test]
+fn short_line_takes_at_least_one_month() {
+    let mut s = session();
+    let (plant, _) = s.build_plant(PlantKind::Peaker, cell(5, 4)).unwrap();
+    let node = s.power().plant(plant).unwrap().node();
+    let (line, _) = s.build_line(node, s.anchor).unwrap();
+    let built = s.power().network().lines().find(|l| l.id == line).unwrap();
+    assert_eq!(
+        built.status,
+        LineStatus::UnderConstruction { months_left: 1 }
+    );
+    assert_eq!(
+        s.pending_instalments(AssetRef::Line(line))
+            .unwrap()
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![Money::from_dollars(40_000_000)]
+    );
+}
+
+#[test]
+fn whole_cells_snaps_float_noise() {
+    assert_eq!(whole_cells(2.0), 2);
+    assert_eq!(whole_cells(2.000_000_000_1), 2);
+    assert_eq!(whole_cells(2.1), 3);
+    assert_eq!(whole_cells(0.0), 0);
+}
+
+#[test]
+fn commit_plant_validates_with_the_plants_own_spec() {
+    let mut s = empty_session();
+    let coal = plant_of(&s, PlantKind::Coal);
+    let peaker = plant_of(&s, PlantKind::Peaker);
+    // A one-hour gap fits the peaker (5 + 10 ticks) but not coal (100 + 480).
+    let mut hours = [true; 24];
+    hours[12] = false;
+    assert_eq!(s.commit_plant(peaker, hours).unwrap(), Vec::new());
+    assert_eq!(s.power().plant(peaker).unwrap().commitment().hours(), hours);
+    assert!(matches!(
+        s.commit_plant(coal, hours),
+        Err(DomainError::CommitmentInfeasible { .. })
+    ));
+    assert_eq!(
+        s.power().plant(coal).unwrap().commitment().hours(),
+        [false; 24]
+    );
+}
+
+#[test]
+fn commit_plant_rejects_unbuilt_unknown_and_non_dispatchable_plants() {
+    let mut s = session();
+    let (built, _) = s.build_plant(PlantKind::Peaker, cell(5, 5)).unwrap();
+    rejected(
+        &mut s,
+        DomainError::PlantNotCommissioned { plant: built },
+        |s| s.commit_plant(built, [true; 24]),
+    );
+    rejected(
+        &mut s,
+        DomainError::UnknownPlant {
+            plant: PlantId(999),
+        },
+        |s| s.commit_plant(PlantId(999), [true; 24]),
+    );
+    let solar = s.insert_commissioned_plant(PlantKind::Solar, cell(4, 4));
+    rejected(
+        &mut s,
+        DomainError::PlantNotDispatchable { plant: solar },
+        |s| s.commit_plant(solar, [true; 24]),
+    );
+    let coal = plant_of(&s, PlantKind::Coal);
+    s.begin_operating().unwrap();
+    rejected(
+        &mut s,
+        DomainError::WrongPhase {
+            actual: DayPhase::Operating,
+        },
+        |s| s.commit_plant(coal, [true; 24]),
+    );
+}
+
+#[test]
+fn plant_view_reports_the_initial_target() {
+    let mut s = session();
+    let coal = plant_of(&s, PlantKind::Coal);
+    let view = |s: &GameSession| s.plant_views().into_iter().find(|p| p.id == coal).unwrap();
+    // The default is the plant's minimum stable output.
+    assert_eq!(view(&s).initial_target, Megawatts::new(240.0));
+
+    s.set_dispatch_target(coal, Megawatts::new(300.0)).unwrap();
+
+    assert_eq!(view(&s).initial_target, Megawatts::new(300.0));
+    // A refused target leaves it alone.
+    assert!(s.set_dispatch_target(coal, Megawatts::new(100.0)).is_err());
+    assert_eq!(view(&s).initial_target, Megawatts::new(300.0));
+}
+
+#[test]
+fn planning_target_sets_the_initial_target() {
+    let mut s = empty_session();
+    let coal = plant_of(&s, PlantKind::Coal);
+    rejected(
+        &mut s,
+        DomainError::BelowMinimumStableOutput {
+            plant: coal,
+            min: Megawatts::new(240.0),
+        },
+        |s| s.set_dispatch_target(coal, Megawatts::new(100.0)),
+    );
+    s.set_dispatch_target(coal, Megawatts::new(300.0)).unwrap();
+    assert_eq!(
+        s.power().plant(coal).unwrap().initial_target(),
+        Megawatts::new(300.0)
+    );
+    s.start_plant(coal).unwrap();
+    s.begin_operating().unwrap();
+    let target = Megawatts::new(300.0);
+    assert_eq!(
+        s.power().plant(coal).unwrap().status(),
+        PlantStatus::Online {
+            output: target,
+            target
+        }
+    );
+    s.set_dispatch_target(coal, Megawatts::new(450.0)).unwrap();
+    assert_eq!(
+        s.power().plant(coal).unwrap().status(),
+        PlantStatus::Online {
+            output: target,
+            target: Megawatts::new(450.0)
+        }
+    );
+    let ccgt = plant_of(&s, PlantKind::Ccgt);
+    rejected(&mut s, DomainError::PlantNotOnline { plant: ccgt }, |s| {
+        s.set_dispatch_target(ccgt, Megawatts::new(300.0))
+    });
+}
+
+#[test]
+fn auto_follow_is_set_in_planning_and_operating() {
+    let mut s = empty_session();
+    let coal = plant_of(&s, PlantKind::Coal);
+    s.set_auto_follow(coal, true).unwrap();
+    assert!(s.power().plant(coal).unwrap().auto_follow());
+    s.begin_operating().unwrap();
+    s.set_auto_follow(coal, false).unwrap();
+    assert!(!s.power().plant(coal).unwrap().auto_follow());
+    let solar = s.insert_commissioned_plant(PlantKind::Solar, cell(4, 4));
+    rejected(
+        &mut s,
+        DomainError::PlantNotDispatchable { plant: solar },
+        |s| s.set_auto_follow(solar, true),
+    );
+}
+
+#[test]
+fn plant_commands_are_rejected_in_review() {
+    let mut s = session();
+    let coal = plant_of(&s, PlantKind::Coal);
+    s.begin_operating().unwrap();
+    run_ticks(&mut s, TICKS_PER_DAY);
+    let review = DomainError::WrongPhase {
+        actual: DayPhase::Review,
+    };
+    rejected(&mut s, review.clone(), |s| s.start_plant(coal));
+    rejected(&mut s, review.clone(), |s| s.stop_plant(coal));
+    rejected(&mut s, review.clone(), |s| s.set_auto_follow(coal, true));
+    rejected(&mut s, review, |s| {
+        s.set_dispatch_target(coal, Megawatts::new(300.0))
+    });
+}
+
+/// The start fleet committed all day on auto-follow, plus two extra
+/// peakers, so the grid stays healthy without coal.
+fn healthy_session() -> (GameSession, PlantId) {
+    let mut s = session();
+    let coal = plant_of(&s, PlantKind::Coal);
+    let mut fleet = vec![
+        plant_of(&s, PlantKind::Ccgt),
+        plant_of(&s, PlantKind::Peaker),
+    ];
+    fleet.push(s.insert_commissioned_plant(PlantKind::Peaker, cell(5, 5)));
+    fleet.push(s.insert_commissioned_plant(PlantKind::Peaker, cell(4, 4)));
+    for plant in fleet {
+        s.start_plant(plant).unwrap();
+        s.set_auto_follow(plant, true).unwrap();
+    }
+    s.set_auto_follow(coal, true).unwrap();
+    (s, coal)
+}
+
+#[test]
+fn stopping_committed_plant_suppresses_actions_without_changing_pattern() {
+    let (mut s, coal) = healthy_session();
+    s.start_plant(coal).unwrap();
+    s.begin_operating().unwrap();
+    run_ticks(&mut s, 600);
+    assert!(s.power().plant(coal).unwrap().is_online());
+    s.stop_plant(coal).unwrap();
+    assert!(matches!(
+        s.power().plant(coal).unwrap().status(),
+        PlantStatus::Stopping { .. }
+    ));
+    assert!(s.power().plant(coal).unwrap().is_commitment_suppressed());
+    let events = run_ticks(&mut s, TICKS_PER_DAY - 600);
+    assert!(!events.contains(&DomainEvent::PlantStarting { plant: coal }));
+    assert!(events.contains(&DomainEvent::PlantStopped { plant: coal }));
+    assert_eq!(
+        s.power().plant(coal).unwrap().status(),
+        PlantStatus::Offline
+    );
+    assert_eq!(
+        s.power().plant(coal).unwrap().commitment().hours(),
+        [true; 24]
+    );
+}
+
+#[test]
+fn stopped_hydro_with_agc_enabled_does_not_starve_the_running_unit() {
+    use crate::region::{RegionDefinition, StartPlantDef, fixtures::tiny_region_parts};
+    use crate::time::TICKS_PER_HOUR;
+    use crate::units::Ratio;
+
+    let mut parts = tiny_region_parts();
+    // A flat, noise-free load that either fixture hydro plant can serve alone.
+    let demand = parts.cities[0].base_load;
+    parts.start.connected_cities = vec![parts.cities[0].id];
+    parts.demand.winter = [1.0; 24];
+    parts.demand.summer = [1.0; 24];
+    parts.demand.shoulder = [1.0; 24];
+    parts.demand.monthly = [1.0; 12];
+    parts.demand.forecast_error = Ratio::ZERO;
+    // Give the second unit its own equivalent hydro site. Both lines still price five cells.
+    let terrain = &parts.terrain;
+    let hydro_site = terrain.get(cell(10, 1)).unwrap();
+    let cells = (0..terrain.height())
+        .flat_map(|y| {
+            (0..terrain.width()).map(move |x| {
+                if (x, y) == (10, 2) {
+                    hydro_site.clone()
+                } else {
+                    terrain.get(cell(x, y)).unwrap().clone()
+                }
+            })
+        })
+        .collect();
+    parts.terrain =
+        crate::region::TerrainGrid::new(terrain.width(), terrain.height(), cells).unwrap();
+    parts.start.fleet = [cell(10, 1), cell(10, 2)]
+        .into_iter()
+        .map(|cell| StartPlantDef {
+            kind: PlantKind::Hydro,
+            cell,
+        })
+        .collect();
+    let mut s = GameSession::new(
+        Arc::new(RegionDefinition::try_from(parts).unwrap()),
+        1,
+        GameSettings::default(),
+    );
+    let plants = s.plant_views();
+    let (idle, running) = (plants[0].id, plants[1].id);
+    // Keep the lower-id unit idle, so stopping it removes no generation.
+    s.set_auto_follow(idle, false).unwrap();
+    s.begin_operating().unwrap();
+    assert_eq!(s.power().plant(idle).unwrap().output(), Megawatts::ZERO);
+    assert_eq!(s.power().plant(running).unwrap().output(), demand);
+
+    let stop_at = 5 * TICKS_PER_HOUR + 1;
+    for tick in 0..TICKS_PER_DAY {
+        if tick == stop_at {
+            s.set_auto_follow(idle, true).unwrap();
+            s.stop_plant(idle).unwrap();
+            let plant = s.power().plant(idle).unwrap();
+            assert!(plant.auto_follow());
+            assert!(plant.is_commitment_suppressed());
+            assert_eq!(plant.commitment(), CommitmentSchedule::all_day());
+        }
+        let events = s.tick().unwrap();
+        let summary = events
+            .iter()
+            .find_map(|event| match event {
+                DomainEvent::TickCompleted(summary) => Some(summary),
+                _ => None,
+            })
+            .unwrap();
+        // In particular, the 06:00 re-plan must not give the idle unit the
+        // healthy unit's allocation and ramp the healthy unit down to zero.
+        assert_eq!(summary.generation, demand, "tick {tick}");
+        assert_eq!(summary.served, demand, "tick {tick}");
+        assert_eq!(summary.unserved, Megawatts::ZERO, "tick {tick}");
+        assert_eq!(summary.outage, Ratio::ZERO, "tick {tick}");
+        assert_eq!(summary.mode, crate::grid::GridMode::Normal, "tick {tick}");
+        assert!(!events.contains(&DomainEvent::Blackout), "tick {tick}");
+        s.check_invariants().unwrap();
+    }
+    assert_eq!(s.phase(), DayPhase::Review);
+    assert_eq!(s.company().reliability(), Ratio::ONE);
+    assert_eq!(s.regulator().strikes(), 0);
+    assert_eq!(
+        s.power().plant(idle).unwrap().status(),
+        PlantStatus::Offline
+    );
+}
+
+#[test]
+fn stopping_a_mixed_pattern_plant_suppresses_its_next_scheduled_start() {
+    // On 00–09 and 20–23: the 10-hour gap fits coal's 100 + 480 ticks.
+    let hours: [bool; 24] = std::array::from_fn(|h| !(10..20).contains(&h));
+    let start_tick = 20 * 60 - 480;
+    let (mut control, coal) = healthy_session();
+    control.commit_plant(coal, hours).unwrap();
+    control.begin_operating().unwrap();
+    let mut stopped = control.clone();
+
+    let events = run_ticks(&mut control, start_tick + 1);
+    assert!(events.contains(&DomainEvent::PlantStarting { plant: coal }));
+
+    run_ticks(&mut stopped, 300);
+    stopped.stop_plant(coal).unwrap();
+    let events = run_ticks(&mut stopped, TICKS_PER_DAY - 300);
+    assert!(!events.contains(&DomainEvent::Blackout));
+    assert!(!events.contains(&DomainEvent::PlantStarting { plant: coal }));
+    assert_eq!(
+        stopped.power().plant(coal).unwrap().commitment().hours(),
+        hours
+    );
+}
+
+#[test]
+fn planning_start_and_stop_select_patterns_without_advancing_time() {
+    let mut s = session();
+    let nuclear = s.insert_commissioned_plant(PlantKind::Nuclear, cell(9, 2));
+    let (clock, rng) = (*s.clock(), s.rng.clone());
+    assert_eq!(s.start_plant(nuclear).unwrap(), Vec::new());
+    assert_eq!(
+        s.power().plant(nuclear).unwrap().commitment().hours(),
+        [true; 24]
+    );
+    assert_eq!(
+        s.power().plant(nuclear).unwrap().status(),
+        PlantStatus::Offline
+    );
+    assert_eq!(s.stop_plant(nuclear).unwrap(), Vec::new());
+    assert_eq!(
+        s.power().plant(nuclear).unwrap().commitment().hours(),
+        [false; 24]
+    );
+    assert_eq!((*s.clock(), &s.rng), (clock, &rng));
+    assert_eq!(s.phase(), DayPhase::Planning);
+}
+
+#[test]
+fn planning_start_rejects_unbuilt_plants() {
+    let mut s = session();
+    let (built, _) = s.build_plant(PlantKind::Peaker, cell(5, 5)).unwrap();
+    rejected(
+        &mut s,
+        DomainError::PlantNotCommissioned { plant: built },
+        |s| s.start_plant(built),
+    );
+    rejected(
+        &mut s,
+        DomainError::PlantNotCommissioned { plant: built },
+        |s| s.stop_plant(built),
+    );
+}
+
+#[test]
+fn manual_start_beyond_midnight_is_rejected_unchanged() {
+    let mut s = empty_session();
+    let nuclear = s.insert_commissioned_plant(PlantKind::Nuclear, cell(9, 2));
+    s.begin_operating().unwrap();
+    rejected(
+        &mut s,
+        DomainError::StartUpBeyondDay {
+            remaining: SimDuration::from_ticks(TICKS_PER_DAY),
+            startup: SimDuration::from_hours(48),
+        },
+        |s| s.start_plant(nuclear),
+    );
+    let coal = plant_of(&s, PlantKind::Coal);
+    run_ticks(&mut s, 961);
+    rejected(
+        &mut s,
+        DomainError::StartUpBeyondDay {
+            remaining: SimDuration::from_ticks(479),
+            startup: SimDuration::from_hours(8),
+        },
+        |s| s.start_plant(coal),
+    );
+}
+
+#[test]
+fn manual_start_finishing_exactly_at_midnight_is_allowed() {
+    let mut s = empty_session();
+    let coal = plant_of(&s, PlantKind::Coal);
+    s.begin_operating().unwrap();
+    run_ticks(&mut s, 960);
+    assert_eq!(
+        s.start_plant(coal).unwrap(),
+        vec![DomainEvent::PlantStarting { plant: coal }]
+    );
+    assert_eq!(
+        s.power().plant(coal).unwrap().status(),
+        PlantStatus::Starting { ticks_left: 480 }
+    );
+    let events = run_ticks(&mut s, TICKS_PER_DAY - 960);
+    assert!(events.contains(&DomainEvent::PlantOnline { plant: coal }));
+    assert_eq!(s.phase(), DayPhase::Review);
+    assert!(s.power().plant(coal).unwrap().is_online());
+}
+
+#[test]
+fn manual_start_of_a_running_plant_reports_its_state() {
+    let mut s = session();
+    let coal = plant_of(&s, PlantKind::Coal);
+    s.start_plant(coal).unwrap();
+    s.begin_operating().unwrap();
+    rejected(&mut s, DomainError::PlantNotOffline { plant: coal }, |s| {
+        s.start_plant(coal)
+    });
+}
+
+#[test]
+fn planning_target_accepts_exactly_minimum_and_capacity() {
+    let mut s = session();
+    let coal = plant_of(&s, PlantKind::Coal);
+    for mw in [240.0, 600.0] {
+        s.set_dispatch_target(coal, Megawatts::new(mw)).unwrap();
+        assert_eq!(
+            s.power().plant(coal).unwrap().initial_target(),
+            Megawatts::new(mw)
+        );
+    }
+    rejected(
+        &mut s,
+        DomainError::AboveCapacity {
+            plant: coal,
+            max: Megawatts::new(600.0),
+        },
+        |s| s.set_dispatch_target(coal, Megawatts::new(600.1)),
+    );
+}
+
+#[test]
+fn non_finite_targets_are_rejected_in_planning_and_operating() {
+    let mut s = session();
+    let coal = plant_of(&s, PlantKind::Coal);
+    let non_finite = DomainError::NonFiniteMegawatts { plant: coal };
+    // Infinities would otherwise read as above capacity or below minimum:
+    // finiteness is checked first.
+    let bad = [f64::NAN, f64::INFINITY, f64::NEG_INFINITY];
+    for mw in bad {
+        rejected(&mut s, non_finite.clone(), |s| {
+            s.set_dispatch_target(coal, Megawatts::unchecked(mw))
+        });
+    }
+    s.start_plant(coal).unwrap();
+    s.begin_operating().unwrap();
+    assert!(s.power().plant(coal).unwrap().is_online());
+    for mw in bad {
+        rejected(&mut s, non_finite.clone(), |s| {
+            s.set_dispatch_target(coal, Megawatts::unchecked(mw))
+        });
+    }
+}

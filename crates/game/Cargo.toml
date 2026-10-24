@@ -1,0 +1,66 @@
+[package]
+name = "game"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Each Bevy-linked test binary costs disk and its own link step, so the game has exactly two: the
+# lib's unit tests (inline `#[cfg(test)]` presenter tests) and the one integration binary,
+# tests/game.rs, whose modules live under tests/game/ (tests/game/layout.rs enforces that).
+# Doctests would each be a further binary, and main.rs has nothing to unit-test, so both are off.
+[lib]
+doctest = false
+
+[[bin]]
+name = "game"
+path = "src/main.rs"
+test = false
+
+[features]
+default = []
+dev = ["dep:bevy-inspector-egui"]
+
+[dependencies]
+bevy-inspector-egui = { version = "0.38.0", optional = true, default-features = false, features = ["bevy_render"] }
+domain = { workspace = true }
+application = { workspace = true }
+infrastructure = { workspace = true }
+bevy_egui = { workspace = true }
+egui_plot = { workspace = true }
+fluent-bundle = { workspace = true }
+tracing = { workspace = true }
+unic-langid = { workspace = true }
+
+# default-features = false (set in the workspace): Bevy 0.20's defaults are the 2d/3d/ui stacks plus
+# audio. These are the Bevy 0.20 feature names (checked in bevy-0.20.0/Cargo.toml):
+[dependencies.bevy]
+workspace = true
+features = [
+    "std",                # the standard library (Bevy 0.20 also builds no_std)
+    "multi_threaded",     # parallel system executor and task pools
+    "bevy_state",         # States / SubStates and StatesPlugin (in DefaultPlugins)
+    "bevy_window",        # Window, WindowPlugin
+    "bevy_winit",         # the winit event loop and windowing backend
+    "bevy_render",        # the wgpu renderer (also enables bevy_camera, so Camera2d)
+    "bevy_core_pipeline", # the 2D/3D main passes bevy_egui draws after
+    "bevy_log",           # LogPlugin: tracing subscriber, RUST_LOG filtering
+    "keyboard",           # keyboard input (each bevy_input device is an opt-in feature in 0.20)
+    "mouse",              # mouse input
+    "x11",                # Linux X11 backend for winit
+    "wayland",            # Linux Wayland backend for winit
+    "bevy_pbr",
+    "bevy_light",
+    "bevy_post_process",
+    "bevy_picking",       # PickingPlugin, which bevy_egui's default `picking` feature expects
+]
+# PBR/light/post-process implement the procedural diorama; no glTF/scene assets or audio.
+# The inspector is opt-in and shares Bevy 0.20 / egui 0.36 with the normal client.
+
+[dev-dependencies]
+proptest = { workspace = true }
+sha2 = { workspace = true }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

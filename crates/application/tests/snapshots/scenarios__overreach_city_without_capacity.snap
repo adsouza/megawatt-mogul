@@ -1,0 +1,367 @@
+---
+source: crates/application/tests/scenarios.rs
+expression: "support::rounded_debug(&report)"
+---
+MonthlyReport {
+    month: SimMonth {
+        year: 2027,
+        month: 7,
+    },
+    days: 31,
+    revenue: Money(
+        8933875670,
+    ),
+    fuel: Money(
+        -4822006083,
+    ),
+    start_up: Money(
+        0,
+    ),
+    fixed_om: Money(
+        -277000000,
+    ),
+    construction: Money(
+        0,
+    ),
+    net: Money(
+        3834869587,
+    ),
+    storage: {},
+    energy_by_kind: {
+        Coal: MegawattHours(
+            446319.703438,
+        ),
+        Ccgt: MegawattHours(
+            370352.633734,
+        ),
+        Peaker: MegawattHours(
+            121097.341423,
+        ),
+    },
+    merit_order: [
+        MeritOrderEntry {
+            plant: PlantId(
+                4,
+            ),
+            kind: Coal,
+            marginal_cost: Price(
+                30.0,
+            ),
+            energy: MegawattHours(
+                446319.703438,
+            ),
+        },
+        MeritOrderEntry {
+            plant: PlantId(
+                7,
+            ),
+            kind: Ccgt,
+            marginal_cost: Price(
+                45.0,
+            ),
+            energy: MegawattHours(
+                370352.633734,
+            ),
+        },
+        MeritOrderEntry {
+            plant: PlantId(
+                10,
+            ),
+            kind: Peaker,
+            marginal_cost: Price(
+                150.0,
+            ),
+            energy: MegawattHours(
+                121097.341423,
+            ),
+        },
+    ],
+    demand: MegawattHours(
+        2707802.12696,
+    ),
+    served: MegawattHours(
+        940407.965273,
+    ),
+    unserved: MegawattHours(
+        1767394.16168,
+    ),
+    curtailed: MegawattHours(
+        0.0,
+    ),
+    imbalance: MegawattHours(
+        -2638.28667839,
+    ),
+    overgeneration: MegawattHours(
+        1340.66525003,
+    ),
+    rotating_outage: MegawattHours(
+        1764166.1719,
+    ),
+    peak_outage_share: Ratio(
+        0.719146637861,
+    ),
+    peak_demand: Megawatts(
+        4874.02228303,
+    ),
+    reliability: Ratio(
+        0.347295674197,
+    ),
+    incidents: [
+        Incident {
+            tick: 0,
+            kind: RotatingOutage {
+                share: Ratio(
+                    0.538598047915,
+                ),
+            },
+        },
+        Incident {
+            tick: 60,
+            kind: RotatingOutage {
+                share: Ratio(
+                    0.510634293243,
+                ),
+            },
+        },
+        Incident {
+            tick: 120,
+            kind: RotatingOutage {
+                share: Ratio(
+                    0.495341614907,
+                ),
+            },
+        },
+        Incident {
+            tick: 180,
+            kind: RotatingOutage {
+                share: Ratio(
+                    0.495210159219,
+                ),
+            },
+        },
+        Incident {
+            tick: 240,
+            kind: RotatingOutage {
+                share: Ratio(
+                    0.524561285879,
+                ),
+            },
+        },
+        Incident {
+            tick: 300,
+            kind: RotatingOutage {
+                share: Ratio(
+                    0.574277636477,
+                ),
+            },
+        },
+        Incident {
+            tick: 360,
+            kind: RotatingOutage {
+                share: Ratio(
+                    0.619350186848,
+                ),
+            },
+        },
+        Incident {
+            tick: 420,
+            kind: RotatingOutage {
+                share: Ratio(
+                    0.640799221732,
+                ),
+            },
+        },
+        Incident {
+            tick: 480,
+            kind: RotatingOutage {
+                share: Ratio(
+                    0.648806053143,
+                ),
+            },
+        },
+        Incident {
+            tick: 540,
+            kind: RotatingOutage {
+                share: Ratio(
+                    0.697301926921,
+                ),
+            },
+        },
+        Incident {
+            tick: 600,
+            kind: RotatingOutage {
+                share: Ratio(
+                    0.70116684291,
+                ),
+            },
+        },
+        Incident {
+            tick: 660,
+            kind: RotatingOutage {
+                share: Ratio(
+                    0.701219827512,
+                ),
+            },
+        },
+        Incident {
+            tick: 765,
+            kind: LoadShed {
+                mw: Megawatts(
+                    66.5082195253,
+                ),
+            },
+        },
+        Incident {
+            tick: 780,
+            kind: RotatingOutage {
+                share: Ratio(
+                    0.704313007048,
+                ),
+            },
+        },
+        Incident {
+            tick: 805,
+            kind: LoadShed {
+                mw: Megawatts(
+                    66.6516470018,
+                ),
+            },
+        },
+        Incident {
+            tick: 840,
+            kind: RotatingOutage {
+                share: Ratio(
+                    0.707393614719,
+                ),
+            },
+        },
+        Incident {
+            tick: 846,
+            kind: LoadShed {
+                mw: Megawatts(
+                    66.9168222539,
+                ),
+            },
+        },
+        Incident {
+            tick: 898,
+            kind: LoadShed {
+                mw: Megawatts(
+                    66.819870313,
+                ),
+            },
+        },
+        Incident {
+            tick: 900,
+            kind: RotatingOutage {
+                share: Ratio(
+                    0.713317425513,
+                ),
+            },
+        },
+        Incident {
+            tick: 960,
+            kind: RotatingOutage {
+                share: Ratio(
+                    0.719052988857,
+                ),
+            },
+        },
+        Incident {
+            tick: 1020,
+            kind: RotatingOutage {
+                share: Ratio(
+                    0.719146637861,
+                ),
+            },
+        },
+        Incident {
+            tick: 1056,
+            kind: LoadShed {
+                mw: Megawatts(
+                    66.8834162753,
+                ),
+            },
+        },
+        Incident {
+            tick: 1072,
+            kind: LoadShed {
+                mw: Megawatts(
+                    67.4259906017,
+                ),
+            },
+        },
+        Incident {
+            tick: 1080,
+            kind: RotatingOutage {
+                share: Ratio(
+                    0.716309735213,
+                ),
+            },
+        },
+        Incident {
+            tick: 1102,
+            kind: LoadShed {
+                mw: Megawatts(
+                    67.5832225634,
+                ),
+            },
+        },
+        Incident {
+            tick: 1115,
+            kind: LoadShed {
+                mw: Megawatts(
+                    67.0911226503,
+                ),
+            },
+        },
+        Incident {
+            tick: 1140,
+            kind: RotatingOutage {
+                share: Ratio(
+                    0.707444414439,
+                ),
+            },
+        },
+        Incident {
+            tick: 1200,
+            kind: RotatingOutage {
+                share: Ratio(
+                    0.645075421473,
+                ),
+            },
+        },
+        Incident {
+            tick: 1260,
+            kind: RotatingOutage {
+                share: Ratio(
+                    0.620021921812,
+                ),
+            },
+        },
+        Incident {
+            tick: 1320,
+            kind: RotatingOutage {
+                share: Ratio(
+                    0.585921325052,
+                ),
+            },
+        },
+        Incident {
+            tick: 1380,
+            kind: RotatingOutage {
+                share: Ratio(
+                    0.557559771973,
+                ),
+            },
+        },
+    ],
+    over_frequency_trips: 0,
+    out_of_band_share: Ratio(
+        0.161111111111,
+    ),
+    frequency_failed: true,
+    frequency_notice: false,
+    rate_review: None,
+    curtailed_by_kind: {},
+}

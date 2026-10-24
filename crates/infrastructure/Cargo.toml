@@ -1,0 +1,28 @@
+[package]
+name = "infrastructure"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+flate2 = "1.1"
+application = { workspace = true }
+domain = { workspace = true }
+serde = { workspace = true }
+ron = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+sha2 = { workspace = true }
+
+tempfile = { workspace = true }
+
+[build-dependencies]
+sha2 = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+domain = { workspace = true, features = ["test-fixtures"] }
+
+[lints]
+workspace = true

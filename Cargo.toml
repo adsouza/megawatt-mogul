@@ -1,0 +1,65 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/domain",
+    "crates/application",
+    "crates/infrastructure",
+    "crates/game",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "AGPL-3.0-only"
+
+[workspace.dependencies]
+# Internal crates
+domain = { path = "crates/domain" }
+application = { path = "crates/application" }
+infrastructure = { path = "crates/infrastructure" }
+
+# Runtime dependencies
+rand_chacha = "0.10"
+thiserror = "2.0"
+tracing = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+ron = "0.12"
+sha2 = "0.11"
+
+# Game client only (crates/game). No other crate may depend on these (spec §4.2).
+# Features are chosen per crate; bevy's defaults (audio, 2d/3d/ui stacks) stay off.
+bevy = { version = "0.20", default-features = false }
+bevy_egui = "0.43.1"
+egui_plot = "0.37.0"
+fluent-bundle = "0.16"
+unic-langid = "0.9"
+
+# Test-only dependencies
+proptest = "1.12"
+proptest-state-machine = "0.9"
+insta = "1.49"
+tempfile = "3.27"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+# Dev builds (the test profile inherits these). Bevy is huge: unoptimised with full debug info it
+# makes debug binaries of ~300 MB and a target/ of 20 GB, and the game runs too slowly to play.
+# Our own crates keep the defaults: opt-level 0 and full debug info, for fast rebuilds and good
+# debugging of the code we change.
+[profile.dev]
+debug = true # full debug info for workspace crates (the default, stated so it isn't "fixed")
+split-debuginfo = "packed" # bundle macOS debug info into dSYMs instead of retaining loose objects
+
+# Every non-workspace crate: Bevy, wgpu, egui, but also rand_chacha, proptest and the rest.
+[profile.dev.package."*"]
+opt-level = 3 # dependencies run at release speed, so the game is playable in debug builds
+debug = false # no debug info for dependencies: much smaller binaries and target/
+
+# Money is plain i64 arithmetic: an overflow must panic, never wrap, in every profile.
+[profile.release]
+overflow-checks = true

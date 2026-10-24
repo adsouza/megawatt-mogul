@@ -1,0 +1,37 @@
+name: Mutation testing
+
+# Weekly, never per commit: a full run mutates every function in `domain` and
+# `application` and takes a long time. See TESTING.md ("Mutation testing").
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+# No Cargo cache: the mutated crates (domain, application) have small, Bevy-free
+# dependencies; cargo-mutants builds in scratch copies that don't reuse target/; and a
+# weekly run's cache would be close to GitHub's seven-day eviction by the next run.
+jobs:
+  mutants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98.1"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants,cargo-nextest
+      # Mutants run in scratch copies of the tree (no --in-place), 4 at a time.
+      - name: Run mutation tests
+        run: cargo mutants -p domain -p application -j 4
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutants-out
+          path: mutants.out/
+          if-no-files-found: ignore

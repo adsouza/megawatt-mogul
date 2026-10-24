@@ -1,0 +1,118 @@
+---
+source: crates/application/tests/scenarios.rs
+expression: "support::rounded_debug(g.projections().monthly_reports.latest().unwrap())"
+---
+MonthlyReport {
+    month: SimMonth {
+        year: 2027,
+        month: 1,
+    },
+    days: 31,
+    revenue: Money(
+        6929954529,
+    ),
+    fuel: Money(
+        -3031977219,
+    ),
+    start_up: Money(
+        0,
+    ),
+    fixed_om: Money(
+        -277000000,
+    ),
+    construction: Money(
+        0,
+    ),
+    net: Money(
+        3620977310,
+    ),
+    storage: {},
+    energy_by_kind: {
+        Coal: MegawattHours(
+            426209.520794,
+        ),
+        Ccgt: MegawattHours(
+            266233.271997,
+        ),
+        Peaker: MegawattHours(
+            37019.9288636,
+        ),
+    },
+    merit_order: [
+        MeritOrderEntry {
+            plant: PlantId(
+                4,
+            ),
+            kind: Coal,
+            marginal_cost: Price(
+                30.0,
+            ),
+            energy: MegawattHours(
+                426209.520794,
+            ),
+        },
+        MeritOrderEntry {
+            plant: PlantId(
+                7,
+            ),
+            kind: Ccgt,
+            marginal_cost: Price(
+                45.0,
+            ),
+            energy: MegawattHours(
+                266233.271997,
+            ),
+        },
+        MeritOrderEntry {
+            plant: PlantId(
+                10,
+            ),
+            kind: Peaker,
+            marginal_cost: Price(
+                150.0,
+            ),
+            energy: MegawattHours(
+                37019.9288636,
+            ),
+        },
+    ],
+    demand: MegawattHours(
+        729468.897831,
+    ),
+    served: MegawattHours(
+        729468.897831,
+    ),
+    unserved: MegawattHours(
+        0.0,
+    ),
+    curtailed: MegawattHours(
+        0.0,
+    ),
+    imbalance: MegawattHours(
+        -6.17617686741,
+    ),
+    overgeneration: MegawattHours(
+        928.459872192,
+    ),
+    rotating_outage: MegawattHours(
+        0.0,
+    ),
+    peak_outage_share: Ratio(
+        0.0,
+    ),
+    peak_demand: Megawatts(
+        1266.93351814,
+    ),
+    reliability: Ratio(
+        1.0,
+    ),
+    incidents: [],
+    over_frequency_trips: 0,
+    out_of_band_share: Ratio(
+        0.0,
+    ),
+    frequency_failed: false,
+    frequency_notice: false,
+    rate_review: None,
+    curtailed_by_kind: {},
+}
