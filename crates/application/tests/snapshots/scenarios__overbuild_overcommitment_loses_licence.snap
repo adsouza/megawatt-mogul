@@ -1,7 +1,6 @@
 ---
 source: crates/application/tests/scenarios.rs
-assertion_line: 668
-expression: "OverbuildOutcome { status, timeline, minimum_generation, last_report, }"
+expression: "support::rounded_debug(&OverbuildOutcome\n{ status, timeline, minimum_generation, last_report, })"
 ---
 OverbuildOutcome {
     status: GameOver(
@@ -27,10 +26,10 @@ OverbuildOutcome {
             },
             RateReviewCompleted {
                 tariff: Price(
-                    100.4613360521048,
+                    100.461336052,
                 ),
                 allowed_return: Ratio(
-                    0.09468736188741605,
+                    0.0946873618874,
                 ),
             },
         ),
@@ -41,10 +40,10 @@ OverbuildOutcome {
             },
             RateReviewCompleted {
                 tariff: Price(
-                    99.23185797248539,
+                    99.2318579725,
                 ),
                 allowed_return: Ratio(
-                    0.095555068364716,
+                    0.0955550683647,
                 ),
             },
         ),
@@ -153,10 +152,10 @@ OverbuildOutcome {
                 1280.0,
             ),
             net_load: Megawatts(
-                617.3999999999999,
+                617.4,
             ),
             excess: Megawatts(
-                662.6000000000001,
+                662.6,
             ),
         },
     ),
@@ -187,10 +186,10 @@ OverbuildOutcome {
         storage: {},
         energy_by_kind: {
             Coal: MegawattHours(
-                301373.2424124951,
+                301373.242412,
             ),
             Ccgt: MegawattHours(
-                292407.85667890275,
+                292407.856679,
             ),
             Peaker: MegawattHours(
                 80.0,
@@ -206,7 +205,7 @@ OverbuildOutcome {
                     30.0,
                 ),
                 energy: MegawattHours(
-                    301373.2424124951,
+                    301373.242412,
                 ),
             },
             MeritOrderEntry {
@@ -218,7 +217,7 @@ OverbuildOutcome {
                     45.0,
                 ),
                 energy: MegawattHours(
-                    899.9999999999999,
+                    900.0,
                 ),
             },
             MeritOrderEntry {
@@ -230,7 +229,7 @@ OverbuildOutcome {
                     45.0,
                 ),
                 energy: MegawattHours(
-                    1400.0000000000002,
+                    1400.0,
                 ),
             },
             MeritOrderEntry {
@@ -242,7 +241,7 @@ OverbuildOutcome {
                     45.0,
                 ),
                 energy: MegawattHours(
-                    1900.0000000000005,
+                    1900.0,
                 ),
             },
             MeritOrderEntry {
@@ -254,7 +253,7 @@ OverbuildOutcome {
                     45.0,
                 ),
                 energy: MegawattHours(
-                    144207.8566789025,
+                    144207.856679,
                 ),
             },
             MeritOrderEntry {
@@ -266,7 +265,7 @@ OverbuildOutcome {
                     45.0,
                 ),
                 energy: MegawattHours(
-                    144000.0000000003,
+                    144000.0,
                 ),
             },
             MeritOrderEntry {
@@ -283,10 +282,10 @@ OverbuildOutcome {
             },
         ],
         demand: MegawattHours(
-            587974.6051432032,
+            587974.605143,
         ),
         served: MegawattHours(
-            587974.6051432032,
+            587974.605143,
         ),
         unserved: MegawattHours(
             0.0,
@@ -295,10 +294,10 @@ OverbuildOutcome {
             0.0,
         ),
         imbalance: MegawattHours(
-            5886.493948194061,
+            5886.49394819,
         ),
         overgeneration: MegawattHours(
-            6544.642851558002,
+            6544.64285156,
         ),
         rotating_outage: MegawattHours(
             0.0,
@@ -307,7 +306,7 @@ OverbuildOutcome {
             0.0,
         ),
         peak_demand: Megawatts(
-            966.3035767308846,
+            966.303576731,
         ),
         reliability: Ratio(
             1.0,
@@ -348,7 +347,7 @@ OverbuildOutcome {
         ],
         over_frequency_trips: 4,
         out_of_band_share: Ratio(
-            0.14791666666666667,
+            0.147916666667,
         ),
         frequency_failed: true,
         frequency_notice: false,

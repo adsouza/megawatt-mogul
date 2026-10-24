@@ -152,7 +152,9 @@ fn winter_peak_month() {
     let (mut g, _) = game_on(winter_peak(), 11);
     play_month(&mut g, auto_follow_all);
     assert_plausible(latest_report(&g));
-    insta::assert_debug_snapshot!(g.projections().monthly_reports.latest().unwrap());
+    insta::assert_snapshot!(support::rounded_debug(
+        g.projections().monthly_reports.latest().unwrap()
+    ));
 }
 
 #[test]
@@ -175,7 +177,7 @@ fn duck_curve_month() {
         "a duck-curve day curtails solar or warns of the evening ramp"
     );
     assert_plausible(report);
-    insta::assert_debug_snapshot!(report);
+    insta::assert_snapshot!(support::rounded_debug(&report));
 }
 
 #[test]
@@ -220,7 +222,7 @@ fn overreach_city_without_capacity() {
         "the regulator strikes the unreliable month"
     );
     assert_plausible(report);
-    insta::assert_debug_snapshot!(report);
+    insta::assert_snapshot!(support::rounded_debug(&report));
 }
 
 /// The forecast shortfall of the current month's representative day, in
@@ -669,12 +671,12 @@ fn overbuild_overcommitment_loses_licence() {
     assert_no_excess_before_commissioning(&timeline);
 
     assert_plausible(&last_report);
-    insta::assert_debug_snapshot!(OverbuildOutcome {
+    insta::assert_snapshot!(support::rounded_debug(&OverbuildOutcome {
         status,
         timeline,
         minimum_generation,
         last_report,
-    });
+    }));
 }
 
 /// Idle capacity (the used-and-useful reserve review end to end): the same
@@ -760,12 +762,12 @@ fn overbuild_idle_capacity_disallowance() {
 
     assert_plausible(&last_report);
     let minimum_generation = g.session().minimum_generation_check();
-    insta::assert_debug_snapshot!(OverbuildOutcome {
+    insta::assert_snapshot!(support::rounded_debug(&OverbuildOutcome {
         status,
         timeline,
         minimum_generation,
         last_report,
-    });
+    }));
 }
 
 /// Each plant's revenue in its `PlantHistory` for the month that just closed: what the history
@@ -857,5 +859,38 @@ fn plant_revenue_takes_the_reviewed_tariff_from_the_january_after_the_review() {
         plant_revenue_since(&g, &after_december),
         at_new,
         "January is the first month at the reviewed tariff"
+    );
+}
+
+#[test]
+fn rounded_debug_rounds_floats_and_keeps_integers() {
+    #[derive(Debug)]
+    #[allow(dead_code)]
+    struct Sample {
+        id_7: u32,
+        cents: i64,
+        mwh: f64,
+        tiny: f64,
+        negative: f64,
+        whole: f64,
+    }
+    let text = support::rounded_debug(&Sample {
+        id_7: 42,
+        cents: 123_456_789_012_345,
+        mwh: 45425.227257652965,
+        tiny: 0.09468736188741605,
+        negative: -6.176176867406136,
+        whole: 0.0,
+    });
+    assert!(text.contains("id_7: 42,"), "{text}");
+    assert!(text.contains("cents: 123456789012345,"), "{text}");
+    assert!(text.contains("mwh: 45425.2272577,"), "{text}");
+    assert!(text.contains("tiny: 0.0946873618874,"), "{text}");
+    assert!(text.contains("negative: -6.17617686741,"), "{text}");
+    assert!(text.contains("whole: 0.0,"), "{text}");
+    // Last-bit platform differences round to the same text.
+    assert_eq!(
+        support::rounded_debug(&45425.22725765297_f64),
+        support::rounded_debug(&45425.227257652965_f64)
     );
 }

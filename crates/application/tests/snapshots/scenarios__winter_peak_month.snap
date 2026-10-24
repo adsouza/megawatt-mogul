@@ -1,7 +1,6 @@
 ---
 source: crates/application/tests/scenarios.rs
-assertion_line: 155
-expression: g.projections().monthly_reports.latest().unwrap()
+expression: "support::rounded_debug(g.projections().monthly_reports.latest().unwrap())"
 ---
 MonthlyReport {
     month: SimMonth {
@@ -30,13 +29,13 @@ MonthlyReport {
     storage: {},
     energy_by_kind: {
         Coal: MegawattHours(
-            426209.5207936858,
+            426209.520794,
         ),
         Ccgt: MegawattHours(
-            266233.27199678135,
+            266233.271997,
         ),
         Peaker: MegawattHours(
-            37019.9288635628,
+            37019.9288636,
         ),
     },
     merit_order: [
@@ -49,7 +48,7 @@ MonthlyReport {
                 30.0,
             ),
             energy: MegawattHours(
-                426209.5207936858,
+                426209.520794,
             ),
         },
         MeritOrderEntry {
@@ -61,7 +60,7 @@ MonthlyReport {
                 45.0,
             ),
             energy: MegawattHours(
-                266233.27199678135,
+                266233.271997,
             ),
         },
         MeritOrderEntry {
@@ -73,15 +72,15 @@ MonthlyReport {
                 150.0,
             ),
             energy: MegawattHours(
-                37019.9288635628,
+                37019.9288636,
             ),
         },
     ],
     demand: MegawattHours(
-        729468.8978308962,
+        729468.897831,
     ),
     served: MegawattHours(
-        729468.8978308962,
+        729468.897831,
     ),
     unserved: MegawattHours(
         0.0,
@@ -90,10 +89,10 @@ MonthlyReport {
         0.0,
     ),
     imbalance: MegawattHours(
-        -6.176176867406136,
+        -6.17617686741,
     ),
     overgeneration: MegawattHours(
-        928.4598721918022,
+        928.459872192,
     ),
     rotating_outage: MegawattHours(
         0.0,
@@ -102,7 +101,7 @@ MonthlyReport {
         0.0,
     ),
     peak_demand: Megawatts(
-        1266.9335181449962,
+        1266.93351814,
     ),
     reliability: Ratio(
         1.0,

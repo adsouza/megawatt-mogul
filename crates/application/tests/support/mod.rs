@@ -244,3 +244,59 @@ pub fn overreach() -> RegionDefinitionParts {
 pub fn overbuild() -> RegionDefinitionParts {
     winter_peak()
 }
+
+/// Pretty `Debug` text with every float literal rounded to 12 significant digits, for
+/// snapshots. Floats derived through libm transcendentals may differ in their last bits
+/// between platforms (spec §5.7); 12 digits is far coarser than that noise and far finer than
+/// any tuning change. Integers, including `Money` cents, are left exactly as printed.
+pub fn rounded_debug(value: &impl std::fmt::Debug) -> String {
+    let text = format!("{value:#?}");
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let starts_number = bytes[i].is_ascii_digit()
+            && (i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_'));
+        if !starts_number {
+            out.push(char::from(bytes[i]));
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            i += 1;
+        }
+        let mut float = false;
+        if i + 1 < bytes.len() && bytes[i] == b'.' && bytes[i + 1].is_ascii_digit() {
+            float = true;
+            i += 1;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+        }
+        if i < bytes.len() && (bytes[i] == b'e' || bytes[i] == b'E') {
+            let mut j = i + 1;
+            if j < bytes.len() && (bytes[j] == b'-' || bytes[j] == b'+') {
+                j += 1;
+            }
+            if j < bytes.len() && bytes[j].is_ascii_digit() {
+                float = true;
+                i = j;
+                while i < bytes.len() && bytes[i].is_ascii_digit() {
+                    i += 1;
+                }
+            }
+        }
+        let token = &text[start..i];
+        if float {
+            let value: f64 = token.parse().expect("a Debug float literal parses");
+            let rounded: f64 = format!("{value:.11e}")
+                .parse()
+                .expect("rounded float parses");
+            out.push_str(&format!("{rounded:?}"));
+        } else {
+            out.push_str(token);
+        }
+    }
+    out
+}

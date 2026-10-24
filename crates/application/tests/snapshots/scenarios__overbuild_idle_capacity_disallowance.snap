@@ -1,7 +1,6 @@
 ---
 source: crates/application/tests/scenarios.rs
-assertion_line: 756
-expression: "OverbuildOutcome { status, timeline, minimum_generation, last_report, }"
+expression: "support::rounded_debug(&OverbuildOutcome\n{ status, timeline, minimum_generation, last_report, })"
 ---
 OverbuildOutcome {
     status: Active,
@@ -25,10 +24,10 @@ OverbuildOutcome {
             },
             RateReviewCompleted {
                 tariff: Price(
-                    100.4613360521048,
+                    100.461336052,
                 ),
                 allowed_return: Ratio(
-                    0.09468736188741605,
+                    0.0946873618874,
                 ),
             },
         ),
@@ -39,10 +38,10 @@ OverbuildOutcome {
             },
             RateReviewCompleted {
                 tariff: Price(
-                    99.23185797248539,
+                    99.2318579725,
                 ),
                 allowed_return: Ratio(
-                    0.095555068364716,
+                    0.0955550683647,
                 ),
             },
         ),
@@ -165,10 +164,10 @@ OverbuildOutcome {
             },
             RateReviewCompleted {
                 tariff: Price(
-                    111.14547279515116,
+                    111.145472795,
                 ),
                 allowed_return: Ratio(
-                    0.09424677945266584,
+                    0.0942467794527,
                 ),
             },
         ),
@@ -338,10 +337,10 @@ OverbuildOutcome {
             },
             RateReviewCompleted {
                 tariff: Price(
-                    111.04660966867604,
+                    111.046609669,
                 ),
                 allowed_return: Ratio(
-                    0.08180175184151191,
+                    0.0818017518415,
                 ),
             },
         ),
@@ -374,13 +373,13 @@ OverbuildOutcome {
         storage: {},
         energy_by_kind: {
             Coal: MegawattHours(
-                421606.16892598465,
+                421606.168926,
             ),
             Ccgt: MegawattHours(
-                246904.81638909274,
+                246904.816389,
             ),
             Peaker: MegawattHours(
-                33024.777654467485,
+                33024.7776545,
             ),
         },
         merit_order: [
@@ -393,7 +392,7 @@ OverbuildOutcome {
                     30.0,
                 ),
                 energy: MegawattHours(
-                    421606.16892598465,
+                    421606.168926,
                 ),
             },
             MeritOrderEntry {
@@ -405,7 +404,7 @@ OverbuildOutcome {
                     45.0,
                 ),
                 energy: MegawattHours(
-                    246904.81638909274,
+                    246904.816389,
                 ),
             },
             MeritOrderEntry {
@@ -465,15 +464,15 @@ OverbuildOutcome {
                     150.0,
                 ),
                 energy: MegawattHours(
-                    33024.777654467485,
+                    33024.7776545,
                 ),
             },
         ],
         demand: MegawattHours(
-            701528.5230583285,
+            701528.523058,
         ),
         served: MegawattHours(
-            701528.5230583285,
+            701528.523058,
         ),
         unserved: MegawattHours(
             0.0,
@@ -482,10 +481,10 @@ OverbuildOutcome {
             0.0,
         ),
         imbalance: MegawattHours(
-            7.239911219346173,
+            7.23991121935,
         ),
         overgeneration: MegawattHours(
-            938.5058135097061,
+            938.50581351,
         ),
         rotating_outage: MegawattHours(
             0.0,
@@ -494,7 +493,7 @@ OverbuildOutcome {
             0.0,
         ),
         peak_demand: Megawatts(
-            1213.6727233374975,
+            1213.67272334,
         ),
         reliability: Ratio(
             1.0,
@@ -509,16 +508,16 @@ OverbuildOutcome {
         rate_review: Some(
             RateReviewOutcome {
                 tariff: Price(
-                    111.04660966867604,
+                    111.046609669,
                 ),
                 allowed_return: Ratio(
-                    0.08180175184151191,
+                    0.0818017518415,
                 ),
                 revenue_requirement: Money(
                     86701681967,
                 ),
                 cost_per_mwh: Some(
-                    49.69693044035915,
+                    49.6969304404,
                 ),
             },
         ),
