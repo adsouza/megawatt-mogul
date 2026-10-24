@@ -32,9 +32,10 @@ use super::commitment::{CommitmentModel, commitment_model, draw_commitment, has_
 use super::construction::{
     ConstructionModel, construction_model, construction_tab_label, draw_construction,
 };
-use super::forecast_chart::{ForecastModel, draw_forecast_chart, forecast_model};
+use super::forecast_chart::{ForecastModel, draw_forecast_chart};
 use super::layout::{Edge, HudArea, OuterPanel};
-use super::planning_warnings::{WarningsModel, draw_warnings, warnings_model};
+use super::planning_cache::{PlanningForecast, PlanningForecastCache};
+use super::planning_warnings::{WarningsModel, draw_warnings, warnings_for};
 use super::tariff::{TariffModel, draw_tariff, tariff_model};
 use super::ui_state::{CommitmentForm, PlanningTab, UiState};
 use super::{SupplyHistoryModel, draw_supply_history, supply_history_model};
@@ -85,6 +86,19 @@ pub fn planning_model(
     if game.session().phase() != DayPhase::Planning {
         return None;
     }
+    planning_model_for(game, l10n, ui, form, &PlanningForecast::of(game, l10n))
+}
+
+fn planning_model_for(
+    game: &Game,
+    l10n: &Localizer,
+    ui: &UiState,
+    form: &CommitmentForm,
+    forecast: &PlanningForecast,
+) -> Option<PlanningModel> {
+    if game.session().phase() != DayPhase::Planning {
+        return None;
+    }
     let tab = |tab: PlanningTab, label: String| ToggleModel {
         button: ButtonModel::new(label, UiAction::SetPlanningTab(tab)),
         on: ui.tab == tab,
@@ -101,16 +115,24 @@ pub fn planning_model(
             ),
             tab(PlanningTab::History, l10n.text("supply-history-title")),
         ],
-        begin: ButtonModel::new(l10n.text("start-operating"), start_the_day(game))
+        begin: ButtonModel::new(l10n.text("start-operating"), start_the_day(forecast))
             .enabled_if(!unsaved),
         begin_hint: unsaved.then(|| l10n.text("commitment-unsaved")),
         content: match ui.tab {
             PlanningTab::Commitments => PlanningContent::Commitments {
-                warnings: warnings_model(game, l10n, ui),
+                warnings: warnings_for(
+                    forecast.shortfall,
+                    forecast.minimum,
+                    &forecast.dry_hydro,
+                    ui.warnings_open,
+                    l10n,
+                ),
                 grid: commitment_model(game, l10n, ui, form),
             },
             PlanningTab::Forecast => {
-                PlanningContent::Forecast(Box::new(forecast_model(game, l10n, ui)))
+                let mut chart = forecast.chart.clone();
+                chart.highlight_hour = ui.highlight_hour;
+                PlanningContent::Forecast(Box::new(chart))
             }
             PlanningTab::Tariff => PlanningContent::Tariff(tariff_model(game, l10n)),
             PlanningTab::Construction => {
@@ -127,8 +149,8 @@ pub fn planning_model(
 /// What *Start the day* sends: the day itself, or, when the committed fleet falls short of the
 /// forecast (§15.5), the prompt that asks first, holding the figures the warnings strip shows.
 /// Only a shortfall asks: a minimum-generation or dry-hydro warning doesn't.
-fn start_the_day(game: &Game) -> UiAction {
-    match game.session().capacity_shortfall_check() {
+fn start_the_day(forecast: &PlanningForecast) -> UiAction {
+    match forecast.shortfall {
         None => UiAction::Command(Command::BeginOperating),
         Some(warning) => UiAction::Prompt(Some(Prompt::ShortfallStart {
             hour: warning.hour,
@@ -175,11 +197,16 @@ pub(super) fn planning_panel(
     mut contexts: EguiContexts,
     mut area: ResMut<HudArea>,
     session: Res<Session>,
+    forecast: Res<PlanningForecastCache>,
     l10n: Res<Localizer>,
     mut form: ResMut<CommitmentForm>,
     mut sink: ActionSink,
 ) -> Result {
-    let Some(model) = planning_model(&session.0, &l10n, sink.ui_state(), &form) else {
+    let Some(forecast) = forecast.get() else {
+        return Ok(());
+    };
+    let Some(model) = planning_model_for(&session.0, &l10n, sink.ui_state(), &form, forecast)
+    else {
         return Ok(());
     };
     let actions = area.show_panel(contexts.ctx_mut()?, PLANNING_PANEL, 0.0, |ui| {

@@ -35,6 +35,8 @@ mod operating_side;
 mod panel_resize;
 #[path = "game/phase_change.rs"]
 mod phase_change;
+#[path = "game/planning_performance.rs"]
+mod planning_performance;
 #[path = "game/player_workflows.rs"]
 mod player_workflows;
 #[path = "game/preferences.rs"]

@@ -113,6 +113,8 @@ The game's tests sit in six layers, from the cheapest to the widest. None opens 
   The modules that drive whole screens through it:
   - `shortfall_prompt.rs`: *Start the day* opens the prompt only on a shortfall, and its buttons,
     a click outside and the transition frame;
+  - `planning_performance.rs`: idle passes and view changes reuse cached analysis, while an applied
+    plan edit refreshes the Start-the-day shortfall confirmation before it is drawn;
   - `operating_side.rs`: the gauge, the fixed-height details block and the plant list that fills
     the rest, whatever is selected and however the panels are sized;
   - `city_card.rs`: a clicked city's card in Planning's inspector and Operating's details block;

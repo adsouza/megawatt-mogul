@@ -123,15 +123,23 @@ fn stacked_supply(game: &Game, l10n: &Localizer, forecast: &SupplyForecast) -> V
 }
 
 pub fn forecast_model(game: &Game, l10n: &Localizer, ui: &UiState) -> ForecastModel {
+    forecast_model_for(game, l10n, ui, &game.session().supply_forecast())
+}
+
+pub(super) fn forecast_model_for(
+    game: &Game,
+    l10n: &Localizer,
+    ui: &UiState,
+    forecast_supply: &SupplyForecast,
+) -> ForecastModel {
     let session = game.session();
     let forecast: [ForecastPoint; 24] = session.hourly_forecast();
     let at = |read: fn(&ForecastPoint) -> Megawatts| -> [f64; 24] {
         std::array::from_fn(|hour| read(&forecast[hour]).value())
     };
     let mean = at(|point| point.mean);
-    let forecast_supply = session.supply_forecast();
     let storage = &forecast_supply.minutes;
-    let stacks = stacked_supply(game, l10n, &forecast_supply);
+    let stacks = stacked_supply(game, l10n, forecast_supply);
     let solar = stacks
         .iter()
         .find(|stack| stack.kind == PlantKind::Solar)

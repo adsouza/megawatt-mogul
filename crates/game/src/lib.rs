@@ -47,6 +47,7 @@ impl PluginGroup for GamePlugins {
             .add(world::WorldViewPlugin)
             .add(world::CameraPlugin)
             .add(preferences::PreferencesPlugin);
+        let plugins = plugins.add(window::IdleRedrawPlugin);
         #[cfg(feature = "dev")]
         let plugins = plugins.add(world::DevToolsPlugin);
         plugins

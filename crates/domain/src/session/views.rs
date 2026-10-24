@@ -11,7 +11,7 @@ use crate::grid::{GridMode, HydroScheduleView, LineStatus, TickSummary};
 use crate::ids::{CellCoord, CityId, LineId, NodeId, PlantId};
 use crate::region::PlantKind;
 use crate::regulation::{Licence, compute_rate_review};
-use crate::time::SimMonth;
+use crate::time::{SimMonth, TICKS_PER_HOUR};
 use crate::units::{Hertz, MegawattHours, Megawatts, Money, Price, Ratio};
 
 /// One plant as the player sees it.
@@ -512,19 +512,24 @@ impl GameSession {
     /// live allocation can exceed the preview. Pure: no randomness, no state
     /// change.
     pub fn capacity_shortfall_check(&self) -> Option<CapacityShortfallWarning> {
-        let ends = self
-            .power
-            .planned_hour_ends(&self.region, self.clock.month());
+        Self::capacity_shortfall_for(&self.supply_forecast())
+    }
+
+    /// Assesses an already-computed supply forecast, so callers can share it with charts.
+    /// Uses the same assessed minutes and earliest-on-ties rule as `capacity_shortfall_check`.
+    pub fn capacity_shortfall_for(
+        forecast: &crate::grid::SupplyForecast,
+    ) -> Option<CapacityShortfallWarning> {
         let mut worst: Option<CapacityShortfallWarning> = None;
-        for (hour, end) in ends.into_iter().map(HourEnd::worse).enumerate() {
-            let shortfall = end.shortfall();
+        for (tick, point) in forecast.assessed_minutes() {
+            let shortfall = point.demand - point.gross_supply;
             let beats_worst =
                 worst.map_or(shortfall > Megawatts::ZERO, |w| shortfall > w.shortfall);
             if beats_worst {
                 worst = Some(CapacityShortfallWarning {
-                    hour: hour as u8,
-                    demand: end.demand,
-                    deliverable: end.deliverable,
+                    hour: (tick / TICKS_PER_HOUR) as u8,
+                    demand: point.demand,
+                    deliverable: point.gross_supply,
                     shortfall,
                 });
             }

@@ -28,6 +28,7 @@ mod menu;
 mod milestones;
 mod operating;
 mod planning;
+mod planning_cache;
 mod planning_warnings;
 mod plant_list;
 mod plant_panel;
@@ -121,6 +122,7 @@ pub use self::operating::{
 pub use self::planning::{
     PLANNING_PANEL_HEIGHT, PlanningContent, PlanningModel, draw_planning, planning_model,
 };
+pub use self::planning_cache::{PlanningForecast, PlanningForecastCache};
 pub use self::planning_warnings::{
     WarningKind, WarningRow, WarningsModel, draw_warnings, warnings_for, warnings_model,
 };
@@ -200,6 +202,7 @@ impl Plugin for HudPlugin {
             .init_resource::<MapLayer>()
             .init_resource::<LegendChoice>()
             .init_resource::<MapCache>()
+            .init_resource::<PlanningForecastCache>()
             .init_resource::<OpenPrompt>()
             .init_resource::<MilestonesOpen>()
             .init_resource::<GameOverView>()
@@ -306,6 +309,7 @@ impl Plugin for HudPlugin {
                 (
                     theme::apply_theme.in_set(HudSet::Theme),
                     layout::reset_hud_area.in_set(HudSet::Begin),
+                    planning_cache::refresh.in_set(HudSet::Begin),
                     game_over::snapshot_game_over_view.in_set(HudSet::Begin),
                     menu::boot_error_screen
                         .in_set(HudSet::Panels)

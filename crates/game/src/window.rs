@@ -4,6 +4,9 @@
 //! once the winit event loop runs. [`WindowSizingPlugin`] waits for the primary monitor, applies
 //! the size once and then stops for good, so a resize by the player always wins.
 
+mod activity;
+pub use activity::IdleRedrawPlugin;
+
 use bevy::prelude::*;
 use bevy::window::{Monitor, PrimaryMonitor, PrimaryWindow, WindowPosition};
 

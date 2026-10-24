@@ -2793,3 +2793,23 @@ policy to subsequent play. Historical command-only replays remain fenced by thei
 Regression tests cover a balanced 17:00 fleet holding charge, transient ramp gaps ending as
 generators catch up, later-peak reserve preservation, shared chart/warning/schedule predictions,
 finite-inventory exhaustion, and save/resume/batching determinism.
+
+## 24. Planning forecast reuse and idle redraws (2026-10-23)
+
+Cache one Planning analysis for the active session: supply chart, capacity shortfall, committed
+minimum warning and dry-hydro findings. Assess the shortfall from the same computed supply forecast
+used by the chart, retaining minute selection, arithmetic and earliest-on-ties behavior. Pure
+presenters remain available; the live HUD reuses the analysis until the session, session generation
+or localiser changes. View-only changes (tabs, highlighted hours, warning expansion, camera and
+selection) do not rebuild it. Clear it outside Planning and on session removal. A new game, loaded
+game, month transition or applied planning command refreshes before the next Planning panel draws.
+Use resource change ticks, not repeated whole-session hashing. The cache is client-only and is
+never saved; no additional simulation-rule or portable-schema change is needed.
+
+Use event-driven window updates on static game screens: a 250 ms focused fallback and 500 ms
+unfocused fallback, with immediate window/user-event wakeups and no wakeups from unrelated raw
+device motion. Menus and active I/O poll at 33 ms while focused. Running Operating keeps the normal
+continuous focused rendering and original fixed-step simulation timing. Input-driven camera moves,
+scrolling, dialogs, save/load completion and phase transitions must remain responsive. Retain
+focused tests of repeated real HUD passes, cache invalidation and shortfall confirmation, plus a
+windowed launch smoke and native idle-performance measurement.

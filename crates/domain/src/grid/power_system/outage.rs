@@ -65,6 +65,7 @@ impl HourEnd {
 
     /// The worse of an hour's two ends: the one with the larger shortfall,
     /// minute 0 on a tie.
+    #[cfg(test)]
     pub(crate) fn worse(ends: [HourEnd; 2]) -> HourEnd {
         Self::worse_by(ends, HourEnd::shortfall)
     }
@@ -269,6 +270,7 @@ impl PowerSystem {
     ///
     /// An upper bound by design: it ignores the start-up and ramp limits the
     /// operating-time sizing applies. Pure.
+    #[cfg(test)]
     pub(crate) fn planned_hour_ends(
         &self,
         region: &RegionDefinition,
