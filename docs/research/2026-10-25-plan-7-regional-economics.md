@@ -16,7 +16,7 @@ found, the gap is listed under [Gaps](#gaps) instead of being estimated.
   the region currency. US rows are not normalised: they are only the pacing reference, and no US
   figure is converted into another region's money.
 - **Sources** give publisher, title, URL, publication date (`pub.`), access date (`acc.`) and
-  locator (`loc.`). All rows were accessed on 2026-10-25.
+  locator (`loc.`). All rows were accessed on 2026-10-25. Rows from downloaded files also record the file's SHA-256.
 - **Per-kW basis.** Capital and fixed O&M are per kW of net (AC) capacity. Battery capital is per
   kW of a 4-hour system, matching the shipped 200 MW / 800 MWh battery.
 - **`fuel_or_marginal`** means fuel plus variable non-fuel O&M per MWh generated. Each row says
@@ -100,7 +100,30 @@ From `assets/regions/{eastern,western}_interconnection.ron` (catalog, `lines`, `
 | AC line cost per km | 466,832 ÷ 2,796,170 = **0.1670** | P7-US-033 |
 | Reference tariff per MWh | 100 ÷ 135.6 = **0.7375** | P7-US-034 |
 | Starting tariff per MWh | 95 ÷ 135.6 = **0.7006**, which is 0.95 × the reference tariff, as shipped | P7-US-034 |
-| AC line build speed | no ratio: no dated US real km-per-month source found (see [Gaps](#gaps)) | — |
+| AC line build speed | no ratio; the line-speed ruling below applies | — |
+
+### Controller rulings (round 2, 25 October 2026)
+
+These rulings close three method gaps. They are authoring rules, not sourced figures, and need no
+rows.
+
+- **Durations.** A baseline build duration with no local source inherits the shipped North
+  American game months. Its RON comment is labelled "authoring judgment: no sourced local
+  duration". Spain and Morocco zone durations stay sourced (P7-ES-003, P7-ES-005, P7-MA-002,
+  P7-MA-006).
+- **Start-up costs.** Use `local game startup = NA game startup × (local game marginal ÷ NA game
+  marginal)`, per kind. The NA values are 1,000,000 (Nuclear), 150,000 (Coal), 40,000 (Ccgt) and
+  5,000 (Peaker), against marginals of 10, 30, 45 and 150. Hydro's NA marginal is 0, so the
+  formula is undefined for Hydro's 1,000 start-up; the region task must record a judgment.
+- **Line build speed.** Keep East's km per month, converted to each region's cells. East builds
+  4 cells × 50.27 km = 201.07 km per game month, so
+  `cells_per_month = max(1, round(201.07 ÷ region cell_km))`. The rounding is the application
+  convention, as for months.
+- **Fuel conversion.** Several local fuel rows are prices per GJ or per m³, not per MWh.
+  - Convert them with the S&L heat rates (P7-US-026 to P7-US-028; higher-heating-value basis):
+    `fuel per MWh = price per MMBtu × heat rate in MMBtu/MWh`, where 1 MMBtu = 1.055056 GJ.
+  - Rows priced on a net (lower) calorific basis are marked LHV. The region task records how it
+    treats the basis as a pacing judgment.
 
 ## Row table
 
@@ -180,6 +203,10 @@ year.
 | P7-FX-017 | IPS/UPS | Russia | Fx | fx_rate | 92.55240 | RUB per USD | 2024 | base rate for 2024 RUB cross rates; FX: self | World Bank — WDI PA.NUS.FCRF — https://api.worldbank.org/v2/country/RUS/indicator/PA.NUS.FCRF?date=2024&format=json — pub. 2026-10-08 — acc. 2026-10-25 — loc. RUS, 2024 | Annual average; for KZ/UZ rows if IPS/UPS ever opts in |
 | P7-FX-018 | IPS/UPS | Kazakhstan | Fx | fx_rate | 468.9625 | KZT per USD | 2024 | derived 5.06701 KZT per RUB; FX: P7-FX-017 | World Bank — WDI PA.NUS.FCRF — https://api.worldbank.org/v2/country/KAZ/indicator/PA.NUS.FCRF?date=2024&format=json — pub. 2026-10-08 — acc. 2026-10-25 — loc. KAZ, 2024 | Annual average; not used by a cost row |
 | P7-FX-019 | IPS/UPS | Uzbekistan | Fx | fx_rate | 12,652.29 | UZS per USD | 2024 | derived 136.704 UZS per RUB; FX: P7-FX-017 | World Bank — WDI PA.NUS.FCRF — https://api.worldbank.org/v2/country/UZB/indicator/PA.NUS.FCRF?date=2024&format=json — pub. 2026-10-08 — acc. 2026-10-25 — loc. UZB, 2024 | Annual average; not used by a cost row |
+| P7-FX-020 | Southern China | China | Fx | fx_rate | 7.189847 | CNY per USD | 2025 | base rate for 2025 USD→CNY (IRENA rows); FX: self | World Bank — WDI PA.NUS.FCRF — https://api.worldbank.org/v2/country/CHN/indicator/PA.NUS.FCRF?date=2025&format=json — pub. 2026-10-08 (last updated) — acc. 2026-10-25 — loc. CHN, 2025 | Annual average; used only for country-specific international (IRENA) rows |
+| P7-FX-021 | India–Nepal–Bhutan | India | Fx | fx_rate | 87.15845 | INR per USD | 2025 | base rate for 2025 USD→INR; FX: self | World Bank — WDI PA.NUS.FCRF — https://api.worldbank.org/v2/country/IND/indicator/PA.NUS.FCRF?date=2025&format=json — pub. 2026-10-08 — acc. 2026-10-25 — loc. IND, 2025 | Annual average; IRENA rows only |
+| P7-FX-022 | Brazil | Brazil | Fx | fx_rate | 5.587286 | BRL per USD | 2025 | base rate for 2025 USD→BRL; FX: self | World Bank — WDI PA.NUS.FCRF — https://api.worldbank.org/v2/country/BRA/indicator/PA.NUS.FCRF?date=2025&format=json — pub. 2026-10-08 — acc. 2026-10-25 — loc. BRA, 2025 | Annual average; IRENA rows only |
+| P7-FX-023 | IPS/UPS | Russia | Fx | fx_rate | 83.6525 | RUB per USD | 2025 | base rate for 2025 USD→RUB; FX: self | World Bank — WDI PA.NUS.FCRF — https://api.worldbank.org/v2/country/RUS/indicator/PA.NUS.FCRF?date=2025&format=json — pub. 2026-10-08 — acc. 2026-10-25 — loc. RUS, 2025 | Annual average; IRENA rows only |
 
 ### Brazil (`BR`, BRL)
 
@@ -222,6 +249,7 @@ schedule, which the rows use as `build_months_real`.
 | P7-BR-027 | Brazil | Brazil (SIN) | Hydro | fixed_om_per_kw_year | 50 | BRL/kW-yr | 2024 (Dec) | 50 BRL/kW-yr; FX: none | EPE PDE 2035 Custos — https://www.epe.gov.br/sites-pt/publicacoes-dados-abertos/publicacoes/PublicacoesArquivos/publicacao-894/PDE%202035_Caderno%20Par%C3%A2metros%20de%20Custos_rev10.11.25.pdf — pub. 2025-11-10 — acc. 2026-10-25 — loc. p. 14, UHE Bem Querer, O&M | |
 | P7-BR-028 | Brazil | Brazil (SIN) | AcLine | line_cost_per_km | 78.0 billion for 28,781 km | BRL | 2024 (Dec) | derived 78.0e9 ÷ 28,781 = 2,710,121 BRL/km; FX: none | EPE/MME — *PDE 2035 — Caderno de Transmissão de Energia Elétrica* — https://www.epe.gov.br/sites-pt/publicacoes-dados-abertos/publicacoes/PublicacoesArquivos/publicacao-894/PDE%202035_Caderno%20de%20Transmiss%C3%A3o%20de%20Energia.pdf — pub. 2026-06-12 (PDF date) — acc. 2026-10-25 — loc. p. 35 (line investment, reference scenario, 68.0 with + 10.0 without concession) and p. 36 (2026–2035 line evolution, 28,781 km) | Average over all voltages (230–800 kV), including 2,936 km of ±800 kV HVDC poles. Lengths are counted per circuit and per pole. Costs are from the ANEEL price bank |
 | P7-BR-029 | Brazil | Brazil (SIN) | Tariff | retail_tariff_per_mwh | 748.41 | BRL/MWh | 2025 (Dec) | 748.41 BRL/MWh; FX: none | MME — *Informativo Tarifário do Setor Elétrico 2025* — https://www.gov.br/mme/pt-br/assuntos/secretarias/secretaria-nacional-energia-eletrica/informativo-tarifario-do-setor-eletrico/informativo-tarifario-do-setor-eletrico-ano-2025.pdf/@@download/file — pub. 2026-03-24 (PDF date) — acc. 2026-10-25 — loc. Tabela 7, Total por Região, Brasil column, p. 36 | Average billed tariff, all consumer classes, December 2025, ANEEL data (residential 746.42) |
+| P7-BR-030 | Brazil | Brazil | Hydro | capital_per_kw | 1,463 | USD/kW | 2025 | derived 1,463 × 5.587286 = 8,174 BRL/kW; FX: P7-FX-022 | IRENA — *Renewable Power Generation Costs in 2025* — https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_in_2025_2026.pdf (downloaded; SHA-256 38c8c70b848187c89d64b8817f0ebe831a9587c00257c1cc93195f22833a0eab) — pub. 2026-07 — acc. 2026-10-25 — loc. Figure 6.5, large hydropower weighted average 2018–2025, Brazil label, p. 107 | Cross-check only: market weighted average of commissioned projects, far below EPE planning value P7-BR-026; EPE stays the baseline |
 
 ### India–Nepal–Bhutan (`IN`, INR)
 
@@ -240,6 +268,22 @@ schedule, which the rows use as `build_months_real`.
 | P7-IN-009 | India–Nepal–Bhutan | India | Battery | capital_per_kw | 9,400 crore outlay for 4,000 MWh | INR | 2023 | derived 9.4e10 ÷ 4.0e6 kWh = 23,500 INR/kWh, × 4 h = 94,000 INR/kW; FX: none | Prime Minister's Office — Cabinet approves VGF for BESS — https://www.pmindia.gov.in/en/news_updates/cabinet-approves-the-scheme-titled-viability-gap-funding-for-development-of-battery-energy-storage-systems-bess/ — pub. 2023-09-06 — acc. 2026-10-25 — loc. paragraphs 1–2 | Outlay = capital cost: the 3,760 crore budget support is 40% of 9,400. The 4-hour conversion is derived |
 | P7-IN-010 | India–Nepal–Bhutan | India | AcLine | line_cost_per_km | 10,163 | INR per MW-km | 2023 | not convertible to INR/km without a line rating; FX: none | CEA — https://jmkresearch.com/wp-content/uploads/2023/05/Report_on_Optimal_Generation_Mix_in_year_2030_1683189805.pdf — Optimal Generation Capacity Mix 2029-30 v2.0 (as P7-IN-002) — pub. 2023-04 — acc. 2026-10-25 — loc. §7.10, below Table 5, PDF p. 28 | Inter-regional candidate lines (twice this value to or from NER); per MW of transfer capacity, so not a per-km line cost |
 | P7-IN-011 | India–Nepal–Bhutan | India | Tariff | retail_tariff_per_mwh | 7.03 | INR/kWh | FY 2024-25 | derived 7,030 INR/MWh; FX: none | Dataful, compiling Ministry of Power and PFC data — ACS–ARR gap (cash adjusted) of state distribution utilities — https://dataful.in/datasets/23048/ — pub. 2026-02-25 (last updated) — acc. 2026-10-25 — loc. All India grand total, 2024-25, ARR column | Average revenue realised, all consumers of state distribution companies (ACS 7.10). Third-party compilation; the PFC report itself was not reached |
+| P7-IN-012 | India–Nepal–Bhutan | India | Coal | fixed_om_per_kw_year | 19.54 | lakh INR/MW-yr | 2021-22 | derived 1,954 INR/kW-yr; FX: none | CEA — *National Electricity Plan (Volume I) Generation 2022-32*, gazette edition (copy hosted by Climate Policy Radar; both CEA URLs return 404) — https://cpr-prod-cclw-document-admin-store.s3.eu-west-1.amazonaws.com/NEP_2022_32_FINAL_GAZETTE_English.pdf (downloaded; SHA-256 01f0dd82a2aed75e685d9668b5fcfea1471fc5f4bb570b848577695d9ea93471) — pub. 2023-05 — acc. 2026-10-25 — loc. Chapter 5, Financial Parameters table (cost level 2021-22), p. 5.29–5.30 (PDF p. 156) | Planner assumption; CERC norm P7-IN-003 is the regulated alternative |
+| P7-IN-013 | India–Nepal–Bhutan | India | Coal | build_months_real | 4 | years | — | 48 months; FX: none | CEA — *National Electricity Plan (Volume I) Generation 2022-32*, gazette edition (copy hosted by Climate Policy Radar; both CEA URLs return 404) — https://cpr-prod-cclw-document-admin-store.s3.eu-west-1.amazonaws.com/NEP_2022_32_FINAL_GAZETTE_English.pdf (downloaded; SHA-256 01f0dd82a2aed75e685d9668b5fcfea1471fc5f4bb570b848577695d9ea93471) — pub. 2023-05 — acc. 2026-10-25 — loc. Chapter 5, Financial Parameters table (cost level 2021-22), p. 5.29–5.30 (PDF p. 156), Construction Time column | Planner construction-time assumption |
+| P7-IN-014 | India–Nepal–Bhutan | India | Hydro | capital_per_kw | 6 to 20 | crore INR/MW | 2021-22 | derived 60,000–200,000 INR/kW; FX: none | CEA — *National Electricity Plan (Volume I) Generation 2022-32*, gazette edition (copy hosted by Climate Policy Radar; both CEA URLs return 404) — https://cpr-prod-cclw-document-admin-store.s3.eu-west-1.amazonaws.com/NEP_2022_32_FINAL_GAZETTE_English.pdf (downloaded; SHA-256 01f0dd82a2aed75e685d9668b5fcfea1471fc5f4bb570b848577695d9ea93471) — pub. 2023-05 — acc. 2026-10-25 — loc. Chapter 5, Financial Parameters table (cost level 2021-22), p. 5.29–5.30 (PDF p. 156) | Project-specific range from developers and CEA cost estimates; P7-IN-006 (Tato-II, 116,374) lies inside it |
+| P7-IN-015 | India–Nepal–Bhutan | India | Hydro | fixed_om_per_kw_year | 2.5% of capex | share | 2021-22 | derived 2.5% × 116,374 (P7-IN-006) = 2,909 INR/kW-yr; FX: none | CEA — *National Electricity Plan (Volume I) Generation 2022-32*, gazette edition (copy hosted by Climate Policy Radar; both CEA URLs return 404) — https://cpr-prod-cclw-document-admin-store.s3.eu-west-1.amazonaws.com/NEP_2022_32_FINAL_GAZETTE_English.pdf (downloaded; SHA-256 01f0dd82a2aed75e685d9668b5fcfea1471fc5f4bb570b848577695d9ea93471) — pub. 2023-05 — acc. 2026-10-25 — loc. Chapter 5, Financial Parameters table (cost level 2021-22), p. 5.29–5.30 (PDF p. 156) | Percentage applied to the Tato-II capital row is a derived pairing |
+| P7-IN-016 | India–Nepal–Bhutan | India | Hydro | build_months_real | 5 to 8 | years | — | 60–96 months; FX: none | CEA — *National Electricity Plan (Volume I) Generation 2022-32*, gazette edition (copy hosted by Climate Policy Radar; both CEA URLs return 404) — https://cpr-prod-cclw-document-admin-store.s3.eu-west-1.amazonaws.com/NEP_2022_32_FINAL_GAZETTE_English.pdf (downloaded; SHA-256 01f0dd82a2aed75e685d9668b5fcfea1471fc5f4bb570b848577695d9ea93471) — pub. 2023-05 — acc. 2026-10-25 — loc. Chapter 5, Financial Parameters table (cost level 2021-22), p. 5.29–5.30 (PDF p. 156), Construction Time column | Range; P7-IN-007 (72 months) lies inside it |
+| P7-IN-017 | India–Nepal–Bhutan | India | Solar | capital_per_kw | 4.5 (2021-22) falling to 4.1 (2029-30) | crore INR/MW | 2021-22 | derived 45,000 INR/kW (2021-22); FX: none | CEA — *National Electricity Plan (Volume I) Generation 2022-32*, gazette edition (copy hosted by Climate Policy Radar; both CEA URLs return 404) — https://cpr-prod-cclw-document-admin-store.s3.eu-west-1.amazonaws.com/NEP_2022_32_FINAL_GAZETTE_English.pdf (downloaded; SHA-256 01f0dd82a2aed75e685d9668b5fcfea1471fc5f4bb570b848577695d9ea93471) — pub. 2023-05 — acc. 2026-10-25 — loc. Chapter 5, Financial Parameters table (cost level 2021-22), p. 5.29–5.30 (PDF p. 156), footnote on solar trajectory | Planner assumption; corroborates P7-IN-008 |
+| P7-IN-018 | India–Nepal–Bhutan | India | Solar | fixed_om_per_kw_year | 1% of capex | share | 2021-22 | derived 1% × 45,000 = 450 INR/kW-yr; FX: none | CEA — *National Electricity Plan (Volume I) Generation 2022-32*, gazette edition (copy hosted by Climate Policy Radar; both CEA URLs return 404) — https://cpr-prod-cclw-document-admin-store.s3.eu-west-1.amazonaws.com/NEP_2022_32_FINAL_GAZETTE_English.pdf (downloaded; SHA-256 01f0dd82a2aed75e685d9668b5fcfea1471fc5f4bb570b848577695d9ea93471) — pub. 2023-05 — acc. 2026-10-25 — loc. Chapter 5, Financial Parameters table (cost level 2021-22), p. 5.29–5.30 (PDF p. 156) |  |
+| P7-IN-019 | India–Nepal–Bhutan | India | Solar | build_months_real | 0.5 | years | — | 6 months; FX: none | CEA — *National Electricity Plan (Volume I) Generation 2022-32*, gazette edition (copy hosted by Climate Policy Radar; both CEA URLs return 404) — https://cpr-prod-cclw-document-admin-store.s3.eu-west-1.amazonaws.com/NEP_2022_32_FINAL_GAZETTE_English.pdf (downloaded; SHA-256 01f0dd82a2aed75e685d9668b5fcfea1471fc5f4bb570b848577695d9ea93471) — pub. 2023-05 — acc. 2026-10-25 — loc. Chapter 5, Financial Parameters table (cost level 2021-22), p. 5.29–5.30 (PDF p. 156), Construction Time column | Planner assumption |
+| P7-IN-020 | India–Nepal–Bhutan | India | Wind | capital_per_kw | 6 | crore INR/MW | 2021-22 | derived 60,000 INR/kW; FX: none | CEA — *National Electricity Plan (Volume I) Generation 2022-32*, gazette edition (copy hosted by Climate Policy Radar; both CEA URLs return 404) — https://cpr-prod-cclw-document-admin-store.s3.eu-west-1.amazonaws.com/NEP_2022_32_FINAL_GAZETTE_English.pdf (downloaded; SHA-256 01f0dd82a2aed75e685d9668b5fcfea1471fc5f4bb570b848577695d9ea93471) — pub. 2023-05 — acc. 2026-10-25 — loc. Chapter 5, Financial Parameters table (cost level 2021-22), p. 5.29–5.30 (PDF p. 156) | Onshore wind planner assumption |
+| P7-IN-021 | India–Nepal–Bhutan | India | Wind | fixed_om_per_kw_year | 1% of capex | share | 2021-22 | derived 600 INR/kW-yr; FX: none | CEA — *National Electricity Plan (Volume I) Generation 2022-32*, gazette edition (copy hosted by Climate Policy Radar; both CEA URLs return 404) — https://cpr-prod-cclw-document-admin-store.s3.eu-west-1.amazonaws.com/NEP_2022_32_FINAL_GAZETTE_English.pdf (downloaded; SHA-256 01f0dd82a2aed75e685d9668b5fcfea1471fc5f4bb570b848577695d9ea93471) — pub. 2023-05 — acc. 2026-10-25 — loc. Chapter 5, Financial Parameters table (cost level 2021-22), p. 5.29–5.30 (PDF p. 156) |  |
+| P7-IN-022 | India–Nepal–Bhutan | India | Wind | build_months_real | 1.5 | years | — | 18 months; FX: none | CEA — *National Electricity Plan (Volume I) Generation 2022-32*, gazette edition (copy hosted by Climate Policy Radar; both CEA URLs return 404) — https://cpr-prod-cclw-document-admin-store.s3.eu-west-1.amazonaws.com/NEP_2022_32_FINAL_GAZETTE_English.pdf (downloaded; SHA-256 01f0dd82a2aed75e685d9668b5fcfea1471fc5f4bb570b848577695d9ea93471) — pub. 2023-05 — acc. 2026-10-25 — loc. Chapter 5, Financial Parameters table (cost level 2021-22), p. 5.29–5.30 (PDF p. 156), Construction Time column | Planner assumption |
+| P7-IN-023 | India–Nepal–Bhutan | India | Battery | fixed_om_per_kw_year | 1% of capex | share | 2021-22 | derived 1% × 94,000 (P7-IN-009) = 940 INR/kW-yr; FX: none | CEA — *National Electricity Plan (Volume I) Generation 2022-32*, gazette edition (copy hosted by Climate Policy Radar; both CEA URLs return 404) — https://cpr-prod-cclw-document-admin-store.s3.eu-west-1.amazonaws.com/NEP_2022_32_FINAL_GAZETTE_English.pdf (downloaded; SHA-256 01f0dd82a2aed75e685d9668b5fcfea1471fc5f4bb570b848577695d9ea93471) — pub. 2023-05 — acc. 2026-10-25 — loc. Chapter 5, Financial Parameters table (cost level 2021-22), p. 5.29–5.30 (PDF p. 156) | Percentage applied to P7-IN-009 capital is a derived pairing |
+| P7-IN-024 | India–Nepal–Bhutan | India | Battery | build_months_real | 0.5 | years | — | 6 months; FX: none | CEA — *National Electricity Plan (Volume I) Generation 2022-32*, gazette edition (copy hosted by Climate Policy Radar; both CEA URLs return 404) — https://cpr-prod-cclw-document-admin-store.s3.eu-west-1.amazonaws.com/NEP_2022_32_FINAL_GAZETTE_English.pdf (downloaded; SHA-256 01f0dd82a2aed75e685d9668b5fcfea1471fc5f4bb570b848577695d9ea93471) — pub. 2023-05 — acc. 2026-10-25 — loc. Chapter 5, Financial Parameters table (cost level 2021-22), p. 5.29–5.30 (PDF p. 156), Construction Time column | Planner assumption |
+| P7-IN-025 | India–Nepal–Bhutan | India | Wind | capital_per_kw | 1,172 | USD/kW | 2025 | derived 1,172 × 87.15845 = 102,150 INR/kW; FX: P7-FX-021 | IRENA — *Renewable Power Generation Costs in 2025* — https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_in_2025_2026.pdf (downloaded; SHA-256 38c8c70b848187c89d64b8817f0ebe831a9587c00257c1cc93195f22833a0eab) — pub. 2026-07 — acc. 2026-10-25 — loc. Table 2.1, India, 2025 weighted average, p. 46 | Market weighted average of commissioned onshore projects; well above the NEP planning value P7-IN-020 |
+| P7-IN-026 | India–Nepal–Bhutan | India | Solar | capital_per_kw | 545 | USD/kW | 2025 | derived 545 × 87.15845 = 47,501 INR/kW; FX: P7-FX-021 | IRENA — *Renewable Power Generation Costs in 2025* — https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_in_2025_2026.pdf (downloaded; SHA-256 38c8c70b848187c89d64b8817f0ebe831a9587c00257c1cc93195f22833a0eab) — pub. 2026-07 — acc. 2026-10-25 — loc. Table 3.1, India, 2025 weighted average, p. 62 | Utility-scale PV; corroborates P7-IN-008 and P7-IN-017 |
+| P7-IN-027 | India–Nepal–Bhutan | India | Hydro | capital_per_kw | 2,003 | USD/kW | 2018–2025 (2025 USD) | derived 2,003 × 87.15845 = 174,578 INR/kW; FX: P7-FX-021 | IRENA — *Renewable Power Generation Costs in 2025* — https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_in_2025_2026.pdf (downloaded; SHA-256 38c8c70b848187c89d64b8817f0ebe831a9587c00257c1cc93195f22833a0eab) — pub. 2026-07 — acc. 2026-10-25 — loc. Figure 6.5, large hydropower weighted average 2018–2025, India label, p. 107 | Cross-check; above P7-IN-006 |
 
 ### Southern China (`SC`, CNY)
 
@@ -250,12 +294,28 @@ schedule, which the rows use as `build_months_real`.
 | P7-SC-003 | Southern China | Guangdong | Coal | capital_per_kw | 780,656 (10,000 CNY) for 2 × 1,000 MW | CNY | 2022 | derived 7.80656e9 ÷ 2.0e6 kW = 3,903 CNY/kW; FX: none | Guangdong Baolihua New Energy (SZSE 000690) — Announcement 2022-025 on approval of Lufeng Jiahu Bay units 3–4 — https://disc.static.szse.cn/disc/disk03/finalpage/2022-09-14/49356c75-5a7f-4405-bac8-c7680136c7bf.PDF — pub. 2022-09-14 — acc. 2026-10-25 — loc. paragraph 2 (total investment), citing Guangdong DRC approval 粤发改核准〔2022〕31号 | Ultra-supercritical 2 × 1,000 MW extension at an existing site |
 | P7-SC-004 | Southern China | Guangdong | Coal | build_months_real | in service before end of 2024 | target date | — | *planned* window ≤ 27 months (2022-09 approval to 2024-12); FX: none | Baoxin Energy Announcement 2022-025 (as P7-SC-003) — https://disc.static.szse.cn/disc/disk03/finalpage/2022-09-14/49356c75-5a7f-4405-bac8-c7680136c7bf.PDF — pub. 2022-09-14 — acc. 2026-10-25 — loc. paragraph 2 (in-service target) | Approval-to-target window, not an observed construction duration |
 | P7-SC-005 | Southern China | Guangdong (east and west, non-Pearl-River-Delta) | Tariff | retail_tariff_per_mwh | 67.986875 | fen/kWh (tax included) | 2025 (Aug) | derived 679.87 CNY/MWh; FX: none | Shantou Municipal Government, publishing the Guangdong grid company's agency-purchase tariff table — 广东省电网企业代理购电用户电价表（汕头市）, August 2025 — https://www.shantou.gov.cn/attachment/0/137/137749/2459290.pdf — pub. 2025-07-29 (PDF date) — acc. 2026-10-25 — loc. industrial and commercial, single-part, 1–10(20) kV, energy price column | Commercial and industrial users on agency purchase, flat period, tax included. Applies to Shantou, Chaozhou, Jieyang, Shanwei, Yangjiang, Zhanjiang, Maoming, Zhaoqing and three Jiangmen cities |
+| P7-SC-006 | Southern China | China (national) | Hydro | capital_per_kw | 2,302 | USD/kW | 2018–2025 (2025 USD) | derived 2,302 × 7.189847 = 16,551 CNY/kW; FX: P7-FX-020 | IRENA — *Renewable Power Generation Costs in 2025* — https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_in_2025_2026.pdf (downloaded; SHA-256 38c8c70b848187c89d64b8817f0ebe831a9587c00257c1cc93195f22833a0eab) — pub. 2026-07 — acc. 2026-10-25 — loc. Figure 6.5, large hydropower weighted average 2018–2025, China label, p. 107 | Country-specific international measurement; no local-currency hydro source found |
+| P7-SC-007 | Southern China | China (national) | Wind | capital_per_kw | 789 | USD/kW | 2025 | derived 789 × 7.189847 = 5,673 CNY/kW; FX: P7-FX-020 | IRENA — *Renewable Power Generation Costs in 2025* — https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_in_2025_2026.pdf (downloaded; SHA-256 38c8c70b848187c89d64b8817f0ebe831a9587c00257c1cc93195f22833a0eab) — pub. 2026-07 — acc. 2026-10-25 — loc. Table 2.1, China, 2025 weighted average, p. 46 | Cross-check; 38% above CREEI P7-SC-001. CREEI (local currency, national planner) stays the baseline |
+| P7-SC-008 | Southern China | China (national) | Solar | capital_per_kw | 533 | USD/kW | 2025 | derived 533 × 7.189847 = 3,832 CNY/kW; FX: P7-FX-020 | IRENA — *Renewable Power Generation Costs in 2025* — https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_in_2025_2026.pdf (downloaded; SHA-256 38c8c70b848187c89d64b8817f0ebe831a9587c00257c1cc93195f22833a0eab) — pub. 2026-07 — acc. 2026-10-25 — loc. Table 3.1, China, 2025 weighted average, p. 62 | Cross-check of P7-SC-002 (+20%) |
 
 ### IPS/UPS (`IPS`, RUB)
 
 | ID | Region | Market | Technology | Metric | Value as stated | Unit/currency | Price year | Normalised value (region currency) | Source | Scope notes |
 |---|---|---|---|---|---|---|---|---|---|---|
 | P7-IPS-001 | IPS/UPS | Russia (Moscow) | Tariff | retail_tariff_per_mwh | 7.87 from 2025-07-01 (6.99 before) | RUB/kWh | 2025 | derived 7,870 RUB/MWh; FX: none | RBC Realty, reporting the Moscow Department of Economic Policy and Development tariff order — https://realty.rbc.ru/news/673c9b499a79473b78eb639d — pub. 2024-11-19 — acc. 2026-10-25 — loc. tariff paragraph, homes with gas stoves, single-rate | Regulated household tariff, gas-stove homes, single rate; electric-stove homes 7.16. Press report of the order; the order's number is not given |
+| P7-IPS-002 | IPS/UPS | Russia | Nuclear | capital_per_kw | 13,785 billion for 29.299 million kW | RUB (incl. VAT, forecast prices of each year) | 2025–2042 | derived 13,785e9 ÷ 29.299e6 kW = 470,494 RUB/kW; FX: none | Government of the Russian Federation — Order No. 4153-r of 30 Dec 2024 approving the *General Scheme for the Location of Electric Power Facilities to 2042* — http://static.government.ru/media/files/Rwf9Akjf5FwAnustDEL2m7PEvZ26i7k3.pdf (downloaded; SHA-256 d50d7cd30c93f4f34a836eea0a6a7b832ecd388bcbc3f1676814cb5849d2f07c) — pub. 2024-12-30 — acc. 2026-10-25 — loc. Annex 31, Total, nuclear (PDF p. 153); §IV, nuclear additions (p. 14) | Planner aggregate: investment ÷ planned additions, not one project; includes VAT and future-year nominal prices; includes decentralised-zone units |
+| P7-IPS-003 | IPS/UPS | Russia | Hydro | capital_per_kw | 2,517 billion for 7.756 million kW | RUB (incl. VAT, forecast prices) | 2025–2042 | derived 324,523 RUB/kW; FX: none | Government of the Russian Federation — Order No. 4153-r of 30 Dec 2024 approving the *General Scheme for the Location of Electric Power Facilities to 2042* — http://static.government.ru/media/files/Rwf9Akjf5FwAnustDEL2m7PEvZ26i7k3.pdf (downloaded; SHA-256 d50d7cd30c93f4f34a836eea0a6a7b832ecd388bcbc3f1676814cb5849d2f07c) — pub. 2024-12-30 — acc. 2026-10-25 — loc. Annex 31, Total, hydro and pumped storage (PDF p. 153); §IV, hydro additions (p. 14) | Planner aggregate; includes pumped storage |
+| P7-IPS-004 | IPS/UPS | Russia (Zabaykalsky Krai) | Coal | capital_per_kw | about 172 billion for 2 × 230 MW | RUB | 2025 | derived 172e9 ÷ 460,000 kW = 373,913 RUB/kW; FX: none | Investfuture, reporting Inter RAO CEO S. Dregval at SPIEF — Inter RAO building new Kharanorskaya GRES units by 2029 — https://investfuture.ru/articles/inter-rao-vedet-stroitelstvo-novykh-energoblokov-kharanorskoy-gres-k-2029-godu-36855650 — pub. 2026-06-09 — acc. 2026-10-25 — loc. investment and schedule paragraphs | Whole project, steam units in the Siberian south-east (Far-East-adjacent remote site); press report of company statement. The General Scheme thermal aggregate (4,782 bn RUB ÷ 35.378 million kW = 135,169 RUB/kW, PDF p. 153 and p. 15) mixes gas, coal and reconstruction and is not used |
+| P7-IPS-005 | IPS/UPS | Russia (Zabaykalsky Krai) | Coal | build_months_real | construction launched 2025-10; commissioning planned 2029 | dates | — | derived *planned* 39–50 months; FX: none | Investfuture (as P7-IPS-004) — https://investfuture.ru/articles/inter-rao-vedet-stroitelstvo-novykh-energoblokov-kharanorskoy-gres-k-2029-godu-36855650 — pub. 2026-06-09 — acc. 2026-10-25 — loc. schedule paragraph | Planned; not needed under the duration ruling but recorded |
+| P7-IPS-006 | IPS/UPS | Russia (Krasnodar Krai) | Ccgt | capital_per_kw | 275 | million RUB/MW | 2025 | 275,000 RUB/kW; FX: none | Kommersant — southern TPP projects and capex prepared for government approval — https://www.kommersant.ru/doc/8159614 — pub. 2025-10-27 — acc. 2026-10-25 — loc. Udarnaya TPP paragraph | Udarnaya TPP expansion, three CCGT units, 555 MW, from government-commission materials as reported; Tavricheskaya (Crimea) excluded by footprint |
+| P7-IPS-007 | IPS/UPS | Russia | Wind | capital_per_kw | 1,818 | USD/kW | 2025 | derived 1,818 × 83.6525 = 152,080 RUB/kW; FX: P7-FX-023 | IRENA — *Renewable Power Generation Costs in 2025* — https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_in_2025_2026.pdf (downloaded; SHA-256 38c8c70b848187c89d64b8817f0ebe831a9587c00257c1cc93195f22833a0eab) — pub. 2026-07 — acc. 2026-10-25 — loc. Figure 2.4, Russian Federation, 2025 label, p. 47 | Country market weighted average of commissioned onshore wind (+54% on 2024) |
+| P7-IPS-008 | IPS/UPS | Russia (Stavropol Krai) | Wind | capital_per_kw | 64.86 | thousand RUB/kW | 2019 bid (COD 2024) | 64,860 RUB/kW; FX: none | Kommersant, reporting ATS-published bids in the 2019 renewables CSA selection — https://www.kommersant.ru/doc/3998706 — pub. 2019-06-11 — acc. 2026-10-25 — loc. wind paragraph (cap 109.23) | Bid capex of a 71.25 MW project; dated; cap was 109.23 thousand RUB/kW |
+| P7-IPS-009 | IPS/UPS | Russia | Solar | capital_per_kw | 49.78 | thousand RUB/kW | 2019 bid (COD 2022) | 49,780 RUB/kW; FX: none | Kommersant (as P7-IPS-008) — https://www.kommersant.ru/doc/3998706 — pub. 2019-06-11 — acc. 2026-10-25 — loc. solar paragraph | Fortum 5.6 MW bid; other bids 53.8 and 54.9; dated and small |
+| P7-IPS-010 | IPS/UPS | Eurasia (IRENA region) | Solar | capital_per_kw | 998 | USD/kW | 2025 | derived 998 × 83.6525 = 83,485 RUB/kW; FX: P7-FX-023 | IRENA — *Renewable Power Generation Costs in 2025* — https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_in_2025_2026.pdf (downloaded; SHA-256 38c8c70b848187c89d64b8817f0ebe831a9587c00257c1cc93195f22833a0eab) — pub. 2026-07 — acc. 2026-10-25 — loc. Table 3.1, Eurasia, 2025 weighted average, p. 62 | Regional aggregate (IRENA Eurasia), not Russia alone; more current than P7-IPS-009 |
+| P7-IPS-011 | IPS/UPS | Russia (Moscow) | Ccgt | fuel_or_marginal | 7,763 | RUB per 1,000 m³ (excl. VAT) | 2025 (from 1 July) | derived 7,763 ÷ 33.080 GJ = 234.7 RUB/GJ; FX: none | FAS Russia — Order No. 1009/24 of 13 Dec 2024 on wholesale gas prices (Gazprom), text at pravo.ppt.ru — https://pravo.ppt.ru/prikaz/fas/n-1009-24-310500 — pub. 2024-12-13 (registered 2025-02-27) — acc. 2026-10-25 — loc. annex, Moscow row; calorific basis 7,900 kcal/m³ (33,080 kJ/m³) | Regulated wholesale gas price at transmission exit, consumers other than households; fuel only. Also used for Peaker |
+| P7-IPS-012 | IPS/UPS | Russia | AcLine | line_cost_per_km | Л1-07 8,944 + Л3-07 5,483 + Л5-09 1,225 × 3 | thousand RUB/km (excl. VAT) | 2018 (prices at 01.01.2018) | derived 18,102 thousand = 18,102,000 RUB/km; FX: none | Minenergo — Order No. 10 of 17 Jan 2019, aggregated price norms for typical grid construction solutions, text at legalacts.ru — https://legalacts.ru/doc/prikaz-minenergo-rossii-ot-17012019-n-10-ob-utverzhdenii/ — pub. 2019-01-17 — acc. 2026-10-25 — loc. §2 (price base); tables Л1, Л3, Л5 | 500 kV single circuit, lattice towers: works + towers + three conductors per phase (Table С2 recommends 3 for 500 kV). Sum of components is derived; excludes land, design and regional factors. Superseded by Order No. 131 of 26 Feb 2024 (not reached) |
+| P7-IPS-013 | IPS/UPS | Kazakhstan | Wind | capital_per_kw | 1,353 | USD/kW | 2025 | derived 1,353 × 83.6525 = 113,182 RUB/kW; FX: P7-FX-023 | IRENA — *Renewable Power Generation Costs in 2025* — https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_in_2025_2026.pdf (downloaded; SHA-256 38c8c70b848187c89d64b8817f0ebe831a9587c00257c1cc93195f22833a0eab) — pub. 2026-07 — acc. 2026-10-25 — loc. Figure 2.4, Kazakhstan, 2025 label, p. 47 | Country market average; recorded for the IPS/UPS opt-in test (not a whole-project figure) |
+| P7-IPS-014 | IPS/UPS | Uzbekistan | Wind | capital_per_kw | 1,382 | USD/kW | 2025 | derived 1,382 × 83.6525 = 115,608 RUB/kW; FX: P7-FX-023 | IRENA — *Renewable Power Generation Costs in 2025* — https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_in_2025_2026.pdf (downloaded; SHA-256 38c8c70b848187c89d64b8817f0ebe831a9587c00257c1cc93195f22833a0eab) — pub. 2026-07 — acc. 2026-10-25 — loc. Figure 2.4, Uzbekistan, 2025 label, p. 47 | Country market average; recorded for the opt-in test |
 
 ### Spain (`ES`, EUR)
 
@@ -266,6 +326,8 @@ schedule, which the rows use as `build_months_real`.
 | P7-ES-003 | Europe–Maghreb | Spain | Wind | build_months_real | 8 | months | — | 8 months; FX: none | Iberdrola España — Iberdrola puts the Puylobo wind farm into operation — https://www.iberdrolaespana.com/sala-comunicacion/noticias/detalle/201130_np_01_parque_eolico_puylobo — pub. 2020-11-29 — acc. 2026-10-25 — loc. paragraph 1 (construction time) | 49 MW, 14 × SG 3.4-132, Zaragoza; built during the pandemic; the company calls it record time |
 | P7-ES-004 | Europe–Maghreb | Spain | Solar | capital_per_kw | nearly 300 million for 500 MWp (391 MW grid connection) | EUR | 2019 | derived ≤ 300e6 ÷ 391,000 kWac = 767 EUR/kWac (600 EUR/kWp); FX: none | Iberdrola — Núñez de Balboa completed — https://www.iberdrola.com/press-room/news/detail/nunez-balboa-completed-iberdrola-finalizes-construction-largest-photovoltaic-plant-europe-within-year — pub. 2019-12-27 — acc. 2026-10-25 — loc. paragraph 2 (500 MW, investment); AC rating from Iberdrola project page https://www.iberdrola.com/about-us/power/solar-photovoltaic-energy/nunez-de-balboa-photovoltaic-plant (undated page), installed-capacity line | Badajoz. "Nearly" makes 767 an upper bound per kWac |
 | P7-ES-005 | Europe–Maghreb | Spain | Solar | build_months_real | 12 | months | — | 12 months; FX: none | Iberdrola — https://www.iberdrola.com/press-room/news/detail/nunez-balboa-completed-iberdrola-finalizes-construction-largest-photovoltaic-plant-europe-within-year — Núñez de Balboa completed (as P7-ES-004) — pub. 2019-12-27 — acc. 2026-10-25 — loc. headline and paragraph 1 (construction in one year) | Construction completed December 2019; operation forecast for Q1 2020 |
+| P7-ES-006 | Europe–Maghreb | Spain | Wind | capital_per_kw | 1,422 | USD/kW | 2025 | derived 1,422 × 0.884969 = 1,258 EUR/kW; FX: P7-FX-011 | IRENA — *Renewable Power Generation Costs in 2025* — https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_in_2025_2026.pdf (downloaded; SHA-256 38c8c70b848187c89d64b8817f0ebe831a9587c00257c1cc93195f22833a0eab) — pub. 2026-07 — acc. 2026-10-25 — loc. Figure 2.4, Spain, 2025 label, p. 47 | Market weighted average; disclosed in the contrast (same-era comparison with P7-MA-004) |
+| P7-ES-007 | Europe–Maghreb | Spain | Solar | capital_per_kw | 690 | USD/kW | 2025 | derived 610.6 EUR/kW; FX: P7-FX-011 | IRENA — *Renewable Power Generation Costs in 2025* — https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_in_2025_2026.pdf (downloaded; SHA-256 38c8c70b848187c89d64b8817f0ebe831a9587c00257c1cc93195f22833a0eab) — pub. 2026-07 — acc. 2026-10-25 — loc. Figure 3.2, Spain, 2025 label, p. 63 | Market weighted average |
 
 ### Morocco (`MA`, EUR via MAD)
 
@@ -277,6 +339,9 @@ schedule, which the rows use as `build_months_real`.
 | P7-MA-004 | Europe–Maghreb | Morocco | Wind | capital_per_kw | about 3.25 billion for 270 MW | MAD | 2024 | derived 3.25e9 ÷ 270,000 kW = 12,037 MAD/kW ÷ 10.7614 = 1,119 EUR/kW; FX: P7-FX-005, P7-FX-006 | Enerdata, reporting ONEE — Morocco starts operations of 270 MW Jbel Lahdid wind project — https://www.enerdata.net/publications/daily-energy-news/morocco-starts-operations-270-mw-jbel-lahdid-wind-project.html — pub. 2024-10-15 — acc. 2026-10-25 — loc. paragraph 1 | 54 × 5 MW, Essaouira; ONEE with Nareva and Enel Green Power. Counter-evidence to the Spain–Morocco capital gap (see contrast) |
 | P7-MA-005 | Europe–Maghreb | Morocco | Solar | capital_per_kw | more than 750 million for 72 MW | MAD | 2017 | derived 750e6 ÷ 72,000 kW = 10,417 MAD/kW ÷ 10.9489 = 951 EUR/kW; FX: P7-FX-001, P7-FX-002 | Masen — press release on the launch of works at Noor Ouarzazate IV — https://www.masen.ma/sites/default/files/documents_presse/17.pdf — pub. 2017-04-01 — acc. 2026-10-25 — loc. p. 1, paragraph 3 | Estimated investment at launch; 72 MW maximum capacity, single-axis tracking PV; ACWA Power consortium. "More than" makes 951 a lower bound |
 | P7-MA-006 | Europe–Maghreb | Morocco | Solar | build_months_real | works launched 2017-04-01; commissioning planned for Q1 2018 | dates | — | derived *planned* 9–12 months; FX: none | Masen — https://www.masen.ma/sites/default/files/documents_presse/17.pdf — Noor Ouarzazate IV release (as P7-MA-005) — pub. 2017-04-01 — acc. 2026-10-25 — loc. p. 1, paragraphs 1 and 3 | Planned; actual commissioning date not found |
+| P7-MA-007 | Europe–Maghreb | Morocco | Wind | capital_per_kw | actual investment 215.85 million for 140 MW | EUR | 2011 (commissioned) | derived 1,542 EUR/kW; FX: none (stated in EUR) | KfW Development Bank — *Ex post evaluation – Morocco: Wind Farm Tangier II* (evaluation report 2015) — https://www.kfw-entwicklungsbank.de/PDF/Evaluierung/Ergebnisse-und-Publikationen/PDF-Dokumente-L-P_EN/Marokko_Windpark_E_2016.pdf (downloaded; SHA-256 1da025e6b444762c8e5c3651ba2a52f415d8157a06c807bbfcf015e24be408d9) — pub. 2016-05 (PDF) — acc. 2026-10-25 — loc. p. 1 header table (actual); p. 4 efficiency section | ONEE Tangier II, 165 × 850 kW; 29% over the planned 167 million; old turbine class and price year, so not used for the paced contrast |
+| P7-MA-008 | Europe–Maghreb | Morocco | Wind | build_months_real | put into operation 25 months later than planned | months of delay | — | +25 months versus plan; FX: none | KfW Development Bank — *Ex post evaluation – Morocco: Wind Farm Tangier II* (evaluation report 2015) — https://www.kfw-entwicklungsbank.de/PDF/Evaluierung/Ergebnisse-und-Publikationen/PDF-Dokumente-L-P_EN/Marokko_Windpark_E_2016.pdf (downloaded; SHA-256 1da025e6b444762c8e5c3651ba2a52f415d8157a06c807bbfcf015e24be408d9) — pub. 2016-05 (PDF) — acc. 2026-10-25 — loc. p. 4, efficiency section | Independent evidence of long Moroccan wind schedules (land rights, turbine repositioning, cabling); a delay, not a full duration |
+| P7-MA-009 | Europe–Maghreb | Morocco | Wind | capital_per_kw | total cost 704 million for 150 + 100 + 200 MW | EUR | 2013 (appraisal) | derived 704e6 ÷ 450,000 kW = 1,564 EUR/kW; FX: none | EIB — ONEE - Projet Éolien, project 20120174 — https://www.eib.org/en/projects/all/20120174 — pub. 2013-11-06 (release date) — acc. 2026-10-25 — loc. Total cost; Description | Planned programme cost for Midelt, Tangier and Essaouira farms; capacities later changed; independent of EBRD |
 
 ### Germany (`DE`, EUR) — technology-level costs used for the regional-default proposal
 
@@ -315,6 +380,27 @@ technology-level market ranges, not single whole projects.
 | P7-EM-007 | Europe–Maghreb | ENTSO-E area | Coal | fuel_or_marginal | 2.8–4.1 | EUR/MWh | 2024 edition | 2.8–4.1 EUR/MWh (VOM only); FX: none | ENTSO-E/ACER — https://www.acer.europa.eu/sites/default/files/documents/Individual%20Decisions_annex/ACER-Decision-07-2025-ERAA-2024-Annex-Ib-Assumptions_0.pdf — ERAA 2024 Annex 1 — pub. 2025-07-15 — acc. 2026-10-25 — loc. Table 15, Hard coal, 2025, p. 38 | VOM only |
 | P7-EM-008 | Europe–Maghreb | EU27 | Tariff | retail_tariff_per_mwh | 0.2075 | EUR/kWh | 2025 (H1) | derived 207.5 EUR/MWh; FX: none | Eurostat — Electricity prices for household consumers, bi-annual data (nrg_pc_204) — https://ec.europa.eu/eurostat/databrowser/view/nrg_pc_204/default/table — pub. 2026-10-19 (dataset update) — acc. 2026-10-25 — loc. EU27_2020, band DC (2,500–4,999 kWh), excluding taxes and levies, 2025-S1 | Household; 0.2879 with all taxes |
 | P7-EM-009 | Europe–Maghreb | EU27 | Tariff | retail_tariff_per_mwh | 0.1387 | EUR/kWh | 2025 (H1) | derived 138.7 EUR/MWh; FX: none | Eurostat — Electricity prices for non-household consumers, bi-annual data (nrg_pc_205) — https://ec.europa.eu/eurostat/databrowser/view/nrg_pc_205/default/table — pub. 2026-10-19 (dataset update) — acc. 2026-10-25 — loc. EU27_2020, band ID (2,000–19,999 MWh), excluding taxes and levies, 2025-S1 | Non-household; 0.1640 excluding VAT only |
+| P7-EM-010 | Europe–Maghreb | EU | Hydro | capital_per_kw | 2,100 | EUR2015/kW | 2015 (2020 column) | 2,100 EUR/kW; FX: none | European Commission (E3-Modelling) — *EU Reference Scenario 2020: REF2020 Technology Assumptions* (xlsx) — https://circabc.europa.eu/rest/download/336c6844-6ee8-4861-91e9-7e86107c35ad (downloaded; SHA-256 cb4e63d737b26e391a6b1637617a26fd65d792528f8c353aa206371a5946a9e2) — pub. 2021-07 — acc. 2026-10-25 — loc. sheet Power&Heat, row Lakes, overnight investment 2020 | Reservoir hydro, greenfield, excluding financing; run of river 1,715 |
+| P7-EM-011 | Europe–Maghreb | EU | Hydro | fixed_om_per_kw_year | 25.5 | EUR2015/kW-yr | 2015 (2020 column) | 25.5 EUR/kW-yr; FX: none | European Commission (E3-Modelling) — *EU Reference Scenario 2020: REF2020 Technology Assumptions* (xlsx) — https://circabc.europa.eu/rest/download/336c6844-6ee8-4861-91e9-7e86107c35ad (downloaded; SHA-256 cb4e63d737b26e391a6b1637617a26fd65d792528f8c353aa206371a5946a9e2) — pub. 2021-07 — acc. 2026-10-25 — loc. sheet Power&Heat, row Lakes, fixed O&M 2020 |  |
+| P7-EM-012 | Europe–Maghreb | EU (ACER sample) | AcLine | line_cost_per_km | median 0.397 (average 0.465) | million EUR/km | 2023 (publication) | 397,000 EUR/km (median); FX: none | ACER — *Unit investment cost indicators for energy infrastructure categories* (04.07.2023) — https://www.acer.europa.eu/sites/default/files/documents/Publications_annex/ACER_UIC_indicators_table.pdf (downloaded; SHA-256 d59526c167e394de6b6ff4ac86fc15f6f69280c89f85f00d6bcc0000f24c4c01) — pub. 2023-07-04 — acc. 2026-10-25 — loc. Overhead line, 380–400 kV 1 circuit row | 18 assets; Q1 0.298, Q3 0.606; price base not stated in the table |
+| P7-EM-013 | Europe–Maghreb | ENTSO-E area | Ccgt | fuel_or_marginal | 7.60 | EUR2023 per net GJ | 2025 | 7.60 EUR/GJ (LHV); FX: none | ENTSO-E/ACER — ERAA 2024 Annex 1 — https://www.acer.europa.eu/sites/default/files/documents/Individual%20Decisions_annex/ACER-Decision-07-2025-ERAA-2024-Annex-Ib-Assumptions_0.pdf — pub. 2025-07-15 — acc. 2026-10-25 — loc. Table 7, Natural Gas, 2025, p. 28 | Natural gas price (Bloomberg for 2025); fuel only, net calorific basis; also used for Peaker |
+| P7-EM-014 | Europe–Maghreb | ENTSO-E area | Coal | fuel_or_marginal | 2.97 | EUR2023 per net GJ | 2025 | 2.97 EUR/GJ (LHV); FX: none | ENTSO-E/ACER — ERAA 2024 Annex 1 — https://www.acer.europa.eu/sites/default/files/documents/Individual%20Decisions_annex/ACER-Decision-07-2025-ERAA-2024-Annex-Ib-Assumptions_0.pdf — pub. 2025-07-15 — acc. 2026-10-25 — loc. Table 7, Hard coal, 2025, p. 28 | Fuel only. The table's nuclear fuel price is taken from EIA (a US figure) and is not recorded |
+| P7-EM-015 | Europe–Maghreb | Europe (IRENA region) | Hydro | capital_per_kw | 2,324 | USD/kW | 2018–2025 (2025 USD) | derived 2,324 × 0.884969 = 2,057 EUR/kW; FX: P7-FX-011 | IRENA — *Renewable Power Generation Costs in 2025* — https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_in_2025_2026.pdf (downloaded; SHA-256 38c8c70b848187c89d64b8817f0ebe831a9587c00257c1cc93195f22833a0eab) — pub. 2026-07 — acc. 2026-10-25 — loc. Figure 6.5, Europe label, p. 107 | Corroborates P7-EM-010 |
+
+### Other Europe–Maghreb country markets (`FR`, `IT`, `PL`, `TR`, EUR)
+
+IRENA country weighted averages of commissioned projects (2025 USD). They are market averages, not whole projects, so they are recorded for authoring context and are not proposed as zones. No Algerian or Tunisian whole-project or country-level row was found.
+
+| ID | Region | Market | Technology | Metric | Value as stated | Unit/currency | Price year | Normalised value (region currency) | Source | Scope notes |
+|---|---|---|---|---|---|---|---|---|---|---|
+| P7-FR-001 | Europe–Maghreb | France | Wind | capital_per_kw | 1,932 | USD/kW | 2025 | derived 1,932 × 0.884969 = 1,710 EUR/kW; FX: P7-FX-011 | IRENA — *Renewable Power Generation Costs in 2025* — https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_in_2025_2026.pdf (downloaded; SHA-256 38c8c70b848187c89d64b8817f0ebe831a9587c00257c1cc93195f22833a0eab) — pub. 2026-07 — acc. 2026-10-25 — loc. Figure 2.4, France, 2025 label, p. 47 | Country market weighted average, not a whole project; regional default stays zone 0 |
+| P7-FR-002 | Europe–Maghreb | France | Solar | capital_per_kw | 860 | USD/kW | 2025 | derived 860 × 0.884969 = 761 EUR/kW; FX: P7-FX-011 | IRENA — *Renewable Power Generation Costs in 2025* — https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_in_2025_2026.pdf (downloaded; SHA-256 38c8c70b848187c89d64b8817f0ebe831a9587c00257c1cc93195f22833a0eab) — pub. 2026-07 — acc. 2026-10-25 — loc. Figure 3.2, France, 2025 label, p. 63 | Utility-scale PV market weighted average, not a whole project |
+| P7-IT-001 | Europe–Maghreb | Italy | Wind | capital_per_kw | 1,483 | USD/kW | 2025 | derived 1,483 × 0.884969 = 1,312 EUR/kW; FX: P7-FX-011 | IRENA — *Renewable Power Generation Costs in 2025* — https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_in_2025_2026.pdf (downloaded; SHA-256 38c8c70b848187c89d64b8817f0ebe831a9587c00257c1cc93195f22833a0eab) — pub. 2026-07 — acc. 2026-10-25 — loc. Figure 2.4, Italy, 2025 label, p. 47 | Country market weighted average, not a whole project; regional default stays zone 0 |
+| P7-IT-002 | Europe–Maghreb | Italy | Solar | capital_per_kw | 1,017 | USD/kW | 2025 | derived 1,017 × 0.884969 = 900 EUR/kW; FX: P7-FX-011 | IRENA — *Renewable Power Generation Costs in 2025* — https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_in_2025_2026.pdf (downloaded; SHA-256 38c8c70b848187c89d64b8817f0ebe831a9587c00257c1cc93195f22833a0eab) — pub. 2026-07 — acc. 2026-10-25 — loc. Figure 3.2, Italy, 2025 label, p. 63 | Utility-scale PV market weighted average, not a whole project |
+| P7-PL-001 | Europe–Maghreb | Poland | Wind | capital_per_kw | 1,855 | USD/kW | 2025 | derived 1,855 × 0.884969 = 1,642 EUR/kW; FX: P7-FX-011 | IRENA — *Renewable Power Generation Costs in 2025* — https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_in_2025_2026.pdf (downloaded; SHA-256 38c8c70b848187c89d64b8817f0ebe831a9587c00257c1cc93195f22833a0eab) — pub. 2026-07 — acc. 2026-10-25 — loc. Figure 2.4, Poland, 2025 label, p. 47 | Country market weighted average, not a whole project; regional default stays zone 0 |
+| P7-PL-002 | Europe–Maghreb | Poland | Solar | capital_per_kw | 1,145 | USD/kW | 2025 | derived 1,145 × 0.884969 = 1,013 EUR/kW; FX: P7-FX-011 | IRENA — *Renewable Power Generation Costs in 2025* — https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_in_2025_2026.pdf (downloaded; SHA-256 38c8c70b848187c89d64b8817f0ebe831a9587c00257c1cc93195f22833a0eab) — pub. 2026-07 — acc. 2026-10-25 — loc. Figure 3.2, Poland, 2025 label, p. 63 | Utility-scale PV market weighted average, not a whole project |
+| P7-TR-001 | Europe–Maghreb | Türkiye | Wind | capital_per_kw | 1,345 | USD/kW | 2025 | derived 1,345 × 0.884969 = 1,190 EUR/kW; FX: P7-FX-011 | IRENA — *Renewable Power Generation Costs in 2025* — https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_in_2025_2026.pdf (downloaded; SHA-256 38c8c70b848187c89d64b8817f0ebe831a9587c00257c1cc93195f22833a0eab) — pub. 2026-07 — acc. 2026-10-25 — loc. Figure 2.4, Türkiye, 2025 label, p. 47 | Country market weighted average, not a whole project; regional default stays zone 0 |
+| P7-TR-002 | Europe–Maghreb | Türkiye | Solar | capital_per_kw | 1,095 | USD/kW | 2025 | derived 1,095 × 0.884969 = 969 EUR/kW; FX: P7-FX-011 | IRENA — *Renewable Power Generation Costs in 2025* — https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_in_2025_2026.pdf (downloaded; SHA-256 38c8c70b848187c89d64b8817f0ebe831a9587c00257c1cc93195f22833a0eab) — pub. 2026-07 — acc. 2026-10-25 — loc. Figure 3.2, Türkiye, 2025 label, p. 63 | Utility-scale PV market weighted average, not a whole project |
 
 ## Europe–Maghreb economic-zone proposal
 
@@ -337,10 +423,16 @@ Zone 0 is the regional default and needs a baseline catalog. **Proposed by autho
 - Fixed O&M from the pan-European ERAA rows (P7-EM-001 to P7-EM-003), and from P7-DE-008 to
   P7-DE-013 where ERAA has none.
 - Tariffs from Eurostat (P7-EM-008, P7-EM-009).
+- Hydro capital and fixed O&M from the EU Reference Scenario (P7-EM-010, P7-EM-011);
+  P7-EM-015 corroborates.
+- Fuel from ERAA Table 7 (gas P7-EM-013, hard coal P7-EM-014), with VOM from P7-EM-004 to
+  P7-EM-007.
+- AC line cost from the ACER median (P7-EM-012).
 
 Germany is the largest system in the synchronous area. No pan-regional whole-project source
-covering every kind was reachable (see [Gaps](#gaps)). Zone-0 build durations, hydro capital and
-fuel prices are unsourced.
+covering every kind was reachable (see [Gaps](#gaps)). Zone-0 build durations follow the duration
+ruling: they inherit North American game months as an authoring judgment. Nuclear fuel has no
+non-US source.
 
 ## Spain–Morocco contrast
 
@@ -363,6 +455,23 @@ The required contrast (§28.7.1; Plan 7 Task 1, Step 5.2) is met by **onshore wi
     812 against 729 EUR/kW paced, a gap of +11.4%.
   - The duration contrast does not depend on Koudia's cost. Its only duration evidence is Koudia
     itself (P7-MA-002, P7-MA-003); no sourced Jbel Lahdid start date was found.
+- **Round 2 evidence.** Two independent Moroccan wind sources were added:
+  - KfW's Tangier II evaluation: 1,542 EUR/kW actual (P7-MA-007), with commissioning 25 months
+    later than planned (P7-MA-008).
+  - EIB's 2013 programme appraisal: 1,564 EUR/kW (P7-MA-009).
+  - Both independently support "Moroccan wind is dearer and slower". Their price years (2011,
+    2013) predate the Spanish rows, so they corroborate the direction rather than replace the
+    2021 pair.
+  - **Counter-evidence (disclosed).** IRENA's 2025 Spain market average is 1,258 EUR/kW
+    (P7-ES-006). Against the 2024 Jbel Lahdid cost (1,119 EUR/kW), Morocco is about 11% *cheaper*
+    in the same era. The capital difference exceeds 10% in both pairings, but its sign is not
+    robust across eras.
+  - The duration difference is robust: P7-MA-002 and P7-MA-008 against P7-ES-003.
+  - Recommendation: keep the same-year, project-to-project 2021 pair. The user may prefer to
+    confirm.
+- **No second qualifying technology.** IRENA has no Moroccan solar or wind country value. Solar
+  durations stay about 12 months on both sides. No Spanish or Moroccan CCGT build source was
+  found.
 - **Solar does not qualify.** Capital differs (Spain ≤ 767, Morocco ≥ 951 EUR/kWac: 255 against
   317 EUR/kW paced, +24%). But both projects took, or planned, about 12 months, which paces to
   2 game months each. Solar is offered as a capital-only difference.
@@ -372,10 +481,12 @@ The required contrast (§28.7.1; Plan 7 Task 1, Step 5.2) is met by **onshore wi
 **Omit `economic_zones` (authoring choice).** The opt-in test needs sourced whole-project figures
 for one same technology in both Russia and Kazakhstan or Uzbekistan.
 
-- No Russian whole-project capital or duration row was found for any technology.
-- The only Russian material found was press coverage of government CAPEX *caps* for capacity
-  auctions. Caps are not project costs, so they were not used.
-- Kazakhstan and Uzbekistan therefore cannot form a sourced contrast.
+- Round 2 found Russian whole-project figures for coal (P7-IPS-004) and CCGT (P7-IPS-006),
+  but none for Kazakhstan or Uzbekistan in those technologies.
+- For wind, all three countries have only IRENA country market averages (P7-IPS-007,
+  P7-IPS-013, P7-IPS-014). These are not whole-project figures. The only Russian wind project
+  value is a dated 2019 bid (P7-IPS-008).
+- The test is therefore still unmet, and the decision is unchanged.
 - Task 8's header comment should read "economic_zones omitted by authoring choice", giving this
   reason. FX rows P7-FX-017 to P7-FX-019 exist if a later edition opts in.
 
@@ -393,52 +504,43 @@ northern Algeria, Tunisia, and any micro-states and areas Task 9 rules into the 
 
 ## Gaps
 
-What was searched and not found or not usable, by region. "Not reached" means the source exists
-but could not be read without a download, a login or a bot check, which this task did not do.
+What was searched and not found or not usable, after round 2. "Not reached" means the source exists
+but could not be read without a login, a bot check or a download beyond the round-2 budget.
 
+- **Closed by ruling, not by rows:** baseline durations, start-up costs and line build speed (see
+  [Controller rulings](#controller-rulings-round-2-25-october-2026)).
 - **All regions**
-  - Start-up costs. Only the US peaker has a source (P7-US-032).
-  - AC line build speed. No dated US real km-per-month source, so `cells_per_month` has no pacing
-    ratio. Region tasks need an authoring judgment, recorded as such.
   - IEA WEO 2025 technology-cost tables: behind a Cloudflare bot check, not bypassed.
-  - IRENA *Renewable Power Generation Costs in 2025*: PDF over 10 MB, not reached without a
-    download.
   - NEA/IEA *Projected Costs of Generating Electricity 2020*: HTTP 403.
-  - IAEA PRIS reactor timelines: the site moved to a script-only app.
-- **US.** AEO2026 Table 3 lead times include development. The S&L construction times are used
-  instead, as documented.
+  - IAEA PRIS reactor timelines: a script-only app.
 - **Brazil**
-  - Hydro (UHE) construction duration: not in the PDE 2035 cost caderno.
+  - Hydro (UHE) construction duration: inherits North American months under the duration ruling.
   - Per-voltage line cost: only the all-voltage average (P7-BR-028); the ANEEL price bank was not
-    reached.
-  - Start-up costs.
+    reached within the download budget.
 - **India**
-  - Capital: onshore wind, CCGT and peaker. No Ministry normative wind cost was found.
-  - Build durations for coal, nuclear, solar, wind, battery, CCGT and peaker. NTPC's 48/52-month
-    Lara schedule appears only on a login-gated NTPC page.
+  - Capital: CCGT and peaker. The CEA plan models no new gas build; no CERC benchmark was found.
   - Fuel or energy charges.
-  - Per-km line cost: CEA gives only a per-MW-km figure.
-  - The CEA *National Electricity Plan 2022-32* PDF (HTTP 404 at both known URLs) and the PFC
-    *Report on Performance of Power Utilities* itself.
+  - Per-km line cost: CEA gives only a per-MW-km figure (P7-IN-010).
+  - Nuclear, CCGT and peaker durations (ruling applies).
 - **Southern China**
-  - Nuclear capital: only media estimates of about 20 billion CNY per unit; no official figure,
-    so none was used.
-  - Capital for CCGT, peaker, hydro and battery. The CREEI report gives battery costs only as a
-    forecast range for the 15th Five-Year Plan.
-  - All observed build durations (P7-SC-004 is planned).
-  - Fixed O&M, fuel, line cost and start-up.
-  - A province-wide all-sector average tariff: the national average sales price was not found.
+  - Capital: nuclear (only media estimates of about 20 billion CNY per unit; not used), CCGT,
+    peaker and battery.
+    - A Shenzhen Gas announcement gives 22.81 billion CNY for two combined-cycle sets, but no
+      capacity, so it is not used.
+  - Fixed O&M, fuel prices (no Guangdong gate price for generation found) and line cost.
+  - Observed durations (ruling applies; P7-SC-004 is planned).
 - **IPS/UPS**
-  - Everything except the Moscow tariff: capital, durations, O&M, fuel and line cost for all kinds.
-  - The *General Scheme to 2042* public-discussion text has no unit costs.
-  - ATS renewable-auction results and Ministry of Energy aggregated price norms for lines were not
-    reached.
+  - Fixed O&M for every kind; coal price.
+  - Hydro and nuclear project-level costs (only the General Scheme aggregates, P7-IPS-002 and
+    P7-IPS-003).
+  - The current Minenergo line norm (Order No. 131 of 2024); the superseded 2019 norm is used.
+  - The current ATS renewable-selection bids, which since 2021 use a price-based bid and not capex.
 - **Europe–Maghreb**
-  - Zone-0 build durations for every kind, and zone-0 hydro capital.
-  - Fuel prices; line costs (regional, Spanish and Moroccan).
-  - Country whole-project rows for France (RTE *Futurs énergétiques 2050* cost annex not reached),
-    Italy, Poland, Türkiye, Algeria and Tunisia.
-  - The EU Reference Scenario 2020 technology assumptions are published only as an Excel download.
+  - Nuclear fuel: ERAA's value is an EIA (US) figure, so it is excluded.
+  - Spanish and Moroccan line costs (zones inherit the regional line).
+  - Whole-project rows for France, Italy, Poland, Türkiye, Algeria and Tunisia. IRENA market
+    averages cover the first four (P7-FR-*, P7-IT-*, P7-PL-*, P7-TR-*); none cover Algeria or
+    Tunisia.
   - The actual commissioning date of Noor Ouarzazate IV.
 
 ## Verification
@@ -450,4 +552,7 @@ but could not be read without a download, a login or a bot check, which this tas
 - The note contains no quotations; figures and locators only.
 - Suggested reviewer re-fetch set (at least 10 rows, across regions, including every Spain–Morocco
   contrast row): P7-ES-001, P7-ES-003, P7-MA-001, P7-MA-002, P7-MA-004, P7-US-001, P7-US-033,
-  P7-BR-001, P7-BR-029, P7-IN-006, P7-SC-003 and P7-FX-006.
+  P7-BR-001, P7-BR-029, P7-IN-006, P7-SC-003 and P7-FX-006. Round 2 adds P7-IPS-002, P7-IPS-006,
+  P7-IN-020, P7-MA-007 and P7-EM-012.
+- Downloaded files (round 2) are kept outside git in `target/research/`. Each row names its URL and
+  SHA-256, so a reviewer can re-download it and check the bytes.
