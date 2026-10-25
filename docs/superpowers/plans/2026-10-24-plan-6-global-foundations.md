@@ -829,10 +829,11 @@ Expected: everything is green.
 - [x] **Step 5: Isolated playtest (2026-10-25).** On the unlocked Mac, actual native CUA mouse
   and keyboard playtests used seed 7 and isolated scratch saves/logs. Eastern completed January;
   Western completed January and February, including night, morning, midday and dusk lighting
-  observations. Picker, zone-labelled ET/CT and PT/MST clocks, USD, Winter-to-Spring transition,
-  and Arizona's fixed MST across the March DST boundary were verified. Review and Continue worked;
-  the owned process exited 0 and final process inventory was clear. Durable observations and
-  log/save receipts: `.superpowers/sdd/2026-10-24-plan-6-global-foundations/native-playtest.md`.
+  observations. Both January reviews showed 100% demand served and no incidents; net cash changes
+  were +$125M Eastern and +$55.1M Western. Picker, zone-labelled ET/CT and PT/MST clocks, USD,
+  Winter-to-Spring transition, and Arizona's fixed MST across the March DST boundary were
+  verified. Review and Continue worked; the owned process exited 0 and final process inventory
+  was clear. Scratch logs and saves were temporary local receipts.
 
 - [x] **Step 6: Commit and update the spec status**
 
