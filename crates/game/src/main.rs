@@ -16,6 +16,11 @@ fn main() -> AppExit {
         }
     };
 
+    if args.version {
+        println!("Megawatt Mogul {}", env!("CARGO_PKG_VERSION"));
+        return AppExit::Success;
+    }
+
     let log_dir = LogDir(args.log_dir());
     let save_dir = SaveDir(args.save_dir());
     let exit_after_frames = args.exit_after_frames;
@@ -28,6 +33,8 @@ fn main() -> AppExit {
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Megawatt Mogul".into(),
+                // Match the installed desktop file so Linux shells show the package's icon.
+                name: Some("io.github.adsouza.MegawattMogul".into()),
                 // Smaller than this, the map is too small to read and the side panels crowd it.
                 // The opening size waits for the monitor: `WindowSizingPlugin` applies it.
                 resize_constraints: WindowResizeConstraints {

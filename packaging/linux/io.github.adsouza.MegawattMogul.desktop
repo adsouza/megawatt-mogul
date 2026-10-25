@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Megawatt Mogul
+Comment=Build a power company and keep the grid balanced
+Exec=megawatt-mogul
+Icon=io.github.adsouza.MegawattMogul
+StartupWMClass=io.github.adsouza.MegawattMogul
+Terminal=false
+Categories=Game;Simulation;
+Keywords=electricity;energy;grid;strategy;

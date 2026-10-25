@@ -1,5 +1,7 @@
 # Cargo build output
 /target/
+/dist/
+__pycache__/
 
 # Command logs written by `cargo run -p game` (default --log-dir)
 logs/

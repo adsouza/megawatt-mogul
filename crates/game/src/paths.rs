@@ -40,10 +40,11 @@ pub fn resolve_asset_root(arg: Option<PathBuf>) -> PathBuf {
         .unwrap_or(working_dir)
 }
 
-/// The command-line flags: `--assets <dir>` and `--log-dir <dir>`, plus the hidden developer flag
-/// `--exit-after-frames <n>` (see [`ExitAfterFrames`]).
+/// The command-line flags: `--version`, `--assets <dir>`, `--log-dir <dir>`, `--save-dir <dir>`,
+/// plus the hidden developer flag `--exit-after-frames <n>` (see [`ExitAfterFrames`]).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CliArgs {
+    pub version: bool,
     pub assets: Option<PathBuf>,
     pub log_dir: Option<PathBuf>,
     pub save_dir: Option<PathBuf>,
@@ -56,6 +57,10 @@ impl CliArgs {
         let mut parsed = Self::default();
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
+            if arg == "--version" {
+                parsed.version = true;
+                continue;
+            }
             let flag = match arg.to_str() {
                 Some("--assets") => "--assets",
                 Some("--log-dir") => "--log-dir",
@@ -105,7 +110,7 @@ pub enum CliError {
 
 impl CliError {
     pub const USAGE: &'static str =
-        "usage: game [--assets <dir>] [--log-dir <dir>] [--save-dir <dir>]";
+        "usage: game [--version] [--assets <dir>] [--log-dir <dir>] [--save-dir <dir>]";
 }
 
 impl fmt::Display for CliError {
