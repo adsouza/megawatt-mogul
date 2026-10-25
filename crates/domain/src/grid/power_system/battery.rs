@@ -7,6 +7,7 @@ use crate::ids::PlantId;
 use crate::region::{BatterySpec, PlantKind, RegionDefinition};
 use crate::time::{SimMonth, TICKS_PER_DAY, TICKS_PER_HOUR};
 use crate::units::{MegawattHours, Megawatts, Ratio};
+use std::cell::OnceCell;
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -75,6 +76,149 @@ fn discharging_window(spec: BatterySpec, tick: u32) -> bool {
     tick >= u32::from(spec.discharge_start_hour) * TICKS_PER_HOUR && tick < TICKS_PER_DAY
 }
 
+/// Scratch data for one immutable planning query. Membership and site potential do not
+/// change while the query runs. Keep ID order and the original arithmetic; no cached data
+/// enters saved state or survives a command, tick, inventory change or wind observation.
+pub(super) struct BatteryPlanningInputs<'a> {
+    power: &'a PowerSystem,
+    region: &'a RegionDefinition,
+    month: SimMonth,
+    batteries: Vec<&'a Plant>,
+    dispatchable: Vec<&'a Plant>,
+    thermal: Vec<&'a Plant>,
+    cities: Vec<&'a crate::demand::DemandCenter>,
+    solar: Vec<(Megawatts, Ratio)>,
+    wind_potential: Megawatts,
+    minutes: Vec<OnceCell<PlanningMinute>>,
+}
+
+pub(super) struct PlanningMinute {
+    pub(super) demand: Megawatts,
+    pub(super) solar: Megawatts,
+    pub(super) wind: Megawatts,
+}
+
+impl<'a> BatteryPlanningInputs<'a> {
+    pub(super) fn new(
+        power: &'a PowerSystem,
+        region: &'a RegionDefinition,
+        month: SimMonth,
+    ) -> Self {
+        let plants: Vec<_> = power.connected_plants().collect();
+        Self {
+            power,
+            region,
+            month,
+            batteries: plants
+                .iter()
+                .copied()
+                .filter(|p| p.battery().is_some())
+                .collect(),
+            dispatchable: plants
+                .iter()
+                .copied()
+                .filter(|p| p.kind().is_dispatchable())
+                .collect(),
+            thermal: plants
+                .iter()
+                .copied()
+                .filter(|p| p.kind().is_dispatchable() && p.kind() != PlantKind::Hydro)
+                .collect(),
+            cities: power.connected_cities().collect(),
+            solar: plants
+                .iter()
+                .filter(|p| p.kind() == PlantKind::Solar)
+                .map(|p| {
+                    (
+                        p.spec().capacity,
+                        super::cell_ratio(region, p.cell(), |c| c.irradiance),
+                    )
+                })
+                .collect(),
+            wind_potential: plants
+                .iter()
+                .filter(|p| p.kind() == PlantKind::Wind)
+                .map(|p| {
+                    p.spec().capacity
+                        * super::cell_ratio(region, p.cell(), |c| c.wind_potential).value()
+                })
+                .sum(),
+            minutes: (0..TICKS_PER_DAY).map(|_| OnceCell::new()).collect(),
+        }
+    }
+
+    pub(super) fn minute(&self, tick: u32) -> &PlanningMinute {
+        self.minutes[tick as usize].get_or_init(|| {
+            let sun = crate::generation::sun_factor(self.region.solar(), self.month, tick);
+            let clearness = self.region.solar().clearness_mean[self.month.index0()];
+            PlanningMinute {
+                demand: crate::demand::forecast_demand(
+                    self.cities.iter().copied(),
+                    self.region.demand(),
+                    self.month,
+                    tick,
+                ),
+                solar: self
+                    .solar
+                    .iter()
+                    .map(|&(capacity, irradiance)| {
+                        crate::generation::solar_available(capacity, irradiance, sun, clearness)
+                    })
+                    .sum(),
+                wind: self.wind_potential
+                    * self
+                        .power
+                        .wind_factor_forecast(self.region, self.month, tick)
+                        .0,
+            }
+        })
+    }
+
+    pub(super) fn thermal_for_charge(&self, tick: u32, from: u32, preview: bool) -> Megawatts {
+        self.thermal
+            .iter()
+            .copied()
+            .map(|p| {
+                let committed = p.commitment().is_committed((tick / TICKS_PER_HOUR) as u8);
+                if preview {
+                    return if committed {
+                        if p.auto_follow() {
+                            p.spec().capacity
+                        } else {
+                            p.initial_target()
+                        }
+                    } else {
+                        Megawatts::ZERO
+                    };
+                }
+                if !committed && !p.is_commitment_suppressed() {
+                    return Megawatts::ZERO;
+                }
+                match p.status() {
+                    PlantStatus::Online { output, target } => {
+                        if p.auto_follow() {
+                            p.spec()
+                                .capacity
+                                .min(output + p.spec().ramp.over_ticks(tick.saturating_sub(from)))
+                        } else {
+                            target.min(output + p.spec().ramp.over_ticks(tick.saturating_sub(from)))
+                        }
+                    }
+                    PlantStatus::Starting { ticks_left }
+                        if tick.saturating_sub(from) >= ticks_left =>
+                    {
+                        p.spec().capacity.min(
+                            p.spec().min_output()
+                                + p.spec().ramp.over_ticks(tick - from - ticks_left),
+                        )
+                    }
+                    _ => Megawatts::ZERO,
+                }
+            })
+            .sum()
+    }
+}
+
 impl PowerSystem {
     pub(crate) fn invalidate_battery_plan(&mut self) {
         self.battery_plan_dirty = true;
@@ -129,48 +273,6 @@ impl PowerSystem {
         self.battery_plan = next;
         self.battery_plan_dirty = false;
     }
-    fn thermal_for_charge(&self, tick: u32, from: u32, preview: bool) -> Megawatts {
-        self.connected_plants()
-            .filter(|p| p.kind().is_dispatchable() && p.kind() != PlantKind::Hydro)
-            .map(|p| {
-                let committed = p.commitment().is_committed((tick / TICKS_PER_HOUR) as u8);
-                if preview {
-                    return if committed {
-                        if p.auto_follow() {
-                            p.spec().capacity
-                        } else {
-                            p.initial_target()
-                        }
-                    } else {
-                        Megawatts::ZERO
-                    };
-                }
-                if !committed && !p.is_commitment_suppressed() {
-                    return Megawatts::ZERO;
-                }
-                match p.status() {
-                    PlantStatus::Online { output, target } => {
-                        if p.auto_follow() {
-                            p.spec()
-                                .capacity
-                                .min(output + p.spec().ramp.over_ticks(tick.saturating_sub(from)))
-                        } else {
-                            target.min(output + p.spec().ramp.over_ticks(tick.saturating_sub(from)))
-                        }
-                    }
-                    PlantStatus::Starting { ticks_left }
-                        if tick.saturating_sub(from) >= ticks_left =>
-                    {
-                        p.spec().capacity.min(
-                            p.spec().min_output()
-                                + p.spec().ramp.over_ticks(tick - from - ticks_left),
-                        )
-                    }
-                    _ => Megawatts::ZERO,
-                }
-            })
-            .sum()
-    }
     fn compute_battery_plan(
         &self,
         region: &RegionDefinition,
@@ -178,37 +280,41 @@ impl PowerSystem {
         from: u32,
         preview: bool,
     ) -> BatteryScheduleView {
-        let mut plan = self.compute_battery_charge_plan(region, month, from, preview);
-        if !self.has_batteries() {
+        if !self.connected_plants().any(|p| p.battery().is_some()) {
+            return BatteryScheduleView::default();
+        }
+        let inputs = BatteryPlanningInputs::new(self, region, month);
+        let mut plan = self.charge_plan_with_inventory(&inputs, from, preview, None);
+        if !inputs
+            .batteries
+            .iter()
+            .any(|p| p.battery().is_some_and(|b| b.enabled()))
+        {
             return plan;
         }
         // Delivery is an estimate of gaps left by generation, never a generation reduction request.
-        self.project_storage_supply(region, month, from, TICKS_PER_DAY, preview, &mut plan);
+        self.project_storage_supply_with_inputs(
+            &inputs,
+            from,
+            TICKS_PER_DAY,
+            preview,
+            &mut plan,
+            false,
+        );
         plan
     }
 
-    fn compute_battery_charge_plan(
+    pub(super) fn charge_plan_with_inventory(
         &self,
-        region: &RegionDefinition,
-        month: SimMonth,
-        from: u32,
-        preview: bool,
-    ) -> BatteryScheduleView {
-        self.charge_plan_with_inventory(region, month, from, preview, None)
-    }
-
-    fn charge_plan_with_inventory(
-        &self,
-        region: &RegionDefinition,
-        month: SimMonth,
+        inputs: &BatteryPlanningInputs<'_>,
         from: u32,
         preview: bool,
         inventory: Option<&BTreeMap<PlantId, crate::generation::BatteryState>>,
     ) -> BatteryScheduleView {
-        if !self.connected_plants().any(|p| p.battery().is_some()) {
+        if inputs.batteries.is_empty() {
             return BatteryScheduleView::default();
         }
-        let has_room = self.connected_plants().any(|p| {
+        let has_room = inputs.batteries.iter().copied().any(|p| {
             p.battery()
                 .zip(p.spec().battery)
                 .is_some_and(|(state, spec)| {
@@ -224,9 +330,10 @@ impl PowerSystem {
         if !has_room {
             return BatteryScheduleView {
                 expected_charging: preview,
-                plants: self
-                    .connected_plants()
-                    .filter(|p| p.battery().is_some())
+                plants: inputs
+                    .batteries
+                    .iter()
+                    .copied()
                     .map(|p| {
                         (
                             p.id(),
@@ -242,21 +349,36 @@ impl PowerSystem {
         let n = TICKS_PER_DAY as usize;
         let mut charge_residual: Vec<_> = (0..TICKS_PER_DAY)
             .map(|t| {
-                self.connected_demand_forecast(region, month, t)
-                    - self.expected_variable(region, month, t)
+                let point = inputs.minute(t);
+                point.demand - (point.solar + point.wind)
             })
             .collect();
+        // No battery can use headroom outside this window. The residual still spans
+        // the full day because its extrema determine fill_minutes' bisection bounds.
+        let charge_end = inputs
+            .batteries
+            .iter()
+            .filter_map(|p| {
+                p.battery().filter(|b| b.enabled())?;
+                Some(u32::from(p.spec().battery?.charge_end_hour) * TICKS_PER_HOUR)
+            })
+            .max()
+            .unwrap_or(0);
         let mut headroom: Vec<_> = (0..TICKS_PER_DAY)
             .map(|t| {
-                (self.thermal_for_charge(t, from, preview) - charge_residual[t as usize])
-                    .max(Megawatts::ZERO)
+                if t >= from && t < charge_end {
+                    (inputs.thermal_for_charge(t, from, preview) - charge_residual[t as usize])
+                        .max(Megawatts::ZERO)
+                } else {
+                    Megawatts::ZERO
+                }
             })
             .collect();
         let mut result = BatteryScheduleView {
             expected_charging: preview,
             ..Default::default()
         };
-        for p in self.connected_plants() {
+        for p in &inputs.batteries {
             let (Some(spec), Some(state)) = (p.spec().battery, p.battery()) else {
                 continue;
             };
@@ -269,7 +391,8 @@ impl PowerSystem {
                 );
             let charge_caps: Vec<_> = (0..TICKS_PER_DAY)
                 .map(|t| {
-                    if enabled && t >= from && charging_window(region, month, spec, t) {
+                    if enabled && t >= from && charging_window(inputs.region, inputs.month, spec, t)
+                    {
                         headroom[t as usize].min(spec.charge_power)
                     } else {
                         Megawatts::ZERO
@@ -495,8 +618,9 @@ impl PowerSystem {
         if !self.has_batteries() {
             return Vec::new();
         }
-        let mut plan = self.compute_battery_charge_plan(region, month, 0, true);
-        self.project_storage_supply(region, month, 0, TICKS_PER_DAY, true, &mut plan)
+        let inputs = BatteryPlanningInputs::new(self, region, month);
+        let mut plan = self.charge_plan_with_inventory(&inputs, 0, true, None);
+        self.project_storage_supply_with_inputs(&inputs, 0, TICKS_PER_DAY, true, &mut plan, true)
     }
 
     /// One sequential inventory per projected horizon. Future receipts are allowed only in Planning.
@@ -508,12 +632,13 @@ impl PowerSystem {
         end: u32,
         preview: bool,
     ) -> Vec<super::outage::HourEnd> {
+        let inputs = BatteryPlanningInputs::new(self, region, month);
         let mut plan = if preview {
-            self.compute_battery_charge_plan(region, month, start, true)
+            self.charge_plan_with_inventory(&inputs, start, true, None)
         } else {
             self.battery_plan.clone()
         };
-        self.project_storage_supply(region, month, start, end, preview, &mut plan)
+        self.project_storage_supply_with_inputs(&inputs, start, end, preview, &mut plan, true)
             .into_iter()
             .map(|point| super::outage::HourEnd {
                 demand: point.demand,
@@ -532,14 +657,31 @@ impl PowerSystem {
         preview: bool,
         plans: &mut BatteryScheduleView,
     ) -> Vec<SupplyForecastPoint> {
+        let inputs = BatteryPlanningInputs::new(self, region, month);
+        self.project_storage_supply_with_inputs(&inputs, start, end, preview, plans, true)
+    }
+
+    pub(super) fn project_storage_supply_with_inputs(
+        &self,
+        inputs: &BatteryPlanningInputs<'_>,
+        start: u32,
+        end: u32,
+        preview: bool,
+        plans: &mut BatteryScheduleView,
+        collect_forecast: bool,
+    ) -> Vec<SupplyForecastPoint> {
+        let region = inputs.region;
+        let month = inputs.month;
         let hydro = if preview {
             self.preview_hydro(region, month)
         } else {
             // Live projections use the applied hydro ceilings through `deliverable` below.
             BTreeMap::new()
         };
-        let mut inventory: BTreeMap<_, _> = self
-            .connected_plants()
+        let mut inventory: BTreeMap<_, _> = inputs
+            .batteries
+            .iter()
+            .copied()
             .filter_map(|p| {
                 p.battery().map(|b| {
                     let mut state = b.clone();
@@ -550,8 +692,10 @@ impl PowerSystem {
                 })
             })
             .collect();
-        let mut water: BTreeMap<_, _> = self
-            .connected_plants()
+        let mut water: BTreeMap<_, _> = inputs
+            .dispatchable
+            .iter()
+            .copied()
             .filter(|p| p.kind() == PlantKind::Hydro)
             .map(|p| {
                 (
@@ -568,16 +712,13 @@ impl PowerSystem {
         let mut last_surplus = None;
         for tick in start..end.min(TICKS_PER_DAY) {
             let hour = (tick / 60) as u8;
-            let solar = self.expected_solar(region, month, tick);
-            let demand = self.connected_demand_forecast(region, month, tick);
-            let wind = self.wind_forecast(region, month, tick).0;
+            let point = inputs.minute(tick);
+            let (solar, demand, wind) = (point.solar, point.demand, point.wind);
             let mut primary = solar + wind;
-            let mut generation =
-                BTreeMap::from([(PlantKind::Solar, solar), (PlantKind::Wind, wind)]);
-            for p in self
-                .connected_plants()
-                .filter(|p| p.kind().is_dispatchable())
-            {
+            // Schedule-only callers need the flows, not a map and point for every minute.
+            let mut generation = collect_forecast
+                .then(|| BTreeMap::from([(PlantKind::Solar, solar), (PlantKind::Wind, wind)]));
+            for p in inputs.dispatchable.iter().copied() {
                 let mut output = if preview {
                     if !p.commitment().is_committed(hour) {
                         Megawatts::ZERO
@@ -598,12 +739,13 @@ impl PowerSystem {
                     *left = MegawattHours::new((left.value() - output.value() / 60.0).max(0.0));
                 }
                 primary += output;
-                *generation.entry(p.kind()).or_insert(Megawatts::ZERO) += output;
+                if let Some(generation) = &mut generation {
+                    *generation.entry(p.kind()).or_insert(Megawatts::ZERO) += output;
+                }
             }
             let surplus = primary >= demand;
             if preview && (last_surplus != Some(surplus) || tick.is_multiple_of(TICKS_PER_HOUR)) {
-                let next =
-                    self.charge_plan_with_inventory(region, month, tick, true, Some(&inventory));
+                let next = self.charge_plan_with_inventory(inputs, tick, true, Some(&inventory));
                 for (id, future) in next.plants {
                     if let Some(existing) = plans.plants.get_mut(&id) {
                         existing.charge[tick as usize..]
@@ -616,7 +758,7 @@ impl PowerSystem {
             let mut charging_room = (primary - demand).max(Megawatts::ZERO);
             let mut storage = Megawatts::ZERO;
             let mut charging = Megawatts::ZERO;
-            for p in self.connected_plants() {
+            for p in &inputs.batteries {
                 let (Some(spec), Some(state)) = (p.spec().battery, inventory.get_mut(&p.id()))
                 else {
                     continue;
@@ -644,13 +786,15 @@ impl PowerSystem {
                 charging += flow.charge;
                 charging_room = (charging_room - flow.charge).max(Megawatts::ZERO);
             }
-            minutes.push(SupplyForecastPoint {
-                demand,
-                generation,
-                gross_supply: primary + storage,
-                battery_charge: charging,
-                battery_discharge: storage,
-            });
+            if let Some(generation) = generation {
+                minutes.push(SupplyForecastPoint {
+                    demand,
+                    generation,
+                    gross_supply: primary + storage,
+                    battery_charge: charging,
+                    battery_discharge: storage,
+                });
+            }
         }
         minutes
     }

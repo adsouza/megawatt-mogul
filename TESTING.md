@@ -724,6 +724,13 @@ December. A saved December Review continues without repeating the annual review.
 acceptance compares ten extra batteries against a baseline for both regions, seeds 0–7, across
 36 months: excess storage is held at its first review and final cash never beats the baseline.
 
+`grid::power_system::tests::battery_planning` compares cached forecasts and complete charge plans
+bit for bit with the original uncached calculations across generated months, seeds, live/preview
+modes, thermal states, manual targets, disabled storage and inventory overrides. It also checks
+that schedule-only projection produces the same schedule bytes as collecting forecast points.
+Planning scratch data lives only for an immutable query; it is never persisted or reused across
+simulation ticks. Keep the full 16-case, three-review shipped acceptance when optimizing this path.
+
 ## Wind farms and revised charging (Plan 5, rules 14)
 
 `domain/grid/power_system/tests/wind.rs` independently checks 120 MW from a 300 MW farm at 80%
