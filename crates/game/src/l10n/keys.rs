@@ -72,6 +72,7 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "world-effects-help",
     "world-help",
     "world-copper-plate",
+    "world-supply-help",
     "world-dev-title",
     "world-dev-boundary",
     "world-dev-entities",

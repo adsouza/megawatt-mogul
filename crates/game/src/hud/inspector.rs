@@ -50,7 +50,7 @@ pub struct CellInspector {
     pub title: String,
     /// `Land` or `Water`.
     pub terrain: String,
-    /// Height, sunshine, cooling water and hydro potential, each a percentage.
+    /// Height, sunshine, wind potential, cooling water and hydro potential, each a percentage.
     pub readings: Vec<Stat>,
     /// The heading over the suitability rows.
     pub suitability_heading: String,
@@ -159,6 +159,7 @@ fn cell_inspector(game: &Game, l10n: &Localizer, at: CellCoord) -> Option<CellIn
         readings: vec![
             reading("inspector-height", cell.height),
             reading("inspector-irradiance", cell.irradiance),
+            reading("wind-potential", cell.wind_potential),
             reading("inspector-cooling-water", cell.cooling_water),
             reading("inspector-hydro-potential", cell.hydro_potential),
         ],
@@ -395,6 +396,10 @@ mod tests {
                 (
                     "Sunshine",
                     format::percent(terrain_cell.irradiance).as_str()
+                ),
+                (
+                    "Wind potential",
+                    format::percent(terrain_cell.wind_potential).as_str()
                 ),
                 (
                     "Cooling water",

@@ -355,7 +355,13 @@ fn the_players_legend_choice_lasts_through_the_phases_of_a_game() {
 fn the_active_map_layer_is_shown_as_selected() {
     use crate::contrast::button_look;
     use game::hud::MapLayer;
-    const LAYERS: [&str; 4] = ["Terrain", "Sunshine", "Cooling water", "Hydro potential"];
+    const LAYERS: [&str; 5] = [
+        "Terrain",
+        "Sunshine",
+        "Cooling water",
+        "Hydro potential",
+        "Suitability: Wind farm",
+    ];
     let logs = TempDir::new().unwrap();
     let mut app = app_in(&logs, EASTERN, DayPhase::Planning);
     let pass = EguiPass::attach(&mut app);
@@ -370,7 +376,7 @@ fn the_active_map_layer_is_shown_as_selected() {
             (layer.selected, button_look(&painted, layer.rect))
         })
     };
-    let shows_on = |looks: &[(bool, crate::contrast::ButtonLook); 4], on: usize| {
+    let shows_on = |looks: &[(bool, crate::contrast::ButtonLook); 5], on: usize| {
         for (index, (selected, look)) in looks.iter().enumerate() {
             assert_eq!(*selected, index == on, "{}", LAYERS[index]);
             if index != on {
@@ -386,9 +392,18 @@ fn the_active_map_layer_is_shown_as_selected() {
     assert_eq!(*app.world().resource::<MapLayer>(), MapLayer::Terrain);
     shows_on(&looks(&mut app), 0);
 
-    for _ in 0..2 {
-        click_button(&mut app, &pass, MEDIUM, "Sunshine");
-        assert_eq!(*app.world().resource::<MapLayer>(), MapLayer::Irradiance);
-        shows_on(&looks(&mut app), 1);
+    for (label, layer, index) in [
+        ("Sunshine", MapLayer::Irradiance, 1),
+        (
+            "Suitability: Wind farm",
+            MapLayer::Suitability(domain::region::PlantKind::Wind),
+            4,
+        ),
+    ] {
+        for _ in 0..2 {
+            click_button(&mut app, &pass, MEDIUM, label);
+            assert_eq!(*app.world().resource::<MapLayer>(), layer);
+            shows_on(&looks(&mut app), index);
+        }
     }
 }
