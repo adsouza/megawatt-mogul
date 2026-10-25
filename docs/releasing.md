@@ -32,14 +32,17 @@ simulation-rules versions remain independent compatibility counters, not applica
 
 1. Set the desired version in the root `Cargo.toml`. Refresh workspace versions in `Cargo.lock`
    with `cargo update --workspace` and commit both files along with the intended release changes.
-2. Merge the changes and wait for CI. Check out the intended release commit.
-3. Validate the version, create an annotated tag and push it. For the initial version:
+2. Merge the changes and wait for CI and cache warming. Check out `main` with a clean checkout.
+3. Run the release script with the version tag. For the initial version:
 
    ```sh
-   python3 tools/release/release.py metadata --tag v0.1.0
-   git tag -a v0.1.0 -m "Megawatt Mogul 0.1.0"
-   git push origin v0.1.0
+   ./tools/release.sh v0.1.0
    ```
+
+   It fast-forwards from `origin/main`, validates the shared version, creates an annotated tag
+   and pushes only that tag. It refuses dirty checkouts, other branches, unpublished local main
+   commits and existing tags. The push runs the normal clippy/test hooks. If the push fails,
+   the local tag remains; the script prints the command to retry the push.
 
 4. Wait for **Linux release**, inspect its draft and test the downloaded packages on Linux.
    Publish the draft from GitHub when ready. The workflow never publishes it automatically.
