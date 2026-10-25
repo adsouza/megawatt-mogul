@@ -11,6 +11,12 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Runner hardware
+      shell: bash
+      run: |
+        lscpu
+        printf '\nAvailable logical CPUs: %s\n' "$(nproc)"
+        free -h
     # Bevy's Linux build dependencies, from Bevy 0.20's docs/linux_dependencies.md (Ubuntu), plus
     # the XCB libraries bevy_egui's docs list for its clipboard support. The game tests run
     # headless (MinimalPlugins, no window or GPU), so no display server is needed. Cached, so a
