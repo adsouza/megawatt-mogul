@@ -138,8 +138,13 @@ git config core.hooksPath .githooks
 ```
 
 - **pre-commit** runs `cargo fmt --all --check` (instant).
-- **pre-push** runs clippy and the full test suite (about 25 s on a warm build).
-- Both match CI. `--no-verify` skips them in an emergency.
+- **pre-push** always runs clippy. It runs the full test suite (about 25 s on a warm build)
+  when any outgoing change touches Rust, Cargo metadata, toolchain/build configuration, crate
+  files or assets. Documentation-only and CI-only updates skip the suite. New refs or unknown
+  comparison ranges keep the full check.
+- CI runs formatting, clippy and tests for every pull request and push to main.
+
+Check the pre-push selection logic with `python3 .githooks/tests/test_pre_push.py`.
 
 See [TESTING.md](TESTING.md) for the test layers and [ARCHITECTURE.md](ARCHITECTURE.md) for how the
 code is organised. Contributors and coding agents should read [AGENTS.md](AGENTS.md).

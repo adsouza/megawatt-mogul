@@ -16,8 +16,10 @@ equal to demand. Clean Architecture + DDD; see ARCHITECTURE.md, and the spec in 
 - Run the game: `cargo run -p game` (`--assets <dir>`, `--log-dir <dir>`)
 - Launch smoke: `cargo run -p game -- --exit-after-frames 120` opens the window, draws 120 frames
   and exits 0. Tests can't open a window, so run it after changing plugins or system parameters.
-- Hooks: `git config core.hooksPath .githooks`. pre-commit checks formatting; pre-push runs clippy
-  and the tests. Don't bypass them with `--no-verify`: fix the failure instead.
+- Hooks: `git config core.hooksPath .githooks`. pre-commit checks formatting; pre-push always runs
+  clippy and runs tests when outgoing changes affect Rust, Cargo metadata, toolchain/build config,
+  crate files or assets. New refs or unknown comparison ranges also run tests. Check hook selection
+  with `python3 .githooks/tests/test_pre_push.py`. Don't bypass hooks with `--no-verify`.
 
 ## Architecture rules
 

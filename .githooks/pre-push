@@ -1,12 +1,41 @@
 #!/usr/bin/env bash
-# Runs the checks CI runs before anything leaves this machine: clippy (warnings denied)
-# and the full nextest suite (about 25 s on a warm build).
+# Always run clippy; run nextest when outgoing changes affect Rust or its test inputs.
 # Enable once per clone: git config core.hooksPath .githooks
-# Bypass in an emergency: git push --no-verify
 set -euo pipefail
+
+# Git supplies every ref update on stdin. Compare the entire outgoing range, not
+# just HEAD, and disable rename detection so removing a Rust input is covered too.
+run_tests=false
+saw_update=false
+while read -r local_ref local_oid remote_ref remote_oid; do
+    saw_update=true
+    if [[ "$local_oid" =~ ^0+$ ]]; then
+        continue # Deleting a ref introduces no code.
+    fi
+    if [[ -z "$remote_oid" || "$remote_oid" =~ ^0+$ ]]; then
+        run_tests=true # New refs have no known baseline: keep the full check.
+        continue
+    fi
+    if git diff --quiet --no-ext-diff --no-textconv --no-renames \
+        "$remote_oid" "$local_oid" -- \
+        ':(glob)**/*.rs' ':(glob)**/Cargo.toml' ':(glob)**/Cargo.lock' \
+        ':(glob)**/rust-toolchain*' ':(glob)**/.cargo/**' \
+        .config/nextest.toml crates/ assets/; then
+        : # No relevant changes in this ref update.
+    else
+        run_tests=true # Includes diff errors or unavailable remote objects.
+    fi
+done
+if [[ "$saw_update" == false ]]; then
+    run_tests=true # Direct invocation without Git's ref records is conservative.
+fi
 
 echo "pre-push: clippy" >&2
 cargo clippy --workspace --all-targets --quiet -- -D warnings
 
-echo "pre-push: tests" >&2
-cargo nextest run --workspace --profile ci --status-level fail --final-status-level fail
+if [[ "$run_tests" == true ]]; then
+    echo "pre-push: tests" >&2
+    cargo nextest run --workspace --profile ci --status-level fail --final-status-level fail
+else
+    echo "pre-push: skipping tests (no Rust or test-input changes in outgoing refs)" >&2
+fi
