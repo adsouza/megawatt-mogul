@@ -2,6 +2,7 @@
 //! return. Commands and worker results are scoped to a session generation.
 use super::{CommandFailed, DomainEventMessage, PlayerCommand, ReturnToMenu, Session, SimSpeed};
 use crate::{
+    crash::CrashContext,
     paths::SaveDir,
     state::{AppState, PhaseState},
 };
@@ -101,8 +102,13 @@ enum Completion {
     Saved(Result<SaveReceipt, SaveError>),
     Renamed(Result<SaveReceipt, SaveError>),
     Deleted(Result<(), SaveError>),
-    Loaded(Result<Box<Game>, SaveError>),
+    Loaded(Result<LoadedGame, SaveError>),
     Failed(SaveError),
+}
+/// A restored game and the resume log it records to.
+struct LoadedGame {
+    game: Box<Game>,
+    log: std::path::PathBuf,
 }
 /// The boundary whose autosave failed. Boundaries of one run are ordered by their accepted-command
 /// count, so a save with at least as many commands covers it.
@@ -312,9 +318,12 @@ impl Persistence {
                         Box::new(sink.with_prepared_recording(candidate.recording)),
                         &|| cancel.load(Ordering::Relaxed),
                     )
-                    .map(Box::new)
                     .map_err(SaveError::Restore)
                     .inspect_err(|_| discard_branch_log(&log))
+                    .map(|game| LoadedGame {
+                        game: Box::new(game),
+                        log,
+                    })
             })())
         });
         if self.error.is_some() {
@@ -792,9 +801,12 @@ impl Persistence {
                         )
                         .map_err(RestoreError::Log)?;
                         game.with_recording(Box::new(sink), &|| cancel.load(Ordering::Relaxed))
-                            .map(Box::new)
                             .map_err(SaveError::Restore)
                             .inspect_err(|_| discard_branch_log(&log))
+                            .map(|game| LoadedGame {
+                                game: Box::new(game),
+                                log,
+                            })
                     })())
                 });
             }
@@ -1028,6 +1040,7 @@ pub(super) fn poll_persistence(
     mut player: ResMut<Messages<PlayerCommand>>,
     mut events: ResMut<Messages<DomainEventMessage>>,
     mut failures: ResMut<Messages<CommandFailed>>,
+    crash: Res<CrashContext>,
 ) {
     persistence.poll_preload(generation.0);
     if persistence.resuming {
@@ -1192,7 +1205,8 @@ pub(super) fn poll_persistence(
             }
         },
         Completion::Loaded(result) => match result {
-            Ok(game) => {
+            Ok(LoadedGame { game, log }) => {
+                crash.set_game_log(Some(log));
                 generation.0 = generation.0.wrapping_add(1);
                 persistence.abandon();
                 persistence.enter(generation.0);

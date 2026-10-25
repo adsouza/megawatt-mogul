@@ -52,7 +52,8 @@ cargo run -p game -- --assets <dir> --log-dir <dir> --save-dir <dir>
   first of `./assets`, `assets/` next to the executable, and the workspace's `assets/`.
 - `--log-dir` is where command logs are written (default `./logs`, which git ignores). Each game
   records its own log there, named for the time, region and seed. A crash writes
-  `crash-<time>.txt` there too, with the panic message and a backtrace.
+  `crash-<time>.txt` there too, with the panic message, a backtrace and the path of the running
+  game's log, which replays the game up to the crash.
 - `--save-dir` holds game saves and `preferences.ron` (default `./saves`). Storage errors do not
   prevent a new game from starting.
 - `--exit-after-frames <n>` (for developers) closes the game after `n` frames: a quick check that

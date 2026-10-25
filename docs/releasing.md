@@ -143,7 +143,8 @@ local focused checks do not imply permission to run the full local suite.
 ## Crash reports and symbols
 
 A panic writes `crash-<UTC time>.txt` beside the command logs, with the version, thread, panic
-message, location and a backtrace (captured even without `RUST_BACKTRACE`). Release builds carry
+message, location, the running game's command log (to replay it) and a backtrace (captured even
+without `RUST_BACKTRACE`). Release builds carry
 no debug info, so the backtrace can name functions but not source lines. It names them only
 because both packages keep the binary's symbol table. Cargo's release profile strips debug info
 alone. The Flatpak manifest sets `"strip": false` and `"no-debuginfo": true`, since

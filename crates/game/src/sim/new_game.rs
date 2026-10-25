@@ -14,6 +14,7 @@ use domain::session::GameSettings;
 use infrastructure::command_log::{FileCommandLog, region_archive_path};
 
 use super::{Catalog, CommandFailed, NewGameRequest, Session};
+use crate::crash::CrashContext;
 use crate::paths::LogDir;
 use crate::state::AppState;
 
@@ -46,10 +47,12 @@ pub(super) fn start_new_game(
     mut persistence: ResMut<super::Persistence>,
     mut next: ResMut<NextState<AppState>>,
     mut failures: MessageWriter<CommandFailed>,
+    crash: Res<CrashContext>,
 ) {
     for request in requests.read() {
         match new_game(&catalog.0, &log_dir.0, request, since_epoch().as_secs()) {
-            Ok(game) => {
+            Ok((game, log)) => {
+                crash.set_game_log(Some(log));
                 generation.0 = generation.0.wrapping_add(1);
                 persistence.abandon();
                 persistence.enter(generation.0);
@@ -67,13 +70,13 @@ pub(super) fn start_new_game(
 }
 
 /// Creates the log under `log_dir` (named for `unix_secs`, the region and seed) and starts the
-/// game on it.
+/// game on it. Returns the game and its log's path.
 fn new_game(
     catalog: &dyn RegionCatalog,
     log_dir: &Path,
     request: &NewGameRequest,
     unix_secs: u64,
-) -> Result<Game, CommandError> {
+) -> Result<(Game, PathBuf), CommandError> {
     let stem = log_stem(unix_secs, &request.region, request.seed);
     let (path, sink) = create_log(log_dir, &stem)?;
     let started = Game::start_new(
@@ -95,7 +98,7 @@ fn new_game(
         }
         Err(_) => {}
     }
-    started
+    started.map(|game| (game, path))
 }
 
 /// `<YYYYMMDD-HHMMSS>-<region>-<seed>`, in UTC. Characters a file name shouldn't carry become `_`.

@@ -22,7 +22,7 @@ fn main() -> AppExit {
     }
 
     // Before anything else can panic, so every crash leaves a report beside the command logs.
-    game::crash::install(args.log_dir());
+    let crash_context = game::crash::install(args.log_dir());
     if args.crash {
         game::crash::requested_crash();
     }
@@ -35,6 +35,7 @@ fn main() -> AppExit {
     let mut app = App::new();
     app.insert_resource(asset_root)
         .insert_resource(log_dir)
+        .insert_resource(crash_context)
         .insert_resource(save_dir)
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
