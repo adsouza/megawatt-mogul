@@ -330,6 +330,33 @@ pub fn tiny_region_parts() -> RegionDefinitionParts {
     RegionDefinitionParts {
         id: RegionId::new("tiny"),
         name_key: "region-tiny".to_owned(),
+        geo: GeoBounds {
+            west: -6.0,
+            east: 6.0,
+            south: 0.0,
+            north: 8.0,
+        },
+        clock: RegionClock {
+            system_zone: ZoneId(0),
+            zones: vec![TimeZone {
+                id: ZoneId(0),
+                name_key: None,
+                standard_offset_minutes: 0,
+                dst_months: [false; 12],
+            }],
+        },
+        city_locales: cities()
+            .iter()
+            .map(|city| {
+                (
+                    city.id,
+                    CityLocale {
+                        zone: ZoneId(0),
+                        climate: ClimateId(0),
+                    },
+                )
+            })
+            .collect(),
         terrain: terrain(),
         catalog: catalog(),
         cities: cities(),

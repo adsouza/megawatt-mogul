@@ -2,6 +2,7 @@
 //! parameters and the starting scenario. Constructing one validates it, so the
 //! rest of the domain can rely on its invariants.
 
+mod clock;
 mod params;
 mod plant_spec;
 mod terrain;
@@ -9,11 +10,13 @@ mod terrain;
 #[cfg(any(test, feature = "test-fixtures"))]
 pub mod fixtures;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use thiserror::Error;
 
 use crate::ids::{CellCoord, CityId, RegionId};
+
+pub use clock::{CityLocale, ClimateId, GeoBounds, RegionClock, TimeZone, ZoneId};
 
 pub use params::{
     CityDef, DemandShape, FrequencyParams, HydroParams, LineParams, RegulatorParams,
@@ -81,6 +84,9 @@ pub enum RegionError {
 pub struct RegionDefinitionParts {
     pub id: RegionId,
     pub name_key: String,
+    pub geo: GeoBounds,
+    pub clock: RegionClock,
+    pub city_locales: BTreeMap<CityId, CityLocale>,
     pub terrain: TerrainGrid,
     pub catalog: Vec<PlantSpec>,
     pub cities: Vec<CityDef>,
@@ -100,6 +106,9 @@ pub struct RegionDefinitionParts {
 pub struct RegionDefinition {
     id: RegionId,
     name_key: String,
+    geo: GeoBounds,
+    clock: RegionClock,
+    city_locales: BTreeMap<CityId, CityLocale>,
     terrain: TerrainGrid,
     /// One spec per kind, in `PlantKind::ALL` order.
     catalog: Vec<PlantSpec>,
@@ -485,11 +494,12 @@ fn validate_lines(lines: &LineParams) -> Result<(), RegionError> {
 impl TryFrom<RegionDefinitionParts> for RegionDefinition {
     type Error = RegionError;
 
-    /// Validates in order: grid (checked when the terrain was built), catalog,
-    /// cities, start, shapes, regulator bands, catalog values, frequency,
-    /// lines. Reports the first error found.
+    /// Validates in order: catalog, geography and clocks, cities, start,
+    /// shapes, regulator bands, catalog values, frequency, lines. Grid length
+    /// was checked when the terrain was built. Reports the first error found.
     fn try_from(mut parts: RegionDefinitionParts) -> Result<Self, RegionError> {
         let catalog = order_catalog(std::mem::take(&mut parts.catalog))?;
+        clock::validate(&parts)?;
         validate_cities(&parts.terrain, &parts.cities)?;
         validate_start(&parts.terrain, &catalog, &parts.cities, &parts.start)?;
         validate_shapes(&parts)?;
@@ -500,6 +510,9 @@ impl TryFrom<RegionDefinitionParts> for RegionDefinition {
         Ok(Self {
             id: parts.id,
             name_key: parts.name_key,
+            geo: parts.geo,
+            clock: parts.clock,
+            city_locales: parts.city_locales,
             terrain: parts.terrain,
             catalog,
             cities: parts.cities,
@@ -576,6 +589,7 @@ mod tests {
             parts.cities = cells[..city_count].iter().enumerate().map(|(i, &cell)| CityDef {
                 id: CityId(i as u32 + 1), cell, ..template.clone()
             }).collect();
+            parts.city_locales = parts.cities.iter().map(|city| (city.id, CityLocale { zone: ZoneId(0), climate: ClimateId(0) })).collect();
             parts.start.home_city = CityId(1);
             parts.start.connected_cities = vec![CityId(1)];
             parts.start.fleet = cells[city_count..].iter().map(|&cell| StartPlantDef {

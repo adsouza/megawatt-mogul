@@ -5,9 +5,10 @@
 
 use domain::ids::{CellCoord, CityId, RegionId};
 use domain::region::{
-    CityDef, DemandShape, FrequencyParams, HydroParams, LineParams, PlantKind, PlantSpec,
-    RegionDefinition, RegionDefinitionParts, RegionError, RegulatorParams, SatisfactionParams,
-    SitingRule, SolarParams, StartDef, StartPlantDef, StorageAccreditation, WindParams,
+    CityDef, CityLocale, ClimateId, DemandShape, FrequencyParams, GeoBounds, HydroParams,
+    LineParams, PlantKind, PlantSpec, RegionClock, RegionDefinition, RegionDefinitionParts,
+    RegionError, RegulatorParams, SatisfactionParams, SitingRule, SolarParams, StartDef,
+    StartPlantDef, StorageAccreditation, TimeZone, WindParams, ZoneId,
 };
 use domain::time::{SimDuration, SimMonth, TICKS_PER_HOUR};
 use domain::units::{Hertz, Megawatts, Money, Price, RampRate, Ratio};
@@ -44,6 +45,34 @@ pub fn map_region(mut file: RegionFile) -> Result<RegionDefinition> {
     let parts = RegionDefinitionParts {
         id: RegionId::new(&file.id),
         name_key: file.name_key.clone(),
+        geo: GeoBounds {
+            west: file.bounds.west,
+            east: file.bounds.east,
+            south: file.bounds.south,
+            north: file.bounds.north,
+        },
+        clock: RegionClock {
+            system_zone: ZoneId(0),
+            zones: vec![TimeZone {
+                id: ZoneId(0),
+                name_key: None,
+                standard_offset_minutes: 0,
+                dst_months: [false; 12],
+            }],
+        },
+        city_locales: file
+            .cities
+            .iter()
+            .map(|city| {
+                (
+                    CityId(city.id),
+                    CityLocale {
+                        zone: ZoneId(0),
+                        climate: ClimateId(0),
+                    },
+                )
+            })
+            .collect(),
         terrain: rasterize(&file),
         catalog: file
             .catalog
