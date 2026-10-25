@@ -4,6 +4,10 @@
 region-eastern-interconnection = Eastern Interconnection
 region-western-interconnection = Western Interconnection
 
+# What the region picker says beside each region: `<name key>-description`.
+region-eastern-interconnection-description = Dense cities, big demand, and a legacy coal and nuclear fleet. Keep the industrial heartland humming.
+region-western-interconnection-description = Mountain crossings, desert sunshine, and Pacific Northwest hydro. Master the evening demand surge.
+
 city-albuquerque = Albuquerque
 city-amarillo = Amarillo
 city-atlanta = Atlanta

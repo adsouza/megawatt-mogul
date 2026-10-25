@@ -26,7 +26,7 @@ use game::state::{AppState, BootError};
 use infrastructure::region::RonRegionCatalog;
 use tempfile::TempDir;
 
-use crate::support::{headless_app, shipped_assets, update_n};
+use crate::support::{SHIPPED_REGIONS, headless_app, shipped_assets, update_n};
 
 fn shipped() -> Localizer {
     Localizer::load(&shipped_assets().join("locales").join("en-US"))
@@ -913,11 +913,46 @@ fn every_shipped_region_and_city_name_key_exists() {
     let catalog = RonRegionCatalog::new(shipped_assets().join("regions"));
 
     let listings = catalog.list().unwrap();
-    assert!(listings.len() >= 2, "expected both shipped regions");
+    let ids: Vec<_> = listings.iter().map(|listing| listing.id.as_str()).collect();
+    assert_eq!(
+        ids, SHIPPED_REGIONS,
+        "the support list names the shipped regions"
+    );
     for listing in listings {
         let region = catalog.load(&listing.id).unwrap().definition;
-        let mut keys = vec![region.name_key().to_owned()];
+        let mut keys = vec![
+            region.name_key().to_owned(),
+            // The region picker shows this beside the region's button (§28.3).
+            format!("{}-description", region.name_key()),
+        ];
         keys.extend(region.cities().iter().map(|city| city.name_key.clone()));
+        // Every civil zone a city or the system clock uses.
+        keys.extend(region.system_zone().name_key.clone());
+        keys.extend(
+            region
+                .cities()
+                .iter()
+                .filter_map(|city| region.city_zone(city.id).name_key.clone()),
+        );
+        // Every economic zone with a cell, and every starter line's authored name.
+        let terrain = region.terrain();
+        let zones: std::collections::BTreeSet<_> = (0..terrain.height())
+            .flat_map(|y| (0..terrain.width()).map(move |x| CellCoord { x, y }))
+            .map(|cell| region.economic_zone_at(cell).unwrap())
+            .collect();
+        keys.extend(
+            zones
+                .into_iter()
+                .filter_map(|zone| region.economic_zone(zone))
+                .map(|zone| zone.name_key.clone()),
+        );
+        keys.extend(
+            region
+                .cities()
+                .iter()
+                .filter_map(|city| region.start_line_name(city.id))
+                .map(str::to_owned),
+        );
         for key in keys {
             assert!(
                 l10n.has(&key),

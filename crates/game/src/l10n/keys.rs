@@ -193,8 +193,6 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "region-select-southern",
     "region-select-both-hemispheres",
     "region-select-home",
-    "region-select-east-description",
-    "region-select-west-description",
     "region-select-empty",
     "region-select-unavailable",
     // Shell: top bar, toasts and game over

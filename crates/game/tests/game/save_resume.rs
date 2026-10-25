@@ -39,7 +39,7 @@ pub(crate) fn open_browser(app: &mut App) {
 }
 #[test]
 fn save_resume_mid_day_restores_a_paused_runnable_game_with_all_projections() {
-    for region in ["eastern_interconnection", "western_interconnection"] {
+    for &region in crate::support::SHIPPED_REGIONS {
         let logs = TempDir::new().unwrap();
         let saves = TempDir::new().unwrap();
         let mut app = hud_app(logs.path());

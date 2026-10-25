@@ -397,10 +397,11 @@ pub fn region_select_model(
 fn region_choice(listing: &RegionListing, seed: Option<u64>, l10n: &Localizer) -> RegionChoice {
     match &listing.entry {
         Ok(summary) => RegionChoice {
-            description: match summary.id.as_str() {
-                "eastern_interconnection" => Some(l10n.text("region-select-east-description")),
-                "western_interconnection" => Some(l10n.text("region-select-west-description")),
-                _ => None,
+            description: {
+                // Each region's copy sits in `regions.ftl` beside its name; a region without
+                // any shows none.
+                let key = format!("{}-description", summary.name_key);
+                l10n.has(&key).then(|| l10n.text(&key))
             },
             detail: None,
             metadata: None,
@@ -748,6 +749,51 @@ mod tests {
             seed: " 12 ".to_owned(),
         };
         assert_eq!(padded.parsed_seed(), Some(12));
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    #[test]
+    fn a_regions_description_is_looked_up_from_its_name_key() {
+        let l10n = shipped_l10n();
+        // Neither ID is one the menu knows by name: the key alone finds the copy.
+        let listings = RegionListings(Ok(vec![
+            available("somewhere", EAST.1),
+            available("elsewhere", WEST.1),
+            // A real message with no description beside it.
+            available("nowhere", "city-columbus"),
+        ]));
+
+        let model = region_select_model(&listings, Some(1), &l10n);
+
+        let descriptions: Vec<_> = model
+            .regions
+            .iter()
+            .map(|r| r.description.clone())
+            .collect();
+        assert_eq!(
+            descriptions,
+            [
+                Some(
+                    "Dense cities, big demand, and a legacy coal and nuclear fleet. \
+                     Keep the industrial heartland humming."
+                        .to_owned()
+                ),
+                Some(
+                    "Mountain crossings, desert sunshine, and Pacific Northwest hydro. \
+                     Master the evening demand surge."
+                        .to_owned()
+                ),
+                None,
+            ]
+        );
+        assert_eq!(
+            descriptions[0],
+            Some(l10n.text("region-eastern-interconnection-description"))
+        );
+        assert_eq!(
+            descriptions[1],
+            Some(l10n.text("region-western-interconnection-description"))
+        );
         assert_eq!(l10n.problems(), vec![]);
     }
 

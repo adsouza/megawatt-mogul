@@ -138,3 +138,127 @@ fn runtime_currency_fallback_uses_the_primary_context_fonts() {
     pass.run(&mut app, 1024.0, 640.0);
     assert_eq!(app.world().resource::<MoneyStyle>().prefix, "EUR ");
 }
+
+/// A weak currency late in a rich game shows a thousand billion in the top bar (₹1,234B,
+/// ₽5,000B). Even then, at the smallest window and at the largest UI zoom, every label of the
+/// bar must paint whole (egui truncates silently, and the AccessKit label still reads in full)
+/// and inside the screen, with no region's longer names pushing a button off the edge.
+#[test]
+fn the_widest_top_bar_cash_fits_at_the_minimum_window() {
+    use application::Game;
+    use bevy::prelude::default;
+    use game::hud::top_bar_model;
+    use game::sim::Persistence;
+    use infrastructure::region::RonRegionCatalog;
+
+    let l10n = shipped_l10n();
+    let catalog = RonRegionCatalog::new(crate::support::shipped_assets().join("regions"));
+    let widest = [1_234_000_000_000_i64, 5_000_000_000_000]
+        .into_iter()
+        .flat_map(|dollars| [dollars, -dollars]);
+    let widest: Vec<Money> = widest.map(Money::from_dollars).collect();
+    for &region in crate::support::SHIPPED_REGIONS {
+        let game = Game::start_new(
+            &catalog,
+            &RegionId::new(region),
+            7,
+            GameSettings::default(),
+            Box::new(InMemoryCommandLog::default()),
+        )
+        .unwrap();
+        for zoom in [1.0, 1.25] {
+            let ctx = egui::Context::default();
+            ctx.set_zoom_factor(zoom);
+            // Fonts exist only once the context has run a frame.
+            ctx.run_ui(egui::RawInput::default(), |_| {})
+                .drop_without_applying_deltas();
+            let screen = egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(
+                    game::window::MIN_WINDOW_SIZE.x / zoom,
+                    game::window::MIN_WINDOW_SIZE.y / zoom,
+                ),
+            );
+            for currency in [
+                Currency::Usd,
+                Currency::Eur,
+                Currency::Cny,
+                Currency::Inr,
+                Currency::Rub,
+                Currency::Brl,
+            ] {
+                // The style the game picks from its fonts, and the symbol form.
+                for style in [
+                    MoneyStyle::resolve_egui(currency, &l10n, &ctx),
+                    MoneyStyle::resolve(currency, &l10n, |_| true),
+                ] {
+                    for &amount in &widest {
+                        let mut model =
+                            top_bar_model(&game, &Persistence::default(), &l10n, &style);
+                        model.cash.value = money(amount, &style);
+                        let label =
+                            format!("{region} {currency:?} {} zoom {zoom}", model.cash.value);
+                        let mut checked = 0;
+                        for frame in 0..4 {
+                            let output = ctx.run_ui(
+                                egui::RawInput {
+                                    screen_rect: Some(screen),
+                                    ..default()
+                                },
+                                |ui| {
+                                    egui::Panel::top("top_bar")
+                                        .show(ui, |ui| game::hud::draw_top_bar(ui, &model));
+                                },
+                            );
+                            let shapes = output.shapes.clone();
+                            output.drop_without_applying_deltas();
+                            // The first frames lay out with the fonts still loading.
+                            if frame < 2 {
+                                continue;
+                            }
+                            for text in [
+                                &model.date,
+                                &model.time,
+                                &model.season,
+                                &model.phase,
+                                &model.cash.label,
+                                &model.cash.value,
+                                &model.reliability.label,
+                                &model.reliability.value,
+                                &model.satisfaction.label,
+                                &model.satisfaction.value,
+                                &model.strikes.label,
+                                &model.strikes.value,
+                                &model.milestones.label,
+                                &model.save.label,
+                                &model.menu.label,
+                            ] {
+                                let painted = shapes
+                                    .iter()
+                                    .find_map(|shape| match &shape.shape {
+                                        egui::Shape::Text(t) if t.galley.text() == *text => Some(t),
+                                        _ => None,
+                                    })
+                                    .unwrap_or_else(|| panic!("{label}: {text:?} was not painted"));
+                                let glyphs: String = painted
+                                    .galley
+                                    .rows
+                                    .iter()
+                                    .flat_map(|row| row.glyphs.iter().map(|g| g.chr))
+                                    .collect();
+                                assert_eq!(&glyphs, text, "{label}: painted whole");
+                                let bounds = painted.visual_bounding_rect();
+                                assert!(
+                                    screen.contains_rect(bounds),
+                                    "{label}: {text:?} at {bounds:?} leaves the {screen:?} screen"
+                                );
+                                checked += 1;
+                            }
+                        }
+                        assert_eq!(checked, 2 * 15, "{label}");
+                    }
+                }
+            }
+        }
+    }
+}

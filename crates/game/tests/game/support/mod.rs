@@ -35,6 +35,10 @@ pub fn update_n(app: &mut App, n: usize) {
     }
 }
 
+/// Every region shipped in `assets/regions`, sorted like `RonRegionCatalog::list`. Each region
+/// task inserts its ID here; the shipped-region name-key test checks it against the folder.
+pub const SHIPPED_REGIONS: &[&str] = &["eastern_interconnection", "western_interconnection"];
+
 /// The workspace's shipped `assets/` directory. Tests only read from it.
 pub fn shipped_assets() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")

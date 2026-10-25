@@ -439,6 +439,26 @@ mod tests {
         );
     }
 
+    /// A rich late game in a weak currency reaches a thousand billion: the compact form stops at
+    /// `B`, so it grows into thousands of billions rather than adding a unit.
+    #[test]
+    fn money_at_a_thousand_billion_fits() {
+        use domain::units::Currency::{Inr, Rub, Usd};
+        for (currency, amount, expected) in [
+            (Inr, Money::from_dollars(1_234_000_000_000), "₹1,234B"),
+            (Rub, Money::from_dollars(5_000_000_000_000), "₽5,000B"),
+            (Usd, Money::from_dollars(999_000_000_000), "$999B"),
+            (Usd, Money::from_dollars(1_000_000_000_000), "$1,000B"),
+            (
+                Rub,
+                Money::from_dollars(-5_000_000_000_000),
+                "\u{2212}₽5,000B",
+            ),
+        ] {
+            assert_eq!(money(amount, &currency_style(currency)), expected);
+        }
+    }
+
     #[test]
     fn money_is_signed_with_a_true_minus() {
         let cents = |dollars: f64| Money::from_cents((dollars * 100.0).round() as i64);

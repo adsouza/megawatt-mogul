@@ -26,6 +26,46 @@ const REGIONS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/reg
 const EAST: &str = "eastern_interconnection";
 const WEST: &str = "western_interconnection";
 
+/// The research note whose row tables the region files cite (`[P7-XX-NNN]`).
+const RESEARCH_NOTE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../docs/research/2026-10-25-plan-7-regional-economics.md"
+);
+
+/// Every shipped region ID, sorted like `RonRegionCatalog::list`. Each Plan 7 region task
+/// inserts its ID here and in the tables below; every region-agnostic test iterates them.
+const SHIPPED: &[&str] = &[EAST, WEST];
+
+/// The IDs Plan 7 adds, a subset of `SHIPPED`. The provenance, scale and squareness tests
+/// iterate it: the Eastern and Western files predate those rules.
+const NEW_REGIONS: &[&str] = &[];
+
+/// Each region's real system capacity in GW, from the research note: the scale reference for
+/// `new_region_load_scales_with_capacity`.
+const RESEARCH_CAPACITY_GW: &[(&str, f64)] = &[(EAST, 980.0), (WEST, 340.0)];
+
+/// Each region's start city (`start.home_city`), by name key.
+const HOME_CITY: &[(&str, &str)] = &[(EAST, "city-columbus"), (WEST, "city-seattle")];
+
+/// The city each region's first-expansion acceptance test (spec §18.3) connects, by name key.
+const EXPANSION_CITY: &[(&str, &str)] = &[(EAST, "city-cleveland"), (WEST, "city-vancouver")];
+
+/// Each region's nominal grid frequency in hertz.
+const NOMINAL_HZ: &[(&str, f64)] = &[(EAST, 60.0), (WEST, 60.0)];
+
+/// The row for `id` in one of the per-region tables above.
+fn table_value<T: Copy>(table: &[(&str, T)], id: &str) -> T {
+    table
+        .iter()
+        .find(|(key, _)| *key == id)
+        .map(|(_, value)| *value)
+        .unwrap_or_else(|| panic!("{id} has no row in a shipped-region table"))
+}
+
+fn table_keys<'a, T>(table: &[(&'a str, T)]) -> Vec<&'a str> {
+    table.iter().map(|(key, _)| *key).collect()
+}
+
 fn catalog() -> RonRegionCatalog {
     RonRegionCatalog::new(REGIONS_DIR)
 }
@@ -49,24 +89,293 @@ fn total_base_load(region: &RegionDefinition) -> f64 {
     region.cities().iter().map(|c| c.base_load.value()).sum()
 }
 
-/// Whether the cell containing (lon, lat) is land.
+/// Whether the cell containing (lon, lat) is land. Points outside the grid count as its
+/// nearest edge cell.
 fn is_land(id: &str, lon: f64, lat: f64) -> bool {
-    let file = region_file(id);
-    let cell = domain::ids::CellCoord {
-        x: ((lon - file.bounds.west) / (file.bounds.east - file.bounds.west)
-            * f64::from(file.grid.width))
-        .floor()
-        .clamp(0.0, f64::from(file.grid.width - 1)) as u16,
-        y: ((file.bounds.north - lat) / (file.bounds.north - file.bounds.south)
-            * f64::from(file.grid.height))
-        .floor()
-        .clamp(0.0, f64::from(file.grid.height - 1)) as u16,
-    };
-    region(id)
-        .terrain()
-        .get(cell)
-        .expect("point lies inside the grid")
-        .land
+    LandMap::load(id).land_at_clamped(lon, lat)
+}
+
+/// A region's land mask with its geographic bounds, loaded once so that whole-grid scans
+/// don't re-read the file for every cell.
+struct LandMap {
+    lon: (f64, f64),
+    lat: (f64, f64),
+    grid: (u16, u16),
+    /// Row-major from the northwest cell.
+    land: Vec<bool>,
+}
+
+impl LandMap {
+    fn from_cells(lon: (f64, f64), lat: (f64, f64), grid: (u16, u16), land: Vec<bool>) -> Self {
+        assert_eq!(land.len(), usize::from(grid.0) * usize::from(grid.1));
+        Self {
+            lon,
+            lat,
+            grid,
+            land,
+        }
+    }
+
+    /// The shipped region `id`, mapped exactly as loading does.
+    fn load(id: &str) -> Self {
+        let file = region_file(id);
+        let region = region(id);
+        let terrain = region.terrain();
+        let land = (0..terrain.height())
+            .flat_map(|y| (0..terrain.width()).map(move |x| domain::ids::CellCoord { x, y }))
+            .map(|cell| terrain.get(cell).expect("cell is in the grid").land)
+            .collect();
+        Self::from_cells(
+            (file.bounds.west, file.bounds.east),
+            (file.bounds.south, file.bounds.north),
+            (file.grid.width, file.grid.height),
+            land,
+        )
+    }
+
+    fn land_at_clamped(&self, lon: f64, lat: f64) -> bool {
+        let (width, height) = (f64::from(self.grid.0), f64::from(self.grid.1));
+        let x = ((lon - self.lon.0) / (self.lon.1 - self.lon.0) * width)
+            .floor()
+            .clamp(0.0, width - 1.0) as usize;
+        let y = ((self.lat.1 - lat) / (self.lat.1 - self.lat.0) * height)
+            .floor()
+            .clamp(0.0, height - 1.0) as usize;
+        self.land[y * usize::from(self.grid.0) + x]
+    }
+
+    /// Whether (lon, lat) lies inside the bounds and in a land cell.
+    fn land_at(&self, lon: f64, lat: f64) -> bool {
+        (self.lon.0..=self.lon.1).contains(&lon)
+            && (self.lat.0..=self.lat.1).contains(&lat)
+            && self.land_at_clamped(lon, lat)
+    }
+
+    /// The (lon, lat) centre of every land cell.
+    fn land_centres(&self) -> Vec<(f64, f64)> {
+        let (width, height) = (usize::from(self.grid.0), usize::from(self.grid.1));
+        let mut centres = Vec::new();
+        for y in 0..height {
+            for x in 0..width {
+                if self.land[y * width + x] {
+                    centres.push((
+                        self.lon.0 + (x as f64 + 0.5) * (self.lon.1 - self.lon.0) / width as f64,
+                        self.lat.1 - (y as f64 + 0.5) * (self.lat.1 - self.lat.0) / height as f64,
+                    ));
+                }
+            }
+        }
+        centres
+    }
+
+    /// The centres of this map's land cells that are also land in `other`.
+    fn centres_on_land_in(&self, other: &LandMap) -> Vec<(f64, f64)> {
+        self.land_centres()
+            .into_iter()
+            .filter(|&(lon, lat)| other.land_at(lon, lat))
+            .collect()
+    }
+}
+
+/// Crimea and Sevastopol: no region may offer a playable cell there.
+#[derive(serde::Deserialize)]
+struct ExcludedExtent {
+    polygons: Vec<Vec<(f64, f64)>>,
+}
+
+impl ExcludedExtent {
+    fn contains(&self, lon: f64, lat: f64) -> bool {
+        self.polygons
+            .iter()
+            .any(|ring| point_in_ring(lon, lat, ring))
+    }
+}
+
+fn excluded_extent() -> ExcludedExtent {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/authoring/ukraine_ips_operating_extent.ron"
+    );
+    ron::de::from_str(&std::fs::read_to_string(path).expect("extent file exists"))
+        .expect("extent file parses")
+}
+
+/// Even-odd ray casting: whether (lon, lat) lies inside the (lon, lat) ring.
+fn point_in_ring(lon: f64, lat: f64, ring: &[(f64, f64)]) -> bool {
+    let mut inside = false;
+    let mut previous = ring.len() - 1;
+    for (i, &(xi, yi)) in ring.iter().enumerate() {
+        let (xj, yj) = ring[previous];
+        if (yi > lat) != (yj > lat) && lon < (xj - xi) * (lat - yi) / (yj - yi) + xi {
+            inside = !inside;
+        }
+        previous = i;
+    }
+    inside
+}
+
+/// Degrees to kilometres: the research note's spherical-Earth convention (R = 6,371 km).
+const KM_PER_DEGREE: f64 = 111.195;
+/// The longest cell edge over the shortest, at the region's middle latitude.
+const MAX_CELL_ASPECT: f64 = 1.25;
+const MAX_GRID_WIDTH: u16 = 256;
+const MAX_GRID_HEIGHT: u16 = 128;
+
+/// A cell's east-west and north-south lengths in km at the middle latitude of `lat`.
+fn cell_size_km(lon: (f64, f64), lat: (f64, f64), grid: (u16, u16)) -> (f64, f64) {
+    let middle = (lat.0 + lat.1) / 2.0;
+    let w_km = (lon.1 - lon.0) / f64::from(grid.0) * KM_PER_DEGREE * middle.to_radians().cos();
+    let h_km = (lat.1 - lat.0) / f64::from(grid.1) * KM_PER_DEGREE;
+    (w_km, h_km)
+}
+
+/// The longer edge over the shorter: 1.0 for a square cell.
+fn cell_aspect(w_km: f64, h_km: f64) -> f64 {
+    w_km.max(h_km) / w_km.min(h_km)
+}
+
+fn grid_fits(width: u16, height: u16) -> bool {
+    width <= MAX_GRID_WIDTH && height <= MAX_GRID_HEIGHT
+}
+
+/// The share of the Eastern Interconnection's load per GW that a region carries: 40,850 MW
+/// at 980 GW. New regions stay within a quarter of it.
+const LOAD_SCALE_BAND: std::ops::RangeInclusive<f64> = 0.75..=1.25;
+
+fn load_scale(total_base_load_mw: f64, capacity_gw: f64) -> f64 {
+    total_base_load_mw / (40_850.0 * capacity_gw / 980.0)
+}
+
+/// The longest build (in played months) each kind may take, for the tycoon pacing contract.
+const PACING_CEILINGS: [(PlantKind, u32); 6] = [
+    (PlantKind::Peaker, 3),
+    (PlantKind::Solar, 3),
+    (PlantKind::Ccgt, 6),
+    (PlantKind::Coal, 12),
+    (PlantKind::Hydro, 18),
+    (PlantKind::Nuclear, 24),
+];
+
+/// Each kind whose `build_months` exceeds its ceiling, described under `label`.
+fn pacing_overshoots(label: &str, build_months: impl Fn(PlantKind) -> u32) -> Vec<String> {
+    PACING_CEILINGS
+        .iter()
+        .filter(|&&(kind, longest)| build_months(kind) > longest)
+        .map(|&(kind, longest)| {
+            format!(
+                "{label}: {kind:?} takes {} played months, over {longest}",
+                build_months(kind)
+            )
+        })
+        .collect()
+}
+
+/// A provenance citation looks like `[P7-SC-007]`: two or three capitals, then three digits.
+/// Returns the ID at the very start of `text`, if it has that shape.
+fn leading_row_id(text: &str) -> Option<&str> {
+    let body = text.strip_prefix("P7-")?;
+    let letters = body.bytes().take_while(u8::is_ascii_uppercase).count();
+    if !(2..=3).contains(&letters) {
+        return None;
+    }
+    let digits = body[letters..].strip_prefix('-')?;
+    if digits.bytes().take_while(u8::is_ascii_digit).count() != 3 {
+        return None;
+    }
+    Some(&text[.."P7-".len() + letters + "-".len() + 3])
+}
+
+/// Every `[P7-XX-NNN]` citation in `text`, in order.
+fn cited_ids(text: &str) -> Vec<String> {
+    let mut ids = Vec::new();
+    let mut rest = text;
+    while let Some(at) = rest.find("[P7-") {
+        rest = &rest[at + 1..];
+        if let Some(id) = leading_row_id(rest)
+            && rest[id.len()..].starts_with(']')
+        {
+            ids.push(id.to_owned());
+        }
+    }
+    ids
+}
+
+/// The IDs that head a `| P7-XX-NNN |` row of the research note's tables.
+fn research_row_ids(note: &str) -> std::collections::BTreeSet<String> {
+    note.lines()
+        .filter_map(|line| {
+            let cell = line.trim_start().strip_prefix("| ")?;
+            let id = leading_row_id(cell)?;
+            cell[id.len()..]
+                .starts_with([' ', '|'])
+                .then(|| id.to_owned())
+        })
+        .collect()
+}
+
+/// Whether the entry at `lines[at]` has a comment block directly above it that cites a row.
+/// An entry written over several lines starts at its opening `(` (and `id:` line).
+fn has_citation_above(lines: &[&str], at: usize) -> bool {
+    let mut top = at;
+    while top > 0 && {
+        let above = lines[top - 1].trim();
+        above == "(" || above.starts_with("id:")
+    } {
+        top -= 1;
+    }
+    let mut i = top;
+    while i > 0 && lines[i - 1].trim_start().starts_with("//") {
+        i -= 1;
+        if !cited_ids(lines[i]).is_empty() {
+            return true;
+        }
+    }
+    false
+}
+
+/// The entries a region file must source: every plant kind in the catalog, every economic zone,
+/// the `lines` block, the starting tariff and the starting cash. Each is described by its line
+/// number and text when no comment directly above it cites a research row.
+fn uncited_entries(ron: &str) -> Vec<String> {
+    let lines: Vec<&str> = ron.lines().collect();
+    let mut catalog_indent = None;
+    let mut found = Vec::new();
+    for (n, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        let indent = line.len() - trimmed.len();
+        if trimmed.starts_with("//") {
+            continue;
+        }
+        match catalog_indent {
+            Some(open) if indent <= open && trimmed.starts_with(']') => {
+                catalog_indent = None;
+                continue;
+            }
+            None if trimmed.starts_with("catalog: [") => {
+                catalog_indent = Some(indent);
+                continue;
+            }
+            _ => {}
+        }
+        let plant = catalog_indent.is_some()
+            && (trimmed.starts_with("(kind:")
+                || (trimmed.starts_with("kind:") && n > 0 && lines[n - 1].trim() == "("));
+        let sourced = plant
+            || trimmed.contains("name_key: \"economic-zone-")
+            || trimmed.starts_with("lines:")
+            || trimmed.starts_with("starting_tariff_per_mwh:")
+            || trimmed.starts_with("cash:");
+        if sourced && !has_citation_above(&lines, n) {
+            found.push(format!("line {}: {trimmed}", n + 1));
+        }
+    }
+    found
+}
+
+/// The cited IDs of `ron` that are not rows of the research note, sorted and without repeats.
+fn unknown_citations(ron: &str, rows: &std::collections::BTreeSet<String>) -> Vec<String> {
+    let cited: std::collections::BTreeSet<String> = cited_ids(ron).into_iter().collect();
+    cited.into_iter().filter(|id| !rows.contains(id)).collect()
 }
 
 /// The highest demand multiplier of the year: every month's shape at every
@@ -188,7 +497,7 @@ fn shipped_city_clocks_shift_local_demand_and_sun() {
 
 #[test]
 fn shipped_first_expansion_acceptance_seeds_zero_through_seven() {
-    for id in [EAST, WEST] {
+    for &id in SHIPPED {
         for seed in 0..8 {
             assert_first_expansion(id, seed);
         }
@@ -206,10 +515,15 @@ fn both_regions_allow_battery_discharge_from_four_pm() {
 }
 
 #[test]
-fn both_regions_carry_the_frequency_protection_and_performance_defaults() {
-    for id in [EAST, WEST] {
+fn shipped_regions_carry_the_frequency_protection_and_performance_defaults() {
+    for &id in SHIPPED {
         let region = region(id);
         let (f, r) = (region.frequency(), region.regulator());
+        assert_eq!(
+            f.nominal,
+            Hertz::new(table_value(NOMINAL_HZ, id)),
+            "{id} nominal_hz"
+        );
         assert_eq!(f.trip_above, Hertz::new(1.5), "{id} trip_above");
         assert_eq!(f.trip_after_ticks, 5, "{id} trip_after_ticks");
         assert_eq!(
@@ -227,10 +541,10 @@ fn both_regions_carry_the_frequency_protection_and_performance_defaults() {
 }
 
 #[test]
-fn ships_exactly_two_regions() {
+fn ships_exactly_the_listed_regions() {
     let listed = catalog().list().expect("shipped regions list");
     let ids: Vec<_> = listed.iter().map(|l| l.id.as_str()).collect();
-    assert_eq!(ids, [EAST, WEST]);
+    assert_eq!(ids, SHIPPED);
     for listing in &listed {
         assert!(listing.entry.is_ok(), "{listing:?}");
     }
@@ -238,7 +552,8 @@ fn ships_exactly_two_regions() {
 
 #[test]
 fn shipped_home_cities_anchor_the_existing_city_nodes() {
-    for (id, name_key) in [(EAST, "city-columbus"), (WEST, "city-seattle")] {
+    for &id in SHIPPED {
+        let name_key = table_value(HOME_CITY, id);
         let game = new_game(&catalog(), id, 0);
         let session = game.session();
         let cities = session.city_views();
@@ -269,10 +584,10 @@ fn east_is_three_to_five_times_west() {
 
 #[test]
 fn cities_are_named_metros() {
-    for id in [EAST, WEST] {
+    for &id in SHIPPED {
         let cities = region(id).cities().to_vec();
         assert!(
-            (18..=25).contains(&cities.len()),
+            (18..=40).contains(&cities.len()),
             "{id} has {} cities",
             cities.len()
         );
@@ -302,7 +617,7 @@ fn landmarks_fall_on_the_right_side_of_boundaries() {
 
 #[test]
 fn start_fleet_covers_connected_peak_with_margin() {
-    for id in [EAST, WEST] {
+    for &id in SHIPPED {
         let region = region(id);
         let start = region.start();
         let firm: f64 = start
@@ -353,7 +668,7 @@ fn auto_follow_all(game: &mut Game) {
 
 #[test]
 fn one_month_smoke_run_is_reliable() {
-    for id in [EAST, WEST] {
+    for &id in SHIPPED {
         let mut game = Game::start_new(
             &catalog(),
             &RegionId::new(id),
@@ -549,10 +864,10 @@ fn west_october_smoke_run_is_reliable() {
 }
 
 /// Spec §16.2: a new game with no player commands plays its first day
-/// without a forecast shortfall, on both shipped regions at seeds 0-7.
+/// without a forecast shortfall, on every shipped region at seeds 0-7.
 #[test]
 fn shipped_regions_start_without_a_shortfall() {
-    for id in [EAST, WEST] {
+    for &id in SHIPPED {
         for seed in 0..8 {
             let game = new_game(&catalog(), id, seed);
             assert_eq!(
@@ -564,61 +879,85 @@ fn shipped_regions_start_without_a_shortfall() {
     }
 }
 
-/// Spec §14.5 beginner acceptance: with the hands-off plan (every
-/// dispatchable plant committed all day under AGC, no other commands), each
-/// shipped region is still `Active` after twelve months on seeds 0-7.
-#[test]
-fn hands_off_plan_survives_year_one() {
-    assert_survives_year_one(hands_off_game);
-}
-
-/// Spec §16.5: the beginner acceptance check also passes with no commands at
-/// all, on the previous operator's schedule.
-#[test]
-fn no_commands_survive_year_one() {
-    assert_survives_year_one(new_game);
-}
-
-/// Plays twelve months on both regions at seeds 0-7, each game started by
-/// `start` and given no commands beyond the phase changes, and asserts the
-/// game is still `Active` at every close. Before every month the forecast
-/// shows no shortfall, so a hands-off player never sees the shortfall prompt
-/// (spec §16.4).
-fn assert_survives_year_one(start: fn(&dyn RegionCatalog, &str, u64) -> Game) {
-    for id in [EAST, WEST] {
-        for seed in 0..8 {
-            let mut game = start(&catalog(), id, seed);
-            for month in 1..=12 {
-                assert_eq!(
-                    game.session().capacity_shortfall_check(),
-                    None,
-                    "{id} seed {seed} month {month}"
-                );
-                let played = play_month(&mut game);
-                assert_eq!(
-                    game.session().status(),
-                    SessionStatus::Active,
-                    "{id} seed {seed}: game over at the close of month {month} ({:?}, \
-                     out of band {:.3}, reliability {:.4})",
-                    played.report.month,
-                    played.report.out_of_band_share.value(),
-                    played.report.reliability.value(),
-                );
-                game.execute(Command::FinishReview).expect("finish review");
+/// One test per region and mode, so nextest runs the regions in parallel and names a failure.
+/// Spec §14.5 beginner acceptance: with the hands-off plan (every dispatchable plant committed
+/// all day under AGC, no other commands), each shipped region is still `Active` after twelve
+/// months on seeds 0-7. Spec §16.5: the beginner acceptance check also passes with no commands
+/// at all, on the previous operator's schedule. Each region task adds one line here.
+macro_rules! year_one_cases {
+    ($(($hands_off:ident, $no_commands:ident, $id:expr)),+ $(,)?) => {
+        $(
+            #[test]
+            fn $hands_off() {
+                assert_survives_year_one(hands_off_game, $id);
             }
+
+            #[test]
+            fn $no_commands() {
+                assert_survives_year_one(new_game, $id);
+            }
+        )+
+
+        /// The regions the year-one cases cover.
+        const YEAR_ONE_REGIONS: &[&str] = &[$($id),+];
+    };
+}
+
+year_one_cases! {
+    (
+        year_one_hands_off_eastern_interconnection,
+        year_one_no_commands_eastern_interconnection,
+        EAST
+    ),
+    (
+        year_one_hands_off_western_interconnection,
+        year_one_no_commands_western_interconnection,
+        WEST
+    ),
+}
+
+#[test]
+fn year_one_cases_cover_every_shipped_region() {
+    assert_eq!(YEAR_ONE_REGIONS, SHIPPED);
+}
+
+/// Plays twelve months on region `id` at seeds 0-7, each game started by `start` and given no
+/// commands beyond the phase changes, and asserts the game is still `Active` at every close.
+/// Before every month the forecast shows no shortfall, so a hands-off player never sees the
+/// shortfall prompt (spec §16.4).
+fn assert_survives_year_one(start: fn(&dyn RegionCatalog, &str, u64) -> Game, id: &str) {
+    for seed in 0..8 {
+        let mut game = start(&catalog(), id, seed);
+        for month in 1..=12 {
+            assert_eq!(
+                game.session().capacity_shortfall_check(),
+                None,
+                "{id} seed {seed} month {month}"
+            );
+            let played = play_month(&mut game);
+            assert_eq!(
+                game.session().status(),
+                SessionStatus::Active,
+                "{id} seed {seed}: game over at the close of month {month} ({:?}, \
+                 out of band {:.3}, reliability {:.4})",
+                played.report.month,
+                played.report.out_of_band_share.value(),
+                played.report.reliability.value(),
+            );
+            game.execute(Command::FinishReview).expect("finish review");
         }
     }
 }
 
 /// Spec §15.7: the shipped start fleets cover their forecasts, so the
 /// hands-off plan never orders a rotating outage. Over the hands-off year
-/// on seeds 0-7, every month of both regions closes with no planned outage;
+/// on seeds 0-7, every month of every shipped region closes with no planned outage;
 /// a failure lists each month that had one, with the hours it ran and its
 /// size.
 #[test]
 fn shipped_regions_never_order_outages_hands_off() {
     let mut outages = Vec::new();
-    for id in [EAST, WEST] {
+    for &id in SHIPPED {
         for seed in 0..8 {
             let mut game = hands_off_game(&catalog(), id, seed);
             let mut months_played = 0;
@@ -656,25 +995,60 @@ fn shipped_regions_never_order_outages_hands_off() {
 
 /// Gameplay pacing is a contract: basic builds finish within a few played days,
 /// while nuclear and hydro remain longer-term investments, within two played years.
+/// Economic-zone overrides keep the same ceilings.
 #[test]
 fn shipped_projects_fit_tycoon_pacing() {
-    for id in [EAST, WEST] {
+    for &id in SHIPPED {
         let region = region(id);
-        for (kind, longest) in [
-            (PlantKind::Peaker, 3),
-            (PlantKind::Solar, 3),
-            (PlantKind::Ccgt, 6),
-            (PlantKind::Coal, 12),
-            (PlantKind::Hydro, 18),
-            (PlantKind::Nuclear, 24),
-        ] {
-            assert!(
-                region.spec(kind).build_months <= longest,
-                "{id}: {kind:?} takes {} played months",
-                region.spec(kind).build_months
-            );
+        let overshoots = pacing_overshoots(id, |kind| region.spec(kind).build_months);
+        assert!(overshoots.is_empty(), "{overshoots:?}");
+        // One cell per economic zone stands for it: the zone's overrides resolve the same
+        // everywhere inside it.
+        let mut zone_cells = std::collections::BTreeMap::new();
+        for y in 0..region.terrain().height() {
+            for x in 0..region.terrain().width() {
+                let cell = domain::ids::CellCoord { x, y };
+                let zone = region.economic_zone_at(cell).expect("cell is in the grid");
+                zone_cells.entry(zone).or_insert(cell);
+            }
+        }
+        for (zone, cell) in zone_cells {
+            let overshoots = pacing_overshoots(&format!("{id} zone {}", zone.0), |kind| {
+                region
+                    .plant_spec_at(kind, cell)
+                    .expect("cell is in the grid")
+                    .build_months
+            });
+            assert!(overshoots.is_empty(), "{overshoots:?}");
         }
     }
+}
+
+#[test]
+fn the_pacing_check_flags_exactly_the_kinds_over_their_ceiling() {
+    let at_ceiling = |kind| {
+        PACING_CEILINGS
+            .iter()
+            .find(|(k, _)| *k == kind)
+            .map_or(1, |(_, longest)| *longest)
+    };
+    assert!(pacing_overshoots("at the ceilings", at_ceiling).is_empty());
+    for (kind, longest) in PACING_CEILINGS {
+        let slow = pacing_overshoots("one slow kind", |k| at_ceiling(k) + u32::from(k == kind));
+        assert_eq!(slow.len(), 1, "{kind:?}: {slow:?}");
+        assert!(
+            slow[0].contains(&format!("{kind:?} takes {}", longest + 1)),
+            "{slow:?}"
+        );
+    }
+    // Wind and Battery have no ceiling.
+    assert!(
+        pacing_overshoots("unbounded kinds", |k| match k {
+            PlantKind::Wind | PlantKind::Battery => 99,
+            other => at_ceiling(other),
+        })
+        .is_empty()
+    );
 }
 
 fn assert_first_expansion(id: &str, seed: u64) {
@@ -683,11 +1057,7 @@ fn assert_first_expansion(id: &str, seed: u64) {
     let mut game = new_game(&catalog(), id, seed);
     let region = Arc::clone(game.session().region());
     let starting_cash = game.session().company().cash();
-    let city_key = if id == EAST {
-        "city-cleveland"
-    } else {
-        "city-vancouver"
-    };
+    let city_key = table_value(EXPANSION_CITY, id);
     let target = game
         .session()
         .city_views()
@@ -864,7 +1234,7 @@ proptest::proptest! {
     #![proptest_config(proptest::test_runner::Config { cases: 4, failure_persistence: None, ..Default::default() })]
     #[test]
     fn shipped_first_city_expansion_is_affordable_and_reliable(seed in proptest::prelude::any::<u64>()) {
-        for id in [EAST, WEST] {
+        for &id in SHIPPED {
             assert_first_expansion(id, seed);
         }
     }
@@ -1366,5 +1736,407 @@ fn solar_migration_preserves_every_playable_strict_site_ranking() {
             cells.len(),
             groups.len()
         );
+    }
+}
+
+// ---- Shared acceptance for every shipped region ----------------------------------------------
+//
+// Plan 7 adds regions one file at a time. Each region task inserts its ID into the tables at the
+// top of this file, and every test below that iterates them then covers the new region.
+
+#[test]
+fn shipped_region_tables_cover_every_shipped_region() {
+    assert!(SHIPPED.windows(2).all(|pair| pair[0] < pair[1]), "sorted");
+    for id in [EAST, WEST] {
+        assert!(SHIPPED.contains(&id), "{id} still ships");
+    }
+    for id in NEW_REGIONS {
+        assert!(SHIPPED.contains(id), "new region {id} is not in SHIPPED");
+        assert!(
+            ![EAST, WEST].contains(id),
+            "{id} is North American, not new"
+        );
+    }
+    for (table, keys) in [
+        ("HOME_CITY", table_keys(HOME_CITY)),
+        ("EXPANSION_CITY", table_keys(EXPANSION_CITY)),
+        ("NOMINAL_HZ", table_keys(NOMINAL_HZ)),
+        ("RESEARCH_CAPACITY_GW", table_keys(RESEARCH_CAPACITY_GW)),
+    ] {
+        assert_eq!(
+            keys, SHIPPED,
+            "{table} must hold one row per shipped region"
+        );
+    }
+}
+
+#[test]
+fn new_region_cells_are_nearly_square() {
+    for &id in NEW_REGIONS {
+        let file = region_file(id);
+        let (w_km, h_km) = cell_size_km(
+            (file.bounds.west, file.bounds.east),
+            (file.bounds.south, file.bounds.north),
+            (file.grid.width, file.grid.height),
+        );
+        let aspect = cell_aspect(w_km, h_km);
+        assert!(
+            aspect <= MAX_CELL_ASPECT,
+            "{id}: cells are {w_km:.1} x {h_km:.1} km (aspect {aspect:.3})"
+        );
+        assert!(
+            grid_fits(file.grid.width, file.grid.height),
+            "{id}: grid {} x {} exceeds {MAX_GRID_WIDTH} x {MAX_GRID_HEIGHT}",
+            file.grid.width,
+            file.grid.height
+        );
+    }
+}
+
+#[test]
+fn cell_geometry_helpers_follow_the_research_convention() {
+    // 10 degrees square, 100 x 100 cells, centred on the equator: w = h = 11.1195 km.
+    let (w, h) = cell_size_km((0.0, 10.0), (-5.0, 5.0), (100, 100));
+    assert!(
+        (w - 11.1195).abs() < 1e-3 && (h - 11.1195).abs() < 1e-3,
+        "{w} {h}"
+    );
+    assert!((cell_aspect(w, h) - 1.0).abs() < 1e-9);
+    // At 60 degrees north an east-west degree is half as long, so the same grid is 2:1.
+    let (w, h) = cell_size_km((0.0, 10.0), (55.0, 65.0), (100, 100));
+    assert!((cell_aspect(w, h) - 1.0 / 60.0_f64.to_radians().cos()).abs() < 1e-6);
+    assert!(cell_aspect(w, h) > MAX_CELL_ASPECT, "{w} x {h}");
+    // Doubling the width halves the east-west length: the aspect flips side but keeps its size.
+    let (w2, h2) = cell_size_km((0.0, 10.0), (-5.0, 5.0), (200, 100));
+    assert!((cell_aspect(w2, h2) - 2.0).abs() < 1e-9);
+    // The limit is inclusive on both sides.
+    assert!(grid_fits(256, 128));
+    assert!(!grid_fits(257, 128));
+    assert!(!grid_fits(256, 129));
+}
+
+#[test]
+fn new_region_load_scales_with_capacity() {
+    for &id in NEW_REGIONS {
+        let capacity_gw = table_value(RESEARCH_CAPACITY_GW, id);
+        let total = total_base_load(&region(id));
+        let scale = load_scale(total, capacity_gw);
+        assert!(
+            LOAD_SCALE_BAND.contains(&scale),
+            "{id}: {total:.0} MW against {capacity_gw} GW is {scale:.3} of the Eastern ratio"
+        );
+    }
+}
+
+#[test]
+fn load_scale_is_relative_to_the_eastern_interconnection() {
+    // The Eastern Interconnection (980 GW) carries 40,850 MW, the anchor of the ratio.
+    assert!((load_scale(40_850.0, 980.0) - 1.0).abs() < 1e-12);
+    assert!((load_scale(40_850.0 * 1350.0 / 980.0, 1350.0) - 1.0).abs() < 1e-12);
+    assert!((load_scale(81_700.0, 980.0) - 2.0).abs() < 1e-12);
+    assert!(LOAD_SCALE_BAND.contains(&0.75) && LOAD_SCALE_BAND.contains(&1.25));
+    assert!(!LOAD_SCALE_BAND.contains(&0.7499) && !LOAD_SCALE_BAND.contains(&1.2501));
+}
+
+const CITED: &str = "// Pumped hydro, [P7-SC-007] and [P7-SC-009].";
+
+#[test]
+fn new_region_entries_cite_research_rows() {
+    let note = std::fs::read_to_string(RESEARCH_NOTE).expect("research note exists");
+    let rows = research_row_ids(&note);
+    assert!(
+        rows.len() > 100,
+        "the research note's row table parsed: {}",
+        rows.len()
+    );
+    for &id in NEW_REGIONS {
+        let text = std::fs::read_to_string(format!("{REGIONS_DIR}/{id}.ron")).expect("file exists");
+        let uncited = uncited_entries(&text);
+        assert!(
+            uncited.is_empty(),
+            "{id}: entries without a citation: {uncited:#?}"
+        );
+        let unknown = unknown_citations(&text, &rows);
+        assert!(
+            unknown.is_empty(),
+            "{id}: citations the research note lacks: {unknown:?}"
+        );
+    }
+}
+
+#[test]
+fn the_research_row_parser_reads_row_tables_only() {
+    let note = "\
+| ID | Area |
+|---|---|
+| P7-US-001 | Pacing reference | US | Wind |
+| P7-IPS-011 | IPS/UPS | Russia |
+Prose citing P7-SC-001 and a bracketed [P7-BR-002] is not a row.
+    | P7-DE-005 | indented rows still count |
+| p7-xx-001 | lower case is not an ID |
+| P7-X-001 | one letter is not an area |
+| P7-ABCD-001 | four letters are not an area |
+| P7-US-01 | two digits are not a row |
+";
+    let rows: Vec<_> = research_row_ids(note).into_iter().collect();
+    assert_eq!(rows, ["P7-DE-005", "P7-IPS-011", "P7-US-001"]);
+}
+
+#[test]
+fn the_citation_finder_reads_bracketed_ids_only() {
+    assert_eq!(cited_ids(CITED), ["P7-SC-007", "P7-SC-009"]);
+    assert_eq!(cited_ids("// see [P7-IPS-011]"), ["P7-IPS-011"]);
+    for not_a_citation in [
+        "// P7-SC-007 without brackets",
+        "// [P7-S-007] one letter",
+        "// [P7-ABCD-007] four letters",
+        "// [P7-SC-07] two digits",
+        "// [P7-SC-0071] four digits",
+        "// [p7-sc-007] lower case",
+        "// [P7-SC-007",
+    ] {
+        assert!(cited_ids(not_a_citation).is_empty(), "{not_a_citation}");
+    }
+}
+
+/// A fixture region file with every kind of entry the provenance rule covers.
+const CITED_REGION: &str = "\
+(
+    // Pacing: [P7-US-001].
+    lines: (cost_per_cell: 1, cells_per_month: 4, book_life_months: 600),
+    catalog: [
+        // Wind: [P7-SC-001].
+        (kind: Wind, capacity_mw: 300.0),
+        // Peaker: [P7-SC-002]
+        // arithmetic: 2 * 3.
+        (
+            kind: Peaker,
+            capacity_mw: 100.0,
+        ),
+    ],
+    economic_zones: (
+        zones: [
+            // North: [P7-SC-003].
+            (id: 1, name_key: \"economic-zone-north\", plants: []),
+            // South: [P7-SC-004].
+            (
+                id: 2,
+                name_key: \"economic-zone-south\",
+            ),
+        ],
+    ),
+    regulator: (
+        // Tariff: [P7-SC-005].
+        starting_tariff_per_mwh: 95.0,
+    ),
+    start: (
+        // Cash: [P7-SC-006].
+        cash: 5000000000,
+    ),
+)
+";
+
+#[test]
+fn an_entry_with_a_citation_directly_above_it_passes() {
+    assert_eq!(uncited_entries(CITED_REGION), Vec::<String>::new());
+    let rows: std::collections::BTreeSet<String> = (1..=6)
+        .map(|n| format!("P7-SC-{n:03}"))
+        .chain(["P7-US-001".to_owned()])
+        .collect();
+    assert_eq!(unknown_citations(CITED_REGION, &rows), Vec::<String>::new());
+}
+
+#[test]
+fn an_entry_without_a_citation_directly_above_it_fails() {
+    for (name, text) in [
+        (
+            "a one-line plant",
+            "(\n    catalog: [\n        (kind: Wind, capacity_mw: 300.0),\n    ],\n)",
+        ),
+        (
+            "a plant in the multi-line form",
+            "(\n    catalog: [\n        (\n            kind: Peaker,\n        ),\n    ],\n)",
+        ),
+        (
+            "a one-line economic zone",
+            "(\n    zones: [\n        (id: 1, name_key: \"economic-zone-north\"),\n    ],\n)",
+        ),
+        (
+            "a multi-line economic zone",
+            "(\n    zones: [\n        (\n            id: 2,\n            name_key: \"economic-zone-south\",\n        ),\n    ],\n)",
+        ),
+        ("the lines block", "(\n    lines: (cost_per_cell: 1),\n)"),
+        (
+            "the starting tariff",
+            "(\n    starting_tariff_per_mwh: 95.0,\n)",
+        ),
+        ("the starting cash", "(\n    cash: 5000000000,\n)"),
+        (
+            "a comment two lines above",
+            "(\n    // Cash: [P7-SC-006].\n\n    cash: 5000000000,\n)",
+        ),
+        (
+            "a comment without an ID",
+            "(\n    // Cash, no source.\n    cash: 5000000000,\n)",
+        ),
+        (
+            "a comment that only cites a malformed ID",
+            "(\n    // Cash: [P7-S-006].\n    cash: 5000000000,\n)",
+        ),
+    ] {
+        assert_eq!(uncited_entries(text).len(), 1, "{name}: {text}");
+    }
+    // The rule covers a catalog's kinds, the zone names and the named fields, nothing else.
+    let unrelated = "(\n    atlas: (kind: Wind),\n    name_key: \"region-x\",\n    start_line_names: [],\n    cash_note: 1,\n    catalog: [\n    ],\n)";
+    assert!(uncited_entries(unrelated).is_empty());
+    // A `kind:` after the catalog closes is not a catalog entry.
+    let after = "(\n    catalog: [\n        // Wind: [P7-SC-001].\n        (kind: Wind),\n    ],\n    other: (kind: Solar),\n)";
+    assert!(uncited_entries(after).is_empty());
+}
+
+#[test]
+fn a_cited_id_missing_from_the_research_table_fails() {
+    let rows: std::collections::BTreeSet<String> = ["P7-US-001".to_owned()].into();
+    let unknown = unknown_citations(CITED_REGION, &rows);
+    assert_eq!(unknown.len(), 6, "{unknown:?}");
+    assert!(
+        unknown.iter().all(|id| id.starts_with("P7-SC-")),
+        "{unknown:?}"
+    );
+    assert!(unknown_citations("// [P7-US-001]", &rows).is_empty());
+}
+
+/// Pairs `(a, b, n)` whose grids already share `n` cells along their real border: `n` land
+/// cells of `a` have their centre in a land cell of `b`. The Eastern and Western grids (0.51 and
+/// 0.39 degrees wide) don't line up along the seam through the Oklahoma panhandle and New
+/// Mexico, so three cells each way straddle it. The count is exact: a new overlap fails, and so
+/// does a fix that leaves this entry behind. No other pair may share a cell.
+const KNOWN_SEAM_OVERLAPS: &[(&str, &str, usize)] = &[(EAST, WEST, 3), (WEST, EAST, 3)];
+
+#[test]
+fn shipped_regions_do_not_overlap() {
+    let maps: Vec<(&str, LandMap)> = SHIPPED.iter().map(|&id| (id, LandMap::load(id))).collect();
+    for (a_id, a) in &maps {
+        for (b_id, b) in &maps {
+            if a_id == b_id {
+                continue;
+            }
+            let allowed = KNOWN_SEAM_OVERLAPS
+                .iter()
+                .find(|(x, y, _)| x == a_id && y == b_id)
+                .map_or(0, |&(_, _, cells)| cells);
+            let shared = a.centres_on_land_in(b);
+            assert_eq!(
+                shared.len(),
+                allowed,
+                "{a_id} has {} land cells whose centre is playable in {b_id} (allowed {allowed}), \
+                 first {:?}",
+                shared.len(),
+                shared.first()
+            );
+        }
+    }
+}
+
+#[test]
+fn the_overlap_check_sees_shared_land_and_nothing_else() {
+    //  2 x 1 cells over lon 0..2: land on both.
+    let both = LandMap::from_cells((0.0, 2.0), (0.0, 1.0), (2, 1), vec![true, true]);
+    // The same square sharing only the western cell's centre (0.5, 0.5) with `both`.
+    let west_cell = LandMap::from_cells((0.0, 1.0), (0.0, 1.0), (1, 1), vec![true]);
+    // East of `both`: no shared coordinates at all.
+    let apart = LandMap::from_cells((5.0, 6.0), (0.0, 1.0), (1, 1), vec![true]);
+    // Water where `both` has land.
+    let water = LandMap::from_cells((0.0, 2.0), (0.0, 1.0), (2, 1), vec![false, false]);
+    assert_eq!(both.centres_on_land_in(&west_cell), vec![(0.5, 0.5)]);
+    assert_eq!(both.centres_on_land_in(&apart), Vec::<(f64, f64)>::new());
+    assert_eq!(both.centres_on_land_in(&water), Vec::<(f64, f64)>::new());
+    assert_eq!(water.centres_on_land_in(&both), Vec::<(f64, f64)>::new());
+    // Strictly outside the other map's bounds is not land, even when its edge cell is.
+    assert!(!west_cell.land_at(1.5, 0.5));
+    assert!(west_cell.land_at(0.5, 0.5));
+    // A land cell centre must be land in itself.
+    assert_eq!(both.centres_on_land_in(&both).len(), 2);
+}
+
+#[test]
+fn excluded_extent_is_unplayable_everywhere() {
+    let extent = excluded_extent();
+    for &id in SHIPPED {
+        let map = LandMap::load(id);
+        let inside: Vec<_> = map
+            .land_centres()
+            .into_iter()
+            .filter(|&(lon, lat)| extent.contains(lon, lat))
+            .collect();
+        assert!(
+            inside.is_empty(),
+            "{id} has {} playable cells inside the excluded extent, first {:?}",
+            inside.len(),
+            inside.first()
+        );
+    }
+}
+
+#[test]
+fn the_excluded_extent_covers_crimea_and_sevastopol_only() {
+    let extent = excluded_extent();
+    assert!(!extent.polygons.is_empty());
+    for (name, lon, lat) in [
+        ("Simferopol", 34.10, 44.95),
+        ("Sevastopol (Balaklava side)", 33.55, 44.52),
+        ("Kerch", 36.47, 45.36),
+        ("Yalta", 34.17, 44.50),
+    ] {
+        assert!(extent.contains(lon, lat), "{name} is in the extent");
+    }
+    for (name, lon, lat) in [
+        ("Kherson", 32.62, 46.64),
+        ("Melitopol", 35.37, 46.85),
+        ("Kyiv", 30.52, 50.45),
+        ("Rostov-on-Don", 39.72, 47.24),
+        ("Bucharest", 26.10, 44.43),
+    ] {
+        assert!(!extent.contains(lon, lat), "{name} is outside the extent");
+    }
+}
+
+#[test]
+fn point_in_ring_handles_concavity_and_edges() {
+    // A U shape: the notch between the arms is outside.
+    let u = [
+        (0.0, 0.0),
+        (3.0, 0.0),
+        (3.0, 3.0),
+        (2.0, 3.0),
+        (2.0, 1.0),
+        (1.0, 1.0),
+        (1.0, 3.0),
+        (0.0, 3.0),
+    ];
+    assert!(point_in_ring(0.5, 2.0, &u), "left arm");
+    assert!(point_in_ring(2.5, 2.0, &u), "right arm");
+    assert!(point_in_ring(1.5, 0.5, &u), "base");
+    assert!(!point_in_ring(1.5, 2.0, &u), "notch");
+    assert!(!point_in_ring(-1.0, 1.0, &u), "left of the shape");
+    assert!(!point_in_ring(5.0, 1.0, &u), "right of the shape");
+    assert!(!point_in_ring(1.5, 4.0, &u), "above");
+}
+
+#[test]
+fn home_lighting_is_finite_for_every_shipped_region() {
+    for &id in SHIPPED {
+        let region = region(id);
+        for month in 1..=12 {
+            let month = SimMonth::new(2027, month).expect("valid month");
+            for tick in 0..TICKS_PER_DAY {
+                if let Some(sun) = region.sun_at_home(month, tick) {
+                    assert!(
+                        sun.elevation_deg.is_finite() && sun.azimuth_deg.is_finite(),
+                        "{id} {month:?} tick {tick}: {sun:?}"
+                    );
+                }
+            }
+        }
     }
 }

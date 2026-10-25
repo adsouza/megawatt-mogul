@@ -365,8 +365,6 @@ region-select-northern = Northern hemisphere
 region-select-southern = Southern hemisphere
 region-select-both-hemispheres = Both hemispheres
 region-select-home = Start in { $city } · { $cities } cities to serve
-region-select-east-description = Dense cities, big demand, and a legacy coal and nuclear fleet. Keep the industrial heartland humming.
-region-select-west-description = Mountain crossings, desert sunshine, and Pacific Northwest hydro. Master the evening demand surge.
 
 # Tabletop diorama
 world-reset = Reset view (R)
