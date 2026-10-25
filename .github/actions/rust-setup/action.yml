@@ -13,15 +13,20 @@ runs:
   steps:
     # Bevy's Linux build dependencies, from Bevy 0.20's docs/linux_dependencies.md (Ubuntu), plus
     # the XCB libraries bevy_egui's docs list for its clipboard support. The game tests run
-    # headless (MinimalPlugins, no window or GPU), so no display server is needed. Cached, so a
-    # warm run skips apt-get entirely; bump `version` to refresh the cached packages.
-    - uses: awalsh128/cache-apt-pkgs-action@v1
-      with:
-        packages: >-
-          g++ pkg-config libx11-dev libasound2-dev libudev-dev libxkbcommon-x11-0
-          libwayland-dev libxkbcommon-dev
-          libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
-        version: "1"
+    # headless (MinimalPlugins, no window or GPU), so no display server is needed. The hosted
+    # Ubuntu image already has every one of them, so check first and skip apt-get, whose index
+    # update dominated this step; install only if the image ever lacks one.
+    - name: Bevy's Linux dependencies
+      shell: bash
+      run: |
+        packages=(g++ pkg-config libx11-dev libasound2-dev libudev-dev libxkbcommon-x11-0
+          libwayland-dev libxkbcommon-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev)
+        if dpkg -s "${packages[@]}" > /dev/null 2>&1; then
+          echo "All ${#packages[@]} packages are already installed."
+        else
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y "${packages[@]}"
+        fi
     # Linking the large game test binary dominates a warm build; mold is much faster than ld.
     - uses: rui314/setup-mold@v1
     - uses: dtolnay/rust-toolchain@master
@@ -35,6 +40,9 @@ runs:
     # Cargo.lock. GitHub scopes caches by branch: a PR restores its own or main's, never another
     # PR's, and the repository holds 10 GB in total. So only main saves, and every PR starts from
     # main's cache instead of evicting it.
+    # Saved after a failed run too: compiled dependencies are valid whatever a test did, so one
+    # failing or flaky test no longer leaves the next pull request to build from cold.
     - uses: Swatinem/rust-cache@v2
       with:
         save-if: ${{ github.ref == 'refs/heads/main' }}
+        cache-on-failure: true
