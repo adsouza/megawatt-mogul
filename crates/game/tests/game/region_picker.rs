@@ -312,7 +312,7 @@ impl<'a> Picker<'a> {
         ])
     }
 
-    /// Wheels the card panel, with the pointer over its first card, until `label`'s title is
+    /// Wheels the card panel, with the pointer over it, until `label`'s title is
     /// painted on screen, then lets the wheel settle: that frame's paint and widgets. Panics if
     /// 60 steps of 120 points never reach it.
     fn scroll_to(
@@ -323,9 +323,14 @@ impl<'a> Picker<'a> {
         Vec<super::support::egui_harness::Widget>,
     ) {
         let (_, widgets, _) = self.frame(vec![]);
-        let at = widget(&widgets, &self.model.regions[0].button.label)
-            .rect
-            .center();
+        // Over the panel, at the screen's mid-height: the first card may be scrolled away.
+        let at = egui::pos2(
+            widget(&widgets, &self.model.regions[0].button.label)
+                .rect
+                .center()
+                .x,
+            self.screen.center().y,
+        );
         for _ in 0..60 {
             let (shapes, widgets, actions) = self.frame(vec![]);
             assert!(actions.is_empty(), "scrolling must not start a game");
@@ -344,6 +349,98 @@ impl<'a> Picker<'a> {
         }
         panic!("{label} is never scrolled into view");
     }
+
+    /// Wheels the card panel down in `step`-point steps, with the pointer over it,
+    /// until [`card_shown`] holds for `label`'s card or 60 steps have passed: the last frame's
+    /// paint and widgets, for the caller to assert on.
+    fn scroll_until(
+        &mut self,
+        label: &str,
+        lines: &[&str],
+        step: f32,
+    ) -> (
+        Vec<egui::epaint::ClippedShape>,
+        Vec<super::support::egui_harness::Widget>,
+    ) {
+        let (_, widgets, _) = self.frame(vec![]);
+        // Over the panel, at the screen's mid-height: the first card may be scrolled away.
+        let at = egui::pos2(
+            widget(&widgets, &self.model.regions[0].button.label)
+                .rect
+                .center()
+                .x,
+            self.screen.center().y,
+        );
+        let mut last = None;
+        for _ in 0..60 {
+            let (shapes, widgets, actions) = self.frame(vec![]);
+            assert!(actions.is_empty(), "scrolling must not start a game");
+            if card_shown(&shapes, self.screen, label, lines) {
+                return (shapes, widgets);
+            }
+            last = Some((shapes, widgets));
+            let (_, _, actions) = self.wheel(at, step);
+            assert!(actions.is_empty(), "scrolling must not start a game");
+        }
+        last.expect("at least one frame")
+    }
+}
+
+/// The painted text shapes whose whole string is `text`, as (glyph bounds, clip rect).
+fn painted_text_rects(shapes: &[egui::epaint::ClippedShape], text: &str) -> Vec<(Rect, Rect)> {
+    fn walk(shape: &egui::Shape, clip: Rect, text: &str, found: &mut Vec<(Rect, Rect)>) {
+        match shape {
+            egui::Shape::Vec(shapes) => {
+                for shape in shapes {
+                    walk(shape, clip, text, found);
+                }
+            }
+            egui::Shape::Text(painted) if painted.galley.text() == text => {
+                found.push((painted.visual_bounding_rect(), clip));
+            }
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    for clipped in shapes {
+        walk(&clipped.shape, clipped.clip_rect, text, &mut found);
+    }
+    found
+}
+
+/// Whether `label`'s card is wholly in view: its title, and then each of its `lines` (the first
+/// painted copy below the line before, since shared lines repeat on other cards), is painted
+/// inside both the screen and the clip rect it is painted with, which is the card panel's
+/// viewport.
+fn card_shown(
+    shapes: &[egui::epaint::ClippedShape],
+    screen: Rect,
+    label: &str,
+    lines: &[&str],
+) -> bool {
+    let whole =
+        |(glyphs, clip): (Rect, Rect)| screen.contains_rect(glyphs) && clip.contains_rect(glyphs);
+    let Some(title) = painted_text_rects(shapes, label).into_iter().next() else {
+        return false;
+    };
+    if !whole(title) {
+        return false;
+    }
+    let mut above = title.0.bottom();
+    for line in lines {
+        let Some(next) = painted_text_rects(shapes, line)
+            .into_iter()
+            .filter(|(glyphs, _)| glyphs.top() >= above - 1.0)
+            .min_by(|a, b| a.0.top().total_cmp(&b.0.top()))
+        else {
+            return false;
+        };
+        if !whole(next) {
+            return false;
+        }
+        above = next.0.bottom();
+    }
+    true
 }
 
 /// The card panel scrolls vertically when the cards are taller than the picker (user decision,
@@ -365,37 +462,55 @@ fn map_cards_and_descriptions_fit_the_smallest_and_large_windows() {
         let globe = widget(&widgets, "World power grids").rect;
         let first = widget(&widgets, &model.regions[0].button.label).rect;
         for choice in &model.regions {
-            let (_, widgets) = picker.scroll_to(&choice.button.label);
-            let title = widget(&widgets, &choice.button.label).rect;
+            let label = &choice.button.label;
+            // Every shipped card has its description, its "home city · N cities" detail line
+            // and its metadata line, in that order; the metadata line is the card's last.
+            let lines = [
+                ("description", &choice.description),
+                ("detail", &choice.detail),
+                ("metadata", &choice.metadata),
+            ]
+            .map(|(name, line)| {
+                line.as_deref()
+                    .unwrap_or_else(|| panic!("{label} has no {name} line"))
+            });
+            picker.scroll_to(label);
+            // Keep wheeling in short steps until the whole card, title to last line, is painted
+            // unclipped inside the screen and the card panel's viewport.
+            let (shapes, widgets) = picker.scroll_until(label, &lines, 40.0);
+            let title = widget(&widgets, label).rect;
+            assert!(
+                card_shown(&shapes, picker.screen, label, &lines),
+                "{width}x{height}: {label}'s card is not wholly in view at any scroll offset"
+            );
             // Every card shares one column grid to the right of the globe, inside the screen.
             assert!(
                 title.left() > globe.right() && title.right() <= screen.right(),
-                "{width}x{height}: {} spills sideways: {title:?}",
-                choice.button.label
+                "{width}x{height}: {label} spills sideways: {title:?}"
             );
             assert!(
                 (title.width() - first.width()).abs() < 1.0,
-                "{width}x{height}: {} is not a full card column",
-                choice.button.label
+                "{width}x{height}: {label} is not a full card column"
             );
             // The title button fills the card's content width after the colour stripe, so the
-            // card's text must stay between the panel's left edge and the title's right edge.
-            for text in [&choice.description, &choice.metadata]
-                .into_iter()
-                .flatten()
-            {
+            // card's text must stay between the panel's left edge and the title's right edge,
+            // and below the title.
+            for text in lines {
                 // The card's own copy: the first one below its title (shared metadata lines
                 // repeat on other cards).
                 let rect = widgets
                     .iter()
-                    .filter(|w| &w.text == text && w.rect.top() >= title.bottom())
+                    .filter(|w| w.text == text && w.rect.top() >= title.bottom())
                     .map(|w| w.rect)
                     .min_by(|a, b| a.top().total_cmp(&b.top()))
                     .unwrap_or_else(|| panic!("{text:?} is below its title"));
                 assert!(
                     rect.left() > globe.right() && rect.right() <= title.right() + 1.0,
-                    "{width}x{height}: {}'s {text:?} is clipped sideways: {rect:?} beside {title:?}",
-                    choice.button.label
+                    "{width}x{height}: {label}'s {text:?} is clipped sideways: {rect:?} beside {title:?}"
+                );
+                assert!(
+                    screen.contains_rect(rect),
+                    "{width}x{height}: {label}'s {text:?} is off screen: {rect:?}"
                 );
             }
         }
