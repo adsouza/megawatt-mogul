@@ -36,6 +36,7 @@ mod plant_panel;
 mod prompt;
 mod ramp_warnings;
 mod region_atlas;
+mod region_globe;
 mod review;
 mod title_scene;
 mod world_coastline;

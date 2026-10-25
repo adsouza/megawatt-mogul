@@ -19,28 +19,17 @@ fn model(seed: Option<u64>) -> game::hud::RegionSelectModel {
         .with_atlas(&RegionAtlas::load(&catalog, &listings), &shipped_l10n())
 }
 
-// Same geographic extent as the overview; assert the rendered image is the click target.
+// Independent orthographic equations at the rendered-image boundary. Initial view faces 100°W.
 fn point(rect: Rect, lon: f32, lat: f32) -> Pos2 {
-    // Independent f64 equations at the public rendered-image boundary.
-    let project = |lon: f64, lat: f64| {
-        let t = (3.0_f64.sqrt() * 0.5 * lat.to_radians().sin()).asin();
-        let t2 = t * t;
-        (
-            2.0 * lon.to_radians() * t.cos()
-                / (3.0_f64.sqrt()
-                    * (1.340264 - 3.0 * 0.081106 * t2
-                        + t2.powi(3) * (7.0 * 0.000893 + 9.0 * 0.003796 * t2))),
-            t * (1.340264 - 0.081106 * t2 + t2.powi(3) * (0.000893 + 0.003796 * t2)),
-        )
-    };
-    let (x, y) = project(f64::from(lon), f64::from(lat));
-    let north = project(0.0, 75.0).1;
-    let south = project(0.0, -60.0).1;
-    rect.min
-        + egui::vec2(
-            ((x + 2.7066299836960748) / 5.4132599673921496) as f32 * rect.width(),
-            ((north - y) / (north - south)) as f32 * rect.height(),
-        )
+    point_at(rect, lon, lat, -100.0)
+}
+fn point_at(rect: Rect, lon: f32, lat: f32, centre: f32) -> Pos2 {
+    let longitude = (lon - centre).to_radians();
+    let latitude = lat.to_radians();
+    let tilt = 22.0f32.to_radians();
+    let x = latitude.cos() * longitude.sin();
+    let y = latitude.sin() * tilt.cos() - latitude.cos() * longitude.cos() * tilt.sin();
+    rect.center() + egui::vec2(x, -y) * rect.width() * 0.5
 }
 
 #[test]
@@ -199,6 +188,21 @@ fn hovering_the_map_highlights_a_region_without_starting_a_game() {
     let pixels_per_point = output.pixels_per_point;
     output.drop_without_applying_deltas();
     assert_eq!(cursor, egui::CursorIcon::PointingHand);
+    let title = shapes.iter().rposition(|shape| matches!(&shape.shape,
+        egui::Shape::Text(text) if text.galley.text() == "Eastern Interconnection" && rect.contains(text.pos)
+    )).expect("the hovered region has a globe title");
+    let last_fill = shapes
+        .iter()
+        .rposition(|shape| {
+            matches!(&shape.shape,
+                egui::Shape::Mesh(mesh) if !mesh.vertices.is_empty()
+            )
+        })
+        .expect("globe geography is painted");
+    assert!(
+        title > last_fill,
+        "no later region fill may cover the hover title"
+    );
     let highlighted = egui::Color32::from_rgb(228, 131, 47);
     assert!(shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Mesh(mesh) if mesh.vertices.iter().any(|v| v.color == highlighted))));
     assert!(shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Rect(rect) if rect.stroke.width == 2.0 && rect.stroke.color == highlighted)));
@@ -360,7 +364,7 @@ fn cards_show_frequency_currency_zones_and_hemisphere() {
 }
 
 #[test]
-fn every_region_is_startable_from_its_card_at_minimum_window_size() {
+fn every_region_is_startable_from_its_card_in_one_and_two_columns() {
     let mut model = model(Some(42));
     let prototype = model.regions[0].clone();
     model.regions = (0..8)
@@ -375,7 +379,7 @@ fn every_region_is_startable_from_its_card_at_minimum_window_size() {
         })
         .collect();
     let minimum = game::window::MIN_WINDOW_SIZE;
-    for (width, height) in [(minimum.x, minimum.y), (1024.0, 640.0)] {
+    for (width, height) in [(minimum.x, minimum.y), (1920.0, 1080.0)] {
         for index in 0..8 {
             let harness = Harness::with_screen(width, height);
             let mut form = MenuForm::new(42);
@@ -409,7 +413,7 @@ fn every_region_is_startable_from_its_card_at_minimum_window_size() {
 
 #[test]
 fn atlas_labels_meet_contrast() {
-    let model = metadata_model();
+    let model = model(Some(42));
     let mut form = MenuForm::new(42);
     let screen = Rect::from_min_size(Pos2::ZERO, egui::vec2(1024.0, 640.0));
     let widgets = Harness::with_screen(1024.0, 640.0)
@@ -430,7 +434,7 @@ fn atlas_labels_meet_contrast() {
     let output = ctx.run_ui(
         egui::RawInput {
             screen_rect: Some(screen),
-            events: vec![egui::Event::PointerMoved(point(map, 6.5, 3.5))],
+            events: vec![egui::Event::PointerMoved(point(map, -83.0, 40.0))],
             ..Default::default()
         },
         |ui| {
@@ -440,12 +444,348 @@ fn atlas_labels_meet_contrast() {
     let shapes = output.shapes.clone();
     assert!(crate::contrast::check_paint(output) > 0);
     let texts = crate::contrast::painted_texts(&shapes);
-    for expected in ["region-minimal", model.map_note.as_str()] {
+    for expected in ["Eastern Interconnection", model.map_note.as_str()] {
         let label = texts
             .iter()
             .find(|text| text.text == expected && map.contains(text.at))
             .expect(expected);
         assert_eq!(label.background, game::hud::theme::LABEL_BACKING);
         assert_eq!(label.background.a(), 255);
+    }
+}
+
+#[test]
+fn dragging_either_direction_never_starts_a_region() {
+    let model = model(Some(42));
+    let form = RefCell::new(MenuForm::new(42));
+    let harness = Harness::new();
+    let draw = |ui: &mut egui::Ui| {
+        central(ui, |ui| {
+            draw_region_select(ui, &model, &mut form.borrow_mut())
+        })
+    };
+    let globe = widget(&harness.draw(draw), "World power grids").rect;
+    let start = point(globe, -83.0, 40.0);
+    for direction in [-1.0, 1.0] {
+        let frames = harness.drag(start, &[start + egui::vec2(direction * 140.0, 0.0)], draw);
+        assert!(frames.into_iter().flatten().next().is_none());
+    }
+}
+
+#[test]
+fn actual_globe_drag_pauses_then_resumes_and_rotated_clicks_use_visible_geography() {
+    use super::support::egui_harness::widgets_of;
+    let model = model(Some(42));
+    let mut form = MenuForm::new(42);
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    let screen = Rect::from_min_size(Pos2::ZERO, egui::vec2(1280.0, 800.0));
+    let mut frame = |time, events| {
+        let mut actions = Vec::new();
+        let output = ctx.run_ui(
+            egui::RawInput {
+                time: Some(time),
+                screen_rect: Some(screen),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                actions = central(ui, |ui| draw_region_select(ui, &model, &mut form));
+            },
+        );
+        let globe = widget(&widgets_of(&output), "World power grids").rect;
+        let vertices = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Mesh(mesh) if mesh.vertices.len() > 500 => {
+                    Some(mesh.vertices.iter().map(|v| v.pos).collect::<Vec<_>>())
+                }
+                _ => None,
+            })
+            .expect("projected context land");
+        output.drop_without_applying_deltas();
+        (actions, globe, vertices)
+    };
+    let (_, globe, _) = frame(0.0, vec![]);
+    let start = point(globe, -83.0, 40.0);
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        pressed,
+        button: egui::PointerButton::Primary,
+        modifiers: egui::Modifiers::NONE,
+    };
+    assert!(
+        frame(
+            0.1,
+            vec![egui::Event::PointerMoved(start), button(start, true)]
+        )
+        .0
+        .is_empty()
+    );
+    let end = start + egui::vec2(120.0, 0.0);
+    assert!(
+        frame(0.2, vec![egui::Event::PointerMoved(end)])
+            .0
+            .is_empty()
+    );
+    let released = frame(0.3, vec![button(end, false)]);
+    assert!(released.0.is_empty());
+    assert_eq!(released.2, frame(2.2, vec![]).2, "two-second idle hold");
+    assert_ne!(
+        released.2,
+        frame(2.5, vec![]).2,
+        "automatic rotation resumes"
+    );
+
+    // A fresh context advances exactly a quarter turn in six seconds. Pick the western grid
+    // at its new visible location, rather than its old screen coordinates.
+    let model = model.clone();
+    let mut form = MenuForm::new(42);
+    let harness_ctx = egui::Context::default();
+    let mut at_time = |time, events| {
+        let mut actions = Vec::new();
+        harness_ctx
+            .run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    screen_rect: Some(screen),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    actions = central(ui, |ui| draw_region_select(ui, &model, &mut form));
+                },
+            )
+            .drop_without_applying_deltas();
+        actions
+    };
+    at_time(0.0, vec![]);
+    at_time(6.0, vec![]);
+    let target = point_at(globe, -122.33, 47.61, 170.0);
+    assert!(
+        at_time(
+            6.0,
+            vec![egui::Event::PointerMoved(target), button(target, true)]
+        )
+        .is_empty()
+    );
+    assert_eq!(
+        at_time(6.0, vec![button(target, false)]),
+        vec![UiAction::NewGame {
+            region: RegionId::new("western_interconnection"),
+            seed: 42
+        }]
+    );
+}
+
+#[test]
+fn outside_the_globe_and_back_hemisphere_cannot_start_a_region() {
+    let model = model(Some(42));
+    let mut form = MenuForm::new(42);
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    let screen = Rect::from_min_size(Pos2::ZERO, egui::vec2(1280.0, 800.0));
+    let mut frame = |time, events| {
+        let mut actions = Vec::new();
+        let output = ctx.run_ui(
+            egui::RawInput {
+                time: Some(time),
+                screen_rect: Some(screen),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                actions = central(ui, |ui| draw_region_select(ui, &model, &mut form));
+            },
+        );
+        let rect = widget(
+            &super::support::egui_harness::widgets_of(&output),
+            "World power grids",
+        )
+        .rect;
+        output.drop_without_applying_deltas();
+        (actions, rect)
+    };
+    frame(0.0, vec![]);
+    let globe = frame(12.0, vec![]).1;
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        pressed,
+        button: egui::PointerButton::Primary,
+        modifiers: egui::Modifiers::NONE,
+    };
+    // At 12 seconds the Eastern grid is behind the globe. Its projected back-face coordinate
+    // lies inside the disc, but the visible geographic point there belongs to another continent.
+    for target in [
+        globe.left_top() + egui::vec2(2.0, 2.0),
+        point_at(globe, -83.0, 40.0, 80.0),
+    ] {
+        assert!(
+            frame(
+                12.0,
+                vec![egui::Event::PointerMoved(target), button(target, true)]
+            )
+            .0
+            .is_empty()
+        );
+        assert!(frame(12.0, vec![button(target, false)]).0.is_empty());
+    }
+}
+
+#[test]
+fn cards_use_two_columns_when_the_right_panel_has_room_and_keep_row_order() {
+    let mut model = model(Some(42));
+    let prototype = model.regions[0].clone();
+    model.regions = (0..4)
+        .map(|index| {
+            let mut choice = prototype.clone();
+            choice.button.label = format!("Grid {index}");
+            choice.button.action = UiAction::NewGame {
+                region: RegionId::new(&format!("grid-{index}")),
+                seed: 42,
+            };
+            choice
+        })
+        .collect();
+    for (width, height, two_columns) in [
+        (1024.0, 640.0, false),
+        (1920.0, 1080.0, true),
+        (3072.0, 1728.0, true),
+    ] {
+        let harness = Harness::with_screen(width, height);
+        let form = RefCell::new(MenuForm::new(42));
+        let draw = |ui: &mut egui::Ui| {
+            central(ui, |ui| {
+                draw_region_select(ui, &model, &mut form.borrow_mut())
+            })
+        };
+        let widgets = harness.draw(draw);
+        let a = widget(&widgets, "Grid 0").rect;
+        let b = widget(&widgets, "Grid 1").rect;
+        let c = widget(&widgets, "Grid 2").rect;
+        if two_columns {
+            assert!(
+                (a.top() - b.top()).abs() < 1.0,
+                "first row must share a top edge"
+            );
+            assert!(b.left() > a.right(), "cards must occupy separate columns");
+            assert!(
+                c.top() > a.bottom() && (c.left() - a.left()).abs() < 1.0,
+                "next row retains catalog order"
+            );
+            assert_eq!(
+                harness.click("Grid 1", draw),
+                vec![UiAction::NewGame {
+                    region: RegionId::new("grid-1"),
+                    seed: 42
+                }]
+            );
+        } else {
+            assert!(b.top() > a.bottom(), "narrow panel keeps one column");
+        }
+        let labels: &[&str] = if two_columns {
+            &["Grid 0", "Grid 1", "Grid 2", "Grid 3", "Back"]
+        } else {
+            &["Grid 0", "Back"]
+        };
+        for label in labels {
+            assert!(
+                harness
+                    .screen_rect()
+                    .contains_rect(widget(&widgets, label).rect)
+            );
+        }
+    }
+}
+
+#[test]
+fn card_body_brings_a_hidden_region_forward_then_resumes_after_two_seconds() {
+    use super::support::egui_harness::widgets_of;
+    let catalog = RonRegionCatalog::new(shipped_assets().join("regions"));
+    let loaded = catalog
+        .load(&RegionId::new("eastern_interconnection"))
+        .unwrap();
+    let outline = infrastructure::region::region_outline(
+        &loaded.source_bytes,
+        &RegionId::new("eastern_interconnection"),
+    )
+    .unwrap();
+    let midpoint = ((outline.bounds.west + outline.bounds.east) * 0.5) as f32;
+    let (_, home_lon, home_lat) = outline.home.unwrap();
+    for enabled in [false, true] {
+        let model = model(enabled.then_some(42));
+        let mut form = if enabled {
+            MenuForm::new(42)
+        } else {
+            MenuForm {
+                seed: "invalid".into(),
+            }
+        };
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let screen = Rect::from_min_size(Pos2::ZERO, egui::vec2(1920.0, 1080.0));
+        let mut frame = |time, events| {
+            let mut actions = Vec::new();
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    screen_rect: Some(screen),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    actions = central(ui, |ui| draw_region_select(ui, &model, &mut form));
+                },
+            );
+            let widgets = widgets_of(&output);
+            let land = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Mesh(mesh) if mesh.vertices.len() > 500 => {
+                        Some(mesh.vertices.iter().map(|v| v.pos).collect::<Vec<_>>())
+                    }
+                    _ => None,
+                })
+                .expect("context mesh");
+            let globe = widget(&widgets, "World power grids").rect;
+            let home = point_at(globe, home_lon as f32, home_lat as f32, midpoint);
+            let centered = output.shapes.iter().any(|shape| matches!(&shape.shape,
+            egui::Shape::Circle(circle) if circle.radius == 3.5 && circle.center.distance(home) < 0.05));
+            output.drop_without_applying_deltas();
+            assert!(actions.is_empty(), "body selection must not start a game");
+            (widgets, land, centered)
+        };
+        frame(0.0, vec![]);
+        let (widgets, hidden, _) = frame(12.0, vec![]); // North America now faces away.
+        let title = widget(&widgets, "Eastern Interconnection").rect;
+        let body = title.center_bottom() + egui::vec2(0.0, 22.0);
+        let button = |pressed| egui::Event::PointerButton {
+            pos: body,
+            pressed,
+            button: egui::PointerButton::Primary,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(12.0, vec![egui::Event::PointerMoved(body), button(true)]);
+        frame(12.0, vec![button(false)]);
+        let (_, arrived, centered) = frame(12.6, vec![egui::Event::PointerGone]);
+        if enabled {
+            assert!(
+                centered,
+                "the geographic midpoint must face the viewer on arrival"
+            );
+            assert!(hidden != arrived);
+            assert!(
+                arrived == frame(14.5, vec![]).1,
+                "hold for two seconds after arrival"
+            );
+            assert!(arrived != frame(14.9, vec![]).1, "resume gradual spin");
+        } else {
+            assert!(
+                arrived != frame(14.5, vec![]).1,
+                "disabled cards cannot interrupt the normal rotation"
+            );
+        }
     }
 }

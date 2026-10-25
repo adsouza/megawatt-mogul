@@ -101,6 +101,16 @@ Optional economic zones have independent arithmetic and compatibility checks:
   [Plan 6a](docs/superpowers/plans/2026-10-25-plan-6a-economic-zones.md#implementation-and-validation-record)
   records the isolated native save/resume-through-commissioning acceptance.
 
+The new-game globe's pure tests in `hud/region_globe.rs` pin its 22° tilt, 24-second rotation,
+bidirectional drag and two-second idle hold, with projection round-trip properties. Real widget
+tests in `game/tests/game/region_picker.rs` verify that dragging never selects a region, rotation
+and picking agree, and the existing seed validation, exclusions, keyboard cards, small-window fit
+and text contrast remain intact. They also cover responsive one/two-column cards, row-major
+keyboard access, reversed automatic rotation, and hover titles painted after every region fill.
+Card-body tests cover selection from the hidden hemisphere, midpoint alignment and a two-second
+hold before automatic rotation resumes; pure motion properties pin shortest arcs, frame partition
+independence and manual interruption. Rendering clips the far hemisphere before triangulation.
+
 The three year-one checks in `infrastructure::shipped_regions`—
 `hands_off_plan_survives_year_one`, `no_commands_survive_year_one` and
 `shipped_regions_never_order_outages_hands_off`—cover two regions × eight seeds × twelve months.

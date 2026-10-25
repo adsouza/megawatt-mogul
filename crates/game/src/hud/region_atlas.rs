@@ -4,9 +4,10 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
+use super::region_globe::{GlobeSpin, GlobeView, clip_limb, sphere};
 use application::RegionCatalog;
-use bevy::prelude::Resource;
-use bevy_egui::egui::{self, Color32, Pos2, Rect, Stroke};
+use bevy::{math::Vec3, prelude::Resource};
+use bevy_egui::egui::{self, Color32, Rect, Stroke};
 use domain::ids::RegionId;
 use infrastructure::region::{Bounds, RegionOutline, region_outline};
 
@@ -15,9 +16,9 @@ use crate::l10n::{FluentArg, Localizer};
 
 const WEST: f64 = -180.0;
 const EAST: f64 = 180.0;
-const NORTH: f64 = 75.0;
-const SOUTH: f64 = -60.0;
-const ROWS: usize = 1000;
+const NORTH: f64 = 90.0;
+const SOUTH: f64 = -90.0;
+const ROWS: usize = 720;
 const OCEAN: Color32 = Color32::from_rgb(12, 25, 36);
 const LAND: Color32 = Color32::from_rgb(39, 55, 63);
 const COLOURS: [Color32; 4] = [
@@ -30,7 +31,7 @@ const COLOURS: [Color32; 4] = [
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Artwork {
     outline: RegionOutline,
-    mesh: Vec<[[f32; 2]; 4]>,
+    mesh: Vec<[[f32; 3]; 4]>,
 }
 
 /// Optional RON geography cached once on entering the menu. Unknown catalog formats still have
@@ -115,86 +116,13 @@ impl RegionSelectModel {
     }
 }
 
-// Spherical Equal Earth on a unit-radius sphere. Inputs/outputs use degrees at the API
-// boundary. Equations: Šavrič, Patterson & Jenny (2018); PROJ eqearth.cpp (see provenance).
-const A1: f64 = 1.340264;
-const A2: f64 = -0.081106;
-const A3: f64 = 0.000893;
-const A4: f64 = 0.003796;
-const M: f64 = 0.8660254037844386;
-const MAX_Y: f64 = 1.3173627591574;
-const MAX_X: f64 = 2.7066299836960748;
-
-fn derivative(theta: f64) -> f64 {
-    let t2 = theta * theta;
-    A1 + 3.0 * A2 * t2 + t2.powi(3) * (7.0 * A3 + 9.0 * A4 * t2)
-}
-
-fn equal_earth(lon: f64, lat: f64) -> (f64, f64) {
-    let theta = (M * lat.to_radians().sin()).asin();
-    let t2 = theta * theta;
-    (
-        lon.to_radians() * theta.cos() / (M * derivative(theta)),
-        theta * (A1 + A2 * t2 + t2.powi(3) * (A3 + A4 * t2)),
-    )
-}
-
-/// Reject points outside the curved Earth footprint, including non-finite pointer input.
-fn equal_earth_inverse(x: f64, y: f64) -> Option<(f64, f64)> {
-    if !x.is_finite() || !y.is_finite() || y.abs() > MAX_Y + 1e-12 {
-        return None;
-    }
-    let mut theta = y;
-    for _ in 0..10 {
-        let t2 = theta * theta;
-        let residual = theta * (A1 + A2 * t2 + t2.powi(3) * (A3 + A4 * t2)) - y;
-        let delta = residual / derivative(theta);
-        theta -= delta;
-        if delta.abs() < 1e-12 {
-            let sin_lat = theta.sin() / M;
-            let lon = (M * x * derivative(theta) / theta.cos()).to_degrees();
-            if sin_lat.abs() > 1.0 + 1e-12 || lon.abs() > 180.0 + 1e-9 {
-                return None;
-            }
-            return Some((
-                lon.clamp(-180.0, 180.0),
-                sin_lat.clamp(-1.0, 1.0).asin().to_degrees(),
-            ));
-        }
-    }
-    None
-}
-
 pub(super) fn aspect() -> f32 {
-    (2.0 * MAX_X / (equal_earth(0.0, NORTH).1 - equal_earth(0.0, SOUTH).1)) as f32
+    1.0
 }
 
-fn project(rect: Rect, lon: f64, lat: f64) -> Pos2 {
-    let (x, y) = equal_earth(lon, lat);
-    let north = equal_earth(0.0, NORTH).1;
-    let south = equal_earth(0.0, SOUTH).1;
-    rect.min
-        + egui::vec2(
-            ((x + MAX_X) / (2.0 * MAX_X)) as f32 * rect.width(),
-            ((north - y) / (north - south)) as f32 * rect.height(),
-        )
-}
-
-fn unproject(rect: Rect, pos: Pos2) -> Option<(f64, f64)> {
-    let north = equal_earth(0.0, NORTH).1;
-    let south = equal_earth(0.0, SOUTH).1;
-    let (lon, lat) = equal_earth_inverse(
-        f64::from((pos.x - rect.left()) / rect.width()) * 2.0 * MAX_X - MAX_X,
-        north - f64::from((pos.y - rect.top()) / rect.height()) * (north - south),
-    )?;
-    (SOUTH - 1e-6..=NORTH + 1e-6)
-        .contains(&lat)
-        .then_some((lon, lat))
-}
-
-// Scanline union/subtraction is independent of the playable grid size. Project all four
-// corners of each strip so the curved meridians remain aligned with inverse picking.
-fn mesh(outline: &RegionOutline) -> Vec<[[f32; 2]; 4]> {
+// Cache a scanline union/subtraction on the unit sphere, independent of the playable grid.
+// Longitude subdivisions keep curved shorelines and limb clipping accurate during rotation.
+fn mesh(outline: &RegionOutline) -> Vec<[[f32; 3]; 4]> {
     geographic_mesh(outline.bounds, &outline.land, &outline.exclude)
 }
 
@@ -202,9 +130,8 @@ fn geographic_mesh(
     bounds: Bounds,
     land_rings: &[Vec<(f64, f64)>],
     excluded_rings: &[Vec<(f64, f64)>],
-) -> Vec<[[f32; 2]; 4]> {
+) -> Vec<[[f32; 3]; 4]> {
     let mut strips = Vec::new();
-    let unit = Rect::from_min_max(Pos2::ZERO, egui::pos2(1.0, 1.0));
     let step = (NORTH - SOUTH) / ROWS as f64;
     for row in 0..ROWS {
         let lat = NORTH - (row as f64 + 0.5) * step;
@@ -256,38 +183,99 @@ fn geographic_mesh(
             {
                 let top = (lat + step * 0.5).min(bounds.north);
                 let bottom = (lat - step * 0.5).max(bounds.south);
-                strips.push([
-                    project(unit, west, top).into(),
-                    project(unit, x, top).into(),
-                    project(unit, x, bottom).into(),
-                    project(unit, west, bottom).into(),
-                ]);
+                let columns = (x - west).ceil() as usize;
+                for column in 0..columns {
+                    let left = west + (x - west) * column as f64 / columns as f64;
+                    let right = west + (x - west) * (column + 1) as f64 / columns as f64;
+                    strips.push([
+                        sphere(left, top).to_array(),
+                        sphere(right, top).to_array(),
+                        sphere(right, bottom).to_array(),
+                        sphere(left, bottom).to_array(),
+                    ]);
+                }
             }
         }
     }
     strips
 }
 
-fn paint_mesh(painter: &egui::Painter, strips: &[[[f32; 2]; 4]], rect: Rect, colour: Color32) {
+fn paint_mesh(
+    painter: &egui::Painter,
+    strips: &[[[f32; 3]; 4]],
+    rect: Rect,
+    view: &GlobeView,
+    colour: Color32,
+    shade: bool,
+    offset: egui::Vec2,
+) {
     let mut mesh = egui::Mesh::default();
-    mesh.vertices.reserve(strips.len() * 4);
-    mesh.indices.reserve(strips.len() * 6);
+    mesh.vertices.reserve(strips.len() * 2);
+    mesh.indices.reserve(strips.len() * 3);
     for strip in strips {
-        let base = mesh.vertices.len() as u32;
-        for point in strip {
-            mesh.colored_vertex(
-                rect.min + egui::vec2(point[0], point[1]) * rect.size(),
-                colour,
-            );
+        let face = strip.map(|p| view.rotate(Vec3::from_array(p)));
+        if face.iter().all(|p| p.z < 0.0) {
+            continue;
         }
-        mesh.add_triangle(base, base + 1, base + 2);
-        mesh.add_triangle(base, base + 2, base + 3);
+        let clipped;
+        let points = if face.iter().all(|p| p.z >= 0.0) {
+            &face[..]
+        } else {
+            clipped = clip_limb(&face);
+            &clipped
+        };
+        let base = mesh.vertices.len() as u32;
+        for p in points {
+            let gain = if shade {
+                0.62 + 0.38 * p.z.max(0.0).sqrt()
+            } else {
+                1.0
+            };
+            let colour = Color32::from_rgb(
+                (f32::from(colour.r()) * gain) as u8,
+                (f32::from(colour.g()) * gain) as u8,
+                (f32::from(colour.b()) * gain) as u8,
+            );
+            mesh.colored_vertex(view.screen(rect, *p) + offset, colour);
+        }
+        for i in 1..points.len().saturating_sub(1) {
+            mesh.add_triangle(base, base + i as u32, base + i as u32 + 1);
+        }
     }
     painter.add(egui::Shape::mesh(mesh));
 }
 
-fn backdrop() -> &'static Vec<[[f32; 2]; 4]> {
-    static BACKDROP: OnceLock<Vec<[[f32; 2]; 4]>> = OnceLock::new();
+fn graticule(
+    painter: &egui::Painter,
+    rect: Rect,
+    view: &GlobeView,
+    points: impl Iterator<Item = Vec3>,
+) {
+    let mut previous = None;
+    for point in points.map(|p| view.rotate(p)) {
+        if let Some(a) = previous {
+            let a: Vec3 = a;
+            if a.z >= 0.0 || point.z >= 0.0 {
+                let mut a = a;
+                let mut b = point;
+                if a.z < 0.0 {
+                    a = a.lerp(b, a.z / (a.z - b.z)).normalize_or_zero();
+                }
+                if b.z < 0.0 {
+                    b = b.lerp(a, b.z / (b.z - a.z)).normalize_or_zero();
+                }
+                painter.line_segment(
+                    [view.screen(rect, a), view.screen(rect, b)],
+                    Stroke::new(0.6, Color32::from_rgb(39, 65, 79)),
+                );
+            }
+        }
+        previous = Some(point);
+    }
+}
+
+fn backdrop() -> &'static Vec<[[f32; 3]; 4]> {
+    static BACKDROP: OnceLock<Vec<[[f32; 3]; 4]>> = OnceLock::new();
     BACKDROP.get_or_init(|| {
         let land = super::world_coastline::LAND
             .iter()
@@ -306,56 +294,118 @@ fn backdrop() -> &'static Vec<[[f32; 2]; 4]> {
     })
 }
 
+/// Card bodies change only the transient preview, never the selected simulation region.
+pub(super) fn focus_region(ctx: &egui::Context, choice: &super::menu::RegionChoice) {
+    let Some(art) = choice.artwork.as_ref().filter(|_| choice.button.enabled) else {
+        return;
+    };
+    let UiAction::NewGame { region, .. } = &choice.button.action else {
+        return;
+    };
+    let now = ctx.input(|input| input.time);
+    ctx.data_mut(|data| {
+        let id = egui::Id::new("region_globe_motion");
+        let mut spin = data.get_temp::<GlobeSpin>(id).unwrap_or_default();
+        spin.focus(
+            now,
+            (art.outline.bounds.west + art.outline.bounds.east) * 0.5,
+        );
+        data.insert_temp(id, spin);
+        data.insert_temp(egui::Id::new("region_globe_selected"), region.clone());
+    });
+    ctx.request_repaint();
+}
+
 /// Returns the region under the pointer so the cards and map can share a hover treatment.
-pub(super) fn draw_map(
+pub(super) fn draw_globe(
     ui: &mut egui::Ui,
     model: &RegionSelectModel,
     card_hover: Option<usize>,
     actions: &mut Vec<UiAction>,
 ) -> Option<usize> {
     let width = ui.available_width();
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(width, width / aspect()), egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(width, width / aspect()),
+        egui::Sense::click_and_drag(),
+    );
     response
         .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Image, true, &model.map_label));
-    let hovered = response.hover_pos().and_then(|pos| {
-        let (lon, lat) = unproject(rect, pos)?;
-        model.regions.iter().position(|choice| {
-            choice.button.enabled
-                && choice
-                    .artwork
-                    .as_ref()
-                    .is_some_and(|art| art.outline.contains(lon, lat))
-        })
-    });
-    let active = hovered.or(card_hover);
-    let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
-    painter.rect_filled(rect, 12.0, OCEAN);
-    for lon in (-180..=180).step_by(30) {
-        let points = (0..=54)
-            .map(|i| {
-                project(
-                    rect,
-                    f64::from(lon),
-                    SOUTH + f64::from(i) * (NORTH - SOUTH) / 54.0,
-                )
+    let id = egui::Id::new("region_globe_motion");
+    let mut spin = ui
+        .ctx()
+        .data_mut(|data| data.get_temp::<GlobeSpin>(id).unwrap_or_default());
+    spin.advance(
+        ui.input(|input| input.time),
+        response.is_pointer_button_down_on() || response.dragged(),
+        response.drag_delta().x,
+        rect.width(),
+    );
+    let view = GlobeView::new(spin.longitude);
+    ui.ctx().data_mut(|data| data.insert_temp(id, spin));
+    ui.ctx().request_repaint();
+    let hovered = response
+        .hover_pos()
+        .filter(|_| !response.dragged())
+        .and_then(|pos| {
+            let (lon, lat) = view.unproject(rect, pos)?;
+            model.regions.iter().position(|choice| {
+                choice.button.enabled
+                    && choice
+                        .artwork
+                        .as_ref()
+                        .is_some_and(|art| art.outline.contains(lon, lat))
             })
-            .collect();
-        painter.add(egui::Shape::line(
-            points,
-            Stroke::new(0.5, Color32::from_rgb(26, 43, 54)),
-        ));
+        });
+    let selected_id = egui::Id::new("region_globe_selected");
+    if response.dragged() {
+        ui.ctx()
+            .data_mut(|data| data.remove::<RegionId>(selected_id));
     }
-    for lat in (-60..=75).step_by(15) {
-        painter.line_segment(
-            [
-                project(rect, WEST, f64::from(lat)),
-                project(rect, EAST, f64::from(lat)),
-            ],
-            Stroke::new(0.5, Color32::from_rgb(26, 43, 54)),
+    let selected = ui
+        .ctx()
+        .data_mut(|data| data.get_temp::<RegionId>(selected_id));
+    let selected = model.regions.iter().position(|choice| {
+        choice.button.enabled
+            && matches!(&choice.button.action,
+            UiAction::NewGame { region, .. } if Some(region) == selected.as_ref())
+    });
+    let active = hovered.or(card_hover).or(selected);
+    let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+    let radius = rect.width() * 0.5;
+    painter.circle_filled(rect.center(), radius, OCEAN);
+    for band in 0..48 {
+        let fraction = band as f32 / 48.0;
+        painter.circle_filled(
+            rect.center(),
+            radius * (1.0 - fraction),
+            OCEAN.lerp_to_gamma(Color32::from_rgb(25, 51, 65), fraction),
         );
     }
-    paint_mesh(&painter, backdrop(), rect, LAND);
+    for lon in (-180..180).step_by(30) {
+        graticule(
+            &painter,
+            rect,
+            &view,
+            (0..=180).map(|i| sphere(f64::from(lon), -90.0 + f64::from(i))),
+        );
+    }
+    for lat in (-75..=75).step_by(15) {
+        graticule(
+            &painter,
+            rect,
+            &view,
+            (0..=360).map(|i| sphere(-180.0 + f64::from(i), f64::from(lat))),
+        );
+    }
+    paint_mesh(
+        &painter,
+        backdrop(),
+        rect,
+        &view,
+        LAND,
+        true,
+        egui::Vec2::ZERO,
+    );
     for (index, choice) in model.regions.iter().enumerate() {
         let Some(art) = &choice.artwork else {
             continue;
@@ -381,27 +431,41 @@ pub(super) fn draw_map(
                 egui::vec2(0.0, -1.5),
                 egui::vec2(0.0, 1.5),
             ] {
-                paint_mesh(&painter, &art.mesh, rect.translate(offset), Color32::WHITE);
-            }
-        }
-        paint_mesh(&painter, &art.mesh, rect, colour);
-        if let Some((_, lon, lat)) = &art.outline.home {
-            let pos = project(rect, *lon, *lat);
-            painter.circle_filled(pos, 7.0, theme::LABEL_BACKING);
-            painter.circle_filled(pos, 3.5, Color32::WHITE);
-            if active == Some(index) {
-                theme::paint_label(
+                paint_mesh(
                     &painter,
-                    pos + egui::vec2(if pos.x > rect.center().x { -12.0 } else { 12.0 }, 0.0),
-                    if pos.x > rect.center().x {
-                        egui::Align2::RIGHT_CENTER
-                    } else {
-                        egui::Align2::LEFT_CENTER
-                    },
-                    &choice.button.label,
-                    13.0,
+                    &art.mesh,
+                    rect,
+                    &view,
+                    Color32::WHITE,
+                    false,
+                    offset,
                 );
             }
+        }
+        paint_mesh(
+            &painter,
+            &art.mesh,
+            rect,
+            &view,
+            colour,
+            active != Some(index),
+            egui::Vec2::ZERO,
+        );
+    }
+    painter.circle_stroke(
+        rect.center(),
+        radius,
+        Stroke::new(1.5, Color32::from_rgb(66, 101, 120)),
+    );
+    // All geographic fills precede the markers, and the active title is the final overlay.
+    // Otherwise a later region can cover a neighbouring region's marker or a title beside it.
+    for choice in &model.regions {
+        if let Some(art) = &choice.artwork
+            && let Some((_, lon, lat)) = &art.outline.home
+            && let Some(pos) = view.project(rect, *lon, *lat)
+        {
+            painter.circle_filled(pos, 7.0, theme::LABEL_BACKING);
+            painter.circle_filled(pos, 3.5, Color32::WHITE);
         }
     }
     theme::paint_label(
@@ -411,12 +475,36 @@ pub(super) fn draw_map(
         &model.map_note,
         12.0,
     );
+    if let Some(choice) = active.and_then(|index| model.regions.get(index))
+        && let Some(art) = &choice.artwork
+        && let Some((_, lon, lat)) = &art.outline.home
+        && let Some(pos) = view.project(rect, *lon, *lat)
+    {
+        theme::paint_label(
+            &painter,
+            pos + egui::vec2(if pos.x > rect.center().x { -12.0 } else { 12.0 }, 0.0),
+            if pos.x > rect.center().x {
+                egui::Align2::RIGHT_CENTER
+            } else {
+                egui::Align2::LEFT_CENTER
+            },
+            &choice.button.label,
+            13.0,
+        );
+    }
     ui.weak(&model.land_note);
-    if let Some(index) = hovered {
+    if response.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    } else if let Some(index) = hovered {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         if response.clicked() {
             actions.push(model.regions[index].button.action.clone());
         }
+    } else if response
+        .hover_pos()
+        .is_some_and(|at| view.unproject(rect, at).is_some())
+    {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
     }
     active
 }
@@ -431,55 +519,4 @@ pub(super) fn colour(choice: &super::menu::RegionChoice, index: usize) -> Color3
         .and_then(|hex| u32::from_str_radix(hex, 16).ok())
         .map(|rgb| Color32::from_rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8))
         .unwrap_or(COLOURS[index % COLOURS.len()])
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use proptest::prelude::*;
-
-    #[test]
-    fn equal_earth_matches_published_values() {
-        for (lon, lat, expected) in [
-            (0.0, 0.0, (0.0, 0.0)),
-            (180.0, 0.0, (2.7066299836960748, 0.0)),
-            (0.0, 90.0, (0.0, 1.3173627591574)),
-        ] {
-            let (x, y) = equal_earth(lon, lat);
-            assert!((x - expected.0).abs() < 1e-12 && (y - expected.1).abs() < 1e-12);
-        }
-    }
-
-    #[test]
-    fn equal_earth_inverse_rejects_outside_the_curved_earth_and_nonfinite_input() {
-        for (x, y) in [
-            (3.0, 0.0),
-            (2.7, 1.2),
-            (0.0, 1.4),
-            (f64::NAN, 0.0),
-            (0.0, f64::INFINITY),
-        ] {
-            assert!(equal_earth_inverse(x, y).is_none());
-        }
-    }
-
-    proptest! {
-        #[test]
-        fn equal_earth_round_trips(lon in WEST..EAST, lat in SOUTH..NORTH) {
-            let (x, y) = equal_earth(lon, lat);
-            let (got_lon, got_lat) = equal_earth_inverse(x, y).unwrap();
-            prop_assert!((got_lon - lon).abs() < 1e-6);
-            prop_assert!((got_lat - lat).abs() < 1e-6);
-        }
-        #[test]
-        fn projection_round_trips_at_any_window_size(
-            lon in -179.9_f64..179.9, lat in -59.9_f64..74.9,
-            width in 300.0_f32..2000.0, height in 200.0_f32..1200.0,
-        ) {
-            let rect = Rect::from_min_size(egui::pos2(20.0, 45.0), egui::vec2(width, height));
-            let (got_lon, got_lat) = unproject(rect, project(rect, lon, lat)).unwrap();
-            prop_assert!((got_lon - lon).abs() < 0.0001);
-            prop_assert!((got_lat - lat).abs() < 0.0001);
-        }
-    }
 }

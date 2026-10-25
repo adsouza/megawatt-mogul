@@ -61,6 +61,14 @@ effective spec. No state fields or schema change: portable state stays 3. Absent
 legacy pricing. These zones do not affect electrical areas, physics, currency or operating costs.
 The HUD formats domain quotes and stored construction history; it does not calculate local prices.
 
+The new-game globe is also presentation-only. `hud::region_atlas` caches geographic union meshes
+on the unit sphere; `region_globe` supplies front-hemisphere projection, limb clipping and the
+24-second rotation clock. Mouse dragging changes longitude while retaining the 22° pole tilt;
+automatic rotation resumes two seconds after release. Card bodies select a transient region and
+animate its geographic midpoint to the front along the shortest longitude arc, then hold for two
+seconds before resuming. Title buttons start games as before. Its transient egui state never enters
+simulation time, randomness, commands or saves. The existing region cards remain keyboard-accessible.
+
 Rules 13 accredit commissioned storage by deliverable duration (including disabled batteries),
 refresh rate-base firm MW only at annual review, and adjust allowed return by post-close customer
 satisfaction. Estimates refresh a clone; restoring a snapshot never refreshes its saved profiles.

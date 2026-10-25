@@ -3871,12 +3871,20 @@ old reports stay as recorded.
 
 ### 28.10 The world picker
 
-- **Map.** The region picker becomes a world map in the Equal Earth projection, cropped to
-  60°S–75°N. Each shipped region is filled from its own outline. Colours are SGCC `#CF414C`,
+- **Globe.** The new-game region picker uses an orthographic globe with its north pole tilted
+  22° toward the viewer and its south pole away. Automatic rotation follows the tilted polar
+  axis, moving the visible surface from left to right, and completes one revolution every 24 real
+  seconds (15°/second), independent of frame rate and simulation speed. Horizontal mouse dragging
+  takes direct control in either direction,
+  much faster than automatic rotation, while preserving the tilt. Holding a drag pauses automatic
+  rotation; it resumes at the normal speed two seconds after release. A drag never starts a game.
+  Land, region fills and home markers on the far hemisphere are hidden. Picking inverts the
+  current view onto the front hemisphere, rejects points outside the disc, and respects region
+  exclusions. Each shipped region is filled from its own outline. Colours are SGCC `#CF414C`,
   Europe–Maghreb `#226EC7`, Eastern Interconnection `#E4832F`, India–Nepal–Bhutan `#B29400`,
   Southern China `#008F9D`, IPS/UPS `#7652B2`, Western Interconnection `#936A45` and Brazil
   `#1E8F59`. Home cities use point markers; region names appear on hover and on the cards.
-  No illustration letters or heading are painted over the map. Keep its localized accessible name.
+  No illustration letters or heading are painted over the globe. Keep its localized accessible name.
 - **Atlas metadata.** Optional `atlas: (colour: "#RRGGBB")` metadata in region RON supplies the
   colour. Only the infrastructure outline reader uses it; the domain never sees it. A custom
   region without it takes the next colour from the fallback palette. Historical `letter` input is
@@ -3884,8 +3892,17 @@ old reports stay as recorded.
   DTO. Preserve archived source bytes and existing saves.
 - **Areas.** SGCC is one entry. Its area boundaries are drawn, and hovering shows the area names.
 - **Text.** Hover labels and the map note sit on opaque backings at the 4.5:1 contrast floor (§8.4).
+  Paint geographic fills first, then home markers, and the active hover title last so neighbouring
+  regions cannot cover it.
 - **Region cards.** Each card adds frequency, currency, time-zone span and hemisphere to the
-  existing description and home city.
+  existing description and home city. The panel to the globe's right uses two columns when both
+  cards remain comfortably readable, and one column at narrower widths. Catalog order and keyboard
+  focus proceed across each row before moving to the next. Clicking an enabled card's body
+  selects and highlights its region without starting a game, including a region on the far side.
+  Smoothly rotate through the shortest longitude arc in 0.6 seconds to put the midpoint of its
+  geographic bounds on the front meridian, preserving the 22° tilt. Hold for two seconds after
+  arrival, then resume gradual rotation. Another card retargets from the current pose; dragging
+  cancels the animation and takes immediate control. The card's title button still starts the game.
 - **Unchanged behaviour.** Hover, click, keyboard start buttons, the seed rules and disabled entries
   stay as in §2.6. Grey land is unselectable, and the picker does not imply that grey land lacks
   electricity.
