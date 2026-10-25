@@ -145,7 +145,7 @@ class ReleaseTests(unittest.TestCase):
         control = subprocess.run(
             ["dpkg-deb", "--field", str(artifact)], check=True, capture_output=True, text=True
         ).stdout
-        self.assertIn(f"Version: {self.version}\n", control)
+        self.assertIn(f"Version: {release.metadata(self.root)['deb_version']}\n", control)
         self.assertIn("Architecture: amd64\n", control)
         self.assertIn("libc6", control)
         self.assertIn("libxcursor1", control)

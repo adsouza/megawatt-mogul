@@ -16,10 +16,10 @@ on:
 permissions:
   contents: read
 
-# Never cancel a release upload midway through. Re-runs may update an existing draft.
+# Never cancel tag-release uploads midway through; superseded PR checks can stop early.
 concurrency:
   group: linux-release-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   version:
