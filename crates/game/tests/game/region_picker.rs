@@ -191,11 +191,14 @@ fn hovering_the_map_highlights_a_region_without_starting_a_game() {
     let title = shapes.iter().rposition(|shape| matches!(&shape.shape,
         egui::Shape::Text(text) if text.galley.text() == "Eastern Interconnection" && rect.contains(text.pos)
     )).expect("the hovered region has a globe title");
+    // A mesh whose every vertex is fully transparent paints nothing, so it cannot cover the
+    // title: egui's ScrollArea paints its edge fade that way when its content overflows and the
+    // panel behind it has no fill. Every visible mesh still counts.
     let last_fill = shapes
         .iter()
         .rposition(|shape| {
             matches!(&shape.shape,
-                egui::Shape::Mesh(mesh) if !mesh.vertices.is_empty()
+                egui::Shape::Mesh(mesh) if mesh.vertices.iter().any(|v| v.color.a() > 0)
             )
         })
         .expect("globe geography is painted");
@@ -237,47 +240,244 @@ fn hovering_the_map_highlights_a_region_without_starting_a_game() {
     );
 }
 
+/// One picker screen driven frame by frame, with the clock advancing, so the mouse wheel can
+/// scroll the card panel. The output's textures are dropped inside each frame, before any test
+/// assertion can unwind past them.
+struct Picker<'a> {
+    ctx: egui::Context,
+    screen: Rect,
+    time: f64,
+    model: &'a game::hud::RegionSelectModel,
+    form: MenuForm,
+}
+
+impl<'a> Picker<'a> {
+    fn new(model: &'a game::hud::RegionSelectModel, width: f32, height: f32) -> Self {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        Self {
+            ctx,
+            screen: Rect::from_min_size(Pos2::ZERO, egui::vec2(width, height)),
+            time: 0.0,
+            model,
+            form: MenuForm::new(42),
+        }
+    }
+
+    /// One pass with `events`: what it painted, its widgets and its actions.
+    fn frame(
+        &mut self,
+        events: Vec<egui::Event>,
+    ) -> (
+        Vec<egui::epaint::ClippedShape>,
+        Vec<super::support::egui_harness::Widget>,
+        Vec<UiAction>,
+    ) {
+        self.time += 0.5;
+        let mut actions = Vec::new();
+        let (model, form) = (self.model, &mut self.form);
+        let output = self.ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(self.screen),
+                time: Some(self.time),
+                events,
+                ..Default::default()
+            },
+            |ui| actions = central(ui, |ui| draw_region_select(ui, model, form)),
+        );
+        let widgets = super::support::egui_harness::widgets_of(&output);
+        let shapes = output.shapes.clone();
+        output.drop_without_applying_deltas();
+        (shapes, widgets, actions)
+    }
+
+    /// Wheels the card panel down by `points` with the pointer at `at`.
+    fn wheel(
+        &mut self,
+        at: Pos2,
+        points: f32,
+    ) -> (
+        Vec<egui::epaint::ClippedShape>,
+        Vec<super::support::egui_harness::Widget>,
+        Vec<UiAction>,
+    ) {
+        self.frame(vec![
+            egui::Event::PointerMoved(at),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, -points),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ])
+    }
+
+    /// Wheels the card panel, with the pointer over its first card, until `label`'s title is
+    /// painted on screen, then lets the wheel settle: that frame's paint and widgets. Panics if
+    /// 60 steps of 120 points never reach it.
+    fn scroll_to(
+        &mut self,
+        label: &str,
+    ) -> (
+        Vec<egui::epaint::ClippedShape>,
+        Vec<super::support::egui_harness::Widget>,
+    ) {
+        let (_, widgets, _) = self.frame(vec![]);
+        let at = widget(&widgets, &self.model.regions[0].button.label)
+            .rect
+            .center();
+        for _ in 0..60 {
+            let (shapes, widgets, actions) = self.frame(vec![]);
+            assert!(actions.is_empty(), "scrolling must not start a game");
+            let shown = |shapes: &[egui::epaint::ClippedShape], widgets: &[_]| {
+                let title: &super::support::egui_harness::Widget = widget(widgets, label);
+                self.screen.contains_rect(title.rect)
+                    && crate::contrast::painted_texts(shapes)
+                        .iter()
+                        .any(|text| text.text == label && title.rect.contains(text.at))
+            };
+            if shown(&shapes, &widgets) {
+                return (shapes, widgets);
+            }
+            let (_, _, actions) = self.wheel(at, 120.0);
+            assert!(actions.is_empty(), "scrolling must not start a game");
+        }
+        panic!("{label} is never scrolled into view");
+    }
+}
+
+/// The card panel scrolls vertically when the cards are taller than the picker (user decision,
+/// 2026-10-25): at the smallest window and the larger ones, every card can be scrolled into
+/// view, and each card's title and description fit its column without being cut sideways.
 #[test]
 fn map_cards_and_descriptions_fit_the_smallest_and_large_windows() {
     let model = model(Some(42));
-    let form = RefCell::new(MenuForm::new(42));
     for (width, height) in [(1024.0, 640.0), (1280.0, 800.0), (3072.0, 1728.0)] {
-        let harness = Harness::with_screen(width, height);
-        let widgets = harness.draw(|ui| {
-            central(ui, |ui| {
-                draw_region_select(ui, &model, &mut form.borrow_mut())
-            })
-        });
-        for name in ["Eastern Interconnection", "Western Interconnection", "Back"] {
+        let mut picker = Picker::new(&model, width, height);
+        let (_, widgets, _) = picker.frame(vec![]);
+        let screen = picker.screen;
+        for name in ["World power grids", "Back"] {
             assert!(
-                harness
-                    .screen_rect()
-                    .contains_rect(widget(&widgets, name).rect),
+                screen.contains_rect(widget(&widgets, name).rect),
                 "{width}x{height}: {name}"
             );
         }
-        let map = widget(&widgets, "World power grids").rect;
+        let globe = widget(&widgets, "World power grids").rect;
+        let first = widget(&widgets, &model.regions[0].button.label).rect;
         for choice in &model.regions {
-            for text in [
-                choice.description.as_ref().unwrap(),
-                choice.detail.as_ref().unwrap(),
-            ] {
-                // AccessKit exposes a wrapped label as several nodes with the same value.
-                let labels: Vec<_> = widgets
+            let (_, widgets) = picker.scroll_to(&choice.button.label);
+            let title = widget(&widgets, &choice.button.label).rect;
+            // Every card shares one column grid to the right of the globe, inside the screen.
+            assert!(
+                title.left() > globe.right() && title.right() <= screen.right(),
+                "{width}x{height}: {} spills sideways: {title:?}",
+                choice.button.label
+            );
+            assert!(
+                (title.width() - first.width()).abs() < 1.0,
+                "{width}x{height}: {} is not a full card column",
+                choice.button.label
+            );
+            // The title button fills the card's content width after the colour stripe, so the
+            // card's text must stay between the panel's left edge and the title's right edge.
+            for text in [&choice.description, &choice.metadata]
+                .into_iter()
+                .flatten()
+            {
+                // The card's own copy: the first one below its title (shared metadata lines
+                // repeat on other cards).
+                let rect = widgets
                     .iter()
-                    .filter(|widget| &widget.text == text)
-                    .collect();
-                assert!(!labels.is_empty());
-                for label in labels {
-                    assert!(harness.screen_rect().contains_rect(label.rect));
-                    assert!(label.rect.left() >= map.right());
-                }
+                    .filter(|w| &w.text == text && w.rect.top() >= title.bottom())
+                    .map(|w| w.rect)
+                    .min_by(|a, b| a.top().total_cmp(&b.top()))
+                    .unwrap_or_else(|| panic!("{text:?} is below its title"));
+                assert!(
+                    rect.left() > globe.right() && rect.right() <= title.right() + 1.0,
+                    "{width}x{height}: {}'s {text:?} is clipped sideways: {rect:?} beside {title:?}",
+                    choice.button.label
+                );
             }
+        }
+        // Where the cards overflow the panel, the panel itself scrolls: wheeling to the last
+        // card moves the first one up while the globe stays put.
+        let mut fresh = Picker::new(&model, width, height);
+        let (shapes, widgets, _) = fresh.frame(vec![]);
+        let last = &model.regions.last().unwrap().button.label;
+        if !crate::contrast::painted_texts(&shapes)
+            .iter()
+            .any(|text| &text.text == last)
+        {
+            let top = widget(&widgets, &model.regions[0].button.label).rect;
+            let (_, scrolled) = fresh.scroll_to(last);
+            assert!(
+                widget(&scrolled, &model.regions[0].button.label).rect.top() < top.top() - 1.0,
+                "{width}x{height}: the card panel scrolled"
+            );
+            assert_eq!(widget(&scrolled, "World power grids").rect, globe);
         }
     }
 }
 
-// Detects dropping authored atlas colours or leaking retired illustration labels into the UI.
+/// Eight listings from a fixture catalog: at the smallest window the wheel reaches the last
+/// card, and its title then starts that region.
+#[test]
+fn scrolling_reaches_the_last_of_eight_cards_at_the_smallest_window() {
+    let source = include_str!("../../../infrastructure/tests/support/minimal_region_v4.ron");
+    let dir = tempfile::TempDir::new().unwrap();
+    for index in 0..8 {
+        let file = source
+            .replace(r#"id: "minimal""#, &format!(r#"id: "grid_{index}""#))
+            .replace(
+                r#"name_key: "region-minimal""#,
+                &format!(r#"name_key: "region-grid-{index}""#),
+            );
+        std::fs::write(dir.path().join(format!("grid_{index}.ron")), file).unwrap();
+    }
+    let catalog = RonRegionCatalog::new(dir.path());
+    let listings = RegionListings(catalog.list());
+    let model = region_select_model(&listings, Some(42), &shipped_l10n())
+        .with_atlas(&RegionAtlas::load(&catalog, &listings), &shipped_l10n());
+    assert_eq!(model.regions.len(), 8);
+    assert!(model.regions.iter().all(|choice| choice.button.enabled));
+    let mut picker = Picker::new(&model, 1024.0, 640.0);
+    let (shapes, widgets, _) = picker.frame(vec![]);
+    assert!(
+        !crate::contrast::painted_texts(&shapes)
+            .iter()
+            .any(|text| text.text == "region-grid-7"),
+        "eight cards overflow the smallest window"
+    );
+    let before = widget(&widgets, "region-grid-0").rect;
+    let globe = widget(&widgets, "World power grids").rect;
+    let (_, widgets) = picker.scroll_to("region-grid-7");
+    assert!(
+        widget(&widgets, "region-grid-0").rect.top() < before.top() - 1.0,
+        "the card panel scrolled"
+    );
+    assert_eq!(
+        widget(&widgets, "World power grids").rect,
+        globe,
+        "the globe stays in view while the cards scroll"
+    );
+    let at = widget(&widgets, "region-grid-7").rect.center();
+    let press = |pressed| egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let (_, _, mut actions) = picker.frame(vec![egui::Event::PointerMoved(at), press(true)]);
+    actions.extend(picker.frame(vec![press(false)]).2);
+    assert_eq!(
+        actions,
+        vec![UiAction::NewGame {
+            region: RegionId::new("grid_7"),
+            seed: 42
+        }]
+    );
+}
+
 fn metadata_model() -> game::hud::RegionSelectModel {
     metadata_model_from(include_str!(
         "../../../infrastructure/tests/support/minimal_region_v4.ron"
@@ -314,31 +514,31 @@ fn atlas_colours_and_region_names_are_shown_without_illustration_labels() {
 fn picker_hides_legacy_letters_and_map_heading_at_both_layouts() {
     let legacy = include_str!("../../../infrastructure/tests/support/minimal_region_v4.ron")
         .replace("atlas: (", r#"atlas: (letter: "B", "#);
+    let no_labels = |shapes: &[egui::epaint::ClippedShape]| {
+        !crate::contrast::painted_texts(shapes).iter().any(|text| {
+            text.text == "World power grids"
+                || matches!(
+                    text.text.as_str(),
+                    "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H"
+                )
+        })
+    };
     for model in [model(Some(42)), metadata_model_from(&legacy)] {
         for width in [1024.0, 1280.0] {
-            let mut form = MenuForm::new(42);
-            let ctx = egui::Context::default();
-            let output = ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(width, 720.0))),
-                    ..Default::default()
-                },
-                |ui| {
-                    central(ui, |ui| draw_region_select(ui, &model, &mut form));
-                },
+            let mut picker = Picker::new(&model, width, 720.0);
+            let (shapes, _, _) = picker.frame(vec![]);
+            assert!(
+                no_labels(&shapes),
+                "{width}: a letter or heading is painted"
             );
-            let texts = crate::contrast::painted_texts(&output.shapes);
-            assert!(!texts.iter().any(|text| {
-                text.text == "World power grids"
-                    || matches!(
-                        text.text.as_str(),
-                        "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H"
-                    )
-            }));
+            // Each card's own name is the label, painted once its card is scrolled into view.
             for choice in &model.regions {
-                assert!(texts.iter().any(|text| text.text == choice.button.label));
+                let (shapes, _) = picker.scroll_to(&choice.button.label);
+                assert!(
+                    no_labels(&shapes),
+                    "{width}: a letter or heading is painted"
+                );
             }
-            output.drop_without_applying_deltas();
         }
     }
 }

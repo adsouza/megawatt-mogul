@@ -623,12 +623,23 @@ pub fn draw_region_select(
                         map_rect.right_top() + egui::vec2(20.0, 0.0),
                         egui::pos2(ui.max_rect().right(), ui.max_rect().bottom()),
                     );
-                    let (hovered, rects) = ui
+                    // The card panel scrolls on its own when the cards are taller than the
+                    // picker, so the globe stays in view; it never scrolls sideways.
+                    let (hovered, rects, viewport) = ui
                         .scope_builder(
                             egui::UiBuilder::new()
                                 .max_rect(right)
                                 .layout(egui::Layout::top_down(egui::Align::Min)),
-                            |ui| cards(ui, &mut actions, true),
+                            |ui| {
+                                let panel = egui::ScrollArea::vertical()
+                                    .id_salt("region_cards_panel")
+                                    .animated(false)
+                                    .auto_shrink([false, true])
+                                    .max_height(content_height)
+                                    .show(ui, |ui| cards(ui, &mut actions, true));
+                                let (hovered, rects) = panel.inner;
+                                (hovered, rects, panel.inner_rect)
+                            },
                         )
                         .inner;
                     let active = ui
@@ -640,7 +651,8 @@ pub fn draw_region_select(
                         )
                         .inner;
                     if let Some(index) = active {
-                        ui.painter().rect_stroke(
+                        // A card scrolled out of the panel keeps its outline out of view too.
+                        ui.painter().with_clip_rect(viewport).rect_stroke(
                             rects[index],
                             10.0,
                             egui::Stroke::new(
