@@ -129,7 +129,8 @@ proptest! {
             let mut hydro_used = 0.0;
             let mut charged = 0.0;
             let mut discharged = 0.0;
-            let (rise, set) = s.region.solar().daylight[month as usize - 1];
+            let crate::region::SolarModel::DaylightTable(table) = &s.region.solar().model else { unreachable!() };
+            let (rise, set) = table[month as usize - 1];
             let solar_capacity = s.region.spec(PlantKind::Solar).capacity.value();
             let irradiance = s.region.terrain().get(CellCoord { x: 6, y: 1 }).unwrap().irradiance.value();
             let clearness = s.region.solar().clearness_mean[month as usize - 1];

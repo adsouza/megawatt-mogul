@@ -3,7 +3,7 @@ use super::{PowerSystem, is_commissioned};
 use crate::events::DomainEvent;
 use crate::generation::{BatteryFlow, Plant, PlantStatus, fill_minutes};
 use crate::grid::GridMode;
-use crate::ids::PlantId;
+use crate::ids::{CellCoord, PlantId};
 use crate::region::{BatterySpec, PlantKind, RegionDefinition};
 use crate::time::{SimMonth, TICKS_PER_DAY, TICKS_PER_HOUR};
 use crate::units::{MegawattHours, Megawatts, Ratio};
@@ -87,7 +87,7 @@ pub(super) struct BatteryPlanningInputs<'a> {
     dispatchable: Vec<&'a Plant>,
     thermal: Vec<&'a Plant>,
     cities: Vec<&'a crate::demand::DemandCenter>,
-    solar: Vec<(Megawatts, Ratio)>,
+    solar: Vec<(Megawatts, Ratio, CellCoord)>,
     wind_potential: Megawatts,
     minutes: Vec<OnceCell<PlanningMinute>>,
 }
@@ -132,6 +132,7 @@ impl<'a> BatteryPlanningInputs<'a> {
                     (
                         p.spec().capacity,
                         super::cell_ratio(region, p.cell(), |c| c.irradiance),
+                        p.cell(),
                     )
                 })
                 .collect(),
@@ -149,7 +150,6 @@ impl<'a> BatteryPlanningInputs<'a> {
 
     pub(super) fn minute(&self, tick: u32) -> &PlanningMinute {
         self.minutes[tick as usize].get_or_init(|| {
-            let sun = crate::generation::sun_factor(self.region.solar(), self.month, tick);
             let clearness = self.region.solar().clearness_mean[self.month.index0()];
             PlanningMinute {
                 demand: crate::demand::forecast_demand(
@@ -161,8 +161,13 @@ impl<'a> BatteryPlanningInputs<'a> {
                 solar: self
                     .solar
                     .iter()
-                    .map(|&(capacity, irradiance)| {
-                        crate::generation::solar_available(capacity, irradiance, sun, clearness)
+                    .map(|&(capacity, irradiance, cell)| {
+                        crate::generation::solar_available(
+                            capacity,
+                            irradiance,
+                            self.region.sun(cell, self.month, tick),
+                            clearness,
+                        )
                     })
                     .sum(),
                 wind: self.wind_potential

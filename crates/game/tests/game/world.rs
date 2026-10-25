@@ -1794,7 +1794,7 @@ fn world_secondary_middle_and_shift_drags_pan_without_orbiting_or_selecting() {
     assert_ne!((after.yaw, after.elevation), (before.yaw, before.elevation));
 }
 
-fn western_solar() -> domain::region::SolarParams {
+fn western_solar() -> std::sync::Arc<domain::region::RegionDefinition> {
     use application::RegionCatalog;
     let catalog = infrastructure::region::RonRegionCatalog::new(
         crate::support::shipped_assets().join("regions"),
@@ -1803,8 +1803,6 @@ fn western_solar() -> domain::region::SolarParams {
         .load(&domain::ids::RegionId::new("western_interconnection"))
         .unwrap()
         .definition
-        .solar()
-        .clone()
 }
 
 #[test]
@@ -1813,7 +1811,10 @@ fn world_sun_arc_runs_east_to_south_to_west_and_varies_with_the_month() {
     let solar = &western_solar();
     for month in [1, 6, 12] {
         let month = SimMonth::new(2027, month).unwrap();
-        let (rise, set) = solar.daylight[month.index0()];
+        let domain::region::SolarModel::DaylightTable(table) = &solar.solar().model else {
+            unreachable!()
+        };
+        let (rise, set) = table[month.index0()];
         let at = |fraction: f64| {
             game::world::sun_position(
                 solar,
@@ -1832,7 +1833,10 @@ fn world_sun_arc_runs_east_to_south_to_west_and_varies_with_the_month() {
     }
     let noon = |m| {
         let month = SimMonth::new(2027, m).unwrap();
-        let (rise, set) = solar.daylight[month.index0()];
+        let domain::region::SolarModel::DaylightTable(table) = &solar.solar().model else {
+            unreachable!()
+        };
+        let (rise, set) = table[month.index0()];
         game::world::sun_position(solar, month, ((rise + set) * 30.0).round() as u32)
     };
     assert!(noon(6).toward_sun.y > noon(12).toward_sun.y);
@@ -1847,7 +1851,8 @@ proptest! {
         prop_assert!(sun.toward_sun.is_finite());
         prop_assert!((sun.toward_sun.length() - 1.0).abs() < 1e-5);
         prop_assert!((0.0..=1.0).contains(&sun.strength));
-        let (rise, set) = solar.daylight[month.index0()];
+        let domain::region::SolarModel::DaylightTable(table) = &solar.solar().model else { unreachable!() };
+        let (rise, set) = table[month.index0()];
         let hour = f64::from(tick) / 60.0;
         if hour <= rise || hour >= set { prop_assert_eq!(sun.strength, 0.0); }
         else { prop_assert!(sun.strength > 0.0 && sun.toward_sun.y > 0.0); }
@@ -2155,4 +2160,48 @@ fn world_flow_pulses_animate_freeze_hide_and_leave_simulation_and_assets_unchang
             .count(),
         0
     );
+}
+
+#[test]
+fn world_computed_sun_points_north_in_the_south_and_is_finite_overhead() {
+    use domain::region::{GeoBounds, RegionDefinition, SolarModel, fixtures};
+    let month = domain::time::SimMonth::new(2027, 1).unwrap();
+    let mut parts = fixtures::tiny_region_parts();
+    parts.solar.model = SolarModel::Astronomical;
+    parts.geo = GeoBounds {
+        west: -1.0,
+        east: 1.0,
+        south: -25.0,
+        north: -24.0,
+    };
+    parts.clock.zones[0].standard_offset_minutes = 0;
+    let region = RegionDefinition::try_from(parts).unwrap();
+    let sun = game::world::sun_position(&region, month, 720);
+    assert!(sun.toward_sun.z < 0.0);
+    assert!(sun.toward_sun.y > 0.9);
+    assert!(sun.toward_sun.is_finite());
+    assert!((sun.toward_sun.length() - 1.0).abs() < 1e-5);
+    assert!((sun.strength - sun.toward_sun.y).abs() < 1e-6);
+
+    let mut parts = fixtures::tiny_region_parts();
+    parts.solar.model = SolarModel::Astronomical;
+    let home = parts
+        .cities
+        .iter()
+        .find(|c| c.id == parts.start.home_city)
+        .unwrap()
+        .cell;
+    let dec = domain::generation::declination_deg(month);
+    parts.geo = GeoBounds {
+        west: -f64::from(home.x) - 0.5,
+        east: 12.0 - f64::from(home.x) - 0.5,
+        north: dec + f64::from(home.y) + 0.5,
+        south: dec + f64::from(home.y) + 0.5 - 8.0,
+    };
+    parts.clock.zones[0].standard_offset_minutes = 0;
+    let region = RegionDefinition::try_from(parts).unwrap();
+    let overhead = game::world::sun_position(&region, month, 720);
+    assert!(overhead.toward_sun.is_finite());
+    assert!(overhead.toward_sun.y > 0.9999);
+    assert!(overhead.strength > 0.9999);
 }

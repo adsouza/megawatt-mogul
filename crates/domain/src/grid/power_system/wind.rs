@@ -49,11 +49,10 @@ impl PowerSystem {
         tick: u32,
         withheld: Megawatts,
     ) -> BTreeMap<PlantKind, Megawatts> {
-        let sun = sun_factor(region.solar(), month, tick);
         let mut by_kind = BTreeMap::new();
         for plant in self.connected_plants().filter(|p| is_curtailable(p)) {
             *by_kind.entry(plant.kind()).or_insert(Megawatts::ZERO) +=
-                self.available(region, plant, sun);
+                self.available(region, plant, month, tick);
         }
         let total: Megawatts = by_kind.values().copied().sum();
         let fraction = if total > Megawatts::ZERO {

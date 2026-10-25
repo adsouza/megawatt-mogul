@@ -14,10 +14,17 @@ pub struct CityDef {
     pub base_load: Megawatts,
 }
 
-/// Solar resource parameters. `daylight` holds (sunrise, sunset) hours per month.
+/// Legacy sunrise/sunset windows or the computed per-cell sun.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SolarModel {
+    DaylightTable([(f64, f64); 12]),
+    Astronomical,
+}
+
+/// Solar resource parameters; clearness remains a single regional daily draw.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SolarParams {
-    pub daylight: [(f64, f64); 12],
+    pub model: SolarModel,
     pub clearness_mean: [f64; 12],
     pub clearness_sd: f64,
 }

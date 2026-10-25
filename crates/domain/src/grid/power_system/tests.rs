@@ -534,7 +534,7 @@ const MIDDAY: std::ops::Range<u32> = 660..860;
 
 /// The most a tiny-region solar plant could produce at `tick` (clear sky).
 fn clear_sky_solar(region: &RegionDefinition, tick: u32) -> f64 {
-    300.0 * 0.8 * sun_factor(region.solar(), april(), tick)
+    300.0 * 0.8 * region.sun(cell(5, 5), april(), tick)
 }
 
 /// The start fleet at random fixed (not auto-follow) targets, as fractions of
@@ -950,7 +950,7 @@ fn expected_solar_uses_mean_clearness_for_connected_plants() {
         &region,
         &[connected(PlantKind::Solar, cell(5, 5)), isolated],
     );
-    let sun = sun_factor(region.solar(), april(), 762);
+    let sun = region.sun(cell(5, 5), april(), 762);
     let expected = 300.0 * 0.8 * sun * 0.75;
     let got = sys.expected_solar(&region, april(), 762);
     assert!((got.value() - expected).abs() < 1e-9);
@@ -5146,4 +5146,45 @@ fn plan5_overlap_supports_a_deficit_despite_charging_eligibility() {
     let flows = sys.propose_battery_flows(&region, april(), 960, demand, demand);
     assert_eq!(flows[&id].charge, Megawatts::ZERO);
     assert_eq!(flows[&id].discharge, Megawatts::new(100.0));
+}
+
+#[test]
+fn astronomical_solar_actual_forecast_and_curtailment_use_each_plant_cell() {
+    let region = crate::region::fixtures::astronomical_region();
+    let west = cell(1, 3);
+    let east = cell(10, 3);
+    let mut sys = system_with(
+        &region,
+        &[
+            connected(PlantKind::Solar, west),
+            connected(PlantKind::Solar, east),
+            connected(PlantKind::Wind, cell(7, 3)),
+        ],
+    );
+    sys.begin_day(&region, april(), &mut SimRng::from_seed(1));
+    // At 05:00 MSK (02:00 UTC) the eastern site is lit while the western site is dark.
+    let tick = 300;
+    assert_eq!(region.sun(west, april(), tick), 0.0);
+    assert!(region.sun(east, april(), tick) > 0.0);
+    let east_clear = 300.0 * 0.8 * region.sun(east, april(), tick);
+    let expected = east_clear * 0.75;
+    assert!((sys.expected_solar(&region, april(), tick).value() - expected).abs() < 1e-9);
+    assert!(
+        (battery::BatteryPlanningInputs::new(&sys, &region, april())
+            .minute(tick)
+            .solar
+            .value()
+            - expected)
+            .abs()
+            < 1e-9
+    );
+    let (available, _, _) = sys.availability(&region, april(), tick);
+    assert_eq!(available[&PlantId(1)], Megawatts::ZERO);
+    let actual = east_clear * sys.clearness;
+    assert!((available[&PlantId(2)].value() - actual).abs() < 1e-9);
+    let wind = available[&PlantId(3)].value();
+    let withheld = Megawatts::new((actual + wind) * 0.25);
+    let split = sys.withheld_by_kind(&region, april(), tick, withheld);
+    assert!((split[&PlantKind::Solar].value() - actual * 0.25).abs() < 1e-9);
+    assert!((split[&PlantKind::Wind].value() - wind * 0.25).abs() < 1e-9);
 }

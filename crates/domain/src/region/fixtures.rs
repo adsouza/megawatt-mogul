@@ -246,7 +246,7 @@ fn climate() -> Climate {
 
 fn solar() -> SolarParams {
     SolarParams {
-        daylight: [
+        model: SolarModel::DaylightTable([
             (7.5, 17.0),
             (7.1, 17.7),
             (6.7, 18.4),
@@ -259,7 +259,7 @@ fn solar() -> SolarParams {
             (6.7, 18.4),
             (7.1, 17.7),
             (7.5, 17.0),
-        ],
+        ]),
         clearness_mean: [0.75; 12],
         clearness_sd: 0.15,
     }
@@ -398,6 +398,20 @@ pub fn tiny_region_parts() -> RegionDefinitionParts {
 
 pub fn tiny_region() -> RegionDefinition {
     RegionDefinition::try_from(tiny_region_parts()).expect("tiny region fixture is valid")
+}
+
+/// A wide, northern region on the Moscow system clock, sharing tiny-region tuning.
+pub fn astronomical_region() -> RegionDefinition {
+    let mut parts = tiny_region_parts();
+    parts.solar.model = SolarModel::Astronomical;
+    parts.geo = GeoBounds {
+        west: 30.0,
+        east: 90.0,
+        south: 45.0,
+        north: 65.0,
+    };
+    parts.clock.zones[0].standard_offset_minutes = 180;
+    RegionDefinition::try_from(parts).expect("astronomical fixture is valid")
 }
 
 /// Reduced May 2033 incident: five 800 MW hydro units, three all-day 500 MW CCGTs,

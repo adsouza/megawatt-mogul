@@ -1,8 +1,8 @@
-//! A representative northern-hemisphere sun arc tied to the simulation's daylight calendar.
+//! Home-city astronomical lighting, retaining the legacy illustrative sun arc.
 use bevy::prelude::*;
 use domain::{
     generation::sun_factor,
-    region::SolarParams,
+    region::{RegionDefinition, SolarModel},
     session::DayPhase,
     time::{SimMonth, TICKS_PER_HOUR},
 };
@@ -16,8 +16,23 @@ pub struct SunPosition {
     pub strength: f32,
 }
 
-pub fn sun_position(solar: &SolarParams, month: SimMonth, tick: u32) -> SunPosition {
-    let (rise, set) = solar.daylight[month.index0()];
+pub fn sun_position(region: &RegionDefinition, month: SimMonth, tick: u32) -> SunPosition {
+    if let Some(angles) = region.sun_at_home(month, tick) {
+        let elevation = angles.elevation_deg.to_radians();
+        let azimuth = angles.azimuth_deg.to_radians();
+        return SunPosition {
+            toward_sun: Vec3::new(
+                (elevation.cos() * azimuth.sin()) as f32,
+                elevation.sin() as f32,
+                (-elevation.cos() * azimuth.cos()) as f32,
+            ),
+            strength: elevation.sin().max(0.0) as f32,
+        };
+    }
+    let SolarModel::DaylightTable(daylight) = &region.solar().model else {
+        unreachable!("computed sun handled above")
+    };
+    let (rise, set) = daylight[month.index0()];
     let hour = f64::from(tick) / f64::from(TICKS_PER_HOUR);
     let phase = ((hour - rise) / (set - rise)).clamp(0.0, 1.0) as f32;
     let angle = std::f32::consts::PI * phase;
@@ -29,7 +44,7 @@ pub fn sun_position(solar: &SolarParams, month: SimMonth, tick: u32) -> SunPosit
             angle.sin() * peak.sin(),
             angle.sin() * peak.cos(),
         ),
-        strength: sun_factor(solar, month, tick) as f32,
+        strength: sun_factor(daylight, month, tick) as f32,
     }
 }
 
@@ -45,17 +60,35 @@ pub(super) fn update_sunlight(
     let Some(model) = &scene.model else {
         return;
     };
-    let solar = model.region.solar();
-    let (rise, set) = solar.daylight[model.month.index0()];
+    let region = &model.region;
     let tick = if model.phase == DayPhase::Planning {
-        ((rise + set) * 0.5 * f64::from(TICKS_PER_HOUR)).round() as u32
+        match &region.solar().model {
+            SolarModel::DaylightTable(daylight) => {
+                let (rise, set) = daylight[model.month.index0()];
+                ((rise + set) * 0.5 * f64::from(TICKS_PER_HOUR)).round() as u32
+            }
+            SolarModel::Astronomical => {
+                let home = region
+                    .city(region.start().home_city)
+                    .expect("validated home city");
+                let (_, lon) = region.cell_lat_lon(home.cell);
+                (720.0 - lon * 4.0 + f64::from(region.system_zone().offset_minutes(model.month)))
+                    .round()
+                    .rem_euclid(1440.0) as u32
+            }
+        }
     } else {
         model.tick
     };
-    let sun = sun_position(solar, model.month, tick);
+    let sun = sun_position(region, model.month, tick);
     for (mut light, mut transform) in &mut lights {
-        *transform =
-            Transform::from_translation(sun.toward_sun * 100.0).looking_at(Vec3::ZERO, Vec3::Y);
+        // At the zenith/nadir the usual up vector is parallel to the light direction.
+        let up = if sun.toward_sun.y.abs() > 0.9999 {
+            Vec3::Z
+        } else {
+            Vec3::Y
+        };
+        *transform = Transform::from_translation(sun.toward_sun * 100.0).looking_at(Vec3::ZERO, up);
         light.illuminance = tuning.sunlight() * sun.strength;
         light.shadow_maps_enabled = sun.strength > 0.0;
     }

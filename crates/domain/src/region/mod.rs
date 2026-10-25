@@ -24,7 +24,7 @@ pub use clock::{CityLocale, ClimateId, GeoBounds, RegionClock, TimeZone, ZoneId}
 
 pub use params::{
     CityDef, FrequencyParams, HydroParams, LineParams, RegulatorParams, SatisfactionParams,
-    SolarParams, StartDef, StartPlantDef, StorageAccreditation, WindParams,
+    SolarModel, SolarParams, StartDef, StartPlantDef, StorageAccreditation, WindParams,
 };
 pub use plant_spec::{BatterySpec, PlantKind, PlantSpec, SitingRule};
 pub use terrain::{Cell, TerrainGrid};
@@ -123,6 +123,8 @@ pub struct RegionDefinition {
     demand_noise: DemandNoiseParams,
     calendar: Calendar,
     solar: SolarParams,
+    /// Annual latitude factors only: one value per grid row for computed sun.
+    solar_rows: Vec<f64>,
     wind: WindParams,
     hydro: HydroParams,
     frequency: FrequencyParams,
@@ -156,6 +158,53 @@ impl RegionDefinition {
 
     pub fn solar(&self) -> &SolarParams {
         &self.solar
+    }
+
+    /// Sun height at this cell and system-clock minute.
+    pub fn sun(&self, cell: CellCoord, month: crate::time::SimMonth, tick: u32) -> f64 {
+        match &self.solar.model {
+            SolarModel::DaylightTable(daylight) => {
+                crate::generation::sun_factor(daylight, month, tick)
+            }
+            SolarModel::Astronomical => {
+                let (lat, lon) = self.cell_lat_lon(cell);
+                let utc = f64::from(tick) - f64::from(self.system_zone().offset_minutes(month));
+                crate::generation::astronomical_sun(lat, lon, utc, month)
+            }
+        }
+    }
+
+    /// The computed home-city sun; legacy regions retain their illustrative arc.
+    pub fn sun_at_home(
+        &self,
+        month: crate::time::SimMonth,
+        tick: u32,
+    ) -> Option<crate::generation::SunAngles> {
+        if matches!(self.solar.model, SolarModel::DaylightTable(_)) {
+            return None;
+        }
+        let home = self
+            .city(self.start.home_city)
+            .expect("validated home city");
+        let (lat, lon) = self.cell_lat_lon(home.cell);
+        let utc = f64::from(tick) - f64::from(self.system_zone().offset_minutes(month));
+        Some(crate::generation::sun_angles(lat, lon, utc, month))
+    }
+
+    /// Site irradiance scaled by annual latitude potential for computed regions.
+    pub fn solar_potential(&self, cell: CellCoord) -> Ratio {
+        let irradiance = self
+            .terrain
+            .get(cell)
+            .expect("cell belongs to region")
+            .irradiance;
+        match self.solar.model {
+            SolarModel::DaylightTable(_) => irradiance,
+            SolarModel::Astronomical => Ratio::new(
+                (irradiance.value() * self.solar_rows[usize::from(cell.y)]).clamp(0.0, 1.0),
+            )
+            .expect("finite annual solar potential"),
+        }
     }
 
     pub fn wind(&self) -> &WindParams {
@@ -333,10 +382,12 @@ fn validate_shapes(parts: &RegionDefinitionParts) -> Result<(), RegionError> {
     )?;
     let s = &parts.solar;
     // NaN and infinities fail these comparisons, so no separate finiteness check is needed.
-    let daylight_ok = s
-        .daylight
-        .iter()
-        .all(|&(rise, set)| 0.0 <= rise && rise < set && set <= 24.0);
+    let daylight_ok = match &s.model {
+        SolarModel::DaylightTable(daylight) => daylight
+            .iter()
+            .all(|&(rise, set)| 0.0 <= rise && rise < set && set <= 24.0),
+        SolarModel::Astronomical => true,
+    };
     check_shape(daylight_ok, "solar.daylight")?;
     check_shape(all_positive(&s.clearness_mean), "solar.clearness_mean")?;
     check_shape(
@@ -503,6 +554,19 @@ impl TryFrom<RegionDefinitionParts> for RegionDefinition {
         validate_catalog_values(&catalog)?;
         validate_frequency(&parts.frequency)?;
         validate_lines(&parts.lines)?;
+        let solar_rows = if matches!(parts.solar.model, SolarModel::Astronomical) {
+            let equator = crate::generation::annual_sun_integral(0.0);
+            (0..parts.terrain.height())
+                .map(|y| {
+                    let lat = parts.geo.north
+                        - (f64::from(y) + 0.5) * (parts.geo.north - parts.geo.south)
+                            / f64::from(parts.terrain.height());
+                    crate::generation::annual_sun_integral(lat) / equator
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         Ok(Self {
             id: parts.id,
             name_key: parts.name_key,
@@ -516,6 +580,7 @@ impl TryFrom<RegionDefinitionParts> for RegionDefinition {
             demand_noise: parts.demand_noise,
             calendar: parts.calendar,
             solar: parts.solar,
+            solar_rows,
             wind: parts.wind,
             hydro: parts.hydro,
             frequency: parts.frequency,
@@ -841,7 +906,12 @@ mod tests {
             (f64::NEG_INFINITY, 12.0),
         ];
         for window in bad {
-            let r = RegionDefinition::try_from(parts_with(|p| p.solar.daylight[3] = window));
+            let r = RegionDefinition::try_from(parts_with(|p| {
+                let SolarModel::DaylightTable(table) = &mut p.solar.model else {
+                    unreachable!()
+                };
+                table[3] = window;
+            }));
             assert_eq!(
                 r.unwrap_err(),
                 RegionError::InvalidShape {
@@ -850,7 +920,12 @@ mod tests {
             );
         }
         for window in [(0.0, 24.0), (5.0, 5.5)] {
-            let r = RegionDefinition::try_from(parts_with(|p| p.solar.daylight[3] = window));
+            let r = RegionDefinition::try_from(parts_with(|p| {
+                let SolarModel::DaylightTable(table) = &mut p.solar.model else {
+                    unreachable!()
+                };
+                table[3] = window;
+            }));
             assert!(r.is_ok(), "{window:?}");
         }
     }
@@ -1308,7 +1383,10 @@ mod battery_validation_tests {
             assert!(RegionDefinition::try_from(p).is_err());
         }
         let mut p = fixtures::tiny_region_parts();
-        p.solar.daylight[0] = (18.0, 20.0);
+        let SolarModel::DaylightTable(table) = &mut p.solar.model else {
+            unreachable!()
+        };
+        table[0] = (18.0, 20.0);
         assert!(
             RegionDefinition::try_from(p).is_ok(),
             "storage eligibility is independent of daylight"

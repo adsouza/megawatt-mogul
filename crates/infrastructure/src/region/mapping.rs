@@ -8,7 +8,8 @@ use domain::region::{
     Calendar, CityDef, CityLocale, Climate, ClimateId, DemandNoiseParams, FrequencyParams,
     GeoBounds, HydroParams, LineParams, PlantKind, PlantSpec, RegionClock, RegionDefinition,
     RegionDefinitionParts, RegionError, RegulatorParams, SatisfactionParams, SitingRule,
-    SolarParams, StartDef, StartPlantDef, StorageAccreditation, TimeZone, WindParams, ZoneId,
+    SolarModel, SolarParams, StartDef, StartPlantDef, StorageAccreditation, TimeZone, WindParams,
+    ZoneId,
 };
 use domain::time::{SimDuration, SimMonth, TICKS_PER_HOUR};
 use domain::units::{Hertz, Megawatts, Money, Price, RampRate, Ratio};
@@ -340,7 +341,7 @@ fn map_solar(solar: &SolarDto) -> Result<SolarParams> {
         finite(set, "solar.daylight")?;
     }
     Ok(SolarParams {
-        daylight,
+        model: SolarModel::DaylightTable(daylight),
         clearness_mean: array(&solar.clearness_mean, "solar.clearness_mean")?,
         clearness_sd: finite(solar.clearness_sd, "solar.clearness_sd")?,
     })
