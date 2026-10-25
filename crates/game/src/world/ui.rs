@@ -35,6 +35,7 @@ pub struct ToolbarModel {
     pub layer_label: String,
     pub control_room: Option<ButtonModel>,
     pub supply: String,
+    pub supply_help: String,
 }
 pub fn toolbar_model(
     l10n: &Localizer,
@@ -81,6 +82,7 @@ pub fn toolbar_model(
         } else {
             String::new()
         },
+        supply_help: l10n.text("world-supply-help"),
     }
 }
 pub fn draw_surface(
@@ -149,7 +151,8 @@ pub fn draw_surface(
             .fill(theme::LABEL_BACKING)
             .inner_margin(3.0)
             .show(ui, |ui| {
-                ui.small(&toolbar.supply);
+                ui.small(&toolbar.supply)
+                    .on_hover_text(&toolbar.supply_help);
             });
     }
     if toolbar.resources_visible

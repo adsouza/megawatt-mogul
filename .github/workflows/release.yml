@@ -1,0 +1,192 @@
+name: Linux release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    # Branch pushes warm the release cache; tag pushes always run (GitHub ignores paths for tags).
+    paths:
+      - '.github/workflows/release.yml'
+      - '.github/actions/rust-setup/**'
+      - '.github/actions/rust-release-build/**'
+      - '.cargo/**'
+      - 'rust-toolchain*'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**'
+      - 'assets/**'
+      - 'packaging/**'
+      - 'tools/release/**'
+  # Exercise packaging before merging changes; only version-tag pushes create releases.
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - '.github/actions/rust-setup/**'
+      - '.github/actions/rust-release-build/**'
+      - '.cargo/**'
+      - 'rust-toolchain*'
+      - 'packaging/**'
+      - 'tools/release/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+
+permissions:
+  contents: read
+
+# Never cancel tag-release uploads midway through; superseded PR checks can stop early.
+concurrency:
+  group: linux-release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+      deb_version: ${{ steps.metadata.outputs.deb_version }}
+      prerelease: ${{ steps.metadata.outputs.prerelease }}
+      app_id: ${{ steps.metadata.outputs.app_id }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Test release tooling
+        run: python3 -m unittest discover -s tools/release/tests
+      - name: Validate workspace, lockfile and version tag
+        id: metadata
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          args=()
+          if [[ "$REF_TYPE" == tag ]]; then
+            args+=(--tag "$TAG")
+          fi
+          python3 tools/release/release.py metadata "${args[@]}" --github-output "$GITHUB_OUTPUT"
+
+  warm-cache:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_PROFILE_DEV_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/rust-setup
+        with:
+          cache: 'false'
+      # Default-branch caches are available to future tags and pull requests.
+      - uses: ./.github/actions/rust-release-build
+        with:
+          version: ${{ needs.version.outputs.version }}
+
+  package:
+    if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/v')
+    needs: version
+    # A fixed glibc baseline: Ubuntu 24.04 (2.39), also older than Freedesktop 25.08 (2.42).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      VERSION: ${{ needs.version.outputs.version }}
+      APP_ID: ${{ needs.version.outputs.app_id }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/rust-setup
+        with:
+          components: clippy, rustfmt
+          cache: 'false'
+      # Tags can point to any commit, so check them here even if main passed CI earlier.
+      # Pull requests already run these checks in ci.yml.
+      - name: Check tagged source
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo nextest run --workspace --locked --profile ci
+      - name: Build Linux x86_64
+        uses: ./.github/actions/rust-release-build
+        with:
+          version: ${{ needs.version.outputs.version }}
+      - name: Install packaging and smoke-test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            dpkg-dev flatpak flatpak-builder elfutils appstream desktop-file-utils \
+            xvfb xauth dbus-x11 mesa-vulkan-drivers
+          # Flatpak's own Ubuntu 24.04 CI uses this workaround for bubblewrap.
+          # Only affects this disposable runner, never an installed package.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user --noninteractive flathub org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08
+      - name: Package Debian and Flatpak payloads
+        run: |
+          release_date=$(git show -s --format=%cs HEAD)
+          python3 tools/release/release.py deb --binary target/release/game --output dist --date "$release_date"
+          python3 tools/release/release.py stage --binary target/release/game \
+            --output target/flatpak-source/payload --prefix /app --date "$release_date"
+          cp "packaging/linux/$APP_ID.json" target/flatpak-source/
+          desktop-file-validate "target/flatpak-source/payload/share/applications/$APP_ID.desktop"
+          appstreamcli validate --no-net "target/flatpak-source/payload/share/metainfo/$APP_ID.metainfo.xml"
+          flatpak-builder --user --force-clean --repo=target/flatpak-repo \
+            target/flatpak-build "target/flatpak-source/$APP_ID.json"
+          flatpak build-bundle target/flatpak-repo "dist/megawatt-mogul_${VERSION}_x86_64.flatpak" \
+            "$APP_ID" --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
+      - name: Install and smoke-test Debian package in clean Ubuntu
+        # The build host's development libraries must not mask missing package dependencies.
+        run: |
+          docker run --rm --volume "$PWD/dist:/packages:ro" \
+            --volume "$PWD/tools/release/smoke-deb.sh:/smoke-deb.sh:ro" \
+            --env VERSION ubuntu:24.04 bash /smoke-deb.sh
+      - name: Install and smoke-test Flatpak bundle
+        run: |
+          flatpak install --user --noninteractive ./dist/*.flatpak
+          test "$(dbus-run-session -- flatpak run "$APP_ID" --version)" = "Megawatt Mogul $VERSION"
+          cd "$RUNNER_TEMP"
+          timeout 120s dbus-run-session -- xvfb-run -a -s '-screen 0 1280x720x24' \
+            flatpak run "$APP_ID" --save-dir /var/data/smoke-saves --log-dir /var/data/smoke-logs --exit-after-frames 120
+      - name: Checksum packages
+        working-directory: dist
+        run: sha256sum -- *.deb *.flatpak > SHA256SUMS
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-packages
+          path: dist/
+          if-no-files-found: error
+
+  draft:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [version, package]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+      VERSION: ${{ needs.version.outputs.version }}
+      PRERELEASE: ${{ needs.version.outputs.prerelease }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux-packages
+          path: dist
+      - name: Create or update draft release
+        run: |
+          shopt -s failglob
+          files=(dist/*.deb dist/*.flatpak dist/SHA256SUMS)
+          if draft=$(gh release view "$TAG" --json isDraft --jq .isDraft); then
+            if [[ "$draft" != true ]]; then
+              echo "Refusing to change the published release $TAG" >&2
+              exit 1
+            fi
+            gh release upload "$TAG" "${files[@]}" --clobber
+          else
+            flags=()
+            if [[ "$PRERELEASE" == true ]]; then
+              flags+=(--prerelease)
+            fi
+            gh release create "$TAG" "${files[@]}" --verify-tag --draft --generate-notes \
+              --title "Megawatt Mogul $VERSION" "${flags[@]}"
+          fi

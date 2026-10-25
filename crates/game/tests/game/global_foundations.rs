@@ -206,11 +206,23 @@ fn the_gibraltar_style_starter_line_paints_its_name_and_reuses_cable_meshes_and_
         colors.iter().any(|color| color[0] < 0.5),
         "cable has dark water segments"
     );
+    let cable_paths: std::collections::BTreeSet<_> = app
+        .world()
+        .resource::<WorldScene>()
+        .model
+        .as_ref()
+        .unwrap()
+        .flow_paths
+        .iter()
+        .filter(|(_, path)| path.line == named)
+        .map(|(key, _)| *key)
+        .collect();
+    assert!(!cable_paths.is_empty());
     let pulses: Vec<_> = app
         .world_mut()
         .query::<(Entity, &FlowPulse)>()
         .iter(app.world())
-        .filter(|(_, pulse)| pulse.line == named)
+        .filter(|(_, pulse)| cable_paths.contains(&pulse.path))
         .map(|(entity, _)| entity)
         .collect();
     assert!(!pulses.is_empty());

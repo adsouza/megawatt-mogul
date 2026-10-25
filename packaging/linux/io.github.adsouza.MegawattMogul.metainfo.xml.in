@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.adsouza.MegawattMogul</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-only</project_license>
+  <name>Megawatt Mogul</name>
+  <summary>Build a power company and keep the grid balanced</summary>
+  <description>
+    <p>Run a power company in a single-player electricity grid simulation.
+    Plan generation, build plants and transmission lines, and balance supply
+    against demand on an interactive 3D tabletop.</p>
+  </description>
+  <launchable type="desktop-id">io.github.adsouza.MegawattMogul.desktop</launchable>
+  <url type="homepage">https://github.com/adsouza/megawatt-mogul</url>
+  <url type="bugtracker">https://github.com/adsouza/megawatt-mogul/issues</url>
+  <provides><binary>megawatt-mogul</binary></provides>
+  <releases><release version="@VERSION@" date="@DATE@"/></releases>
+</component>

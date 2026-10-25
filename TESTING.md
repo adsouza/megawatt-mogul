@@ -571,8 +571,18 @@ simulation-clock sunlight from east through south to west, monthly arc height an
 limits, paused lighting, nighttime ambient visibility and Planning's noon preview,
 and uniform copper-plate supply. Flow-route tests cover generation reversals, transit cities,
 stable loop routing, opposing transfers, disconnected/unfinished routes and chain cut balances.
-Arrow tests check direction/path bounds, animation/pause, overlays, blackout hiding, asset reuse
-and checkpoint preservation. Invariants use property tests.
+Dot tests check spherical shape, route reversal/path bounds, animation/pause, overlays, blackout
+hiding, asset reuse and checkpoint preservation, including bright cyan dots against deeper blue
+energized lines independent of sunlight.
+The Western starter network regression checks that the overlapping Seattle–Grand Coulee and
+Seattle–Spokane connections show one net direction, and zero transfer hides their dots.
+Generated overlapping intervals vary direction, slope, weights and endpoint order and require
+one stream per shared stretch with the algebraic net; example checks cover cancellation,
+partial overlap and construction exclusions.
+Window tests check facade placement, demand-scaled transforms, lit/dark groups at full, half and
+zero supply, disconnected cities, overlay hiding and lit walls without whole-building emission.
+A property test checks proportional window lighting and monotonic darkening as supply falls.
+Invariants use property tests.
 
 Headless `WorldViewPlugin` tests reconcile stable IDs without a renderer, check bounded mesh/material
 counts through idle frames, rebuild on new games and free every owned asset on leave. A fixed command

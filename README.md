@@ -40,6 +40,9 @@ charging to 00:00–18:00.
 
 ## Run
 
+Linux `.deb` and Flatpak downloads are built by the version-tag release workflow.
+See [Releasing](docs/releasing.md) for installation, versioning and how to create a draft release.
+
 ```sh
 cargo run -p game                                  # assets from ./assets or the workspace
 cargo run -p game -- --assets <dir> --log-dir <dir> --save-dir <dir>

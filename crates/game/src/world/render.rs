@@ -22,20 +22,14 @@ use std::{collections::BTreeMap, sync::Arc};
 #[derive(Component)]
 pub struct WorldEntity;
 #[derive(Component)]
-pub struct OutputGauge {
-    pub plant: PlantId,
-    /// None is the full, unfilled track; Some is one output segment.
-    pub segment: Option<u8>,
-}
-#[derive(Component)]
 pub(super) struct SelectionMarker;
 #[derive(Resource, Default)]
 pub struct ViewSync {
     pub plants: BTreeMap<PlantId, Entity>,
     pub cities: BTreeMap<CityId, Entity>,
     pub lines: BTreeMap<LineId, Entity>,
-    gauges: BTreeMap<PlantId, Vec<Entity>>,
-    pulses: BTreeMap<LineId, Vec<Entity>>,
+    pub city_windows: BTreeMap<CityId, Vec<Entity>>,
+    pulses: BTreeMap<super::FlowPathKey, Vec<Entity>>,
 }
 #[derive(Resource, Default)]
 pub struct WorldScene {
@@ -54,7 +48,7 @@ pub struct WorldAssets {
     cube: Handle<Mesh>,
     ring: Handle<Mesh>,
     pulse: Handle<Mesh>,
-    gauge_track: Handle<Mesh>,
+    city_windows: Vec<Handle<Mesh>>,
     line_meshes: BTreeMap<LineId, Handle<Mesh>>,
     line_view: Option<(CameraPose, f32)>,
     layer: Option<MapLayer>,
@@ -74,10 +68,9 @@ const BUILDING: usize = 3;
 const CITY: usize = 4;
 const LINE: usize = 5;
 const ENERGIZED: usize = 6;
-const GAUGE: usize = 7;
-const SELECTED: usize = 8;
-const FLOW: usize = 9;
-const GAUGE_TRACK: usize = 10;
+const SELECTED: usize = 7;
+const FLOW: usize = 8;
+const WINDOWS: usize = 9;
 
 pub fn mesh_of(geometry: &TerrainGeometry) -> Mesh {
     Mesh::new(
@@ -202,7 +195,9 @@ fn initialise(
     let ring = super::selection_parts();
     assets.ring = add(parts_mesh(&ring));
     assets.pulse = add(Sphere::new(0.035).mesh().uv(8, 6));
-    assets.gauge_track = add(parts_mesh(&super::gauge_track_parts()));
+    assets.city_windows = (0..super::model::CITY_WINDOW_GROUPS)
+        .map(|group| add(parts_mesh(&super::model::city_window_parts(group))))
+        .collect();
     for color in [
         Color::WHITE,
         Color::WHITE,
@@ -210,15 +205,21 @@ fn initialise(
         Color::srgb(0.95, 0.62, 0.18),
         Color::WHITE,
         Color::srgb(0.75, 0.60, 0.28),
-        Color::srgb(0.1, 0.8, 1.0),
-        Color::srgb(0.18, 0.65, 0.75),
+        Color::linear_rgb(0.0, 0.2, 1.0),
         Color::srgb(1.0, 0.85, 0.15),
-        Color::srgb(0.65, 0.92, 1.0),
-        Color::srgb(0.16, 0.20, 0.22),
+        // Unlit StandardMaterial ignores emissive: HDR base colour supplies the visible glow.
+        Color::linear_rgb(0.04, 2.4, 4.0),
     ] {
         assets.materials.push(materials.add(StandardMaterial {
             base_color: color,
             perceptual_roughness: 0.85,
+            ..default()
+        }));
+    }
+    for _ in 0..super::model::CITY_WINDOW_GROUPS {
+        assets.materials.push(materials.add(StandardMaterial {
+            base_color: Color::srgb(0.025, 0.035, 0.05),
+            unlit: true,
             ..default()
         }));
     }
@@ -354,38 +355,7 @@ pub fn reconcile(
                     Transform::from_translation(p.at),
                 ))
                 .id();
-            let gauges = std::iter::once(None)
-                .chain((0..super::GAUGE_SEGMENTS).map(Some))
-                .map(|segment| {
-                    commands
-                        .spawn((
-                            WorldEntity,
-                            OutputGauge {
-                                plant: p.id,
-                                segment,
-                            },
-                            Mesh3d(if segment.is_some() {
-                                assets.cube.clone()
-                            } else {
-                                assets.gauge_track.clone()
-                            }),
-                            MeshMaterial3d(
-                                assets.materials[if segment.is_some() {
-                                    GAUGE
-                                } else {
-                                    GAUGE_TRACK
-                                }]
-                                .clone(),
-                            ),
-                            Transform::default(),
-                            Visibility::Hidden,
-                            bevy::light::NotShadowCaster,
-                        ))
-                        .id()
-                })
-                .collect();
             entry.insert(root);
-            views.gauges.insert(p.id, gauges);
         }
     }
     for c in model.cities.values() {
@@ -398,6 +368,25 @@ pub fn reconcile(
                     Transform::from_translation(c.at).with_scale(c.visual_scale(1.0)),
                 ))
                 .id()
+        });
+        views.city_windows.entry(c.id).or_insert_with(|| {
+            assets
+                .city_windows
+                .iter()
+                .enumerate()
+                .map(|(group, mesh)| {
+                    commands
+                        .spawn((
+                            WorldEntity,
+                            Mesh3d(mesh.clone()),
+                            MeshMaterial3d(assets.materials[WINDOWS + group].clone()),
+                            Transform::from_translation(c.at).with_scale(c.visual_scale(1.0)),
+                            Visibility::Hidden,
+                            bevy::light::NotShadowCaster,
+                        ))
+                        .id()
+                })
+                .collect()
         });
     }
     for line in model.lines.values() {
@@ -412,29 +401,6 @@ pub fn reconcile(
             *mesh = parts_mesh(&line.parts);
             assets.line_view = None;
         }
-        views.pulses.entry(line.id).or_insert_with(|| {
-            let length: f32 = line.parts.iter().map(|p| p.size.z).sum();
-            let count = (length / 2.0).ceil().clamp(1.0, 16.0) as u32;
-            (0..count)
-                .map(|slot| {
-                    commands
-                        .spawn((
-                            WorldEntity,
-                            super::FlowPulse {
-                                line: line.id,
-                                slot,
-                                count,
-                            },
-                            Mesh3d(assets.pulse.clone()),
-                            MeshMaterial3d(assets.materials[FLOW].clone()),
-                            Transform::default(),
-                            Visibility::Hidden,
-                            bevy::light::NotShadowCaster,
-                        ))
-                        .id()
-                })
-                .collect()
-        });
         views.lines.entry(line.id).or_insert_with(|| {
             let h = store.meshes.add(parts_mesh(&line.parts));
             assets.line_meshes.insert(line.id, h.clone());
@@ -448,6 +414,31 @@ pub fn reconcile(
                 .id()
         });
     }
+    for (key, path) in &model.flow_paths {
+        views.pulses.entry(*key).or_insert_with(|| {
+            let length: f32 = path.parts.iter().map(|p| p.size.z).sum();
+            let count = (length / 2.0).ceil().clamp(1.0, 16.0) as u32;
+            (0..count)
+                .map(|slot| {
+                    commands
+                        .spawn((
+                            WorldEntity,
+                            super::FlowPulse {
+                                path: *key,
+                                slot,
+                                count,
+                            },
+                            Mesh3d(assets.pulse.clone()),
+                            MeshMaterial3d(assets.materials[FLOW].clone()),
+                            Transform::default(),
+                            Visibility::Hidden,
+                            bevy::light::NotShadowCaster,
+                        ))
+                        .id()
+                })
+                .collect()
+        });
+    }
     // Domain currently never removes commissioned assets, but retain correct identity if it does.
     views.plants.retain(|id, e| {
         if model.plants.contains_key(id) {
@@ -457,12 +448,12 @@ pub fn reconcile(
             false
         }
     });
-    views.gauges.retain(|id, gauges| {
-        if model.plants.contains_key(id) {
+    views.city_windows.retain(|id, windows| {
+        if model.cities.contains_key(id) {
             true
         } else {
-            for gauge in gauges {
-                commands.entity(*gauge).despawn();
+            for window in windows {
+                commands.entity(*window).despawn();
             }
             false
         }
@@ -475,8 +466,8 @@ pub fn reconcile(
             false
         }
     });
-    views.pulses.retain(|id, pulses| {
-        if model.lines.contains_key(id) {
+    views.pulses.retain(|key, pulses| {
+        if model.flow_paths.contains_key(key) {
             true
         } else {
             for pulse in pulses {
@@ -510,14 +501,15 @@ pub(super) struct VisualInputs<'w> {
     tuning: Res<'w, TuningConfig>,
     time: Res<'w, Time>,
 }
-type ObjectFilter = (Without<OutputGauge>, Without<SelectionMarker>);
-type MarkerFilter = (With<SelectionMarker>, Without<OutputGauge>);
 pub fn update_visuals(
     input: VisualInputs,
     mut store: RenderStore,
-    mut objects: Query<(&mut Transform, &mut MeshMaterial3d<StandardMaterial>), ObjectFilter>,
-    mut gauges: Query<(&OutputGauge, &mut Transform, &mut Visibility), Without<SelectionMarker>>,
-    mut marker: Query<(&mut Transform, &mut Visibility), MarkerFilter>,
+    mut objects: Query<
+        (&mut Transform, &mut MeshMaterial3d<StandardMaterial>),
+        Without<SelectionMarker>,
+    >,
+    mut window_visibility: Query<&mut Visibility, Without<SelectionMarker>>,
+    mut marker: Query<(&mut Transform, &mut Visibility), With<SelectionMarker>>,
 ) {
     let VisualInputs {
         scene,
@@ -564,44 +556,30 @@ pub fn update_visuals(
         }
         store.assets.layer = Some(chosen);
     }
-    let city_light = model.served
-        * if model.served < 0.999 {
-            0.90 + 0.10 * (time.elapsed_secs() * 5.0).sin()
-        } else {
-            1.0
-        };
     for (i, h) in store.assets.materials.iter().enumerate() {
         if let Some(mut m) = store.materials.get_mut(h) {
             // Preserve face lighting and cast shadows under the supply indicators.
-            m.unlit = matches!(i, GAUGE | GAUGE_TRACK | SELECTED | FLOW);
+            m.unlit = matches!(i, SELECTED | FLOW) || i >= WINDOWS;
             m.emissive = LinearRgba::BLACK;
             match i {
                 TERRAIN => m.base_color = Color::WHITE,
-                CITY => {
-                    m.base_color = if holo {
-                        let brightness = 0.25 + model.served * 0.75;
-                        Color::srgb(brightness, brightness, brightness)
-                    } else {
-                        Color::WHITE
-                    };
-                    if holo {
-                        m.emissive = LinearRgba::rgb(0.1, 0.6, 0.9) * city_light * 0.18;
-                    }
-                }
+                CITY => m.base_color = Color::WHITE,
                 ENERGIZED if holo => {
-                    m.emissive = LinearRgba::rgb(0.05, 0.6, 1.0)
+                    m.emissive = LinearRgba::rgb(0.0, 0.2, 1.0)
                         * (0.6 + 0.15 * (time.elapsed_secs() * 2.0).sin())
                 }
-                GAUGE => {
-                    let color = if tuning.gauge_color.is_finite() {
-                        tuning.gauge_color.clamp(Vec3::ZERO, Vec3::splat(1.0))
+                i if i >= WINDOWS => {
+                    let fill = if holo {
+                        super::overlay::city_window_fill(model.served, i - WINDOWS)
                     } else {
-                        Vec3::new(0.18, 0.65, 0.75)
+                        0.0
                     };
-                    m.base_color = Color::srgb(color.x, color.y, color.z);
-                    m.emissive = LinearRgba::rgb(color.x, color.y, color.z) * 0.5;
+                    m.base_color = Color::linear_rgb(
+                        0.002 + fill * 2.498,
+                        0.003 + fill * 1.497,
+                        0.005 + fill * 0.075,
+                    );
                 }
-                FLOW => m.emissive = LinearRgba::rgb(0.5, 0.85, 1.0) * 2.0,
                 SELECTED => m.emissive = LinearRgba::rgb(1.0, 0.8, 0.1),
                 _ => {}
             }
@@ -632,6 +610,18 @@ pub fn update_visuals(
             t.scale = c.visual_scale(scale);
             *m = material(if c.connected { CITY } else { OFFLINE });
         }
+        for entity in store.views.city_windows.get(&c.id).into_iter().flatten() {
+            if let Ok((mut t, _)) = objects.get_mut(*entity) {
+                *t = Transform::from_translation(c.at).with_scale(c.visual_scale(scale));
+            }
+            if let Ok(mut visibility) = window_visibility.get_mut(*entity) {
+                *visibility = if holo && c.connected {
+                    Visibility::Visible
+                } else {
+                    Visibility::Hidden
+                };
+            }
+        }
     }
     for l in model.lines.values() {
         if let Some(e) = store.views.lines.get(&l.id)
@@ -646,26 +636,6 @@ pub fn update_visuals(
             } else {
                 LINE
             });
-        }
-    }
-    for (gauge, mut transform, mut visibility) in &mut gauges {
-        let plant = model
-            .plants
-            .get(&gauge.plant)
-            .filter(|p| holo && p.connected && p.building.is_none());
-        let pose = plant.and_then(|plant| match gauge.segment {
-            None => Some(Transform::from_translation(plant.at).with_scale(Vec3::splat(scale))),
-            Some(segment) => super::output_gauge_part(plant, &tuning, segment).map(|part| {
-                Transform::from_translation(part.center)
-                    .with_rotation(part.rotation)
-                    .with_scale(part.size)
-            }),
-        });
-        if let Some(pose) = pose {
-            *transform = pose;
-            *visibility = Visibility::Visible;
-        } else {
-            *visibility = Visibility::Hidden;
         }
     }
     let selected = match *selection {

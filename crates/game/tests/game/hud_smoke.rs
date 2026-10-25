@@ -1054,6 +1054,7 @@ fn the_inspector_lists_what_can_be_built_on_the_selected_cell() {
 
     assert!(shows(&widgets, &title));
     assert!(shows(&widgets, "Water"));
+    assert!(shows(&widgets, "Wind potential"));
     assert!(shows(&widgets, "Can be built here"));
     assert!(
         shows(&widgets, "That spot is water"),

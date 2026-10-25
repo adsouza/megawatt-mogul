@@ -176,6 +176,73 @@ pub fn city_parts() -> Vec<Part> {
         .collect(),
     )
 }
+
+/// Interleaved facade windows share four materials, so supply can turn off groups without
+/// rebuilding meshes or making the entire building glow. Geometry uses the fitted city walls.
+pub(super) const CITY_WINDOW_GROUPS: usize = 4;
+
+pub(super) fn city_window_parts(group: usize) -> Vec<Part> {
+    let mut windows = Vec::new();
+    for (building, part) in city_parts().iter().enumerate() {
+        for floor in 0..3 {
+            for face in 0..4 {
+                if (building + floor + face) % CITY_WINDOW_GROUPS != group {
+                    continue;
+                }
+                let rotation = Quat::from_rotation_y(face as f32 * std::f32::consts::FRAC_PI_2);
+                let depth = if face % 2 == 0 {
+                    part.size.z
+                } else {
+                    part.size.x
+                };
+                let width = if face % 2 == 0 {
+                    part.size.x
+                } else {
+                    part.size.z
+                };
+                windows.push(Part {
+                    center: part.center
+                        + Vec3::Y * part.size.y * (floor as f32 / 3.0 - 1.0 / 3.0)
+                        + rotation * Vec3::new(0.0, 0.0, depth / 2.0 + 0.001),
+                    size: Vec3::new(width * 0.75, part.size.y * 0.16, 0.001),
+                    rotation,
+                    color: [1.0; 4],
+                });
+            }
+        }
+    }
+    windows
+}
+
+#[cfg(test)]
+mod window_tests {
+    use super::*;
+
+    #[test]
+    fn windows_sit_on_city_facades_with_equal_groups_and_clear_roofs() {
+        let walls = city_parts();
+        for group in 0..CITY_WINDOW_GROUPS {
+            let windows = city_window_parts(group);
+            assert_eq!(windows.len(), walls.len() * 3);
+            for window in windows {
+                let (min, max) = window.bounds();
+                assert!(min.x > -0.41 && max.x < 0.41);
+                assert!(min.z > -0.41 && max.z < 0.41);
+                assert!(
+                    walls.iter().any(|wall| {
+                        let offset = (window.center - wall.center).abs();
+                        let on_x = (offset.x - wall.size.x / 2.0 - 0.001).abs() < 1e-6
+                            && offset.z < wall.size.z / 2.0;
+                        let on_z = (offset.z - wall.size.z / 2.0 - 0.001).abs() < 1e-6
+                            && offset.x < wall.size.x / 2.0;
+                        (on_x || on_z) && min.y > wall.bounds().0.y && max.y < wall.bounds().1.y
+                    }),
+                    "window must sit just outside a wall: {window:?}"
+                );
+            }
+        }
+    }
+}
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorldPlant {
     pub id: PlantId,
@@ -211,6 +278,10 @@ pub struct WorldLine {
     pub parts: Vec<Part>,
     pub building: Option<u32>,
     pub energized: bool,
+    pub from: CellCoord,
+    pub to: CellCoord,
+    pub net_flow: f64,
+    /// Logical line direction; shared map stretches are netted separately in `flow_paths`.
     pub flow: Option<super::FlowDirection>,
     pub midpoint: Vec3,
 }
@@ -224,6 +295,7 @@ pub struct WorldModel {
     pub plants: BTreeMap<PlantId, WorldPlant>,
     pub cities: BTreeMap<CityId, WorldCity>,
     pub lines: BTreeMap<LineId, WorldLine>,
+    pub flow_paths: BTreeMap<super::FlowPathKey, super::FlowPath>,
     pub nodes: BTreeMap<NodeId, Vec3>,
 }
 impl WorldModel {
@@ -339,11 +411,11 @@ impl WorldModel {
             )
             .collect();
         let flows = if s.phase() == DayPhase::Operating && energized {
-            super::flow::route_flows(&line_views, &sources, &sinks)
+            super::flow::route_net_flows(&line_views, &sources, &sinks)
         } else {
             BTreeMap::new()
         };
-        let lines = line_views
+        let lines: BTreeMap<_, _> = line_views
             .into_iter()
             .filter_map(|l| {
                 let (from, fc) = nodes.get(&l.from)?;
@@ -420,12 +492,16 @@ impl WorldModel {
                             LineStatus::InService => None,
                         },
                         energized: *fc && *tc && energized,
-                        flow: flows.get(&l.id).copied(),
+                        from: coordinates.cell_at(from.x, from.z)?,
+                        to: coordinates.cell_at(to.x, to.z)?,
+                        net_flow: flows.get(&l.id).copied().unwrap_or(0.0),
+                        flow: flows.get(&l.id).copied().and_then(super::flow::direction),
                         midpoint: (from + to) / 2.0 + Vec3::Y * 0.5,
                     },
                 ))
             })
             .collect();
+        let flow_paths = super::flow::net_flow_paths(&lines);
         Self {
             region,
             phase: s.phase(),
@@ -435,6 +511,7 @@ impl WorldModel {
             plants,
             cities,
             lines,
+            flow_paths,
             nodes: nodes.into_iter().map(|(id, (at, _))| (id, at)).collect(),
         }
     }

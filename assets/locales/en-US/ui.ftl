@@ -376,7 +376,8 @@ world-effects-off = Disable effects
 world-effects-on = Enable effects
 world-effects-help = Soft glow around bright objects and gentle camera-focus blur. Your choice is remembered.
 world-help = Drag to orbit · Shift + drag or right/middle drag to pan · Scroll to zoom at the pointer · R resets · O toggles overlay. Keyboard shortcuts work while pointing at the map.
-world-copper-plate = Gauges: output / capacity · City height: demand · Lights: shared supply · Pulses: illustrative routes, not measured line flow
+world-copper-plate = Taller cities = more demand · Fewer lit windows = less power supplied · Moving dots = illustrative power routes. Hover for details.
+world-supply-help = Taller cities need more power. Warm yellow windows show electricity reaching a city; windows go dark as supply falls. All connected cities receive the same percentage of their demand. Bright cyan dots show illustrative power routes along deeper blue energized lines; they do not measure how much power a line carries.
 world-dev-title = Diorama inspector
 world-dev-boundary = Visual tuning only. Simulation tuning lives in region data and applies to new games.
 world-dev-entities = Render entities

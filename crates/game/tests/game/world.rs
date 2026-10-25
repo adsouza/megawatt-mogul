@@ -195,6 +195,28 @@ fn world_effects_button_names_the_action_it_will_take() {
 }
 
 #[test]
+fn world_operating_hint_describes_visible_changes_in_plain_language() {
+    let l10n = crate::support::shipped_l10n();
+    let model = game::world::toolbar_model(&l10n, true, true, true, true);
+    for explanation in ["Taller cities", "Fewer lit windows", "Moving dots"] {
+        assert!(model.supply.contains(explanation), "{explanation}");
+    }
+    assert!(!model.supply.contains("gauges"));
+    assert!(!model.supply_help.contains("gauge"));
+    assert!(
+        model
+            .supply_help
+            .contains("All connected cities receive the same percentage")
+    );
+    assert!(
+        model
+            .supply_help
+            .contains("do not measure how much power a line carries")
+    );
+    assert!(l10n.problems().is_empty());
+}
+
+#[test]
 fn world_camera_can_zoom_close_enough_to_inspect_cell_sized_models() {
     let size = bevy::math::Vec2::new(100.0, 60.0);
     let mut camera = game::world::OrbitCamera {
@@ -1569,48 +1591,26 @@ fn world_dev_inspector_registers_types_without_default_bevy_features_and_preserv
 }
 
 #[test]
-fn world_output_gauges_stay_at_the_base_and_do_not_leave_tall_pick_targets() {
+fn world_plants_remain_pickable_without_output_gauges() {
     use bevy::prelude::*;
     use game::{
         hud::Selection,
         sim::Session,
-        world::{
-            OutputGauge, TuningConfig, WorldAction, WorldAssets, WorldControls, WorldScene,
-            presented_hit,
-        },
+        world::{TuningConfig, WorldAction, WorldAssets, WorldControls, WorldScene, presented_hit},
     };
     let logs = tempfile::TempDir::new().unwrap();
     let mut app = diorama_app(logs.path());
     crate::support::request(&mut app, "eastern_interconnection");
-    let visible = |app: &mut App| {
-        app.world_mut()
-            .query::<(&OutputGauge, &Transform, &Visibility)>()
-            .iter(app.world())
-            .filter(|(_, _, v)| **v == Visibility::Visible)
-            .map(|(g, t, _)| (g.plant, g.segment, *t))
-            .collect::<Vec<_>>()
-    };
-    assert!(visible(&mut app).is_empty());
     app.world_mut()
         .resource_mut::<Session>()
         .0
         .execute(application::Command::BeginOperating)
         .unwrap();
     app.update();
-    let gauges = visible(&mut app);
-    assert!(!gauges.is_empty());
     let assets = app.world().resource::<WorldAssets>().counts();
     let checkpoint = app.world().resource::<Session>().0.checkpoint();
     let scene = app.world().resource::<WorldScene>();
     let mut model = scene.model.as_ref().unwrap().clone();
-    for (id, segment, transform) in &gauges {
-        let plant = &model.plants[id];
-        if segment.is_some() {
-            let top = transform.translation.y + transform.scale.y * 0.5;
-            assert!(top < plant.at.y + 0.1, "gauges must stay on the ground");
-            assert!(plant.output > 0.0 && plant.connected && plant.building.is_none());
-        }
-    }
     let plant = model
         .plants
         .values()
@@ -1625,7 +1625,7 @@ fn world_output_gauges_stay_at_the_base_and_do_not_leave_tall_pick_targets() {
     // The old beam above the roof must neither render nor intercept a click.
     let ray = Ray3d::new(plant.at + Vec3::new(10.0, 3.0, 0.0), Dir3::NEG_X);
     assert!(presented_hit(ray, &model, controls, &tuning).is_none());
-    // A gauge's site remains selectable via its occupied ground cell.
+    // The bare margin remains selectable via the occupied ground cell.
     let ray = Ray3d::new(plant.at + Vec3::new(0.42, 10.0, 0.42), Dir3::NEG_Y);
     assert_eq!(
         presented_hit(ray, &model, controls, &tuning)
@@ -1638,13 +1638,11 @@ fn world_output_gauges_stay_at_the_base_and_do_not_leave_tall_pick_targets() {
         vec![game::hud::UiAction::World(WorldAction::ToggleOverlay)],
     );
     app.update();
-    assert!(visible(&mut app).is_empty());
     crate::hud_smoke::dispatch_in(
         &mut app,
         vec![game::hud::UiAction::World(WorldAction::ControlRoom)],
     );
     app.update();
-    assert_eq!(visible(&mut app), gauges);
     assert_eq!(app.world().resource::<WorldAssets>().counts(), assets);
     assert_eq!(app.world().resource::<Session>().0.checkpoint(), checkpoint);
 }
@@ -2023,6 +2021,201 @@ fn world_operating_overlay_preserves_lit_terrain_and_building_shading() {
 }
 
 #[test]
+fn world_city_windows_follow_supply_without_flattening_or_glowing_walls() {
+    use bevy::prelude::*;
+    use game::{
+        sim::Session,
+        world::{ViewSync, WorldAssets, WorldControls, WorldScene},
+    };
+    let logs = tempfile::TempDir::new().unwrap();
+    let mut app = diorama_app(logs.path());
+    crate::support::request(&mut app, "eastern_interconnection");
+    let windows = app.world().resource::<ViewSync>().city_windows.clone();
+    assert!(!windows.is_empty());
+    assert!(
+        windows
+            .values()
+            .flatten()
+            .all(|e| *app.world().get::<Visibility>(*e).unwrap() == Visibility::Hidden)
+    );
+    app.world_mut()
+        .resource_mut::<Session>()
+        .0
+        .execute(application::Command::BeginOperating)
+        .unwrap();
+    app.update();
+    let checkpoint = app.world().resource::<Session>().0.checkpoint();
+    let assets = app.world().resource::<WorldAssets>().counts();
+    let model = app
+        .world()
+        .resource::<WorldScene>()
+        .model
+        .as_ref()
+        .unwrap()
+        .clone();
+    for served in [1.0, 0.5, 0.0] {
+        app.world_mut()
+            .resource_mut::<WorldScene>()
+            .model
+            .as_mut()
+            .unwrap()
+            .served = served;
+        // Effects off must retain readable window colours without relying on bloom.
+        app.world_mut().resource_mut::<WorldControls>().effects = false;
+        app.update();
+        for (city, entities) in &windows {
+            let c = &model.cities[city];
+            let mut lit = 0;
+            for entity in entities {
+                let world = app.world();
+                let material = world
+                    .resource::<Assets<StandardMaterial>>()
+                    .get(
+                        &world
+                            .get::<MeshMaterial3d<StandardMaterial>>(*entity)
+                            .unwrap()
+                            .0,
+                    )
+                    .unwrap();
+                let visibility = *world.get::<Visibility>(*entity).unwrap();
+                assert_eq!(visibility == Visibility::Visible, c.connected);
+                assert!(
+                    material.unlit,
+                    "windows must remain visible without sunlight"
+                );
+                assert_eq!(
+                    *world.get::<Transform>(*entity).unwrap(),
+                    Transform::from_translation(c.at).with_scale(c.visual_scale(1.0))
+                );
+                if material.base_color.to_linear().red > 0.1 {
+                    lit += 1;
+                    let colour = material.base_color.to_srgba();
+                    assert!(colour.red > colour.blue * 2.0, "windows glow warm yellow");
+                }
+            }
+            assert_eq!(lit as f32 / entities.len() as f32, served);
+            let world = app.world();
+            let wall = world.resource::<ViewSync>().cities[city];
+            let material = world
+                .resource::<Assets<StandardMaterial>>()
+                .get(
+                    &world
+                        .get::<MeshMaterial3d<StandardMaterial>>(wall)
+                        .unwrap()
+                        .0,
+                )
+                .unwrap();
+            assert!(!material.unlit);
+            assert_eq!(material.emissive, LinearRgba::BLACK, "only windows glow");
+        }
+    }
+    app.world_mut().resource_mut::<WorldControls>().overlay = false;
+    app.update();
+    assert!(
+        windows
+            .values()
+            .flatten()
+            .all(|e| *app.world().get::<Visibility>(*e).unwrap() == Visibility::Hidden)
+    );
+    assert_eq!(app.world().resource::<WorldAssets>().counts(), assets);
+    assert_eq!(app.world().resource::<Session>().0.checkpoint(), checkpoint);
+}
+
+#[test]
+fn world_overlapping_lines_animate_only_one_net_direction() {
+    use bevy::prelude::*;
+    use game::{
+        sim::{Session, SimSpeed},
+        world::{FlowPulse, WorldScene},
+    };
+    let logs = tempfile::TempDir::new().unwrap();
+    let mut app = diorama_app(logs.path());
+    crate::support::request(&mut app, "western_interconnection");
+    app.world_mut()
+        .resource_mut::<Session>()
+        .0
+        .execute(application::Command::BeginOperating)
+        .unwrap();
+    app.world_mut()
+        .resource_mut::<Session>()
+        .0
+        .execute(application::Command::AdvanceTicks { n: 60 })
+        .unwrap();
+    app.update();
+    let model = app.world().resource::<WorldScene>().model.as_ref().unwrap();
+    let seattle = model
+        .cities
+        .values()
+        .find(|c| c.name_key == "city-seattle")
+        .unwrap()
+        .at
+        .xz();
+    let hydro = model
+        .plants
+        .values()
+        .find(|p| p.kind == domain::region::PlantKind::Hydro)
+        .unwrap()
+        .at
+        .xz();
+    let length = seattle.distance(hydro);
+    let along = (hydro - seattle).normalize();
+    let positions = |app: &mut App| -> std::collections::BTreeMap<Entity, Vec2> {
+        app.world_mut()
+            .query_filtered::<(Entity, &Transform, &Visibility), With<FlowPulse>>()
+            .iter(app.world())
+            .filter(|(_, _, v)| **v == Visibility::Visible)
+            .map(|(e, t, _)| (e, t.translation.xz()))
+            .collect()
+    };
+    let before = positions(&mut app);
+    app.insert_resource(SimSpeed::X1);
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+        std::time::Duration::from_millis(50),
+    ));
+    app.update();
+    let mut directions = std::collections::BTreeSet::new();
+    for (entity, after) in positions(&mut app) {
+        let Some(before) = before.get(&entity) else {
+            continue;
+        };
+        let offset = *before - seattle;
+        let progress = offset.dot(along);
+        let movement = (after - *before).dot(along);
+        if progress > 0.3
+            && progress < length - 0.3
+            && (offset - along * progress).length() < 0.01
+            && movement.abs() > 1e-4
+            && movement.abs() < 0.2
+        {
+            directions.insert(movement > 0.0);
+        }
+    }
+    assert_eq!(
+        directions.len(),
+        1,
+        "shared Seattle–Grand Coulee stretch has counter-flowing dots: {directions:?}"
+    );
+    let checkpoint = app.world().resource::<Session>().0.checkpoint();
+    for path in app
+        .world_mut()
+        .resource_mut::<WorldScene>()
+        .model
+        .as_mut()
+        .unwrap()
+        .flow_paths
+        .values_mut()
+    {
+        path.net_flow = 0.0;
+    }
+    app.update();
+    assert!(
+        positions(&mut app).is_empty(),
+        "zero net transfer hides all dots even on energized lines"
+    );
+    assert_eq!(app.world().resource::<Session>().0.checkpoint(), checkpoint);
+}
+
+#[test]
 fn world_flow_pulses_animate_freeze_hide_and_leave_simulation_and_assets_unchanged() {
     use application::Command;
     use bevy::prelude::*;
@@ -2043,6 +2236,30 @@ fn world_flow_pulses_animate_freeze_hide_and_leave_simulation_and_assets_unchang
             .collect()
     };
     assert!(visible(&mut app).is_empty(), "Planning has no pulses");
+    for handle in app
+        .world_mut()
+        .query_filtered::<&MeshMaterial3d<StandardMaterial>, With<FlowPulse>>()
+        .iter(app.world())
+    {
+        let material = app
+            .world()
+            .resource::<Assets<StandardMaterial>>()
+            .get(&handle.0)
+            .unwrap();
+        let blue = material.base_color.to_srgba();
+        assert!(
+            material.base_color.to_linear().blue > 1.0,
+            "unlit flow dots need HDR base colour for glow; emissive is ignored"
+        );
+        assert!(
+            blue.blue > 0.9 && blue.blue > 4.0 * blue.red && blue.green > blue.blue * 0.7,
+            "flow dots must use the lines' bright cyan blue: {blue:?}"
+        );
+        assert!(
+            material.unlit,
+            "flow dots must stay bright without sunlight"
+        );
+    }
     crate::hud_smoke::dispatch_in(
         &mut app,
         vec![
@@ -2053,14 +2270,54 @@ fn world_flow_pulses_animate_freeze_hide_and_leave_simulation_and_assets_unchang
     app.update();
     let before = visible(&mut app);
     assert!(!before.is_empty(), "generating plants supply cities");
+    let world = app.world();
+    // Submarine routes preserve their dark vertex colours instead of using the inland
+    // energized material. Compare the cyan dot against an inland line's deeper blue.
+    let model = world.resource::<WorldScene>().model.as_ref().unwrap();
+    let pulse = before
+        .iter()
+        .map(|(entity, _)| *entity)
+        .find(|entity| {
+            let key = world.get::<FlowPulse>(*entity).unwrap().path;
+            !model.lines[&model.flow_paths[&key].line].submarine
+        })
+        .expect("an energized inland route");
+    let key = world.get::<FlowPulse>(pulse).unwrap().path;
+    let line_id = world
+        .resource::<WorldScene>()
+        .model
+        .as_ref()
+        .unwrap()
+        .flow_paths[&key]
+        .line;
+    let line = world.resource::<game::world::ViewSync>().lines[&line_id];
+    let colour = |entity| {
+        world
+            .resource::<Assets<StandardMaterial>>()
+            .get(
+                &world
+                    .get::<MeshMaterial3d<StandardMaterial>>(entity)
+                    .unwrap()
+                    .0,
+            )
+            .unwrap()
+            .base_color
+            .to_linear()
+    };
+    let dot_colour = colour(pulse);
+    let line_colour = colour(line);
+    assert!(
+        line_colour.blue > line_colour.green * 3.0,
+        "energized lines use the dots' deeper blue"
+    );
+    assert!(
+        dot_colour.green / dot_colour.blue > line_colour.green / line_colour.blue,
+        "moving dots are cyan against deeper blue lines"
+    );
     for (entity, _) in &before {
-        let line = app.world().get::<FlowPulse>(*entity).unwrap().line;
+        let path = app.world().get::<FlowPulse>(*entity).unwrap().path;
         let model = app.world().resource::<WorldScene>().model.as_ref().unwrap();
-        assert!(
-            model.lines[&line].flow.is_some()
-                && model.lines[&line].energized
-                && model.lines[&line].building.is_none()
-        );
+        assert!(model.flow_paths[&path].net_flow.abs() > 1e-9 && model.flow_paths[&path].energized);
     }
     let checkpoint = app.world().resource::<Session>().0.checkpoint();
     let assets = app.world().resource::<WorldAssets>().counts();
@@ -2142,19 +2399,6 @@ fn world_flow_pulses_animate_freeze_hide_and_leave_simulation_and_assets_unchang
             city.scale > 0.0,
             "a blackout dims cities without flattening demand"
         );
-    }
-    for (gauge, visibility) in app
-        .world_mut()
-        .query::<(&game::world::OutputGauge, &Visibility)>()
-        .iter(app.world())
-    {
-        if gauge.segment.is_some() {
-            assert_eq!(
-                *visibility,
-                Visibility::Hidden,
-                "zero-output gauges are empty"
-            );
-        }
     }
     crate::hud_smoke::dispatch_in(&mut app, vec![UiAction::ReturnToMenu]);
     crate::support::update_n(&mut app, 3);

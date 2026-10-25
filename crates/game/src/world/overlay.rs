@@ -84,7 +84,6 @@ pub struct TuningConfig {
     pub model_scale: f32,
     pub sunlight: f32,
     pub bloom_intensity: f32,
-    pub gauge_color: Vec3,
 }
 impl Default for TuningConfig {
     fn default() -> Self {
@@ -92,7 +91,6 @@ impl Default for TuningConfig {
             model_scale: 1.0,
             sunlight: 14000.0,
             bloom_intensity: 0.12,
-            gauge_color: Vec3::new(0.18, 0.65, 0.75),
         }
     }
 }
@@ -125,102 +123,32 @@ pub fn supply_fraction(mode: domain::grid::GridMode, outage: f64, shed: f64) -> 
     }
 }
 
-pub const GAUGE_SEGMENTS: u8 = 24;
-
-/// A quiet, segmented square around the fitted plant base, inside the selection outline.
-pub fn gauge_track_parts() -> [super::Part; GAUGE_SEGMENTS as usize] {
-    std::array::from_fn(|segment| gauge_segment(segment as u8, 1.0, 0.035))
-}
-
-fn gauge_segment(segment: u8, fill: f32, height: f32) -> super::Part {
-    let step = 0.82 / 6.0;
-    let length = step - 0.018;
-    let rotation = Quat::from_rotation_y(f32::from(segment / 6) * std::f32::consts::FRAC_PI_2);
-    let center = Vec3::new(
-        -0.41 + (f32::from(segment % 6) + 0.5) * step - length * (1.0 - fill) * 0.5,
-        height,
-        -0.41,
-    );
-    super::Part {
-        center: rotation * center,
-        size: Vec3::new(length * fill, 0.014, 0.016),
-        rotation,
-        color: [1.0; 4],
-    }
-}
-
-/// Exact visible segment bounds. A fractional last segment keeps the gauge proportional.
-pub fn output_gauge_part(
-    plant: &super::WorldPlant,
-    tuning: &TuningConfig,
-    segment: u8,
-) -> Option<super::Part> {
-    if !plant.connected
-        || plant.building.is_some()
-        || !plant.output.is_finite()
-        || segment >= GAUGE_SEGMENTS
-    {
-        return None;
-    }
-    let fill = (plant.output.clamp(0.0, 1.0) * f32::from(GAUGE_SEGMENTS) - f32::from(segment))
-        .clamp(0.0, 1.0);
-    (fill > 0.0).then(|| {
-        let mut part = gauge_segment(segment, fill, 0.052);
-        part.center = plant.at + part.center * tuning.scale();
-        part.size *= tuning.scale();
-        part
-    })
+pub(super) fn city_window_fill(served: f32, group: usize) -> f32 {
+    (served.clamp(0.0, 1.0) * super::model::CITY_WINDOW_GROUPS as f32 - group as f32)
+        .clamp(0.0, 1.0)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use domain::{
-        ids::{CellCoord, PlantId},
-        region::PlantKind,
-    };
     use proptest::prelude::*;
-
-    fn plant(output: f32) -> super::super::WorldPlant {
-        super::super::WorldPlant {
-            id: PlantId(1),
-            kind: PlantKind::Solar,
-            cell: CellCoord { x: 0, y: 0 },
-            at: Vec3::ZERO,
-            connected: true,
-            building: None,
-            online: true,
-            output,
-        }
-    }
 
     proptest! {
         #[test]
-        fn gauge_fill_is_proportional_and_stays_at_the_base(output in 0.0f32..=1.0, scale in 0.4f32..=1.0) {
-            let tuning = TuningConfig { model_scale: scale, ..Default::default() };
-            let parts: Vec<_> = (0..GAUGE_SEGMENTS)
-                .filter_map(|segment| output_gauge_part(&plant(output), &tuning, segment))
-                .collect();
-            let length: f32 = parts.iter().map(|p| p.size.x).sum();
-            prop_assert!((length - (4.0 * 0.82 - 24.0 * 0.018) * scale * output).abs() < 1e-5);
-            for part in parts {
-                let (min, max) = part.bounds();
-                prop_assert!(min.y > 0.0 && max.y < 0.1);
-                prop_assert!(min.x >= -0.42 && min.z >= -0.42);
-                prop_assert!(max.x <= 0.42 && max.z <= 0.42);
+        fn lit_window_fraction_tracks_supply_and_never_increases_during_a_shortage(
+            a in 0.0f32..=1.0, b in 0.0f32..=1.0,
+        ) {
+            let groups = super::super::model::CITY_WINDOW_GROUPS;
+            let mut total = 0.0;
+            for group in 0..groups {
+                let fill = city_window_fill(a, group);
+                prop_assert!((0.0..=1.0).contains(&fill));
+                total += fill;
+                prop_assert!(city_window_fill(a.min(b), group) <= city_window_fill(a.max(b), group));
+                prop_assert_eq!(city_window_fill(0.0, group), 0.0);
+                prop_assert_eq!(city_window_fill(1.0, group), 1.0);
             }
-        }
-    }
-
-    #[test]
-    fn gauges_never_fill_for_zero_output_disconnected_or_unfinished_plants() {
-        let tuning = TuningConfig::default();
-        let mut disconnected = plant(1.0);
-        disconnected.connected = false;
-        let mut building = plant(1.0);
-        building.building = Some(1);
-        for plant in [plant(0.0), disconnected, building] {
-            assert!((0..GAUGE_SEGMENTS).all(|s| output_gauge_part(&plant, &tuning, s).is_none()));
+            prop_assert!((total / groups as f32 - a).abs() < 1e-6);
         }
     }
 }

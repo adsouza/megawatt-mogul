@@ -53,6 +53,7 @@ impl MapLayer {
                 PlantKind::Nuclear,
                 PlantKind::Coal,
                 PlantKind::Solar,
+                PlantKind::Wind,
                 PlantKind::Hydro,
             ]
             .into_iter()
@@ -1959,6 +1960,7 @@ mod tests {
                 MapLayer::Suitability(PlantKind::Nuclear),
                 MapLayer::Suitability(PlantKind::Coal),
                 MapLayer::Suitability(PlantKind::Solar),
+                MapLayer::Suitability(PlantKind::Wind),
                 MapLayer::Suitability(PlantKind::Hydro),
             ]
         );
@@ -1986,7 +1988,8 @@ mod tests {
         assert_eq!(labels[5], "Suitability: Nuclear plant");
         assert_eq!(labels[6], "Suitability: Coal plant");
         assert_eq!(labels[7], "Suitability: Solar farm");
-        assert_eq!(labels[8], "Suitability: Hydro plant");
+        assert_eq!(labels[8], "Suitability: Wind farm");
+        assert_eq!(labels[9], "Suitability: Hydro plant");
         assert_eq!(model.layer, MapLayer::Terrain);
         assert_eq!(l10n.problems(), vec![]);
 

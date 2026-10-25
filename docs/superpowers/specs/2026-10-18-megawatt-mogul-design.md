@@ -747,13 +747,14 @@ run through the ordinary generating-plant step or acquire synthetic opening outp
   in every region. This is the site's static game resource rating, not the percentage of sunny
   days or current weather; season, sun angle and cloud cover separately affect solar output.
 - **Selectable map layers:** terrain, sunshine, cooling water, hydro potential, and suitability
-  for nuclear, coal, solar and hydro. Omit gas (CCGT) and peaker suitability overlays: those
+  for nuclear, coal, solar, wind and hydro. Omit gas (CCGT) and peaker suitability overlays: those
   plants accept any land cell, so separate overlays add no siting information. Batteries likewise
   have no suitability overlay (§20.7). The cell inspector
   still reports suitability for every plant kind.
-- **Operating overlay:** supply indicators over the warm, lit diorama: subtle segmented output
-  gauges around plant bases, city lights showing supply status and energised lines with flowing
-  light pulses. Retain terrain colours, building
+- **Operating overlay:** supply indicators over the warm, lit diorama: distinct warm yellow
+  facade windows showing supply status and deep-blue energised lines with bright cyan moving dots.
+  Plant output gauges are omitted. Window groups go dark as the common supplied-demand fraction
+  falls, with proportional dimming in the partially supplied group. Retain terrain colours, building
   face shading and cast shadows; the overlay must not blacken the map or flatten the buildings.
 - **Sunlight and shadows:** use the region's monthly sunrise/sunset times and the simulation
   clock. Sunlight comes from the east in the morning, south at solar noon and west in the evening;
