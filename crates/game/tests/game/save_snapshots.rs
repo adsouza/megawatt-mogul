@@ -1,6 +1,7 @@
 //! Converted portable saves load normally; no recovery UI or writes are needed.
 use crate::{
     hud_smoke::dispatch_in,
+    save_resume::open_browser,
     support::{egui_harness::button, egui_pass::EguiPass, headless_app, shipped_assets, update_n},
 };
 use application::{Game, GameCheckpoint, InMemoryCommandLog, SaveStore};
@@ -96,10 +97,7 @@ fn portable_resume_click_uses_normal_ui_and_restores_paused_progress() {
         "schema1-charged-battery.mgsave",
     ] {
         let (mut app, saves, _logs, id, bytes, expected) = setup(file);
-        dispatch_in(
-            &mut app,
-            vec![UiAction::Persistence(PersistAction::OpenBrowser)],
-        );
+        open_browser(&mut app);
         settle(&mut app);
         let pass = EguiPass::attach(&mut app);
         let widgets = pass.settled(&mut app, 1280.0, 640.0);
@@ -192,10 +190,7 @@ fn load_library_renders_cached_cards_immediately_while_refreshing_metadata() {
     let (mut app, _saves, _logs, id, _bytes, expected) = setup("schema1-migrated-review.mgsave");
     assert!(app.world().resource::<Persistence>().menu_scanned());
     let pass = EguiPass::attach(&mut app);
-    dispatch_in(
-        &mut app,
-        vec![UiAction::Persistence(PersistAction::OpenBrowser)],
-    );
+    open_browser(&mut app);
     // Paint before polling the new list job: the previous menu index is already useful.
     assert!(app.world().resource::<Persistence>().busy());
     let widgets = pass.run(&mut app, 1280.0, 640.0);

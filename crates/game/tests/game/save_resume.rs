@@ -20,6 +20,22 @@ fn settle(app: &mut App) {
     }
     panic!("persistence worker did not complete");
 }
+/// Opens the load browser the way a player can: the menu's Load game button is disabled while
+/// persistence is frozen (a foreground job such as the menu's save scan), so wait until it would
+/// be enabled, then dispatch. A slow machine can still be scanning a few frames after returning
+/// to the menu, and an `OpenBrowser` dispatched then is ignored. Callers settle afterwards.
+pub(crate) fn open_browser(app: &mut App) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while app.world().resource::<Persistence>().frozen() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "persistence stayed frozen; Load game would stay disabled"
+        );
+        app.update();
+        std::thread::yield_now();
+    }
+    action(app, PersistAction::OpenBrowser);
+}
 #[test]
 fn save_resume_mid_day_restores_a_paused_runnable_game_with_all_projections() {
     for region in ["eastern_interconnection", "western_interconnection"] {
@@ -79,10 +95,7 @@ fn save_resume_mid_day_restores_a_paused_runnable_game_with_all_projections() {
         app.add_plugins(game::world::WorldViewPlugin);
         app.insert_resource(SaveDir(saves.path().into()));
         update_n(&mut app, 2);
-        dispatch_in(
-            &mut app,
-            vec![UiAction::Persistence(PersistAction::OpenBrowser)],
-        );
+        open_browser(&mut app);
         settle(&mut app);
         dispatch_in(
             &mut app,
@@ -325,7 +338,7 @@ fn save_resume_refuses_old_generation_commands_and_load_entry_never_drives_a_tic
         .clone();
     dispatch_in(&mut app, vec![UiAction::ReturnToMenu]);
     update_n(&mut app, 3);
-    action(&mut app, PersistAction::OpenBrowser);
+    open_browser(&mut app);
     settle(&mut app);
     action(&mut app, PersistAction::Load(id));
     settle(&mut app);
@@ -380,7 +393,7 @@ fn save_resume_actual_dialog_fits_and_load_browser_shows_corruption_separately()
     .unwrap();
     dispatch_in(&mut app, vec![UiAction::ReturnToMenu]);
     update_n(&mut app, 3);
-    action(&mut app, PersistAction::OpenBrowser);
+    open_browser(&mut app);
     settle(&mut app);
     let widgets = pass.settled(&mut app, 1024.0, 640.0);
     assert!(widgets.iter().any(|w| w.text == "Resume"));
@@ -1076,7 +1089,7 @@ fn returning_to_the_menu_clears_the_warning_before_a_new_game_or_load() {
         None,
         "cleared on leaving, before any load"
     );
-    action(&mut app, PersistAction::OpenBrowser);
+    open_browser(&mut app);
     settle(&mut app);
     action(&mut app, PersistAction::Load(slot));
     settle(&mut app);
@@ -1292,7 +1305,7 @@ fn load_browser(logs: &TempDir, saves: &TempDir) -> App {
     let mut app = hud_app(logs.path());
     app.insert_resource(SaveDir(saves.path().into()));
     update_n(&mut app, 2);
-    action(&mut app, PersistAction::OpenBrowser);
+    open_browser(&mut app);
     settle(&mut app);
     app
 }
@@ -1663,7 +1676,7 @@ fn save_and_rename_name_fields_submit_with_enter_using_the_current_text() {
         .expect("Enter creates a save")
         .clone();
     assert_eq!(saved.metadata.name, "Keyboard save");
-    action(&mut app, PersistAction::OpenBrowser);
+    open_browser(&mut app);
     settle(&mut app);
     action(
         &mut app,
@@ -1815,7 +1828,7 @@ fn save_rename_preserves_the_active_autosave_name_and_revision_at_the_next_month
         .unwrap()
         .clone();
     assert_eq!(original.metadata.kind, SaveKind::Automatic);
-    action(&mut app, PersistAction::OpenBrowser);
+    open_browser(&mut app);
     settle(&mut app);
     let checkpoint = app.world().resource::<Session>().0.checkpoint();
     let summary = app.world().resource::<Persistence>().last_summary.clone();
@@ -2451,7 +2464,7 @@ fn a_preloaded_snapshot_replaced_on_disk_is_rejected_and_load_game_discards_the_
                 Some(application::SaveError::SlotChanged)
             );
         } else {
-            action(&mut app, PersistAction::OpenBrowser);
+            open_browser(&mut app);
             settle(&mut app);
         }
         assert_eq!(
@@ -2816,7 +2829,7 @@ fn save_delete_retries_storage_failures_and_deletes_an_unreadable_snapshot() {
         std::fs::write(&path, b"unreadable snapshot").unwrap();
         let mut app = hud_app(logs.path());
         app.insert_resource(persistence);
-        action(&mut app, PersistAction::OpenBrowser);
+        open_browser(&mut app);
         settle(&mut app);
         let row = browser_model(&app).rows.remove(0);
         assert!(row.action.is_none() && row.rename.is_none());
@@ -3177,7 +3190,7 @@ fn save_game_shows_only_manual_games_while_load_keeps_monthly_snapshots() {
     assert!(!widgets.iter().any(|widget| widget.text == "broken.mgsave"));
 
     action(&mut app, PersistAction::Cancel);
-    action(&mut app, PersistAction::OpenBrowser);
+    open_browser(&mut app);
     settle(&mut app);
     let model = browser_model(&app);
     assert_eq!(model.rows.len(), 3);
