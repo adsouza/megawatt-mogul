@@ -15,7 +15,7 @@ use domain::time::{SimDuration, SimMonth, TICKS_PER_HOUR};
 use domain::units::{Hertz, Megawatts, Money, Price, RampRate, Ratio};
 
 use super::dto::*;
-use super::raster::{Geography, rasterize_geometry, to_cell_geometry};
+use super::raster::{Geography, Irradiance, rasterize_geometry, to_cell_geometry};
 
 type Result<T> = std::result::Result<T, RegionError>;
 
@@ -161,9 +161,20 @@ fn check_geometry(file: Geography<'_>) -> Result<()> {
     if !ring_ok(file.exclude) {
         return Err(invalid("exclude"));
     }
+    check_field(file.height, "height")?;
+    match file.irradiance {
+        Irradiance::Gaussian(field) => check_field(field, "irradiance")?,
+        Irradiance::Cells(values) => {
+            if values.len() != cells
+                || values
+                    .iter()
+                    .any(|v| !v.is_finite() || !(0.0..=1.0).contains(v))
+            {
+                return Err(invalid("irradiance.cells"));
+            }
+        }
+    }
     for (field, name) in [
-        (file.height, "height"),
-        (file.irradiance, "irradiance"),
         (file.cooling_water, "cooling_water"),
         (file.hydro_potential, "hydro_potential"),
     ] {

@@ -298,6 +298,54 @@ mod present_option {
     }
 }
 
+/// Schema-4 site irradiance: geographic Gaussian field or exact row-major cells.
+/// The wire forms are mutually exclusive and keep existing Gaussian RON valid.
+#[derive(Debug, Clone)]
+pub enum IrradianceV4 {
+    Gaussian(Field),
+    Cells(Vec<f64>),
+}
+
+impl<'de> Deserialize<'de> for IrradianceV4 {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(rename = "Field", deny_unknown_fields)]
+        struct Source {
+            #[serde(default, deserialize_with = "present_option::deserialize")]
+            base: Option<f64>,
+            #[serde(default, deserialize_with = "present_option::deserialize")]
+            blobs: Option<Vec<Blob>>,
+            #[serde(default, deserialize_with = "present_option::deserialize")]
+            cells: Option<Vec<f64>>,
+        }
+        use serde::de::Error;
+        let source = Source::deserialize(deserializer)?;
+        match (source.base, source.blobs, source.cells) {
+            (Some(base), Some(blobs), None) => Ok(Self::Gaussian(Field { base, blobs })),
+            (None, None, Some(cells)) => Ok(Self::Cells(cells)),
+            (_, _, Some(_)) => Err(D::Error::custom(
+                "irradiance requires either base and blobs or cells, never both",
+            )),
+            (None, _, None) => Err(D::Error::missing_field("base")),
+            (_, None, None) => Err(D::Error::missing_field("blobs")),
+        }
+    }
+}
+
+impl Serialize for IrradianceV4 {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        match self {
+            Self::Gaussian(field) => field.serialize(serializer),
+            Self::Cells(cells) => {
+                let mut source = serializer.serialize_struct("Field", 1)?;
+                source.serialize_field("cells", cells)?;
+                source.end()
+            }
+        }
+    }
+}
+
 /// Strict schema-4 source; no legacy locale or tuning defaults.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -312,7 +360,7 @@ pub struct RegionFileV4 {
     /// Polygons cut out of the land (lakes, bays).
     pub exclude: Vec<Vec<(f64, f64)>>,
     pub height: Field,
-    pub irradiance: Field,
+    pub irradiance: IrradianceV4,
     pub cooling_water: Field,
     pub hydro_potential: Field,
     pub wind_potential: Field,
@@ -495,8 +543,36 @@ impl ParsedRegionFile {
         }
     }
 }
-#[derive(Deserialize)]
 pub(super) struct SchemaProbe {
-    #[serde(default, with = "present_option")]
     pub region_schema: Option<u32>,
+}
+
+impl<'de> Deserialize<'de> for SchemaProbe {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Fields {
+            #[serde(default, with = "present_option")]
+            region_schema: Option<u32>,
+        }
+        struct ProbeVisitor;
+        impl<'de> serde::de::Visitor<'de> for ProbeVisitor {
+            type Value = SchemaProbe;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a region struct")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                map: A,
+            ) -> Result<Self::Value, A::Error> {
+                let fields =
+                    Fields::deserialize(serde::de::value::MapAccessDeserializer::new(map))?;
+                Ok(SchemaProbe {
+                    region_schema: fields.region_schema,
+                })
+            }
+        }
+        // Probe only the schema without imposing a helper's struct name. The full
+        // versioned DTO then validates its own name, fields, and complete syntax.
+        deserializer.deserialize_any(ProbeVisitor)
+    }
 }

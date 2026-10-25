@@ -3745,6 +3745,14 @@ old reports stay as recorded.
   unsuffixed money fields, optional `areas`, optional `hvdc`, optional `start.line_names` and
   optional `atlas`. A schema-4 file missing a required field fails to load with a typed error that
   names the field.
+- **Schema-4 irradiance authoring.** `irradiance` is either the existing Gaussian field
+  `(base: value, blobs: [...])` or an exact cell field `(cells: [...])`. The forms are mutually
+  exclusive; partial Gaussian fields and mixed forms are rejected. The cell list has exactly
+  `grid.width × grid.height` finite values in `[0, 1]`, row-major from the northwest cell.
+  These are authored site-quality values, not annual potential: the usual computed sun and
+  annual latitude factor still apply unchanged. An offline data tool may invert that factor to
+  preserve an existing field's relative solar-site ranking; no runtime compensation or
+  calibration is added. Schemas 3 and earlier keep only their existing Gaussian syntax and math.
 - **Schemas 3 and earlier.** Version-aware mapping supplies frozen legacy behaviour: one zone at
   offset zero without DST, the authored `daylight` table (the domain keeps
   `SolarModel::DaylightTable` beside `SolarModel::Astronomical`), one climate with northern
@@ -3754,6 +3762,9 @@ old reports stay as recorded.
   (§28.4), the computed sun, re-authored irradiance and climates. Their balance changes. Fix any
   failing beginner check by retuning region data, never the rules. Their fingerprints change.
   Archived bytes do not, so existing saves keep their single clock and daylight table.
+  The migrated annual potential preserves every strict ordering between playable cells in the
+  frozen legacy irradiance field; acceptance groups equal old values and requires each group's
+  largest new value to be below the next group's smallest, including rejection of collapsed ties.
 - **Portable state.**
   - **Plan 6:** the new `Season` tags enter persisted milestone state, so it bumps the state schema
     once.

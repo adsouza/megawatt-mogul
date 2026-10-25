@@ -1313,12 +1313,32 @@ fn solar_migration_preserves_authored_site_rankings() {
         let mut inversions = Vec::new();
         for (i, (a, oa, na)) in values.iter().enumerate() {
             for (b, ob, nb) in &values[i + 1..] {
-                if (oa - ob) * (na - nb) < 0.0 {
+                if oa != ob && oa.total_cmp(ob) != na.total_cmp(nb) {
                     inversions.push(format!("{a} vs {b}"));
                 }
             }
         }
-        let cells: Vec<_> = (0..before.terrain().height())
+        assert!(
+            inversions.is_empty(),
+            "{id} authored-site inversions: {inversions:?}"
+        );
+    }
+}
+
+/// Neighboring old-value groups suffice to prove every strict pair's order:
+/// the largest new value in one group must precede the smallest in the next.
+#[test]
+fn solar_migration_preserves_every_playable_strict_site_ranking() {
+    use infrastructure::region::{RegionFile, map_region};
+    for id in [EAST, WEST] {
+        let source = std::fs::read_to_string(format!(
+            "{}/tests/support/global-foundations/{id}-v3.ron",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap();
+        let before = map_region(ron::from_str::<RegionFile>(&source).unwrap()).unwrap();
+        let after = region(id);
+        let mut cells: Vec<_> = (0..before.terrain().height())
             .flat_map(|y| {
                 (0..before.terrain().width()).map(move |x| domain::ids::CellCoord { x, y })
             })
@@ -1327,30 +1347,24 @@ fn solar_migration_preserves_authored_site_rankings() {
                 (
                     before.solar_potential(c).value(),
                     after.solar_potential(c).value(),
+                    c,
                 )
             })
             .collect();
-        let mut concordant = 0u64;
-        let mut discordant = 0u64;
-        for (i, (oa, na)) in cells.iter().enumerate() {
-            for (ob, nb) in &cells[i + 1..] {
-                let product = (oa - ob) * (na - nb);
-                if product > 0.0 {
-                    concordant += 1;
-                }
-                if product < 0.0 {
-                    discordant += 1;
-                }
-            }
+        cells.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.2.cmp(&b.2)));
+        let groups: Vec<_> = cells.chunk_by(|a, b| a.0 == b.0).collect();
+        for pair in groups.windows(2) {
+            let lower = pair[0].iter().max_by(|a, b| a.1.total_cmp(&b.1)).unwrap();
+            let higher = pair[1].iter().min_by(|a, b| a.1.total_cmp(&b.1)).unwrap();
+            assert!(
+                lower.1 < higher.1,
+                "{id}: strict old order collapsed or reversed: {lower:?} vs {higher:?}"
+            );
         }
         eprintln!(
-            "{id}: {} land cells; {concordant} concordant / {discordant} discordant pairs; {:.3}% agreement among non-ties",
+            "{id}: all strict pairs preserved over {} playable cells / {} distinct old-value groups",
             cells.len(),
-            100.0 * concordant as f64 / (concordant + discordant) as f64
-        );
-        assert!(
-            inversions.is_empty(),
-            "{id} authored-site inversions: {inversions:?}"
+            groups.len()
         );
     }
 }

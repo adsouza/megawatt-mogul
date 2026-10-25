@@ -80,6 +80,58 @@ fn schema_fields_round_trip_with_the_region_dto() {
 }
 
 #[test]
+fn schema_probe_preserves_explicit_region_names_without_relaxing_dto_gates() {
+    use infrastructure::region::{RegionFile, RegionFileV4};
+    let id = RegionId::new("minimal");
+    let file: RegionFile = ron::from_str(MINIMAL).unwrap();
+    let anonymous = ron::to_string(&file).unwrap();
+    let named = format!("RegionFile{anonymous}");
+    // The pre-Plan-6 loader directly decoded this unchanged legacy DTO.
+    let _: RegionFile = ron::from_str(&named).unwrap();
+    let before = load_region_bytes(anonymous.into_bytes(), &id).unwrap();
+    let after = load_region_bytes(named.into_bytes(), &id).unwrap();
+    assert_eq!(before.definition, after.definition);
+    let file: RegionFileV4 = ron::from_str(V4).unwrap();
+    let anonymous = ron::to_string(&file).unwrap();
+    let named = format!("RegionFileV4{anonymous}");
+    let before = load_region_bytes(anonymous.clone().into_bytes(), &id).unwrap();
+    let after = load_region_bytes(named.clone().into_bytes(), &id).unwrap();
+    assert_eq!(before.definition, after.definition);
+    for wrong in [
+        format!("RegionFile{anonymous}"),
+        format!("Wrong{anonymous}"),
+    ] {
+        assert!(matches!(
+            load_region_bytes(wrong.into_bytes(), &id),
+            Err(RegionLoadError::Parse { .. })
+        ));
+    }
+    let unknown = named.replacen("region_schema:4", "region_schema:99", 1);
+    assert!(matches!(
+        load_region_bytes(unknown.into_bytes(), &id),
+        Err(RegionLoadError::Invalid {
+            error: RegionError::UnsupportedRegionSchema(99),
+            ..
+        })
+    ));
+    let duplicate = named.replacen("region_schema:4", "region_schema:4,region_schema:3", 1);
+    assert!(matches!(
+        load_region_bytes(duplicate.into_bytes(), &id),
+        Err(RegionLoadError::Parse { .. })
+    ));
+    let unknown_field = named.replacen("region_schema:4", "region_schema:4,unknown:0", 1);
+    assert!(matches!(
+        load_region_bytes(unknown_field.into_bytes(), &id),
+        Err(RegionLoadError::Parse { .. })
+    ));
+    let missing = named.replacen("system_zone:7,", "", 1);
+    assert_ne!(missing, named);
+    assert!(
+        matches!(load_region_bytes(missing.into_bytes(), &id), Err(RegionLoadError::Invalid { error: RegionError::MissingField {field}, .. }) if field == "system_zone")
+    );
+}
+
+#[test]
 fn a_schema2_region_missing_an_a12_field_names_it() {
     for field in [
         "storage_accreditation",
@@ -1135,5 +1187,160 @@ proptest! {
         let result = infrastructure::region::map_region_v4(file);
         prop_assert_eq!(result.is_ok(), city == 2 && !blank);
         if let Err(error) = result {prop_assert_eq!(error, RegionError::InvalidShape {field: "start.line_names"});}
+    }
+}
+
+fn v4_irradiance(source: &str) -> String {
+    V4.replace(
+        "irradiance: (base: 0.8, blobs: [])",
+        &format!("irradiance: {source}"),
+    )
+}
+
+#[test]
+fn v4_irradiance_retains_explicit_field_names_and_named_roundtrips() {
+    use infrastructure::region::IrradianceV4;
+    let anonymous = load_region_bytes(V4.as_bytes().to_vec(), &RegionId::new("minimal")).unwrap();
+    let named = load_region_bytes(
+        v4_irradiance("Field(base: 0.8, blobs: [])").into_bytes(),
+        &RegionId::new("minimal"),
+    )
+    .unwrap();
+    assert_eq!(named.definition, anonymous.definition);
+    for source in ["(base: 0.8, blobs: [])", "(cells: [0.0, 0.5, 1.0])"] {
+        let field: IrradianceV4 = ron::from_str(source).unwrap();
+        let named = ron::ser::to_string_pretty(
+            &field,
+            ron::ser::PrettyConfig::default().struct_names(true),
+        )
+        .unwrap();
+        assert!(named.starts_with("Field("));
+        let roundtrip: IrradianceV4 = ron::from_str(&named).unwrap();
+        assert_eq!(
+            ron::to_string(&roundtrip).unwrap(),
+            ron::to_string(&field).unwrap()
+        );
+    }
+}
+
+#[test]
+fn v4_irradiance_grid_maps_exact_row_major_values_and_roundtrips() {
+    let values: Vec<_> = (0..96).map(|i| f64::from(i) / 95.0).collect();
+    let text = v4_irradiance(&format!("(cells: {values:?})"));
+    let loaded = load_region_bytes(text.into_bytes(), &RegionId::new("minimal")).unwrap();
+    for y in 0..8 {
+        for x in 0..12 {
+            assert_eq!(
+                loaded
+                    .definition
+                    .terrain()
+                    .get(CellCoord { x, y })
+                    .unwrap()
+                    .irradiance
+                    .value(),
+                values[usize::from(y) * 12 + usize::from(x)]
+            );
+        }
+    }
+    let dto: infrastructure::region::RegionFileV4 =
+        ron::de::from_bytes(&loaded.source_bytes).unwrap();
+    let encoded = ron::to_string(&dto).unwrap();
+    let roundtrip = load_region_bytes(encoded.into_bytes(), &RegionId::new("minimal")).unwrap();
+    assert_eq!(roundtrip.definition, loaded.definition);
+}
+
+#[test]
+fn v4_irradiance_grid_rejects_nonfinite_and_out_of_range_values() {
+    for value in ["NaN", "inf", "-inf", "-0.01", "1.01"] {
+        let values = std::iter::once(value)
+            .chain(std::iter::repeat_n("0.5", 95))
+            .collect::<Vec<_>>()
+            .join(",");
+        let error = load_region_bytes(
+            v4_irradiance(&format!("(cells: [{values}])")).into_bytes(),
+            &RegionId::new("minimal"),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                RegionLoadError::Invalid {
+                    error: RegionError::InvalidShape {
+                        field: "irradiance.cells"
+                    },
+                    ..
+                }
+            ),
+            "{value}: {error:?}"
+        );
+    }
+}
+
+#[test]
+fn v4_irradiance_requires_exactly_one_complete_encoding() {
+    for source in [
+        "(base: 0.8, blobs: [], cells: [])",
+        "(base: 0.8, cells: [])",
+        "(blobs: [], cells: [])",
+        "(cells: [], typo: 1)",
+    ] {
+        assert!(
+            matches!(
+                load_region_bytes(
+                    v4_irradiance(source).into_bytes(),
+                    &RegionId::new("minimal")
+                ),
+                Err(RegionLoadError::Parse { .. })
+            ),
+            "{source}"
+        );
+    }
+    for (source, field) in [
+        ("(base: 0.8)", "blobs"),
+        ("(blobs: [])", "base"),
+        ("()", "base"),
+    ] {
+        let error = load_region_bytes(
+            v4_irradiance(source).into_bytes(),
+            &RegionId::new("minimal"),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, RegionLoadError::Invalid {error: RegionError::MissingField {field: got}, ..} if got == field),
+            "{source}: {error:?}"
+        );
+    }
+    let source = without_field(V4, "irradiance");
+    assert!(matches!(
+        load_region_bytes(source.into_bytes(), &RegionId::new("minimal")),
+        Err(RegionLoadError::Invalid {
+            error: RegionError::MissingField {
+                field: "irradiance"
+            },
+            ..
+        })
+    ));
+    let legacy = MINIMAL.replace(
+        "irradiance: (base: 0.8, blobs: [])",
+        "irradiance: (cells: [])",
+    );
+    assert!(matches!(
+        load_region_bytes(legacy.into_bytes(), &RegionId::new("minimal")),
+        Err(RegionLoadError::Parse { .. })
+    ));
+}
+
+proptest! {
+    #[test]
+    fn v4_irradiance_grid_length_is_exact_and_values_reach_their_cell(length in 0usize..193, at in 0usize..96, value in 0.0f64..=1.0) {
+        let mut values = vec![0.5;length];
+        if at < length {values[at]=value;}
+        let result=load_region_bytes(v4_irradiance(&format!("(cells: {values:?})")).into_bytes(), &RegionId::new("minimal"));
+        if length == 96 {
+            let r=result.unwrap().definition;
+            prop_assert_eq!(r.terrain().get(CellCoord{x:(at%12) as u16,y:(at/12) as u16}).unwrap().irradiance.value(),value);
+        } else {
+            prop_assert!(matches!(result, Err(RegionLoadError::Invalid {error: RegionError::InvalidShape {field: "irradiance.cells"}, ..})), "length {length}");
+        }
     }
 }

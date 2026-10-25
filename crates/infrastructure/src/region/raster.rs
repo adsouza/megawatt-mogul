@@ -6,7 +6,13 @@ use domain::ids::CellCoord;
 use domain::region::{Cell, TerrainGrid};
 use domain::units::Ratio;
 
-use super::dto::{Bounds, Field, GridSize, RegionFile, RegionFileV4};
+use super::dto::{Bounds, Field, GridSize, IrradianceV4, RegionFile, RegionFileV4};
+
+#[derive(Clone, Copy)]
+pub(super) enum Irradiance<'a> {
+    Gaussian(&'a Field),
+    Cells(&'a [f64]),
+}
 
 /// Borrowed geometry shared by both source schemas.
 #[derive(Clone, Copy)]
@@ -16,7 +22,7 @@ pub(super) struct Geography<'a> {
     pub land: &'a [Vec<(f64, f64)>],
     pub exclude: &'a [Vec<(f64, f64)>],
     pub height: &'a Field,
-    pub irradiance: &'a Field,
+    pub irradiance: Irradiance<'a>,
     pub cooling_water: &'a Field,
     pub hydro_potential: &'a Field,
     pub wind_potential: Option<&'a Field>,
@@ -43,7 +49,13 @@ pub(super) fn rasterize_geometry(file: Geography<'_>) -> TerrainGrid {
             cells.push(Cell {
                 land,
                 height: sample(file.height, lon, lat),
-                irradiance: sample(file.irradiance, lon, lat),
+                irradiance: match file.irradiance {
+                    Irradiance::Gaussian(field) => sample(field, lon, lat),
+                    Irradiance::Cells(values) => {
+                        Ratio::new(values[usize::from(y) * usize::from(width) + usize::from(x)])
+                            .expect("mapping validates every irradiance cell")
+                    }
+                },
                 wind_potential: file
                     .wind_potential
                     .map_or(Ratio::ZERO, |f| sample(f, lon, lat)),
@@ -136,7 +148,7 @@ impl RegionFile {
             land: &self.land,
             exclude: &self.exclude,
             height: &self.height,
-            irradiance: &self.irradiance,
+            irradiance: Irradiance::Gaussian(&self.irradiance),
             cooling_water: &self.cooling_water,
             hydro_potential: &self.hydro_potential,
             wind_potential: self.wind_potential.as_ref(),
@@ -152,7 +164,10 @@ impl RegionFileV4 {
             land: &self.land,
             exclude: &self.exclude,
             height: &self.height,
-            irradiance: &self.irradiance,
+            irradiance: match &self.irradiance {
+                IrradianceV4::Gaussian(field) => Irradiance::Gaussian(field),
+                IrradianceV4::Cells(values) => Irradiance::Cells(values),
+            },
             cooling_water: &self.cooling_water,
             hydro_potential: &self.hydro_potential,
             wind_potential: Some(&self.wind_potential),

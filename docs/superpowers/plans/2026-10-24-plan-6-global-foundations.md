@@ -791,6 +791,14 @@ git commit -am "feat: world region picker in Equal Earth"
     climate where the data task justifies it.
   - Re-author irradiance without the latitude effect, so that `solar_potential` keeps each
     region's current relative site ranking.
+  - **Authoring implementation:** retain the schema-4 Gaussian form and add an explicit
+    `(cells: [...])` irradiance form with exact row-major length and finite `[0, 1]` validation.
+    Offline Rust authoring uses the immutable legacy field and authoritative domain sun factors;
+    the authored scale is an explicit CLI input recorded in the RON provenance (East 1.0,
+    West 0.82). The latter leaves headroom below the physical irradiance cap. Compare every
+    playable cell, not only named sites: sort old-value groups and require strict separation
+    of their new extrema. This avoids thousands of narrow Gaussian blobs and their load-time
+    exponentials without changing domain cells, solar rules, or archived source bytes.
 
 - [x] **Step 1: Capture the archive goldens before editing**
 
