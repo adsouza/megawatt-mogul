@@ -14,7 +14,7 @@ fn wind_storage_resume_preserves_rng_history_and_midnight_at_each_policy_boundar
             cell: CellCoord { x: 5, y: 2 },
         },
     ]);
-    parts.demand.forecast_error = Ratio::ZERO;
+    parts.demand_noise.forecast_error = Ratio::ZERO;
     let region = Arc::new(RegionDefinition::try_from(parts).unwrap());
     let mut live = GameSession::new(region.clone(), 42, GameSettings::default());
     let farm = live

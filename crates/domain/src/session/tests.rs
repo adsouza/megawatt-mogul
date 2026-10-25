@@ -820,9 +820,7 @@ fn hourly_forecast_covers_connected_cities_only() {
     let region = tiny_region();
     // Cities 1 and 2 (600 + 400 MW base) are connected; city 3 is not.
     let forecast = s.hourly_forecast();
-    let shape = region.demand().shoulder[0]
-        + (region.demand().shoulder[1] - region.demand().shoulder[0]) * 0.5;
-    let expected = 1000.0 * shape * region.demand().monthly[3];
+    let expected = 1000.0 * region.load_factor(CityId(1), SimMonth::new(2027, 4).unwrap(), 30);
     assert!((forecast[0].mean.value() - expected).abs() < 1e-9);
 }
 
@@ -867,10 +865,10 @@ fn session_in_an_outage() -> GameSession {
 /// largest shape factor at minute 30 of an hour, and that hour, the earliest
 /// on a tie.
 fn peak_of(s: &GameSession, base_load: f64) -> (f64, u8) {
-    let shape = s.region().demand();
+    let region = s.region();
     let month = s.clock().month();
     (0..24u8).fold((f64::MIN, 0), |(best, at), hour| {
-        let factor = crate::demand::shape_factor(shape, month, u32::from(hour) * 60 + 30);
+        let factor = region.load_factor(CityId(1), month, u32::from(hour) * 60 + 30);
         if base_load * factor > best {
             (base_load * factor, hour)
         } else {
@@ -946,16 +944,83 @@ fn a_city_view_scales_the_system_by_base_load() {
         "{served} vs {tick:?}"
     );
     for city in &operating {
-        assert!(close_relative(
-            city.demand_now.unwrap().value(),
-            city.share.value() * tick.demand.value()
-        ));
+        assert_eq!(
+            city.demand_now.unwrap().value().to_bits(),
+            city.share.of(tick.demand).value().to_bits()
+        );
+        assert_eq!(
+            city.served_now.unwrap().value().to_bits(),
+            city.share.of(tick.served).value().to_bits()
+        );
     }
 
     // Review: the day is over, so nothing is live.
     run_ticks(&mut s, TICKS_PER_DAY - 90);
     assert_eq!(s.phase(), DayPhase::Review);
     assert!(details(&s).iter().all(|c| c.demand_now.is_none()));
+}
+
+#[test]
+fn city_details_allocate_live_demand_by_local_climate_at_the_observed_tick() {
+    use crate::region::{Climate, ClimateId, RegionDefinition, fixtures::tiny_region_parts};
+    let mut p = tiny_region_parts();
+    p.start.connected_cities.push(CityId(3));
+    p.climates[0].shapes = vec![[1.0; 24]];
+    p.climates[0].month_shapes = [0; 12];
+    p.climates[0].monthly = [1.0; 12];
+    let mut second = [2.0; 24];
+    second[1] = 62.0;
+    p.climates.push(Climate {
+        id: ClimateId(1),
+        shapes: vec![second],
+        month_shapes: [0; 12],
+        monthly: [1.0; 12],
+    });
+    p.climates.push(Climate {
+        id: ClimateId(2),
+        shapes: vec![[0.0; 24]],
+        month_shapes: [0; 12],
+        monthly: [1.0; 12],
+    });
+    p.city_locales.get_mut(&CityId(2)).unwrap().climate = ClimateId(1);
+    p.city_locales.get_mut(&CityId(3)).unwrap().climate = ClimateId(2);
+    let mut s = GameSession::new(
+        Arc::new(RegionDefinition::try_from(p).unwrap()),
+        1,
+        GameSettings::default(),
+    );
+    s.begin_operating().unwrap();
+    run_ticks(&mut s, 1);
+    let tick = s.grid_snapshot().last_tick.unwrap();
+    assert_eq!(tick.tick, 0);
+    let before = s.state_hash();
+    let cities: Vec<_> = (1..=3)
+        .map(|id| s.city_detail(CityId(id)).unwrap())
+        .collect();
+    assert_eq!(
+        s.state_hash(),
+        before,
+        "pure views cannot draw noise or mutate state"
+    );
+    for (city, weight) in cities.iter().zip([3.0 / 7.0, 4.0 / 7.0, 0.0]) {
+        assert!(close_relative(
+            city.demand_now.unwrap().value(),
+            tick.demand.value() * weight
+        ));
+        assert!(close_relative(
+            city.served_now.unwrap().value(),
+            tick.served.value() * weight
+        ));
+        assert_eq!(city.share.value(), city.base_load.value() / 1300.0);
+    }
+    assert!(close_relative(
+        cities.iter().map(|c| c.demand_now.unwrap().value()).sum(),
+        tick.demand.value()
+    ));
+    assert!(close_relative(
+        cities.iter().map(|c| c.served_now.unwrap().value()).sum(),
+        tick.served.value()
+    ));
 }
 
 #[test]
@@ -1449,10 +1514,10 @@ fn session_with_trough_knot(knot: usize) -> GameSession {
     let mut s = session_with(|parts| {
         let mut shape = [0.5; 24];
         shape[knot] = 0.2;
-        parts.demand.winter = shape;
-        parts.demand.summer = shape;
-        parts.demand.shoulder = shape;
-        parts.demand.monthly = [1.0; 12];
+        parts.climates[0].shapes[0] = shape;
+        parts.climates[0].shapes[1] = shape;
+        parts.climates[0].shapes[2] = shape;
+        parts.climates[0].monthly = [1.0; 12];
     });
     s.empty_start();
     s
@@ -1505,10 +1570,10 @@ fn minimum_generation_worse_end_ties_to_minute_zero() {
 /// committed.
 fn flat_500_session() -> GameSession {
     let mut s = session_with(|parts| {
-        parts.demand.winter = [0.5; 24];
-        parts.demand.summer = [0.5; 24];
-        parts.demand.shoulder = [0.5; 24];
-        parts.demand.monthly = [1.0; 12];
+        parts.climates[0].shapes[0] = [0.5; 24];
+        parts.climates[0].shapes[1] = [0.5; 24];
+        parts.climates[0].shapes[2] = [0.5; 24];
+        parts.climates[0].monthly = [1.0; 12];
     });
     s.empty_start();
     s
@@ -1640,7 +1705,7 @@ fn capacity_shortfall_check_previews_a_fresh_days_water_after_a_spent_day() {
 fn shaped_day(month: SimMonth, scale: f64, instant: bool) -> GameSession {
     let mut parts = crate::region::fixtures::tiny_region_parts();
     parts.start.month = month;
-    parts.demand.forecast_error = Ratio::ZERO;
+    parts.demand_noise.forecast_error = Ratio::ZERO;
     for city in &mut parts.cities {
         city.base_load = city.base_load * scale;
     }

@@ -7,7 +7,7 @@ use crate::units::{MegawattHours, Megawatts};
 
 fn storage_session() -> (GameSession, PlantId) {
     let mut parts = fixtures::tiny_region_parts();
-    parts.demand.forecast_error = Ratio::ZERO;
+    parts.demand_noise.forecast_error = Ratio::ZERO;
     parts.start.fleet.push(StartPlantDef {
         kind: PlantKind::Battery,
         cell: CellCoord { x: 5, y: 1 },
@@ -37,11 +37,11 @@ proptest::proptest! {
         parts.start.fleet.retain(|p| p.kind == PlantKind::Ccgt);
         parts.start.fleet.push(StartPlantDef { kind: PlantKind::Battery, cell: CellCoord { x: 5, y: 1 } });
         parts.catalog.iter_mut().find(|p| p.kind == PlantKind::Battery).unwrap().battery.as_mut().unwrap().energy_capacity = MegawattHours::new(energy);
-        parts.demand.forecast_error = Ratio::ZERO;
+        parts.demand_noise.forecast_error = Ratio::ZERO;
         let mut shape = [1.0; 24];
         shape[peak..peak + 2].fill(1.5);
-        parts.demand.winter = shape; parts.demand.summer = shape; parts.demand.shoulder = shape;
-        parts.demand.monthly = [1.0; 12];
+        parts.climates[0].shapes[0] = shape; parts.climates[0].shapes[1] = shape; parts.climates[0].shapes[2] = shape;
+        parts.climates[0].monthly = [1.0; 12];
         let count = parts.start.connected_cities.len() as f64;
         for city in &mut parts.cities { city.base_load = Megawatts::new(400.0 / count); }
         let s = GameSession::new(Arc::new(RegionDefinition::try_from(parts).unwrap()), 7, GameSettings::default());
@@ -318,7 +318,7 @@ fn battery_monthly_weighting_includes_leap_february() {
     for (year, month, days) in [(2027, 2, 28), (2028, 2, 29), (2027, 4, 30), (2027, 1, 31)] {
         let mut parts = fixtures::tiny_region_parts();
         parts.start.month = crate::time::SimMonth::new(year, month).unwrap();
-        parts.demand.forecast_error = Ratio::ZERO;
+        parts.demand_noise.forecast_error = Ratio::ZERO;
         parts.start.fleet.push(StartPlantDef {
             kind: PlantKind::Battery,
             cell: CellCoord { x: 5, y: 1 },
@@ -358,13 +358,13 @@ fn battery_monthly_weighting_includes_leap_february() {
 fn battery_reserve_preserves_peaker_dispatch_and_customer_revenue() {
     fn play(storage: bool) -> Box<MonthlyReport> {
         let mut p = fixtures::tiny_region_parts();
-        p.demand.forecast_error = Ratio::ZERO;
+        p.demand_noise.forecast_error = Ratio::ZERO;
         let mut shape = [0.5; 24];
         shape[17..24].fill(1.0);
-        p.demand.winter = shape;
-        p.demand.summer = shape;
-        p.demand.shoulder = shape;
-        p.demand.monthly = [1.0; 12];
+        p.climates[0].shapes[0] = shape;
+        p.climates[0].shapes[1] = shape;
+        p.climates[0].shapes[2] = shape;
+        p.climates[0].monthly = [1.0; 12];
         p.catalog
             .iter_mut()
             .find(|s| s.kind == PlantKind::Ccgt)

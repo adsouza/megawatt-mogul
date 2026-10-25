@@ -154,7 +154,7 @@ impl<'a> BatteryPlanningInputs<'a> {
             PlanningMinute {
                 demand: crate::demand::forecast_demand(
                     self.cities.iter().copied(),
-                    self.region.demand(),
+                    self.region,
                     self.month,
                     tick,
                 ),

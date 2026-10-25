@@ -667,14 +667,15 @@ mod tests {
         );
         let session = original.session();
         let capacity = session.region().spec(PlantKind::Ccgt).capacity.value();
-        let peak = session
-            .region()
-            .demand()
-            .winter
-            .iter()
-            .copied()
-            .fold(0.0, f64::max)
-            * session.region().demand().monthly[session.clock().month().index0()];
+        let peak = (0..24)
+            .map(|hour| {
+                session.region().load_factor(
+                    session.region().cities()[0].id,
+                    session.clock().month(),
+                    hour * 60,
+                )
+            })
+            .fold(0.0, f64::max);
         let cities = session
             .city_views()
             .iter()

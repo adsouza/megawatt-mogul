@@ -219,12 +219,12 @@ fn peaker_commissions_after_twelve_months_with_exact_instalments() {
 /// (500 MW firm) builds in one month.
 fn flat_december() -> RegionDefinitionParts {
     let mut parts = starting_in(2027, 12);
-    let demand = &mut parts.demand;
-    demand.winter = [1.0; 24];
-    demand.summer = [1.0; 24];
-    demand.shoulder = [1.0; 24];
+    let demand = &mut parts.climates[0];
+    demand.shapes[0] = [1.0; 24];
+    demand.shapes[1] = [1.0; 24];
+    demand.shapes[2] = [1.0; 24];
     demand.monthly = [1.0; 12];
-    demand.forecast_error = Ratio::ZERO;
+    parts.demand_noise.forecast_error = Ratio::ZERO;
     parts.cities[0].base_load = Megawatts::new(1000.0);
     parts.cities[1].base_load = Megawatts::new(1000.0);
     parts.cities[1].cell = cell(7, 5);
@@ -1226,7 +1226,7 @@ fn a_balanced_month_reports_no_trips() {
 /// the day opens in a rotating outage that deepens with the load.
 fn shortage_session() -> GameSession {
     let mut parts = tiny_region_parts();
-    parts.demand.forecast_error = Ratio::ZERO;
+    parts.demand_noise.forecast_error = Ratio::ZERO;
     parts.start.connected_cities.push(CityId(3));
     let city = parts.cities.iter_mut().find(|c| c.id == CityId(3)).unwrap();
     city.base_load = Megawatts::new(3_000.0);

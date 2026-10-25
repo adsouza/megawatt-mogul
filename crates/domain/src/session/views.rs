@@ -75,10 +75,9 @@ pub struct CityView {
 }
 
 /// One city's demand, for the coming day in Planning or the day being played
-/// (spec §16.8). Every city shares one demand shape and one noise process,
-/// and a rotating outage or protection's shed falls on connected cities in
-/// proportion, so a connected city's figures are the system's scaled by its
-/// share of the connected base load.
+/// (spec §16.8). Cities use their local climate and share one noise process.
+/// Outages and shedding fall in proportion to their instantaneous forecast
+/// demand. `share` continues to describe their share of connected base load.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CityDetail {
     pub id: CityId,
@@ -361,15 +360,40 @@ impl GameSession {
         } else {
             Ratio::ZERO
         };
-        // The city's own forecast: the system's shape on its base load alone, so
-        // an unconnected city shows what it would add.
-        let forecast = hourly_forecast([city], self.region.demand(), self.clock.month());
+        // The city's own climate in its local time, including the load an
+        // unconnected city would add.
+        let forecast = hourly_forecast([city], &self.region, self.clock.month());
         let peak = forecast.iter().fold(forecast[0], |best, point| {
             if point.mean > best.mean { *point } else { best }
         });
         let live = (connected && self.phase == DayPhase::Operating)
             .then(|| self.day_ticks.last())
             .flatten();
+        let live_share = live.map(|tick| {
+            let month = self.clock.month();
+            let factor = self.region.load_factor(id, month, tick.tick);
+            let mut identical = true;
+            let total: Megawatts = self
+                .power
+                .cities()
+                .values()
+                .filter(|other| network.is_connected(other.node()))
+                .map(|other| {
+                    let other_factor = self.region.load_factor(other.id(), month, tick.tick);
+                    identical &= other_factor == factor;
+                    other.def().base_load * other_factor
+                })
+                .sum();
+            // Preserve the original base-share arithmetic for uniform climates,
+            // including every legacy region. Avoid cancellation roundoff.
+            if identical {
+                share
+            } else if total > Megawatts::ZERO {
+                Ratio::new(((base_load * factor) / total).clamp(0.0, 1.0)).unwrap_or(Ratio::ZERO)
+            } else {
+                Ratio::ZERO
+            }
+        });
         Some(CityDetail {
             id,
             name_key: city.def().name_key.clone(),
@@ -378,8 +402,12 @@ impl GameSession {
             share,
             peak: peak.mean,
             peak_hour: peak.hour,
-            demand_now: live.map(|tick| share.of(tick.demand)),
-            served_now: live.map(|tick| share.of(tick.served)),
+            demand_now: live
+                .zip(live_share)
+                .map(|(tick, weight)| weight.of(tick.demand)),
+            served_now: live
+                .zip(live_share)
+                .map(|(tick, weight)| weight.of(tick.served)),
         })
     }
 
@@ -422,7 +450,7 @@ impl GameSession {
             .cities()
             .values()
             .filter(|city| network.is_connected(city.node()));
-        hourly_forecast(connected, self.region.demand(), self.clock.month())
+        hourly_forecast(connected, &self.region, self.clock.month())
     }
 
     /// Today's hydro peak-shaving schedule (spec §12.6), valid per phase:

@@ -7,10 +7,10 @@ fn wind_region() -> RegionDefinition {
         p.wind.monthly = [0.5; 12];
         p.wind.initial_sd = 0.0;
         p.wind.innovation_sd = 0.0;
-        p.demand.winter = [1.0; 24];
-        p.demand.summer = [1.0; 24];
-        p.demand.shoulder = [1.0; 24];
-        p.demand.monthly = [1.0; 12];
+        p.climates[0].shapes[0] = [1.0; 24];
+        p.climates[0].shapes[1] = [1.0; 24];
+        p.climates[0].shapes[2] = [1.0; 24];
+        p.climates[0].monthly = [1.0; 12];
         for city in &mut p.cities {
             city.base_load = Megawatts::new(300.0);
         }

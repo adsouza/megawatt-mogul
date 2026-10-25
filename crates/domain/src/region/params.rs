@@ -14,17 +14,6 @@ pub struct CityDef {
     pub base_load: Megawatts,
 }
 
-/// Demand multipliers. Spring and autumn use `shoulder`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct DemandShape {
-    pub winter: [f64; 24],
-    pub summer: [f64; 24],
-    pub shoulder: [f64; 24],
-    pub monthly: [f64; 12],
-    pub forecast_error: Ratio,
-    pub error_persistence: f64,
-}
-
 /// Solar resource parameters. `daylight` holds (sunrise, sunset) hours per month.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SolarParams {

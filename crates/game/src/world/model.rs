@@ -278,11 +278,7 @@ impl WorldModel {
                     detail.demand_now.unwrap_or_else(|| {
                         // Disconnected cities still have demand, even when none is served.
                         detail.base_load
-                            * domain::demand::shape_factor(
-                                region.demand(),
-                                s.clock().month(),
-                                s.clock().tick(),
-                            )
+                            * region.load_factor(c.id, s.clock().month(), s.clock().tick())
                     })
                 } else {
                     detail.base_load

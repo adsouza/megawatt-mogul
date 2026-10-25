@@ -5,10 +5,10 @@
 
 use domain::ids::{CellCoord, CityId, RegionId};
 use domain::region::{
-    CityDef, CityLocale, ClimateId, DemandShape, FrequencyParams, GeoBounds, HydroParams,
-    LineParams, PlantKind, PlantSpec, RegionClock, RegionDefinition, RegionDefinitionParts,
-    RegionError, RegulatorParams, SatisfactionParams, SitingRule, SolarParams, StartDef,
-    StartPlantDef, StorageAccreditation, TimeZone, WindParams, ZoneId,
+    Calendar, CityDef, CityLocale, Climate, ClimateId, DemandNoiseParams, FrequencyParams,
+    GeoBounds, HydroParams, LineParams, PlantKind, PlantSpec, RegionClock, RegionDefinition,
+    RegionDefinitionParts, RegionError, RegulatorParams, SatisfactionParams, SitingRule,
+    SolarParams, StartDef, StartPlantDef, StorageAccreditation, TimeZone, WindParams, ZoneId,
 };
 use domain::time::{SimDuration, SimMonth, TICKS_PER_HOUR};
 use domain::units::{Hertz, Megawatts, Money, Price, RampRate, Ratio};
@@ -84,7 +84,12 @@ pub fn map_region(mut file: RegionFile) -> Result<RegionDefinition> {
             .iter()
             .map(|c| map_city(&file, c))
             .collect::<Result<Vec<_>>>()?,
-        demand: map_demand(&file.demand)?,
+        climates: vec![map_demand(&file.demand)?],
+        demand_noise: DemandNoiseParams {
+            forecast_error: ratio(file.demand.forecast_error, "demand.forecast_error")?,
+            error_persistence: finite(file.demand.error_persistence, "demand.error_persistence")?,
+        },
+        calendar: Calendar::northern_meteorological(),
         solar: map_solar(&file.solar)?,
         wind: WindParams {
             monthly: array(&wind.monthly, "wind.monthly")?,
@@ -311,14 +316,16 @@ fn map_city(file: &RegionFile, city: &CityDto) -> Result<CityDef> {
     })
 }
 
-fn map_demand(demand: &DemandDto) -> Result<DemandShape> {
-    Ok(DemandShape {
-        winter: array(&demand.winter, "demand.winter")?,
-        summer: array(&demand.summer, "demand.summer")?,
-        shoulder: array(&demand.shoulder, "demand.shoulder")?,
+fn map_demand(demand: &DemandDto) -> Result<Climate> {
+    Ok(Climate {
+        id: ClimateId(0),
+        shapes: vec![
+            array(&demand.winter, "demand.winter")?,
+            array(&demand.summer, "demand.summer")?,
+            array(&demand.shoulder, "demand.shoulder")?,
+        ],
+        month_shapes: [0, 0, 2, 2, 2, 1, 1, 1, 2, 2, 2, 0],
         monthly: array(&demand.monthly, "demand.monthly")?,
-        forecast_error: ratio(demand.forecast_error, "demand.forecast_error")?,
-        error_persistence: finite(demand.error_persistence, "demand.error_persistence")?,
     })
 }
 

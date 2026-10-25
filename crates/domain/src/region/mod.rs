@@ -2,7 +2,11 @@
 //! parameters and the starting scenario. Constructing one validates it, so the
 //! rest of the domain can rely on its invariants.
 
+mod climate;
 mod clock;
+pub use climate::{Calendar, Climate, DemandNoiseParams};
+#[cfg(test)]
+mod climate_tests;
 mod params;
 mod plant_spec;
 mod terrain;
@@ -19,8 +23,8 @@ use crate::ids::{CellCoord, CityId, RegionId};
 pub use clock::{CityLocale, ClimateId, GeoBounds, RegionClock, TimeZone, ZoneId};
 
 pub use params::{
-    CityDef, DemandShape, FrequencyParams, HydroParams, LineParams, RegulatorParams,
-    SatisfactionParams, SolarParams, StartDef, StartPlantDef, StorageAccreditation, WindParams,
+    CityDef, FrequencyParams, HydroParams, LineParams, RegulatorParams, SatisfactionParams,
+    SolarParams, StartDef, StartPlantDef, StorageAccreditation, WindParams,
 };
 pub use plant_spec::{BatterySpec, PlantKind, PlantSpec, SitingRule};
 pub use terrain::{Cell, TerrainGrid};
@@ -90,7 +94,9 @@ pub struct RegionDefinitionParts {
     pub terrain: TerrainGrid,
     pub catalog: Vec<PlantSpec>,
     pub cities: Vec<CityDef>,
-    pub demand: DemandShape,
+    pub climates: Vec<Climate>,
+    pub demand_noise: DemandNoiseParams,
+    pub calendar: Calendar,
     pub solar: SolarParams,
     pub wind: WindParams,
     pub hydro: HydroParams,
@@ -113,7 +119,9 @@ pub struct RegionDefinition {
     /// One spec per kind, in `PlantKind::ALL` order.
     catalog: Vec<PlantSpec>,
     cities: Vec<CityDef>,
-    demand: DemandShape,
+    climates: Vec<Climate>,
+    demand_noise: DemandNoiseParams,
+    calendar: Calendar,
     solar: SolarParams,
     wind: WindParams,
     hydro: HydroParams,
@@ -144,10 +152,6 @@ impl RegionDefinition {
 
     pub fn cities(&self) -> &[CityDef] {
         &self.cities
-    }
-
-    pub fn demand(&self) -> &DemandShape {
-        &self.demand
     }
 
     pub fn solar(&self) -> &SolarParams {
@@ -314,11 +318,7 @@ fn check_shape(ok: bool, field: &'static str) -> Result<(), RegionError> {
 }
 
 fn validate_shapes(parts: &RegionDefinitionParts) -> Result<(), RegionError> {
-    let d = &parts.demand;
-    check_shape(all_positive(&d.winter), "demand.winter")?;
-    check_shape(all_positive(&d.summer), "demand.summer")?;
-    check_shape(all_positive(&d.shoulder), "demand.shoulder")?;
-    check_shape(all_positive(&d.monthly), "demand.monthly")?;
+    climate::validate(parts)?;
     let w = &parts.wind;
     check_shape(
         w.monthly
@@ -347,11 +347,7 @@ fn validate_shapes(parts: &RegionDefinitionParts) -> Result<(), RegionError> {
         all_positive(&parts.hydro.monthly_flow),
         "hydro.monthly_flow",
     )?;
-    // |phi| >= 1 would make the AR(1) innovation scale sqrt(1 - phi^2) NaN or zero.
-    check_shape(
-        (0.0..1.0).contains(&d.error_persistence),
-        "demand.error_persistence",
-    )
+    Ok(())
 }
 
 fn check_band(ok: bool, field: &'static str) -> Result<(), RegionError> {
@@ -516,7 +512,9 @@ impl TryFrom<RegionDefinitionParts> for RegionDefinition {
             terrain: parts.terrain,
             catalog,
             cities: parts.cities,
-            demand: parts.demand,
+            climates: parts.climates,
+            demand_noise: parts.demand_noise,
+            calendar: parts.calendar,
             solar: parts.solar,
             wind: parts.wind,
             hydro: parts.hydro,
@@ -634,9 +632,9 @@ mod tests {
                 RegionError::InvalidHomeCity(CityId(99)),
             ),
             (
-                |p| p.demand.monthly[3] = 0.0,
+                |p| p.climates[0].monthly[3] = -0.1,
                 RegionError::InvalidShape {
-                    field: "demand.monthly",
+                    field: "climates.monthly",
                 },
             ),
             (
@@ -812,17 +810,17 @@ mod tests {
     }
 
     #[test]
-    fn demand_shapes_must_be_positive_and_finite() {
+    fn demand_shapes_must_be_nonnegative_and_finite() {
         for (field, edit) in [
             (
-                "demand.winter",
-                (|d: &mut DemandShape| d.winter[5] = 0.0) as fn(&mut DemandShape),
+                "climates.shapes",
+                (|d: &mut Climate| d.shapes[0][5] = -0.1) as fn(&mut Climate),
             ),
-            ("demand.summer", |d| d.summer[23] = -0.1),
-            ("demand.shoulder", |d| d.shoulder[0] = f64::NAN),
-            ("demand.monthly", |d| d.monthly[11] = f64::INFINITY),
+            ("climates.shapes", |d| d.shapes[1][23] = -0.1),
+            ("climates.shapes", |d| d.shapes[2][0] = f64::NAN),
+            ("climates.monthly", |d| d.monthly[11] = f64::INFINITY),
         ] {
-            let r = RegionDefinition::try_from(parts_with(|p| edit(&mut p.demand)));
+            let r = RegionDefinition::try_from(parts_with(|p| edit(&mut p.climates[0])));
             assert_eq!(
                 r.unwrap_err(),
                 RegionError::InvalidShape { field },
@@ -931,19 +929,19 @@ mod tests {
         let cases: Vec<(Edit, RegionError)> = vec![
             // demand.error_persistence in [0, 1)
             (
-                |p| p.demand.error_persistence = 1.0,
+                |p| p.demand_noise.error_persistence = 1.0,
                 shape("demand.error_persistence"),
             ),
             (
-                |p| p.demand.error_persistence = 1.5,
+                |p| p.demand_noise.error_persistence = 1.5,
                 shape("demand.error_persistence"),
             ),
             (
-                |p| p.demand.error_persistence = -0.01,
+                |p| p.demand_noise.error_persistence = -0.01,
                 shape("demand.error_persistence"),
             ),
             (
-                |p| p.demand.error_persistence = f64::NAN,
+                |p| p.demand_noise.error_persistence = f64::NAN,
                 shape("demand.error_persistence"),
             ),
             // regulator counts
@@ -1181,8 +1179,8 @@ mod tests {
     #[test]
     fn range_boundaries_are_accepted() {
         let cases: Vec<Edit> = vec![
-            |p| p.demand.error_persistence = 0.0,
-            |p| p.demand.error_persistence = 0.999_999,
+            |p| p.demand_noise.error_persistence = 0.0,
+            |p| p.demand_noise.error_persistence = 0.999_999,
             |p| p.regulator.strikes_to_revoke = 1,
             |p| p.regulator.clean_months_to_expire = 1,
             |p| p.catalog[PEAKER].capacity = mw(0.001),
@@ -1223,7 +1221,7 @@ mod tests {
     fn with_two_faults_the_earlier_validation_stage_reports() {
         // catalog, then cities, then start, then shapes, then bands.
         let bad_band = |p: &mut RegionDefinitionParts| p.regulator.min_return = Ratio::ONE;
-        let bad_shape = |p: &mut RegionDefinitionParts| p.demand.winter[0] = 0.0;
+        let bad_shape = |p: &mut RegionDefinitionParts| p.climates[0].shapes[0][0] = -0.1;
         let bad_start = |p: &mut RegionDefinitionParts| p.start.home_city = CityId(99);
         let bad_city = |p: &mut RegionDefinitionParts| p.cities[0].cell = CellCoord { x: 50, y: 4 };
         let bad_catalog = |p: &mut RegionDefinitionParts| {
@@ -1241,7 +1239,7 @@ mod tests {
         assert_eq!(
             err(&bad_band, &bad_shape),
             RegionError::InvalidShape {
-                field: "demand.winter"
+                field: "climates.shapes"
             }
         );
         assert_eq!(

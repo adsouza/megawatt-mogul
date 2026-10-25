@@ -801,11 +801,11 @@ fn stopped_hydro_with_agc_enabled_does_not_starve_the_running_unit() {
     // A flat, noise-free load that either fixture hydro plant can serve alone.
     let demand = parts.cities[0].base_load;
     parts.start.connected_cities = vec![parts.cities[0].id];
-    parts.demand.winter = [1.0; 24];
-    parts.demand.summer = [1.0; 24];
-    parts.demand.shoulder = [1.0; 24];
-    parts.demand.monthly = [1.0; 12];
-    parts.demand.forecast_error = Ratio::ZERO;
+    parts.climates[0].shapes[0] = [1.0; 24];
+    parts.climates[0].shapes[1] = [1.0; 24];
+    parts.climates[0].shapes[2] = [1.0; 24];
+    parts.climates[0].monthly = [1.0; 12];
+    parts.demand_noise.forecast_error = Ratio::ZERO;
     // Give the second unit its own equivalent hydro site. Both lines still price five cells.
     let terrain = &parts.terrain;
     let hydro_site = terrain.get(cell(10, 1)).unwrap();

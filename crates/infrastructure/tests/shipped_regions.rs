@@ -12,7 +12,6 @@ use application::{
     Command, Game, InMemoryCommandLog, LoadedRegion, RegionCatalog, RegionListing, RegionLoadError,
     RegionSummary,
 };
-use domain::demand::shape_factor;
 use domain::events::DomainEvent;
 use domain::generation::PlantStatus;
 use domain::grid::TickSummary;
@@ -67,7 +66,9 @@ fn max_shape_factor(region: &RegionDefinition) -> f64 {
     (1..=12)
         .flat_map(|month| {
             let month = SimMonth::new(2027, month).expect("valid month");
-            (0..24).map(move |hour| shape_factor(region.demand(), month, hour * TICKS_PER_HOUR))
+            (0..24).map(move |hour| {
+                region.load_factor(region.cities()[0].id, month, hour * TICKS_PER_HOUR)
+            })
         })
         .fold(f64::MIN, f64::max)
 }

@@ -394,11 +394,7 @@ fn world_city_heights_are_proportional_to_demand_in_planning_and_operation() {
                 } else {
                     detail.demand_now.unwrap_or_else(|| {
                         detail.base_load
-                            * domain::demand::shape_factor(
-                                model.region.demand(),
-                                model.month,
-                                model.tick,
-                            )
+                            * model.region.load_factor(city.id, model.month, model.tick)
                     })
                 };
                 let demand = expected.value() as f32;

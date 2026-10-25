@@ -216,7 +216,7 @@ fn cities() -> Vec<CityDef> {
     ]
 }
 
-fn demand() -> DemandShape {
+fn climate() -> Climate {
     let shoulder = [
         0.70, 0.66, 0.64, 0.63, 0.64, 0.68, 0.76, 0.85, 0.90, 0.92, 0.93, 0.94, 0.94, 0.94, 0.95,
         0.96, 0.98, 1.00, 0.99, 0.96, 0.91, 0.85, 0.78, 0.73,
@@ -230,15 +230,17 @@ fn demand() -> DemandShape {
         }
         shape
     };
-    DemandShape {
-        winter: scaled(|h| matches!(h, 6..=9 | 17..=21), 1.1),
-        summer: scaled(|h| matches!(h, 10..=19), 1.15),
-        shoulder,
+    Climate {
+        id: ClimateId(0),
+        shapes: vec![
+            scaled(|h| matches!(h, 6..=9 | 17..=21), 1.1),
+            scaled(|h| matches!(h, 10..=19), 1.15),
+            shoulder,
+        ],
+        month_shapes: [0, 0, 2, 2, 2, 1, 1, 1, 2, 2, 2, 0],
         monthly: [
             1.10, 1.05, 0.95, 0.90, 0.95, 1.05, 1.15, 1.15, 1.00, 0.92, 0.98, 1.08,
         ],
-        forecast_error: r(0.03),
-        error_persistence: 0.995,
     }
 }
 
@@ -360,7 +362,12 @@ pub fn tiny_region_parts() -> RegionDefinitionParts {
         terrain: terrain(),
         catalog: catalog(),
         cities: cities(),
-        demand: demand(),
+        climates: vec![climate()],
+        demand_noise: DemandNoiseParams {
+            forecast_error: r(0.03),
+            error_persistence: 0.995,
+        },
+        calendar: Calendar::northern_meteorological(),
         solar: solar(),
         wind: WindParams {
             monthly: [0.6; 12],
@@ -429,8 +436,8 @@ pub fn may_2033_parts() -> RegionDefinitionParts {
         .min_stable = r(0.3);
     parts.cities[0].base_load = Megawatts::new(2_131.272);
     parts.cities[1].base_load = Megawatts::new(1_420.848);
-    parts.demand.shoulder = [1.0; 24];
-    parts.demand.monthly = [1.0; 12];
-    parts.demand.forecast_error = Ratio::ZERO;
+    parts.climates[0].shapes[2] = [1.0; 24];
+    parts.climates[0].monthly = [1.0; 12];
+    parts.demand_noise.forecast_error = Ratio::ZERO;
     parts
 }

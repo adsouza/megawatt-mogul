@@ -245,7 +245,16 @@ fn maps_the_same_values_as_the_domain_fixture() {
     let tiny = tiny_region();
     assert_eq!(def.catalog(), tiny.catalog());
     assert_eq!(def.cities(), tiny.cities());
-    assert_eq!(def.demand(), tiny.demand());
+    assert_eq!(def.demand_noise(), tiny.demand_noise());
+    for m in 1..=12 {
+        for t in 0..1440 {
+            let month = domain::time::SimMonth::new(2027, m).unwrap();
+            assert_eq!(
+                def.load_factor(def.cities()[0].id, month, t).to_bits(),
+                tiny.load_factor(tiny.cities()[0].id, month, t).to_bits()
+            );
+        }
+    }
     assert_eq!(def.solar(), tiny.solar());
     assert_eq!(def.hydro(), tiny.hydro());
     assert_eq!(def.frequency(), tiny.frequency());

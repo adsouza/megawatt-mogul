@@ -95,7 +95,7 @@ pub fn top_bar_model(game: &Game, persistence: &Persistence, l10n: &Localizer) -
     );
     TopBarModel {
         date: format::month_year(grid.month),
-        season: grid.month.season().localize(l10n),
+        season: session.region().season(grid.month).localize(l10n),
         phase: grid.phase.localize(l10n),
         cash: stat("topbar-cash", format::money(company.cash)),
         reliability: stat("topbar-reliability", format::percent(company.reliability)),

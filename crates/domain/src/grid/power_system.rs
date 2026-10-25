@@ -503,7 +503,7 @@ impl PowerSystem {
         let params = region.frequency();
         let mut events = Vec::new();
         let hour = u8::try_from(tick / TICKS_PER_HOUR).unwrap_or(u8::MAX);
-        let error = self.noise.step(region.demand(), rng);
+        let error = self.noise.step(region.demand_noise(), rng);
         if tick > 0 {
             let w = region.wind();
             self.wind_factor = crate::generation::wind_step(
@@ -1280,7 +1280,7 @@ impl PowerSystem {
         month: SimMonth,
         tick: u32,
     ) -> Megawatts {
-        forecast_demand(self.connected_cities(), region.demand(), month, tick)
+        forecast_demand(self.connected_cities(), region, month, tick)
     }
 
     /// Expected output of connected commissioned solar at `tick`, using the
@@ -1347,7 +1347,7 @@ impl PowerSystem {
         let mut month = first_month;
         let mut peak = Megawatts::ZERO;
         for _ in 0..MONTHS_PER_YEAR {
-            for point in hourly_forecast(cities.iter().copied(), region.demand(), month) {
+            for point in hourly_forecast(cities.iter().copied(), region, month) {
                 peak = peak.max(point.mean);
             }
             month = month.next();

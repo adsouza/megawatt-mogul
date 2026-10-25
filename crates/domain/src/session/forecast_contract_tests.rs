@@ -172,8 +172,8 @@ proptest! {
         let spec = parts.catalog.iter().find(|p| p.kind == PlantKind::Ccgt).unwrap();
         let target = spec.min_output() + (spec.capacity - spec.min_output()) * (f64::from(fraction) / 100.0);
         parts.start.fleet.retain(|p| p.kind == PlantKind::Ccgt);
-        parts.demand.forecast_error = Ratio::ZERO;
-        parts.demand.winter = [1.0; 24]; parts.demand.summer = [1.0; 24]; parts.demand.shoulder = [1.0; 24]; parts.demand.monthly = [1.0; 12];
+        parts.demand_noise.forecast_error = Ratio::ZERO;
+        parts.climates[0].shapes[0] = [1.0; 24]; parts.climates[0].shapes[1] = [1.0; 24]; parts.climates[0].shapes[2] = [1.0; 24]; parts.climates[0].monthly = [1.0; 12];
         let customers = parts.start.connected_cities.len() as f64;
         for city in &mut parts.cities { city.base_load = target * (1.0 / customers); }
         let mut s = make(parts);

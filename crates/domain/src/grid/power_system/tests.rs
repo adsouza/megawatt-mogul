@@ -1,5 +1,5 @@
 use super::*;
-use crate::demand::shape_factor;
+
 use crate::generation::{CommitmentSchedule, PlantStatus, water_fill};
 use crate::grid::network::{LineStatus, Node, NodeKind};
 use crate::ids::{CellCoord, LineId};
@@ -933,7 +933,7 @@ fn tick_completed_carries_the_summary_last() {
 fn connected_demand_forecast_counts_connected_cities_only() {
     let region = tiny_region();
     let sys = system_with(&region, &[]);
-    let factor = shape_factor(region.demand(), april(), 600);
+    let factor = region.load_factor(region.cities()[0].id, april(), 600);
     let forecast = sys.connected_demand_forecast(&region, april(), 600);
     assert!((forecast.value() - 1000.0 * factor).abs() < 1e-9);
 }
@@ -1050,7 +1050,7 @@ fn projected_peak_uses_summed_hourly_means_and_current_connectivity() {
         let mut best = 0.0f64;
         for _ in 0..12 {
             for h in 0..24 {
-                best = best.max(shape_factor(region.demand(), month, h * 60 + 30));
+                best = best.max(region.load_factor(region.cities()[0].id, month, h * 60 + 30));
             }
             month = month.next();
         }
@@ -1309,7 +1309,7 @@ fn tick_demand_is_the_forecast_times_one_plus_the_drawn_error() {
     for t in 0..40 {
         let mut shadow_rng = rng.clone();
         let mut shadow_noise = sys.noise;
-        let error = shadow_noise.step(region.demand(), &mut shadow_rng);
+        let error = shadow_noise.step(region.demand_noise(), &mut shadow_rng);
         let forecast = sys.connected_demand_forecast(&region, april(), t);
         let (s, _) = sys.tick(&region, april(), t, &mut rng);
         assert!(close(s.demand, forecast * (1.0 + error)), "tick {t}");
@@ -2526,7 +2526,7 @@ fn the_last_hour_is_not_ramped_to_zero_before_midnight() {
     // otherwise AGC may legitimately reduce output as customer demand falls.
     let region = region_with(|parts| {
         noise_free(parts);
-        parts.demand.winter = [1.0; 24];
+        parts.climates[0].shapes[0] = [1.0; 24];
     });
     let mut sys = west_like_fleet(&region);
     let mut rng = SimRng::from_seed(21);
@@ -3652,7 +3652,7 @@ fn region_with(edit: impl FnOnce(&mut crate::region::RegionDefinitionParts)) -> 
 
 /// Turns demand noise off, so a tick's demand is exactly the forecast.
 fn noise_free(parts: &mut crate::region::RegionDefinitionParts) {
-    parts.demand.forecast_error = Ratio::ZERO;
+    parts.demand_noise.forecast_error = Ratio::ZERO;
 }
 
 /// Connects city 3 at the start too, with `base_load` MW of base load: the
@@ -3866,7 +3866,7 @@ fn the_boundary_is_dispatched_against_the_load_hour_zeros_outage_leaves() {
     // capacity; the second must bring it down to the reduced load.
     let region = region_with(|p| {
         connect_city_3(p, 2_000.0);
-        p.demand.shoulder[1] = 0.90;
+        p.climates[0].shapes[2][1] = 0.90;
     });
     let mut sys = auto_follow_fleet(&region);
     sys.begin_day(&region, april(), &mut SimRng::from_seed(3));
