@@ -327,6 +327,7 @@ pub struct RegionChoice {
     pub button: ButtonModel,
     pub description: Option<String>,
     pub detail: Option<String>,
+    pub metadata: Option<String>,
     pub(super) artwork: Option<std::sync::Arc<region_atlas::Artwork>>,
     /// Why the region can't be played, when it can't: a status word and the localised error.
     pub problem: Option<RegionProblem>,
@@ -344,6 +345,7 @@ pub struct RegionSelectModel {
     pub subtitle: String,
     pub map_title: String,
     pub map_note: String,
+    pub land_note: String,
     pub seed_label: String,
     pub seed_invalid: String,
     pub regions: Vec<RegionChoice>,
@@ -378,6 +380,7 @@ pub fn region_select_model(
         subtitle: l10n.text("region-select-subtitle"),
         map_title: l10n.text("region-select-map-title"),
         map_note: l10n.text("region-select-map-note"),
+        land_note: l10n.text("region-select-land-note"),
         seed_label: l10n.text("menu-seed"),
         seed_invalid: l10n.text("menu-seed-invalid"),
         regions,
@@ -399,6 +402,7 @@ fn region_choice(listing: &RegionListing, seed: Option<u64>, l10n: &Localizer) -
                 _ => None,
             },
             detail: None,
+            metadata: None,
             artwork: None,
             button: ButtonModel::new(
                 l10n.text(&summary.name_key),
@@ -413,6 +417,7 @@ fn region_choice(listing: &RegionListing, seed: Option<u64>, l10n: &Localizer) -
         Err(error) => RegionChoice {
             description: None,
             detail: None,
+            metadata: None,
             artwork: None,
             // A broken file has no name to translate: its id (the file name) is all there is.
             button: ButtonModel::new(
@@ -464,6 +469,7 @@ pub fn draw_region_select(
     ui.add_space(12.0);
     let content_height = (ui.available_height() - 50.0).max(80.0);
     egui::ScrollArea::vertical()
+        .animated(false)
         .max_height(content_height)
         .show(ui, |ui| {
             let has_map = model.regions.iter().any(|choice| choice.artwork.is_some());
@@ -482,8 +488,24 @@ pub fn draw_region_select(
                                     egui::vec2(6.0, 28.0),
                                     egui::Sense::hover(),
                                 );
-                                ui.painter()
-                                    .rect_filled(rect, 3.0, region_atlas::colour(index));
+                                ui.painter().rect_filled(
+                                    rect,
+                                    3.0,
+                                    region_atlas::colour(choice, index),
+                                );
+                                if let Some(letter) = region_atlas::letter(choice) {
+                                    let (rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(18.0, 28.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    super::theme::paint_label(
+                                        ui.painter(),
+                                        rect.center(),
+                                        egui::Align2::CENTER_CENTER,
+                                        letter,
+                                        13.0,
+                                    );
+                                }
                                 let response = add_enabled(
                                     ui,
                                     choice.button.enabled,
@@ -495,6 +517,9 @@ pub fn draw_region_select(
                                     .min_size(egui::vec2(ui.available_width(), 48.0))
                                     .wrap(),
                                 );
+                                if response.has_focus() {
+                                    response.scroll_to_me(Some(egui::Align::Center));
+                                }
                                 if response.hovered() || response.has_focus() {
                                     hovered = Some(index);
                                 }
@@ -509,6 +534,10 @@ pub fn draw_region_select(
                             if let Some(detail) = &choice.detail {
                                 ui.add_space(10.0);
                                 ui.weak(detail);
+                            }
+                            if let Some(metadata) = &choice.metadata {
+                                ui.add_space(6.0);
+                                ui.label(metadata);
                             }
                             if let Some(problem) = &choice.problem {
                                 ui.colored_label(
@@ -528,11 +557,11 @@ pub fn draw_region_select(
             };
             if wide {
                 let width = ui.available_width();
-                let map_width = (width * 0.66).min(content_height * 1.6);
+                let map_width = (width * 0.66).min(content_height * region_atlas::aspect());
                 ui.horizontal_top(|ui| {
                     let map_rect = egui::Rect::from_min_size(
                         ui.cursor().min,
-                        egui::vec2(map_width, map_width / 1.6),
+                        egui::vec2(map_width, map_width / region_atlas::aspect()),
                     );
                     // Draw the cards first so either a card or its map area can highlight both.
                     let right = egui::Rect::from_min_max(
@@ -559,7 +588,10 @@ pub fn draw_region_select(
                         ui.painter().rect_stroke(
                             rects[index],
                             10.0,
-                            egui::Stroke::new(2.0, region_atlas::colour(index)),
+                            egui::Stroke::new(
+                                2.0,
+                                region_atlas::colour(&model.regions[index], index),
+                            ),
                             egui::StrokeKind::Inside,
                         );
                     }

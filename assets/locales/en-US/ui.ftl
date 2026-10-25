@@ -354,8 +354,15 @@ milestones-in-progress = In progress
 
 # Region overview: map and accessible region cards share the same start action.
 region-select-subtitle = Choose a grid. Build your power company. Keep the lights on.
-region-select-map-title = North America
+region-select-map-title = World power grids
 region-select-map-note = Hover to explore · Click a coloured region to begin
+region-select-land-note = Grey land has power systems beyond the playable regions.
+region-select-metadata = { $frequency } Hz · { $currency } · { $zones } · { $hemisphere }
+region-select-zone = UTC{ $offset }
+region-select-zone-span = { $west }–{ $east }
+region-select-northern = Northern hemisphere
+region-select-southern = Southern hemisphere
+region-select-both-hemispheres = Both hemispheres
 region-select-home = Start in { $city } · { $cities } cities to serve
 region-select-east-description = Dense cities, big demand, and a legacy coal and nuclear fleet. Keep the industrial heartland humming.
 region-select-west-description = Mountain crossings, desert sunshine, and Pacific Northwest hydro. Master the evening demand surge.

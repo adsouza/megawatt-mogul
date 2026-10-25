@@ -21,10 +21,25 @@ fn model(seed: Option<u64>) -> game::hud::RegionSelectModel {
 
 // Same geographic extent as the overview; assert the rendered image is the click target.
 fn point(rect: Rect, lon: f32, lat: f32) -> Pos2 {
+    // Independent f64 equations at the public rendered-image boundary.
+    let project = |lon: f64, lat: f64| {
+        let t = (3.0_f64.sqrt() * 0.5 * lat.to_radians().sin()).asin();
+        let t2 = t * t;
+        (
+            2.0 * lon.to_radians() * t.cos()
+                / (3.0_f64.sqrt()
+                    * (1.340264 - 3.0 * 0.081106 * t2
+                        + t2.powi(3) * (7.0 * 0.000893 + 9.0 * 0.003796 * t2))),
+            t * (1.340264 - 0.081106 * t2 + t2.powi(3) * (0.000893 + 0.003796 * t2)),
+        )
+    };
+    let (x, y) = project(f64::from(lon), f64::from(lat));
+    let north = project(0.0, 75.0).1;
+    let south = project(0.0, -60.0).1;
     rect.min
         + egui::vec2(
-            (lon + 168.0) / 116.0 * rect.width(),
-            (74.0 - lat) / 62.0 * rect.height(),
+            ((x + 2.7066299836960748) / 5.4132599673921496) as f32 * rect.width(),
+            ((north - y) / (north - south)) as f32 * rect.height(),
         )
 }
 
@@ -50,7 +65,7 @@ fn invalid_seed_edits_disable_cards_and_map_without_using_the_previous_value() {
         assert!(widget(&widgets, name).disabled);
         assert!(harness.click(name, draw).is_empty());
     }
-    let map = widget(&widgets, "North America").rect;
+    let map = widget(&widgets, "World power grids").rect;
     assert!(harness.click_at(point(map, -83.0, 40.0), draw).is_empty());
 }
 
@@ -81,7 +96,7 @@ fn overview_clicks_start_the_right_region_with_the_entered_seed() {
             })
         };
         let widgets = harness.draw(draw);
-        let map = widget(&widgets, "North America").rect;
+        let map = widget(&widgets, "World power grids").rect;
         assert_eq!(
             harness.click_at(point(map, lon, lat), draw),
             vec![UiAction::NewGame {
@@ -110,7 +125,7 @@ fn overview_does_not_select_ocean_ercot_quebec_or_disabled_regions() {
                 draw_region_select(ui, &model, &mut form.borrow_mut())
             })
         };
-        let map = widget(&harness.draw(draw), "North America").rect;
+        let map = widget(&harness.draw(draw), "World power grids").rect;
         for (lon, lat) in [(-140.0, 35.0), (-97.74, 30.27), (-71.2, 46.8)] {
             assert!(harness.click_at(point(map, lon, lat), draw).is_empty());
         }
@@ -151,7 +166,7 @@ fn hovering_the_map_highlights_a_region_without_starting_a_game() {
                 draw_region_select(ui, &model, &mut form.borrow_mut())
             })
         }),
-        "North America",
+        "World power grids",
     )
     .rect;
     let ctx = egui::Context::default();
@@ -235,7 +250,7 @@ fn map_cards_and_descriptions_fit_the_smallest_and_large_windows() {
                 "{width}x{height}: {name}"
             );
         }
-        let map = widget(&widgets, "North America").rect;
+        let map = widget(&widgets, "World power grids").rect;
         for choice in &model.regions {
             for text in [
                 choice.description.as_ref().unwrap(),
@@ -253,5 +268,147 @@ fn map_cards_and_descriptions_fit_the_smallest_and_large_windows() {
                 }
             }
         }
+    }
+}
+
+// Detects dropping raw atlas metadata or failing to paint its identifier/colour.
+fn metadata_model() -> game::hud::RegionSelectModel {
+    metadata_model_from(include_str!(
+        "../../../infrastructure/tests/support/minimal_region_v4.ron"
+    ))
+}
+
+fn metadata_model_from(source: &str) -> game::hud::RegionSelectModel {
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(dir.path().join("minimal.ron"), source).unwrap();
+    let catalog = RonRegionCatalog::new(dir.path());
+    let listings = RegionListings(catalog.list());
+    region_select_model(&listings, Some(42), &shipped_l10n())
+        .with_atlas(&RegionAtlas::load(&catalog, &listings), &shipped_l10n())
+}
+
+#[test]
+fn atlas_letters_and_colours_come_from_region_data() {
+    let model = metadata_model();
+    let mut form = MenuForm::new(42);
+    let ctx = egui::Context::default();
+    let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+        central(ui, |ui| draw_region_select(ui, &model, &mut form));
+    });
+    let shapes = output.shapes.clone();
+    output.drop_without_applying_deltas();
+    let texts = crate::contrast::painted_texts(&shapes);
+    assert!(texts.iter().any(|text| text.text == "B"));
+    assert!(shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Rect(rect) if rect.fill == egui::Color32::from_rgb(18,52,86))));
+}
+
+#[test]
+fn cards_show_frequency_currency_zones_and_hemisphere() {
+    let model = metadata_model();
+    let mut form = MenuForm::new(42);
+    let widgets =
+        Harness::new().draw(|ui| central(ui, |ui| draw_region_select(ui, &model, &mut form)));
+    for expected in [
+        "60 Hz",
+        "EUR",
+        "UTC−03:00",
+        "UTC+06:45",
+        "Northern hemisphere",
+    ] {
+        assert!(
+            widgets.iter().any(|w| w.text.contains(expected)),
+            "missing {expected}: {widgets:?}"
+        );
+    }
+}
+
+#[test]
+fn every_region_is_startable_from_its_card_at_minimum_window_size() {
+    let mut model = model(Some(42));
+    let prototype = model.regions[0].clone();
+    model.regions = (0..8)
+        .map(|index| {
+            let mut choice = prototype.clone();
+            choice.button.label = format!("Grid {index}");
+            choice.button.action = UiAction::NewGame {
+                region: RegionId::new(&format!("grid-{index}")),
+                seed: 42,
+            };
+            choice
+        })
+        .collect();
+    let minimum = game::window::MIN_WINDOW_SIZE;
+    for (width, height) in [(minimum.x, minimum.y), (1024.0, 640.0)] {
+        for index in 0..8 {
+            let harness = Harness::with_screen(width, height);
+            let mut form = MenuForm::new(42);
+            let mut draw =
+                |ui: &mut egui::Ui| central(ui, |ui| draw_region_select(ui, &model, &mut form));
+            harness.draw(&mut draw);
+            // Tab order: seed, then cards. Focus scrolls each card into view.
+            for _ in 0..index + 2 {
+                harness.press_key(egui::Key::Tab, &mut draw);
+            }
+            let widgets = harness.draw(&mut draw);
+            assert!(
+                harness
+                    .screen_rect()
+                    .contains_rect(widget(&widgets, &format!("Grid {index}")).rect),
+                "Grid {index} is offscreen: {:?}",
+                widget(&widgets, &format!("Grid {index}")).rect
+            );
+            let actions = harness.press_key(egui::Key::Enter, &mut draw);
+            assert_eq!(
+                actions,
+                vec![UiAction::NewGame {
+                    region: RegionId::new(&format!("grid-{index}")),
+                    seed: 42
+                }],
+                "Grid {index} cannot be started from its card"
+            );
+        }
+    }
+}
+
+#[test]
+fn atlas_labels_meet_contrast() {
+    let model = metadata_model();
+    let mut form = MenuForm::new(42);
+    let screen = Rect::from_min_size(Pos2::ZERO, egui::vec2(1024.0, 640.0));
+    let widgets = Harness::with_screen(1024.0, 640.0)
+        .draw(|ui| central(ui, |ui| draw_region_select(ui, &model, &mut form)));
+    let map = widget(&widgets, "World power grids").rect;
+    let ctx = egui::Context::default();
+    ctx.set_visuals(game::hud::theme::visuals());
+    ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(screen),
+            ..Default::default()
+        },
+        |ui| {
+            central(ui, |ui| draw_region_select(ui, &model, &mut form));
+        },
+    )
+    .drop_without_applying_deltas();
+    let output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(screen),
+            events: vec![egui::Event::PointerMoved(point(map, 6.5, 3.5))],
+            ..Default::default()
+        },
+        |ui| {
+            central(ui, |ui| draw_region_select(ui, &model, &mut form));
+        },
+    );
+    let shapes = output.shapes.clone();
+    assert!(crate::contrast::check_paint(output) > 0);
+    let texts = crate::contrast::painted_texts(&shapes);
+    for expected in ["B", "region-minimal", "World power grids"] {
+        let label = texts
+            .iter()
+            .find(|text| text.text == expected && map.contains(text.at))
+            .expect(expected);
+        assert_eq!(label.background, game::hud::theme::LABEL_BACKING);
+        assert_eq!(label.background.a(), 255);
     }
 }

@@ -37,6 +37,7 @@ mod ramp_warnings;
 mod region_atlas;
 mod review;
 mod title_scene;
+mod world_coastline;
 pub use region_atlas::RegionAtlas;
 mod saves;
 mod selection;
