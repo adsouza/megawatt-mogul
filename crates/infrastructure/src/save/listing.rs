@@ -6,6 +6,7 @@ use super::codec::{
 };
 use crate::command_log::dto::LogHeaderDto;
 use application::*;
+use domain::state::SUPPORTED_STATE_SCHEMAS;
 use domain::{
     ids::RegionId,
     session::{DayPhase, GameOverReason, SessionStatus},
@@ -265,7 +266,7 @@ fn decode_card(
     if card
         .snapshot
         .as_ref()
-        .is_some_and(|s| !(1..=2).contains(&s.schema))
+        .is_some_and(|s| !SUPPORTED_STATE_SCHEMAS.contains(&s.schema))
     {
         return Err(RestoreError::InvalidSnapshot.into());
     }

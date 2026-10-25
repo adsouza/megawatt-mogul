@@ -10,6 +10,8 @@
 
 /// Every literal key the HUD uses, grouped as in `ui.ftl`.
 pub const ALL_UI_KEYS: &[&str] = &[
+    "season-monsoon",
+    "season-post-monsoon",
     "review-curtailed-kind",
     "plant-capacity-credit",
     "map-layer-wind",

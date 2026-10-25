@@ -45,7 +45,7 @@ pub fn shape_factor(shape: &DemandShape, month: SimMonth, tick: u32) -> f64 {
     let hourly = match month.season() {
         Season::Winter => &shape.winter,
         Season::Summer => &shape.summer,
-        Season::Spring | Season::Autumn => &shape.shoulder,
+        Season::Spring | Season::Autumn | Season::Monsoon | Season::PostMonsoon => &shape.shoulder,
     };
     let hour = (tick / TICKS_PER_HOUR % HOURS_PER_DAY) as usize;
     let next = (hour + 1) % HOURS_PER_DAY as usize;

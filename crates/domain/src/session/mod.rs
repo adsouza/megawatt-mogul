@@ -461,7 +461,7 @@ fn line_cost(params: &LineParams, cells: u32) -> Money {
 
 impl GameSession {
     pub fn snapshot_state(&self) -> Vec<u8> {
-        self.snapshot_state_schema(2)
+        self.snapshot_state_schema(crate::state::CURRENT_STATE_SCHEMA)
     }
 
     pub fn snapshot_state_schema(&self, schema: u32) -> Vec<u8> {
@@ -500,7 +500,7 @@ impl GameSession {
         let mut input = StateReader::new(bytes);
         let schema = u32::read(&mut input)?;
         input.schema = schema;
-        if !(1..=2).contains(&schema) {
+        if !crate::state::SUPPORTED_STATE_SCHEMAS.contains(&schema) {
             return Err(StateError::Version);
         }
         let session = Self {

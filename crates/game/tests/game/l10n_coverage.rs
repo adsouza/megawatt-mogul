@@ -755,6 +755,8 @@ fn every_typed_value_translates_without_falling_back() {
             Season::Spring,
             Season::Summer,
             Season::Autumn,
+            Season::Monsoon,
+            Season::PostMonsoon,
         ],
     );
     assert_translates(

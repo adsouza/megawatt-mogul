@@ -14,6 +14,8 @@ season-winter = Winter
 season-spring = Spring
 season-summer = Summer
 season-autumn = Autumn
+season-monsoon = Monsoon
+season-post-monsoon = Post-monsoon
 
 plant-kind-nuclear = Nuclear plant
 plant-kind-coal = Coal plant

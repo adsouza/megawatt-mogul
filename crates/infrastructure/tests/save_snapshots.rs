@@ -42,7 +42,7 @@ fn released_portable_schema1_golden_saves_restore_and_continue_without_replaying
         );
         let source = &bundle.checkpoint;
         let snapshot = source.snapshot.as_ref().unwrap();
-        assert_eq!(before.snapshot.as_ref().unwrap().schema, 2);
+        assert_eq!(before.snapshot.as_ref().unwrap().schema, 3);
         assert!(
             game.session().snapshot_state_schema(1) == snapshot.session,
             "all schema-1 gameplay fields and RNG preserved"

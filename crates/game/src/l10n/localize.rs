@@ -382,6 +382,8 @@ impl Localize for Season {
             Self::Spring => "season-spring",
             Self::Summer => "season-summer",
             Self::Autumn => "season-autumn",
+            Self::Monsoon => "season-monsoon",
+            Self::PostMonsoon => "season-post-monsoon",
         })
     }
 }

@@ -155,7 +155,7 @@ pub enum DomainEvent {
 // Portable state schema 1: explicit field order and enum tags.
 impl crate::state::State for DomainEvent {
     fn write(&self, out: &mut Vec<u8>) {
-        self.write_schema(out, 2);
+        self.write_schema(out, crate::state::CURRENT_STATE_SCHEMA);
     }
     fn write_schema(&self, out: &mut Vec<u8>, schema: u32) {
         match self {

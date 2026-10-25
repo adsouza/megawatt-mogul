@@ -697,3 +697,93 @@ fn format1_ticks_reencode_to_rle_and_replay_with_identical_projections_and_conti
         assert_eq!(before.projections(), after.projections());
     }
 }
+
+#[test]
+fn new_schema_three_save_round_trips_on_disk_and_restores() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let saved = bundle();
+    assert_eq!(saved.checkpoint.snapshot.as_ref().unwrap().schema, 3);
+    let path = dir.path().join("schema3.mgsave");
+    std::fs::write(&path, encode_save(&saved).unwrap()).unwrap();
+    let (decoded, region) = decode_save(&std::fs::read(path).unwrap(), &identity()).unwrap();
+    assert_eq!(decoded, saved);
+    let restored = Game::restore(
+        region,
+        decoded.checkpoint,
+        Box::new(InMemoryCommandLog::default()),
+        &|| false,
+    )
+    .unwrap();
+    assert_eq!(restored.checkpoint(), saved.checkpoint);
+}
+
+#[test]
+fn every_save_gate_accepts_schemas_one_through_three_and_rejects_four() {
+    use application::{RestoreError, SaveStore};
+    use domain::state::State;
+    use infrastructure::save::FileSaveStore;
+    for schema in [0, 1, 2, 3, 4] {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut saved = bundle();
+        let (_, region) = decode_save(&encode_save(&saved).unwrap(), &identity()).unwrap();
+        let game = Game::restore(
+            region.clone(),
+            saved.checkpoint.clone(),
+            Box::new(InMemoryCommandLog::default()),
+            &|| false,
+        )
+        .unwrap();
+        let snapshot = saved.checkpoint.snapshot.as_mut().unwrap();
+        snapshot.schema = schema;
+        snapshot.session = game.session().snapshot_state_schema(schema);
+        snapshot.projections = game.projections().state_bytes_schema(schema);
+        saved.checkpoint.state_hash = snapshot.state_hash();
+        let bytes = encode_save(&saved).unwrap();
+        let path = dir
+            .path()
+            .join(format!("{}.mgsave", saved.metadata.slot.as_str()));
+        std::fs::write(&path, &bytes).unwrap();
+        let store = FileSaveStore::new(dir.path().into());
+        let rows = store.list().unwrap();
+        assert_eq!(rows.len(), 1);
+        let decoded = decode_save(&bytes, &identity());
+        let restored = Game::restore(
+            region,
+            saved.checkpoint.clone(),
+            Box::new(InMemoryCommandLog::default()),
+            &|| false,
+        );
+        if matches!(schema, 1..=3) {
+            assert!(rows[0].entry.is_ok(), "listing schema {schema}");
+            let (read, region) = decoded.unwrap();
+            assert_eq!(read, saved);
+            Game::restore(
+                region,
+                read.checkpoint,
+                Box::new(InMemoryCommandLog::default()),
+                &|| false,
+            )
+            .unwrap();
+            assert!(restored.is_ok(), "restore schema {schema}");
+        } else {
+            assert!(
+                matches!(
+                    rows[0].entry,
+                    Err(SaveError::Restore(RestoreError::InvalidSnapshot))
+                ),
+                "listing schema {schema}"
+            );
+            assert!(
+                matches!(
+                    decoded,
+                    Err(SaveError::Restore(RestoreError::InvalidSnapshot))
+                ),
+                "codec schema {schema}"
+            );
+            assert!(
+                matches!(restored, Err(RestoreError::InvalidSnapshot)),
+                "restore schema {schema}"
+            );
+        }
+    }
+}

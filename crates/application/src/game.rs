@@ -5,7 +5,7 @@ use domain::SIM_RULES_VERSION;
 use domain::events::DomainEvent;
 use domain::ids::RegionId;
 use domain::session::{GameSession, GameSettings};
-use domain::state::State;
+use domain::state::{CURRENT_STATE_SCHEMA, SUPPORTED_STATE_SCHEMAS, State};
 
 use crate::command::{Command, CommandHandler};
 use crate::error::{CommandError, ReplayError};
@@ -75,7 +75,7 @@ impl Game {
     pub fn checkpoint(&self) -> GameCheckpoint {
         let snapshot = PortableState {
             origin: self.origin.clone(),
-            schema: 2,
+            schema: CURRENT_STATE_SCHEMA,
             session: self.session.snapshot_state(),
             projections: self.projections.state_bytes(),
             journal_hash: portable_hash(&self.journal.state_bytes()),
@@ -126,7 +126,7 @@ impl Game {
             if cancelled() {
                 return Err(RestoreError::Cancelled);
             }
-            if !(1..=2).contains(&snapshot.schema) {
+            if !SUPPORTED_STATE_SCHEMAS.contains(&snapshot.schema) {
                 return Err(RestoreError::InvalidSnapshot);
             }
             if snapshot.state_hash() != checkpoint.state_hash {

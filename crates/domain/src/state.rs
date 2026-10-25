@@ -2,6 +2,12 @@
 //! Field order and enum tags in the explicit implementations are a persisted contract. Changing
 //! that contract requires a schema migration, independently of simulation rules and Rust layout.
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::ops::RangeInclusive;
+
+/// Schema emitted by new portable state captures.
+pub const CURRENT_STATE_SCHEMA: u32 = 3;
+/// Portable state schemas accepted by every reader.
+pub const SUPPORTED_STATE_SCHEMAS: RangeInclusive<u32> = 1..=3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum StateError {
@@ -24,7 +30,7 @@ impl<'a> StateReader<'a> {
         Self {
             bytes,
             at: 0,
-            schema: 2,
+            schema: CURRENT_STATE_SCHEMA,
         }
     }
     pub fn take(&mut self, n: usize) -> Result<&'a [u8], StateError> {
@@ -60,7 +66,7 @@ pub trait State: Sized {
         out
     }
     fn from_state_bytes_schema(bytes: &[u8], schema: u32) -> Result<Self, StateError> {
-        if !(1..=2).contains(&schema) {
+        if !SUPPORTED_STATE_SCHEMAS.contains(&schema) {
             return Err(StateError::Version);
         }
         let mut input = StateReader::new(bytes);
@@ -282,7 +288,7 @@ impl State for String {
 macro_rules! state_record {
     ($ty:ty { $($field:ident),* ; $($added:ident : $default:expr),* $(,)? }) => {
         impl $crate::state::State for $ty {
-            fn write(&self, out: &mut Vec<u8>) { self.write_schema(out, 2); }
+            fn write(&self, out: &mut Vec<u8>) { self.write_schema(out, $crate::state::CURRENT_STATE_SCHEMA); }
             fn write_schema(&self, out: &mut Vec<u8>, schema: u32) {
                 $( $crate::state::State::write_schema(&self.$field, out, schema); )*
                 if schema >= 2 { $( $crate::state::State::write_schema(&self.$added, out, schema); )* }
@@ -295,7 +301,7 @@ macro_rules! state_record {
     };
     ($ty:ty { $($field:ident),* $(,)? }) => {
         impl $crate::state::State for $ty {
-            fn write(&self, out: &mut Vec<u8>) { self.write_schema(out, 2); }
+            fn write(&self, out: &mut Vec<u8>) { self.write_schema(out, $crate::state::CURRENT_STATE_SCHEMA); }
             fn write_schema(&self, out: &mut Vec<u8>, schema: u32) { $( $crate::state::State::write_schema(&self.$field, out, schema); )* }
             fn read(input: &mut $crate::state::StateReader<'_>) -> Result<Self, $crate::state::StateError> {
                 Ok(Self { $( $field: $crate::state::State::read(input)?, )* })
@@ -317,4 +323,37 @@ macro_rules! state_tuple {
             }
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    #[test]
+    fn every_gate_accepts_exactly_the_supported_schemas() {
+        assert_eq!(CURRENT_STATE_SCHEMA, 3);
+        for schema in [1, 2, 3] {
+            assert!(SUPPORTED_STATE_SCHEMAS.contains(&schema));
+            assert_eq!(u8::from_state_bytes_schema(&[7], schema), Ok(7));
+        }
+        for schema in [0, 4, u32::MAX] {
+            assert!(!SUPPORTED_STATE_SCHEMAS.contains(&schema));
+            assert_eq!(
+                u8::from_state_bytes_schema(&[7], schema),
+                Err(StateError::Version)
+            );
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn state_schema_gate_accepts_only_one_through_three(schema in any::<u32>()) {
+            let expected = match schema {
+                1..=3 => Ok(7),
+                _ => Err(StateError::Version),
+            };
+            prop_assert_eq!(u8::from_state_bytes_schema(&[7], schema), expected);
+        }
+    }
 }

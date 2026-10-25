@@ -3,6 +3,7 @@ use crate::region::load_region_bytes;
 use application::*;
 use domain::ids::RegionId;
 use domain::session::{DayPhase, GameOverReason, SessionStatus};
+use domain::state::SUPPORTED_STATE_SCHEMAS;
 use domain::time::SimMonth;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -270,7 +271,7 @@ fn decode_payload<C: Into<super::journal::JournalRecord>>(
     // could suppress the still-usable legacy original without being restorable by this build.
     if p.snapshot
         .as_ref()
-        .is_some_and(|s| !(1..=2).contains(&s.schema))
+        .is_some_and(|s| !SUPPORTED_STATE_SCHEMAS.contains(&s.schema))
     {
         return Err(SaveError::Restore(RestoreError::InvalidSnapshot));
     }
@@ -388,7 +389,7 @@ impl SnapshotDto {
             }
             Ok(out)
         }
-        if !(1..=2).contains(&self.schema) {
+        if !SUPPORTED_STATE_SCHEMAS.contains(&self.schema) {
             return Err(SaveError::Restore(RestoreError::InvalidSnapshot));
         }
         Ok(PortableState {
