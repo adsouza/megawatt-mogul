@@ -23,6 +23,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Release metadata and packaging contracts
+        run: python3 -m unittest discover -s tools/release/tests
       - uses: ./.github/actions/rust-setup
         with:
           components: clippy, rustfmt

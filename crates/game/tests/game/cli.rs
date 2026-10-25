@@ -18,6 +18,14 @@ fn no_flags_leave_both_paths_unset() {
 }
 
 #[test]
+fn version_flag_needs_no_value_and_preserves_other_flags() {
+    let args = parse(&["--version", "--assets", "/a"]).unwrap();
+    assert!(args.version);
+    assert_eq!(args.assets, Some(PathBuf::from("/a")));
+    assert!(!CliArgs::default().version);
+}
+
+#[test]
 fn both_flags_are_read() {
     let args = parse(&["--assets", "/a", "--log-dir", "/l"]).unwrap();
 

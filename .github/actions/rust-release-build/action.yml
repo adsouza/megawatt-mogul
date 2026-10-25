@@ -1,0 +1,63 @@
+name: Cached Linux release build
+description: Restore completed release artifacts and save a new snapshot only after a successful build.
+
+inputs:
+  version:
+    description: Expected Cargo workspace version.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Identify compiler and build configuration
+      id: identity
+      shell: bash
+      run: |
+        fingerprint=$(
+          {
+            rustc -vV
+            cargo -vV
+            if command -v mold > /dev/null; then mold --version; fi
+            for config in "${CARGO_HOME:-$HOME/.cargo}/config" "${CARGO_HOME:-$HOME/.cargo}/config.toml"; do
+              if [[ -f "$config" ]]; then cat "$config"; fi
+            done
+            env | LC_ALL=C sort | while IFS='=' read -r name value; do
+              case "$name" in
+                RUSTFLAGS|RUSTC|RUSTC_WRAPPER|RUSTC_WORKSPACE_WRAPPER|CARGO_ENCODED_RUSTFLAGS|CARGO_BUILD_*|CARGO_PROFILE_*|CARGO_TARGET_*|CC|CC_*|CXX|CXX_*|CFLAGS|CFLAGS_*|CXXFLAGS|CXXFLAGS_*|AR|AR_*|LDFLAGS)
+                  printf '%s=%s\n' "$name" "$value" ;;
+              esac
+            done
+          } | sha256sum | cut -d ' ' -f 1
+        )
+        echo "prefix=linux-release-complete-v1-$RUNNER_OS-$RUNNER_ARCH-$fingerprint" >> "$GITHUB_OUTPUT"
+    - name: Restore completed release build
+      id: restore
+      uses: actions/cache/restore@v5
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target/release
+        # A source revision can publish a fresh completed snapshot after a fallback restore.
+        # This namespace intentionally never matches the old, partial rust-cache entry.
+        key: ${{ steps.identity.outputs.prefix }}-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'crates/**/Cargo.toml', '.cargo/**', 'rust-toolchain*', '.github/actions/rust-release-build/action.yml') }}-${{ github.sha }}
+        restore-keys: |
+          ${{ steps.identity.outputs.prefix }}-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'crates/**/Cargo.toml', '.cargo/**', 'rust-toolchain*', '.github/actions/rust-release-build/action.yml') }}-
+          ${{ steps.identity.outputs.prefix }}-
+    - name: Build Linux x86_64 and verify version
+      shell: bash
+      env:
+        EXPECTED_VERSION: ${{ inputs.version }}
+        CARGO_INCREMENTAL: '0'
+      run: |
+        cargo build --release --locked -p game
+        test "$(target/release/game --version)" = "Megawatt Mogul $EXPECTED_VERSION"
+    - name: Save completed release build
+      if: success() && !cancelled() && steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v5
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target/release
+        key: ${{ steps.restore.outputs.cache-primary-key }}

@@ -1,0 +1,21 @@
+{
+  "app-id": "io.github.adsouza.MegawattMogul",
+  "runtime": "org.freedesktop.Platform",
+  "runtime-version": "25.08",
+  "sdk": "org.freedesktop.Sdk",
+  "command": "megawatt-mogul",
+  "finish-args": [
+    "--share=ipc",
+    "--socket=wayland",
+    "--socket=fallback-x11",
+    "--device=dri"
+  ],
+  "modules": [
+    {
+      "name": "megawatt-mogul",
+      "buildsystem": "simple",
+      "build-commands": ["cp -a payload/. /app/"],
+      "sources": [{"type": "dir", "path": "payload", "dest": "payload"}]
+    }
+  ]
+}

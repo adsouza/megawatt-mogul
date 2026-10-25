@@ -7,6 +7,9 @@ inputs:
   components:
     description: Extra toolchain components, comma separated.
     default: clippy
+  cache:
+    description: Restore/save the normal test-build cache (release builds manage their own).
+    default: 'true'
 
 runs:
   using: composite
@@ -44,11 +47,12 @@ runs:
         tool: cargo-nextest
     # Caches ~/.cargo and the compiled dependencies in target/, keyed per job, toolchain and
     # Cargo.lock. GitHub scopes caches by branch: a PR restores its own or main's, never another
-    # PR's, and the repository holds 10 GB in total. So only main saves, and every PR starts from
-    # main's cache instead of evicting it.
+    # PR's, and the repository holds 10 GB in total. Only main saves this test-build cache.
+    # Release jobs disable it and use rust-release-build's successful-build checkpoint instead.
     # Saved after a failed run too: compiled dependencies are valid whatever a test did, so one
     # failing or flaky test no longer leaves the next pull request to build from cold.
     - uses: Swatinem/rust-cache@v2
+      if: inputs.cache == 'true'
       with:
         save-if: ${{ github.ref == 'refs/heads/main' }}
         cache-on-failure: true
