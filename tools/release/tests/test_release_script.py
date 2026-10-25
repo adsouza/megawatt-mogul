@@ -11,7 +11,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 
 
-class ReleaseScriptTests(unittest.TestCase):
+class GitReleaseFixture(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -66,6 +66,8 @@ class ReleaseScriptTests(unittest.TestCase):
         self.assertEqual(self.git(self.remote, "tag", "--list"), "")
         self.assertFalse(self.marker.exists())
 
+
+class ReleaseScriptTests(GitReleaseFixture):
     def test_pulls_main_then_pushes_only_the_annotated_release_tag_with_hooks(self):
         upstream = self.directory / "upstream"
         self.git(self.directory, "clone", str(self.remote), str(upstream))

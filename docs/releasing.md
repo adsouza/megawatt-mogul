@@ -30,6 +30,30 @@ simulation-rules versions remain independent compatibility counters, not applica
 
 ## Cut a release
 
+For a new version, run the bump helper from a clean `main` checkout:
+
+```sh
+./tools/bump.py          # patch: 0.1.0 -> 0.1.1
+./tools/bump.py -minor   # minor: 0.1.0 -> 0.2.0
+./tools/bump.py -major   # major: 0.1.0 -> 1.0.0
+```
+
+Choose one command; `-major` and `-minor` are mutually exclusive (`--major`/`--minor` also work).
+The helper fast-forwards `main`, increments the numeric version and clears any prerelease/build
+suffix, edits only the workspace version, and refreshes `Cargo.lock` with `cargo update --workspace`.
+It validates inherited crate/lockfile versions, commits the two version files, pushes `main`, then
+calls `tools/release.sh` with the new tag. Normal commit/push hooks run, including clippy and tests
+on both pushes. The tag workflow performs its own source checks and creates a draft release;
+publishing that draft remains manual.
+
+A failed lockfile refresh restores the original version files. Commit or push failures preserve
+prepared changes, the local commit, or the local tag, with recovery instructions; follow those
+instead of running another bump. Repositories requiring PRs to update `main` will reject the direct
+push; use the manual version-bump/merge route below in that case.
+
+To release the version already recorded in the workspace, such as the initial `0.1.0`, use
+`./tools/release.sh v0.1.0` without bumping. For a manually prepared version bump:
+
 1. Set the desired version in the root `Cargo.toml`. Refresh workspace versions in `Cargo.lock`
    with `cargo update --workspace` and commit both files along with the intended release changes.
 2. Merge the changes and wait for CI and cache warming. Check out `main` with a clean checkout.
