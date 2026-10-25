@@ -399,13 +399,9 @@ fn game_over_stops_the_driver() {
     let assets = copy_assets(root.path());
     let region = assets.join("regions").join(format!("{EASTERN}.ron"));
     let source = fs::read_to_string(&region).unwrap();
-    let solvent = "cash_usd: 5000000000,";
+    let solvent = "cash: 5000000000,";
     assert!(source.contains(solvent), "the shipped start cash changed");
-    fs::write(
-        &region,
-        source.replace(solvent, "cash_usd: -1000000000000,"),
-    )
-    .unwrap();
+    fs::write(&region, source.replace(solvent, "cash: -1000000000000,")).unwrap();
     let logs = root.path().join("logs");
     let mut app = sim_app(&assets, &logs);
     start_game(&mut app, EASTERN, 7);

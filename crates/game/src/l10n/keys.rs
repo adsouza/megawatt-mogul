@@ -447,4 +447,11 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "error-unknown-line",
     "error-line-not-under-construction",
     "event-line-construction-cancelled",
+    "zone-et",
+    "zone-ct",
+    "zone-saskatchewan-cst",
+    "zone-at",
+    "zone-pt",
+    "zone-mt",
+    "zone-arizona-mst",
 ];

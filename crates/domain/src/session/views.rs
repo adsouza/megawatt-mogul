@@ -169,15 +169,15 @@ pub struct RateReviewEstimate {
 
 /// The hour in which committed minimum generation exceeds the net load by
 /// the most (spec §14.3): the plan would have to dump or curtail the surplus.
-/// Its figures are those of the hour's worse end, minute 0 or minute 59.
+/// Its figures use the worst sampled minute: 0, 59, or an interior local-hour bend.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MinimumGenerationWarning {
     /// The hour of day, 0 to 23.
     pub hour: u8,
     /// What the plants committed in that hour must generate at least.
     pub committed_minimum: Megawatts,
-    /// The forecast net load at the hour's worse end: the lower of minute 0
-    /// and minute 59.
+    /// The lowest forecast net load among the hour's endpoints and interior
+    /// local-hour bends.
     pub net_load: Megawatts,
     /// `committed_minimum − net_load`, always positive.
     pub excess: Megawatts,
@@ -186,12 +186,12 @@ pub struct MinimumGenerationWarning {
 /// The hour in which the committed fleet's deliverable capacity falls short
 /// of the forecast demand by the most (spec §15.5): the plan would have to
 /// leave that load to a rotating outage. Its figures are those of the hour's
-/// worse end, minute 0 or minute 59.
+/// worst sampled minute: 0, 59, or an interior local-hour bend.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CapacityShortfallWarning {
     /// The hour of day, 0 to 23.
     pub hour: u8,
-    /// The connected forecast demand at the hour's worse end.
+    /// The connected forecast demand at that sampled minute.
     pub demand: Megawatts,
     /// What the plants committed in that hour could deliver then, with
     /// expected solar: an upper bound that ignores start-up and ramp limits.

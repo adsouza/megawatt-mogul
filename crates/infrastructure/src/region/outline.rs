@@ -147,7 +147,7 @@ pub fn region_outline(source: &[u8], id: &RegionId) -> Result<RegionOutline, Reg
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::region::{RegionFile, rasterize};
+    use crate::region::{RegionFileV4, map_region_v4};
     use domain::ids::CellCoord;
 
     #[test]
@@ -182,8 +182,9 @@ mod tests {
             ),
         ] {
             let outline = region_outline(source, &RegionId::new(id)).unwrap();
-            let file: RegionFile = ron::de::from_bytes(source).unwrap();
-            let grid = rasterize(&file);
+            let file: RegionFileV4 = ron::de::from_bytes(source).unwrap();
+            let region = map_region_v4(file.clone()).unwrap();
+            let grid = region.terrain();
             for y in 0..file.grid.height {
                 for x in 0..file.grid.width {
                     let lon = file.bounds.west

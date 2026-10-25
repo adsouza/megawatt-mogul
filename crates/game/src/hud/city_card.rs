@@ -221,7 +221,7 @@ mod tests {
         let model =
             city_card_model(&game, &crate::hud::test_support::global_l10n(), CityId(2)).unwrap();
         assert_eq!(model.local_time, "Local time: 02:30 IST");
-        let legacy = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let legacy = crate::hud::test_support::legacy_eastern_game();
         assert_eq!(
             card(&legacy, city(&legacy, true)).local_time,
             "Local time: 00:00"

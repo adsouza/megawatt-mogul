@@ -546,6 +546,15 @@ pub(crate) mod test_support {
         shipped_game_in(dir.path(), "minimal")
     }
 
+    /// Frozen legacy data exercises the no-zone display contract after migration.
+    pub fn legacy_eastern_game() -> Game {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("eastern_interconnection.ron"), include_bytes!(
+            "../../../infrastructure/tests/support/global-foundations/eastern_interconnection-v3.ron"
+        )).unwrap();
+        shipped_game_in(dir.path(), "eastern_interconnection")
+    }
+
     /// A new eastern game, seed 7, in Planning, recording to `sink`.
     pub fn eastern_game(sink: Box<dyn CommandLogSink>) -> Game {
         shipped_game("eastern_interconnection", sink)

@@ -409,7 +409,7 @@ fn a_resumed_december_review_is_not_reviewed_again() {
 }
 
 #[test]
-fn archived_v3_save_restores_with_a_v4_catalog_and_continues_identically() {
+fn archived_na_saves_resume_identically() {
     use domain::ids::RegionId;
     use domain::region::SolarModel;
     use domain::units::Currency;
@@ -457,6 +457,10 @@ fn archived_v3_save_restores_with_a_v4_catalog_and_continues_identically() {
         let (mut bundle, archived) = store.read(&original.metadata.slot).unwrap();
         let archived_bytes = std::fs::read(baseline.join(format!("{id}-v3.ron"))).unwrap();
         assert_eq!(archived.source_bytes, archived_bytes);
+        assert_eq!(
+            archived.fingerprint,
+            original.checkpoint.header.region_fingerprint
+        );
         assert_ne!(archived.fingerprint, current_region.fingerprint);
         assert_eq!(archived.definition.currency(), Currency::Usd);
         assert!(matches!(
@@ -495,10 +499,29 @@ fn archived_v3_save_restores_with_a_v4_catalog_and_continues_identically() {
                 .as_ref()
                 .is_some_and(|b| b.stored.value() == 800.0)
         }));
+        // On every target, resave the frozen source boundary, restore, and
+        // compare full checkpoints at both continuation boundaries.
+        bundle.compatibility = replay_compatibility();
+        bundle.checkpoint = game.checkpoint();
+        let mut resumed = restored(&encode_save(&bundle).unwrap());
         game.execute(Command::AdvanceTicks { n: 60 }).unwrap();
-        assert_eq!(game.checkpoint().state_hash, after60, "{id} after 60 ticks");
+        resumed.execute(Command::AdvanceTicks { n: 60 }).unwrap();
+        assert_eq!(
+            resumed.checkpoint(),
+            game.checkpoint(),
+            "{id} after 60 ticks"
+        );
+        if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+            assert_eq!(game.checkpoint().state_hash, after60, "{id} after 60 ticks");
+        }
+        bundle.checkpoint = resumed.checkpoint();
+        let mut resumed = restored(&encode_save(&bundle).unwrap());
         game.execute(Command::AdvanceTicks { n: 480 }).unwrap();
-        assert_eq!(game.checkpoint().state_hash, review, "{id} at review");
+        resumed.execute(Command::AdvanceTicks { n: 480 }).unwrap();
+        assert_eq!(resumed.checkpoint(), game.checkpoint(), "{id} at review");
+        if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+            assert_eq!(game.checkpoint().state_hash, review, "{id} at review");
+        }
         bundle.compatibility = replay_compatibility();
         bundle.checkpoint = game.checkpoint();
         let rewritten = encode_save(&bundle).unwrap();

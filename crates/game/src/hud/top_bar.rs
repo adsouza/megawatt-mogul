@@ -390,7 +390,7 @@ mod tests {
             top_bar_model(&game, &Persistence::default(), &l10n, &usd_style()).time,
             "14:20 MSK"
         );
-        let legacy = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let legacy = crate::hud::test_support::legacy_eastern_game();
         assert_eq!(
             top_bar_model(&legacy, &Persistence::default(), &l10n, &usd_style()).time,
             "00:00"

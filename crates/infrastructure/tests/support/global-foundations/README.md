@@ -12,3 +12,11 @@ height, irradiance, wind potential, cooling water and hydro potential as f64 bit
 little endian. The generators are retained for provenance, not automatic refresh.
 
 The separate `portable-saves` directory retains the released schema-1 fixtures.
+
+Capture target: macOS / aarch64 (Darwin arm64). Exact terrain SHA-256 and
+future-state literal hashes are asserted on this origin target only, per spec
+§5.7's same-build/platform libm guarantee. Every target verifies source bytes,
+fingerprint, original portable hash and canonical source-schema bytes, compares
+the old independent raster/shape/sun formulas, and checks full same-target
+save/resume continuation checkpoints after 60 ticks and at review. Linux is not
+excluded from archived-save restoration or continuation.

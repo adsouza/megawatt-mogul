@@ -1796,21 +1796,17 @@ fn world_secondary_middle_and_shift_drags_pan_without_orbiting_or_selecting() {
     assert_ne!((after.yaw, after.elevation), (before.yaw, before.elevation));
 }
 
-fn western_solar() -> std::sync::Arc<domain::region::RegionDefinition> {
-    use application::RegionCatalog;
-    let catalog = infrastructure::region::RonRegionCatalog::new(
-        crate::support::shipped_assets().join("regions"),
-    );
-    catalog
-        .load(&domain::ids::RegionId::new("western_interconnection"))
-        .unwrap()
-        .definition
+fn legacy_western_solar() -> std::sync::Arc<domain::region::RegionDefinition> {
+    infrastructure::region::load_region_bytes(
+        include_bytes!("../../../infrastructure/tests/support/global-foundations/western_interconnection-v3.ron").to_vec(),
+        &domain::ids::RegionId::new("western_interconnection"),
+    ).unwrap().definition
 }
 
 #[test]
-fn world_sun_arc_runs_east_to_south_to_west_and_varies_with_the_month() {
+fn world_legacy_sun_arc_runs_east_to_south_to_west_and_varies_with_the_month() {
     use domain::time::SimMonth;
-    let solar = &western_solar();
+    let solar = &legacy_western_solar();
     for month in [1, 6, 12] {
         let month = SimMonth::new(2027, month).unwrap();
         let domain::region::SolarModel::DaylightTable(table) = &solar.solar().model else {
@@ -1846,8 +1842,8 @@ fn world_sun_arc_runs_east_to_south_to_west_and_varies_with_the_month() {
 
 proptest! {
     #[test]
-    fn world_sun_arc_is_finite_unit_length_and_dark_outside_daylight(month in 1u8..13, tick in 0u32..=1440) {
-        let solar = western_solar();
+    fn world_legacy_sun_arc_is_finite_unit_length_and_dark_outside_daylight(month in 1u8..13, tick in 0u32..=1440) {
+        let solar = legacy_western_solar();
         let month = domain::time::SimMonth::new(2027, month).unwrap();
         let sun = game::world::sun_position(&solar, month, tick);
         prop_assert!(sun.toward_sun.is_finite());
@@ -1934,7 +1930,14 @@ fn world_sunlight_changes_direction_with_the_operating_clock() {
         .query::<&DirectionalLight>()
         .single(app.world())
         .unwrap();
-    assert!(light.illuminance > 10000.0 && light.shadow_maps_enabled);
+    // Independent spherical calculation for the February 15 preview: Seattle's
+    // cell centre is (47.8 N, 122.170833333 W), PT=-480, solar noon rounds
+    // to 12:09. delta=-23.44*cos(2*pi*56/365); H=0.079166667 degrees.
+    // Direct east/up/south components give the following vector and sin(elevation).
+    assert!((light.illuminance - 6751.719).abs() < 0.1);
+    assert!(light.shadow_maps_enabled);
+    let toward_sun = -direction(&mut app);
+    assert!(toward_sun.abs_diff_eq(Vec3::new(-0.00134429, 0.48226565, 0.876024), 1e-5));
 }
 
 #[test]

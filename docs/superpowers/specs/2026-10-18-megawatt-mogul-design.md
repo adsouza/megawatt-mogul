@@ -14,7 +14,8 @@
   (§25, 2026-10-23, implemented under rules 14); A12, closing the rate-base loophole and
   making satisfaction count (§26, 2026-10-23, implemented under rules 13; lands before A11);
   A13, battery discharge from 16:00 (§27, 2026-10-24, implemented under rules 15); A14, global
-  regions, the first Milestone 2 amendment (§28, 2026-10-24, specified)
+  regions, the first Milestone 2 amendment (§28, 2026-10-24; Plan 6 global foundations
+  implemented under rules 16; Plans 7 and 8 pending)
 - **Engine:** Rust 1.98, Bevy 0.20, bevy_egui 0.43, bevy-inspector-egui 0.38
 
 ## 1. Vision and goals
@@ -3372,10 +3373,12 @@ fixtures author `discharge_start_hour: 16`.
 American interconnections, each one 60 Hz copper plate priced in US$. Every earlier amendment
 (A1–A13) belongs to Milestone 1.
 
-**Status:** Specified, not implemented. It lands as three plans, in order: **Plan 6**, global
-foundations (§28.4–§28.8, §28.10–§28.11, and the North American migration); **Plan 7**, five
-single-area regions (B, D, E, F, H in §28.3); **Plan 8**, multi-area regions with HVDC links and
-the SGCC region (§28.9). Each plan bumps `SIM_RULES_VERSION` once, from whatever the previous
+**Status:** **Plan 6 global foundations is implemented under rules 16** (§28.4–§28.8,
+§28.10–§28.11, and the North American schema-4 migration). Automated acceptance and the native
+120-frame launch smoke pass; the isolated full representative-day visual playtest in each North
+American region remains pending because the Mac is locked. **Plan 7** (five single-area regions,
+B, D, E, F, H in §28.3) and **Plan 8** (multi-area regions with HVDC links and SGCC, §28.9)
+remain pending. Each plan bumps `SIM_RULES_VERSION` once, from whatever the previous
 implemented amendment left. The source for boundaries, inclusions and exclusions is the research
 edition of 18 October 2026, copied to
 [docs/research/2026-10-18-world-power-grids-top-8.md](../../research/2026-10-18-world-power-grids-top-8.md).

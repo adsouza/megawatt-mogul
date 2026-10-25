@@ -145,7 +145,7 @@ mod tests {
                 &crate::hud::test_support::usd_style()
             )
             .time,
-            "01:15"
+            "01:15 ET"
         );
         let buttons: Vec<(&str, &UiAction, bool)> = model
             .speeds

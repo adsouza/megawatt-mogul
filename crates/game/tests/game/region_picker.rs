@@ -188,22 +188,25 @@ fn hovering_the_map_highlights_a_region_without_starting_a_game() {
         output
     };
     let initial = paint(vec![]);
-    let highlighted = egui::Color32::from_rgb(69, 178, 179);
-    assert!(!initial.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Mesh(mesh) if mesh.vertices.iter().any(|v| v.color == highlighted))));
+    let highlighted = egui::Color32::from_rgb(228, 131, 47);
+    // Authored atlas colours stay saturated; hover adds the active card outline.
+    let initially_active = initial.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Rect(rect) if rect.stroke.width == 2.0 && rect.stroke.color == highlighted));
     initial.drop_without_applying_deltas();
+    assert!(!initially_active);
     let output = paint(vec![egui::Event::PointerMoved(point(rect, -83.0, 40.0))]);
-    assert_eq!(
-        output.platform_output.cursor_icon,
-        egui::CursorIcon::PointingHand
-    );
-    let highlighted = egui::Color32::from_rgb(69, 178, 179);
-    assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Mesh(mesh) if mesh.vertices.iter().any(|v| v.color == highlighted))));
-    assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Rect(rect) if rect.stroke.width == 2.0 && rect.stroke.color == highlighted)));
+    let cursor = output.platform_output.cursor_icon;
+    let shapes = output.shapes.clone();
+    let pixels_per_point = output.pixels_per_point;
+    output.drop_without_applying_deltas();
+    assert_eq!(cursor, egui::CursorIcon::PointingHand);
+    let highlighted = egui::Color32::from_rgb(228, 131, 47);
+    assert!(shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Mesh(mesh) if mesh.vertices.iter().any(|v| v.color == highlighted))));
+    assert!(shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Rect(rect) if rect.stroke.width == 2.0 && rect.stroke.color == highlighted)));
     // This point is halfway along an overlapping land ring's old interior seam. Inspect the
     // actual tessellated paint: the visible colour must be the region fill, not a white stroke.
     let at = point(rect, -96.025, 46.5);
     let mut visible = None;
-    for primitive in ctx.tessellate(output.shapes.clone(), output.pixels_per_point) {
+    for primitive in ctx.tessellate(shapes, pixels_per_point) {
         if !primitive.clip_rect.contains(at) {
             continue;
         }
@@ -228,7 +231,6 @@ fn hovering_the_map_highlights_a_region_without_starting_a_game() {
         Some(highlighted),
         "interior polygon seam must stay filled"
     );
-    output.drop_without_applying_deltas();
 }
 
 #[test]

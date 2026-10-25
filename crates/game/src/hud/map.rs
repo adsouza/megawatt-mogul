@@ -1843,8 +1843,8 @@ mod tests {
             };
             let low = at(lower);
             let high = at(higher);
-            let low_value = region.terrain().get(low).unwrap().irradiance.value();
-            let high_value = region.terrain().get(high).unwrap().irradiance.value();
+            let low_value = region.solar_potential(low).value();
+            let high_value = region.solar_potential(high).value();
             assert!(
                 high_value > low_value + 0.2,
                 "{id}: {low_value} → {high_value}"

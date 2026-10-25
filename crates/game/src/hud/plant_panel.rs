@@ -1263,8 +1263,8 @@ mod tests {
             } else {
                 assert_eq!(view.id, solar);
                 assert!(!card.stats.iter().any(|s| s.label == "Start-up time"));
-                let site = game.session().region().terrain().get(view.cell).unwrap();
-                assert_eq!(stat("Solar potential"), &format::percent(site.irradiance));
+                let potential = game.session().region().solar_potential(view.cell);
+                assert_eq!(stat("Solar potential"), &format::percent(potential));
             }
             if let Some(water) = view.hydro_day_budget {
                 assert_eq!(

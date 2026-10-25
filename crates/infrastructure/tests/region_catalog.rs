@@ -13,6 +13,9 @@ use infrastructure::region::{RonRegionCatalog, load_region_bytes};
 use proptest::prelude::*;
 use tempfile::TempDir;
 
+#[path = "support/legacy_raster.rs"]
+mod legacy_raster;
+
 const MINIMAL: &str = include_str!("support/minimal_region.ron");
 
 /// SHA-256 of `support/minimal_region.ron`, computed independently with
@@ -1056,6 +1059,11 @@ fn archived_v3_bytes_preserve_terrain_factors_sun_and_locale() {
             domain::region::SolarModel::DaylightTable(_)
         ));
         let t = r.terrain();
+        assert_eq!(
+            *t,
+            legacy_raster::rasterize(&file),
+            "{id} old raster formula"
+        );
         let mut h = Sha256::new();
         h.update(t.width().to_le_bytes());
         h.update(t.height().to_le_bytes());
@@ -1074,12 +1082,15 @@ fn archived_v3_bytes_preserve_terrain_factors_sun_and_locale() {
                 }
             }
         }
-        assert_eq!(
-            hex(&h.finalize()),
-            fs::read_to_string(root.join(format!("{id}-terrain-sha256.txt")))
-                .unwrap()
-                .trim()
-        );
+        // Only the capture platform promises exact dynamic libm bits (§5.7).
+        if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+            assert_eq!(
+                hex(&h.finalize()),
+                fs::read_to_string(root.join(format!("{id}-terrain-sha256.txt")))
+                    .unwrap()
+                    .trim()
+            );
+        }
         for m in 1..=12 {
             let month = SimMonth::new(2027, m).unwrap();
             assert_eq!(r.season(month), month.season());

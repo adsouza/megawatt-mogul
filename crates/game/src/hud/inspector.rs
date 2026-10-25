@@ -475,7 +475,7 @@ mod tests {
                 ("Height", format::percent(terrain_cell.height).as_str()),
                 (
                     "Solar potential",
-                    format::percent(terrain_cell.irradiance).as_str()
+                    format::percent(region.solar_potential(at)).as_str()
                 ),
                 (
                     "Cooling water",

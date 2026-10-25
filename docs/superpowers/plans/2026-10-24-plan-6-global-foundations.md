@@ -88,7 +88,7 @@ work (§28.9) is Plan 8, and the new regions are Plan 7. Neither is in scope her
   `domain::state::SUPPORTED_STATE_SCHEMAS: RangeInclusive<u32> = 1..=3` and
   `Season::{Monsoon, PostMonsoon}` (tags 4 and 5).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```rust
 #[test]
@@ -111,12 +111,12 @@ fn every_gate_accepts_exactly_the_supported_schemas() {
 Add an infrastructure test that writes a new save (schema 3), reads it back, then restores the
 existing schema-2 golden fixtures unchanged. A schema-4 header must still fail as unsupported.
 
-- [ ] **Step 2: Run them and confirm they fail**
+- [x] **Step 2: Run them and confirm they fail**
 
 Run: `cargo nextest run --workspace -E 'test(season_tags_four_and_five) | test(every_gate_accepts)'`
 Expected: they fail to compile, because the constants and variants don't exist yet.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 - Add the constants and replace every literal `1..=2`, `schema: 2` and `snapshot_state_schema(2)`
   in the files above with `SUPPORTED_STATE_SCHEMAS` or `CURRENT_STATE_SCHEMA`.
@@ -124,12 +124,12 @@ Expected: they fail to compile, because the constants and variants don't exist y
 - `Season::localize` maps the new variants to `season-monsoon` and `season-post-monsoon`.
 - No simulation outcome changes.
 
-- [ ] **Step 4: Run the tests and confirm they pass**
+- [x] **Step 4: Run the tests and confirm they pass**
 
 Run: `cargo nextest run --workspace`
 Expected: everything passes, the schema-2 golden saves included.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -am "feat: portable state schema 3 with monsoon season tags"
@@ -171,7 +171,7 @@ git commit -am "feat: portable state schema 3 with monsoon season tags"
 - Per-city locale lives on the region, never in `CityDef`. `DemandCenter.def` is persisted, so
   changing `CityDef` would change portable state.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```rust
 #[test] fn offsets_follow_dst_months() {
@@ -204,22 +204,22 @@ Validation tests:
 - A proptest: `local_minute < 1440`, and `(local_minute − tick) mod 1440` equals the offset
   difference.
 
-- [ ] **Step 2: Run them and confirm they fail**
+- [x] **Step 2: Run them and confirm they fail**
 
 Run: `cargo nextest run --workspace -E 'test(offsets_follow_dst) | test(local_minute_wraps) | test(cell_centres_span)'`
 Expected: they fail to compile.
 
-- [ ] **Step 3: Implement** `clock.rs` and wire up the region accessors.
+- [x] **Step 3: Implement** `clock.rs` and wire up the region accessors.
 
 `local_minute = (tick as i32 + city_offset − system_offset).rem_euclid(1440)`. The legacy and
 fixture regions use one zone `ZoneId(0)`, `name_key: None`, offset 0 and no DST.
 
-- [ ] **Step 4: Run the tests and confirm they pass**
+- [x] **Step 4: Run the tests and confirm they pass**
 
 Run: `cargo nextest run --workspace`
 Expected: everything passes, and no outcome changes.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -am "feat: region geography and per-city time zones"
@@ -274,7 +274,7 @@ git commit -am "feat: region geography and per-city time zones"
   `(h[hour] + (h[next] − h[hour]) × fraction) × monthly`, so legacy results are bit-identical.
 - `run_length` is the length of the maximal cyclic run of equal labels that contains `month`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```rust
 #[test] fn legacy_climate_is_bit_identical_to_the_old_shape() {
@@ -303,12 +303,12 @@ git commit -am "feat: region geography and per-city time zones"
 - Milestone test: with the India calendar, strike-free January and February complete the
   milestone. `needed` reports 2 in January and 4 in July.
 
-- [ ] **Step 2: Run them and confirm they fail**
+- [x] **Step 2: Run them and confirm they fail**
 
 Run: `cargo nextest run --workspace -E 'test(legacy_climate_is_bit) | test(southern_calendar) | test(other_zones_peak) | test(run_lengths)'`
 Expected: they fail to compile.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 - Replace every `region.demand()` read with the new API, `month.season()` with
   `region.season(month)`, and `SEASON_MONTHS` with `calendar.run_length(month)`.
@@ -321,13 +321,13 @@ Expected: they fail to compile.
 - Keep `SimMonth::season()` only as the meteorological default used by
   `Calendar::northern_meteorological`.
 
-- [ ] **Step 4: Run the tests and confirm they pass**
+- [x] **Step 4: Run the tests and confirm they pass**
 
 Run: `cargo nextest run --workspace`
 Expected: everything passes. Snapshots and the rules guard are unchanged, because legacy is
 bit-identical.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -am "feat: demand climates, regional demand noise and region calendars"
@@ -372,7 +372,7 @@ git commit -am "feat: demand climates, regional demand noise and region calendar
     offset 0) ÷ the same at latitude 0, clamped to [0, 1];
   - **DaylightTable:** irradiance, exactly as today.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```rust
 #[test] fn quito_equinox_noon_is_near_overhead() {           // −0.18, −78.47, March
@@ -402,12 +402,12 @@ Proptests:
 - `sun_angles` is never NaN, including at the poles and at the zenith (where `atan2(0, 0)` is
   defined).
 
-- [ ] **Step 2: Run them and confirm they fail**
+- [x] **Step 2: Run them and confirm they fail**
 
 Run: `cargo nextest run --workspace -E 'test(quito) | test(murmansk) | test(sao_paulo) | test(eastern_sites) | test(southern_noon) | test(daylight_table_regions)'`
 Expected: they fail to compile.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 - Representative day of year `n = [0,31,59,90,120,151,181,212,243,273,304,334][m−1] + 15`.
 - `UTC minutes = tick − system_offset(month)`.
@@ -419,12 +419,12 @@ Expected: they fail to compile.
 - The tiny fixture stays on `DaylightTable`. Add `fixtures::astronomical_region()` (gated by
   `test-fixtures`) for the new tests.
 
-- [ ] **Step 4: Run the tests and confirm they pass**
+- [x] **Step 4: Run the tests and confirm they pass**
 
 Run: `cargo nextest run --workspace`
 Expected: everything passes, and the snapshots are unchanged.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -am "feat: computed per-cell sun for astronomical regions"
@@ -447,7 +447,7 @@ git commit -am "feat: computed per-cell sun for astronomical regions"
   for each city whose local hour starts mid-system-hour. Every no-storage hourly sampler uses it
   in place of `HOUR_ENDS`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```rust
 #[test] fn ist_cities_add_the_half_hour_bend() {
@@ -461,20 +461,20 @@ git commit -am "feat: computed per-cell sun for astronomical regions"
 }
 ```
 
-- [ ] **Step 2: Run them and confirm they fail**
+- [x] **Step 2: Run them and confirm they fail**
 
 Run: `cargo nextest run --workspace -E 'test(half_hour_bend)'`
 Expected: they fail.
 
-- [ ] **Step 3: Implement** by threading the sample set through the outage and views samplers.
+- [x] **Step 3: Implement** by threading the sample set through the outage and views samplers.
   Single-zone regions return `{0, 59}`, so legacy behaviour is unchanged.
 
-- [ ] **Step 4: Run the tests and confirm they pass**
+- [x] **Step 4: Run the tests and confirm they pass**
 
 Run: `cargo nextest run --workspace`
 Expected: everything passes.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -am "feat: sample planning demand at every local-hour bend"
@@ -514,7 +514,7 @@ git commit -am "feat: sample planning demand at every local-hour bend"
   `prefix = "<ISO> "`, as in `"INR 1.20M"`. Unit labels such as `supply-chart-unit-cost` take
   a `{ $symbol }` argument.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```rust
 #[test] fn usd_money_text_is_unchanged() { /* the existing table at format.rs:298-305 passes with MoneyStyle for USD */ }
@@ -532,22 +532,22 @@ Also add a game-binary test that paints each shipped currency's symbol with the 
 fonts. It asserts either that the glyph renders, meaning it isn't the replacement glyph, or that
 `MoneyStyle` chose the ISO fallback.
 
-- [ ] **Step 2: Run them and confirm they fail**
+- [x] **Step 2: Run them and confirm they fail**
 
 Run: `cargo nextest run --workspace -E 'test(usd_money_text) | test(every_currency_formats) | test(missing_glyph)'`
 Expected: they fail to compile.
 
-- [ ] **Step 3: Implement** the change at every caller.
+- [x] **Step 3: Implement** the change at every caller.
   - Presenters read `MoneyStyle` from a resource built when a session loads, and pass it on.
   - Save-library cards resolve a style from each save's region currency.
   - Legacy regions are USD, so their text is byte-identical.
 
-- [ ] **Step 4: Run the tests and confirm they pass**
+- [x] **Step 4: Run the tests and confirm they pass**
 
 Run: `cargo nextest run --workspace`
 Expected: everything passes, including l10n coverage.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -am "feat: region currency and currency-aware money formatting"
@@ -602,7 +602,7 @@ git commit -am "feat: region currency and currency-aware money formatting"
 - Schema-4 checks: the grid is at most 256 × 128 (`InvalidShape { field: "grid" }`), and every
   required field is present (`MissingField { field }`).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 - `a_v4_file_maps_every_new_field`: a small v4 file with two zones, two climates, a southern
   calendar, EUR and a line name. Assert the domain accessors.
@@ -622,12 +622,12 @@ git commit -am "feat: region currency and currency-aware money formatting"
   and legacy domain values, and reproduces the saved canonical bytes under the source state schema.
 - `atlas_metadata_reaches_the_outline_only`.
 
-- [ ] **Step 2: Run them and confirm they fail**
+- [x] **Step 2: Run them and confirm they fail**
 
 Run: `cargo nextest run --workspace -E 'test(a_v4_file) | test(archived_v3_bytes) | test(archived_v3_save) | test(atlas_metadata)'`
 Expected: they fail.
 
-- [ ] **Step 3: Implement** the DTOs, shared catalog parser and mapping.
+- [x] **Step 3: Implement** the DTOs, shared catalog parser and mapping.
   - Route catalog listing, loading and outlines through `ParsedRegionFile`; archived regions
     reach the same parser through `load_region_bytes`. Keep id checks and fingerprints tied to
     the exact input bytes.
@@ -635,12 +635,12 @@ Expected: they fail.
     `SatisfactionDto`, `BatteryDto`, `Bounds`, `GridSize`).
   - Legacy values live only in `legacy.rs` and never apply to v4.
 
-- [ ] **Step 4: Run the tests and confirm they pass**
+- [x] **Step 4: Run the tests and confirm they pass**
 
 Run: `cargo nextest run --workspace`
 Expected: everything passes, and the shipped v3 files still load.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -am "feat: region schema 4 with time zones, climates, calendar and currency"
@@ -671,7 +671,7 @@ git commit -am "feat: region schema 4 with time zones, climates, calendar and cu
   This is a supercover traversal in deterministic integer order, returning only non-land cells.
   The line card shows "Submarine cable · N cells" when the result is non-empty.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 - `top_bar_shows_system_time_with_zone`: "14:20 MSK" for a region whose system zone has
   `name_key` `zone-msk`, and "14:20" for a legacy zone with `name_key: None`.
@@ -685,22 +685,22 @@ git commit -am "feat: region schema 4 with time zones, climates, calendar and cu
 - `the_gibraltar_style_starter_line_is_named_and_drawn_as_a_cable`, using a small v4 fixture with
   a strait.
 
-- [ ] **Step 2: Run them and confirm they fail**
+- [x] **Step 2: Run them and confirm they fail**
 
 Run: `cargo nextest run -p game -E 'test(system_time_with_zone) | test(local_time) | test(season_label) | test(north_at_noon) | test(polar_night) | test(legacy_lighting) | test(gibraltar_style)'`
 Expected: they fail.
 
-- [ ] **Step 3: Implement** through the presenter → draw → `UiAction` → dispatch flow.
+- [x] **Step 3: Implement** through the presenter → draw → `UiAction` → dispatch flow.
   - Submarine segments render darker and dashed over water cells, with the existing pulses kept.
   - They reuse render entities and assets across frames (§8.3).
   - The line card adds "Transfer limits are not simulated (copper plate)".
 
-- [ ] **Step 4: Run the tests and confirm they pass**
+- [x] **Step 4: Run the tests and confirm they pass**
 
 Run: `cargo nextest run --workspace` and then `cargo run -p game -- --exit-after-frames 120`
 Expected: every test passes, and the launch smoke exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -am "feat: local time, region seasons, computed sunlight and submarine cables in the HUD"
@@ -725,7 +725,7 @@ git commit -am "feat: local time, region seasons, computed sunlight and submarin
   - The palette comes from `atlas.colour` when present (A–H per §28.10), and otherwise from the
     existing `COLOURS` fallback.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 - `equal_earth_round_trips` (a proptest across the cropped extent, tolerance 1e-6°), plus
   `equal_earth_matches_published_values` at (0, 0), (180, 0) and (0, 90), using the projection's
@@ -735,22 +735,22 @@ git commit -am "feat: local time, region seasons, computed sunlight and submarin
 - `every_region_is_startable_from_its_card_at_minimum_window_size`.
 - `atlas_labels_meet_contrast` (painted glyph check at 4.5:1).
 
-- [ ] **Step 2: Run them and confirm they fail**
+- [x] **Step 2: Run them and confirm they fail**
 
 Run: `cargo nextest run --workspace -E 'test(equal_earth) | test(atlas_letters) | test(cards_show) | test(startable_from_its_card) | test(atlas_labels)'`
 Expected: they fail.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
   - Draw the backdrop from a coarse built-in world coastline. Embed it as a static asset in the
     game crate; it is not region data.
   - Keep hover, click, keyboard start, seed and disabled behaviour (§2.6).
 
-- [ ] **Step 4: Run the tests and confirm they pass**
+- [x] **Step 4: Run the tests and confirm they pass**
 
 Run: `cargo nextest run --workspace` and then `cargo run -p game -- --exit-after-frames 120`
 Expected: everything passes.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -am "feat: world region picker in Equal Earth"
@@ -792,37 +792,39 @@ git commit -am "feat: world region picker in Equal Earth"
   - Re-author irradiance without the latitude effect, so that `solar_potential` keeps each
     region's current relative site ranking.
 
-- [ ] **Step 1: Capture the archive goldens before editing**
+- [x] **Step 1: Capture the archive goldens before editing**
 
 Add `archived_na_saves_resume_identically`. For a schema-3 save of each region, mid-Operating
 with a charged battery, the save restores byte-identically, continues 60 ticks, and matches the
 state hash and reports recorded in the test under the old region bytes. Run it and confirm it
 passes against the unmodified files.
 
-- [ ] **Step 2: Rewrite both RON files to schema 4 with the values above**, then run the tests.
+- [x] **Step 2: Rewrite both RON files to schema 4 with the values above**, then run the tests.
 
 Run: `cargo nextest run --workspace`
 Expected: the beginner, §18.3 and rules-guard tests may fail. The archive goldens must pass.
 
-- [ ] **Step 3: Retune region data only** (starter fleets, cash, irradiance and climate scale)
+- [x] **Step 3: Retune region data only** (starter fleets, cash, irradiance and climate scale)
   until these pass on both regions, seeds 0–7:
   - the no-command and hands-off year-one runs (§26.7);
   - the early-expansion acceptance (§18.3).
 
   Never change rules to pass.
 
-- [ ] **Step 4: Bump `SIM_RULES_VERSION` to 16 and regenerate the rules guard and snapshots**,
+- [x] **Step 4: Bump `SIM_RULES_VERSION` to 16 and regenerate the rules guard and snapshots**,
   reviewing every diff with `cargo insta review`.
 
 Run: `cargo nextest run --workspace`, clippy, `cargo fmt --all --check`, and
 `cargo run -p game -- --exit-after-frames 120`
 Expected: everything is green.
 
-- [ ] **Step 5: Isolated playtest.** Run a full representative day in each North American region
+- [ ] **Step 5: Isolated playtest.** **Pending:** the Mac is locked, so the full-day visual
+  acceptance has not run. Automated acceptance and the 120-frame native launch smoke passed;
+  resume this check once the desktop is accessible. Run a full representative day in each North American region
   in a scratch save directory. Check zone-labelled time, season, lighting arc, currency text and
   picker selection. Don't open the window while the user may be playtesting.
 
-- [ ] **Step 6: Commit and update the spec status**
+- [x] **Step 6: Commit and update the spec status**
 
 ```bash
 git commit -am "feat: move North American regions to schema 4 (rules 16)"

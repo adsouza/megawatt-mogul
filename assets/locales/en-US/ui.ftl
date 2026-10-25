@@ -487,3 +487,12 @@ commitment-system-time = System time
 commitment-system-zone = System time ({ $zone })
 line-submarine = Submarine cable · { $cells } cells
 line-copper-plate = Transfer limits are not simulated (copper plate)
+
+# North American civil clocks (DST is authored per representative month).
+zone-et = ET
+zone-ct = CT
+zone-saskatchewan-cst = CST
+zone-at = AT
+zone-pt = PT
+zone-mt = MT
+zone-arizona-mst = MST

@@ -20,7 +20,7 @@ use domain::region::{PlantKind, RegionDefinition};
 use domain::session::{GameSettings, MonthlyReport, SessionStatus};
 use domain::time::{SimMonth, TICKS_PER_DAY, TICKS_PER_HOUR};
 use domain::units::{Hertz, Ratio};
-use infrastructure::region::{RegionFile, RonRegionCatalog, map_region, to_cell};
+use infrastructure::region::{RegionFileV4, RonRegionCatalog, map_region_v4};
 
 const REGIONS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/regions");
 const EAST: &str = "eastern_interconnection";
@@ -40,7 +40,7 @@ fn region(id: &str) -> RegionDefinition {
 }
 
 /// The raw file, for mapping (lon, lat) to cells exactly as loading does.
-fn region_file(id: &str) -> RegionFile {
+fn region_file(id: &str) -> RegionFileV4 {
     let text = std::fs::read_to_string(format!("{REGIONS_DIR}/{id}.ron")).expect("file exists");
     ron::de::from_str(&text).expect("file parses")
 }
@@ -52,7 +52,16 @@ fn total_base_load(region: &RegionDefinition) -> f64 {
 /// Whether the cell containing (lon, lat) is land.
 fn is_land(id: &str, lon: f64, lat: f64) -> bool {
     let file = region_file(id);
-    let cell = to_cell(&file, lon, lat);
+    let cell = domain::ids::CellCoord {
+        x: ((lon - file.bounds.west) / (file.bounds.east - file.bounds.west)
+            * f64::from(file.grid.width))
+        .floor()
+        .clamp(0.0, f64::from(file.grid.width - 1)) as u16,
+        y: ((file.bounds.north - lat) / (file.bounds.north - file.bounds.south)
+            * f64::from(file.grid.height))
+        .floor()
+        .clamp(0.0, f64::from(file.grid.height - 1)) as u16,
+    };
     region(id)
         .terrain()
         .get(cell)
@@ -71,6 +80,119 @@ fn max_shape_factor(region: &RegionDefinition) -> f64 {
             })
         })
         .fold(f64::MIN, f64::max)
+}
+
+/// Civil clocks must shift demand by the city's authored local hour, including
+/// the Saskatchewan/Arizona summer exceptions. A wrong zone changes these loads.
+#[test]
+fn shipped_city_clocks_shift_local_demand_and_sun() {
+    use domain::region::SolarModel;
+    use domain::units::Currency;
+    for (id, system_offset, groups) in [
+        (
+            EAST,
+            -300,
+            vec![
+                (
+                    -300,
+                    true,
+                    "new-york washington philadelphia toronto miami charlotte atlanta tampa boston detroit pittsburgh cincinnati columbus cleveland",
+                ),
+                (
+                    -360,
+                    true,
+                    "chicago nashville new-orleans st-louis minneapolis kansas-city oklahoma-city winnipeg amarillo",
+                ),
+                (-360, false, "regina"),
+                (-240, true, "halifax"),
+            ],
+        ),
+        (
+            WEST,
+            -480,
+            vec![
+                (
+                    -480,
+                    true,
+                    "los-angeles riverside san-diego san-francisco san-jose sacramento fresno las-vegas seattle portland spokane vancouver tijuana mexicali",
+                ),
+                (
+                    -420,
+                    true,
+                    "salt-lake-city denver albuquerque el-paso boise calgary edmonton",
+                ),
+                (-420, false, "phoenix tucson"),
+            ],
+        ),
+    ] {
+        let r = region(id);
+        assert!(matches!(r.solar().model, SolarModel::Astronomical), "{id}");
+        assert_eq!(r.currency(), Currency::Usd);
+        let legacy: infrastructure::region::RegionFile = ron::from_str(
+            &std::fs::read_to_string(format!(
+                "{}/tests/support/global-foundations/{id}-v3.ron",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        let mut covered = 0;
+        for (offset, dst, names) in groups {
+            for name in names.split_whitespace() {
+                let c = r
+                    .cities()
+                    .iter()
+                    .find(|c| c.name_key == format!("city-{name}"))
+                    .unwrap();
+                covered += 1;
+                for m in 1..=12 {
+                    let month = SimMonth::new(2027, m).unwrap();
+                    let summer_clock = (3..=10).contains(&m);
+                    let system = system_offset + if summer_clock { 60 } else { 0 };
+                    let local = offset + if dst && summer_clock { 60 } else { 0 };
+                    assert_eq!(r.system_zone().offset_minutes(month), system);
+                    assert_eq!(
+                        r.city_zone(c.id).offset_minutes(month),
+                        local,
+                        "{id} {name} {m}"
+                    );
+                    assert_eq!(r.season(month), month.season());
+                    let shape = match m {
+                        12 | 1 | 2 => &legacy.demand.winter,
+                        6..=8 => &legacy.demand.summer,
+                        _ => &legacy.demand.shoulder,
+                    };
+                    for tick in [0, 59, 480, 960, 1439] {
+                        let minute = (tick as i32 + local - system).rem_euclid(1440) as usize;
+                        assert_eq!(r.local_minute(c.id, month, tick), minute as u32);
+                        let hour = minute / 60;
+                        let want = (shape[hour]
+                            + (shape[(hour + 1) % 24] - shape[hour]) * (minute % 60) as f64 / 60.0)
+                            * legacy.demand.monthly[usize::from(m - 1)];
+                        assert!(
+                            (r.load_factor(c.id, month, tick) - want).abs() < 1e-12,
+                            "{id} {name} {m} {tick}"
+                        );
+                    }
+                }
+            }
+        }
+        assert_eq!(covered, r.cities().len());
+        let home = r.city(r.start().home_city).unwrap();
+        let june = SimMonth::new(2027, 6).unwrap();
+        assert_eq!(r.sun(home.cell, june, 0), 0.0);
+        assert!(r.sun(home.cell, june, 13 * 60) > 0.8);
+        assert!(r.sun_at_home(june, 13 * 60).is_some());
+    }
+}
+
+#[test]
+fn shipped_first_expansion_acceptance_seeds_zero_through_seven() {
+    for id in [EAST, WEST] {
+        for seed in 0..8 {
+            assert_first_expansion(id, seed);
+        }
+    }
 }
 
 #[test]
@@ -278,7 +400,7 @@ impl StartMonthOverride {
             .expect("shipped region loads");
         let mut file = region_file(id);
         file.start.month = month;
-        loaded.definition = Arc::new(map_region(file).expect("overridden region maps"));
+        loaded.definition = Arc::new(map_region_v4(file).expect("overridden region maps"));
         Self(loaded)
     }
 }
@@ -1135,5 +1257,100 @@ mod gold_plated_batteries_do_not_raise_cash_over_three_reviews {
     #[test]
     fn application_western_enabled() {
         compare(WEST, 7, Driver::Application, StorageUse::Enabled);
+    }
+}
+
+/// Compare the new annual overlay with the frozen old irradiance field, across
+/// every authored blob centre on land, starter solar plant, and named example.
+#[test]
+fn solar_migration_preserves_authored_site_rankings() {
+    use infrastructure::region::{RegionFile, map_region, to_cell};
+    for (id, names) in [
+        (EAST, "miami amarillo regina toronto"),
+        (WEST, "phoenix tucson mexicali el-paso seattle vancouver"),
+    ] {
+        let old: RegionFile = ron::from_str(
+            &std::fs::read_to_string(format!(
+                "{}/tests/support/global-foundations/{id}-v3.ron",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        let before = map_region(old.clone()).unwrap();
+        let after = region(id);
+        let mut sites = std::collections::BTreeMap::new();
+        for b in &old.irradiance.blobs {
+            let cell = to_cell(&old, b.lon, b.lat);
+            if before.terrain().get(cell).unwrap().land {
+                sites.insert(cell, format!("blob({},{})", b.lon, b.lat));
+            } else {
+                eprintln!("{id}: excluded water blob({},{})", b.lon, b.lat);
+            }
+        }
+        for plant in &before.start().fleet {
+            if plant.kind == PlantKind::Solar {
+                sites.insert(plant.cell, "starter solar".into());
+            }
+        }
+        for name in names.split_whitespace() {
+            let c = before
+                .cities()
+                .iter()
+                .find(|c| c.name_key == format!("city-{name}"))
+                .unwrap();
+            sites.entry(c.cell).or_insert(c.name_key.clone());
+        }
+        let values: Vec<_> = sites
+            .iter()
+            .map(|(cell, name)| {
+                let old = before.solar_potential(*cell).value();
+                let new = after.solar_potential(*cell).value();
+                eprintln!("{id} {name}: {old:.6} -> {new:.6}");
+                (name, old, new)
+            })
+            .collect();
+        let mut inversions = Vec::new();
+        for (i, (a, oa, na)) in values.iter().enumerate() {
+            for (b, ob, nb) in &values[i + 1..] {
+                if (oa - ob) * (na - nb) < 0.0 {
+                    inversions.push(format!("{a} vs {b}"));
+                }
+            }
+        }
+        let cells: Vec<_> = (0..before.terrain().height())
+            .flat_map(|y| {
+                (0..before.terrain().width()).map(move |x| domain::ids::CellCoord { x, y })
+            })
+            .filter(|c| before.terrain().get(*c).unwrap().land)
+            .map(|c| {
+                (
+                    before.solar_potential(c).value(),
+                    after.solar_potential(c).value(),
+                )
+            })
+            .collect();
+        let mut concordant = 0u64;
+        let mut discordant = 0u64;
+        for (i, (oa, na)) in cells.iter().enumerate() {
+            for (ob, nb) in &cells[i + 1..] {
+                let product = (oa - ob) * (na - nb);
+                if product > 0.0 {
+                    concordant += 1;
+                }
+                if product < 0.0 {
+                    discordant += 1;
+                }
+            }
+        }
+        eprintln!(
+            "{id}: {} land cells; {concordant} concordant / {discordant} discordant pairs; {:.3}% agreement among non-ties",
+            cells.len(),
+            100.0 * concordant as f64 / (concordant + discordant) as f64
+        );
+        assert!(
+            inversions.is_empty(),
+            "{id} authored-site inversions: {inversions:?}"
+        );
     }
 }
