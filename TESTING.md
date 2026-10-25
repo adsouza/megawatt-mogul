@@ -93,6 +93,13 @@ comparison through construction, commissioning and the first battery operating m
 streamlined driver against the application. Nextest can schedule the cases in parallel; use a
 focused filter when changing an unrelated rule.
 
+These scenarios check every added battery and its dedicated line at the first review, including
+the line's matching held fraction. Focused domain tests use a fully excess fixture to check exact
+book values for both asset kinds at holding and write-off. A fast property test independently
+calculates cent-exact partial holdings, eligible returns and subsequent depreciation across
+generated costs, lives, first-review lengths and one to four associated lines; it also checks that
+capital adjustments are non-cash and written-off value is not recovered again.
+
 ## The game crate
 
 The game's tests sit in six layers, from the cheapest to the widest. None opens a window.

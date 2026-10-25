@@ -753,7 +753,7 @@ mod gold_plated_batteries_do_not_raise_cash_over_three_reviews {
     use super::*;
     use application::pipeline::{CoreHandler, InvariantCheckLayer};
     use application::{CommandError, CommandHandler};
-    use domain::company::AssetRef;
+    use domain::company::{AssetProfile, AssetRef};
     use domain::error::DomainError;
     use domain::generation::BatteryTotals;
     use domain::ids::CellCoord;
@@ -993,6 +993,46 @@ mod gold_plated_batteries_do_not_raise_cash_over_three_reviews {
         batteries
     }
 
+    fn assert_every_storage_asset_is_held(
+        company: &FinancialCompany,
+        batteries: &[PlantId],
+        events: &[DomainEvent],
+    ) {
+        let rate_base = company.session().company().rate_base();
+        for id in batteries {
+            let plant = company.session().power().plant(*id).unwrap();
+            let capital = rate_base.asset(AssetRef::Plant(*id)).unwrap();
+            assert!(
+                capital.held() > domain::units::Money::ZERO,
+                "battery {id:?}"
+            );
+            assert!(events.contains(&DomainEvent::CapitalHeld {
+                asset: capital.asset,
+                amount: capital.held(),
+            }));
+            let fraction = capital.held_slice().unwrap().fraction();
+            let lines: Vec<_> = rate_base
+                .assets()
+                .filter(|asset| {
+                    !asset.legacy
+                        && matches!(asset.profile,
+                    AssetProfile::Line { from, to } if from == plant.node() || to == plant.node())
+                })
+                .collect();
+            assert_eq!(lines.len(), 1, "one dedicated line for battery {id:?}");
+            for line in lines {
+                assert!(line.held() > domain::units::Money::ZERO);
+                assert!(events.contains(&DomainEvent::CapitalHeld {
+                    asset: line.asset,
+                    amount: line.held(),
+                }));
+                let slice = line.held_slice().unwrap();
+                assert_eq!(slice.follows(), Some(*id));
+                assert_eq!(slice.fraction(), fraction);
+            }
+        }
+    }
+
     fn compare(region_id: &str, seed: u64, driver: Driver, storage_use: StorageUse) {
         let mut baseline = FinancialCompany::new(region_id, seed, driver);
         let mut gold = FinancialCompany::new(region_id, seed, driver);
@@ -1028,10 +1068,16 @@ mod gold_plated_batteries_do_not_raise_cash_over_three_reviews {
                 );
             }
             let now = gold.session().clock().month();
-            if events.iter().any(|e| matches!(e, DomainEvent::PlantCommissioned { plant, .. } if batteries.contains(plant))) { first_commission.get_or_insert(now); }
+            if events.iter().any(|e| {
+                matches!(e,
+                DomainEvent::PlantCommissioned { plant, .. } if batteries.contains(plant))
+            }) {
+                first_commission.get_or_insert(now);
+            }
             if now.month() == 12 && first_commission.is_some_and(|first| first.year() == now.year())
             {
-                first_december_held = events.iter().any(|e| matches!(e, DomainEvent::CapitalHeld { asset: AssetRef::Plant(plant), .. } if batteries.contains(plant)));
+                assert_every_storage_asset_is_held(&gold, &batteries, &events);
+                first_december_held = true;
             }
             if month < 35 {
                 baseline.execute(Command::FinishReview).unwrap();
