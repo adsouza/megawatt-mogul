@@ -135,11 +135,24 @@ Relevant pushes to `main` run a build-only `warm-cache` job with the same action
 That default-branch cache can be restored by subsequent PRs and version tags. Warming does not
 package or create a release. Before this workflow merges, its PR cache is available only to that
 PR's subsequent runs. GitHub can evict unused or older caches; a cache miss always builds normally.
-Flatpak's symbol processing requires `elfutils` in addition to `flatpak-builder`.
 CI also validates desktop/AppStream metadata and launches both installed packages from outside
 the checkout using Xvfb and Mesa. Debian's launch runs in a clean Ubuntu container so build
 dependencies cannot hide missing runtime dependencies. The full Rust suite runs in CI for tags;
 local focused checks do not imply permission to run the full local suite.
+
+## Crash reports and symbols
+
+A panic writes `crash-<UTC time>.txt` beside the command logs, with the version, thread, panic
+message, location and a backtrace (captured even without `RUST_BACKTRACE`). Release builds carry
+no debug info, so the backtrace can name functions but not source lines. It names them only
+because both packages keep the binary's symbol table. Cargo's release profile strips debug info
+alone. The Flatpak manifest sets `"strip": false` and `"no-debuginfo": true`, since
+`flatpak-builder` would otherwise move the symbols into a separate `.Debug` extension that the
+bundle doesn't include. The symbols add about 3.7 MB to each compressed package. The .deb uses xz
+compression, like the Flatpak bundle's LZMA static deltas; zstd made it about 2 MB larger.
+
+Both installed-package smokes run `--crash` and check that the report names
+`game::crash::requested_crash`. A stripped binary would print `<unknown>` frames and fail the check.
 
 ## Icon
 

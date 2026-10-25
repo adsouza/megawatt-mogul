@@ -129,7 +129,11 @@ Description: Build a power company and keep the grid balanced
  A single-player electricity grid simulation on an interactive 3D tabletop.
 """)
         artifact = output / f"{PACKAGE}_{data['deb_version']}_amd64.deb"
-        subprocess.run(["dpkg-deb", "--root-owner-group", "--build", str(tree), str(artifact.resolve())], check=True)
+        # xz, as Flatpak's static deltas use LZMA: zstd made the same binary ~2 MB larger.
+        subprocess.run(
+            ["dpkg-deb", "--root-owner-group", "-Zxz", "--build", str(tree), str(artifact.resolve())],
+            check=True,
+        )
         return artifact
 
 

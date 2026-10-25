@@ -113,7 +113,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
-            dpkg-dev flatpak flatpak-builder elfutils appstream desktop-file-utils \
+            dpkg-dev flatpak flatpak-builder appstream desktop-file-utils \
             xvfb xauth dbus-x11 mesa-vulkan-drivers
           # Flatpak's own Ubuntu 24.04 CI uses this workaround for bubblewrap.
           # Only affects this disposable runner, never an installed package.
@@ -146,6 +146,12 @@ jobs:
           cd "$RUNNER_TEMP"
           timeout 120s dbus-run-session -- xvfb-run -a -s '-screen 0 1280x720x24' \
             flatpak run "$APP_ID" --save-dir /var/data/smoke-saves --log-dir /var/data/smoke-logs --exit-after-frames 120
+          # A crash must leave a report whose backtrace names the game's functions (not stripped).
+          if dbus-run-session -- flatpak run "$APP_ID" --log-dir /var/data/crash-logs --crash; then
+            echo "flatpak run $APP_ID --crash exited successfully" >&2
+            exit 1
+          fi
+          grep -l 'game::crash::requested_crash' "$HOME/.var/app/$APP_ID/data/crash-logs"/crash-*.txt
       - name: Checksum packages
         working-directory: dist
         run: sha256sum -- *.deb *.flatpak > SHA256SUMS
