@@ -43,13 +43,12 @@ never compile Bevy, so feedback takes seconds.
 | Rendering, input, UI and localised text | `game` (see [The game crate](#the-game-crate)) |
 
 Region data (plant tuning numbers, cities, regulator parameters) lives in `assets/regions/*.ron`,
-never as code constants. Shipped files declare `region_schema: 3`, requiring explicit wind
-resource fields/parameters/catalog entries and the battery charge-end hour, in addition to the
-schema-2 storage-accreditation ladder and satisfaction-return parameters. Pre-wind archives
-(schema 1 without a marker, or schema 2) receive only the frozen version-1 wind extension from
-`infrastructure::region::legacy`; schema 1 also receives the frozen A12 regulator defaults.
-Unexpected new fields on legacy sources and unsupported schemas fail with typed errors.
-Region schema versions are independent of portable state schema 2, whose reader retains schema 1.
+never as code constants. Shipped files declare `region_schema: 4`, including explicit clock,
+climate, calendar, currency, and astronomical-sun data. Legacy region schemas retain frozen
+defaults in `infrastructure::region::legacy`; old-source integrity is checked before any
+upcast. Unexpected new fields on legacy sources and unsupported schemas fail with typed errors.
+Region schema versions are independent of portable state schema 3, written by current saves;
+readers retain schemas 1–3.
 
 Rules 13 accredit commissioned storage by deliverable duration (including disabled batteries),
 refresh rate-base firm MW only at annual review, and adjust allowed return by post-close customer

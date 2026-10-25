@@ -781,7 +781,7 @@ the whole served load. Noisy emergency cases separately pin one shedding episode
 no shedding after restoration and reviewed rules-14 energy limits. The over-frequency settling
 oracle integrates the three known surplus windows instead of assuming a 3 Hz peak.
 
-Game `save_snapshots` tests compare restored schema-2 captures to the immutable schema-1 fixtures
+Game `save_snapshots` tests compare restored schema-3 captures to the immutable schema-1 fixtures
 using source-schema canonical gameplay/projection bytes. They also check upgraded battery cutoff,
 header rules, journal, command count, summary, archived region, provenance and unchanged disk bytes.
 A new capture's schema/hash may change; elapsed history and original save files may not.
