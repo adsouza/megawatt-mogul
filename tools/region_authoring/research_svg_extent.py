@@ -1,27 +1,30 @@
-"""The Ukraine-IPS schematic operating extent, read from the research map.
+"""Provenance check of the Ukraine-IPS operating extent against the research map.
 
     python3 -I tools/region_authoring/research_svg_extent.py <World_Power_Grids_Top_8.svg> \\
-        --admin1 target/natural-earth/ne_10m_admin_1_states_provinces.geojson
+        --check-extent crates/infrastructure/authoring/ukraine_ips_operating_extent.ron
+
+The extent itself is Natural Earth admin-1 Crimea and Sevastopol, written by `natural_earth.py
+--extent`. This tool checks that the research map agrees with it:
 
 1. Read the research map (a Matplotlib SVG in Equal Earth).
-2. Take the IPS violet (#7652b2) patches whose bounding box lies within Ukraine's
-   (22-41 deg E, 44-53 deg N).
-3. Calibrate pixels to Equal Earth from the labelled graticule `line2d` ticks. Both the
+2. Calibrate pixels to Equal Earth from the labelled graticule `line2d` ticks. Both the
    spherical form and Cartopy's default WGS84 form (the same polynomial on the authalic
    latitude) are fitted; the one with the smaller residual is kept.
-4. Inverse-project with Newton iteration (A1..A4 = 1.340264, -0.081106, 0.000893, 0.003796),
+3. Inverse-project with Newton iteration (A1..A4 = 1.340264, -0.081106, 0.000893, 0.003796),
    then convert the authalic latitude back to geodetic for the WGS84 form.
-5. Append Natural Earth admin-1 "Crimea" and "Sevastopol".
+4. Require an IPS violet (#7652b2) point marker over Ukraine (22-41 deg E, 44-53 deg N), and
+   every such marker to lie inside the extent: the map marks Crimea's connection with a point.
+5. Require that no #7652b2 patch covers mainland Ukraine (22-41 deg E, 44.5-53 deg N, outside the
+   extent): the map draws no wider occupied extent.
+6. Require the probe points: Sevastopol (on land), Simferopol and Kerch inside; Henichesk,
+   Kherson, Donetsk, Kyiv, Odesa and Kharkiv outside.
 
-The result is checked before anything is printed: Sevastopol and Donetsk must lie inside it, and
-Kyiv, Odesa and Kharkiv outside. On success stdout is the RON file
-`(polygons: [[(lon, lat), ...], ...])`; on any failure the tool exits non-zero and prints
-nothing to stdout. Run with `python3 -I` and pass paths as arguments: inputs are untrusted.
+It exits non-zero on any failure. Run with `python3 -I` and pass paths as arguments: inputs are
+untrusted.
 """
 
 import argparse
 import dataclasses
-import hashlib
 import importlib.util
 import math
 import pathlib
@@ -37,11 +40,18 @@ M = math.sqrt(3.0) / 2.0
 
 IPS_VIOLET = "#7652b2"
 UKRAINE_BOX = (22.0, 41.0, 44.0, 53.0)
-ADMIN1 = ["UKR:Crimea", "UKR:Sevastopol"]
-# ISO 3166-2 "UA-.." codes belong to Ukraine, whatever adm0_a3 Natural Earth files them under.
-ISO2_CODES = {"UA": {"UKR"}}
-PROBES_INSIDE = [("Sevastopol", 33.52, 44.62), ("Donetsk", 37.80, 48.00)]
-PROBES_OUTSIDE = [("Kyiv", 30.52, 50.45), ("Odesa", 30.73, 46.48), ("Kharkiv", 36.23, 49.99)]
+MAINLAND_BOX = (22.0, 41.0, 44.5, 53.0)
+# Sevastopol's probe is in the city on land: (33.52, 44.62) is in the bay notch of the 1:10m
+# polygon.
+PROBES_INSIDE = [("Sevastopol", 33.52, 44.60), ("Simferopol", 34.10, 44.95), ("Kerch", 36.47, 45.36)]
+PROBES_OUTSIDE = [
+    ("Henichesk", 34.82, 46.17),
+    ("Kherson", 32.62, 46.64),
+    ("Donetsk", 37.80, 48.00),
+    ("Kyiv", 30.52, 50.45),
+    ("Odesa", 30.73, 46.48),
+    ("Kharkiv", 36.23, 49.99),
+]
 LABEL_TOLERANCE_PX = 8.0
 MAX_RESIDUAL_PX = 1.5
 SVG = "{http://www.w3.org/2000/svg}"
@@ -363,10 +373,14 @@ def fill_colour(element):
     return colour.lower()
 
 
-def violet_rings(root, calibration, colour=IPS_VIOLET, box=UKRAINE_BOX):
-    """Lon/lat rings of every `colour` path whose bounding box lies within `box`."""
+def _in_box(point, box):
     west, east, south, north = box
-    rings = []
+    return west <= point[0] <= east and south <= point[1] <= north
+
+
+def violet_patches(root, calibration, colour=IPS_VIOLET):
+    """Lon/lat subpath rings of every on-globe `colour` path, one list per patch."""
+    patches = []
     for element, transformed in _elements(root):
         if element.tag != SVG + "path" or fill_colour(element) != colour or not element.get("d"):
             continue
@@ -376,42 +390,76 @@ def violet_rings(root, calibration, colour=IPS_VIOLET, box=UKRAINE_BOX):
         if transformed:
             raise CalibrationError("a candidate patch is transformed; unsupported")
         try:
-            projected = [[calibration.to_lonlat(px, py) for px, py in s] for s in subpaths]
+            patches.append([[calibration.to_lonlat(px, py) for px, py in s] for s in subpaths])
         except CalibrationError:
             continue  # legend swatches and other marks off the globe
-        points = [p for s in projected for p in s]
-        if (
-            west <= min(p[0] for p in points)
-            and max(p[0] for p in points) <= east
-            and south <= min(p[1] for p in points)
-            and max(p[1] for p in points) <= north
-        ):
-            rings.extend(projected)
-    return rings
+    return patches
 
 
-def colour_marks(root, calibration, colour=IPS_VIOLET):
-    """Diagnostics: every `colour` path or marker as `(kind, lon, lat)` of its centre."""
-    marks = []
-    for element in root.iter():
-        if fill_colour(element) != colour:
+def violet_markers(root, calibration, colour=IPS_VIOLET):
+    """Lon/lat of every on-globe `colour` point marker (`<use>`)."""
+    markers = []
+    for element, transformed in _elements(root):
+        if element.tag != SVG + "use" or fill_colour(element) != colour:
             continue
-        if element.tag == SVG + "use":
-            px, py = float(element.get("x", "nan")), float(element.get("y", "nan"))
-            kind = "marker"
-        elif element.tag == SVG + "path" and element.get("d"):
-            points = [p for s in path_points(element.get("d")) for p in s]
-            px = sum(p[0] for p in points) / len(points)
-            py = sum(p[1] for p in points) / len(points)
-            kind = "patch"
-        else:
-            continue
+        if transformed:
+            raise CalibrationError("a candidate marker is transformed; unsupported")
         try:
-            lon, lat = calibration.to_lonlat(px, py)
-            marks.append((kind, round(lon, 2), round(lat, 2)))
+            markers.append(
+                calibration.to_lonlat(float(element.get("x", "nan")), float(element.get("y", "nan")))
+            )
         except CalibrationError:
-            marks.append((kind + " off the globe", round(px, 1), round(py, 1)))
-    return marks
+            continue
+    return markers
+
+
+def check_extent(root, calibration, rings):
+    """Every way the research map or the probes disagree with the extent `rings`."""
+    inside = lambda lon, lat: any(ne.contains(r, lon, lat) for r in rings)  # noqa: E731
+    failures = []
+    markers = [m for m in violet_markers(root, calibration) if _in_box(m, UKRAINE_BOX)]
+    if not markers:
+        failures.append(f"no {IPS_VIOLET} point marker over Ukraine {UKRAINE_BOX}")
+    for lon, lat in markers:
+        if not inside(lon, lat):
+            failures.append(f"{IPS_VIOLET} marker at ({lon:.2f}, {lat:.2f}) is outside the extent")
+    for patch in violet_patches(root, calibration):
+        mainland = [
+            p for ring in patch for p in ring if _in_box(p, MAINLAND_BOX) and not inside(*p)
+        ]
+        covered = [
+            name
+            for name, lon, lat in PROBES_OUTSIDE
+            if sum(ne.contains(ring, lon, lat) for ring in patch) % 2
+        ]
+        if mainland or covered:
+            where = f"vertex ({mainland[0][0]:.2f}, {mainland[0][1]:.2f})" if mainland else ""
+            where += (", " if where and covered else "") + (", ".join(covered) if covered else "")
+            failures.append(f"a {IPS_VIOLET} patch covers mainland Ukraine: {where}")
+    return failures + failed_probes(rings)
+
+
+NUMBER = r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?"
+PAIR = re.compile(rf"\(\s*({NUMBER})\s*,\s*({NUMBER})\s*\)")
+
+
+def parse_extent(text):
+    """Rings of a RON `(polygons: [[(lon, lat), ...], ...])` file; `//` comments allowed."""
+    body = re.sub(r"//[^\n]*", "", text)
+    match = re.fullmatch(r"\s*\(\s*polygons\s*:\s*\[(.*)\]\s*,?\s*\)\s*", body, re.DOTALL)
+    if not match:
+        raise ValueError("extent is not a (polygons: [...]) RON value")
+    rings = []
+    for ring_match in re.finditer(r"\[([^\[\]]*)\]", match.group(1)):
+        ring = [(float(a), float(b)) for a, b in PAIR.findall(ring_match.group(1))]
+        if PAIR.sub("", ring_match.group(1)).strip(" \t\n,") or len(ring) < 3:
+            raise ValueError("extent ring is not a list of at least three (lon, lat) pairs")
+        rings.append(ring)
+    if re.sub(r"\[[^\[\]]*\]", "", match.group(1)).strip(" \t\n,"):
+        raise ValueError("extent has text outside its rings")
+    if not rings:
+        raise ValueError("extent has no rings")
+    return rings
 
 
 def failed_probes(rings):
@@ -422,71 +470,35 @@ def failed_probes(rings):
     return failed
 
 
-def format_polygons(rings):
-    lines = ["(polygons: ["]
-    for ring in rings:
-        lines.append("    [")
-        for i in range(0, len(ring), ne.POINTS_PER_LINE):
-            chunk = ", ".join(ne.format_point(p) for p in ring[i : i + ne.POINTS_PER_LINE])
-            lines.append(f"        {chunk},")
-        lines.append("    ],")
-    lines.append("])")
-    return "\n".join(lines)
-
-
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("svg")
-    parser.add_argument("--admin1", required=True)
-    parser.add_argument("--tolerance-deg", type=float, default=0.01)
+    parser.add_argument("--check-extent", required=True, metavar="RON")
     args = parser.parse_args(argv)
-    data = pathlib.Path(args.svg).read_bytes()
-    root = parse_svg(data.decode("utf-8"))
+    root = parse_svg(pathlib.Path(args.svg).read_bytes().decode("utf-8"))
     calibration = calibrate(root)
     print(
         f"calibration: cx={calibration.cx:.4f} cy={calibration.cy:.4f} sx={calibration.sx:.4f} "
-        f"sy={calibration.sy:.4f}, {calibration.model}, max residual {calibration.residual_px:.3f} px, "
-        f"parallels {calibration.parallels}, meridians {calibration.meridians}",
-        file=sys.stderr,
+        f"sy={calibration.sy:.4f}, {calibration.model}, max residual "
+        f"{calibration.residual_px:.3f} px, parallels {calibration.parallels}, "
+        f"meridians {calibration.meridians}"
     )
     if calibration.residual_px > MAX_RESIDUAL_PX:
         print(f"error: residual exceeds {MAX_RESIDUAL_PX} px", file=sys.stderr)
         return 1
-    violet = violet_rings(root, calibration)
-    if not violet:
-        print(
-            f"error: no {IPS_VIOLET} patch lies within Ukraine's box {UKRAINE_BOX}; "
-            f"{IPS_VIOLET} marks found: {colour_marks(root, calibration)}",
-            file=sys.stderr,
-        )
+    rings = parse_extent(pathlib.Path(args.check_extent).read_text(encoding="utf-8"))
+    failures = check_extent(root, calibration, rings)
+    for failure in failures:
+        print(f"error: {failure}", file=sys.stderr)
+    if failures:
         return 1
-    admin1 = ne.select_admin1(ne.read_features(args.admin1), ADMIN1, ISO2_CODES)
-    crimea = [rings[0] for f in admin1 for rings in ne.polygons(f) if rings]
-    rings = [
-        ne.round_ring(ne.simplify_ring(r, args.tolerance_deg)) for r in violet + crimea
-    ]
-    rings = [r for r in rings if len(r) >= 3]
-    failed = failed_probes(rings)
-    if failed:
-        print(f"error: extent check failed: {', '.join(failed)}", file=sys.stderr)
-        return 1
-    svg_name, admin1_name = pathlib.Path(args.svg).name, pathlib.Path(args.admin1).name
+    markers = [m for m in violet_markers(root, calibration) if _in_box(m, UKRAINE_BOX)]
     print(
-        "\n".join(
-            [
-                "// Ukraine-IPS schematic operating extent per the research notes; no sovereignty",
-                "// position. Excluded by both Continental Europe-Maghreb and IPS/UPS.",
-                f"// Research map {svg_name} SHA-256 {hashlib.sha256(data).hexdigest()}",
-                f"// Natural Earth {ne.RELEASE} admin-1 {admin1_name} SHA-256 "
-                f"{ne.sha256(args.admin1)}: {', '.join(ADMIN1)}",
-                "// python3 -I tools/region_authoring/research_svg_extent.py "
-                f"{svg_name} --admin1 {admin1_name} --tolerance-deg {args.tolerance_deg:g}",
-                f"// Calibration: {calibration.model} Equal Earth, residual "
-                f"{calibration.residual_px:.3f} px.",
-            ]
-        )
+        f"ok: {len(rings)} polygons; {IPS_VIOLET} markers over Ukraine "
+        f"{[(round(a, 2), round(b, 2)) for a, b in markers]} are inside; no {IPS_VIOLET} patch "
+        f"covers mainland Ukraine; probes inside {[p[0] for p in PROBES_INSIDE]}, outside "
+        f"{[p[0] for p in PROBES_OUTSIDE]}"
     )
-    print(format_polygons(rings))
     return 0
 
 

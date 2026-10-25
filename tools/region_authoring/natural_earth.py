@@ -21,15 +21,20 @@ Selectors:
   finds Crimea although the dataset files it under `RUS`.
 
 Each ring is clipped to the bounds, simplified with Douglas-Peucker at the tolerance (half a cell
-by default), rounded, and dropped when its area falls under two cells. Outer rings of included
+by default) and rounded. Land rings under two cells' area are dropped; exclusions never are.
+`--dissolve` first merges rings that share borders, so separately simplified neighbours cannot
+open a sliver between them. `--extent` prints only the exclusions, as a standalone
+`(polygons: [...])` file; `--comment` adds header lines. Outer rings of included
 features become `land`. Their holes become `exclude`, unless another included feature fills the
 hole (an enclave). Outer rings of `--exclude-admin1` features become `exclude`.
 """
 
 import argparse
+import collections
 import hashlib
 import json
 import pathlib
+import shlex
 import sys
 
 RELEASE = "v5.1.2"
@@ -135,13 +140,52 @@ def cross_y(a, b, y):
     return (a[0] + t * (b[0] - a[0]), y)
 
 
-def ring_area(ring):
-    """Absolute shoelace area in square degrees."""
+def signed_area(ring):
+    """Shoelace area in square degrees, positive for counter-clockwise rings."""
     total = 0.0
     for i, (x0, y0) in enumerate(ring):
         x1, y1 = ring[(i + 1) % len(ring)]
         total += x0 * y1 - x1 * y0
-    return abs(total) / 2.0
+    return total / 2.0
+
+
+def ring_area(ring):
+    """Absolute shoelace area in square degrees."""
+    return abs(signed_area(ring))
+
+
+def dissolve(rings):
+    """Merge rings that share borders, so simplification cannot open a sliver between them.
+
+    Every ring is oriented counter-clockwise; an edge that two rings traverse in opposite
+    directions is a shared border and is cancelled, and the remaining edges are stitched back
+    into rings. Natural Earth subdivisions share exact border vertices, which this relies on.
+    Rings that touch at a single vertex, or overlap, are refused.
+    """
+    oriented = [r if signed_area(r) > 0 else list(reversed(r)) for r in rings]
+    edges = [(r[i], r[(i + 1) % len(r)]) for r in oriented for i in range(len(r))]
+    present = collections.Counter(edges)
+    following = {}
+    for a, b in edges:
+        if (b, a) in present:
+            continue
+        if a in following:
+            raise ValueError(f"rings touch or overlap at {a}; cannot dissolve them")
+        following[a] = b
+    out = []
+    while following:
+        start = next(iter(following))
+        ring, point = [start], following.pop(start)
+        while point != start:
+            if point not in following:
+                raise ValueError(f"border at {point} does not close; cannot dissolve")
+            ring.append(point)
+            point = following.pop(point)
+        out.append(ring)
+    before, after = sum(map(signed_area, oriented)), sum(map(signed_area, out))
+    if abs(before - after) > 1e-9 * max(1.0, abs(before)):
+        raise ValueError("dissolved area differs from the inputs; rings overlap")
+    return out
 
 
 def round_ring(ring):
@@ -164,6 +208,15 @@ def prepare_rings(rings, bounds, tolerance, min_area):
         if len(ring) >= 3 and ring_area(ring) >= min_area:
             out.append(ring)
     return out
+
+
+def prepare_geometry(land, exclude, bounds, tolerance, min_area):
+    """Prepared `(land, exclude)`. The area floor drops small land only: an exclusion is never
+    dropped, since dropping one would turn its area back into land."""
+    return (
+        prepare_rings(land, bounds, tolerance, min_area),
+        prepare_rings(exclude, bounds, tolerance, 0.0),
+    )
 
 
 def polygons(feature):
@@ -296,6 +349,32 @@ def format_rings(name, rings, indent="    "):
     return "\n".join(lines)
 
 
+def format_polygons(rings):
+    """A top-level RON `(polygons: [...])` value."""
+    lines = ["(polygons: ["]
+    for ring in rings:
+        lines.append("    [")
+        for i in range(0, len(ring), POINTS_PER_LINE):
+            chunk = ", ".join(format_point(p) for p in ring[i : i + POINTS_PER_LINE])
+            lines.append(f"        {chunk},")
+        lines.append("    ],")
+    lines.append("])")
+    return "\n".join(lines)
+
+
+def command_line(argv):
+    """The invocation, for provenance, without its `--comment` values (printed separately)."""
+    shown, skip = [], False
+    for arg in argv:
+        if skip:
+            skip = False
+        elif arg == "--comment":
+            skip = True
+        elif not arg.startswith("--comment="):
+            shown.append(arg)
+    return "python3 -I tools/region_authoring/natural_earth.py " + shlex.join(shown)
+
+
 def sha256(path):
     return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
 
@@ -320,6 +399,7 @@ def selectors(text):
 
 
 def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--admin0", required=True)
     parser.add_argument("--admin1")
@@ -329,6 +409,13 @@ def main(argv=None):
     parser.add_argument("--bounds", required=True, help="W,E,S,N in degrees")
     parser.add_argument("--grid", required=True, help="WIDTH,HEIGHT in cells")
     parser.add_argument("--tolerance-deg", type=float)
+    parser.add_argument("--dissolve", action="store_true", help="merge shared borders first")
+    parser.add_argument(
+        "--extent",
+        action="store_true",
+        help="print the exclusions as a standalone (polygons: [...]) file",
+    )
+    parser.add_argument("--comment", action="append", default=[], help="extra header line")
     args = parser.parse_args(argv)
     west, east, south, north = numbers(args.bounds, 4, "bounds")
     width, height = (int(v) for v in numbers(args.grid, 2, "grid"))
@@ -343,6 +430,8 @@ def main(argv=None):
     )
     if (include1 or exclude1) and not args.admin1:
         parser.error("admin-1 selectors need --admin1")
+    if args.extent and (include or include1):
+        parser.error("--extent prints exclusions only; drop --include and --include-admin1")
 
     admin0 = read_features(args.admin0)
     included = select_admin0(admin0, include)
@@ -353,28 +442,35 @@ def main(argv=None):
         included += select_admin1(admin1, include1, codes)
         excluded = select_admin1(admin1, exclude1, codes)
     land, exclude = feature_rings(included, excluded)
+    if args.dissolve:
+        land, exclude = dissolve(land), dissolve(exclude)
     bounds = (west, east, south, north)
-    min_area = 2.0 * cell_w * cell_h
-    land = prepare_rings(land, bounds, tolerance, min_area)
-    exclude = prepare_rings(exclude, bounds, tolerance, min_area)
+    land, exclude = prepare_geometry(land, exclude, bounds, tolerance, 2.0 * cell_w * cell_h)
 
     header = [
-        "// Generated by tools/region_authoring/natural_earth.py",
-        f"// Natural Earth {RELEASE} ({SOURCE}), public domain.",
-        f"// admin-0: {pathlib.Path(args.admin0).name} SHA-256 {sha256(args.admin0)}",
+        "Generated by tools/region_authoring/natural_earth.py",
+        f"Natural Earth {RELEASE} ({SOURCE}), public domain.",
+        f"admin-0: {pathlib.Path(args.admin0).name} SHA-256 {sha256(args.admin0)}",
     ]
     if args.admin1:
-        header.append(f"// admin-1: {pathlib.Path(args.admin1).name} SHA-256 {sha256(args.admin1)}")
+        header.append(f"admin-1: {pathlib.Path(args.admin1).name} SHA-256 {sha256(args.admin1)}")
     header += [
-        f"// include: {','.join(include) or '-'}",
-        f"// include-admin1: {','.join(include1) or '-'}",
-        f"// exclude-admin1: {','.join(exclude1) or '-'}",
-        f"// bounds {args.bounds}, grid {width}x{height}, Douglas-Peucker {tolerance:g} deg,"
-        " rings under 2 cells dropped",
+        f"include: {','.join(include) or '-'}",
+        f"include-admin1: {','.join(include1) or '-'}",
+        f"exclude-admin1: {','.join(exclude1) or '-'}",
+        f"bounds {args.bounds}, grid {width}x{height}, Douglas-Peucker {tolerance:g} deg"
+        + (", shared borders dissolved" if args.dissolve else "")
+        + ", land rings under 2 cells dropped",
+        *args.comment,
+        f"Command: {command_line(argv)}",
     ]
-    print("\n".join("    " + line for line in header))
-    print(format_rings("land", land))
-    print(format_rings("exclude", exclude))
+    if args.extent:
+        print("\n".join("// " + line for line in header))
+        print(format_polygons(exclude))
+    else:
+        print("\n".join("    // " + line for line in header))
+        print(format_rings("land", land))
+        print(format_rings("exclude", exclude))
     print(
         f"{len(land)} land and {len(exclude)} exclude rings, "
         f"{sum(map(len, land)) + sum(map(len, exclude))} points",

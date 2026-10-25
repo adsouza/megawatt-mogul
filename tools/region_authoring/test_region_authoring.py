@@ -5,10 +5,15 @@ Run: python3 -I tools/region_authoring/test_region_authoring.py
 `-I` drops the working directory from sys.path, so the tool modules are loaded by file path.
 """
 
+import contextlib
+import hashlib
 import importlib.util
+import io
+import json
 import math
 import pathlib
 import sys
+import tempfile
 import unittest
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -73,6 +78,29 @@ class ClipTest(unittest.TestCase):
         )
         self.assertEqual(kept, [square(1.0, 4.0, 1.0, 4.0)])
 
+    def test_exclude_rings_are_never_dropped_for_area(self):
+        bounds = (0.0, 10.0, 0.0, 10.0)
+        islet = square(6.0, 6.5, 6.0, 6.5)
+        lagoon = square(2.0, 2.5, 2.0, 2.5)
+        land, exclude = ne.prepare_geometry(
+            [square(1.0, 4.0, 1.0, 4.0), islet], [lagoon], bounds, tolerance=0.1, min_area=2.0
+        )
+        self.assertEqual(land, [square(1.0, 4.0, 1.0, 4.0)])
+        self.assertEqual(exclude, [lagoon])
+
+    def test_dissolve_removes_shared_borders(self):
+        west = [(0.0, 0.0), (1.0, 0.0), (1.0, 0.5), (1.0, 1.0), (0.0, 1.0)]
+        east = [(1.0, 0.0), (2.0, 0.0), (2.0, 1.0), (1.0, 1.0), (1.0, 0.5)]
+        apart = square(5.0, 6.0, 5.0, 6.0)
+        merged = ne.dissolve([west, list(reversed(east)), apart])
+        self.assertEqual(len(merged), 2)
+        self.assertAlmostEqual(sum(ne.ring_area(r) for r in merged), 3.0)
+        self.assertEqual(sorted(ne.simplify_ring(merged[0], 0.01)), sorted(square(0.0, 2.0, 0.0, 1.0)))
+        self.assertIn(apart, merged)
+        corner = square(1.0, 2.0, 1.0, 2.0)
+        with self.assertRaises(ValueError):
+            ne.dissolve([square(0.0, 1.0, 0.0, 1.0), corner])
+
     def test_rings_are_rounded_to_three_decimals_without_repeats(self):
         ring = [(0.00001, 0.0), (0.00002, 0.0), (5.12345, 0.0), (5.0, 5.0)]
         self.assertEqual(
@@ -122,6 +150,45 @@ class SelectionTest(unittest.TestCase):
         self.assertEqual(exclude, [lake, enclave, square(4.0, 5.0, 4.0, 5.0)])
 
 
+class ExtentModeTest(unittest.TestCase):
+    def test_extent_mode_prints_dissolved_exclusions_as_polygons(self):
+        admin0 = {"type": "FeatureCollection", "features": [
+            feature({"ISO_A3": "UKR", "ISO_A3_EH": "UKR", "ADM0_A3": "UKR", "ISO_A2": "UA"}),
+        ]}
+        admin1 = {"type": "FeatureCollection", "features": [
+            feature({"adm0_a3": "RUS", "iso_3166_2": "UA-43", "name": "Crimea"},
+                    [[(0.0, 0.0), (1.0, 0.0), (1.0, 0.5), (1.0, 1.0), (0.0, 1.0)]]),
+            feature({"adm0_a3": "RUS", "iso_3166_2": "UA-40", "name": "Sevastopol"},
+                    [[(1.0, 0.0), (1.2, 0.0), (1.2, 1.0), (1.0, 1.0), (1.0, 0.5)]]),
+        ]}
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = []
+            for name, data in [("a0.geojson", admin0), ("a1.geojson", admin1)]:
+                path = pathlib.Path(tmp) / name
+                path.write_text(json.dumps(data))
+                paths.append(str(path))
+            args = [
+                "--admin0", paths[0], "--admin1", paths[1],
+                "--exclude-admin1", "UKR:Crimea,UKR:Sevastopol",
+                "--bounds=-1,3,-1,2", "--grid", "40,30", "--extent", "--dissolve",
+                "--comment", "No sovereignty position is taken.",
+            ]
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(ne.main(args), 0)
+            text = out.getvalue()
+            digest = hashlib.sha256(pathlib.Path(paths[1]).read_bytes()).hexdigest()
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                ne.main(args + ["--include", "ISO:UKR"])
+        header = [line for line in text.splitlines() if line.startswith("//")]
+        self.assertTrue(any(digest in line for line in header), header)
+        self.assertIn("// No sovereignty position is taken.", header)
+        self.assertTrue(any(line.startswith("// Command: python3 -I") for line in header), header)
+        rings = svg.parse_extent(text)
+        self.assertEqual(len(rings), 1)
+        self.assertEqual(sorted(rings[0]), sorted(square(0.0, 1.2, 0.0, 1.0)))
+
+
 class EqualEarthTest(unittest.TestCase):
     def test_equal_earth_inverse_round_trips(self):
         for lat10 in range(-600, 751, 25):
@@ -149,7 +216,7 @@ class EqualEarthTest(unittest.TestCase):
             self.assertAlmostEqual(y, want_y, delta=1e-12)
 
 
-def synthetic_svg(cx, cy, sx, sy, patches=(), wgs84=False):
+def synthetic_svg(cx, cy, sx, sy, patches=(), wgs84=False, markers=()):
     """A matplotlib-shaped SVG: two parallel and two meridian graticule ticks, with labels.
 
     With `wgs84`, latitudes are projected through their WGS84 authalic latitude, as Cartopy's
@@ -186,6 +253,12 @@ def synthetic_svg(cx, cy, sx, sy, patches=(), wgs84=False):
     for i, (colour, ring) in enumerate(patches):
         d = path([pixel(lon, lat) for lon, lat in ring]) + " z"
         parts.append(f'<g id="patch_{i + 1}"><path d="{d}" style="fill: {colour}"/></g>')
+    for i, (colour, (lon, lat)) in enumerate(markers):
+        mx, my = pixel(lon, lat)
+        parts.append(
+            f'<g id="PathCollection_{i + 1}"><use href="#m" x="{mx:.6f}" y="{my:.6f}" '
+            f'style="fill: {colour}"/></g>'
+        )
     body = "\n".join(parts)
     return (
         '<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2000 1000">'
@@ -251,33 +324,72 @@ class SvgTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             svg.parse_svg(hostile)
 
-    def test_violet_patches_inside_the_box_are_inverse_projected(self):
-        donbas = square(37.0, 39.5, 47.0, 49.0)
-        far = square(60.0, 80.0, 50.0, 60.0)
-        root = svg.parse_svg(
-            synthetic_svg(
-                1000.0,
-                500.0,
-                380.0,
-                380.0,
-                patches=[("#7652b2", donbas), ("#7652b2", far), ("#78a7dd", donbas)],
-            )
-        )
-        rings = svg.violet_rings(root, svg.calibrate(root))
-        self.assertEqual(len(rings), 1)
-        for (lon, lat), (want_lon, want_lat) in zip(rings[0], donbas):
-            self.assertAlmostEqual(lon, want_lon, delta=1e-5)
-            self.assertAlmostEqual(lat, want_lat, delta=1e-5)
-
     def test_extent_check_names_failing_probes(self):
-        crimea = square(32.5, 36.6, 44.3, 46.2)
-        self.assertEqual(svg.failed_probes([crimea]), ["Donetsk inside"])
+        crimea = square(32.5, 36.7, 44.3, 46.0)
+        self.assertEqual(svg.failed_probes([crimea]), [])
+        self.assertEqual(
+            svg.failed_probes([square(32.5, 35.0, 44.3, 46.0)]), ["Kerch inside"]
+        )
         everything = square(22.0, 41.0, 44.0, 53.0)
         self.assertEqual(
             svg.failed_probes([everything]),
-            ["Kyiv outside", "Odesa outside", "Kharkiv outside"],
+            [f"{name} outside" for name in
+             ["Henichesk", "Kherson", "Donetsk", "Kyiv", "Odesa", "Kharkiv"]],
         )
-        self.assertEqual(svg.failed_probes([crimea, square(37.0, 40.0, 47.0, 48.5)]), [])
+
+    def test_check_extent_accepts_the_crimea_marker_inside(self):
+        crimea = square(32.5, 36.7, 44.3, 46.0)
+        root = svg.parse_svg(
+            synthetic_svg(
+                1000.0, 500.0, 380.0, 380.0,
+                patches=[("#7652b2", square(60.0, 80.0, 50.0, 60.0)), ("#78a7dd", square(30.0, 38.0, 46.5, 50.0))],
+                markers=[("#7652b2", (34.0, 45.1)), ("#7652b2", (106.9, 47.9))],
+            )
+        )
+        self.assertEqual(svg.check_extent(root, svg.calibrate(root), [crimea]), [])
+
+    def test_check_extent_rejects_misplaced_markers_and_mainland_patches(self):
+        crimea = square(32.5, 36.7, 44.3, 46.0)
+
+        def failures(patches=(), markers=()):
+            root = svg.parse_svg(
+                synthetic_svg(1000.0, 500.0, 380.0, 380.0, patches=patches, markers=markers)
+            )
+            return svg.check_extent(root, svg.calibrate(root), [crimea])
+
+        crimea_dot = [("#7652b2", (34.0, 45.1))]
+        self.assertEqual(len(failures()), 1, "no violet marker over Ukraine")
+        self.assertEqual(len(failures(markers=[("#7652b2", (30.5, 50.4))])), 1)
+        donbas = [("#7652b2", square(37.0, 39.5, 47.0, 49.0))]
+        self.assertEqual(len(failures(patches=donbas, markers=crimea_dot)), 1)
+        # A violet patch covering the whole of Ukraine has no vertex in it, but covers Kyiv.
+        cover = [("#7652b2", square(20.0, 45.0, 40.0, 55.0))]
+        self.assertEqual(len(failures(patches=cover, markers=crimea_dot)), 1)
+        # A violet patch wholly inside the extent is consistent with it.
+        self.assertEqual(
+            failures(patches=[("#7652b2", square(33.0, 34.0, 44.6, 45.4))], markers=crimea_dot),
+            [],
+        )
+
+    def test_parse_extent_reads_ron_polygons(self):
+        text = """// header
+(polygons: [
+    [
+        (32.500, 44.300), (36.700, 44.300), // a comment
+        (36.700, 46.000), (-32.500, 46.000),
+    ],
+    [(1.000, 2.000), (3.000, 4.000), (5.000, 6.000)],
+])
+"""
+        self.assertEqual(
+            svg.parse_extent(text),
+            [
+                [(32.5, 44.3), (36.7, 44.3), (36.7, 46.0), (-32.5, 46.0)],
+                [(1.0, 2.0), (3.0, 4.0), (5.0, 6.0)],
+            ],
+        )
+        with self.assertRaises(ValueError):
+            svg.parse_extent("(land: [])")
 
 
 if __name__ == "__main__":
