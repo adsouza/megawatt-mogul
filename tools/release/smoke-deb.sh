@@ -17,3 +17,10 @@ mkdir -m 700 "$XDG_RUNTIME_DIR"
 cd "$work"
 timeout 120s xvfb-run -a -s '-screen 0 1280x720x24' \
     megawatt-mogul --exit-after-frames 120
+
+# A crash must leave a report whose backtrace names the game's functions: the package keeps symbols.
+if megawatt-mogul --crash 2> crash.err; then
+    echo "megawatt-mogul --crash exited successfully" >&2
+    exit 1
+fi
+grep -l 'game::crash::requested_crash' "$XDG_DATA_HOME"/megawatt-mogul/logs/crash-*.txt

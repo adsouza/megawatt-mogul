@@ -23,6 +23,7 @@ use self::driver::TicksInFlight;
 pub use self::driver::{FIXED_STEP_HZ, drive_ticks};
 use self::new_game::start_new_game;
 pub use self::new_game::{default_seed, utc_date_time, utc_stamp};
+use crate::crash::CrashContext;
 use crate::paths::AssetRoot;
 use crate::state::{AppState, BootChecklistAppExt, BootError, PhaseState, finish_boot};
 
@@ -120,6 +121,8 @@ impl Plugin for SimulationPlugin {
             .init_resource::<TicksInFlight>()
             .init_resource::<Persistence>()
             .init_resource::<SessionGeneration>()
+            // `main.rs` inserts the context its panic hook reads; tests get an unconnected one.
+            .init_resource::<CrashContext>()
             .add_systems(
                 Update,
                 persistence::initialise_store
@@ -264,8 +267,10 @@ fn leave_game(
     mut queued: ResMut<Messages<PlayerCommand>>,
     mut speed: ResMut<SimSpeed>,
     mut in_flight: ResMut<TicksInFlight>,
+    crash: Res<CrashContext>,
 ) {
     commands.remove_resource::<Session>();
+    crash.set_game_log(None);
     persistence.abandon();
     generation.0 = generation.0.wrapping_add(1);
     queued.clear();

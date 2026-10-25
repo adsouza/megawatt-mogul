@@ -4,6 +4,7 @@
   "runtime-version": "25.08",
   "sdk": "org.freedesktop.Sdk",
   "command": "megawatt-mogul",
+  "build-options": {"strip": false, "no-debuginfo": true},
   "finish-args": [
     "--share=ipc",
     "--socket=wayland",
