@@ -49,6 +49,9 @@ It prints a provenance comment and then the RON `land: [...]` and `exclude: [...
   simplified separately, and the two simplified borders open slivers between them. The merge
   relies on Natural Earth's exact shared vertices, and it refuses rings that touch at a point or
   overlap.
+- `--max-loss-pct P` fails the run when more than P% of the unsimplified (clipped, dissolved)
+  area lies outside the simplified output. Every header records the measured share, computed
+  by scanline integration.
 - `--extent` prints only the exclusions, as a standalone `(polygons: [...])` file. `--comment`
   adds header lines. The header always ends with the generating command, without the comments.
 - `ISO:<A3>` matches admin-0 `ISO_A3`, falling back to `ISO_A3_EH` (France and Norway carry
@@ -75,13 +78,16 @@ python3 -I tools/region_authoring/natural_earth.py \
     --admin0 target/natural-earth/ne_50m_admin_0_countries.geojson \
     --admin1 target/natural-earth/ne_10m_admin_1_states_provinces.geojson \
     --exclude-admin1 "UKR:Crimea,UKR:Sevastopol" \
-    --bounds=32.0,37.2,44.1,46.5 --grid 13,8 --dissolve --extent \
-    --comment "..." > crates/infrastructure/authoring/ukraine_ips_operating_extent.ron
+    --bounds=32.0,37.2,44.1,46.5 --grid 13,8 --tolerance-deg 0.02 --max-loss-pct 1 \
+    --dissolve --extent --comment "..." \
+    > crates/infrastructure/authoring/ukraine_ips_operating_extent.ron
 ```
 
-The file's header gives the full `--comment` text. The 13 × 8 grid gives the finer of the two
-regions' cells (Continental Europe–Maghreb, about 0.4° × 0.3°). The tolerance is half of that
-cell (0.15°), as for land. At IPS/UPS's 0.25° half cell, Kerch would fall outside the outline.
+The file's header gives the full `--comment` text. The extent uses a near-raw 0.02° tolerance
+rather than half a cell. At half a cell (0.15°), the outline missed about 10% of the raw area
+along the coast, and a land cell centre of either region could have sat in raw Crimea outside
+the exclusion. `--max-loss-pct 1` makes the run fail if more than 1% of the dissolved,
+unsimplified area lies outside the output. On 2026-10-25 it measured 0.878%, with 87 points.
 
 ## `research_svg_extent.py`: provenance check
 

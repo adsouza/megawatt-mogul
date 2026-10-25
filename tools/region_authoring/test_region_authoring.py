@@ -101,6 +101,20 @@ class ClipTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             ne.dissolve([square(0.0, 1.0, 0.0, 1.0), corner])
 
+    def test_uncovered_fraction_measures_raw_area_outside_the_simplified_rings(self):
+        raw = [square(0.0, 10.0, 0.0, 10.0)]
+        self.assertEqual(ne.uncovered_fraction(raw, raw), 0.0)
+        self.assertAlmostEqual(ne.uncovered_fraction(raw, [square(0.0, 9.9, 0.0, 10.0)]), 0.01, delta=1e-9)
+        # Gains elsewhere do not offset a loss.
+        shifted = [square(0.5, 10.5, 0.0, 10.0)]
+        self.assertAlmostEqual(ne.uncovered_fraction(raw, shifted), 0.05, delta=1e-9)
+        # Rings are unions, as the rasteriser's `any` test treats them: the shared edge at x = 5
+        # is not double-counted, and the strip between the two covers is lost.
+        halves = [square(0.0, 5.0, 0.0, 10.0), square(5.0, 10.0, 0.0, 10.0)]
+        covers = [square(0.0, 4.0, 0.0, 10.0), square(6.0, 10.0, 0.0, 10.0)]
+        self.assertAlmostEqual(ne.uncovered_fraction(halves, covers), 0.2, delta=1e-9)
+        self.assertEqual(ne.uncovered_fraction([], raw), 0.0)
+
     def test_rings_are_rounded_to_three_decimals_without_repeats(self):
         ring = [(0.00001, 0.0), (0.00002, 0.0), (5.12345, 0.0), (5.0, 5.0)]
         self.assertEqual(
@@ -180,6 +194,15 @@ class ExtentModeTest(unittest.TestCase):
             digest = hashlib.sha256(pathlib.Path(paths[1]).read_bytes()).hexdigest()
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 ne.main(args + ["--include", "ISO:UKR"])
+            # At 0.9 deg the 1.2 x 1 outline collapses, losing everything.
+            coarse = args + ["--tolerance-deg", "0.9", "--max-loss-pct", "1"]
+            with contextlib.redirect_stdout(io.StringIO()) as lost, contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(ne.main(coarse), 1)
+            self.assertEqual(lost.getvalue(), "")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(ne.main(args + ["--max-loss-pct", "1"]), 0)
+            self.assertIn("// Unsimplified area outside the output: 0.000%", out.getvalue())
         header = [line for line in text.splitlines() if line.startswith("//")]
         self.assertTrue(any(digest in line for line in header), header)
         self.assertIn("// No sovereignty position is taken.", header)
