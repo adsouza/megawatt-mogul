@@ -3469,11 +3469,14 @@ column lists what the notes exclude, not everything outside.
 - **Areas the notes don't address.** These include Western Sahara, Abkhazia, South Ossetia,
   Transnistria and Kosovo. The region-data task settles each one by the same rule, records the
   operator source in the region file's comments, and never infers membership from a border.
-- **The one exception.** Crimea and the occupied parts of Ukraine are left out of both
-  Europe–Maghreb and IPS/UPS, with no cities and no buildable cells. Their boundary is the notes'
-  schematic Ukraine–IPS operating extent, which does not follow complete oblasts. The
-  Europe–Maghreb and IPS/UPS data tasks each author that same exclusion polygon once, and the
-  two regions must not overlap.
+- **The one exception.** Crimea, including Sevastopol, is left out of both Europe–Maghreb and
+  IPS/UPS, with no cities and no buildable cells.
+  - The research map marks Crimea's electrical connection to IPS/UPS with a point and draws no
+    wider occupied-area extent. It paints mainland Ukraine, Donetsk and Luhansk included, in the
+    Continental Europe colour, so mainland Ukraine belongs to Europe–Maghreb.
+  - The exclusion is the Natural Earth 1:10m admin-1 Crimea and Sevastopol polygons (decided
+    2026-10-25; this supersedes the earlier "occupied parts" wording).
+  - Both regions exclude that one canonical polygon set, and the two regions must not overlap.
 - **Borders.** The base map's borders express no sovereignty position (research notes,
   cartographic method).
 - **Starting territories** (*builder's calls*; each is a few cities with a compact starter fleet,

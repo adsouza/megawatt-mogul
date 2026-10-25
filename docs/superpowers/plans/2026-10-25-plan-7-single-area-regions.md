@@ -58,8 +58,9 @@ regions, not eight.
 - **Footprints** (§28.3):
   - The grid-operation rule settles membership: an area belongs to the region whose grid operates
     it.
-  - Crimea and the occupied parts of Ukraine are excluded from both Europe–Maghreb and IPS/UPS,
-    using the one canonical polygon set from Task 2.
+  - Crimea, including Sevastopol, is excluded from both Europe–Maghreb and IPS/UPS, using the one
+    canonical polygon set from Task 2. Mainland Ukraine is in Europe–Maghreb (user decision,
+    2026-10-25; spec §28.3).
   - For each area the notes don't address, the region file records its operator source.
 - **Grids:**
   - At most 256 × 128 cells.
@@ -104,8 +105,8 @@ regions, not eight.
 
 ## Review Focus
 
-1. **Excluded and overlapping territory.** A city or buildable cell in Crimea, occupied Ukraine,
-   Kaliningrad, Yunnan, Bangladesh or Paraguay would contradict the footprint. So would a cell
+1. **Excluded and overlapping territory.** A city or buildable cell in Crimea, Kaliningrad,
+   Yunnan, Bangladesh or Paraguay would contradict the footprint. So would a cell
    playable in both Europe–Maghreb and IPS/UPS. Tasks 2, 3, 8 and 9 test landmarks and overlap.
 2. **Cross-zone starter assets.** The Gibraltar starter line runs from a Spain cell to a Morocco
    cell. Its original rate base must equal §28.7.1's route valuation, not `N × cost_per_cell`.
@@ -259,7 +260,7 @@ git commit -m "docs: sourced regional economics for Plan 7"
 **Files:**
 - Create:
   - `tools/region_authoring/natural_earth.py` (polygon extraction and simplification);
-  - `tools/region_authoring/research_svg_extent.py` (the Ukraine–IPS extent);
+  - `tools/region_authoring/research_svg_extent.py` (a research-map provenance check);
   - `tools/region_authoring/test_region_authoring.py` (unittest);
   - `tools/region_authoring/README.md` (dataset release, SHA-256 values, commands).
 - Create:
@@ -281,15 +282,19 @@ git commit -m "docs: sourced regional economics for Plan 7"
   plus a provenance comment naming the dataset release, file SHA-256 and selection.
   Simplification is Douglas–Peucker at `T`, half a cell by default. It clips to the bounds and
   drops rings that fall under 2 cells' area.
-- Produces: `research_svg_extent.py <svg>` prints the canonical exclusion polygon list. It is
-  built as follows:
-  1. Read the research map (`World_Power_Grids_Top_8.svg`, SHA-256 recorded in the README).
-  2. Take the `#7652b2` (IPS violet) patches whose bounding box lies within Ukraine's (22°–41°E,
-     44°–53°N).
-  3. Calibrate pixels to Equal Earth from the graticule `line2d` ticks.
-  4. Inverse-project with Newton iteration, using A1 = 1.340264, A2 = −0.081106, A3 = 0.000893 and
+- Produces: `research_svg_extent.py <svg> --check-extent <ron>` checks the canonical exclusion
+  against the research map (`World_Power_Grids_Top_8.svg`, SHA-256 recorded in the README).
+  *Amended 2026-10-25: the map has no violet Ukraine patch, so it cannot supply the polygon.*
+  It does the following:
+  1. Calibrate pixels to Equal Earth from the graticule `line2d` ticks.
+  2. Inverse-project with Newton iteration, using A1 = 1.340264, A2 = −0.081106, A3 = 0.000893 and
      A4 = 0.003796.
-  5. Append Natural Earth admin-1 "Crimea" and "Sevastopol".
+  3. Assert that the violet Crimea point marker lies inside the extent.
+  4. Assert that no `#7652b2` patch covers mainland Ukraine.
+
+  The extent itself is the Natural Earth 10m admin-1 "Crimea" and "Sevastopol" polygons, from
+  `natural_earth.py`. Its 2-cell area floor applies to land rings only; exclude rings are never
+  dropped.
 - The output file `crates/infrastructure/authoring/ukraine_ips_operating_extent.ron` is
   `(polygons: [[(lon, lat), ...], ...])`.
 - Produces:
@@ -350,13 +355,17 @@ git commit -m "docs: sourced regional economics for Plan 7"
 
 - [ ] **Step 5: Generate the canonical exclusion**
 
-  1. Run `research_svg_extent.py` on the research SVG (ask the user for its path; it was supplied
-     as `~/Downloads/World_Power_Grids_Top_8.svg`).
-  2. Commit `ukraine_ips_operating_extent.ron` with a header comment: SVG SHA-256, tool command,
-     and "schematic operating extent per the research notes; no sovereignty position".
-  3. Don't commit the 7 MB SVG; its hash is the provenance.
-  4. Check the output: Sevastopol (33.52, 44.62) and Donetsk (37.80, 48.00) are inside it; Kyiv
-     (30.52, 50.45), Odesa (30.73, 46.48) and Kharkiv (36.23, 49.99) are outside it.
+  1. Generate `ukraine_ips_operating_extent.ron` from the Natural Earth admin-1 Crimea and
+     Sevastopol polygons.
+  2. Run the `research_svg_extent.py --check-extent` provenance check on
+     `~/Downloads/World_Power_Grids_Top_8.svg`.
+  3. Commit the extent with a header comment: the dataset release and SHA-256, the SVG SHA-256,
+     the commands, and "no sovereignty position".
+  4. Don't commit the 7 MB SVG; its hash is the provenance.
+  5. Check the output:
+     - inside it: Sevastopol city on land, Simferopol (34.10, 44.95) and Kerch (36.47, 45.36);
+     - outside it: Henichesk (34.82, 46.17), Kherson (32.62, 46.64), Donetsk (37.80, 48.00),
+       Kyiv (30.52, 50.45), Odesa (30.73, 46.48) and Kharkiv (36.23, 49.99).
 
 - [ ] **Step 6: Run the tests and confirm they pass**
 
@@ -808,10 +817,10 @@ Every region task follows these steps. Its own section lists its values and its 
 
   - `europe_maghreb_landmarks`:
     - Seville, Tangier (−5.81, 35.76), Lisbon, Aarhus (10.20, 56.16), Palermo, Valletta
-      (14.51, 35.90), Heraklion (25.14, 35.34), Istanbul, Kyiv, Chișinău, Tunis and Algiers are
-      land;
+      (14.51, 35.90), Heraklion (25.14, 35.34), Istanbul, Kyiv, Donetsk, Chișinău, Tunis and Algiers
+      are land;
     - Copenhagen (12.57, 55.68), London, Dublin, Oslo, Cagliari (9.11, 39.22),
-      Palma (2.65, 39.57), Ajaccio, Tamanrasset (5.52, 22.79), Sevastopol and Donetsk are not.
+      Palma (2.65, 39.57), Ajaccio, Tamanrasset (5.52, 22.79), Sevastopol and Simferopol are not.
   - `europe_maghreb_exclude_contains_the_canonical_extent`.
   - `messina_malta_and_crete_are_reachable_by_line` (§28.8): from a new game, `line_quote` is
     accepted between nodes placed at Reggio Calabria and Messina, Syracuse and Valletta, and the
@@ -860,10 +869,10 @@ Every region task follows these steps. Its own section lists its values and its 
 
 - [ ] **Step 1: Check the picker with all seven regions at the minimum window**
 
-  The existing `every_region_is_startable_from_its_card_at_minimum_window_size`,
-  `cards_show_frequency_currency_zones_and_hemisphere` and `atlas_labels_meet_contrast` must pass
-  over all seven listings. If Southern China or Europe–Maghreb is too small to aim at, add §28.10's
-  inset or zoom. Card start must work regardless.
+  *Amended 2026-10-25:* the picker is now the interactive globe (§28.10, commit b9ac0ce). Its
+  existing startability, card-layout, picking and contrast tests in
+  `crates/game/tests/game/region_picker.rs` must pass over all seven listings at the minimum
+  window. Card start and card-select rotation must work for every region.
 
 - [ ] **Step 2: Bump the rules version and regenerate**
 
