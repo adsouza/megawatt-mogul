@@ -37,6 +37,9 @@ pub struct WorldScene {
     pub geometry: Option<TerrainGeometry>,
     pub generation: Option<u64>,
     pub revision: u64,
+    /// How many times the scene built the terrain geometry. A region is built once on load;
+    /// camera motion and map-layer changes never raise it.
+    pub terrain_builds: u32,
 }
 #[derive(Resource, Default)]
 pub struct WorldAssets {
@@ -333,6 +336,7 @@ pub fn reconcile(
                     &geometry,
                 );
                 scene.geometry = Some(geometry);
+                scene.terrain_builds += 1;
                 scene.generation = Some(generation.0);
                 store.assets.layer = Some(MapLayer::Terrain);
             }
@@ -546,12 +550,13 @@ pub fn update_visuals(
         MapLayer::Terrain
     };
     if store.assets.layer != Some(chosen) {
-        if let Ok(g) = super::region_terrain(&model.region, chosen)
+        if let Some(geometry) = &scene.geometry
+            && let Ok(colors) = super::region_terrain_colors(geometry, &model.region, chosen)
             && let Some(h) = &store.assets.terrain
         {
             let h = h.clone();
             if let Some(mut mesh) = store.meshes.get_mut(&h) {
-                mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, g.colors);
+                mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
             }
         }
         store.assets.layer = Some(chosen);

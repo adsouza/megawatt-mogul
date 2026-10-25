@@ -405,6 +405,75 @@ pub fn tiny_region() -> RegionDefinition {
 
 /// A wide, northern region on the Moscow system clock, sharing tiny-region tuning.
 pub fn astronomical_region() -> RegionDefinition {
+    RegionDefinition::try_from(astronomical_region_parts()).expect("astronomical fixture is valid")
+}
+
+/// The largest grid a region may ship (256 x 128) with varied relief, a lake, 40 cities and the
+/// astronomical sun: the size Plan 7's frame-budget tests draw. Relief is a smooth deterministic
+/// function of the cell so neighbours differ (many owned walls) without any randomness.
+pub fn max_grid_region() -> RegionDefinition {
+    const WIDTH: u16 = 256;
+    const HEIGHT: u16 = 128;
+    const LAKE: (f64, f64, f64) = (150.0, 70.0, 18.0);
+    let mut parts = astronomical_region_parts();
+    let city = |id: u32| {
+        // Distinct columns 8, 14, .. 242 and rows spread over the grid, all clear of the lake.
+        let x = 8 + (id as u16 - 1) * 6;
+        let y = 6 + ((id as u16 - 1) * 29) % 116;
+        CityDef {
+            id: CityId(id),
+            name_key: format!("city-max-{id}"),
+            cell: CellCoord { x, y },
+            base_load: Megawatts::new(150.0 + f64::from(id % 7) * 60.0),
+        }
+    };
+    parts.cities = (1..=40).map(city).collect();
+    parts.city_locales = parts
+        .cities
+        .iter()
+        .map(|c| {
+            (
+                c.id,
+                CityLocale {
+                    zone: ZoneId(0),
+                    climate: ClimateId(0),
+                },
+            )
+        })
+        .collect();
+    let occupied: Vec<CellCoord> = parts
+        .cities
+        .iter()
+        .map(|c| c.cell)
+        .chain(parts.start.fleet.iter().map(|p| p.cell))
+        .collect();
+    let mut cells: Vec<Cell> = (0..HEIGHT)
+        .flat_map(|y| {
+            (0..WIDTH).map(move |x| {
+                let (fx, fy) = (f64::from(x), f64::from(y));
+                let relief = 0.5
+                    + 0.3 * (fx * 0.21).sin() * (fy * 0.17).cos()
+                    + 0.2 * (fx * 0.05 + fy * 0.09).sin();
+                Cell {
+                    land: x != 0 && (fx - LAKE.0).hypot(fy - LAKE.1) >= LAKE.2,
+                    height: r(relief.clamp(0.0, 1.0)),
+                    hydro_potential: Ratio::ZERO,
+                    ..cell(x, y)
+                }
+            })
+        })
+        .collect();
+    // Cities and the starting fleet stand on land with cooling water, wherever the relief puts them.
+    for at in occupied {
+        let c = &mut cells[usize::from(at.y) * usize::from(WIDTH) + usize::from(at.x)];
+        c.land = true;
+        c.cooling_water = Ratio::ONE;
+    }
+    parts.terrain = TerrainGrid::new(WIDTH, HEIGHT, cells).expect("fixture grid is rectangular");
+    RegionDefinition::try_from(parts).expect("max-grid fixture is valid")
+}
+
+fn astronomical_region_parts() -> RegionDefinitionParts {
     let mut parts = tiny_region_parts();
     parts.solar.model = SolarModel::Astronomical;
     parts.geo = GeoBounds {
@@ -414,7 +483,7 @@ pub fn astronomical_region() -> RegionDefinition {
         north: 65.0,
     };
     parts.clock.zones[0].standard_offset_minutes = 180;
-    RegionDefinition::try_from(parts).expect("astronomical fixture is valid")
+    parts
 }
 
 /// Reduced May 2033 incident: five 800 MW hydro units, three all-day 500 MW CCGTs,

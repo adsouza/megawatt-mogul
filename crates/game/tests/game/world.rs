@@ -2454,3 +2454,335 @@ fn world_computed_sun_points_north_in_the_south_and_is_finite_overhead() {
     assert!(overhead.toward_sun.y > 0.9999);
     assert!(overhead.strength > 0.9999);
 }
+
+// Plan 7 frame budgets at the largest grid a region may ship (256 x 128).
+mod max_grid {
+    use application::{
+        Game, InMemoryCommandLog, LoadedRegion, RegionCatalog, RegionFingerprint, RegionListing,
+        RegionLoadError,
+    };
+    use bevy::prelude::*;
+    use domain::{
+        ids::{CellCoord, RegionId},
+        region::fixtures,
+        session::GameSettings,
+    };
+    use game::{
+        hud::{MapLayer, Selection},
+        sim::Session,
+        world::{
+            MapSurface, OrbitCamera, TerrainGeometry, WorldModel, WorldScene, pick_world,
+            region_terrain, region_terrain_colors, surface_height,
+        },
+    };
+    use std::{sync::Arc, time::Instant};
+
+    struct MaxGridCatalog;
+    impl RegionCatalog for MaxGridCatalog {
+        fn list(&self) -> Result<Vec<RegionListing>, RegionLoadError> {
+            Ok(Vec::new())
+        }
+        fn load(&self, _: &RegionId) -> Result<LoadedRegion, RegionLoadError> {
+            Ok(LoadedRegion {
+                definition: Arc::new(fixtures::max_grid_region()),
+                source_bytes: Vec::new(),
+                fingerprint: RegionFingerprint::new([0; 32]),
+            })
+        }
+    }
+
+    fn max_grid_game() -> Game {
+        Game::start_new(
+            &MaxGridCatalog,
+            &RegionId::new("max-grid"),
+            7,
+            GameSettings::default(),
+            Box::new(InMemoryCommandLog::default()),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn the_max_grid_fixture_is_the_largest_shippable_region() {
+        let region = fixtures::max_grid_region();
+        let terrain = region.terrain();
+        assert_eq!((terrain.width(), terrain.height()), (256, 128));
+        assert_eq!(region.cities().len(), 40);
+        assert!(matches!(
+            region.solar().model,
+            domain::region::SolarModel::Astronomical
+        ));
+        // Varied relief: many distinct heights, so the owned-wall rule has real work to do.
+        let heights: std::collections::BTreeSet<u64> = (0..terrain.height())
+            .flat_map(|y| (0..terrain.width()).map(move |x| CellCoord { x, y }))
+            .filter_map(|at| terrain.get(at))
+            .map(|cell| cell.height.value().to_bits())
+            .collect();
+        assert!(heights.len() > 1_000, "{} distinct heights", heights.len());
+    }
+
+    #[test]
+    fn terrain_mesh_is_built_once_per_region() {
+        let logs = tempfile::TempDir::new().unwrap();
+        let mut app = super::diorama_app(logs.path());
+        app.world_mut().insert_resource(Session(max_grid_game()));
+        app.update();
+        let region = Arc::clone(app.world().resource::<Session>().0.session().region());
+        let builds = |app: &App| app.world().resource::<WorldScene>().terrain_builds;
+        assert_eq!(builds(&app), 1, "the region's mesh is built on load");
+        let size = app
+            .world()
+            .resource::<WorldScene>()
+            .model
+            .as_ref()
+            .unwrap()
+            .size();
+        let layers: Vec<MapLayer> = MapLayer::all().collect();
+        for frame in 0..30 {
+            let t = frame as f32 / 30.0;
+            let pose = OrbitCamera {
+                yaw: t * 2.0,
+                zoom: 1.0 - 0.5 * t,
+                target: Vec2::new(t * 40.0 - 20.0, 10.0 - t * 20.0),
+                ..default()
+            }
+            .pose(size, 1.6);
+            app.world_mut().resource_mut::<MapSurface>().pose = Some(pose);
+            // Changing the overlay recolours the mesh; it must never rebuild its geometry.
+            if frame % 5 == 0 {
+                *app.world_mut().resource_mut::<MapLayer>() = layers[(frame / 5) % layers.len()];
+            }
+            app.update();
+            if frame % 5 == 0 {
+                // The recoloured mesh is the picture a fresh build would draw for that layer.
+                let layer = *app.world().resource::<MapLayer>();
+                let expected = region_terrain(&region, layer).unwrap();
+                let world = app.world_mut();
+                let mesh = world
+                    .query::<&Mesh3d>()
+                    .iter(world)
+                    .filter_map(|handle| world.resource::<Assets<Mesh>>().get(&handle.0))
+                    .find(|mesh| mesh.count_vertices() == expected.positions.len())
+                    .expect("the terrain mesh is in the scene");
+                let Some(bevy::mesh::VertexAttributeValues::Float32x4(colors)) =
+                    mesh.attribute(Mesh::ATTRIBUTE_COLOR)
+                else {
+                    panic!("the terrain mesh has RGBA vertex colours");
+                };
+                assert_eq!(colors, &expected.colors, "{layer:?}");
+            }
+        }
+        assert_eq!(
+            builds(&app),
+            1,
+            "camera motion and overlay changes reuse the region's mesh"
+        );
+    }
+
+    #[test]
+    fn max_grid_mesh_stays_within_vertex_bound() {
+        let region = fixtures::max_grid_region();
+        let terrain = region.terrain();
+        let (width, height) = (i32::from(terrain.width()), i32::from(terrain.height()));
+        let cells = (width * height) as usize;
+        let top = |x: i32, y: i32| {
+            surface_height(
+                terrain,
+                CellCoord {
+                    x: x as u16,
+                    y: y as u16,
+                },
+            )
+        };
+        // The owned-wall rule: only the higher cell of a pair owns the face, and the grid's
+        // outer edge stands on the base, so every edge cell owns its outer face.
+        let mut walls = 0usize;
+        for y in 0..height {
+            for x in 0..width {
+                let h = top(x, y).unwrap();
+                for (nx, ny) in [(x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)] {
+                    let inside = nx >= 0 && ny >= 0 && nx < width && ny < height;
+                    let low = if inside { top(nx, ny).unwrap() } else { -0.25 };
+                    walls += usize::from(h > low);
+                }
+            }
+        }
+        assert!(walls > cells, "relief leaves only {walls} wall faces");
+        let palette = vec![[90, 120, 70]; cells];
+        let mesh = TerrainGeometry::build(terrain, &palette).unwrap();
+        // The bound is 4 x cells + 4 x wall faces; the closed base adds one more quad.
+        let bound = 4 * cells + 4 * walls;
+        assert!(mesh.positions.len() <= bound + 4);
+        assert_eq!(mesh.positions.len(), bound + 4);
+        assert_eq!(mesh.normals.len(), mesh.positions.len());
+        assert_eq!(mesh.colors.len(), mesh.positions.len());
+        assert_eq!(mesh.indices.len(), mesh.positions.len() / 4 * 6);
+        assert!(
+            mesh.indices
+                .iter()
+                .all(|&i| (i as usize) < mesh.positions.len())
+        );
+    }
+
+    #[test]
+    fn recolouring_replays_the_walls_a_build_gave_each_cell() {
+        let region = fixtures::max_grid_region();
+        let terrain = region.terrain();
+        let cells = usize::from(terrain.width()) * usize::from(terrain.height());
+        let palette = |salt: usize| -> Vec<[u8; 3]> {
+            (0..cells)
+                .map(|i| [(i * 7 + salt) as u8, (i * 13) as u8, (i / 3 + salt) as u8])
+                .collect()
+        };
+        let mesh = TerrainGeometry::build(terrain, &palette(0)).unwrap();
+        // The same palette recolours to exactly what a build gave it ...
+        assert_eq!(mesh.colors_of(&palette(0)).unwrap(), mesh.colors);
+        // ... and another palette to exactly what a fresh build would, geometry untouched.
+        let other = TerrainGeometry::build(terrain, &palette(5)).unwrap();
+        assert_eq!(mesh.colors_of(&palette(5)).unwrap(), other.colors);
+        assert_eq!(mesh.positions, other.positions);
+        assert!(matches!(
+            mesh.colors_of(&palette(0)[1..]),
+            Err(game::world::TerrainGeometryError::PaletteLength { .. })
+        ));
+    }
+
+    fn median(mut samples: Vec<f64>) -> f64 {
+        samples.sort_by(f64::total_cmp);
+        samples[samples.len() / 2]
+    }
+
+    fn millis(mut work: impl FnMut()) -> f64 {
+        let start = Instant::now();
+        work();
+        start.elapsed().as_secs_f64() * 1e3
+    }
+
+    /// Run on demand with the workspace crates optimised, `--release` or, to spare the disk,
+    /// `CARGO_PROFILE_DEV_OPT_LEVEL=3 CARGO_PROFILE_DEV_DEBUG=0 cargo nextest run -p game
+    /// --run-ignored ignored-only -E 'test(max_grid_frame_budgets)'`. The budgets are for an
+    /// optimised build on the development Mac; the default test profile compiles the workspace
+    /// crates unoptimised, several times slower, and misses the overlay and picker budgets.
+    #[test]
+    #[ignore = "timing budget; run with optimised workspace crates"]
+    fn max_grid_frame_budgets() {
+        const RUNS: usize = 100;
+        let region = fixtures::max_grid_region();
+        let terrain = region.terrain();
+        let cells = usize::from(terrain.width()) * usize::from(terrain.height());
+        let palette = vec![[90, 120, 70]; cells];
+
+        // Once per region load.
+        let build = median(
+            (0..RUNS)
+                .map(|_| {
+                    millis(|| {
+                        std::hint::black_box(TerrainGeometry::build(terrain, &palette).unwrap());
+                    })
+                })
+                .collect(),
+        );
+
+        // Per click or hover: rays from a spread of screen points, hits and misses alike.
+        let game = max_grid_game();
+        let model = WorldModel::of(&game);
+        let geometry = region_terrain(&model.region, MapLayer::Terrain).unwrap();
+        let pose = OrbitCamera::default().pose(model.size(), 1.6);
+        let rays: Vec<Ray3d> = (0..RUNS)
+            .map(|i| {
+                let (u, v) = ((i % 10) as f32 / 6.0 - 0.75, (i / 10) as f32 / 6.0 - 0.75);
+                pose.ray(Vec2::new(u, v)).unwrap()
+            })
+            .collect();
+        let mut picked = 0;
+        let pick = median(
+            rays.iter()
+                .map(|ray| {
+                    millis(|| {
+                        let hit = pick_world(*ray, &model, &geometry, 1.0);
+                        picked += usize::from(hit != Selection::None);
+                        std::hint::black_box(hit);
+                    })
+                })
+                .collect(),
+        );
+        assert!(
+            picked > RUNS / 2,
+            "only {picked} of {RUNS} rays land on the grid"
+        );
+
+        // Switching the map layer recolours the terrain mesh in place: the slowest layer's
+        // median counts.
+        let overlay = MapLayer::all()
+            .map(|layer| {
+                median(
+                    (0..RUNS)
+                        .map(|_| {
+                            millis(|| {
+                                std::hint::black_box(
+                                    region_terrain_colors(&geometry, &region, layer).unwrap(),
+                                );
+                            })
+                        })
+                        .collect(),
+                )
+            })
+            .fold(0.0, f64::max);
+
+        // One paint of the region picker (globe, every shipped outline, cards) at the smallest
+        // window: layout and tessellation, on a context that has already built its fonts.
+        let picker = picker_paint_median(RUNS);
+
+        eprintln!(
+            "max grid medians over {RUNS} runs: build {build:.3} ms (budget 250), pick {pick:.4} ms \
+             (1), overlay refresh {overlay:.3} ms (4), picker paint {picker:.3} ms (4)"
+        );
+        assert!(build <= 250.0, "TerrainGeometry::build median {build} ms");
+        assert!(pick <= 1.0, "pick_world median {pick} ms");
+        assert!(overlay <= 4.0, "overlay refresh median {overlay} ms");
+        assert!(picker <= 4.0, "region picker paint median {picker} ms");
+    }
+
+    fn picker_paint_median(runs: usize) -> f64 {
+        use crate::support::egui_harness::central;
+        use bevy_egui::egui;
+        use game::hud::{
+            MenuForm, RegionAtlas, RegionListings, draw_region_select, region_select_model,
+        };
+        let catalog = infrastructure::region::RonRegionCatalog::new(
+            crate::support::shipped_assets().join("regions"),
+        );
+        let listings = RegionListings(catalog.list());
+        let l10n = crate::support::shipped_l10n();
+        let model = region_select_model(&listings, Some(42), &l10n)
+            .with_atlas(&RegionAtlas::load(&catalog, &listings), &l10n);
+        assert_eq!(
+            model.regions.len(),
+            crate::support::SHIPPED_REGIONS.len(),
+            "every shipped region is drawn"
+        );
+        let minimum = game::window::MIN_WINDOW_SIZE;
+        let ctx = egui::Context::default();
+        let mut form = MenuForm::new(42);
+        let mut paint = || {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    minimum.to_array().into(),
+                )),
+                ..egui::RawInput::default()
+            };
+            let output = ctx.run_ui(input, |ui| {
+                central(ui, |ui| draw_region_select(ui, &model, &mut form));
+            });
+            let meshes = ctx.tessellate(output.shapes.clone(), output.pixels_per_point);
+            std::hint::black_box(meshes);
+            output.drop_without_applying_deltas();
+        };
+        // Fonts and the globe's cached artwork exist after the first frames.
+        for _ in 0..3 {
+            paint();
+        }
+        median((0..runs).map(|_| millis(&mut paint)).collect())
+    }
+}

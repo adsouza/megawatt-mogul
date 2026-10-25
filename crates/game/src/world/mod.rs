@@ -2,20 +2,41 @@
 mod terrain;
 pub use terrain::{GridTransform, TerrainGeometry, TerrainGeometryError, surface_height};
 
+fn layer_palette(
+    region: &domain::region::RegionDefinition,
+    layer: crate::hud::MapLayer,
+) -> Vec<[u8; 3]> {
+    let grid = region.terrain();
+    let mut palette = Vec::with_capacity(usize::from(grid.width()) * usize::from(grid.height()));
+    for y in 0..grid.height() {
+        for x in 0..grid.width() {
+            palette.push(crate::hud::cell_color(
+                layer,
+                region,
+                domain::ids::CellCoord { x, y },
+            ));
+        }
+    }
+    palette
+}
+
 /// The existing resource-layer palette mapped onto the 3D geometry, from one region read.
 pub fn region_terrain(
     region: &domain::region::RegionDefinition,
     layer: crate::hud::MapLayer,
 ) -> Result<TerrainGeometry, TerrainGeometryError> {
-    let grid = region.terrain();
-    let palette: Vec<_> = (0..grid.height())
-        .flat_map(|y| {
-            (0..grid.width()).map(move |x| {
-                crate::hud::cell_color(layer, region, domain::ids::CellCoord { x, y })
-            })
-        })
-        .collect();
-    TerrainGeometry::build(grid, &palette)
+    TerrainGeometry::build(region.terrain(), &layer_palette(region, layer))
+}
+
+/// Only the vertex colours of [`region_terrain`], in its vertex order. Changing the map layer
+/// recolours the existing mesh (`geometry`, built from this region) with this instead of
+/// rebuilding it.
+pub fn region_terrain_colors(
+    geometry: &TerrainGeometry,
+    region: &domain::region::RegionDefinition,
+    layer: crate::hud::MapLayer,
+) -> Result<Vec<[f32; 4]>, TerrainGeometryError> {
+    geometry.colors_of(&layer_palette(region, layer))
 }
 
 mod camera;
