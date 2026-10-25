@@ -41,7 +41,8 @@ pub fn resolve_asset_root(arg: Option<PathBuf>) -> PathBuf {
 }
 
 /// The command-line flags: `--version`, `--assets <dir>`, `--log-dir <dir>`, `--save-dir <dir>`,
-/// plus the hidden developer flag `--exit-after-frames <n>` (see [`ExitAfterFrames`]).
+/// plus the hidden developer flags `--exit-after-frames <n>` (see [`ExitAfterFrames`]) and
+/// `--crash` (see [`crate::crash::requested_crash`]).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CliArgs {
     pub version: bool,
@@ -49,6 +50,7 @@ pub struct CliArgs {
     pub log_dir: Option<PathBuf>,
     pub save_dir: Option<PathBuf>,
     pub exit_after_frames: Option<NonZeroU32>,
+    pub crash: bool,
 }
 
 impl CliArgs {
@@ -59,6 +61,10 @@ impl CliArgs {
         while let Some(arg) = args.next() {
             if arg == "--version" {
                 parsed.version = true;
+                continue;
+            }
+            if arg == "--crash" {
+                parsed.crash = true;
                 continue;
             }
             let flag = match arg.to_str() {

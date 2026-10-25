@@ -21,6 +21,12 @@ fn main() -> AppExit {
         return AppExit::Success;
     }
 
+    // Before anything else can panic, so every crash leaves a report beside the command logs.
+    game::crash::install(args.log_dir());
+    if args.crash {
+        game::crash::requested_crash();
+    }
+
     let log_dir = LogDir(args.log_dir());
     let save_dir = SaveDir(args.save_dir());
     let exit_after_frames = args.exit_after_frames;

@@ -4,6 +4,7 @@
 //! player commands through the application layer.
 #![forbid(unsafe_code)]
 
+pub mod crash;
 pub mod hud;
 pub mod l10n;
 pub mod paths;
