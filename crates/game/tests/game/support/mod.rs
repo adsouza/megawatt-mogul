@@ -64,6 +64,21 @@ pub fn hud_app(logs: &Path) -> App {
 
 /// Asks for a new game in `region`, seed 7, and runs the frames it takes to start.
 pub fn request(app: &mut App, region: &str) {
+    // A player can only ask for a new game from the menus. With a save directory the app stays in
+    // Boot until its first save scan finishes (spec §2.6), and a request written then is never
+    // read: Bevy drops unread messages after two updates. A slow runner can still be scanning a
+    // few frames in, so wait for the menus first. A boot error never leaves Boot; don't wait then.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while *app.world().resource::<State<AppState>>().get() == AppState::Boot
+        && !app.world().contains_resource::<game::state::BootError>()
+    {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the app never left Boot for the menus"
+        );
+        app.update();
+        std::thread::yield_now();
+    }
     app.world_mut().write_message(NewGameRequest {
         region: RegionId::new(region),
         seed: 7,
