@@ -497,6 +497,9 @@ zone-pt = PT
 zone-mt = MT
 zone-arizona-mst = MST
 
+# China Standard Time (UTC+8, no DST).
+zone-cst = CST
+
 # Optional construction economics. All prices use the region's currency.
 construction-economic-zone = Market
 construction-regional-default = Regional default

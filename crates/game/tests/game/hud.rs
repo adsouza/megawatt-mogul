@@ -68,7 +68,7 @@ fn entering_the_main_menu_lists_the_shipped_regions() {
     let RegionListings(listings) = app.world().resource::<RegionListings>();
     let listings = listings.as_ref().expect("the shipped regions folder lists");
     let ids: Vec<&str> = listings.iter().map(|listing| listing.id.as_str()).collect();
-    assert_eq!(ids, ["eastern_interconnection", "western_interconnection"]);
+    assert_eq!(ids, crate::support::SHIPPED_REGIONS);
     assert!(listings.iter().all(|listing| listing.entry.is_ok()));
 }
 

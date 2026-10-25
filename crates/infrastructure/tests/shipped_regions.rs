@@ -25,6 +25,7 @@ use infrastructure::region::{RegionFileV4, RonRegionCatalog, map_region_v4};
 const REGIONS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/regions");
 const EAST: &str = "eastern_interconnection";
 const WEST: &str = "western_interconnection";
+const SOUTHERN_CHINA: &str = "southern_china";
 
 /// The research note whose row tables the region files cite (`[P7-XX-NNN]`).
 const RESEARCH_NOTE: &str = concat!(
@@ -34,24 +35,33 @@ const RESEARCH_NOTE: &str = concat!(
 
 /// Every shipped region ID, sorted like `RonRegionCatalog::list`. Each Plan 7 region task
 /// inserts its ID here and in the tables below; every region-agnostic test iterates them.
-const SHIPPED: &[&str] = &[EAST, WEST];
+const SHIPPED: &[&str] = &[EAST, SOUTHERN_CHINA, WEST];
 
 /// The IDs Plan 7 adds, a subset of `SHIPPED`. The provenance, scale and squareness tests
 /// iterate it: the Eastern and Western files predate those rules.
-const NEW_REGIONS: &[&str] = &[];
+const NEW_REGIONS: &[&str] = &[SOUTHERN_CHINA];
 
 /// Each region's real system capacity in GW, from the research note: the scale reference for
 /// `new_region_load_scales_with_capacity`.
-const RESEARCH_CAPACITY_GW: &[(&str, f64)] = &[(EAST, 980.0), (WEST, 340.0)];
+const RESEARCH_CAPACITY_GW: &[(&str, f64)] =
+    &[(EAST, 980.0), (SOUTHERN_CHINA, 500.0), (WEST, 340.0)];
 
 /// Each region's start city (`start.home_city`), by name key.
-const HOME_CITY: &[(&str, &str)] = &[(EAST, "city-columbus"), (WEST, "city-seattle")];
+const HOME_CITY: &[(&str, &str)] = &[
+    (EAST, "city-columbus"),
+    (SOUTHERN_CHINA, "city-guangzhou"),
+    (WEST, "city-seattle"),
+];
 
 /// The city each region's first-expansion acceptance test (spec §18.3) connects, by name key.
-const EXPANSION_CITY: &[(&str, &str)] = &[(EAST, "city-cleveland"), (WEST, "city-vancouver")];
+const EXPANSION_CITY: &[(&str, &str)] = &[
+    (EAST, "city-cleveland"),
+    (SOUTHERN_CHINA, "city-shenzhen"),
+    (WEST, "city-vancouver"),
+];
 
 /// Each region's nominal grid frequency in hertz.
-const NOMINAL_HZ: &[(&str, f64)] = &[(EAST, 60.0), (WEST, 60.0)];
+const NOMINAL_HZ: &[(&str, f64)] = &[(EAST, 60.0), (SOUTHERN_CHINA, 50.0), (WEST, 60.0)];
 
 /// The row for `id` in one of the per-region tables above.
 fn table_value<T: Copy>(table: &[(&str, T)], id: &str) -> T {
@@ -908,6 +918,11 @@ year_one_cases! {
         year_one_hands_off_eastern_interconnection,
         year_one_no_commands_eastern_interconnection,
         EAST
+    ),
+    (
+        year_one_hands_off_southern_china,
+        year_one_no_commands_southern_china,
+        SOUTHERN_CHINA
     ),
     (
         year_one_hands_off_western_interconnection,
@@ -2138,5 +2153,62 @@ fn home_lighting_is_finite_for_every_shipped_region() {
                 }
             }
         }
+    }
+}
+
+// ---- Region checks: Southern China -----------------------------------------------------------
+
+mod southern_china {
+    use super::*;
+
+    const ID: &str = SOUTHERN_CHINA;
+
+    /// The footprint holds Guangdong, Guangxi, Guizhou, Hainan, Hong Kong and Macau, and leaves
+    /// out Yunnan, Vietnam and Hunan (spec §28.3).
+    #[test]
+    fn southern_china_landmarks() {
+        let map = LandMap::load(ID);
+        for (name, lon, lat) in [
+            ("Guangzhou", 113.26, 23.13),
+            ("Hong Kong", 114.17, 22.32),
+            ("Macao", 113.54, 22.20),
+            ("Guiyang", 106.63, 26.65),
+            ("Nanning", 108.37, 22.82),
+            ("Haikou", 110.35, 20.02),
+        ] {
+            assert!(map.land_at(lon, lat), "{name} is playable land");
+        }
+        for (name, lon, lat) in [
+            ("Kunming", 102.83, 24.88),
+            ("Hanoi", 105.85, 21.03),
+            ("Changsha", 112.94, 28.23),
+        ] {
+            assert!(!map.land_at(lon, lat), "{name} is outside the footprint");
+        }
+    }
+
+    /// Spec §28.8: a player-ordered line may cross the Qiongzhou Strait to Hainan, and its
+    /// straight path crosses water, so it is drawn as a submarine cable.
+    #[test]
+    fn hainan_line_crosses_water_as_a_submarine_cable() {
+        let game = new_game(&catalog(), ID, 0);
+        let session = game.session();
+        let city = |key: &str| {
+            session
+                .city_views()
+                .into_iter()
+                .find(|city| city.name_key == key)
+                .unwrap_or_else(|| panic!("{key} is a city"))
+        };
+        let (zhanjiang, haikou) = (city("city-zhanjiang"), city("city-haikou"));
+        let quote = session
+            .line_quote(zhanjiang.node, haikou.node)
+            .expect("the strait crossing is quoted");
+        assert!(quote.cells > 0, "{quote:?}");
+        let water = session
+            .region()
+            .terrain()
+            .water_cells_on_segment(zhanjiang.cell, haikou.cell);
+        assert!(!water.is_empty(), "the straight path crosses the strait");
     }
 }

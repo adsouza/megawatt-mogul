@@ -57,6 +57,121 @@ fn every_currency_symbol_paints_without_a_replacement_glyph_or_uses_iso() {
     output.drop_without_applying_deltas();
 }
 
+/// Every name key a shipped region shows: its own name, every city, every civil zone, every
+/// economic zone with a cell and every starter line's authored name, read from the region files.
+fn shipped_name_keys() -> Vec<(String, String)> {
+    use application::RegionCatalog as _;
+    use domain::ids::CellCoord;
+    let catalog = infrastructure::region::RonRegionCatalog::new(
+        crate::support::shipped_assets().join("regions"),
+    );
+    let listings = catalog.list().unwrap();
+    let ids: Vec<_> = listings.iter().map(|listing| listing.id.as_str()).collect();
+    assert_eq!(ids, crate::support::SHIPPED_REGIONS, "every shipped region");
+    let mut keys = Vec::new();
+    for listing in &listings {
+        let region = catalog.load(&listing.id).unwrap().definition;
+        let mut own = vec![region.name_key().to_owned()];
+        own.extend(region.cities().iter().map(|city| city.name_key.clone()));
+        own.extend(region.system_zone().name_key.clone());
+        own.extend(
+            region
+                .cities()
+                .iter()
+                .filter_map(|city| region.city_zone(city.id).name_key.clone()),
+        );
+        let terrain = region.terrain();
+        let zones: std::collections::BTreeSet<_> = (0..terrain.height())
+            .flat_map(|y| (0..terrain.width()).map(move |x| CellCoord { x, y }))
+            .map(|cell| region.economic_zone_at(cell).unwrap())
+            .collect();
+        own.extend(
+            zones
+                .into_iter()
+                .filter_map(|zone| region.economic_zone(zone))
+                .map(|zone| zone.name_key.clone()),
+        );
+        own.extend(
+            region
+                .cities()
+                .iter()
+                .filter_map(|city| region.start_line_name(city.id))
+                .map(str::to_owned),
+        );
+        own.sort();
+        own.dedup();
+        keys.extend(
+            own.into_iter()
+                .map(|key| (listing.id.as_str().to_owned(), key)),
+        );
+    }
+    keys
+}
+
+/// The characters of `text` that the shipped egui fonts would paint as the replacement glyph.
+fn replaced_characters(ui: &egui::Ui, text: &str) -> Vec<char> {
+    let font = egui::FontId::proportional(14.0);
+    let replacement =
+        ui.painter()
+            .layout_no_wrap("\u{fffd}".into(), font.clone(), egui::Color32::WHITE);
+    let missing_uv = replacement.rows[0].glyphs[0].uv_rect;
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::WHITE);
+    let has_glyph = |c: char| ui.ctx().fonts_mut(|fonts| fonts.has_glyph(&font, c));
+    galley
+        .rows
+        .iter()
+        .flat_map(|row| row.glyphs.iter())
+        .filter(|glyph| glyph.uv_rect == missing_uv || !has_glyph(glyph.chr))
+        .map(|glyph| glyph.chr)
+        .collect()
+}
+
+/// Region, city, zone, economic-zone and line names show on the HUD and the map labels, both
+/// painted with egui's bundled fonts. Each must use characters those fonts have (English names
+/// in Latin script), so none paints as a replacement box. The keys come from the shipped region
+/// files, so every region added later is covered too.
+#[test]
+fn every_shipped_name_paints_with_the_shipped_fonts() {
+    let ctx = egui::Context::default();
+    let l10n = shipped_l10n();
+    let keys = shipped_name_keys();
+    for region in crate::support::SHIPPED_REGIONS {
+        assert!(
+            keys.iter().any(|(id, _)| id == region),
+            "{region} has names"
+        );
+    }
+    let mut problems = Vec::new();
+    let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
+            // The check sees a missing glyph: the fonts have no Chinese characters, but they
+            // do have the Latin diacritics English names use.
+            assert_eq!(
+                replaced_characters(ui, "Guangzhou \u{5e7f}\u{5dde}"),
+                ['\u{5e7f}', '\u{5dde}']
+            );
+            assert!(replaced_characters(ui, "S\u{e3}o Paulo, M\u{e1}laga").is_empty());
+            for (region, key) in &keys {
+                assert!(l10n.has(key), "{region}: en-US lacks {key}");
+                let name = l10n.text(key);
+                let replaced = replaced_characters(ui, &name);
+                if !replaced.is_empty() {
+                    problems.push(format!("{region} {key} = {name:?}: {replaced:?}"));
+                }
+                ui.label(name);
+            }
+        });
+    });
+    output.drop_without_applying_deltas();
+    assert!(
+        problems.is_empty(),
+        "names with glyphs the shipped fonts lack:\n{}",
+        problems.join("\n")
+    );
+}
+
 struct CurrencyCatalog(Currency);
 impl RegionCatalog for CurrencyCatalog {
     fn list(&self) -> Result<Vec<RegionListing>, RegionLoadError> {

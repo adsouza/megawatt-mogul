@@ -3,9 +3,11 @@
 
 region-eastern-interconnection = Eastern Interconnection
 region-western-interconnection = Western Interconnection
+region-southern-china = Southern China
 
 # What the region picker says beside each region: `<name key>-description`.
 region-eastern-interconnection-description = Dense cities, big demand, and a legacy coal and nuclear fleet. Keep the industrial heartland humming.
+region-southern-china-description = Guizhou and Guangxi hydro sent east, coastal nuclear, and the booming Pearl River Delta. Ride the flood season into the summer peak.
 region-western-interconnection-description = Mountain crossings, desert sunshine, and Pacific Northwest hydro. Master the evening demand surge.
 
 city-albuquerque = Albuquerque
@@ -56,3 +58,42 @@ city-tucson = Tucson
 city-vancouver = Vancouver
 city-washington = Washington, D.C.
 city-winnipeg = Winnipeg
+
+# Southern China. Each name is the title of its English Wikipedia article (Yulin without the
+# article's ", Guangxi" qualifier, which only the key keeps).
+city-anshun = Anshun
+city-baise = Baise
+city-beihai = Beihai
+city-bijie = Bijie
+city-chaozhou = Chaozhou
+city-dongguan = Dongguan
+city-foshan = Foshan
+city-guangzhou = Guangzhou
+city-guigang = Guigang
+city-guilin = Guilin
+city-guiyang = Guiyang
+city-haikou = Haikou
+city-hong-kong = Hong Kong
+city-huizhou = Huizhou
+city-jiangmen = Jiangmen
+city-jieyang = Jieyang
+city-liupanshui = Liupanshui
+city-liuzhou = Liuzhou
+city-macau = Macau
+city-maoming = Maoming
+city-meizhou = Meizhou
+city-nanning = Nanning
+city-qingyuan = Qingyuan
+city-qinzhou = Qinzhou
+city-sanya = Sanya
+city-shantou = Shantou
+city-shaoguan = Shaoguan
+city-shenzhen = Shenzhen
+city-wuzhou = Wuzhou
+city-yangjiang = Yangjiang
+city-yulin-guangxi = Yulin
+city-zhanjiang = Zhanjiang
+city-zhaoqing = Zhaoqing
+city-zhongshan = Zhongshan
+city-zhuhai = Zhuhai
+city-zunyi = Zunyi
