@@ -755,6 +755,7 @@ mod gold_plated_batteries_do_not_raise_cash_over_three_reviews {
     use application::{CommandError, CommandHandler};
     use domain::company::AssetRef;
     use domain::error::DomainError;
+    use domain::generation::BatteryTotals;
     use domain::ids::CellCoord;
     use domain::session::GameSession;
 
@@ -762,6 +763,79 @@ mod gold_plated_batteries_do_not_raise_cash_over_three_reviews {
     enum Driver {
         Domain,
         Application,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum StorageUse {
+        Idle,
+        Enabled,
+    }
+
+    fn idle_commissioned_storage(company: &mut FinancialCompany, batteries: &[PlantId]) {
+        let enabled: Vec<_> = batteries
+            .iter()
+            .copied()
+            .filter(|id| {
+                let plant = company.session().power().plant(*id).unwrap();
+                !matches!(plant.status(), PlantStatus::UnderConstruction { .. })
+                    && plant.battery().unwrap().enabled()
+            })
+            .collect();
+        for plant in enabled {
+            company
+                .execute(Command::SetBatteryEnabled { plant, on: false })
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn idle_storage_preserves_regulatory_capacity_without_dispatch() {
+        for region in [EAST, WEST] {
+            let mut company = FinancialCompany::new(region, 7, Driver::Domain);
+            let batteries = add_excess_storage(&mut company);
+            for _ in 0..2 {
+                company.play_month();
+                company.execute(Command::FinishReview).unwrap();
+            }
+            let firm = company
+                .session()
+                .power()
+                .firm_capacity(&company.session().region().regulator().storage_accreditation);
+            let capital = company.session().company().rate_base().clone();
+            idle_commissioned_storage(&mut company, &batteries);
+            for id in &batteries {
+                assert!(
+                    !company
+                        .session()
+                        .power()
+                        .plant(*id)
+                        .unwrap()
+                        .battery()
+                        .unwrap()
+                        .enabled(),
+                    "{region}: financial regressions must keep commissioned storage idle"
+                );
+            }
+            assert_eq!(company.session().company().rate_base(), &capital);
+            assert_eq!(
+                company
+                    .session()
+                    .power()
+                    .firm_capacity(&company.session().region().regulator().storage_accreditation,),
+                firm
+            );
+            let events = company.play_month();
+            let report = events
+                .iter()
+                .find_map(|e| match e {
+                    DomainEvent::MonthClosed(report) => Some(report.as_ref()),
+                    _ => None,
+                })
+                .unwrap();
+            for id in batteries {
+                assert_eq!(report.storage.get(&id), Some(&BatteryTotals::default()));
+            }
+        }
     }
 
     /// The broad financial matrix needs the real commands and invariant checks, but not charts,
@@ -919,15 +993,40 @@ mod gold_plated_batteries_do_not_raise_cash_over_three_reviews {
         batteries
     }
 
-    fn compare(region_id: &str, seed: u64, driver: Driver) {
+    fn compare(region_id: &str, seed: u64, driver: Driver, storage_use: StorageUse) {
         let mut baseline = FinancialCompany::new(region_id, seed, driver);
         let mut gold = FinancialCompany::new(region_id, seed, driver);
         let batteries = add_excess_storage(&mut gold);
         let mut first_december_held = false;
         let mut first_commission = None;
+        let mut storage_operated = false;
         for month in 0..36 {
+            if storage_use == StorageUse::Idle {
+                idle_commissioned_storage(&mut gold, &batteries);
+            }
             baseline.play_month();
             let events = gold.play_month();
+            let report = events
+                .iter()
+                .find_map(|e| match e {
+                    DomainEvent::MonthClosed(report) => Some(report.as_ref()),
+                    _ => None,
+                })
+                .unwrap();
+            let dispatched = report
+                .storage
+                .values()
+                .any(|totals| totals.input.value() > 0.0 || totals.output.value() > 0.0);
+            storage_operated |= dispatched;
+            if storage_use == StorageUse::Idle {
+                assert!(
+                    report
+                        .storage
+                        .values()
+                        .all(|totals| *totals == BatteryTotals::default()),
+                    "{region_id} seed {seed} month {month}: idle storage must have no flows"
+                );
+            }
             let now = gold.session().clock().month();
             if events.iter().any(|e| matches!(e, DomainEvent::PlantCommissioned { plant, .. } if batteries.contains(plant))) { first_commission.get_or_insert(now); }
             if now.month() == 12 && first_commission.is_some_and(|first| first.year() == now.year())
@@ -943,6 +1042,11 @@ mod gold_plated_batteries_do_not_raise_cash_over_three_reviews {
             first_december_held,
             "{region_id} seed {seed}: first review must hold excess storage"
         );
+        assert_eq!(
+            storage_operated,
+            storage_use == StorageUse::Enabled,
+            "{region_id} seed {seed}: exercise the intended {storage_use:?} storage mode"
+        );
         assert!(
             gold.session().company_view().cash <= baseline.session().company_view().cash,
             "{region_id} seed {seed}: gold {:?} > baseline {:?}",
@@ -955,7 +1059,7 @@ mod gold_plated_batteries_do_not_raise_cash_over_three_reviews {
         ($name:ident, $region:expr, $seed:expr) => {
             #[test]
             fn $name() {
-                compare($region, $seed, Driver::Domain);
+                compare($region, $seed, Driver::Domain, StorageUse::Idle);
             }
         };
     }
@@ -977,12 +1081,12 @@ mod gold_plated_batteries_do_not_raise_cash_over_three_reviews {
     case!(western_7, WEST, 7);
 
     #[test]
-    fn application_eastern() {
-        compare(EAST, 7, Driver::Application);
+    fn application_eastern_enabled() {
+        compare(EAST, 7, Driver::Application, StorageUse::Enabled);
     }
 
     #[test]
-    fn application_western() {
-        compare(WEST, 7, Driver::Application);
+    fn application_western_enabled() {
+        compare(WEST, 7, Driver::Application, StorageUse::Enabled);
     }
 }

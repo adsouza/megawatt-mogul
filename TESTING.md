@@ -85,10 +85,13 @@ The three year-one checks in `infrastructure::shipped_regions`—
 `shipped_regions_never_order_outages_hands_off`—cover two regions × eight seeds × twelve months.
 A12's three-review battery comparison has sixteen independent region/seed tests, each playing two
 companies for 36 months. They use `GameSession` through the real core command handler and invariant
-checks, without application projections or recording. Two additional seed-7 cases, one per region,
-run the full application pipeline. A state-byte comparison through construction, commissioning and
-the first battery operating month checks the streamlined driver against the application. Nextest
-can schedule the cases in parallel; use a focused filter when changing an unrelated rule.
+checks, without application projections or recording, and disable added batteries immediately after
+commissioning to isolate idle-capital abuse. They retain the assets' firm capacity and capital and
+assert that storage flows stay zero. Two additional seed-7 cases, one per region, run the full
+application pipeline with enabled batteries and require actual storage operation. A state-byte
+comparison through construction, commissioning and the first battery operating month checks the
+streamlined driver against the application. Nextest can schedule the cases in parallel; use a
+focused filter when changing an unrelated rule.
 
 ## The game crate
 
