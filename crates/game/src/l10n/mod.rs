@@ -10,6 +10,7 @@ pub mod format;
 pub mod keys;
 mod localize;
 mod names;
+pub(crate) use names::starter_line_name;
 
 use std::collections::BTreeMap;
 use std::fmt;

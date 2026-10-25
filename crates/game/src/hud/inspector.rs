@@ -82,6 +82,8 @@ pub enum InspectorModel {
 pub struct LineInspector {
     pub title: String,
     pub status: String,
+    pub submarine: Option<String>,
+    pub transfer_limits: String,
     pub in_service: Option<String>,
     pub cancel: Option<ButtonModel>,
     pub close: ButtonModel,
@@ -97,7 +99,32 @@ fn line_inspector(game: &Game, l10n: &Localizer, id: LineId) -> Option<LineInspe
         .rows
         .into_iter()
         .find(|row| row.project == Project::Line(id));
+    let cells: std::collections::BTreeMap<_, _> = game
+        .session()
+        .city_views()
+        .iter()
+        .map(|c| (c.node, c.cell))
+        .chain(
+            game.session()
+                .plant_views()
+                .iter()
+                .map(|p| (p.node, p.cell)),
+        )
+        .collect();
+    let water = cells
+        .get(&line.from)
+        .zip(cells.get(&line.to))
+        .map_or(0, |(a, b)| {
+            game.session()
+                .region()
+                .terrain()
+                .water_cells_on_segment(*a, *b)
+                .len()
+        });
     Some(LineInspector {
+        submarine: (water > 0)
+            .then(|| l10n.args("line-submarine", &[("cells", (water as u32).into())])),
+        transfer_limits: l10n.text("line-copper-plate"),
         title: Names::new(l10n, game.session()).line(id),
         status: progress
             .as_ref()
@@ -160,7 +187,7 @@ fn cell_inspector(game: &Game, l10n: &Localizer, at: CellCoord) -> Option<CellIn
         }),
         readings: vec![
             reading("inspector-height", cell.height),
-            reading("inspector-irradiance", cell.irradiance),
+            reading("inspector-irradiance", region.solar_potential(at)),
             reading("inspector-cooling-water", cell.cooling_water),
             reading("inspector-hydro-potential", cell.hydro_potential),
         ],
@@ -218,6 +245,10 @@ pub fn draw_inspector(ui: &mut egui::Ui, model: &InspectorModel) -> Vec<UiAction
                 if let Some(in_service) = &line.in_service {
                     ui.colored_label(TextTone::Caution.color(), in_service);
                 }
+                if let Some(submarine) = &line.submarine {
+                    ui.colored_label(TextTone::Information.color(), submarine);
+                }
+                ui.colored_label(TextTone::Neutral.color(), &line.transfer_limits);
                 if let Some(cancel) = &line.cancel {
                     button(ui, cancel, &mut actions);
                 }
@@ -300,6 +331,52 @@ mod tests {
         let terrain = region.terrain();
         let (w, h) = (terrain.width(), terrain.height());
         (0..h).flat_map(move |y| (0..w).map(move |x| CellCoord { x, y }))
+    }
+
+    #[test]
+    fn the_gibraltar_style_starter_line_is_named_and_drawn_as_a_cable() {
+        let game = crate::hud::test_support::global_game();
+        let l10n = crate::hud::test_support::global_l10n();
+        let model = crate::world::WorldModel::of(&game);
+        let line = model
+            .lines
+            .values()
+            .find(|line| line.name_key.is_some())
+            .unwrap();
+        assert_eq!(
+            Names::new(&l10n, game.session()).line(line.id),
+            "Strait of Gibraltar"
+        );
+        let card = line_inspector(&game, &l10n, line.id).unwrap();
+        assert_eq!(card.submarine.as_deref(), Some("Submarine cable · 3 cells"));
+        assert_eq!(
+            card.transfer_limits,
+            "Transfer limits are not simulated (copper plate)"
+        );
+        let water: Vec<_> = line.parts.iter().filter(|p| p.color[0] < 0.5).collect();
+        assert!(!water.is_empty());
+        assert!(water.iter().all(|p| p.size.z < 0.5), "water is dashed");
+        let cell = CellCoord { x: 7, y: 3 };
+        let potential = game.session().region().solar_potential(cell);
+        let reading = cell_model(&game, &l10n, cell);
+        assert_eq!(reading.readings[1].value, format::percent(potential));
+        assert_ne!(
+            potential,
+            game.session()
+                .region()
+                .terrain()
+                .get(cell)
+                .unwrap()
+                .irradiance
+        );
+        assert_eq!(
+            crate::hud::cell_color(
+                crate::hud::MapLayer::Irradiance,
+                game.session().region(),
+                cell
+            ),
+            crate::hud::map::solar_color(potential.value())
+        );
     }
 
     #[test]
@@ -397,7 +474,7 @@ mod tests {
             [
                 ("Height", format::percent(terrain_cell.height).as_str()),
                 (
-                    "Sunshine",
+                    "Solar potential",
                     format::percent(terrain_cell.irradiance).as_str()
                 ),
                 (

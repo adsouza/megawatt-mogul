@@ -204,6 +204,18 @@ pub fn clock(tick: u32) -> String {
     format!("{:02}:{:02}", tick / TICKS_PER_HOUR, tick % TICKS_PER_HOUR)
 }
 
+/// A civil time with its authored zone name. Legacy clocks have no zone suffix.
+pub fn zoned_clock(tick: u32, zone: &domain::region::TimeZone, l10n: &super::Localizer) -> String {
+    let time = clock(tick);
+    match &zone.name_key {
+        Some(key) => l10n.args(
+            "time-with-zone",
+            &[("time", time.into()), ("zone", l10n.text(key).into())],
+        ),
+        None => time,
+    }
+}
+
 /// `March 2027`.
 pub fn month_year(month: SimMonth) -> String {
     format!("{} {}", MONTH_NAMES[month.index0()], month.year())

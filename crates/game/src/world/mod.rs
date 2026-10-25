@@ -26,6 +26,7 @@ pub use flow::{FlowDirection, FlowPulse};
 mod lighting;
 mod model;
 pub use lighting::{SunPosition, sun_position};
+pub(crate) use model::line_breaks;
 mod overlay;
 mod picking;
 pub use model::{

@@ -183,6 +183,12 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "region-select-empty",
     "region-select-unavailable",
     // Shell: top bar, toasts and game over
+    "time-with-zone",
+    "city-local-time",
+    "commitment-system-time",
+    "commitment-system-zone",
+    "line-submarine",
+    "line-copper-plate",
     "topbar-cash",
     "topbar-reliability",
     "topbar-satisfaction",

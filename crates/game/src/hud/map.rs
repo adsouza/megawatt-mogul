@@ -366,7 +366,7 @@ fn lerp(from: Rgb, to: Rgb, t: f64) -> Rgb {
     ]
 }
 
-fn solar_color(value: f64) -> Rgb {
+pub(crate) fn solar_color(value: f64) -> Rgb {
     // A fixed 0–1 sequential scale shared by both regions, never stretched to a region's
     // local minimum/maximum. Viridis anchors distinguish cloudy blue/teal from sunny yellow
     // while retaining increasing luminance, including for red/green colour blindness.
@@ -397,7 +397,7 @@ pub fn cell_color(layer: MapLayer, region: &RegionDefinition, at: CellCoord) -> 
     match layer {
         MapLayer::Terrain if cell.land => lerp(LOWLAND, HIGHLAND, cell.height.value()),
         MapLayer::Terrain => WATER,
-        MapLayer::Irradiance if cell.land => solar_color(cell.irradiance.value()),
+        MapLayer::Irradiance if cell.land => solar_color(region.solar_potential(at).value()),
         MapLayer::Irradiance => WATER,
         MapLayer::WindPotential if cell.land => solar_color(cell.wind_potential.value()),
         MapLayer::WindPotential => WATER,
@@ -774,6 +774,7 @@ pub struct MapModel {
     pub glyphs: Vec<(PlantKind, String)>,
     /// The months left of each plant and line under construction, labelled beside it.
     pub months_left: Vec<MonthsLeftLabel>,
+    pub line_names: Vec<MonthsLeftLabel>,
     /// What each kind of mark on the map is, in a corner of the map when it shows.
     pub legend: Vec<LegendEntry>,
     /// The legend's accessible name.
@@ -818,6 +819,8 @@ pub fn map_model(
     selection: Selection,
 ) -> MapModel {
     let objects = MapObjects::of(game);
+    let names = crate::l10n::Names::new(l10n, game.session());
+    let line_views = game.session().line_views();
     MapModel {
         label: l10n.text("map-label"),
         layers: MapLayer::all()
@@ -848,6 +851,21 @@ pub fn map_model(
         ),
         region: Arc::clone(game.session().region()),
         months_left: months_left_of(&objects, l10n),
+        line_names: objects
+            .lines
+            .iter()
+            .filter_map(|line| {
+                let view = line_views.iter().find(|view| view.id == line.id)?;
+                crate::l10n::starter_line_name(game.session(), view.from, view.to)?;
+                Some(MonthsLeftLabel {
+                    anchor: LabelAnchor::Line {
+                        from: line.from,
+                        to: line.to,
+                    },
+                    text: names.line(line.id),
+                })
+            })
+            .collect(),
         objects,
         glyphs: PlantKind::ALL
             .into_iter()
@@ -1107,16 +1125,46 @@ fn paint_objects(painter: &egui::Painter, layout: &MapLayout, model: &MapModel) 
     let half = plant_half_size(layout);
     let at = |cell| layout.cell_center(cell);
     for line in &objects.lines {
-        let ends = [at(line.from), at(line.to)];
-        if line.in_service() {
-            painter.line_segment(ends, Stroke::new(2.0, IN_SERVICE_LINE));
-        } else {
-            painter.extend(egui::Shape::dashed_line(
-                &ends,
-                Stroke::new(1.5, DASHED_LINE),
-                5.0,
-                4.0,
-            ));
+        let breaks = crate::world::line_breaks(line.from, line.to);
+        let origin = vec2(f32::from(line.from.x) + 0.5, f32::from(line.from.y) + 0.5);
+        let target = vec2(f32::from(line.to.x) + 0.5, f32::from(line.to.y) + 0.5);
+        let mut spans: Vec<(f32, f32, bool)> = Vec::new();
+        for interval in breaks.windows(2) {
+            let midpoint = origin + (target - origin) * ((interval[0] + interval[1]) * 0.5);
+            let water = model
+                .region
+                .terrain()
+                .get(CellCoord {
+                    x: midpoint.x.floor() as u16,
+                    y: midpoint.y.floor() as u16,
+                })
+                .is_some_and(|cell| !cell.land);
+            if !water && let Some((_, end, false)) = spans.last_mut() {
+                *end = interval[1];
+            } else {
+                spans.push((interval[0], interval[1], water));
+            }
+        }
+        for (start, end, water) in spans {
+            let ends = [
+                at(line.from).lerp(at(line.to), start),
+                at(line.from).lerp(at(line.to), end),
+            ];
+            if water {
+                painter.line_segment(
+                    [ends[0], ends[0].lerp(ends[1], 0.5)],
+                    Stroke::new(2.0, Color32::from_rgb(75, 100, 125)),
+                );
+            } else if line.in_service() {
+                painter.line_segment(ends, Stroke::new(2.0, IN_SERVICE_LINE));
+            } else {
+                painter.extend(egui::Shape::dashed_line(
+                    &ends,
+                    Stroke::new(1.5, DASHED_LINE),
+                    5.0,
+                    4.0,
+                ));
+            }
         }
     }
     let ink = INK;
@@ -1161,7 +1209,10 @@ fn paint_objects(painter: &egui::Painter, layout: &MapLayout, model: &MapModel) 
 /// Each project's months left beside it, on a dark backing. Paint only, so a click passes
 /// through to the mark or cell under it.
 fn paint_months_left(painter: &egui::Painter, layout: &MapLayout, model: &MapModel) {
-    for label in months_left_labels(layout, &model.months_left) {
+    for label in months_left_labels(layout, &model.months_left)
+        .into_iter()
+        .chain(months_left_labels(layout, &model.line_names))
+    {
         super::theme::paint_label(painter, label.pos, label.align, label.text, label.size);
     }
 }

@@ -344,10 +344,11 @@ pub fn plant_card_model(
     if let Some(water) = plant.hydro_day_budget {
         stats.push(stat("plant-hydro-available", format::megawatt_hours(water)));
     }
-    if plant.kind == domain::region::PlantKind::Solar
-        && let Some(cell) = session.region().terrain().get(plant.cell)
-    {
-        stats.push(stat("map-solar-scale", format::percent(cell.irradiance)));
+    if plant.kind == domain::region::PlantKind::Solar {
+        stats.push(stat(
+            "map-solar-scale",
+            format::percent(session.region().solar_potential(plant.cell)),
+        ));
     }
     if let Some(wind) = &plant.wind {
         stats.extend(wind_stats(l10n, wind));

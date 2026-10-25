@@ -2192,7 +2192,16 @@ fn speed_buttons_emit_set_speed() {
             .inner
     };
 
-    assert!(shows(&harness.draw(draw), "01:00"), "the time of day");
+    let top = top_bar_model(&game, &Persistence::default(), &l10n, &usd_style());
+    let clock_widgets = harness.draw(|ui| draw_top_bar(ui, &top));
+    assert!(
+        shows(&clock_widgets, "01:00"),
+        "the time of day is in the top bar"
+    );
+    assert!(
+        !shows(&harness.draw(draw), "01:00"),
+        "speed controls do not duplicate the clock"
+    );
     let widgets = harness.draw(draw);
     assert!(shows(&widgets, "16×"));
     assert!(shows(&widgets, "32×"));

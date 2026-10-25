@@ -204,6 +204,8 @@ impl WorldCity {
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorldLine {
+    pub name_key: Option<String>,
+    pub submarine: bool,
     pub id: LineId,
     pub selection: Selection,
     pub parts: Vec<Part>,
@@ -347,15 +349,31 @@ impl WorldModel {
                 let (from, fc) = nodes.get(&l.from)?;
                 let (to, tc) = nodes.get(&l.to)?;
                 let steps = ((to.xz() - from.xz()).length() * 2.0).ceil().max(1.0) as u32;
+                let from_cell = coordinates.cell_at(from.x, from.z)?;
+                let to_cell = coordinates.cell_at(to.x, to.z)?;
+                let breaks = line_breaks(from_cell, to_cell);
                 let mut parts = Vec::new();
+                let mut submarine = false;
                 let mut previous: Option<Vec3> = None;
-                for i in 0..steps {
+                for interval in breaks.windows(2) {
+                    let i = (interval[0] * steps as f32 + 0.00001).floor() as u32;
                     if matches!(l.status, LineStatus::UnderConstruction { .. }) && i % 2 == 1 {
                         previous = None;
                         continue;
                     }
-                    let a = from.lerp(*to, i as f32 / steps as f32);
-                    let b = from.lerp(*to, (i + 1) as f32 / steps as f32);
+                    let a = from.lerp(*to, interval[0]);
+                    let b = from.lerp(*to, interval[1]);
+                    let water = coordinates
+                        .cell_at((a.x + b.x) * 0.5, (a.z + b.z) * 0.5)
+                        .and_then(|at| terrain.get(at))
+                        .is_some_and(|cell| !cell.land);
+                    submarine |= water;
+                    let color = if water {
+                        [0.22, 0.32, 0.40, 1.0]
+                    } else {
+                        [1.0; 4]
+                    };
+                    let b = if water { a.lerp(b, 0.5) } else { b };
                     let height = |p: Vec3| {
                         coordinates
                             .cell_at(p.x, p.z)
@@ -366,6 +384,7 @@ impl WorldModel {
                     let a = Vec3::new(a.x, h, a.z);
                     let b = Vec3::new(b.x, h, b.z);
                     if let Some(end) = previous
+                        && !water
                         && (end.y - a.y).abs() > 0.0001
                     {
                         let delta = a - end;
@@ -373,10 +392,10 @@ impl WorldModel {
                             center: (a + end) / 2.0,
                             size: Vec3::new(0.10, 0.10, delta.length() + 0.06),
                             rotation: Quat::from_rotation_arc(Vec3::Z, delta.normalize()),
-                            color: [1.0; 4],
+                            color,
                         });
                     }
-                    previous = Some(b);
+                    previous = (!water).then_some(b);
                     let delta = b - a;
                     parts.push(Part {
                         center: (a + b) / 2.0,
@@ -384,12 +403,15 @@ impl WorldModel {
                         rotation: delta.try_normalize().map_or(Quat::IDENTITY, |direction| {
                             Quat::from_rotation_arc(Vec3::Z, direction)
                         }),
-                        color: [1.0; 4],
+                        color,
                     });
                 }
                 Some((
                     l.id,
                     WorldLine {
+                        submarine,
+                        name_key: crate::l10n::starter_line_name(s, l.from, l.to)
+                            .map(str::to_owned),
                         id: l.id,
                         selection: Selection::Line(l.id),
                         parts,
@@ -422,4 +444,27 @@ impl WorldModel {
             f32::from(self.region.terrain().height()),
         )
     }
+}
+
+/// Route parameters split at cell boundaries and at most half-cell distances. A narrow
+/// water crossing is never skipped by midpoint sampling. Shared with the flat map adapter.
+pub(crate) fn line_breaks(a: CellCoord, b: CellCoord) -> Vec<f32> {
+    let from = Vec2::new(f32::from(a.x) + 0.5, f32::from(a.y) + 0.5);
+    let to = Vec2::new(f32::from(b.x) + 0.5, f32::from(b.y) + 0.5);
+    let steps = ((to - from).length() * 2.0).ceil().max(1.0) as u32;
+    let mut breaks: Vec<_> = (0..=steps).map(|i| i as f32 / steps as f32).collect();
+    for (start, end) in [(from.x, to.x), (from.y, to.y)] {
+        if start == end {
+            continue;
+        }
+        for boundary in (start.min(end).ceil() as u32)..=(start.max(end).floor() as u32) {
+            let t = (boundary as f32 - start) / (end - start);
+            if t > 0.0 && t < 1.0 {
+                breaks.push(t);
+            }
+        }
+    }
+    breaks.sort_by(f32::total_cmp);
+    breaks.dedup_by(|a, b| (*a - *b).abs() < 0.000001);
+    breaks
 }

@@ -639,7 +639,9 @@ pub fn update_visuals(
         {
             *m = material(if l.building.is_some() {
                 BUILDING
-            } else if holo && l.energized {
+            } else if holo && l.energized && !l.submarine {
+                // Uniform emissive light washes out dark water sections. Cable routes keep
+                // their vertex-color contrast; the existing pulses still show their flow.
                 ENERGIZED
             } else {
                 LINE

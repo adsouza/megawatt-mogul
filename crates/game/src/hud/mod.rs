@@ -514,6 +514,37 @@ pub(crate) mod test_support {
             .join("\n")
     }
 
+    pub fn global_l10n() -> Localizer {
+        let mut paths: Vec<_> = std::fs::read_dir(shipped_assets().join("locales").join(LOCALE))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|e| e == "ftl"))
+            .collect();
+        paths.sort();
+        let mut sources: Vec<_> = paths
+            .into_iter()
+            .map(|path| {
+                (
+                    path.display().to_string(),
+                    std::fs::read_to_string(path).unwrap(),
+                )
+            })
+            .collect();
+        sources.push(("strait.ftl".into(), "zone-msk = MSK\nzone-ist = IST\nline-strait = Strait of Gibraltar\ncity-tiny-1 = West shore\ncity-tiny-2 = East shore\ncity-tiny-3 = Inland\n".into()));
+        Localizer::from_sources(sources).unwrap()
+    }
+
+    pub fn global_game() -> Game {
+        edited_global_game(str::to_owned)
+    }
+
+    pub fn edited_global_game(edit: impl FnOnce(&str) -> String) -> Game {
+        let dir = tempfile::TempDir::new().unwrap();
+        let source = edit(include_str!("../../tests/fixtures/strait-v4.ron"));
+        std::fs::write(dir.path().join("minimal.ron"), source).unwrap();
+        shipped_game_in(dir.path(), "minimal")
+    }
+
     /// A new eastern game, seed 7, in Planning, recording to `sink`.
     pub fn eastern_game(sink: Box<dyn CommandLogSink>) -> Game {
         shipped_game("eastern_interconnection", sink)

@@ -17,6 +17,7 @@ use super::{FluentArg, Localizer};
 /// methods only.
 pub struct Names<'a> {
     l10n: &'a Localizer,
+    line_names: BTreeMap<LineId, String>,
     plants: BTreeMap<PlantId, PlantKind>,
     cities: BTreeMap<CityId, String>,
     /// What stands on each network node, for naming the ends of a line.
@@ -44,7 +45,15 @@ impl<'a> Names<'a> {
                     .map(|plant| (plant.node, NodeThing::Plant(plant.id))),
             )
             .collect();
+        let line_names = session
+            .line_views()
+            .iter()
+            .filter_map(|line| {
+                starter_line_name(session, line.from, line.to).map(|key| (line.id, key.to_owned()))
+            })
+            .collect();
         Self {
+            line_names,
             nodes,
             l10n,
             plants: plant_views
@@ -62,6 +71,7 @@ impl<'a> Names<'a> {
     pub fn empty(l10n: &'a Localizer) -> Self {
         Self {
             l10n,
+            line_names: BTreeMap::new(),
             plants: BTreeMap::new(),
             cities: BTreeMap::new(),
             nodes: BTreeMap::new(),
@@ -112,9 +122,31 @@ impl<'a> Names<'a> {
         }
     }
 
-    /// `Line 4`. The session offers no query for a line's ends, so there is nothing more to say.
+    /// The authored starter-link name, or `Line 4` for an unnamed line.
     pub fn line(&self, id: LineId) -> String {
-        self.l10n
-            .args("name-line", &[("id", id.0.to_string().into())])
+        self.line_names.get(&id).map_or_else(
+            || {
+                self.l10n
+                    .args("name-line", &[("id", id.0.to_string().into())])
+            },
+            |key| self.l10n.text(key),
+        )
     }
+}
+
+/// Authored names apply to the starter home-to-city link, never a new branch to that city.
+pub(crate) fn starter_line_name(session: &GameSession, from: NodeId, to: NodeId) -> Option<&str> {
+    let home = session.anchor_node();
+    let target = if from == home {
+        to
+    } else if to == home {
+        from
+    } else {
+        return None;
+    };
+    let city = session
+        .city_views()
+        .into_iter()
+        .find(|city| city.node == target)?;
+    session.region().start_line_name(city.id)
 }

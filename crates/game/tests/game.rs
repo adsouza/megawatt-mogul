@@ -68,3 +68,6 @@ mod wind;
 
 #[path = "game/currency.rs"]
 mod currency;
+
+#[path = "game/global_foundations.rs"]
+mod global_foundations;
