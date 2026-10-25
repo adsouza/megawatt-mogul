@@ -3376,7 +3376,7 @@ American interconnections, each one 60 Hz copper plate priced in US$. Every earl
 **Status:** **Plan 6 global foundations is implemented under rules 16** (§28.4–§28.8,
 §28.10–§28.11, and the North American schema-4 migration). Automated acceptance, the native
 120-frame launch smoke, and the isolated full representative-day native playtests in both North
-American regions pass. Plan 6 Task 10 records the observed review results and native acceptance
+American regions pass. [Plan 6 Task 10](../plans/2026-10-24-plan-6-global-foundations.md#task-10-migrate-both-north-american-regions-to-schema-4-rules-16) records the observed review results and native acceptance
 checks. Local scratch logs and saves were temporary receipts. **Plan 7** (five single-area
 regions, B, D, E, F, H in §28.3) and **Plan 8**
 (multi-area regions with HVDC links and SGCC, §28.9) remain pending. Each plan bumps
