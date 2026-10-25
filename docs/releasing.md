@@ -93,9 +93,22 @@ On Linux, build with `cargo build --release --locked -p game`, then run the pack
 in the workflow. The helper's `deb` command requires `dpkg-dev` and `dpkg-deb` on the native
 amd64 build host. Flatpak packages that same Ubuntu-built binary against a newer runtime;
 installed-bundle version and graphical launch checks catch missing runtime libraries.
-The release job opts into saving its Rust build cache on pull requests and tags, including
-after packaging failures, so retries can reuse optimized dependencies. Flatpak's symbol
-processing requires `elfutils` in addition to `flatpak-builder`.
+The shared `rust-release-build` action restores a dedicated completed-build cache, compiles the
+game and verifies its version, then saves the cache immediately before packaging starts. Failed
+or cancelled compilations never save a partial cache; later packaging failures preserve the
+completed checkpoint. An exact cache hit still runs Cargo and verifies the executable version.
+
+Keys include the runner platform, actual compiler/Cargo/linker identity, build flags, Cargo
+configuration, manifests, lockfile and source revision. Fallback keys reuse compatible artifacts
+from earlier revisions and dependency sets; Cargo validates which artifacts can be reused. Only
+Cargo's registry/git downloads and `target/release` are cached, excluding test binaries and
+Flatpak repositories. A fresh namespace supersedes the old partial release cache.
+
+Relevant pushes to `main` run a build-only `warm-cache` job with the same action and configuration.
+That default-branch cache can be restored by subsequent PRs and version tags. Warming does not
+package or create a release. Before this workflow merges, its PR cache is available only to that
+PR's subsequent runs. GitHub can evict unused or older caches; a cache miss always builds normally.
+Flatpak's symbol processing requires `elfutils` in addition to `flatpak-builder`.
 CI also validates desktop/AppStream metadata and launches both installed packages from outside
 the checkout using Xvfb and Mesa. Debian's launch runs in a clean Ubuntu container so build
 dependencies cannot hide missing runtime dependencies. The full Rust suite runs in CI for tags;

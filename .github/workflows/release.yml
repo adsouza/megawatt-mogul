@@ -2,12 +2,29 @@ name: Linux release
 
 on:
   push:
+    branches: [main]
     tags: ['v*']
+    # Branch pushes warm the release cache; tag pushes always run (GitHub ignores paths for tags).
+    paths:
+      - '.github/workflows/release.yml'
+      - '.github/actions/rust-setup/**'
+      - '.github/actions/rust-release-build/**'
+      - '.cargo/**'
+      - 'rust-toolchain*'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**'
+      - 'assets/**'
+      - 'packaging/**'
+      - 'tools/release/**'
   # Exercise packaging before merging changes; only version-tag pushes create releases.
   pull_request:
     paths:
       - '.github/workflows/release.yml'
       - '.github/actions/rust-setup/**'
+      - '.github/actions/rust-release-build/**'
+      - '.cargo/**'
+      - 'rust-toolchain*'
       - 'packaging/**'
       - 'tools/release/**'
       - 'Cargo.toml'
@@ -36,16 +53,35 @@ jobs:
       - name: Validate workspace, lockfile and version tag
         id: metadata
         env:
-          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
           TAG: ${{ github.ref_name }}
         run: |
           args=()
-          if [[ "$EVENT_NAME" == push ]]; then
+          if [[ "$REF_TYPE" == tag ]]; then
             args+=(--tag "$TAG")
           fi
           python3 tools/release/release.py metadata "${args[@]}" --github-output "$GITHUB_OUTPUT"
 
+  warm-cache:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_PROFILE_DEV_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/rust-setup
+        with:
+          cache: 'false'
+      # Default-branch caches are available to future tags and pull requests.
+      - uses: ./.github/actions/rust-release-build
+        with:
+          version: ${{ needs.version.outputs.version }}
+
   package:
+    if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/v')
     needs: version
     # A fixed glibc baseline: Ubuntu 24.04 (2.39), also older than Freedesktop 25.08 (2.42).
     runs-on: ubuntu-24.04
@@ -60,19 +96,19 @@ jobs:
       - uses: ./.github/actions/rust-setup
         with:
           components: clippy, rustfmt
-          save-cache: 'true'
+          cache: 'false'
       # Tags can point to any commit, so check them here even if main passed CI earlier.
       # Pull requests already run these checks in ci.yml.
       - name: Check tagged source
-        if: github.event_name == 'push'
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           cargo fmt --all --check
           cargo clippy --workspace --all-targets --locked -- -D warnings
           cargo nextest run --workspace --locked --profile ci
       - name: Build Linux x86_64
-        run: |
-          cargo build --release --locked -p game
-          test "$(target/release/game --version)" = "Megawatt Mogul $VERSION"
+        uses: ./.github/actions/rust-release-build
+        with:
+          version: ${{ needs.version.outputs.version }}
       - name: Install packaging and smoke-test tools
         run: |
           sudo apt-get update
