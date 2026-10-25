@@ -93,6 +93,9 @@ On Linux, build with `cargo build --release --locked -p game`, then run the pack
 in the workflow. The helper's `deb` command requires `dpkg-dev` and `dpkg-deb` on the native
 amd64 build host. Flatpak packages that same Ubuntu-built binary against a newer runtime;
 installed-bundle version and graphical launch checks catch missing runtime libraries.
+The release job opts into saving its Rust build cache on pull requests and tags, including
+after packaging failures, so retries can reuse optimized dependencies. Flatpak's symbol
+processing requires `elfutils` in addition to `flatpak-builder`.
 CI also validates desktop/AppStream metadata and launches both installed packages from outside
 the checkout using Xvfb and Mesa. Debian's launch runs in a clean Ubuntu container so build
 dependencies cannot hide missing runtime dependencies. The full Rust suite runs in CI for tags;

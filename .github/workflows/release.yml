@@ -60,6 +60,7 @@ jobs:
       - uses: ./.github/actions/rust-setup
         with:
           components: clippy, rustfmt
+          save-cache: 'true'
       # Tags can point to any commit, so check them here even if main passed CI earlier.
       # Pull requests already run these checks in ci.yml.
       - name: Check tagged source
@@ -76,7 +77,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
-            dpkg-dev flatpak flatpak-builder appstream desktop-file-utils \
+            dpkg-dev flatpak flatpak-builder elfutils appstream desktop-file-utils \
             xvfb xauth dbus-x11 mesa-vulkan-drivers
           # Flatpak's own Ubuntu 24.04 CI uses this workaround for bubblewrap.
           # Only affects this disposable runner, never an installed package.
