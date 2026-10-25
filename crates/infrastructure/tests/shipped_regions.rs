@@ -751,13 +751,115 @@ proptest::proptest! {
 /// Separate cases let nextest parallelize independent seeds and name any failure.
 mod gold_plated_batteries_do_not_raise_cash_over_three_reviews {
     use super::*;
+    use application::pipeline::{CoreHandler, InvariantCheckLayer};
+    use application::{CommandError, CommandHandler};
     use domain::company::AssetRef;
     use domain::error::DomainError;
     use domain::ids::CellCoord;
+    use domain::session::GameSession;
 
-    fn compare(region_id: &str, seed: u64) {
-        let mut baseline = hands_off_game(&catalog(), region_id, seed);
-        let mut gold = hands_off_game(&catalog(), region_id, seed);
+    #[derive(Clone, Copy)]
+    enum Driver {
+        Domain,
+        Application,
+    }
+
+    /// The broad financial matrix needs the real commands and invariant checks, but not charts,
+    /// ramp warnings or a recording. The two application cases retain that wider integration.
+    enum FinancialCompany {
+        Domain(Box<GameSession>),
+        Application(Box<Game>),
+    }
+
+    impl FinancialCompany {
+        fn new(region: &str, seed: u64, driver: Driver) -> Self {
+            let mut company = match driver {
+                Driver::Domain => {
+                    let loaded = catalog().load(&RegionId::new(region)).unwrap();
+                    Self::Domain(Box::new(GameSession::new(
+                        loaded.definition,
+                        seed,
+                        GameSettings::default(),
+                    )))
+                }
+                Driver::Application => {
+                    Self::Application(Box::new(new_game(&catalog(), region, seed)))
+                }
+            };
+            let plants: Vec<_> = company
+                .session()
+                .plant_views()
+                .into_iter()
+                .filter(|p| {
+                    p.kind.is_dispatchable()
+                        && !matches!(p.status, PlantStatus::UnderConstruction { .. })
+                })
+                .map(|p| p.id)
+                .collect();
+            for plant in plants {
+                company
+                    .execute(Command::CommitPlant {
+                        plant,
+                        hours: [true; 24],
+                    })
+                    .unwrap();
+                company
+                    .execute(Command::SetAutoFollow { plant, on: true })
+                    .unwrap();
+            }
+            company
+        }
+
+        fn session(&self) -> &GameSession {
+            match self {
+                Self::Domain(session) => session,
+                Self::Application(game) => game.session(),
+            }
+        }
+
+        fn execute(&mut self, command: Command) -> Result<Vec<DomainEvent>, CommandError> {
+            match self {
+                Self::Domain(session) => {
+                    InvariantCheckLayer::new(CoreHandler).handle(session, &command)
+                }
+                Self::Application(game) => game.execute(command),
+            }
+        }
+
+        fn play_month(&mut self) -> Vec<DomainEvent> {
+            self.execute(Command::BeginOperating).unwrap();
+            self.execute(Command::AdvanceTicks { n: TICKS_PER_DAY })
+                .unwrap()
+        }
+    }
+
+    #[test]
+    fn financial_driver_matches_application_through_commissioning() {
+        for region in [EAST, WEST] {
+            let mut direct = FinancialCompany::new(region, 7, Driver::Domain);
+            let mut application = FinancialCompany::new(region, 7, Driver::Application);
+            let batteries = add_excess_storage(&mut direct);
+            assert_eq!(batteries, add_excess_storage(&mut application));
+            for month in 0..3 {
+                direct.play_month();
+                application.play_month();
+                assert!(
+                    direct.session().snapshot_state() == application.session().snapshot_state(),
+                    "{region} month {month}: projections must not change simulation state"
+                );
+                if month < 2 {
+                    direct.execute(Command::FinishReview).unwrap();
+                    application.execute(Command::FinishReview).unwrap();
+                }
+            }
+            assert!(batteries.iter().all(|id| !matches!(
+                direct.session().power().plant(*id).unwrap().status(),
+                PlantStatus::UnderConstruction { .. }
+            )));
+        }
+    }
+
+    fn add_excess_storage(gold: &mut FinancialCompany) -> Vec<PlantId> {
         let home = gold.session().anchor_node();
         let home_cell = gold.session().power().network().node(home).unwrap().cell;
         let other = gold.session().plant_views()[0].node;
@@ -814,14 +916,18 @@ mod gold_plated_batteries_do_not_raise_cash_over_three_reviews {
             ));
             batteries.push(plant);
         }
+        batteries
+    }
+
+    fn compare(region_id: &str, seed: u64, driver: Driver) {
+        let mut baseline = FinancialCompany::new(region_id, seed, driver);
+        let mut gold = FinancialCompany::new(region_id, seed, driver);
+        let batteries = add_excess_storage(&mut gold);
         let mut first_december_held = false;
         let mut first_commission = None;
         for month in 0..36 {
-            play_month(&mut baseline);
-            gold.execute(Command::BeginOperating).unwrap();
-            let events = gold
-                .execute(Command::AdvanceTicks { n: TICKS_PER_DAY })
-                .unwrap();
+            baseline.play_month();
+            let events = gold.play_month();
             let now = gold.session().clock().month();
             if events.iter().any(|e| matches!(e, DomainEvent::PlantCommissioned { plant, .. } if batteries.contains(plant))) { first_commission.get_or_insert(now); }
             if now.month() == 12 && first_commission.is_some_and(|first| first.year() == now.year())
@@ -849,7 +955,7 @@ mod gold_plated_batteries_do_not_raise_cash_over_three_reviews {
         ($name:ident, $region:expr, $seed:expr) => {
             #[test]
             fn $name() {
-                compare($region, $seed);
+                compare($region, $seed, Driver::Domain);
             }
         };
     }
@@ -869,4 +975,14 @@ mod gold_plated_batteries_do_not_raise_cash_over_three_reviews {
     case!(western_5, WEST, 5);
     case!(western_6, WEST, 6);
     case!(western_7, WEST, 7);
+
+    #[test]
+    fn application_eastern() {
+        compare(EAST, 7, Driver::Application);
+    }
+
+    #[test]
+    fn application_western() {
+        compare(WEST, 7, Driver::Application);
+    }
 }

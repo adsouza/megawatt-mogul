@@ -82,10 +82,13 @@ small physical oracles and explicit transition coverage over blessing changed sn
 
 The three year-one checks in `infrastructure::shipped_regions`—
 `hands_off_plan_survives_year_one`, `no_commands_survive_year_one` and
-`shipped_regions_never_order_outages_hands_off`—each take about 18 s (two regions × eight seeds ×
-twelve months). A12's three-review battery comparison is longer: sixteen independent region/seed
-tests each play two companies for 36 months. Nextest can schedule those cases in parallel; use a
-focused filter when changing a rule unrelated to that acceptance.
+`shipped_regions_never_order_outages_hands_off`—cover two regions × eight seeds × twelve months.
+A12's three-review battery comparison has sixteen independent region/seed tests, each playing two
+companies for 36 months. They use `GameSession` through the real core command handler and invariant
+checks, without application projections or recording. Two additional seed-7 cases, one per region,
+run the full application pipeline. A state-byte comparison through construction, commissioning and
+the first battery operating month checks the streamlined driver against the application. Nextest
+can schedule the cases in parallel; use a focused filter when changing an unrelated rule.
 
 ## The game crate
 
