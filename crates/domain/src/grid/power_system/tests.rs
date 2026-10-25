@@ -8,6 +8,7 @@ use crate::time::{SimDuration, TICKS_PER_DAY};
 use proptest::prelude::*;
 
 mod battery_bridge;
+mod battery_planning;
 mod transition_properties;
 mod wind;
 
