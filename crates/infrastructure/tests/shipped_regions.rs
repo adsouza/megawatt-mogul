@@ -26,6 +26,7 @@ const REGIONS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/reg
 const EAST: &str = "eastern_interconnection";
 const WEST: &str = "western_interconnection";
 const SOUTHERN_CHINA: &str = "southern_china";
+const BRAZIL: &str = "brazil_sin";
 
 /// The research note whose row tables the region files cite (`[P7-XX-NNN]`).
 const RESEARCH_NOTE: &str = concat!(
@@ -35,19 +36,24 @@ const RESEARCH_NOTE: &str = concat!(
 
 /// Every shipped region ID, sorted like `RonRegionCatalog::list`. Each Plan 7 region task
 /// inserts its ID here and in the tables below; every region-agnostic test iterates them.
-const SHIPPED: &[&str] = &[EAST, SOUTHERN_CHINA, WEST];
+const SHIPPED: &[&str] = &[BRAZIL, EAST, SOUTHERN_CHINA, WEST];
 
 /// The IDs Plan 7 adds, a subset of `SHIPPED`. The provenance, scale and squareness tests
 /// iterate it: the Eastern and Western files predate those rules.
-const NEW_REGIONS: &[&str] = &[SOUTHERN_CHINA];
+const NEW_REGIONS: &[&str] = &[BRAZIL, SOUTHERN_CHINA];
 
 /// Each region's real system capacity in GW, from the research note: the scale reference for
 /// `new_region_load_scales_with_capacity`.
-const RESEARCH_CAPACITY_GW: &[(&str, f64)] =
-    &[(EAST, 980.0), (SOUTHERN_CHINA, 500.0), (WEST, 340.0)];
+const RESEARCH_CAPACITY_GW: &[(&str, f64)] = &[
+    (BRAZIL, 250.0),
+    (EAST, 980.0),
+    (SOUTHERN_CHINA, 500.0),
+    (WEST, 340.0),
+];
 
 /// Each region's start city (`start.home_city`), by name key.
 const HOME_CITY: &[(&str, &str)] = &[
+    (BRAZIL, "city-sao-paulo"),
     (EAST, "city-columbus"),
     (SOUTHERN_CHINA, "city-guangzhou"),
     (WEST, "city-seattle"),
@@ -55,13 +61,19 @@ const HOME_CITY: &[(&str, &str)] = &[
 
 /// The city each region's first-expansion acceptance test (spec §18.3) connects, by name key.
 const EXPANSION_CITY: &[(&str, &str)] = &[
+    (BRAZIL, "city-sorocaba"),
     (EAST, "city-cleveland"),
     (SOUTHERN_CHINA, "city-shenzhen"),
     (WEST, "city-vancouver"),
 ];
 
 /// Each region's nominal grid frequency in hertz.
-const NOMINAL_HZ: &[(&str, f64)] = &[(EAST, 60.0), (SOUTHERN_CHINA, 50.0), (WEST, 60.0)];
+const NOMINAL_HZ: &[(&str, f64)] = &[
+    (BRAZIL, 60.0),
+    (EAST, 60.0),
+    (SOUTHERN_CHINA, 50.0),
+    (WEST, 60.0),
+];
 
 /// The row for `id` in one of the per-region tables above.
 fn table_value<T: Copy>(table: &[(&str, T)], id: &str) -> T {
@@ -914,6 +926,11 @@ macro_rules! year_one_cases {
 }
 
 year_one_cases! {
+    (
+        year_one_hands_off_brazil_sin,
+        year_one_no_commands_brazil_sin,
+        BRAZIL
+    ),
     (
         year_one_hands_off_eastern_interconnection,
         year_one_no_commands_eastern_interconnection,
@@ -2210,5 +2227,136 @@ mod southern_china {
             .terrain()
             .water_cells_on_segment(zhanjiang.cell, haikou.cell);
         assert!(!water.is_empty(), "the straight path crosses the strait");
+    }
+}
+
+// ---- Region checks: Brazil -------------------------------------------------------------------
+
+mod brazil_sin {
+    use super::*;
+    use domain::time::Season;
+
+    const ID: &str = BRAZIL;
+
+    fn month(m: u8) -> SimMonth {
+        SimMonth::new(2027, m).expect("valid month")
+    }
+
+    /// The footprint is mainland Brazil, Roraima included, and leaves out Paraguay, Uruguay and
+    /// Venezuela (spec section 28.3).
+    #[test]
+    fn brazil_landmarks() {
+        let map = LandMap::load(ID);
+        for (name, lon, lat) in [
+            ("Sao Paulo", -46.63, -23.55),
+            ("Boa Vista", -60.67, 2.82),
+            ("Manaus", -60.02, -3.12),
+            ("Rio Branco", -67.81, -9.97),
+            ("Fortaleza", -38.54, -3.72),
+        ] {
+            assert!(map.land_at(lon, lat), "{name} is playable land");
+        }
+        for (name, lon, lat) in [
+            ("Asuncion", -57.58, -25.26),
+            ("Montevideo", -56.19, -34.90),
+            ("Caracas", -66.90, 10.49),
+        ] {
+            assert!(!map.land_at(lon, lat), "{name} is outside the footprint");
+        }
+    }
+
+    /// Spec section 28.6: Brazil's calendar is southern, so January is summer, Sao Paulo's
+    /// January demand follows its summer shape, and December days are longer than June's.
+    #[test]
+    fn brazil_january_is_summer() {
+        let region = region(ID);
+        assert_eq!(region.season(month(1)), Season::Summer);
+        let file = region_file(ID);
+        let home = file
+            .cities
+            .iter()
+            .find(|city| city.name_key == "city-sao-paulo")
+            .expect("Sao Paulo is a city");
+        let climate = file
+            .climates
+            .iter()
+            .find(|climate| climate.id == home.climate)
+            .expect("Sao Paulo's climate");
+        assert_eq!(climate.month_shapes[0], "summer");
+        let summer = &climate
+            .shapes
+            .iter()
+            .find(|(name, _)| name == "summer")
+            .expect("a summer shape")
+            .1;
+        let city = region
+            .cities()
+            .iter()
+            .find(|city| city.name_key == "city-sao-paulo")
+            .unwrap();
+        for hour in 0..24 {
+            let tick = hour * TICKS_PER_HOUR;
+            let local = region.local_minute(city.id, month(1), tick) / TICKS_PER_HOUR;
+            let want = summer[local as usize] * climate.monthly[0];
+            assert!(
+                (region.load_factor(city.id, month(1), tick) - want).abs() < 1e-12,
+                "hour {hour}"
+            );
+        }
+        let daylight = |m| {
+            (0..TICKS_PER_DAY)
+                .filter(|&tick| region.sun(city.cell, month(m), tick) > 0.0)
+                .count()
+        };
+        assert!(
+            daylight(12) > daylight(6),
+            "December {} against June {} minutes",
+            daylight(12),
+            daylight(6)
+        );
+    }
+
+    /// Spec section 28.6: the wet season runs from December to April, and the northeastern
+    /// wind peaks from August to October.
+    #[test]
+    fn brazil_wet_season_and_northeast_wind() {
+        let region = region(ID);
+        let flow = region.hydro().monthly_flow;
+        let mean = |months: &[usize]| {
+            months.iter().map(|&m| flow[m - 1]).sum::<f64>() / months.len() as f64
+        };
+        let (wet, dry) = (mean(&[12, 1, 2, 3, 4]), mean(&[6, 7, 8, 9, 10]));
+        assert!(wet > dry, "wet {wet} against dry {dry}: {flow:?}");
+        let wind = region.wind().monthly;
+        let windiest = (0..12)
+            .max_by(|&a, &b| wind[a].total_cmp(&wind[b]))
+            .unwrap()
+            + 1;
+        assert!(
+            (8..=10).contains(&windiest),
+            "the windiest month is {windiest}: {wind:?}"
+        );
+    }
+
+    /// Roraima lies north of the equator, so the picker card reads both hemispheres.
+    #[test]
+    fn brazil_card_reads_both_hemispheres() {
+        let id = RegionId::new(ID);
+        let loaded = catalog().load(&id).expect("Brazil loads");
+        let outline =
+            infrastructure::region::region_outline(&loaded.source_bytes, &id).expect("outline");
+        assert_eq!(outline.hemisphere, infrastructure::region::Hemisphere::Both);
+    }
+
+    /// Spec section 28.5: in the southern summer the noon sun over Sao Paulo stands north.
+    #[test]
+    fn brazil_home_lighting_points_north_at_noon() {
+        let region = region(ID);
+        let noon = (0..TICKS_PER_DAY)
+            .filter_map(|tick| region.sun_at_home(month(1), tick))
+            .max_by(|a, b| a.elevation_deg.total_cmp(&b.elevation_deg))
+            .expect("the home sun is computed");
+        let from_north = noon.azimuth_deg.min(360.0 - noon.azimuth_deg);
+        assert!(from_north <= 20.0, "solar noon in January: {noon:?}");
     }
 }

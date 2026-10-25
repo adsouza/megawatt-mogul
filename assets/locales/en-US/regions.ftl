@@ -1,11 +1,13 @@
 # Region and city names. Region files refer to these by `name_key` (spec §9); the domain never
 # holds display text.
 
+region-brazil-sin = Brazil
 region-eastern-interconnection = Eastern Interconnection
 region-western-interconnection = Western Interconnection
 region-southern-china = Southern China
 
 # What the region picker says beside each region: `<name key>-description`.
+region-brazil-sin-description = Hydro that fills from December to April and runs low through the dry winter, plus northeastern wind. Ride the wet season into the summer peak.
 region-eastern-interconnection-description = Dense cities, big demand, and a legacy coal and nuclear fleet. Keep the industrial heartland humming.
 region-southern-china-description = Guizhou and Guangxi hydro sent east, coastal nuclear, and the booming Pearl River Delta. Ride the flood season into the summer peak.
 region-western-interconnection-description = Mountain crossings, desert sunshine, and Pacific Northwest hydro. Master the evening demand surge.
@@ -97,3 +99,46 @@ city-zhaoqing = Zhaoqing
 city-zhongshan = Zhongshan
 city-zhuhai = Zhuhai
 city-zunyi = Zunyi
+
+# Brazil. Each name is the title of its English Wikipedia article, without the state qualifier
+# some titles carry (such as "Santos, São Paulo"): no other shipped region has a city of the
+# same name.
+city-aracaju = Aracaju
+city-belem = Belém
+city-belo-horizonte = Belo Horizonte
+city-boa-vista = Boa Vista
+city-brasilia = Brasília
+city-campinas = Campinas
+city-campo-grande = Campo Grande
+city-caxias-do-sul = Caxias do Sul
+city-cuiaba = Cuiabá
+city-curitiba = Curitiba
+city-feira-de-santana = Feira de Santana
+city-florianopolis = Florianópolis
+city-fortaleza = Fortaleza
+city-goiania = Goiânia
+city-joao-pessoa = João Pessoa
+city-joinville = Joinville
+city-juiz-de-fora = Juiz de Fora
+city-londrina = Londrina
+city-macapa = Macapá
+city-maceio = Maceió
+city-manaus = Manaus
+city-natal = Natal
+city-palmas = Palmas
+city-porto-alegre = Porto Alegre
+city-porto-velho = Porto Velho
+city-recife = Recife
+city-ribeirao-preto = Ribeirão Preto
+city-rio-branco = Rio Branco
+city-rio-de-janeiro = Rio de Janeiro
+city-salvador = Salvador
+city-santos = Santos
+city-sao-jose-do-rio-preto = São José do Rio Preto
+city-sao-jose-dos-campos = São José dos Campos
+city-sao-luis = São Luís
+city-sao-paulo = São Paulo
+city-sorocaba = Sorocaba
+city-teresina = Teresina
+city-uberlandia = Uberlândia
+city-vitoria = Vitória

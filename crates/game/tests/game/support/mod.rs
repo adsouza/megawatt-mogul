@@ -38,6 +38,7 @@ pub fn update_n(app: &mut App, n: usize) {
 /// Every region shipped in `assets/regions`, sorted like `RonRegionCatalog::list`. Each region
 /// task inserts its ID here; the shipped-region name-key test checks it against the folder.
 pub const SHIPPED_REGIONS: &[&str] = &[
+    "brazil_sin",
     "eastern_interconnection",
     "southern_china",
     "western_interconnection",

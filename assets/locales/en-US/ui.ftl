@@ -500,6 +500,11 @@ zone-arizona-mst = MST
 # China Standard Time (UTC+8, no DST).
 zone-cst = CST
 
+# Brazil: Brasília, Amazon and Acre time (UTC-3, -4 and -5, no DST).
+zone-brt = BRT
+zone-amt = AMT
+zone-act = ACT
+
 # Optional construction economics. All prices use the region's currency.
 construction-economic-zone = Market
 construction-regional-default = Regional default

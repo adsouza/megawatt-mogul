@@ -461,4 +461,7 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "zone-mt",
     "zone-arizona-mst",
     "zone-cst",
+    "zone-brt",
+    "zone-amt",
+    "zone-act",
 ];
