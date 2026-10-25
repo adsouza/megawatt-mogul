@@ -416,12 +416,12 @@
         // so 198. Start-up (ruling 2, authoring judgment: no sourced local
         // start-up): 150,000 x 197.802 / 30 = 989,011, so 989,000. Build
         // [P7-BR-011] [P7-US-008]: 48 months x (8 / 36) = 10.7, so 11 months
-        // (ruling 1, sourced; ceiling 12).
+        // (ruling 1, sourced; ceiling 12). Ramp (ruling 24): 6 x 600 / 600 = 6.0 MW/min.
         (
             kind: Coal,
             capacity_mw: 600.0,
             min_stable: 0.4,
-            ramp_mw_per_min: 10.0,
+            ramp_mw_per_min: 6.0,
             startup_hours: 8.0,
             startup_cost: 989000,
             marginal_cost_per_mwh: 198.0,

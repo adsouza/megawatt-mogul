@@ -784,14 +784,14 @@
         // local fuel row): 30 x 51.84366 = 1,555.3, so 1,560 [P7-IN-011].
         // Start-up (ruling 2, authoring judgment: no sourced local start-up;
         // per MW by ruling 24, 800 MW rather than 600): 150,000 x 1,555.310 /
-        // 30 x 800 / 600 = 10,368,732, so 10,400,000. Ramp (ruling 24): 10 x
-        // 800 / 600 = 13.3 MW/min. Build [P7-IN-013] [P7-US-008]: 48 months x
+        // 30 x 800 / 600 = 10,368,732, so 10,400,000. Ramp (ruling 24): 6 x
+        // 800 / 600 = 8.0 MW/min. Build [P7-IN-013] [P7-US-008]: 48 months x
         // (8 / 36) = 10.7, so 11 months (ruling 1, sourced; ceiling 12).
         (
             kind: Coal,
             capacity_mw: 800.0,
             min_stable: 0.4,
-            ramp_mw_per_min: 13.3,
+            ramp_mw_per_min: 8.0,
             startup_hours: 8.0,
             startup_cost: 10400000,
             marginal_cost_per_mwh: 1560.0,

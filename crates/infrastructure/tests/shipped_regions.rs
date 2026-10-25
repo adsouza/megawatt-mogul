@@ -1880,6 +1880,80 @@ fn load_scale_is_relative_to_the_eastern_interconnection() {
     assert!(!LOAD_SCALE_BAND.contains(&0.7499) && !LOAD_SCALE_BAND.contains(&1.2501));
 }
 
+/// Catalog entries whose ramp comes from a sourced ramp row rather than ruling 24's per-MW
+/// scaling, as (region, kind). None exists today.
+const SOURCED_RAMPS: &[(&str, infrastructure::region::PlantKindDto)] = &[];
+
+/// The ramp per MW of capacity of each catalog kind with a nonzero ramp, as (kind, ratio).
+fn ramp_per_mw(id: &str) -> Vec<(infrastructure::region::PlantKindDto, f64)> {
+    region_file(id)
+        .catalog
+        .iter()
+        .filter(|spec| spec.ramp_mw_per_min != 0.0)
+        .map(|spec| (spec.kind, spec.ramp_mw_per_min / spec.capacity_mw))
+        .collect()
+}
+
+/// Each entry of `local` whose ramp per MW differs from the reference's for that kind by more
+/// than 1% (3-significant-figure rounding), unless `exempt` lists it.
+fn ramp_mismatches(
+    label: &str,
+    local: &[(infrastructure::region::PlantKindDto, f64)],
+    reference: &[(infrastructure::region::PlantKindDto, f64)],
+    exempt: &[infrastructure::region::PlantKindDto],
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for (kind, reference_ratio) in reference {
+        if exempt.contains(kind) {
+            continue;
+        }
+        match local.iter().find(|(k, _)| k == kind) {
+            Some((_, ratio)) if ((ratio - reference_ratio) / reference_ratio).abs() <= 0.01 => {}
+            Some((_, ratio)) => out.push(format!(
+                "{label} {kind:?}: {ratio:.5} MW/min per MW against North America's \
+                 {reference_ratio:.5}"
+            )),
+            None => out.push(format!("{label} {kind:?}: no ramp")),
+        }
+    }
+    out
+}
+
+/// Ruling 24: a new region's unit ramps scale per MW from the North American catalog, so each
+/// kind's ramp per MW equals the Eastern Interconnection's (within 1%, for rounding) unless a
+/// sourced ramp row backs it.
+#[test]
+fn new_region_ramps_scale_per_mw_from_north_america() {
+    let reference = ramp_per_mw(EAST);
+    assert!(reference.len() >= 6, "{reference:?}");
+    let mut mismatches = Vec::new();
+    for &id in NEW_REGIONS {
+        let exempt: Vec<_> = SOURCED_RAMPS
+            .iter()
+            .filter(|(region, _)| *region == id)
+            .map(|(_, kind)| *kind)
+            .collect();
+        mismatches.extend(ramp_mismatches(id, &ramp_per_mw(id), &reference, &exempt));
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
+fn the_ramp_check_allows_rounding_and_flags_the_rest() {
+    use infrastructure::region::PlantKindDto::{Coal, Nuclear};
+    let reference = [(Coal, 6.0 / 600.0), (Nuclear, 5.0 / 1100.0)];
+    // 5 x 700 / 1,100 = 3.1818 rounds to 3.18: within 1%.
+    let scaled = [(Coal, 8.0 / 800.0), (Nuclear, 3.18 / 700.0)];
+    assert!(ramp_mismatches("scaled", &scaled, &reference, &[]).is_empty());
+    let unscaled = [(Coal, 10.0 / 600.0), (Nuclear, 3.18 / 700.0)];
+    let flagged = ramp_mismatches("unscaled", &unscaled, &reference, &[]);
+    assert_eq!(flagged.len(), 1, "{flagged:?}");
+    assert!(flagged[0].contains("Coal"), "{flagged:?}");
+    assert!(ramp_mismatches("exempt", &unscaled, &reference, &[Coal]).is_empty());
+    let missing = ramp_mismatches("missing", &[(Coal, 0.01)], &reference, &[]);
+    assert_eq!(missing, ["missing Nuclear: no ramp"]);
+}
+
 const CITED: &str = "// Pumped hydro, [P7-SC-007] and [P7-SC-009].";
 
 #[test]
