@@ -9,12 +9,12 @@ is the **merit order**, as real grid operators use it.
 
 ## Goals
 
-Three goals carry equal weight. A trade-off between them is a design problem to solve, not a choice
-to make quietly.
+These goals carry equal weight:
 
-1. **Fun and polish.** It feels like a real game, not a tech demo.
-2. **Architectural elegance.** Clean Architecture and Domain-Driven Design, applied pragmatically.
-3. **Teach how real grids work.** Realistic mechanics teach through play, not text dumps.
+1. **Teach how real grids work.** Realistic mechanics teach through play, not text dumps.
+2. **Fun to play.** It should feel like a real game instead of a tech demo.
+3. **Architectural elegance.** Clean Architecture & Domain-Driven Design, applied pragmatically.
+
 
 ## Regions
 
