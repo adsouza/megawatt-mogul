@@ -3,12 +3,14 @@
 
 region-brazil-sin = Brazil
 region-eastern-interconnection = Eastern Interconnection
+region-india-nepal-bhutan = India–Nepal–Bhutan
 region-western-interconnection = Western Interconnection
 region-southern-china = Southern China
 
 # What the region picker says beside each region: `<name key>-description`.
 region-brazil-sin-description = Hydro that fills from December to April and runs low through the dry winter, plus northeastern wind. Ride the wet season into the summer peak.
 region-eastern-interconnection-description = Dense cities, big demand, and a legacy coal and nuclear fleet. Keep the industrial heartland humming.
+region-india-nepal-bhutan-description = The monsoon fills the rivers and drives the wind while clouds dim the sun, and demand peaks in May before the rains. Meet the evening ramp as solar falls.
 region-southern-china-description = Guizhou and Guangxi hydro sent east, coastal nuclear, and the booming Pearl River Delta. Ride the flood season into the summer peak.
 region-western-interconnection-description = Mountain crossings, desert sunshine, and Pacific Northwest hydro. Master the evening demand surge.
 
@@ -142,3 +144,44 @@ city-sorocaba = Sorocaba
 city-teresina = Teresina
 city-uberlandia = Uberlândia
 city-vitoria = Vitória
+
+# India, Nepal and Bhutan. Each name is the title of its English Wikipedia article, so
+# city-gurugram reads "Gurgaon", the article's title.
+city-agra = Agra
+city-ahmedabad = Ahmedabad
+city-bengaluru = Bengaluru
+city-bhopal = Bhopal
+city-bhubaneswar = Bhubaneswar
+city-chandigarh = Chandigarh
+city-chennai = Chennai
+city-coimbatore = Coimbatore
+city-delhi = Delhi
+city-faridabad = Faridabad
+city-gurugram = Gurgaon
+city-guwahati = Guwahati
+city-hyderabad = Hyderabad
+city-indore = Indore
+city-jaipur = Jaipur
+city-jodhpur = Jodhpur
+city-kanpur = Kanpur
+city-kathmandu = Kathmandu
+city-kochi = Kochi
+city-kolkata = Kolkata
+city-lucknow = Lucknow
+city-ludhiana = Ludhiana
+city-madurai = Madurai
+city-meerut = Meerut
+city-mumbai = Mumbai
+city-nagpur = Nagpur
+city-noida = Noida
+city-patna = Patna
+city-pune = Pune
+city-raipur = Raipur
+city-ranchi = Ranchi
+city-srinagar = Srinagar
+city-surat = Surat
+city-thimphu = Thimphu
+city-thiruvananthapuram = Thiruvananthapuram
+city-vadodara = Vadodara
+city-varanasi = Varanasi
+city-visakhapatnam = Visakhapatnam

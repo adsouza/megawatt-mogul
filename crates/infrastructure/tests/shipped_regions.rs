@@ -27,6 +27,7 @@ const EAST: &str = "eastern_interconnection";
 const WEST: &str = "western_interconnection";
 const SOUTHERN_CHINA: &str = "southern_china";
 const BRAZIL: &str = "brazil_sin";
+const INDIA: &str = "india_nepal_bhutan";
 
 /// The research note whose row tables the region files cite (`[P7-XX-NNN]`).
 const RESEARCH_NOTE: &str = concat!(
@@ -36,17 +37,18 @@ const RESEARCH_NOTE: &str = concat!(
 
 /// Every shipped region ID, sorted like `RonRegionCatalog::list`. Each Plan 7 region task
 /// inserts its ID here and in the tables below; every region-agnostic test iterates them.
-const SHIPPED: &[&str] = &[BRAZIL, EAST, SOUTHERN_CHINA, WEST];
+const SHIPPED: &[&str] = &[BRAZIL, EAST, INDIA, SOUTHERN_CHINA, WEST];
 
 /// The IDs Plan 7 adds, a subset of `SHIPPED`. The provenance, scale and squareness tests
 /// iterate it: the Eastern and Western files predate those rules.
-const NEW_REGIONS: &[&str] = &[BRAZIL, SOUTHERN_CHINA];
+const NEW_REGIONS: &[&str] = &[BRAZIL, INDIA, SOUTHERN_CHINA];
 
 /// Each region's real system capacity in GW, from the research note: the scale reference for
 /// `new_region_load_scales_with_capacity`.
 const RESEARCH_CAPACITY_GW: &[(&str, f64)] = &[
     (BRAZIL, 250.0),
     (EAST, 980.0),
+    (INDIA, 520.0),
     (SOUTHERN_CHINA, 500.0),
     (WEST, 340.0),
 ];
@@ -55,6 +57,7 @@ const RESEARCH_CAPACITY_GW: &[(&str, f64)] = &[
 const HOME_CITY: &[(&str, &str)] = &[
     (BRAZIL, "city-sao-paulo"),
     (EAST, "city-columbus"),
+    (INDIA, "city-delhi"),
     (SOUTHERN_CHINA, "city-guangzhou"),
     (WEST, "city-seattle"),
 ];
@@ -63,6 +66,7 @@ const HOME_CITY: &[(&str, &str)] = &[
 const EXPANSION_CITY: &[(&str, &str)] = &[
     (BRAZIL, "city-sorocaba"),
     (EAST, "city-cleveland"),
+    (INDIA, "city-faridabad"),
     (SOUTHERN_CHINA, "city-shenzhen"),
     (WEST, "city-vancouver"),
 ];
@@ -71,6 +75,7 @@ const EXPANSION_CITY: &[(&str, &str)] = &[
 const NOMINAL_HZ: &[(&str, f64)] = &[
     (BRAZIL, 60.0),
     (EAST, 60.0),
+    (INDIA, 50.0),
     (SOUTHERN_CHINA, 50.0),
     (WEST, 60.0),
 ];
@@ -935,6 +940,11 @@ year_one_cases! {
         year_one_hands_off_eastern_interconnection,
         year_one_no_commands_eastern_interconnection,
         EAST
+    ),
+    (
+        year_one_hands_off_india_nepal_bhutan,
+        year_one_no_commands_india_nepal_bhutan,
+        INDIA
     ),
     (
         year_one_hands_off_southern_china,
@@ -2358,5 +2368,125 @@ mod brazil_sin {
             .expect("the home sun is computed");
         let from_north = noon.azimuth_deg.min(360.0 - noon.azimuth_deg);
         assert!(from_north <= 20.0, "solar noon in January: {noon:?}");
+    }
+}
+
+// ---- Region checks: India–Nepal–Bhutan -------------------------------------------------------
+
+mod india_nepal_bhutan {
+    use super::*;
+    use domain::time::Season;
+
+    const ID: &str = INDIA;
+
+    fn month(m: u8) -> SimMonth {
+        SimMonth::new(2027, m).expect("valid month")
+    }
+
+    /// The footprint is mainland India, the Indian-operated north included, with Nepal and
+    /// Bhutan; Bangladesh, Sri Lanka and the Andaman, Nicobar and Lakshadweep islands are out
+    /// (spec section 28.3).
+    #[test]
+    fn india_landmarks() {
+        let map = LandMap::load(ID);
+        for (name, lon, lat) in [
+            ("Delhi", 77.21, 28.61),
+            ("Leh", 77.58, 34.15),
+            ("Kathmandu", 85.32, 27.72),
+            ("Thimphu", 89.64, 27.47),
+            ("Chennai", 80.27, 13.08),
+        ] {
+            assert!(map.land_at(lon, lat), "{name} is playable land");
+        }
+        for (name, lon, lat) in [
+            ("Dhaka", 90.41, 23.81),
+            ("Colombo", 79.86, 6.93),
+            ("Port Blair", 92.73, 11.62),
+            ("Kavaratti", 72.64, 10.57),
+        ] {
+            assert!(!map.land_at(lon, lat), "{name} is outside the footprint");
+        }
+    }
+
+    /// Spec section 28.6: the HUD season label comes from the region calendar, which follows
+    /// the IMD scheme, so July reads Monsoon and the winter run is two months long.
+    #[test]
+    fn india_labels_follow_the_imd_calendar() {
+        let region = region(ID);
+        assert_eq!(region.season(month(7)), Season::Monsoon);
+        assert_eq!(region.calendar().run_length(month(1)), 2);
+        use Season::*;
+        assert_eq!(
+            region.calendar().seasons,
+            [
+                Winter,
+                Winter,
+                Summer,
+                Summer,
+                Summer,
+                Monsoon,
+                Monsoon,
+                Monsoon,
+                Monsoon,
+                PostMonsoon,
+                PostMonsoon,
+                PostMonsoon
+            ]
+        );
+    }
+
+    /// Spec section 28.6: during the monsoon (June to September) wind and river flow rise above
+    /// their year means while clearness falls below its own.
+    #[test]
+    fn india_monsoon_resources() {
+        let region = region(ID);
+        let monsoon_against_year = |values: [f64; 12]| {
+            let monsoon = values[5..9].iter().sum::<f64>() / 4.0;
+            let year = values.iter().sum::<f64>() / 12.0;
+            (monsoon, year)
+        };
+        let (monsoon, year) = monsoon_against_year(region.wind().monthly);
+        assert!(
+            monsoon > year,
+            "wind: monsoon {monsoon} against year {year}"
+        );
+        let (monsoon, year) = monsoon_against_year(region.hydro().monthly_flow);
+        assert!(
+            monsoon > year,
+            "flow: monsoon {monsoon} against year {year}"
+        );
+        let (monsoon, year) = monsoon_against_year(region.solar().clearness_mean);
+        assert!(
+            monsoon < year,
+            "clearness: monsoon {monsoon} against year {year}"
+        );
+    }
+
+    /// Spec section 28.4: Nepal (+5:45) and Bhutan (+6) put their local-hour bends at :15 and
+    /// :00 of the IST hour, so planning samples minutes 30 and 45 as well as the endpoints.
+    #[test]
+    fn nepal_and_bhutan_add_quarter_hour_samples() {
+        let region = region(ID);
+        let city = |key: &str| {
+            region
+                .cities()
+                .iter()
+                .find(|city| city.name_key == key)
+                .unwrap_or_else(|| panic!("{key} is a city"))
+                .id
+        };
+        let (delhi, kathmandu, thimphu) = (
+            city("city-delhi"),
+            city("city-kathmandu"),
+            city("city-thimphu"),
+        );
+        assert_eq!(
+            region.hour_sample_minutes([delhi, kathmandu, thimphu], month(1)),
+            std::collections::BTreeSet::from([0, 30, 45, 59])
+        );
+        assert_eq!(
+            region.hour_sample_minutes([delhi], month(1)),
+            std::collections::BTreeSet::from([0, 59])
+        );
     }
 }

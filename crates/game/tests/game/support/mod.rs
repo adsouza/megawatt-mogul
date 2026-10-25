@@ -40,6 +40,7 @@ pub fn update_n(app: &mut App, n: usize) {
 pub const SHIPPED_REGIONS: &[&str] = &[
     "brazil_sin",
     "eastern_interconnection",
+    "india_nepal_bhutan",
     "southern_china",
     "western_interconnection",
 ];

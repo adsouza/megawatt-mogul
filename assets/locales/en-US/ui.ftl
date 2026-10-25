@@ -505,6 +505,11 @@ zone-brt = BRT
 zone-amt = AMT
 zone-act = ACT
 
+# India, Nepal and Bhutan: IST, NPT and BTT (UTC+5:30, +5:45 and +6, no DST).
+zone-ist = IST
+zone-npt = NPT
+zone-btt = BTT
+
 # Optional construction economics. All prices use the region's currency.
 construction-economic-zone = Market
 construction-regional-default = Regional default
