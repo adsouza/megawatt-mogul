@@ -331,6 +331,7 @@ fn start() -> StartDef {
 pub fn tiny_region_parts() -> RegionDefinitionParts {
     RegionDefinitionParts {
         start_line_names: Default::default(),
+        economic_zones: None,
         id: RegionId::new("tiny"),
         name_key: "region-tiny".to_owned(),
         currency: crate::units::Currency::Usd,
@@ -455,5 +456,45 @@ pub fn may_2033_parts() -> RegionDefinitionParts {
     parts.climates[0].shapes[2] = [1.0; 24];
     parts.climates[0].monthly = [1.0; 12];
     parts.demand_noise.forecast_error = Ratio::ZERO;
+    parts
+}
+
+/// Two fictional construction markets; cents and durations are test inputs only.
+pub fn economic_region_parts() -> RegionDefinitionParts {
+    let mut parts = tiny_region_parts();
+    parts.economic_zones = Some(EconomicZones {
+        zones: [
+            (1, "economic-zone-west", 101, 2, 3, 2),
+            (2, "economic-zone-east", 202, 3, 7, 3),
+        ]
+        .into_iter()
+        .map(|(id, name, cost, months, line, speed)| EconomicZone {
+            id: EconomicZoneId(id),
+            name_key: name.into(),
+            plants: vec![PlantConstructionOverride {
+                kind: PlantKind::Wind,
+                capital_cost: Some(Money::from_cents(cost)),
+                build_months: Some(months),
+            }],
+            ac_lines: LineConstructionOverride {
+                cost_per_cell: Some(Money::from_cents(line)),
+                cells_per_month: Some(speed),
+            },
+        })
+        .collect(),
+        cells: (0..parts.terrain.height())
+            .flat_map(|_| {
+                (0..parts.terrain.width()).map(|x| {
+                    EconomicZoneId(if x == 0 {
+                        0
+                    } else if x < 6 {
+                        1
+                    } else {
+                        2
+                    })
+                })
+            })
+            .collect(),
+    });
     parts
 }

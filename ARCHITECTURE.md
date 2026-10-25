@@ -50,6 +50,17 @@ upcast. Unexpected new fields on legacy sources and unsupported schemas fail wit
 Region schema versions are independent of portable state schema 3, written by current saves;
 readers retain schemas 1–3.
 
+Rules 17 add optional construction economic zones to region schema 4. The domain's
+`region::economics` validates the dense cell map and partial profiles, resolves plant specs at a
+cell, and prices AC routes by canonical rational midpoint samples. Exact route work uses a checked
+u64 common denominator and u128 sum, rounded once. `plant_quote`/`line_quote` check representable
+completion dates before an order mutates state. Orders, starters and commissioning share these
+terms; owned plants retain their effective spec, while owned lines resolve fixed geometry against
+the immutable archived region. Snapshot validation compares plant specs against their cell's
+effective spec. No state fields or schema change: portable state stays 3. Absent economics retains
+legacy pricing. These zones do not affect electrical areas, physics, currency or operating costs.
+The HUD formats domain quotes and stored construction history; it does not calculate local prices.
+
 Rules 13 accredit commissioned storage by deliverable duration (including disabled batteries),
 refresh rate-base firm MW only at annual review, and adjust allowed return by post-close customer
 satisfaction. Estimates refresh a clone; restoring a snapshot never refreshes its saved profiles.

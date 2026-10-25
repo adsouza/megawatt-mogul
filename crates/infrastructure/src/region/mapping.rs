@@ -57,6 +57,7 @@ pub fn map_region(mut file: RegionFile) -> Result<RegionDefinition> {
         clock: locale.clock,
         city_locales: locale.city_locales,
         start_line_names: Default::default(),
+        economic_zones: None,
         terrain: rasterize_geometry(file.geography()),
         catalog: file
             .catalog
@@ -662,6 +663,7 @@ pub fn map_region_v4(file: RegionFileV4) -> Result<RegionDefinition> {
             })
             .collect(),
         start_line_names: line_names,
+        economic_zones: map_economic_zones(file.economic_zones.as_ref())?,
         terrain: rasterize_geometry(file.geography()),
         catalog: file
             .catalog
@@ -738,4 +740,58 @@ fn map_climate(c: &ClimateDto) -> Result<Climate> {
             .map_err(|_| invalid("climates.month_shapes"))?,
         monthly: array(&c.monthly, "climates.monthly")?,
     })
+}
+
+fn map_economic_zones(
+    dto: Option<&EconomicZonesDto>,
+) -> Result<Option<domain::region::EconomicZones>> {
+    use domain::region::{
+        EconomicZone, EconomicZoneId, EconomicZones, LineConstructionOverride,
+        PlantConstructionOverride,
+    };
+    dto.map(|dto| {
+        let zones = dto
+            .zones
+            .iter()
+            .map(|z| {
+                let money = |v: i64, field| {
+                    major_units(v, field).map_err(|_| RegionError::InvalidEconomicZone {
+                        zone: Some(EconomicZoneId(z.id)),
+                        field,
+                    })
+                };
+                Ok(EconomicZone {
+                    id: EconomicZoneId(z.id),
+                    name_key: z.name_key.clone(),
+                    plants: z
+                        .plants
+                        .iter()
+                        .map(|p| {
+                            Ok(PlantConstructionOverride {
+                                kind: map_kind(p.kind),
+                                capital_cost: p
+                                    .capital_cost
+                                    .map(|v| money(v, "economic_zones.plants.capital_cost"))
+                                    .transpose()?,
+                                build_months: p.build_months,
+                            })
+                        })
+                        .collect::<Result<_>>()?,
+                    ac_lines: LineConstructionOverride {
+                        cost_per_cell: z
+                            .ac_lines
+                            .cost_per_cell
+                            .map(|v| money(v, "economic_zones.ac_lines.cost_per_cell"))
+                            .transpose()?,
+                        cells_per_month: z.ac_lines.cells_per_month,
+                    },
+                })
+            })
+            .collect::<Result<_>>()?;
+        Ok(EconomicZones {
+            zones,
+            cells: dto.cells.iter().map(|id| EconomicZoneId(*id)).collect(),
+        })
+    })
+    .transpose()
 }

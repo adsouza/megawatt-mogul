@@ -172,7 +172,7 @@ fn construction_values(capital: Money, months: u32) -> [f64; 3] {
 /// Each metric has its own regional reference, so monthly affordability reflects the payment
 /// schedule. Line quotes use the same references as plants; changing the selected site or line
 /// origin doesn't change what a colour means.
-fn construction_stats(
+pub(super) fn construction_stats(
     region: &RegionDefinition,
     l10n: &Localizer,
     capital: Money,
@@ -232,8 +232,11 @@ fn plant_section(
     let rows = PlantKind::ALL
         .into_iter()
         .map(|kind| {
-            let spec = region.spec(kind);
+            let spec = region
+                .plant_spec_at(kind, cell)
+                .expect("selected cell exists");
             let site = game.session().plant_site_check(kind, cell);
+            let quote = game.session().plant_quote(kind, cell);
             let mut stats = vec![stat("build-capacity", format::megawatts(spec.capacity))];
             stats.extend(construction_stats(
                 region,
@@ -292,23 +295,50 @@ fn plant_section(
                         .map(|b| super::plant_panel::battery_hint(l10n, "battery-cycle-hint", b))
                 },
                 stats,
-                blocked: site.as_ref().err().map(|error| error.localize(l10n)),
+                blocked: site
+                    .as_ref()
+                    .err()
+                    .map(|error| error.localize(l10n))
+                    .or_else(|| {
+                        quote.as_ref().err().map(|error| {
+                            error.localize_with(l10n, &Names::new(l10n, game.session()))
+                        })
+                    }),
                 build: ButtonModel::new(
                     l10n.text("build-plant"),
                     UiAction::Command(Command::BuildPlant { kind, cell }),
                 )
-                .enabled_if(site.is_ok()),
+                .enabled_if(quote.is_ok()),
             }
         })
         .collect();
     PlantSection::Kinds {
-        heading: l10n.args(
-            "build-plant-heading",
-            &[
-                ("x", cell.x.to_string().into()),
-                ("y", cell.y.to_string().into()),
-            ],
-        ),
+        heading: if region.has_economic_zones() {
+            l10n.args(
+                "build-plant-heading-market",
+                &[
+                    ("x", cell.x.to_string().into()),
+                    ("y", cell.y.to_string().into()),
+                    (
+                        "market",
+                        super::economics::zone_name(
+                            region,
+                            region.economic_zone_at(cell).expect("selected cell"),
+                            l10n,
+                        )
+                        .into(),
+                    ),
+                ],
+            )
+        } else {
+            l10n.args(
+                "build-plant-heading",
+                &[
+                    ("x", cell.x.to_string().into()),
+                    ("y", cell.y.to_string().into()),
+                ],
+            )
+        },
         cell,
         rows,
     }
@@ -414,6 +444,12 @@ fn line_end_section(
                         l10n,
                         quote.capital,
                         quote.months,
+                        style,
+                    ));
+                    stats.extend(super::economics::route_stats(
+                        session.region(),
+                        &quote,
+                        l10n,
                         style,
                     ));
                     LinePreview::Quote(stats)

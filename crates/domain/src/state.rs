@@ -6,6 +6,8 @@ use std::ops::RangeInclusive;
 
 /// Schema emitted by new portable state captures.
 pub const CURRENT_STATE_SCHEMA: u32 = 3;
+/// Existing portable collection bound, also used for construction payment queues.
+pub const MAX_COLLECTION_LEN: usize = 1_000_000;
 /// Portable state schemas accepted by every reader.
 pub const SUPPORTED_STATE_SCHEMAS: RangeInclusive<u32> = 1..=3;
 
@@ -48,7 +50,7 @@ impl<'a> StateReader<'a> {
     }
     fn length(&mut self) -> Result<usize, StateError> {
         let n = u32::read(self)? as usize;
-        if n > 1_000_000 || n > self.bytes.len().saturating_sub(self.at) {
+        if n > MAX_COLLECTION_LEN || n > self.bytes.len().saturating_sub(self.at) {
             return Err(StateError::Limit);
         }
         Ok(n)

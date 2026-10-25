@@ -314,6 +314,9 @@ pub fn plant_card_model(
             .with_color(ValueColor::Tone(connection_tone(plant.connected))),
         stat("build-capacity", format::megawatts(spec.capacity)),
     ];
+    stats.extend(super::economics::owned_plant_stats(
+        game, plant.id, l10n, style,
+    ));
     if plant.kind.is_dispatchable() {
         stats.extend([
             stat("plant-min-output", format::megawatts(spec.min_output())),
@@ -392,6 +395,7 @@ pub fn draw_plant_card(ui: &mut egui::Ui, model: &PlantCardModel) -> Vec<UiActio
         ui.colored_label(TextTone::Neutral.color(), hint);
     }
     egui::Grid::new("plant_card_stats")
+        .max_col_width((ui.available_width() - ui.spacing().item_spacing.x) / 2.0)
         .num_columns(2)
         .spacing(egui::vec2(8.0, 1.0))
         .min_row_height(0.0)

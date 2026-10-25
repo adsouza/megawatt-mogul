@@ -379,6 +379,12 @@ pub struct RegionFileV4 {
         skip_serializing_if = "Option::is_none"
     )]
     pub atlas: Option<AtlasDto>,
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub economic_zones: Option<EconomicZonesDto>,
     pub solar: SolarDtoV4,
     pub hydro: HydroDto,
     pub frequency: FrequencyDto,
@@ -591,4 +597,56 @@ impl<'de> Deserialize<'de> for SchemaProbe {
         // versioned DTO then validates its own name, fields, and complete syntax.
         deserializer.deserialize_any(ProbeVisitor)
     }
+}
+
+/// Optional schema-4 construction markets. Optional scalars use plain RON values,
+/// e.g. `(kind: Wind, build_months: 2)`; omit a member to inherit the catalog.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EconomicZonesDto {
+    pub zones: Vec<EconomicZoneDto>,
+    pub cells: Vec<u32>,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EconomicZoneDto {
+    pub id: u32,
+    pub name_key: String,
+    #[serde(default)]
+    pub plants: Vec<PlantConstructionDto>,
+    #[serde(default)]
+    pub ac_lines: LineConstructionDto,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlantConstructionDto {
+    pub kind: PlantKindDto,
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub capital_cost: Option<i64>,
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub build_months: Option<u32>,
+}
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LineConstructionDto {
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cost_per_cell: Option<i64>,
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cells_per_month: Option<u32>,
 }

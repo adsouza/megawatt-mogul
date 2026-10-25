@@ -109,6 +109,10 @@ fn site_errors() -> Vec<SiteError> {
 
 fn domain_errors() -> Vec<DomainError> {
     vec![
+        DomainError::ConstructionOverflow,
+        DomainError::InvalidConstructionCell {
+            cell: CellCoord { x: 99, y: 99 },
+        },
         DomainError::PlantNotBattery { plant: PLANT },
         DomainError::InvalidRatio { value: 1.5 },
         DomainError::InvalidMonth { month: 13 },
@@ -167,6 +171,10 @@ fn domain_errors() -> Vec<DomainError> {
 fn region_errors() -> Vec<RegionError> {
     let city = CityId(2);
     vec![
+        RegionError::InvalidEconomicZone {
+            zone: Some(domain::region::EconomicZoneId(1)),
+            field: "economic_zones.cells",
+        },
         RegionError::MissingField {
             field: "regulator.satisfaction_target",
         },
@@ -537,7 +545,9 @@ fn events() -> Vec<(DomainEvent, bool)> {
 
 #[test]
 fn the_variant_tables_cover_every_variant() {
-    assert_covers_every_variant("DomainError", &domain_errors(), 25, |e| match e {
+    assert_covers_every_variant("DomainError", &domain_errors(), 27, |e| match e {
+        DomainError::ConstructionOverflow => 25,
+        DomainError::InvalidConstructionCell { .. } => 26,
         DomainError::InvalidRatio { .. } => 0,
         DomainError::InvalidMonth { .. } => 1,
         DomainError::PlantNotDispatchable { .. } => 2,
@@ -564,7 +574,8 @@ fn the_variant_tables_cover_every_variant() {
         DomainError::UnknownLine { .. } => 22,
         DomainError::LineNotUnderConstruction { .. } => 23,
     });
-    assert_covers_every_variant("RegionError", &region_errors(), 14, |e| match e {
+    assert_covers_every_variant("RegionError", &region_errors(), 15, |e| match e {
+        RegionError::InvalidEconomicZone { .. } => 14,
         RegionError::MissingField { .. } => 12,
         RegionError::UnsupportedRegionSchema(_) => 13,
         RegionError::CityCellOccupied { .. } => 11,

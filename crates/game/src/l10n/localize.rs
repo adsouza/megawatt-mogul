@@ -75,6 +75,8 @@ impl Localize for CommandLogError {
 impl LocalizeWith for DomainError {
     fn localize_with(&self, l10n: &Localizer, names: &Names) -> String {
         match self {
+            Self::ConstructionOverflow => l10n.text("error-construction-overflow"),
+            Self::InvalidConstructionCell { .. } => l10n.text("error-construction-cell"),
             Self::InvalidRatio { value: _ } => l10n.text("error-invalid-ratio"),
             Self::InvalidMonth { month } => l10n.args(
                 "error-invalid-month",
@@ -259,6 +261,17 @@ impl Localize for RegionLoadError {
 impl Localize for RegionError {
     fn localize(&self, l10n: &Localizer) -> String {
         match self {
+            Self::InvalidEconomicZone { zone, field } => l10n.args(
+                "region-error-economic-zone",
+                &[
+                    (
+                        "zone",
+                        zone.map_or_else(|| "0".into(), |id| id.0.to_string())
+                            .into(),
+                    ),
+                    ("field", (*field).into()),
+                ],
+            ),
             Self::MissingField { field } => {
                 l10n.args("region-error-missing-field", &[("field", (*field).into())])
             }

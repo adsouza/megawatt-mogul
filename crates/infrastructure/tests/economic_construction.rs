@@ -1,0 +1,471 @@
+use application::{
+    Command, Game, InMemoryCommandLog, ReplayCompatibility, SaveBundle, SaveId, SaveKind,
+    SaveMetadata,
+};
+use domain::{
+    company::AssetRef,
+    generation::PlantStatus,
+    ids::{CellCoord, RegionId},
+    region::PlantKind,
+    session::GameSettings,
+};
+use infrastructure::{
+    region::RonRegionCatalog,
+    save::{decode_save, encode_save},
+};
+
+fn game() -> (tempfile::TempDir, Game) {
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("minimal.ron"),
+        include_bytes!("support/economic_region_v4.ron"),
+    )
+    .unwrap();
+    let game = Game::start_new(
+        &RonRegionCatalog::new(dir.path()),
+        &RegionId::new("minimal"),
+        7,
+        GameSettings::default(),
+        Box::new(InMemoryCommandLog::default()),
+    )
+    .unwrap();
+    (dir, game)
+}
+fn close(game: &mut Game) {
+    game.execute(Command::BeginOperating).unwrap();
+    game.execute(Command::AdvanceTicks { n: 1440 }).unwrap();
+}
+#[test]
+fn local_orders_quotes_payments_progress_and_rate_base_agree() {
+    let (_dir, mut game) = game();
+    let west = CellCoord { x: 4, y: 4 };
+    let east = CellCoord { x: 8, y: 5 };
+    let before = game.checkpoint();
+    let a = game.session().plant_quote(PlantKind::Wind, west).unwrap();
+    let b = game.session().plant_quote(PlantKind::Wind, east).unwrap();
+    assert_eq!(game.checkpoint(), before);
+    assert_eq!(
+        (a.capital.cents(), a.months, b.capital.cents(), b.months),
+        (100_000_000, 2, 200_000_000, 3)
+    );
+    for cell in [west, east] {
+        game.execute(Command::BuildPlant {
+            kind: PlantKind::Wind,
+            cell,
+        })
+        .unwrap();
+    }
+    let plants: Vec<_> = game
+        .session()
+        .plant_views()
+        .into_iter()
+        .filter(|p| p.kind == PlantKind::Wind)
+        .collect();
+    let quote = game
+        .session()
+        .line_quote(plants[0].node, plants[1].node)
+        .unwrap();
+    assert_eq!(
+        quote,
+        game.session()
+            .line_quote(plants[1].node, plants[0].node)
+            .unwrap()
+    );
+    game.execute(Command::BuildLine {
+        from: plants[0].node,
+        to: plants[1].node,
+    })
+    .unwrap();
+    let line = game.session().line_views().into_iter().last().unwrap().id;
+    assert_eq!(game.session().line_build_months(line), Some(quote.months));
+    let mut paid = 0;
+    for month in 1..=3 {
+        close(&mut game);
+        paid -= game
+            .projections()
+            .monthly_reports
+            .history()
+            .last()
+            .unwrap()
+            .construction
+            .cents();
+        for p in &plants {
+            let expected = if p.cell == west { a } else { b };
+            assert_eq!(game.session().plant_construction(p.id).unwrap(), expected);
+            let current = game
+                .session()
+                .plant_views()
+                .into_iter()
+                .find(|v| v.id == p.id)
+                .unwrap();
+            assert_eq!(
+                matches!(current.status, PlantStatus::UnderConstruction { .. }),
+                month < expected.months
+            );
+            if month >= expected.months {
+                let asset = game
+                    .session()
+                    .company()
+                    .rate_base()
+                    .assets()
+                    .find(|v| v.asset == AssetRef::Plant(p.id))
+                    .unwrap();
+                assert_eq!(asset.original, expected.capital);
+            }
+        }
+        if month < 3 {
+            game.execute(Command::FinishReview).unwrap();
+        }
+    }
+    assert_eq!(
+        paid,
+        a.capital.cents() + b.capital.cents() + quote.capital.cents()
+    );
+    let asset = game
+        .session()
+        .company()
+        .rate_base()
+        .assets()
+        .find(|v| v.asset == AssetRef::Line(line))
+        .unwrap();
+    assert_eq!(asset.original, quote.capital);
+}
+#[test]
+fn local_inflight_snapshot_restores_with_archived_prices() {
+    let (dir, mut game) = game();
+    game.execute(Command::BuildPlant {
+        kind: PlantKind::Wind,
+        cell: CellCoord { x: 4, y: 4 },
+    })
+    .unwrap();
+    game.execute(Command::BuildPlant {
+        kind: PlantKind::Wind,
+        cell: CellCoord { x: 8, y: 5 },
+    })
+    .unwrap();
+    let plants: Vec<_> = game
+        .session()
+        .plant_views()
+        .into_iter()
+        .filter(|p| p.kind == PlantKind::Wind)
+        .collect();
+    game.execute(Command::BuildLine {
+        from: plants[0].node,
+        to: plants[1].node,
+    })
+    .unwrap();
+    game.execute(Command::BeginOperating).unwrap();
+    game.execute(Command::AdvanceTicks { n: 100 }).unwrap();
+    let compatibility = ReplayCompatibility {
+        build: "test".into(),
+        platform: "test".into(),
+    };
+    let bundle = SaveBundle {
+        compatibility: compatibility.clone(),
+        metadata: SaveMetadata {
+            slot: SaveId::new("a".repeat(32)).unwrap(),
+            run: SaveId::new("b".repeat(32)).unwrap(),
+            name: "local".into(),
+            kind: SaveKind::Manual,
+            saved_at: 0,
+        },
+        checkpoint: game.checkpoint(),
+    };
+    let bytes = encode_save(&bundle).unwrap();
+    std::fs::write(dir.path().join("minimal.ron"), b"changed installed source").unwrap();
+    let (decoded, region) = decode_save(&bytes, &compatibility).unwrap();
+    let mut resumed = decoded
+        .restore(
+            region,
+            &compatibility,
+            Box::new(InMemoryCommandLog::default()),
+            &|| false,
+        )
+        .unwrap();
+    assert_eq!(resumed.checkpoint(), game.checkpoint());
+    game.execute(Command::AdvanceTicks { n: 1440 }).unwrap();
+    resumed.execute(Command::AdvanceTicks { n: 1440 }).unwrap();
+    assert_eq!(resumed.checkpoint(), game.checkpoint());
+    for _ in 0..2 {
+        for candidate in [&mut game, &mut resumed] {
+            candidate.execute(Command::FinishReview).unwrap();
+            close(candidate);
+        }
+        assert_eq!(resumed.checkpoint(), game.checkpoint());
+    }
+}
+
+#[test]
+fn rules16_construction_capture_keeps_original_bytes_and_continuation() {
+    use sha2::{Digest, Sha256};
+    let root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/support/economic-baseline");
+    let sums = std::fs::read_to_string(root.join("SHA256SUMS")).unwrap();
+    for row in sums.lines() {
+        let (expected, name) = row.split_once("  ").unwrap();
+        let hash = Sha256::digest(std::fs::read(root.join(name)).unwrap());
+        assert_eq!(
+            hash.iter().map(|b| format!("{b:02x}")).collect::<String>(),
+            expected
+        );
+    }
+    let expected = std::fs::read_to_string(root.join("expected.txt")).unwrap();
+    let value = |key: &str| {
+        expected
+            .lines()
+            .find_map(|line| line.strip_prefix(&format!("{key}=")))
+            .unwrap()
+            .parse::<u64>()
+            .unwrap()
+    };
+    let identity = ReplayCompatibility {
+        build: "test".into(),
+        platform: "test".into(),
+    };
+    let bytes = std::fs::read(root.join("in-flight-rules16.mgsave")).unwrap();
+    let (bundle, region) = decode_save(&bytes, &identity).unwrap();
+    assert_eq!(bundle.checkpoint.header.sim_rules_version, 16);
+    let snapshot = bundle.checkpoint.snapshot.as_ref().unwrap();
+    assert_eq!(snapshot.schema, 3);
+    assert_eq!(bundle.checkpoint.state_hash, value("boundary_hash"));
+    assert_eq!(
+        snapshot.session,
+        std::fs::read(root.join("session-schema3.bin")).unwrap()
+    );
+    assert_eq!(
+        snapshot.projections,
+        std::fs::read(root.join("projections-schema3.bin")).unwrap()
+    );
+    assert_eq!(
+        region.source_bytes,
+        std::fs::read(root.join("minimal.ron")).unwrap()
+    );
+    let original = bundle.checkpoint.clone();
+    let mut game = bundle
+        .restore(
+            region,
+            &identity,
+            Box::new(InMemoryCommandLog::default()),
+            &|| false,
+        )
+        .unwrap();
+    assert_eq!(game.checkpoint().snapshot, original.snapshot);
+    for index in 1..=3 {
+        if index > 1 {
+            game.execute(Command::FinishReview).unwrap();
+            game.execute(Command::BeginOperating).unwrap();
+        }
+        game.execute(Command::AdvanceTicks { n: 1440 }).unwrap();
+        if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+            assert_eq!(
+                game.checkpoint().state_hash,
+                value(&format!("close_{index}_hash"))
+            );
+        }
+        let report = game.projections().monthly_reports.history().last().unwrap();
+        let construction = expected
+            .lines()
+            .find_map(|line| line.strip_prefix(&format!("close_{index}_construction=")))
+            .unwrap()
+            .parse::<i64>()
+            .unwrap();
+        assert_eq!(report.construction.cents(), construction);
+        let paid_plant = game
+            .session()
+            .company()
+            .rate_base()
+            .assets()
+            .find(|a| a.asset == AssetRef::Plant(domain::ids::PlantId(13)));
+        assert_eq!(paid_plant.is_some(), index == 3);
+        if let Some(plant) = paid_plant {
+            assert_eq!(plant.original.cents(), 30_000_000_000);
+        }
+    }
+}
+
+#[test]
+fn forged_effective_specs_and_changed_archived_maps_are_rejected() {
+    use domain::state::State;
+    let (_dir, mut game) = game();
+    let cell = CellCoord { x: 4, y: 4 };
+    game.execute(Command::BuildPlant {
+        kind: PlantKind::Wind,
+        cell,
+    })
+    .unwrap();
+    let checkpoint = game.checkpoint();
+    let region = infrastructure::region::load_region_bytes(
+        checkpoint.region_source.clone(),
+        &RegionId::new("minimal"),
+    )
+    .unwrap();
+    let spec = region
+        .definition
+        .plant_spec_at(PlantKind::Wind, cell)
+        .unwrap();
+    let bytes = spec.state_bytes();
+    for price in [true, false] {
+        let mut candidate = checkpoint.clone();
+        let snapshot = candidate.snapshot.as_mut().unwrap();
+        let offset = snapshot
+            .session
+            .windows(bytes.len())
+            .position(|p| p == bytes)
+            .unwrap();
+        let mut forged = spec.clone();
+        if price {
+            forged.capital_cost = domain::units::Money::from_cents(1);
+        } else {
+            forged.build_months += 1;
+        }
+        snapshot
+            .session
+            .splice(offset..offset + bytes.len(), forged.state_bytes());
+        candidate.state_hash = snapshot.state_hash();
+        assert!(matches!(
+            Game::restore(
+                region.clone(),
+                candidate,
+                Box::new(InMemoryCommandLog::default()),
+                &|| false
+            ),
+            Err(application::RestoreError::InvalidSnapshot)
+        ));
+    }
+    let changed = String::from_utf8(checkpoint.region_source.clone())
+        .unwrap()
+        .replace("1000000, build_months: 2", "9000000, build_months: 2");
+    let changed =
+        infrastructure::region::load_region_bytes(changed.into_bytes(), &RegionId::new("minimal"))
+            .unwrap();
+    assert!(
+        Game::restore(
+            changed,
+            checkpoint,
+            Box::new(InMemoryCommandLog::default()),
+            &|| false
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn cancelling_a_local_line_keeps_paid_capital_and_releases_only_future_payments() {
+    let (_dir, mut game) = game();
+    for cell in [CellCoord { x: 4, y: 4 }, CellCoord { x: 8, y: 5 }] {
+        game.execute(Command::BuildPlant {
+            kind: PlantKind::Wind,
+            cell,
+        })
+        .unwrap();
+    }
+    let plants: Vec<_> = game
+        .session()
+        .plant_views()
+        .into_iter()
+        .filter(|p| p.kind == PlantKind::Wind)
+        .collect();
+    let quote = game
+        .session()
+        .line_quote(plants[0].node, plants[1].node)
+        .unwrap();
+    assert!(quote.months > 1);
+    game.execute(Command::BuildLine {
+        from: plants[0].node,
+        to: plants[1].node,
+    })
+    .unwrap();
+    let id = game.session().line_views().into_iter().last().unwrap().id;
+    close(&mut game);
+    let paid = game
+        .session()
+        .company()
+        .ledger()
+        .iter()
+        .filter(|e| e.subject == Some(AssetRef::Line(id)))
+        .map(|e| -e.amount.cents())
+        .sum::<i64>();
+    assert_eq!(paid, quote.capital.cents() / i64::from(quote.months));
+    game.execute(Command::FinishReview).unwrap();
+    let cash = game.session().company_view().cash;
+    game.execute(Command::CancelLineConstruction { line: id })
+        .unwrap();
+    assert_eq!(game.session().company_view().cash, cash);
+    assert_eq!(
+        game.session()
+            .line_quote(plants[0].node, plants[1].node)
+            .unwrap(),
+        quote
+    );
+    close(&mut game);
+    assert_eq!(
+        game.session()
+            .company()
+            .ledger()
+            .iter()
+            .filter(|e| e.subject == Some(AssetRef::Line(id)))
+            .map(|e| -e.amount.cents())
+            .sum::<i64>(),
+        paid
+    );
+    assert!(
+        !game
+            .session()
+            .company()
+            .rate_base()
+            .assets()
+            .any(|a| a.asset == AssetRef::Line(id))
+    );
+}
+
+#[test]
+fn starter_assets_use_local_original_values_without_construction_delay() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let source=include_str!("support/economic_region_v4.ron").replace(
+        "plants: [(kind: Wind, capital_cost: 2000000, build_months: 3)]",
+        "plants: [(kind: Wind, capital_cost: 2000000, build_months: 3), (kind: Peaker, capital_cost: 500000, build_months: 6)]");
+    assert!(source.contains("capital_cost: 500000, build_months: 6"));
+    std::fs::write(dir.path().join("minimal.ron"), source).unwrap();
+    let game = Game::start_new(
+        &RonRegionCatalog::new(dir.path()),
+        &RegionId::new("minimal"),
+        7,
+        GameSettings::default(),
+        Box::new(InMemoryCommandLog::default()),
+    )
+    .unwrap();
+    let peaker = game
+        .session()
+        .plant_views()
+        .into_iter()
+        .find(|p| p.kind == PlantKind::Peaker)
+        .unwrap();
+    assert!(!matches!(
+        peaker.status,
+        PlantStatus::UnderConstruction { .. }
+    ));
+    let original = game
+        .session()
+        .company()
+        .rate_base()
+        .assets()
+        .find(|a| a.asset == AssetRef::Plant(peaker.id))
+        .unwrap();
+    assert_eq!(original.original.cents(), 50_000_000);
+    assert!(original.legacy);
+    let line = game
+        .session()
+        .line_views()
+        .into_iter()
+        .find(|l| l.from == peaker.node || l.to == peaker.node)
+        .unwrap();
+    let original = game
+        .session()
+        .company()
+        .rate_base()
+        .assets()
+        .find(|a| a.asset == AssetRef::Line(line.id))
+        .unwrap();
+    assert_eq!(original.original.cents(), 70_000_000);
+    assert!(original.legacy);
+}

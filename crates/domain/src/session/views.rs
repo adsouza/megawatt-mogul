@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use super::{DayPhase, GameSession, Incident, whole_cells};
+use super::{DayPhase, GameSession, Incident};
 use crate::company::CapitalChange;
 use crate::demand::{ForecastPoint, hourly_forecast};
 use crate::generation::{BatteryFlow, BatteryMode, BatteryTotals, Plant, PlantStatus};
@@ -438,8 +438,7 @@ impl GameSession {
     /// beside its months left (spec §16.9). It reads the line's stored length, as the month close
     /// does when it books the line. Pure. `None` for a line the network doesn't have.
     pub fn line_build_months(&self, line: LineId) -> Option<u32> {
-        let line = self.power.network().line(line)?;
-        Some(self.line_months(whole_cells(line.length_cells)))
+        Some(self.line_construction(line)?.months)
     }
 
     /// The noise-free demand forecast of connected cities for each hour of

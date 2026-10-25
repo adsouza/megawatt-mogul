@@ -94,6 +94,14 @@ pub fn region_outline(source: &[u8], id: &RegionId) -> Result<RegionOutline, Reg
             })
         }
         ParsedRegionFile::V4(file) => {
+            // Optional construction maps must not acquire a geographic click target when the
+            // playable loader would reject their IDs, rates, costs or land assignments.
+            if file.economic_zones.is_some() {
+                super::map_region_v4(file.clone()).map_err(|error| RegionLoadError::Invalid {
+                    region: id.clone(),
+                    error,
+                })?;
+            }
             // This reader sees raw DTOs, before domain validation. Validate before doing DST
             // arithmetic (i32::MAX + 60 would otherwise panic in a debug build).
             if file.time_zones.is_empty() {

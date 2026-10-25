@@ -16,6 +16,7 @@ mod chart_style;
 mod city_card;
 mod commitment;
 mod construction;
+mod economics;
 mod forecast_chart;
 mod frequency;
 mod game_over;

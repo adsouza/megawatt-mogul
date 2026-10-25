@@ -15,8 +15,8 @@
   making satisfaction count (§26, 2026-10-23, implemented under rules 13; lands before A11);
   A13, battery discharge from 16:00 (§27, 2026-10-24, implemented under rules 15); A14, global
   regions, the first Milestone 2 amendment (§28, 2026-10-24; Plan 6 global foundations
-  implemented under rules 16; optional construction economic zones specified for Plan 6a,
-  2026-10-25; Plans 6a, 7 and 8 pending)
+  implemented under rules 16; optional construction economic zones implemented in Plan 6a
+  under rules 17, 2026-10-25; Plans 7 and 8 pending)
 - **Engine:** Rust 1.98, Bevy 0.20, bevy_egui 0.43, bevy-inspector-egui 0.38
 
 ## 1. Vision and goals
@@ -3382,8 +3382,10 @@ Automated acceptance, the native
 120-frame launch smoke, and the isolated full representative-day native playtests in both North
 American regions pass. [Plan 6 Task 10](../plans/2026-10-24-plan-6-global-foundations.md#task-10-migrate-both-north-american-regions-to-schema-4-rules-16) records the observed review results and native acceptance
 checks. Local scratch logs and saves were temporary receipts. **Plan 6a**, optional construction
-economic zones (§28.7.1), is specified on 2026-10-25 and **not implemented**; it lands after Plan 6
-and before new region authoring. Its implementation plan is
+economic zones (§28.7.1), is **implemented under rules 17** on 2026-10-25, with region schema 4
+and portable state schema 3 unchanged. Its isolated two-market native workflow and automated
+accounting/save compatibility checks pass; real country profiles await Plan 7. Its implementation
+record is
 [Plan 6a](../plans/2026-10-25-plan-6a-economic-zones.md). **Plan 7** (five single-area regions:
 Europe–Maghreb, India–Nepal–Bhutan, southern China, IPS/UPS and Brazil in §28.3) and **Plan 8**
 (multi-area regions with HVDC links and SGCC, §28.9) remain pending. Each plan bumps
@@ -3612,6 +3614,10 @@ column lists what the notes exclude, not everything outside.
 
 #### 28.7.1 Optional construction economic zones (specified 2026-10-25; Plan 6a)
 
+**Status:** Implemented under rules 17 on 2026-10-25. The historical heading is retained for links.
+No shipped region opts in yet; country-data acceptance and HVDC integration remain the Plan 7/8
+handoffs recorded in Plan 6a.
+
 **Scope and optionality.** This is an opt-in region-data feature, not another new-game toggle.
 Without `economic_zones`, all current construction prices, months, accounting and source behavior
 remain identical. A zone may represent a country, several countries sharing a cost profile, or a
@@ -3648,6 +3654,14 @@ Validation rejects duplicate/reserved IDs, empty name keys, unknown cell referen
 length, nonzero IDs on non-playable cells, duplicate/unknown plant kinds, unknown fields, negative
 or unrepresentable costs, and zero/out-of-range build months or line speeds, with typed field/ID
 errors. An invalid present block never falls back silently to regional defaults.
+
+RON uses plain optional values, for example
+`(id: 1, name_key: "market-example", plants: [(kind: Wind, capital_cost: 1000000, build_months: 2)], ac_lines: (cells_per_month: 3))`.
+Omit a member to inherit it; do not write `Some(...)` or `None`. Money inputs are whole major
+units of the region currency, converted by the existing checked minor-unit mapping. A complete
+fictional example is `crates/infrastructure/tests/support/economic_region_v4.ron`. Plant duration
+overrides are limited to 1,000,000 months by the existing portable collection-reader bound on
+instalment vectors; this is a representation guard, not gameplay tuning.
 
 **Plants.** Resolve the zone at the plant's cell, copy its base `PlantSpec`, and replace only
 the overridden capital cost and build months. One pure construction resolver supplies the build
@@ -3719,8 +3733,7 @@ country/subnational differences with the same provenance; omission remains valid
 recorded as an authoring choice. India and other regions may use their own local baseline catalog
 or opt in; no region is required to reproduce US money magnitudes or identical project durations.
 
-**Compatibility and delivery.** Plan 6a is a future rules change, expected to take rules 16 to 17;
-it does not change the current rules constant during specification work. Region schema stays 4
+**Compatibility and delivery.** Plan 6a bumps rules 16 to 17. Region schema stays 4
 with this optional extension, and portable state stays 3: effective plant specs and line geometry,
 construction status and instalments already have persisted fields. Do not add a stored zone ID or
 rewrite an old source/capture. Old regions, including schema-4 files without economic zones, use
@@ -3884,8 +3897,9 @@ old reports stay as recorded.
   `demand_noise`, `calendar`, the computed-sun `solar` block (no `daylight`), `currency` with
   unsuffixed money fields, optional `areas`, optional `hvdc`, optional `start.line_names` and
   optional `atlas`. Plan 6a adds optional `economic_zones` (§28.7.1); Plan 8 adds its optional HVDC
-  economic terms. These are specified extensions, not claims that the current loader implements
-  them. A schema-4 file missing a required field fails to load with a typed error naming it.
+  economic terms. The economic-zone plant/AC extension is implemented; HVDC fields remain
+  reserved for Plan 8 and are rejected by the current loader. A schema-4 file missing a required
+  field fails to load with a typed error naming it.
 - **Schema-4 irradiance authoring.** `irradiance` is either the existing Gaussian field
   `(base: value, blobs: [...])` or an exact cell field `(cells: [...])`. The forms are mutually
   exclusive; partial Gaussian fields and mixed forms are rejected. The cell list has exactly
@@ -3917,8 +3931,8 @@ old reports stay as recorded.
 - **Rules versions.** Each plan bumps `SIM_RULES_VERSION` once and regenerates the rules guard and
   the scenario snapshots, reviewing every diff. Command-only logs stay fenced by
   `RulesVersionMismatch`. The delivery order is Plan 6 (implemented, rules 16), Plan 6a (economic
-  zones), Plan 7 (new single-area regions), then Plan 8 (multi-area/HVDC). Plan 6a reuses state
-  schema 3; it adds no persisted fields. Later plans bump from the preceding implemented rules.
+  zones, implemented under rules 17), Plan 7 (new single-area regions), then Plan 8 (multi-area/HVDC).
+  Plan 6a reuses state schema 3; it adds no persisted fields. Later plans bump from the preceding implemented rules.
 
 ### 28.12 Acceptance
 

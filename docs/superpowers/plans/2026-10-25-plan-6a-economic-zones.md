@@ -1,7 +1,8 @@
 # Plan 6a: Optional Construction Economic Zones (Milestone 2)
 
-**Status:** Specified 2026-10-25; not implemented. This document is an implementation plan,
-not authorization to start implementation during the specification update.
+**Status:** Implemented 2026-10-25 under rules 17, following user authorization. Region schema
+remains 4 and portable state schema remains 3. Tasks 1–5 and 8 are complete. Tasks 6–7 remain
+mandatory future Plan 7/8 handoffs; they do not claim that country data or HVDC has shipped.
 
 **Goal:** Let a region optionally author country or subnational plant and transmission
 construction costs and build times. Europe–Maghreb will use this to distinguish construction
@@ -12,7 +13,7 @@ identity operation. Technical plant characteristics and operating economics rema
 The spec's currency, route arithmetic, default behavior and compatibility contracts are binding.
 
 **Sequence:** Completed Plan 6 / rules 16 → **Plan 6a** → Plan 7's five single-area regions →
-Plan 8's multi-area/HVDC work. Plan 6a bumps rules once (expected 16→17 at the current base),
+Plan 8's multi-area/HVDC work. Plan 6a bumps rules once (16→17),
 keeps region schema 4 and portable state schema 3. Plans 7/8 bump from their actual predecessors;
 Plan 8 retains its own planned state-schema change. Plan 7/8 detailed plans do not yet exist in
 this checkout; Tasks 6–7 below are mandatory handoffs when they are written, not broken links to
@@ -44,14 +45,15 @@ imaginary files. Do not re-execute or reopen Plan 6's completed checklist.
   regional data is accepted; do not invent an Indian or Maghreb cost discount from wages alone.
 - Implementation follows TDD, then workspace nextest, clippy `-D warnings`, fmt and appropriate
   native checks before its scoped commits. Respect current user permission for broad checks;
-  never bypass hooks. This documentation-only update does not run Rust tests or change constants.
+  never bypass hooks. See the implementation record below for completed validation.
 
 ## Preflight: immutable construction baseline
 
-- [ ] Before editing implementation paths, capture a rules-16/schema-4 save with an in-flight
+- [x] Before editing implementation paths, capture a rules-16/schema-4 save with an in-flight
   plant and line. Record source bytes, schema/hash/canonical bytes, instalments, commission dates
   and eventual original rate-base values. Keep the existing released/NA archive fixtures too.
   This is a pre-change oracle, never a fixture regenerated after the new resolver is written.
+  Captured at `2009acc` in `crates/infrastructure/tests/support/economic-baseline/`.
 
 ## Task 1: Domain economic profiles and deterministic construction terms
 
@@ -65,20 +67,20 @@ cell-aware effective-spec resolver and a route-terms resolver independent of net
 They must be usable for already-owned assets as well as a prospective order. Return typed invalid
 cell/zone/overflow errors; never silently choose the base profile for invalid input.
 
-- [ ] RED: omitted map, explicit all-0 map and differently named but identical profiles produce
+- [x] RED: omitted map, explicit all-0 map and differently named but identical profiles produce
   exactly the old plant and line terms; two cells can change capital and duration independently.
-- [ ] RED: map/profile validation covers unknown/duplicate/reserved IDs, length, non-playable
+- [x] RED: map/profile validation covers unknown/duplicate/reserved IDs, length, non-playable
   assignments, duplicate kinds, bad amounts/durations and unsupported override fields.
-- [ ] Implement optional profile resolution; no operation may overwrite capacity, siting,
+- [x] Implement optional profile resolution; no operation may overwrite capacity, siting,
   efficiency, startup, O&M, marginal cost, life or other non-construction spec fields.
-- [ ] Implement the spec's AC work-unit sampling: existing billable N, canonical endpoint-cell
+- [x] Implement the spec's AC work-unit sampling: existing billable N, canonical endpoint-cell
   order, exact rational midpoint indices and declared boundary tie rule. Do not use the visual
   water supercover as a billable-cell count or add per-country rounding/fees.
-- [ ] Capital is the checked cents sum. Validate the LCM of all relevant AC rates fits u64;
+- [x] Capital is the checked cents sum. Validate the LCM of all relevant AC rates fits u64;
   accumulate exact scaled work in u128 and ceil once to a positive u32 month count. Reject an
   unrepresentable rate set at load/validation; reject a quote whose money or completion date
   cannot be represented before any state change. No float work sum followed by ceil.
-- [ ] GREEN/properties: reverse endpoints, repeated zone crossings, exact boundary hits, water,
+- [x] GREEN/properties: reverse endpoints, repeated zone crossings, exact boundary hits, water,
   diagonals, odd-cent capital, no extra RNG use, uniform terms across distinct IDs, and overflow.
   Pin a hand-computed case where rounding work separately per zone gives the wrong duration.
 
@@ -95,16 +97,16 @@ inherit. Unknown fields remain errors. Do not accept reserved future `hvdc` over
 Plan 8 implements its typed contract. Existing anonymous and explicit public RON struct names
 must keep loading; do not impose a private schema-probe/helper name on source files.
 
-- [ ] RED: legacy schemas reject the extension; old v4 absence succeeds unchanged; explicit
+- [x] RED: legacy schemas reject the extension; old v4 absence succeeds unchanged; explicit
   default and a two-country fixture map to the expected typed domain profiles and cells.
-- [ ] RED: every invalid map/profile case produces a typed field/ID diagnostic, including a
+- [x] RED: every invalid map/profile case produces a typed field/ID diagnostic, including a
   malformed present block and an overflowing work-rate LCM. No partial silent defaults.
-- [ ] Add strict DTOs/mapping, preserving the discriminator-before-versioned-DTO boundary and
+- [x] Add strict DTOs/mapping, preserving the discriminator-before-versioned-DTO boundary and
   Gaussian/cells irradiance support. Validate starter asset construction valuations before a
   `GameSession` can be constructed, including any unrepresentable startup rate-base value.
-- [ ] GREEN: public list/load, outline and archived-source loading take the same validated
+- [x] GREEN: public list/load, outline and archived-source loading take the same validated
   interpretation; wrong names/unknown fields still fail. Round-trip supported named RON forms.
-- [ ] Check no new domain dependency or serialization derives leak through the boundary.
+- [x] Check no new domain dependency or serialization derives leak through the boundary.
 
 ## Task 3: Quotes, ordering, accounting and frozen construction
 
@@ -117,21 +119,21 @@ state; orders still require Planning and all existing siting/network/need checks
 spec and pure region route resolver are the shared source for terms, not this eligibility quote
 when valuing an already-owned asset (which is necessarily occupied/already connected).
 
-- [ ] RED: two same-kind plant orders in different zones charge their displayed totals, use
+- [x] RED: two same-kind plant orders in different zones charge their displayed totals, use
   different months, and commission in exactly their quoted month. Cover independent overrides,
   inherited members and cancellation's existing paid/future-instalment behavior.
-- [ ] RED: a cross-zone line quote/order/display/cancellation/commissioning has the same total
+- [x] RED: a cross-zone line quote/order/display/cancellation/commissioning has the same total
   and duration; reversing endpoint selection cannot buy the same line cheaper or faster.
-- [ ] Orders resolve before IDs or session mutation. `build_plant` stores the effective spec
+- [x] Orders resolve before IDs or session mutation. `build_plant` stores the effective spec
   in the plant's existing state; `build_line` queues the route quote's instalments/months.
-- [ ] Audit **all** value consumers: starter plant/line original rate base, commissioning,
+- [x] Audit **all** value consumers: starter plant/line original rate base, commissioning,
   `line_build_months`, progress and estimated completion, monthly instalments, capital-held and
   depreciation. In particular, month-close `line_cost(region.lines(), length)` and base-catalog
   construction-card lookups are no longer correct for opt-in regions. Resolve stored line
   geometry against the immutable archived map; use stored plant specs for owned plants.
-- [ ] Preserve technical/operating fields, line need/siting rules and water-crossing ability.
+- [x] Preserve technical/operating fields, line need/siting rules and water-crossing ability.
   No economic-zone boundary creates an electrical area or a transfer limit.
-- [ ] GREEN/properties: sum of instalments equals quoted cents, one/two/many month completion,
+- [x] GREEN/properties: sum of instalments equals quoted cents, one/two/many month completion,
   starters are immediately in service with correctly resolved original value, no mutation on
   invalid/overflow quotes/orders, and unused capital handling still obeys A12.
 
@@ -140,20 +142,20 @@ when valuing an already-owned asset (which is necessarily occupied/already conne
 **Files:** `session/mod.rs` snapshot validation, `application/src/{game,checkpoint}.rs` as
 required by existing gates, infrastructure save tests, `tests/game/save_snapshots.rs`.
 
-- [ ] RED: save a new two-zone game mid-construction with a plant's effective spec different
+- [x] RED: save a new two-zone game mid-construction with a plant's effective spec different
   from its base catalog; restore must not reject it as a forged spec. Include a cross-zone line.
-- [ ] Compare stored plant specs with the cell-aware resolver in `validate_snapshot`; do not
+- [x] Compare stored plant specs with the cell-aware resolver in `validate_snapshot`; do not
   replace the equality check with accepting arbitrary stored prices or durations.
-- [ ] Keep state schema 3 and its field layout: effective `PlantSpec` fields, line geometry,
+- [x] Keep state schema 3 and its field layout: effective `PlantSpec` fields, line geometry,
   status and remaining instalments already hold the required history. No persisted zone-ID field
   is necessary. Do not add one and then omit it from hashes. Plan 8 handles its separate changes.
-- [ ] Verify source-schema hash/canonical bytes before any existing upcast. Omitted/default
+- [x] Verify source-schema hash/canonical bytes before any existing upcast. Omitted/default
   economic data must preserve archived schemas 1–4 regions and supported state schemas exactly.
   Keep the origin-platform dynamic-literal caveat; never regenerate old golden bytes to pass.
-- [ ] GREEN: uninterrupted versus saved/resumed local construction has identical checkpoints,
+- [x] GREEN: uninterrupted versus saved/resumed local construction has identical checkpoints,
   payments, commission dates and original rate-base values. Change the *installed* region file
   after saving: archived source still controls the project; no in-flight repricing occurs.
-- [ ] Pin source-economics/map tamper rejection through fingerprints/hash checks and exact
+- [x] Pin source-economics/map tamper rejection through fingerprints/hash checks and exact
   effective-spec validation. Verify existing command-only rules-version fencing remains intact.
 
 ## Task 5: Present the local quote and actual construction history
@@ -161,17 +163,17 @@ required by existing gates, infrastructure save tests, `tests/game/save_snapshot
 **Files:** `crates/game/src/hud/{build,inspector,construction,plant_panel}.rs`, public view/query
 types if needed, `assets/locales/en-US/*.ftl`, `l10n/keys.rs`, existing game integration modules.
 
-- [ ] RED real-egui tests: selecting otherwise comparable sites in two countries shows each
+- [x] RED real-egui tests: selecting otherwise comparable sites in two countries shows each
   localized zone name, different capital/duration and correct monthly payment. Default/legacy
   sites preserve their prior numbers. Base generic catalog information must not masquerade as
   a final site-specific quote.
-- [ ] Build preview and confirmation share the order quote; under-construction/installed cards
+- [x] Build preview and confirmation share the order quote; under-construction/installed cards
   use that asset's effective terms, not `region.spec(kind)`. Show months-left of the correct total
   and the actual entry-into-service month. Link breakdown units/cents/exact work sum to the quote.
-- [ ] Keep presenters pure, actions through dispatch and resource reads through ActionSink
+- [x] Keep presenters pure, actions through dispatch and resource reads through ActionSink
   getters. Localized names/errors/Regional default get Fluent/literal-key coverage; money uses
   the existing regional MoneyStyle. No national currency selector or new map overlay is required.
-- [ ] GREEN: keyboard submission, disabled invalid builds, minimum window/zoom and 4.5:1 text
+- [x] GREEN: keyboard submission, disabled invalid builds, minimum window/zoom and 4.5:1 text
   contrast. Native isolated playtest compares two sites, orders one, saves during construction,
   resumes and verifies the displayed cost/time through commissioning. Do not use user saves.
 
@@ -219,19 +221,18 @@ Plan 6a does not implement HVDC; add these steps to the future detailed Plan 8 b
 
 ## Task 8: Release verification and version/status update
 
-- [ ] Run targeted domain/application/infrastructure/game tests through each RED/GREEN stage.
+- [x] Run targeted domain/application/infrastructure/game tests through each RED/GREEN stage.
   Verify identity behavior against the immutable preflight construction capture and existing
   released fixtures; do not generate replacement baselines after implementation.
-- [ ] Bump `SIM_RULES_VERSION` exactly once for Plan 6a from its implementation base (expected
-  16→17), regenerate/review the rules guard and relevant scenario snapshots. No current constant
-  changes are part of writing this plan. Annotate every intended output difference.
-- [ ] Run full workspace nextest, clippy/all-targets `-D warnings`, fmt; native launch and the
+- [x] Bump `SIM_RULES_VERSION` exactly once for Plan 6a from its implementation base (16→17), regenerate/review the rules guard and relevant scenario snapshots. Annotate every
+  intended output difference; the only existing snapshot change is the rules-version line.
+- [x] Run full workspace nextest, clippy/all-targets `-D warnings`, fmt; native launch and the
   Task 5 isolated workflow. No new extra Bevy integration binary or broad suite repetition without
   a source change/failure/risk justifying it.
-- [ ] Mark Plan 6a implemented only after its code/validation actually lands. Keep Plan 6's
+- [x] Mark Plan 6a implemented only after its code/validation actually lands. Keep Plan 6's
   historical rules-16 completion and Plans 7/8 status truthful. Update architecture/testing
   guidance for cell-resolved construction; do not claim country tariffs/FX/operating costs exist.
-- [ ] Commit reviewed scoped changes conventionally, with hooks. Do not push/merge without
+- [x] Commit reviewed scoped changes conventionally, with hooks. Do not push/merge without
   the user's integration choice.
 
 ## Review focus
@@ -243,3 +244,45 @@ Plan 6a does not implement HVDC; add these steps to the future detailed Plan 8 b
 4. Profiles must not mutate physics, currency, tariff or regulator behavior by accident.
 5. Europe–Maghreb must actually author country differences; optional infrastructure alone does not
    fulfill its data handoff. Absence remains a supported and tested identity for other regions.
+
+## Implementation and validation record
+
+Implemented from clean base `2009acc` in `codex/m2-global-foundations`. Optional strict RON
+profiles resolve only construction capital/duration. Cell-aware plant specs, canonical sampled AC
+route terms and typed checked arithmetic feed orders, starter valuation, instalments, progress,
+commissioning, original rate base and HUD details. No command fields or portable-state fields were
+added. Existing physics, operating prices and currency remain regional. Old released fixtures and
+the immutable preflight source/save/canonical bytes remain unchanged.
+
+Validation on macOS/aarch64:
+
+- Focused RED/GREEN domain, loader, accounting/save and real-egui tests passed. Review added
+  explicit repeated-crossing/descending-diagonal and typed loader-LCM checks. The old rules guard
+  failed only on 16→17; its reviewed snapshot changes only that line. No legacy golden was updated.
+- Final full workspace nextest: **1,658 passed, 0 skipped** (185.791 seconds). Clippy with all
+  targets and `-D warnings`, `cargo fmt --all --check`, `git diff --check` and all 13 local Markdown
+  targets/heading anchors passed. The native 120-frame launch smoke exited 0 with isolated
+  save/log directories. The only runtime warnings were the existing Metal bindless-mode fallback
+  and a winit window-destroy notification; no panic or system-parameter conflict occurred.
+- Native isolated fixture, seed `1792941545537596000`: west `(4,4)` Wind preview showed €1.00M,
+  about €500k/month and 2 months; east `(10,4)` showed €2.00M, about €667k/month and 3 months.
+  Built eastern Wind 13 in April 2027. Enter submitted the named save “Economic checkpoint”.
+  Left the session, resumed that disk save in a fresh native process, then played all three
+  representative days at 32×. May/June showed 2/1 of 3 months left, always July 2027 entry and
+  €2.00M original capital. July Planning showed the commissioned plant, eastern market, €2.00M
+  capital and 3-month original build time. It remained disconnected, as ordered.
+- The native run exposed long market-name clipping. A failing minimum-window/1.25×-zoom widget
+  regression established the overflow; bounded grid columns fixed it. The resumed native cards
+  visibly wrapped the full market name. Operating's fixed-height details remain scrollable.
+- The fictional fixture's inherited manual starter plan generated frequency notices/strikes;
+  this run validates construction and persistence, not acceptance of future country balance data.
+  Automated shipped-region/year-one checks remain part of the passing workspace suite.
+- Native assets, logs, preferences and saves used an isolated temporary directory. No user saves
+  were used. The durable regression fixtures and tests are in `region/economics_tests.rs`,
+  `infrastructure/tests/{region_catalog,economic_construction}.rs` and
+  `game/tests/game/economics.rs`; scratch native files are not an acceptance dependency.
+
+No real country estimates were fabricated and no shipped region was retuned. Task 6 requires
+Plan 7 to author sourced Europe–Maghreb profiles and record the IPS/UPS choice; Task 7 requires
+Plan 8 to implement/test HVDC terms. This completes the optional infrastructure and its handoffs,
+not those later plans. No push or merge is included.

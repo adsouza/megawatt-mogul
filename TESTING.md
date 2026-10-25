@@ -80,6 +80,27 @@ When adding a regression, ensure it fails for the faulty behavior independently 
 For example, removing a midnight dispatch error must not hide unsafe surplus protection. Prefer
 small physical oracles and explicit transition coverage over blessing changed snapshot numbers.
 
+Optional economic zones have independent arithmetic and compatibility checks:
+
+- `domain/region/economics_tests.rs` covers inheritance, all-default identity, exact boundary
+  sampling, repeated crossings on a descending diagonal, water, endpoint reversal, rate-LCM and
+  quote overflow, and typed map validation. Session properties check cent-exact instalments and
+  unchanged state/IDs on rejection.
+- `infrastructure/tests/economic_construction.rs` follows two local plants and a cross-zone line
+  through payments, cancellation, commissioning and original rate-base valuation; save/resume
+  continues identically even after the installed source changes. Forged effective specs and
+  changed archived economics are rejected. `region_catalog.rs` checks strict DTOs and public
+  list/load/outline consistency, including typed rate-LCM overflow.
+- `infrastructure/tests/support/economic-baseline/` is the immutable rules-16 capture taken at
+  `2009acc` before this implementation. Never regenerate it. Tests verify its original source,
+  canonical state/projections, boundary hash and construction continuation. Literal dynamic hashes
+  retain the macOS/aarch64 origin-platform caveat.
+- `game/tests/game/economics.rs` uses real widgets and the real egui pass for local previews,
+  orders, construction/installed details, exact route breakdown, minimum-window enlarged-zoom fit
+  and text contrast. Its fictional profiles and names are fixtures, not national price estimates.
+  [Plan 6a](docs/superpowers/plans/2026-10-25-plan-6a-economic-zones.md#implementation-and-validation-record)
+  records the isolated native save/resume-through-commissioning acceptance.
+
 The three year-one checks in `infrastructure::shipped_regions`—
 `hands_off_plan_survives_year_one`, `no_commands_survive_year_one` and
 `shipped_regions_never_order_outages_hands_off`—cover two regions × eight seeds × twelve months.

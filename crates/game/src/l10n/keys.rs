@@ -10,6 +10,13 @@
 
 /// Every literal key the HUD uses, grouped as in `ui.ftl`.
 pub const ALL_UI_KEYS: &[&str] = &[
+    "construction-economic-zone",
+    "construction-regional-default",
+    "build-plant-heading-market",
+    "construction-route-work",
+    "error-construction-overflow",
+    "error-construction-cell",
+    "region-error-economic-zone",
     "currency-usd",
     "currency-usd-prefix",
     "currency-usd-suffix",

@@ -68,6 +68,14 @@ impl SimMonth {
         self.month
     }
 
+    /// Constant-time checked calendar arithmetic for construction quotes and displays.
+    pub fn checked_add_months(self, months: u32) -> Result<Self, DomainError> {
+        let absolute = i64::from(self.year) * 12 + i64::from(self.month - 1) + i64::from(months);
+        let year = i32::try_from(absolute.div_euclid(12))
+            .map_err(|_| DomainError::ConstructionOverflow)?;
+        Self::new(year, (absolute.rem_euclid(12) + 1) as u8)
+    }
+
     pub fn next(self) -> Self {
         if self.month == 12 {
             Self {

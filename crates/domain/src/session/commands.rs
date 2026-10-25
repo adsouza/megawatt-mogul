@@ -1,7 +1,9 @@
 //! Player commands. Each checks the game is active, then the phase, then
 //! validates completely before mutating, so `Err` leaves the session unchanged.
 
-use super::{DayPhase, GameSession, line_cost, whole_cells};
+use super::{DayPhase, GameSession};
+#[cfg(test)]
+use super::{line_cost, whole_cells};
 use crate::company::AssetRef;
 use crate::error::DomainError;
 use crate::events::DomainEvent;
@@ -16,17 +18,49 @@ const PLANNING_OR_OPERATING: [DayPhase; 2] = [DayPhase::Planning, DayPhase::Oper
 
 /// What a line would cost and how long it would take to build (see
 /// [`GameSession::line_quote`]).
+pub type LineQuote = crate::region::LineConstructionTerms;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LineQuote {
-    /// Whole cells the line spans: `ceil(length)`.
-    pub cells: u32,
-    /// The capital cost, paid in `months` equal instalments.
+pub struct PlantQuote {
     pub capital: Money,
-    /// Months the line takes to build: at least one.
     pub months: u32,
+    pub economic_zone: crate::region::EconomicZoneId,
 }
 
 impl GameSession {
+    /// Pure, phase-independent quote; an order still requires Planning and a valid site.
+    pub fn plant_quote(&self, kind: PlantKind, cell: CellCoord) -> Result<PlantQuote, DomainError> {
+        self.plant_site_check(kind, cell)
+            .map_err(|reason| DomainError::InvalidSite { kind, cell, reason })?;
+        let spec = self.region.plant_spec_at(kind, cell)?;
+        self.clock.month().checked_add_months(spec.build_months)?;
+        Ok(PlantQuote {
+            capital: spec.capital_cost,
+            months: spec.build_months,
+            economic_zone: self.region.economic_zone_at(cell)?,
+        })
+    }
+    /// Original terms of an owned plant, including a plant that is already commissioned.
+    pub fn plant_construction(&self, plant: PlantId) -> Option<PlantQuote> {
+        let plant = self.power.plant(plant)?;
+        Some(PlantQuote {
+            capital: plant.spec().capital_cost,
+            months: plant.spec().build_months,
+            economic_zone: self.region.economic_zone_at(plant.cell()).ok()?,
+        })
+    }
+    /// Original terms of an existing line; no new-order eligibility or phase check.
+    pub fn line_construction(&self, line: LineId) -> Option<LineQuote> {
+        let line = self.power.network().line(line)?;
+        self.region
+            .line_terms(
+                self.power.network().node(line.from)?.cell,
+                self.power.network().node(line.to)?.cell,
+                line.length_cells,
+            )
+            .ok()
+    }
+
     /// The current siting verdict, including cities and plants still under construction.
     /// Region resource suitability alone does not establish that a site is available.
     pub fn plant_site_check(&self, kind: PlantKind, cell: CellCoord) -> Result<(), SiteError> {
@@ -62,9 +96,8 @@ impl GameSession {
         cell: CellCoord,
     ) -> Result<(PlantId, Vec<DomainEvent>), DomainError> {
         self.require_phase(&[DayPhase::Planning])?;
-        self.plant_site_check(kind, cell)
-            .map_err(|reason| DomainError::InvalidSite { kind, cell, reason })?;
-        let spec = self.region.spec(kind).clone();
+        self.plant_quote(kind, cell)?;
+        let spec = self.region.plant_spec_at(kind, cell)?;
         let plant: PlantId = self.ids.next();
         let node: NodeId = self.ids.next();
         self.power
@@ -88,10 +121,9 @@ impl GameSession {
         ))
     }
 
-    /// Orders a line between two existing nodes (Planning only). It takes
-    /// `max(1, ceil(cells / cells_per_month))` months and costs
-    /// `cost_per_cell` per whole cell, queued as equal monthly instalments:
-    /// exactly what [`GameSession::line_quote`] reports.
+    /// Orders a line between two existing nodes (Planning only), using the route's
+    /// resolved construction terms and equal monthly instalments: exactly what
+    /// [`GameSession::line_quote`] reports.
     pub fn build_line(
         &mut self,
         from: NodeId,
@@ -125,22 +157,25 @@ impl GameSession {
     /// joined by any in-service or ordered path. Pure: no phase check and no state change, so the player can
     /// price a line at any time; only ordering one needs Planning.
     pub fn line_quote(&self, from: NodeId, to: NodeId) -> Result<LineQuote, DomainError> {
-        let cells = whole_cells(self.line_length(from, to)?);
+        let length = self.line_length(from, to)?;
         self.power.network().check_line(from, to)?;
         if self.power.network().joined(from, to) {
             return Err(DomainError::LineNotNeeded { from, to });
         }
-        let params = self.region.lines();
-        Ok(LineQuote {
-            cells,
-            capital: line_cost(params, cells),
-            months: self.line_months(cells),
-        })
-    }
-
-    /// `max(1, ceil(cells / cells_per_month))`: the months a line of `cells` takes to build.
-    pub(super) fn line_months(&self, cells: u32) -> u32 {
-        cells.div_ceil(self.region.lines().cells_per_month).max(1)
+        let network = self.power.network();
+        let quote = self.region.line_terms(
+            network
+                .node(from)
+                .ok_or(DomainError::UnknownNode { node: from })?
+                .cell,
+            network
+                .node(to)
+                .ok_or(DomainError::UnknownNode { node: to })?
+                .cell,
+            length,
+        )?;
+        self.clock.month().checked_add_months(quote.months)?;
+        Ok(quote)
     }
 
     /// Distance between two distinct existing nodes, in cells.

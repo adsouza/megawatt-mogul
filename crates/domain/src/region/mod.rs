@@ -2,6 +2,15 @@
 //! parameters and the starting scenario. Constructing one validates it, so the
 //! rest of the domain can rely on its invariants.
 
+mod economics;
+#[cfg(test)]
+mod economics_tests;
+#[cfg(test)]
+pub(crate) use economics::whole_cells;
+pub use economics::{
+    EconomicZone, EconomicZoneId, EconomicZones, LineConstructionOverride, LineConstructionTerms,
+    PlantConstructionOverride, ZoneRouteWork,
+};
 mod climate;
 mod clock;
 pub use climate::{Calendar, Climate, DemandNoiseParams};
@@ -49,6 +58,11 @@ pub enum SiteError {
 /// Why a region definition was rejected.
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum RegionError {
+    #[error("invalid economic zone {zone:?} field {field}")]
+    InvalidEconomicZone {
+        zone: Option<EconomicZoneId>,
+        field: &'static str,
+    },
     #[error("missing region field {field}")]
     MissingField { field: &'static str },
     #[error("unsupported region schema {0}")]
@@ -107,6 +121,7 @@ pub struct RegionDefinitionParts {
     pub lines: LineParams,
     pub start: StartDef,
     pub start_line_names: BTreeMap<CityId, String>,
+    pub economic_zones: Option<EconomicZones>,
 }
 
 /// A validated region. Only constructible through `TryFrom<RegionDefinitionParts>`.
@@ -136,6 +151,8 @@ pub struct RegionDefinition {
     lines: LineParams,
     start: StartDef,
     start_line_names: BTreeMap<CityId, String>,
+    economic_zones: Option<EconomicZones>,
+    ac_work_denominator: u64,
 }
 
 impl RegionDefinition {
@@ -576,6 +593,7 @@ impl TryFrom<RegionDefinitionParts> for RegionDefinition {
         validate_catalog_values(&catalog)?;
         validate_frequency(&parts.frequency)?;
         validate_lines(&parts.lines)?;
+        let ac_work_denominator = economics::validate(&parts)?;
         let solar_rows = if matches!(parts.solar.model, SolarModel::Astronomical) {
             let equator = crate::generation::annual_sun_integral(0.0);
             (0..parts.terrain.height())
@@ -589,7 +607,9 @@ impl TryFrom<RegionDefinitionParts> for RegionDefinition {
         } else {
             Vec::new()
         };
-        Ok(Self {
+        let region = Self {
+            economic_zones: parts.economic_zones,
+            ac_work_denominator,
             id: parts.id,
             name_key: parts.name_key,
             currency: parts.currency,
@@ -612,7 +632,9 @@ impl TryFrom<RegionDefinitionParts> for RegionDefinition {
             lines: parts.lines,
             start: parts.start,
             start_line_names: parts.start_line_names,
-        })
+        };
+        region.validate_start_construction()?;
+        Ok(region)
     }
 }
 

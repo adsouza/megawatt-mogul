@@ -497,3 +497,9 @@ zone-at = AT
 zone-pt = PT
 zone-mt = MT
 zone-arizona-mst = MST
+
+# Optional construction economics. All prices use the region's currency.
+construction-economic-zone = Market
+construction-regional-default = Regional default
+build-plant-heading-market = Build at ({ $x }, { $y }) · { $market }
+construction-route-work = { $cells } cells · { $capital } · { $numerator }/{ $denominator } months of work

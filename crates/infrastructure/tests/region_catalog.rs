@@ -1364,3 +1364,102 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn economic_zones_load_strictly_and_reach_quotes_and_outline() {
+    let source = include_bytes!("support/economic_region_v4.ron");
+    let loaded = load_region_bytes(source.to_vec(), &RegionId::new("minimal")).unwrap();
+    let spec = loaded
+        .definition
+        .plant_spec_at(domain::region::PlantKind::Wind, CellCoord { x: 8, y: 4 })
+        .unwrap();
+    assert_eq!(spec.capital_cost.cents(), 200_000_000);
+    assert_eq!(spec.build_months, 3);
+    infrastructure::region::region_outline(source, &RegionId::new("minimal")).unwrap();
+}
+
+#[test]
+fn economics_rejects_malformed_present_data_and_legacy_extensions() {
+    let source = include_str!("support/economic_region_v4.ron");
+    for (old, new) in [
+        ("id: 1, name_key:", "id: 0, name_key:"),
+        ("id: 2, name_key:", "id: 1, name_key:"),
+        ("economic-zone-west", " "),
+        ("build_months: 2)", "build_months: 0)"),
+        ("build_months: 2)", "build_months: 1000001)"),
+        ("capital_cost: 1000000", "capital_cost: -1"),
+        ("capital_cost: 1000000", "capital_cost: 9223372036854775807"),
+        ("cost_per_cell: 300000", "cost_per_cell: -1"),
+        ("cells_per_month: 2)", "cells_per_month: 0)"),
+        (
+            "kind: Wind, capital_cost: 1000000",
+            "kind: Unknown, capital_cost: 1000000",
+        ),
+        ("id: 1, name_key:", "id: 1, hvdc: (), name_key:"),
+        (
+            "kind: Wind, capital_cost: 1000000",
+            "kind: Wind, capacity_mw: 400.0, capital_cost: 1000000",
+        ),
+        ("0,1,1,1,1,1,2,2,2,2,2,2", "1,1,1,1,1,1,2,2,2,2,2,2"),
+        ("0,1,1,1,1,1,2,2,2,2,2,2", "0,99,1,1,1,1,2,2,2,2,2,2"),
+        ("0,1,1,1,1,1,2,2,2,2,2,2", "0,1,1,1,1,1,2,2,2,2,2"),
+        ("economic_zones: (", "economic_zones: None"),
+    ] {
+        assert!(source.contains(old), "{old}");
+        let invalid = source.replacen(old, new, 1);
+        assert!(
+            load_region_bytes(invalid.as_bytes().to_vec(), &RegionId::new("minimal")).is_err(),
+            "{new}"
+        );
+        assert!(
+            infrastructure::region::region_outline(invalid.as_bytes(), &RegionId::new("minimal"))
+                .is_err(),
+            "outline: {new}"
+        );
+    }
+    let legacy = MINIMAL.replace(
+        "id: \"minimal\",",
+        "id: \"minimal\", economic_zones: (zones: [], cells: []),",
+    );
+    assert!(load_region_bytes(legacy.into_bytes(), &RegionId::new("minimal")).is_err());
+    let dto: infrastructure::region::RegionFileV4 = ron::from_str(source).unwrap();
+    let named =
+        ron::ser::to_string_pretty(&dto, ron::ser::PrettyConfig::default().struct_names(true))
+            .unwrap();
+    let a = load_region_bytes(source.as_bytes().to_vec(), &RegionId::new("minimal")).unwrap();
+    let b = load_region_bytes(named.into_bytes(), &RegionId::new("minimal")).unwrap();
+    assert_eq!(a.definition, b.definition);
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(dir.path().join("minimal.ron"), source).unwrap();
+    let catalog = RonRegionCatalog::new(dir.path());
+    assert!(catalog.list().unwrap()[0].entry.is_ok());
+    assert!(
+        catalog
+            .load(&RegionId::new("minimal"))
+            .unwrap()
+            .definition
+            .has_economic_zones()
+    );
+}
+
+#[test]
+fn overflowing_economic_work_rates_keep_the_typed_zone_diagnostic() {
+    let source = include_str!("support/economic_region_v4.ron")
+        .replace("cells_per_month: 2)", "cells_per_month: 4294967291)")
+        .replace("cells_per_month: 3)", "cells_per_month: 4294967279)");
+    // The regional speed is 2. These two coprime overrides cannot share a u64 denominator.
+    let error = load_region_bytes(source.into_bytes(), &RegionId::new("minimal")).unwrap_err();
+    assert!(
+        matches!(
+            error,
+            RegionLoadError::Invalid {
+                error: RegionError::InvalidEconomicZone {
+                    zone: Some(domain::region::EconomicZoneId(2)),
+                    field: "economic_zones.ac_lines.cells_per_month"
+                },
+                ..
+            }
+        ),
+        "{error:?}"
+    );
+}

@@ -71,3 +71,6 @@ mod currency;
 
 #[path = "game/global_foundations.rs"]
 mod global_foundations;
+
+#[path = "game/economics.rs"]
+mod economics;

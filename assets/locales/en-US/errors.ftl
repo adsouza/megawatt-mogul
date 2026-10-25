@@ -65,3 +65,7 @@ error-command-log = The command log could not be written: { $message }
 error-plant-not-battery = { $plant } is not battery storage.
 
 error-line-not-needed = { $from } and { $to } are already joined by lines in service or under construction, so the regulator won't approve another line between them.
+
+error-construction-overflow = This project’s cost, duration or completion date exceeds the supported range.
+error-construction-cell = This location is outside the construction map.
+region-error-economic-zone = Invalid construction market { $zone }: check { $field }.
