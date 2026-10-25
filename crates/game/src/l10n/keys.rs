@@ -175,7 +175,7 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "menu-seed-invalid",
     "region-select-title",
     "region-select-subtitle",
-    "region-select-map-title",
+    "region-select-map-label",
     "region-select-map-note",
     "region-select-land-note",
     "region-select-metadata",

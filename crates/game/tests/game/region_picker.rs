@@ -273,7 +273,7 @@ fn map_cards_and_descriptions_fit_the_smallest_and_large_windows() {
     }
 }
 
-// Detects dropping raw atlas metadata or failing to paint its identifier/colour.
+// Detects dropping authored atlas colours or leaking retired illustration labels into the UI.
 fn metadata_model() -> game::hud::RegionSelectModel {
     metadata_model_from(include_str!(
         "../../../infrastructure/tests/support/minimal_region_v4.ron"
@@ -290,7 +290,7 @@ fn metadata_model_from(source: &str) -> game::hud::RegionSelectModel {
 }
 
 #[test]
-fn atlas_letters_and_colours_come_from_region_data() {
+fn atlas_colours_and_region_names_are_shown_without_illustration_labels() {
     let model = metadata_model();
     let mut form = MenuForm::new(42);
     let ctx = egui::Context::default();
@@ -300,8 +300,43 @@ fn atlas_letters_and_colours_come_from_region_data() {
     let shapes = output.shapes.clone();
     output.drop_without_applying_deltas();
     let texts = crate::contrast::painted_texts(&shapes);
-    assert!(texts.iter().any(|text| text.text == "B"));
+    assert!(texts.iter().any(|text| text.text == "region-minimal"));
+    assert!(!texts.iter().any(|text| text.text == "B"));
+    assert!(!texts.iter().any(|text| text.text == "World power grids"));
     assert!(shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Rect(rect) if rect.fill == egui::Color32::from_rgb(18,52,86))));
+}
+
+#[test]
+fn picker_hides_legacy_letters_and_map_heading_at_both_layouts() {
+    let legacy = include_str!("../../../infrastructure/tests/support/minimal_region_v4.ron")
+        .replace("atlas: (", r#"atlas: (letter: "B", "#);
+    for model in [model(Some(42)), metadata_model_from(&legacy)] {
+        for width in [1024.0, 1280.0] {
+            let mut form = MenuForm::new(42);
+            let ctx = egui::Context::default();
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(width, 720.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    central(ui, |ui| draw_region_select(ui, &model, &mut form));
+                },
+            );
+            let texts = crate::contrast::painted_texts(&output.shapes);
+            assert!(!texts.iter().any(|text| {
+                text.text == "World power grids"
+                    || matches!(
+                        text.text.as_str(),
+                        "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H"
+                    )
+            }));
+            for choice in &model.regions {
+                assert!(texts.iter().any(|text| text.text == choice.button.label));
+            }
+            output.drop_without_applying_deltas();
+        }
+    }
 }
 
 #[test]
@@ -405,7 +440,7 @@ fn atlas_labels_meet_contrast() {
     let shapes = output.shapes.clone();
     assert!(crate::contrast::check_paint(output) > 0);
     let texts = crate::contrast::painted_texts(&shapes);
-    for expected in ["B", "region-minimal", "World power grids"] {
+    for expected in ["region-minimal", model.map_note.as_str()] {
         let label = texts
             .iter()
             .find(|text| text.text == expected && map.contains(text.at))

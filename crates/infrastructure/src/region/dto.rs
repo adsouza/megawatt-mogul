@@ -518,11 +518,27 @@ pub enum CurrencyDto {
     #[serde(other)]
     Unknown,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AtlasDto {
-    pub letter: String,
     pub colour: String,
+}
+
+impl<'de> Deserialize<'de> for AtlasDto {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(rename = "AtlasDto", deny_unknown_fields)]
+        struct Wire {
+            pub colour: String,
+            // Archived schema-4 sources used illustration letters. Accept and discard them
+            // without changing archived bytes or exposing them to presentation consumers.
+            #[serde(default, rename = "letter")]
+            _legacy_letter: String,
+        }
+        let wire = Wire::deserialize(deserializer)?;
+        Ok(Self {
+            colour: wire.colour,
+        })
+    }
 }
 #[derive(Debug, Clone)]
 pub enum ParsedRegionFile {

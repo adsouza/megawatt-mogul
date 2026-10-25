@@ -354,7 +354,8 @@ milestones-in-progress = In progress
 
 # Region overview: map and accessible region cards share the same start action.
 region-select-subtitle = Choose a grid. Build your power company. Keep the lights on.
-region-select-map-title = World power grids
+# Accessible map name; not displayed as a heading over the map.
+region-select-map-label = World power grids
 region-select-map-note = Hover to explore · Click a coloured region to begin
 region-select-land-note = Grey land has power systems beyond the playable regions.
 region-select-metadata = { $frequency } Hz · { $currency } · { $zones } · { $hemisphere }

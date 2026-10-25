@@ -1064,19 +1064,39 @@ fn a_v4_file_rejects_invalid_authored_values() {
 }
 
 #[test]
+fn atlas_colour_does_not_require_an_illustration_letter() {
+    let id = RegionId::new("minimal");
+    let expected = load_region_bytes(V4.as_bytes().to_vec(), &id).unwrap();
+    let outline = infrastructure::region::region_outline(&expected.source_bytes, &id).unwrap();
+    assert_eq!(outline.atlas.as_ref().unwrap().colour, "#123456");
+    for source in [
+        V4.to_owned(),
+        V4.replace("atlas: (", "atlas: AtlasDto("),
+        V4.replace("atlas: (", r#"atlas: (letter: "B", "#),
+        V4.replace("atlas: (", r#"atlas: AtlasDto(letter: "B", "#),
+    ] {
+        let loaded = load_region_bytes(source.as_bytes().to_vec(), &id).unwrap();
+        assert_eq!(loaded.source_bytes.as_slice(), source.as_bytes());
+        assert_eq!(loaded.definition, expected.definition);
+        assert_eq!(
+            infrastructure::region::region_outline(&loaded.source_bytes, &id).unwrap(),
+            outline
+        );
+    }
+    let serialized = ron::to_string(outline.atlas.as_ref().unwrap()).unwrap();
+    assert!(!serialized.contains("letter"));
+}
+
+#[test]
 fn atlas_metadata_reaches_the_outline_only() {
     use infrastructure::region::region_outline;
     let id = RegionId::new("minimal");
     let a = load_region_bytes(V4.as_bytes().to_vec(), &id).unwrap();
-    let edited = V4.replace(
-        r##"letter: "B", colour: "#123456""##,
-        r##"letter: "D", colour: "#abcdef""##,
-    );
+    let edited = V4.replace(r##"colour: "#123456""##, r##"colour: "#abcdef""##);
     let b = load_region_bytes(edited.as_bytes().to_vec(), &id).unwrap();
     assert_eq!(a.definition, b.definition);
     assert_ne!(a.fingerprint, b.fingerprint);
     let atlas = region_outline(&b.source_bytes, &id).unwrap().atlas.unwrap();
-    assert_eq!(atlas.letter, "D");
     assert_eq!(atlas.colour, "#abcdef");
     let omitted = load_region_bytes(
         without_field(&without_field(V4, "atlas"), "line_names").into_bytes(),

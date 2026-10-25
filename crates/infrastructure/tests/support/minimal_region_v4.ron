@@ -17,7 +17,7 @@
     demand_noise: (forecast_error: 0.07, error_persistence: 0.8),
     calendar: (seasons: [Summer,Summer,Autumn,Autumn,Autumn,Winter,Winter,Winter,Spring,Spring,Spring,Summer]),
     currency: EUR,
-    atlas: (letter: "B", colour: "#123456"),
+    atlas: (colour: "#123456"),
     name_key: "region-minimal",
     bounds: (west: 0.0, east: 12.0, south: 0.0, north: 8.0),
     grid: (width: 12, height: 8),

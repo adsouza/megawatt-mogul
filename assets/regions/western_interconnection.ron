@@ -25,7 +25,7 @@
     ],
     calendar: (seasons: [Winter, Winter, Spring, Spring, Spring, Summer, Summer, Summer, Autumn, Autumn, Autumn, Winter]),
     currency: USD,
-    atlas: (letter: "G", colour: "#936A45"),
+    atlas: (colour: "#936A45"),
     name_key: "region-western-interconnection",
     bounds: (west: -125.5, east: -102.0, south: 28.0, north: 60.0),
     grid: (width: 60, height: 80),

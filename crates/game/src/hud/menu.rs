@@ -343,7 +343,8 @@ pub struct RegionProblem {
 pub struct RegionSelectModel {
     pub title: String,
     pub subtitle: String,
-    pub map_title: String,
+    /// Accessible name of the map; not painted over its geography.
+    pub map_label: String,
     pub map_note: String,
     pub land_note: String,
     pub seed_label: String,
@@ -378,7 +379,7 @@ pub fn region_select_model(
     RegionSelectModel {
         title: l10n.text("region-select-title"),
         subtitle: l10n.text("region-select-subtitle"),
-        map_title: l10n.text("region-select-map-title"),
+        map_label: l10n.text("region-select-map-label"),
         map_note: l10n.text("region-select-map-note"),
         land_note: l10n.text("region-select-land-note"),
         seed_label: l10n.text("menu-seed"),
@@ -493,19 +494,6 @@ pub fn draw_region_select(
                                     3.0,
                                     region_atlas::colour(choice, index),
                                 );
-                                if let Some(letter) = region_atlas::letter(choice) {
-                                    let (rect, _) = ui.allocate_exact_size(
-                                        egui::vec2(18.0, 28.0),
-                                        egui::Sense::hover(),
-                                    );
-                                    super::theme::paint_label(
-                                        ui.painter(),
-                                        rect.center(),
-                                        egui::Align2::CENTER_CENTER,
-                                        letter,
-                                        13.0,
-                                    );
-                                }
                                 let response = add_enabled(
                                     ui,
                                     choice.button.enabled,

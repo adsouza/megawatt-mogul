@@ -317,7 +317,7 @@ pub(super) fn draw_map(
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(width, width / aspect()), egui::Sense::click());
     response
-        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Image, true, &model.map_title));
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Image, true, &model.map_label));
     let hovered = response.hover_pos().and_then(|pos| {
         let (lon, lat) = unproject(rect, pos)?;
         model.regions.iter().position(|choice| {
@@ -387,18 +387,8 @@ pub(super) fn draw_map(
         paint_mesh(&painter, &art.mesh, rect, colour);
         if let Some((_, lon, lat)) = &art.outline.home {
             let pos = project(rect, *lon, *lat);
-            if let Some(atlas) = &art.outline.atlas {
-                theme::paint_label(
-                    &painter,
-                    pos,
-                    egui::Align2::CENTER_CENTER,
-                    &atlas.letter,
-                    13.0,
-                );
-            } else {
-                painter.circle_filled(pos, 7.0, theme::LABEL_BACKING);
-                painter.circle_filled(pos, 3.5, Color32::WHITE);
-            }
+            painter.circle_filled(pos, 7.0, theme::LABEL_BACKING);
+            painter.circle_filled(pos, 3.5, Color32::WHITE);
             if active == Some(index) {
                 theme::paint_label(
                     &painter,
@@ -414,13 +404,6 @@ pub(super) fn draw_map(
             }
         }
     }
-    theme::paint_label(
-        &painter,
-        rect.left_top() + egui::vec2(18.0, 18.0),
-        egui::Align2::LEFT_TOP,
-        &model.map_title,
-        16.0,
-    );
     theme::paint_label(
         &painter,
         rect.left_bottom() + egui::vec2(18.0, -18.0),
@@ -448,16 +431,6 @@ pub(super) fn colour(choice: &super::menu::RegionChoice, index: usize) -> Color3
         .and_then(|hex| u32::from_str_radix(hex, 16).ok())
         .map(|rgb| Color32::from_rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8))
         .unwrap_or(COLOURS[index % COLOURS.len()])
-}
-
-pub(super) fn letter(choice: &super::menu::RegionChoice) -> Option<&str> {
-    choice
-        .artwork
-        .as_ref()?
-        .outline
-        .atlas
-        .as_ref()
-        .map(|atlas| atlas.letter.as_str())
 }
 
 #[cfg(test)]

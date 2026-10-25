@@ -24,6 +24,14 @@ cargo-nextest.
 Amendment A14 (§28): §28.4–§28.8, §28.10–§28.11 and the North American migration. The multi-area
 work (§28.9) is Plan 8, and the new regions are Plan 7. Neither is in scope here.
 
+**Follow-up specified 2026-10-25:** [Plan 6a: Optional construction economic zones](2026-10-25-plan-6a-economic-zones.md)
+adds country/subnational construction prices and build times (§28.7.1), after this completed plan
+and before Plan 7's region authoring. This does not reopen the completed rules-16 tasks or claim
+the current runtime implements economic zones. In particular, Task 6's original uniform-pacing
+assumption is superseded for opt-in regions by the new specification. Baseline catalogs and
+regions omitting the optional extension retain their current behavior; existing saves are not
+repriced. Plans 7 and 8 must consume the authoring and HVDC handoffs in Plan 6a.
+
 ## Global Constraints
 
 - `domain` depends only on `rand_chacha` and `thiserror`. It has no I/O, serde or user-facing
@@ -582,7 +590,9 @@ git commit -am "feat: region currency and currency-aware money formatting"
     fields renamed. It adds `system_zone: u16`, `time_zones: Vec<TimeZoneDto>`, a per-city
     `zone: u16` and `climate: u16`, `climates: Vec<ClimateDto>`, `demand_noise`,
     `calendar: Vec<SeasonDto>`, `currency: CurrencyDto`, `start.line_names: Vec<(u32, String)>`
-    (optional) and `atlas: Option<AtlasDto { letter: String, colour: String }>`.
+    (optional) and `atlas: Option<AtlasDto { colour: String }>`.
+    Accept and discard the retired illustration-letter field in archived sources; current DTOs
+    expose and serialize only colour, without rewriting archived bytes.
   - The renamed money fields are `startup_cost`, `marginal_cost_per_mwh`, `fixed_om_per_month`,
     `capital_cost`, `starting_tariff_per_mwh`, `reference_tariff_per_mwh`, `cost_per_cell` and
     `start.cash`.
@@ -621,10 +631,12 @@ git commit -am "feat: region currency and currency-aware money formatting"
   v3 region bytes through the normal save-loading path. Assert it retains the exact archived bytes
   and legacy domain values, and reproduces the saved canonical bytes under the source state schema.
 - `atlas_metadata_reaches_the_outline_only`.
+- `atlas_colour_does_not_require_an_illustration_letter`: current colour-only metadata and
+  archived anonymous/named forms load identically; historical source bytes stay unchanged.
 
 - [x] **Step 2: Run them and confirm they fail**
 
-Run: `cargo nextest run --workspace -E 'test(a_v4_file) | test(archived_v3_bytes) | test(archived_v3_save) | test(atlas_metadata)'`
+Run: `cargo nextest run --workspace -E 'test(a_v4_file) | test(archived_v3_bytes) | test(archived_v3_save) | test(atlas_metadata) | test(atlas_colour)'`
 Expected: they fail.
 
 - [x] **Step 3: Implement** the DTOs, shared catalog parser and mapping.
@@ -710,6 +722,9 @@ git commit -am "feat: local time, region seasons, computed sunlight and submarin
 
 ### Task 9: The world picker
 
+**Presentation update 2026-10-25:** use named regions and home-city point markers. Remove the
+illustration letters from map/cards and the visible map heading; retain the accessible map label.
+
 **Files:**
 - Modify: `crates/game/src/hud/region_atlas.rs` (projection, backdrop, palette, labels),
   `crates/game/src/hud/menu.rs` (cards), `crates/infrastructure/src/region/outline.rs`
@@ -722,22 +737,24 @@ git commit -am "feat: local time, region seasons, computed sunlight and submarin
   - `fn equal_earth(lon: f64, lat: f64) -> (f64, f64)` and its numeric inverse
     `fn equal_earth_inverse(x, y) -> Option<(f64, f64)>` (Newton iteration, at most 10 steps).
     These replace `project`/`unproject`, with the map cropped to 60°S–75°N.
-  - The palette comes from `atlas.colour` when present (A–H per §28.10), and otherwise from the
-    existing `COLOURS` fallback.
+  - The palette comes from `atlas.colour` when present (named regions per §28.10), and otherwise
+    from the existing `COLOURS` fallback.
 
 - [x] **Step 1: Write the failing tests**
 
 - `equal_earth_round_trips` (a proptest across the cropped extent, tolerance 1e-6°), plus
   `equal_earth_matches_published_values` at (0, 0), (180, 0) and (0, 90), using the projection's
   published constants A1 = 1.340264, A2 = −0.081106, A3 = 0.000893, A4 = 0.003796.
-- `atlas_letters_and_colours_come_from_region_data`.
+- `atlas_colours_and_region_names_are_shown_without_illustration_labels`.
+- `picker_hides_legacy_letters_and_map_heading_at_both_layouts`: point markers and named cards,
+  no illustration letters or visible map heading, while keeping the map's accessible label.
 - `cards_show_frequency_currency_zones_and_hemisphere`.
 - `every_region_is_startable_from_its_card_at_minimum_window_size`.
 - `atlas_labels_meet_contrast` (painted glyph check at 4.5:1).
 
 - [x] **Step 2: Run them and confirm they fail**
 
-Run: `cargo nextest run --workspace -E 'test(equal_earth) | test(atlas_letters) | test(cards_show) | test(startable_from_its_card) | test(atlas_labels)'`
+Run: `cargo nextest run --workspace -E 'test(equal_earth) | test(atlas_colours) | test(picker_hides) | test(cards_show) | test(startable_from_its_card) | test(atlas_labels)'`
 Expected: they fail.
 
 - [x] **Step 3: Implement**
