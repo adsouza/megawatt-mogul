@@ -690,3 +690,439 @@ fn legacy_wind_extension_payloads_are_frozen() {
         "27a82606b9e94372fce6c3b7a1f27d0b5b2bb1c5daa16c95f580e579ed7ec0a2"
     );
 }
+
+const V4: &str = include_str!("support/minimal_region_v4.ron");
+
+#[test]
+fn a_v4_file_lists_loads_and_has_an_outline() {
+    let dir = dir_with(&[("minimal.ron", V4)]);
+    let catalog = catalog(dir.path());
+    assert_eq!(
+        catalog.list().unwrap()[0].entry.as_ref().unwrap().name_key,
+        "region-minimal"
+    );
+    let loaded = catalog.load(&RegionId::new("minimal")).unwrap();
+    assert_eq!(loaded.source_bytes, V4.as_bytes());
+    let r = &loaded.definition;
+    assert_eq!(r.currency(), domain::units::Currency::Eur);
+    assert_eq!(r.system_zone().standard_offset_minutes, -180);
+    assert_eq!(
+        r.local_minute(CityId(2), domain::time::SimMonth::new(2027, 7).unwrap(), 0),
+        585
+    );
+    assert_eq!(
+        r.load_factor(CityId(1), domain::time::SimMonth::new(2027, 1).unwrap(), 0),
+        3.0
+    );
+    assert_eq!(
+        r.load_factor(CityId(2), domain::time::SimMonth::new(2027, 1).unwrap(), 0),
+        0.5
+    );
+    assert_eq!(
+        r.season(domain::time::SimMonth::new(2027, 1).unwrap()),
+        domain::time::Season::Summer
+    );
+    assert!(matches!(
+        r.solar().model,
+        domain::region::SolarModel::Astronomical
+    ));
+    let outline = infrastructure::region::region_outline(&loaded.source_bytes, r.id()).unwrap();
+    assert_eq!(outline.cities, 3);
+    assert_eq!(outline.home, Some(("city-tiny-1".into(), 6.5, 3.5)));
+}
+
+#[test]
+fn a_v4_file_rejects_a_missing_calendar() {
+    let source = without_field(V4, "calendar");
+    assert!(matches!(
+        load_region_bytes(source.into_bytes(), &RegionId::new("minimal")),
+        Err(RegionLoadError::Invalid {
+            error: RegionError::MissingField { field: "calendar" },
+            ..
+        })
+    ));
+}
+
+#[test]
+fn a_v4_file_rejects_a_257_wide_grid() {
+    let source = V4.replace("width: 12", "width: 257");
+    assert!(matches!(
+        load_region_bytes(source.into_bytes(), &RegionId::new("minimal")),
+        Err(RegionLoadError::Invalid {
+            error: RegionError::InvalidShape { field: "grid" },
+            ..
+        })
+    ));
+}
+
+#[test]
+fn a_legacy_file_preserves_non_earth_bounds() {
+    let mut file: infrastructure::region::RegionFile = ron::from_str(MINIMAL).unwrap();
+    file.bounds.west += 360.0;
+    file.bounds.east += 360.0;
+    for ring in file.land.iter_mut().chain(file.exclude.iter_mut()) {
+        for (lon, _) in ring {
+            *lon += 360.0;
+        }
+    }
+    for field in [
+        &mut file.height,
+        &mut file.irradiance,
+        &mut file.cooling_water,
+        &mut file.hydro_potential,
+    ] {
+        for blob in &mut field.blobs {
+            blob.lon += 360.0;
+        }
+    }
+    for city in &mut file.cities {
+        city.lon += 360.0;
+    }
+    for (_, lon, _) in &mut file.start.fleet {
+        *lon += 360.0;
+    }
+    let bytes = ron::ser::to_string(&file).unwrap().into_bytes();
+    let loaded = load_region_bytes(bytes.clone(), &RegionId::new("minimal")).unwrap();
+    assert_eq!(loaded.source_bytes, bytes);
+    assert_eq!(loaded.definition.geo().west, 360.0);
+    let original =
+        load_region_bytes(MINIMAL.as_bytes().to_vec(), &RegionId::new("minimal")).unwrap();
+    assert_eq!(loaded.definition.terrain(), original.definition.terrain());
+    assert_eq!(
+        loaded
+            .definition
+            .sun(
+                CellCoord { x: 6, y: 4 },
+                domain::time::SimMonth::new(2027, 1).unwrap(),
+                720
+            )
+            .to_bits(),
+        original
+            .definition
+            .sun(
+                CellCoord { x: 6, y: 4 },
+                domain::time::SimMonth::new(2027, 1).unwrap(),
+                720
+            )
+            .to_bits()
+    );
+}
+
+#[test]
+fn a_v4_file_maps_every_money_field_and_currency() {
+    use domain::units::Currency;
+    for (code, expected) in [
+        ("USD", Currency::Usd),
+        ("EUR", Currency::Eur),
+        ("CNY", Currency::Cny),
+        ("INR", Currency::Inr),
+        ("RUB", Currency::Rub),
+        ("BRL", Currency::Brl),
+    ] {
+        let loaded = load_region_bytes(
+            V4.replace("currency: EUR", &format!("currency: {code}"))
+                .into_bytes(),
+            &RegionId::new("minimal"),
+        )
+        .unwrap();
+        let r = loaded.definition;
+        assert_eq!(r.currency(), expected);
+        let p = r.spec(PlantKind::Coal);
+        assert_eq!(p.startup_cost.cents(), 15_000_000);
+        assert_eq!(p.marginal_cost.value(), 30.0);
+        assert_eq!(p.fixed_om_per_month.cents(), 200_000_000);
+        assert_eq!(p.capital_cost.cents(), 200_000_000_000);
+        assert_eq!(r.regulator().starting_tariff.value(), 95.0);
+        assert_eq!(r.regulator().reference_tariff.value(), 100.0);
+        assert_eq!(r.lines().cost_per_cell.cents(), 4_000_000_000);
+        assert_eq!(r.start().cash.cents(), 200_000_000_000);
+        assert_eq!(r.start_line_name(CityId(2)), Some("line-starter"));
+        assert_eq!(r.start_line_name(CityId(1)), None);
+        assert_eq!(r.demand_noise().forecast_error.value(), 0.07);
+        assert_eq!(r.demand_noise().error_persistence, 0.8);
+    }
+}
+
+#[test]
+fn a_v4_file_rejects_usd_suffixed_fields_at_every_level() {
+    for (field, old) in [
+        ("startup_cost", "startup_cost_usd"),
+        ("marginal_cost_per_mwh", "marginal_cost_usd_per_mwh"),
+        ("fixed_om_per_month", "fixed_om_usd_per_month"),
+        ("capital_cost", "capital_cost_usd"),
+        ("starting_tariff_per_mwh", "starting_tariff_usd_per_mwh"),
+        ("reference_tariff_per_mwh", "reference_tariff_usd_per_mwh"),
+        ("cost_per_cell", "cost_per_cell_usd"),
+        ("cash", "cash_usd"),
+    ] {
+        let text = V4.replacen(&format!("{field}:"), &format!("{old}:"), 1);
+        let error = load_region_bytes(text.into_bytes(), &RegionId::new("minimal")).unwrap_err();
+        assert!(
+            matches!(error, RegionLoadError::Parse {ref message, ..} if message.contains(old)),
+            "{field}: {error:?}"
+        );
+    }
+    for (needle, injected) in [
+        ("solar: (", "daylight: [],"),
+        ("battery: Some((", "cash_usd: 2,"),
+        ("calendar: (", "cash_usd: 2,"),
+        ("demand_noise: (", "cash_usd: 2,"),
+        ("atlas: (", "cash_usd: 2,"),
+        ("(id: 7,", "cash_usd: 2,"),
+        ("(id: 10,", "cash_usd: 2,"),
+    ] {
+        let text = V4.replacen(needle, &format!("{needle}{injected}"), 1);
+        assert!(matches!(
+            load_region_bytes(text.into_bytes(), &RegionId::new("minimal")),
+            Err(RegionLoadError::Parse { .. })
+        ));
+    }
+}
+
+#[test]
+fn a_v4_file_requires_authored_fields_with_typed_errors() {
+    // Remove fields from a serialized DTO with balanced containers, so each case
+    // reaches the real decoder rather than failing on malformed test syntax.
+    fn remove(source: &str, field: &str) -> String {
+        let start = source
+            .match_indices(&format!("{field}:"))
+            .find(|(i, _)| {
+                *i == 0
+                    || !source.as_bytes()[i - 1].is_ascii_alphanumeric()
+                        && source.as_bytes()[i - 1] != b'_'
+            })
+            .unwrap()
+            .0;
+        let value = start + field.len() + 1;
+        let mut depth = 0;
+        let mut quoted = false;
+        let mut end = source.len();
+        for (offset, ch) in source[value..].char_indices() {
+            match ch {
+                '"' => quoted = !quoted,
+                '(' | '[' | '{' if !quoted => depth += 1,
+                ')' | ']' | '}' if !quoted && depth == 0 => {
+                    end = value + offset;
+                    break;
+                }
+                ')' | ']' | '}' if !quoted => depth -= 1,
+                ',' if !quoted && depth == 0 => {
+                    end = value + offset + 1;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        format!("{}{}", &source[..start], &source[end..])
+    }
+    for field in [
+        "system_zone",
+        "time_zones",
+        "climates",
+        "demand_noise",
+        "calendar",
+        "currency",
+        "wind",
+        "wind_potential",
+        "zone",
+        "climate",
+        "shapes",
+        "month_shapes",
+        "monthly",
+        "dst_months",
+        "seasons",
+        "startup_cost",
+        "marginal_cost_per_mwh",
+        "fixed_om_per_month",
+        "capital_cost",
+        "starting_tariff_per_mwh",
+        "reference_tariff_per_mwh",
+        "cost_per_cell",
+        "cash",
+        "storage_accreditation",
+        "satisfaction_target",
+        "return_per_satisfaction_point",
+        "clearness_mean",
+        "clearness_sd",
+    ] {
+        let error = load_region_bytes(remove(V4, field).into_bytes(), &RegionId::new("minimal"))
+            .unwrap_err();
+        assert!(
+            matches!(error, RegionLoadError::Invalid {error: RegionError::MissingField {field: missing}, ..} if missing == field),
+            "{field}: {error:?}"
+        );
+    }
+}
+
+#[test]
+fn a_v4_file_rejects_invalid_authored_values() {
+    for (needle, value, field) in [
+        ("currency: EUR", "currency: JPY", "currency"),
+        (
+            "standard_offset_minutes: -180",
+            "standard_offset_minutes: 1",
+            "time_zones.offset",
+        ),
+        ("system_zone: 7", "system_zone: 99", "system_zone"),
+        ("zone: 8", "zone: 99", "cities.zone"),
+        ("climate: 20", "climate: 99", "cities.climate"),
+        ("width: 12", "width: 0", "grid"),
+        ("height: 8", "height: 129", "grid"),
+        ("west: 0.0", "west: -181.0", "bounds"),
+        (
+            r#"month_shapes: ["hot""#,
+            r#"month_shapes: ["missing""#,
+            "climates.month_shapes",
+        ),
+        (
+            r#"line_names: [(2, "line-starter")]"#,
+            r#"line_names: [(3, "line-starter")]"#,
+            "start.line_names",
+        ),
+        (
+            r#"line_names: [(2, "line-starter")]"#,
+            r#"line_names: [(1, "line-starter")]"#,
+            "start.line_names",
+        ),
+        (
+            r#"line_names: [(2, "line-starter")]"#,
+            r#"line_names: [(2, "")]"#,
+            "start.line_names",
+        ),
+        (
+            r#"line_names: [(2, "line-starter")]"#,
+            r#"line_names: [(2, "a"), (2, "b")]"#,
+            "start.line_names",
+        ),
+    ] {
+        assert!(V4.contains(needle), "{needle}");
+        let error = load_region_bytes(
+            V4.replacen(needle, value, 1).into_bytes(),
+            &RegionId::new("minimal"),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, RegionLoadError::Invalid {error: RegionError::InvalidShape {field: f}, ..} if f == field),
+            "{field}: {error:?}"
+        );
+    }
+}
+
+#[test]
+fn atlas_metadata_reaches_the_outline_only() {
+    use infrastructure::region::region_outline;
+    let id = RegionId::new("minimal");
+    let a = load_region_bytes(V4.as_bytes().to_vec(), &id).unwrap();
+    let edited = V4.replace(
+        r##"letter: "B", colour: "#123456""##,
+        r##"letter: "D", colour: "#abcdef""##,
+    );
+    let b = load_region_bytes(edited.as_bytes().to_vec(), &id).unwrap();
+    assert_eq!(a.definition, b.definition);
+    assert_ne!(a.fingerprint, b.fingerprint);
+    let atlas = region_outline(&b.source_bytes, &id).unwrap().atlas.unwrap();
+    assert_eq!(atlas.letter, "D");
+    assert_eq!(atlas.colour, "#abcdef");
+    let omitted = load_region_bytes(
+        without_field(&without_field(V4, "atlas"), "line_names").into_bytes(),
+        &id,
+    )
+    .unwrap();
+    assert!(
+        region_outline(&omitted.source_bytes, &id)
+            .unwrap()
+            .atlas
+            .is_none()
+    );
+    assert!(omitted.definition.start_line_name(CityId(2)).is_none());
+}
+
+#[test]
+fn archived_v3_bytes_preserve_terrain_factors_sun_and_locale() {
+    use domain::time::{Season, SimMonth};
+    use sha2::{Digest, Sha256};
+    for id in ["eastern_interconnection", "western_interconnection"] {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/support/global-foundations");
+        let bytes = fs::read(root.join(format!("{id}-v3.ron"))).unwrap();
+        let file: infrastructure::region::RegionFile = ron::de::from_bytes(&bytes).unwrap();
+        let loaded = load_region_bytes(bytes, &RegionId::new(id)).unwrap();
+        let r = loaded.definition;
+        assert_eq!(r.currency(), domain::units::Currency::Usd);
+        assert_eq!(r.system_zone().standard_offset_minutes, 0);
+        assert_eq!(r.system_zone().dst_months, [false; 12]);
+        assert_eq!(r.system_zone().name_key, None);
+        assert!(matches!(
+            r.solar().model,
+            domain::region::SolarModel::DaylightTable(_)
+        ));
+        let t = r.terrain();
+        let mut h = Sha256::new();
+        h.update(t.width().to_le_bytes());
+        h.update(t.height().to_le_bytes());
+        for y in 0..t.height() {
+            for x in 0..t.width() {
+                let c = t.get(CellCoord { x, y }).unwrap();
+                h.update([u8::from(c.land)]);
+                for f in [
+                    c.height,
+                    c.irradiance,
+                    c.wind_potential,
+                    c.cooling_water,
+                    c.hydro_potential,
+                ] {
+                    h.update(f.value().to_bits().to_le_bytes());
+                }
+            }
+        }
+        assert_eq!(
+            hex(&h.finalize()),
+            fs::read_to_string(root.join(format!("{id}-terrain-sha256.txt")))
+                .unwrap()
+                .trim()
+        );
+        for m in 1..=12 {
+            let month = SimMonth::new(2027, m).unwrap();
+            assert_eq!(r.season(month), month.season());
+            let shape = match month.season() {
+                Season::Winter => &file.demand.winter,
+                Season::Summer => &file.demand.summer,
+                _ => &file.demand.shoulder,
+            };
+            let (rise, set) = file.solar.daylight[usize::from(m - 1)];
+            for tick in 0..1440 {
+                let hour = (tick / 60) as usize;
+                let next = (hour + 1) % 24;
+                let fraction = f64::from(tick % 60) / 60.0;
+                // Frozen pre-foundation interpolation and daylight formula.
+                let demand = (shape[hour] + (shape[next] - shape[hour]) * fraction)
+                    * file.demand.monthly[usize::from(m - 1)];
+                let time = f64::from(tick) / 60.0;
+                let sun = if time <= rise || time >= set {
+                    0.0
+                } else {
+                    (std::f64::consts::PI * (time - rise) / (set - rise)).sin()
+                };
+                for c in r.cities() {
+                    assert_eq!(r.city_zone(c.id), r.system_zone());
+                    assert_eq!(r.load_factor(c.id, month, tick).to_bits(), demand.to_bits());
+                    assert_eq!(
+                        r.sun(c.cell, month, tick).to_bits(),
+                        sun.to_bits(),
+                        "{id} {m} {tick}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+proptest! {
+    #[test]
+    fn v4_starter_line_names_reference_connected_non_home_cities(city in 0u32..8, blank in any::<bool>()) {
+        let mut file: infrastructure::region::RegionFileV4 = ron::from_str(V4).unwrap();
+        file.start.line_names = vec![(city, if blank {" ".into()} else {"line-test".into()})];
+        let result = infrastructure::region::map_region_v4(file);
+        prop_assert_eq!(result.is_ok(), city == 2 && !blank);
+        if let Err(error) = result {prop_assert_eq!(error, RegionError::InvalidShape {field: "start.line_names"});}
+    }
+}

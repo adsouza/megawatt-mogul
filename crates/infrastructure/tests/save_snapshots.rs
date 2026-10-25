@@ -407,3 +407,112 @@ fn a_resumed_december_review_is_not_reviewed_again() {
         game.session().company().rate_base()
     );
 }
+
+#[test]
+fn archived_v3_save_restores_with_a_v4_catalog_and_continues_identically() {
+    use domain::ids::RegionId;
+    use domain::region::SolarModel;
+    use domain::units::Currency;
+    use infrastructure::region::RonRegionCatalog;
+    use infrastructure::save::FileSaveStore;
+    use std::io::Read;
+    for (id, after60, review) in [
+        (
+            "eastern_interconnection",
+            9516849278041982929,
+            17612825350226170891,
+        ),
+        (
+            "western_interconnection",
+            5632289864882056421,
+            15184034769020035595,
+        ),
+    ] {
+        let dir = TempDir::new().unwrap();
+        let current = include_str!("support/minimal_region_v4.ron")
+            .replace("id: \"minimal\"", &format!("id: \"{id}\""));
+        std::fs::write(dir.path().join(format!("{id}.ron")), current).unwrap();
+        let current_catalog = RonRegionCatalog::new(dir.path());
+        let current_region = current_catalog.load(&RegionId::new(id)).unwrap();
+        assert_eq!(current_region.definition.currency(), Currency::Eur);
+        assert!(matches!(
+            current_region.definition.solar().model,
+            SolarModel::Astronomical
+        ));
+        let baseline =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/support/global-foundations");
+        let compressed = std::fs::read(baseline.join(format!("{id}-schema3.mgsave.z"))).unwrap();
+        let mut bytes = Vec::new();
+        flate2::read::ZlibDecoder::new(compressed.as_slice())
+            .read_to_end(&mut bytes)
+            .unwrap();
+        let (original, _) = decode_save(&bytes, &replay_compatibility()).unwrap();
+        let store = FileSaveStore::new(dir.path().join("saves"));
+        std::fs::create_dir(dir.path().join("saves")).unwrap();
+        let save_path = dir
+            .path()
+            .join("saves")
+            .join(format!("{}.mgsave", original.metadata.slot.as_str()));
+        std::fs::write(&save_path, &bytes).unwrap();
+        let (mut bundle, archived) = store.read(&original.metadata.slot).unwrap();
+        let archived_bytes = std::fs::read(baseline.join(format!("{id}-v3.ron"))).unwrap();
+        assert_eq!(archived.source_bytes, archived_bytes);
+        assert_ne!(archived.fingerprint, current_region.fingerprint);
+        assert_eq!(archived.definition.currency(), Currency::Usd);
+        assert!(matches!(
+            archived.definition.solar().model,
+            SolarModel::DaylightTable(_)
+        ));
+        assert_eq!(archived.definition.system_zone().standard_offset_minutes, 0);
+        assert_eq!(bundle.checkpoint.header.sim_rules_version, 15);
+        let snapshot = bundle.checkpoint.snapshot.clone().unwrap();
+        assert_eq!(snapshot.schema, 3);
+        let mut game = bundle
+            .clone()
+            .restore(
+                archived,
+                &store.compatibility(),
+                Box::new(InMemoryCommandLog::default()),
+                &|| false,
+            )
+            .unwrap();
+        assert_eq!(
+            game.session().snapshot_state_schema(snapshot.schema),
+            snapshot.session
+        );
+        assert_eq!(
+            game.projections().state_bytes_schema(snapshot.schema),
+            snapshot.projections
+        );
+        assert_eq!(
+            game.checkpoint().region_source,
+            original.checkpoint.region_source
+        );
+        assert_eq!(game.checkpoint().state_hash, original.checkpoint.state_hash);
+        assert_eq!(game.checkpoint().summary.tick, 900);
+        assert!(game.session().plant_views().iter().any(|p| {
+            p.battery
+                .as_ref()
+                .is_some_and(|b| b.stored.value() == 800.0)
+        }));
+        game.execute(Command::AdvanceTicks { n: 60 }).unwrap();
+        assert_eq!(game.checkpoint().state_hash, after60, "{id} after 60 ticks");
+        game.execute(Command::AdvanceTicks { n: 480 }).unwrap();
+        assert_eq!(game.checkpoint().state_hash, review, "{id} at review");
+        bundle.compatibility = replay_compatibility();
+        bundle.checkpoint = game.checkpoint();
+        let rewritten = encode_save(&bundle).unwrap();
+        let resumed = restored(&rewritten);
+        assert_eq!(resumed.checkpoint(), game.checkpoint());
+        assert_eq!(resumed.checkpoint().snapshot.as_ref().unwrap().schema, 3);
+        assert_eq!(
+            resumed.checkpoint().region_source,
+            original.checkpoint.region_source
+        );
+        assert_eq!(std::fs::read(save_path).unwrap(), bytes);
+        assert_eq!(
+            std::fs::read(baseline.join(format!("{id}-schema3.mgsave.z"))).unwrap(),
+            compressed
+        );
+    }
+}

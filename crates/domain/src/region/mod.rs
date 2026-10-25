@@ -106,6 +106,7 @@ pub struct RegionDefinitionParts {
     pub satisfaction: SatisfactionParams,
     pub lines: LineParams,
     pub start: StartDef,
+    pub start_line_names: BTreeMap<CityId, String>,
 }
 
 /// A validated region. Only constructible through `TryFrom<RegionDefinitionParts>`.
@@ -134,6 +135,7 @@ pub struct RegionDefinition {
     satisfaction: SatisfactionParams,
     lines: LineParams,
     start: StartDef,
+    start_line_names: BTreeMap<CityId, String>,
 }
 
 impl RegionDefinition {
@@ -235,6 +237,11 @@ impl RegionDefinition {
 
     pub fn lines(&self) -> &LineParams {
         &self.lines
+    }
+
+    /// Optional authored name key for a starter city's line.
+    pub fn start_line_name(&self, city: CityId) -> Option<&str> {
+        self.start_line_names.get(&city).map(String::as_str)
     }
 
     pub fn start(&self) -> &StartDef {
@@ -555,6 +562,15 @@ impl TryFrom<RegionDefinitionParts> for RegionDefinition {
         clock::validate(&parts)?;
         validate_cities(&parts.terrain, &parts.cities)?;
         validate_start(&parts.terrain, &catalog, &parts.cities, &parts.start)?;
+        if parts.start_line_names.iter().any(|(city, name)| {
+            *city == parts.start.home_city
+                || !parts.start.connected_cities.contains(city)
+                || name.trim().is_empty()
+        }) {
+            return Err(RegionError::InvalidShape {
+                field: "start.line_names",
+            });
+        }
         validate_shapes(&parts)?;
         validate_bands(&parts.regulator)?;
         validate_catalog_values(&catalog)?;
@@ -595,6 +611,7 @@ impl TryFrom<RegionDefinitionParts> for RegionDefinition {
             satisfaction: parts.satisfaction,
             lines: parts.lines,
             start: parts.start,
+            start_line_names: parts.start_line_names,
         })
     }
 }

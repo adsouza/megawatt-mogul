@@ -297,3 +297,206 @@ mod present_option {
         }
     }
 }
+
+/// Strict schema-4 source; no legacy locale or tuning defaults.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegionFileV4 {
+    pub region_schema: u32,
+    pub id: String,
+    pub name_key: String,
+    pub bounds: Bounds,
+    pub grid: GridSize,
+    /// Land polygons as (lon, lat) rings.
+    pub land: Vec<Vec<(f64, f64)>>,
+    /// Polygons cut out of the land (lakes, bays).
+    pub exclude: Vec<Vec<(f64, f64)>>,
+    pub height: Field,
+    pub irradiance: Field,
+    pub cooling_water: Field,
+    pub hydro_potential: Field,
+    pub wind_potential: Field,
+    pub wind: WindDto,
+    pub catalog: Vec<PlantSpecDtoV4>,
+    pub cities: Vec<CityDtoV4>,
+    pub system_zone: u16,
+    pub time_zones: Vec<TimeZoneDto>,
+    pub climates: Vec<ClimateDto>,
+    pub demand_noise: DemandNoiseDto,
+    pub calendar: CalendarDto,
+    pub currency: CurrencyDto,
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub atlas: Option<AtlasDto>,
+    pub solar: SolarDtoV4,
+    pub hydro: HydroDto,
+    pub frequency: FrequencyDto,
+    pub regulator: RegulatorDtoV4,
+    pub satisfaction: SatisfactionDto,
+    pub lines: LinesDtoV4,
+    pub start: StartDtoV4,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlantSpecDtoV4 {
+    pub kind: PlantKindDto,
+    pub capacity_mw: f64,
+    pub min_stable: f64,
+    pub ramp_mw_per_min: f64,
+    pub startup_hours: f64,
+    pub startup_cost: i64,
+    pub marginal_cost_per_mwh: f64,
+    pub fixed_om_per_month: i64,
+    pub capital_cost: i64,
+    pub build_months: u32,
+    pub capacity_credit: f64,
+    pub book_life_months: u32,
+    pub siting: SitingDto,
+    #[serde(default)]
+    pub battery: Option<BatteryDto>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CityDtoV4 {
+    pub id: u32,
+    pub zone: u16,
+    pub climate: u16,
+    pub name_key: String,
+    pub lon: f64,
+    pub lat: f64,
+    pub base_load_mw: f64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SolarDtoV4 {
+    pub clearness_mean: Vec<f64>,
+    pub clearness_sd: f64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegulatorDtoV4 {
+    pub storage_accreditation: Vec<(f64, f64)>,
+    pub satisfaction_target: f64,
+    pub return_per_satisfaction_point: f64,
+    pub starting_tariff_per_mwh: f64,
+    pub reference_tariff_per_mwh: f64,
+    pub base_return: f64,
+    pub min_return: f64,
+    pub max_return: f64,
+    pub reliability_target: f64,
+    pub return_per_reliability: f64,
+    pub return_per_cost_improvement: f64,
+    pub reserve_margin: f64,
+    pub strike_threshold: f64,
+    pub strikes_to_revoke: u8,
+    pub clean_months_to_expire: u8,
+    pub frequency_band_hz: f64,
+    pub frequency_violation_share: f64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LinesDtoV4 {
+    pub cost_per_cell: i64,
+    pub cells_per_month: u32,
+    pub book_life_months: u32,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct StartDtoV4 {
+    #[serde(default)]
+    pub line_names: Vec<(u32, String)>,
+    pub year: i32,
+    pub month: u8,
+    pub cash: i64,
+    pub home_city: u32,
+    pub connected_cities: Vec<u32>,
+    pub fleet: Vec<(PlantKindDto, f64, f64)>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TimeZoneDto {
+    pub id: u16,
+    pub name_key: String,
+    pub standard_offset_minutes: i32,
+    pub dst_months: Vec<bool>,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClimateDto {
+    pub id: u16,
+    pub shapes: Vec<(String, Vec<f64>)>,
+    pub month_shapes: Vec<String>,
+    pub monthly: Vec<f64>,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DemandNoiseDto {
+    pub forecast_error: f64,
+    pub error_persistence: f64,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CalendarDto {
+    pub seasons: Vec<SeasonDto>,
+}
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+pub enum SeasonDto {
+    Winter,
+    Spring,
+    Summer,
+    Autumn,
+    Monsoon,
+    PostMonsoon,
+}
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum CurrencyDto {
+    Usd,
+    Eur,
+    Cny,
+    Inr,
+    Rub,
+    Brl,
+    #[serde(other)]
+    Unknown,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AtlasDto {
+    pub letter: String,
+    pub colour: String,
+}
+#[derive(Debug, Clone)]
+pub enum ParsedRegionFile {
+    Legacy(RegionFile),
+    V4(RegionFileV4),
+}
+impl ParsedRegionFile {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Legacy(f) => &f.id,
+            Self::V4(f) => &f.id,
+        }
+    }
+    pub fn name_key(&self) -> &str {
+        match self {
+            Self::Legacy(f) => &f.name_key,
+            Self::V4(f) => &f.name_key,
+        }
+    }
+}
+#[derive(Deserialize)]
+pub(super) struct SchemaProbe {
+    #[serde(default, with = "present_option")]
+    pub region_schema: Option<u32>,
+}

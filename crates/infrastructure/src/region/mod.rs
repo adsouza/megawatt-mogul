@@ -10,8 +10,8 @@ mod raster;
 
 pub use catalog::{RonRegionCatalog, load_region_bytes};
 pub use dto::*;
-pub use mapping::map_region;
+pub use mapping::{map_region, map_region_v4};
 pub use outline::{RegionOutline, region_outline};
 pub use raster::{rasterize, to_cell};
 
-pub const CURRENT_REGION_SCHEMA: u32 = 3;
+pub const CURRENT_REGION_SCHEMA: u32 = 4;

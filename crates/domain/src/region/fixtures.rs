@@ -330,6 +330,7 @@ fn start() -> StartDef {
 
 pub fn tiny_region_parts() -> RegionDefinitionParts {
     RegionDefinitionParts {
+        start_line_names: Default::default(),
         id: RegionId::new("tiny"),
         name_key: "region-tiny".to_owned(),
         currency: crate::units::Currency::Usd,

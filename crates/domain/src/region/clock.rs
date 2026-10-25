@@ -118,12 +118,18 @@ impl RegionDefinition {
 pub(super) fn validate(parts: &RegionDefinitionParts) -> Result<(), RegionError> {
     let invalid = |field| RegionError::InvalidShape { field };
     let b = &parts.geo;
-    if !(-180.0..=180.0).contains(&b.west)
-        || !(-180.0..=180.0).contains(&b.east)
-        || !(-90.0..=90.0).contains(&b.south)
-        || !(-90.0..=90.0).contains(&b.north)
-        || b.west >= b.east
-        || b.south >= b.north
+    let finite_ordered = [b.west, b.east, b.south, b.north]
+        .iter()
+        .all(|v| v.is_finite())
+        && b.west < b.east
+        && b.south < b.north;
+    let on_earth = (-180.0..=180.0).contains(&b.west)
+        && (-180.0..=180.0).contains(&b.east)
+        && (-90.0..=90.0).contains(&b.south)
+        && (-90.0..=90.0).contains(&b.north);
+    // Pre-schema-4 sources used finite ordered coordinates, including custom
+    // maps outside geographic ranges. Only computed sun needs Earth bounds.
+    if !finite_ordered || matches!(parts.solar.model, super::SolarModel::Astronomical) && !on_earth
     {
         return Err(invalid("bounds"));
     }
@@ -370,19 +376,31 @@ mod tests {
 
     #[test]
     fn geography_requires_finite_ordered_earth_coordinates() {
+        fn rejects_astronomical(
+            edit: impl FnOnce(&mut RegionDefinitionParts),
+            field: &'static str,
+        ) {
+            rejects(
+                |p| {
+                    p.solar.model = super::super::SolarModel::Astronomical;
+                    edit(p);
+                },
+                field,
+            );
+        }
         for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -181.0, 181.0] {
-            rejects(|p| p.geo.west = value, "bounds");
-            rejects(|p| p.geo.east = value, "bounds");
+            rejects_astronomical(|p| p.geo.west = value, "bounds");
+            rejects_astronomical(|p| p.geo.east = value, "bounds");
         }
         for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -91.0, 91.0] {
-            rejects(|p| p.geo.south = value, "bounds");
-            rejects(|p| p.geo.north = value, "bounds");
+            rejects_astronomical(|p| p.geo.south = value, "bounds");
+            rejects_astronomical(|p| p.geo.north = value, "bounds");
         }
-        rejects(|p| p.geo.east = p.geo.west, "bounds");
-        rejects(|p| p.geo.east = p.geo.west - 1.0, "bounds");
-        rejects(|p| p.geo.north = p.geo.south, "bounds");
-        rejects(|p| p.geo.north = p.geo.south - 1.0, "bounds");
-        rejects(
+        rejects_astronomical(|p| p.geo.east = p.geo.west, "bounds");
+        rejects_astronomical(|p| p.geo.east = p.geo.west - 1.0, "bounds");
+        rejects_astronomical(|p| p.geo.north = p.geo.south, "bounds");
+        rejects_astronomical(|p| p.geo.north = p.geo.south - 1.0, "bounds");
+        rejects_astronomical(
             |p| p.terrain = TerrainGrid::new(0, 0, vec![]).unwrap(),
             "grid",
         );

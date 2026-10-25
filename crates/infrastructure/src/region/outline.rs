@@ -2,7 +2,7 @@
 use application::RegionLoadError;
 use domain::ids::RegionId;
 
-use super::{Bounds, catalog::parse_region_file, raster::contains};
+use super::{AtlasDto, Bounds, ParsedRegionFile, catalog::parse_region_file, raster::contains};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RegionOutline {
@@ -11,6 +11,7 @@ pub struct RegionOutline {
     pub exclude: Vec<Vec<(f64, f64)>>,
     pub home: Option<(String, f64, f64)>,
     pub cities: usize,
+    pub atlas: Option<AtlasDto>,
 }
 
 impl RegionOutline {
@@ -29,18 +30,38 @@ impl RegionOutline {
 /// offer its region as a labelled button without a geographic preview.
 pub fn region_outline(source: &[u8], id: &RegionId) -> Result<RegionOutline, RegionLoadError> {
     let file = parse_region_file(source, id)?;
-    let home = file
-        .cities
-        .iter()
-        .find(|city| city.id == file.start.home_city)
-        .map(|city| (city.name_key.clone(), city.lon, city.lat));
-    Ok(RegionOutline {
-        bounds: file.bounds,
-        land: file.land,
-        exclude: file.exclude,
-        home,
-        cities: file.cities.len(),
-    })
+    match file {
+        ParsedRegionFile::Legacy(file) => {
+            let home = file
+                .cities
+                .iter()
+                .find(|c| c.id == file.start.home_city)
+                .map(|c| (c.name_key.clone(), c.lon, c.lat));
+            Ok(RegionOutline {
+                bounds: file.bounds,
+                land: file.land,
+                exclude: file.exclude,
+                home,
+                cities: file.cities.len(),
+                atlas: None,
+            })
+        }
+        ParsedRegionFile::V4(file) => {
+            let home = file
+                .cities
+                .iter()
+                .find(|c| c.id == file.start.home_city)
+                .map(|c| (c.name_key.clone(), c.lon, c.lat));
+            Ok(RegionOutline {
+                bounds: file.bounds,
+                land: file.land,
+                exclude: file.exclude,
+                home,
+                cities: file.cities.len(),
+                atlas: file.atlas,
+            })
+        }
+    }
 }
 
 #[cfg(test)]

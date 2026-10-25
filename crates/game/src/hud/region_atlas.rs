@@ -151,6 +151,7 @@ fn backdrop() -> &'static Vec<[[f32; 2]; 2]> {
     static BACKDROP: OnceLock<Vec<[[f32; 2]; 2]>> = OnceLock::new();
     BACKDROP.get_or_init(|| {
         mesh(&RegionOutline {
+            atlas: None,
             bounds: Bounds {
                 west: WEST,
                 east: EAST,

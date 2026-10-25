@@ -6,8 +6,21 @@ use domain::ids::CellCoord;
 use domain::region::{Cell, TerrainGrid};
 use domain::units::Ratio;
 
-use super::dto::{Field, RegionFile};
+use super::dto::{Bounds, Field, GridSize, RegionFile, RegionFileV4};
 
+/// Borrowed geometry shared by both source schemas.
+#[derive(Clone, Copy)]
+pub(super) struct Geography<'a> {
+    pub bounds: &'a Bounds,
+    pub grid: GridSize,
+    pub land: &'a [Vec<(f64, f64)>],
+    pub exclude: &'a [Vec<(f64, f64)>],
+    pub height: &'a Field,
+    pub irradiance: &'a Field,
+    pub cooling_water: &'a Field,
+    pub hydro_potential: &'a Field,
+    pub wind_potential: Option<&'a Field>,
+}
 /// Rasterises `file` onto its grid.
 ///
 /// Each cell is sampled at its centre. A cell is land when its centre lies in
@@ -16,6 +29,10 @@ use super::dto::{Field, RegionFile};
 /// where `d` is measured in degrees with the longitude difference scaled by
 /// `cos(lat)`, then clamped to `[0, 1]`.
 pub fn rasterize(file: &RegionFile) -> TerrainGrid {
+    rasterize_geometry(file.geography())
+}
+
+pub(super) fn rasterize_geometry(file: Geography<'_>) -> TerrainGrid {
     let GridDims { width, height } = dims(file);
     let mut cells = Vec::with_capacity(usize::from(width) * usize::from(height));
     for y in 0..height {
@@ -25,14 +42,13 @@ pub fn rasterize(file: &RegionFile) -> TerrainGrid {
                 && !file.exclude.iter().any(|p| contains(p, lon, lat));
             cells.push(Cell {
                 land,
-                height: sample(&file.height, lon, lat),
-                irradiance: sample(&file.irradiance, lon, lat),
+                height: sample(file.height, lon, lat),
+                irradiance: sample(file.irradiance, lon, lat),
                 wind_potential: file
                     .wind_potential
-                    .as_ref()
                     .map_or(Ratio::ZERO, |f| sample(f, lon, lat)),
-                cooling_water: sample(&file.cooling_water, lon, lat),
-                hydro_potential: sample(&file.hydro_potential, lon, lat),
+                cooling_water: sample(file.cooling_water, lon, lat),
+                hydro_potential: sample(file.hydro_potential, lon, lat),
             });
         }
     }
@@ -41,8 +57,12 @@ pub fn rasterize(file: &RegionFile) -> TerrainGrid {
 
 /// The cell containing the point, clamped to the grid.
 pub fn to_cell(file: &RegionFile, lon: f64, lat: f64) -> CellCoord {
+    to_cell_geometry(file.geography(), lon, lat)
+}
+
+pub(super) fn to_cell_geometry(file: Geography<'_>, lon: f64, lat: f64) -> CellCoord {
     let GridDims { width, height } = dims(file);
-    let b = &file.bounds;
+    let b = file.bounds;
     // A NaN fraction saturates to 0 in the cast, so the result is always in range.
     let fx = (lon - b.west) / (b.east - b.west) * f64::from(width);
     let fy = (b.north - lat) / (b.north - b.south) * f64::from(height);
@@ -57,7 +77,7 @@ struct GridDims {
     height: u16,
 }
 
-fn dims(file: &RegionFile) -> GridDims {
+fn dims(file: Geography<'_>) -> GridDims {
     GridDims {
         width: file.grid.width,
         height: file.grid.height,
@@ -69,8 +89,8 @@ fn floor_clamped(value: f64, cells: u16) -> u16 {
     value.floor().clamp(0.0, last) as u16
 }
 
-fn cell_centre(file: &RegionFile, x: u16, y: u16) -> (f64, f64) {
-    let b = &file.bounds;
+fn cell_centre(file: Geography<'_>, x: u16, y: u16) -> (f64, f64) {
+    let b = file.bounds;
     let lon = b.west + (f64::from(x) + 0.5) / f64::from(file.grid.width) * (b.east - b.west);
     let lat = b.north - (f64::from(y) + 0.5) / f64::from(file.grid.height) * (b.north - b.south);
     (lon, lat)
@@ -106,6 +126,38 @@ fn sample(field: &Field, lon: f64, lat: f64) -> Ratio {
         .sum();
     // `mapping` rejects non-finite input; a NaN that slips through reads as 0.
     Ratio::new((field.base + blobs).clamp(0.0, 1.0)).unwrap_or(Ratio::ZERO)
+}
+
+impl RegionFile {
+    pub(super) fn geography(&self) -> Geography<'_> {
+        Geography {
+            bounds: &self.bounds,
+            grid: self.grid,
+            land: &self.land,
+            exclude: &self.exclude,
+            height: &self.height,
+            irradiance: &self.irradiance,
+            cooling_water: &self.cooling_water,
+            hydro_potential: &self.hydro_potential,
+            wind_potential: self.wind_potential.as_ref(),
+        }
+    }
+}
+
+impl RegionFileV4 {
+    pub(super) fn geography(&self) -> Geography<'_> {
+        Geography {
+            bounds: &self.bounds,
+            grid: self.grid,
+            land: &self.land,
+            exclude: &self.exclude,
+            height: &self.height,
+            irradiance: &self.irradiance,
+            cooling_water: &self.cooling_water,
+            hydro_potential: &self.hydro_potential,
+            wind_potential: Some(&self.wind_potential),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -253,7 +305,7 @@ mod tests {
         assert_eq!(at(7.5, 4.5), CellCoord { x: 7, y: 3 });
         assert_eq!(at(11.99, 0.01), CellCoord { x: 11, y: 7 });
         // Cell centres round-trip.
-        let (lon, lat) = cell_centre(&file, 9, 6);
+        let (lon, lat) = cell_centre(file.geography(), 9, 6);
         assert_eq!(at(lon, lat), CellCoord { x: 9, y: 6 });
         // Outside the bounds clamps to the nearest edge cell.
         assert_eq!(at(-50.0, 90.0), CellCoord { x: 0, y: 0 });

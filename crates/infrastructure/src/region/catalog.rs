@@ -10,8 +10,8 @@ use application::{
 use domain::ids::RegionId;
 use sha2::{Digest, Sha256};
 
-use super::dto::RegionFile;
-use super::mapping::map_region;
+use super::dto::{ParsedRegionFile, SchemaProbe};
+use super::mapping::{map_region, map_region_v4};
 
 /// Reads regions from `<dir>/<id>.ron`. Files are self-contained: no includes
 /// and no external inputs, so the file's bytes fully determine the region.
@@ -43,7 +43,7 @@ impl RonRegionCatalog {
 pub(super) fn parse_region_file(
     source_bytes: &[u8],
     region: &RegionId,
-) -> Result<RegionFile, RegionLoadError> {
+) -> Result<ParsedRegionFile, RegionLoadError> {
     let parse_error = |message: String| RegionLoadError::Parse {
         region: region.clone(),
         message,
@@ -51,9 +51,29 @@ pub(super) fn parse_region_file(
     let text = std::str::from_utf8(source_bytes)
         .map_err(|e| parse_error(format!("invalid UTF-8 at byte {}", e.valid_up_to())))?;
     // RON's error display leads with the `line:col` span.
-    let file: RegionFile = ron::de::from_str(text).map_err(|e| parse_error(e.to_string()))?;
+    let invalid = |error| RegionLoadError::Invalid {
+        region: region.clone(),
+        error,
+    };
+    let probe: SchemaProbe = ron::de::from_str(text).map_err(|e| parse_error(e.to_string()))?;
+    let file = match probe.region_schema {
+        None | Some(2 | 3) => ParsedRegionFile::Legacy(
+            ron::de::from_str(text).map_err(|e| parse_error(e.to_string()))?,
+        ),
+        Some(4) => ParsedRegionFile::V4(ron::de::from_str(text).map_err(|e| match e.code {
+            ron::error::Error::MissingStructField { field, .. } => {
+                invalid(domain::region::RegionError::MissingField { field })
+            }
+            _ => parse_error(e.to_string()),
+        })?),
+        Some(schema) => {
+            return Err(invalid(
+                domain::region::RegionError::UnsupportedRegionSchema(schema),
+            ));
+        }
+    };
 
-    let found = RegionId::new(&file.id);
+    let found = RegionId::new(file.id());
     if found != *region {
         return Err(RegionLoadError::IdMismatch {
             requested: region.clone(),
@@ -72,7 +92,11 @@ pub fn load_region_bytes(
     region: &RegionId,
 ) -> Result<LoadedRegion, RegionLoadError> {
     let file = parse_region_file(&source_bytes, region)?;
-    let definition = map_region(file).map_err(|error| RegionLoadError::Invalid {
+    let definition = match file {
+        ParsedRegionFile::Legacy(f) => map_region(f),
+        ParsedRegionFile::V4(f) => map_region_v4(f),
+    }
+    .map_err(|error| RegionLoadError::Invalid {
         region: region.clone(),
         error,
     })?;
@@ -130,8 +154,8 @@ impl RegionCatalog for RonRegionCatalog {
                 let entry = read_once(path, &id)
                     .and_then(|bytes| parse_region_file(&bytes, &id))
                     .map(|file| RegionSummary {
-                        id: RegionId::new(&file.id),
-                        name_key: file.name_key,
+                        id: RegionId::new(file.id()),
+                        name_key: file.name_key().to_owned(),
                     });
                 RegionListing { id, entry }
             })
