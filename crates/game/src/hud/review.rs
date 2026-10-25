@@ -10,6 +10,7 @@
 //! the game-over modal (*See the month*, [`GameOverView::FinalMonth`]). Then the footer is *Back*,
 //! which returns to the game-over modal, and `FinishReview` is never sent: the game is over.
 
+use crate::l10n::format::MoneyStyle;
 use application::projections::Lesson;
 use application::{Command, Game};
 use bevy::prelude::*;
@@ -26,7 +27,7 @@ use super::layout::HudArea;
 pub use super::theme::TextTone as ReviewTone;
 use super::theme::{marginal_cost_fraction, severity_color as marginal_cost_color};
 use super::{SupplyHistoryModel, UiState, draw_supply_history, supply_history_model};
-use crate::l10n::{Localize, LocalizeWith, Localizer, Names, Toast, format};
+use crate::l10n::{LessonMoneyText, Localize, LocalizeWith, Localizer, Names, Toast, format};
 use crate::sim::Session;
 
 /// The space kept clear between the modal and the edges of the dimmed area.
@@ -120,8 +121,13 @@ pub struct ReviewModel {
 
 /// The modal while the month is in review; `None` otherwise. Once the game is over, its own modal
 /// is the only one, unless `view` asks for the final month.
-pub fn review_model(game: &Game, view: GameOverView, l10n: &Localizer) -> Option<ReviewModel> {
-    review_model_with_history(game, view, &UiState::default(), l10n)
+pub fn review_model(
+    game: &Game,
+    view: GameOverView,
+    l10n: &Localizer,
+    style: &MoneyStyle,
+) -> Option<ReviewModel> {
+    review_model_with_history(game, view, &UiState::default(), l10n, style)
 }
 
 fn review_model_with_history(
@@ -129,6 +135,7 @@ fn review_model_with_history(
     view: GameOverView,
     ui: &UiState,
     l10n: &Localizer,
+    style: &MoneyStyle,
 ) -> Option<ReviewModel> {
     let session = game.session();
     if !review_applies(session.status(), session.phase(), view) {
@@ -143,12 +150,13 @@ fn review_model_with_history(
         &Names::new(l10n, session),
         session.region(),
         session.status() != SessionStatus::Active,
-        l10n,
+        (l10n, style),
     );
     model.satisfaction_adjustment = current_satisfaction_adjustment(session, report, l10n);
     if ui.review_supply {
         model.supply = Some(
-            supply_history_model(game, ui.supply_month, l10n).with_layout(ui.supply_chart_layout),
+            supply_history_model(game, ui.supply_month, l10n, style)
+                .with_layout(ui.supply_chart_layout),
         );
         model.supply_button = ButtonModel::new(
             l10n.text("review-summary"),
@@ -203,15 +211,16 @@ pub fn review_model_for(
     names: &Names,
     region: &RegionDefinition,
     game_over: bool,
-    l10n: &Localizer,
+    text: (&Localizer, &MoneyStyle),
 ) -> ReviewModel {
+    let (l10n, style) = text;
     let stat = |key: &str, value: String| ReviewStat {
         label: l10n.text(key),
         value,
         tone: ReviewTone::Information,
     };
     let cash = |key: &str, amount: domain::units::Money| {
-        stat(key, format::money(amount)).with_tone(ReviewTone::cash(amount.cents()))
+        stat(key, format::money(amount, style)).with_tone(ReviewTone::cash(amount.cents()))
     };
     // Match the one-decimal percentage shown in both the highlight and reliability table.
     let frequency_tone = if (report.out_of_band_share.value() * 1000.0).round() == 0.0 {
@@ -253,13 +262,13 @@ pub fn review_model_for(
         .iter()
         .filter_map(|event| {
             event
-                .toast(l10n, names)
+                .toast(l10n, names, style)
                 .map(|text| (text, regulatory_tone(event)))
         })
         .unzip();
     let (lessons, lesson_tones) = lessons
         .iter()
-        .map(|lesson| (lesson.localize(l10n), lesson_tone(lesson)))
+        .map(|lesson| (lesson.localize_money(l10n, style), lesson_tone(lesson)))
         .unzip();
     ReviewModel {
         storage_heading: l10n.text("battery-review-heading"),
@@ -307,7 +316,7 @@ pub fn review_model_for(
             .map(|entry| MeritRow {
                 plant: names.plant(entry.plant),
                 kind: entry.kind.localize(l10n),
-                marginal_cost: format::price(entry.marginal_cost),
+                marginal_cost: format::price(entry.marginal_cost, style),
                 marginal_cost_fraction: marginal_cost_fraction(region, entry.marginal_cost),
                 energy: format::megawatt_hours(entry.energy),
                 has_energy: entry.energy > MegawattHours::ZERO,
@@ -380,7 +389,7 @@ pub fn review_model_for(
             l10n.args(
                 "review-rate-review-result",
                 &[
-                    ("tariff", format::price(outcome.tariff).into()),
+                    ("tariff", format::price(outcome.tariff, style).into()),
                     (
                         "allowed_return",
                         format::percent(outcome.allowed_return).into(),
@@ -679,9 +688,12 @@ pub(super) fn review_modal(
     l10n: Res<Localizer>,
     shown: Res<GameOverViewShown>,
     mut sink: ActionSink,
+    style: Res<MoneyStyle>,
 ) -> Result {
     // The pass's snapshot, not the live view: see `GameOverViewShown`.
-    let Some(model) = review_model_with_history(&session.0, shown.0, sink.ui_state(), &l10n) else {
+    let Some(model) =
+        review_model_with_history(&session.0, shown.0, sink.ui_state(), &l10n, &style)
+    else {
         return Ok(());
     };
     let ctx = contexts.ctx_mut()?;
@@ -771,6 +783,7 @@ fn storage_review_rows(
 
 #[cfg(test)]
 mod tests {
+    use crate::hud::test_support::usd_style;
     use domain::region::PlantKind;
     use std::collections::BTreeMap;
 
@@ -818,7 +831,7 @@ mod tests {
             &Names::empty(&l10n),
             region,
             false,
-            &l10n,
+            (&l10n, &usd_style()),
         );
         let ctx = egui::Context::default();
         let output = ctx.run_ui(
@@ -878,7 +891,7 @@ mod tests {
             &Names::empty(&l10n),
             region,
             false,
-            &l10n,
+            (&l10n, &usd_style()),
         );
         assert_eq!(
             without_peaker.merit[2].marginal_cost_fraction,
@@ -933,7 +946,7 @@ mod tests {
             &Names::empty(&l10n),
             &test_region(),
             false,
-            &l10n,
+            (&l10n, &usd_style()),
         );
         let ctx = egui::Context::default();
         let output = ctx.run_ui(
@@ -980,7 +993,7 @@ mod tests {
     fn merit_row_backgrounds_contain_their_text_without_covering_previous_rows() {
         let game = reviewed_game();
         let l10n = shipped_l10n();
-        let model = review_model(&game, GameOverView::Summary, &l10n).unwrap();
+        let model = review_model(&game, GameOverView::Summary, &l10n, &usd_style()).unwrap();
         fn flatten<'a>(shape: &'a egui::Shape, shapes: &mut Vec<&'a egui::Shape>) {
             match shape {
                 egui::Shape::Vec(children) => {
@@ -1053,7 +1066,7 @@ mod tests {
     fn merit_table_keeps_every_cell_on_one_line_when_the_text_fits() {
         let game = reviewed_game();
         let l10n = shipped_l10n();
-        let model = review_model(&game, GameOverView::Summary, &l10n).unwrap();
+        let model = review_model(&game, GameOverView::Summary, &l10n, &usd_style()).unwrap();
         fn check(shape: &egui::Shape, width: f32) {
             match shape {
                 egui::Shape::Text(text) => {
@@ -1184,7 +1197,7 @@ mod tests {
             &Names::empty(l10n),
             &test_region(),
             false,
-            l10n,
+            (l10n, &usd_style()),
         )
     }
 
@@ -1310,7 +1323,7 @@ mod tests {
             }
         }
         let december = game.projections().monthly_reports.latest().unwrap().clone();
-        let model = review_model(&game, GameOverView::Summary, &l10n).unwrap();
+        let model = review_model(&game, GameOverView::Summary, &l10n, &usd_style()).unwrap();
         let expected = format!(
             "Satisfaction moved your allowed return by {}.",
             format::signed_points(game.session().satisfaction_return_adjustment())
@@ -1334,7 +1347,7 @@ mod tests {
             None
         );
         assert_eq!(
-            review_model(&game, GameOverView::Summary, &l10n)
+            review_model(&game, GameOverView::Summary, &l10n, &usd_style())
                 .unwrap()
                 .satisfaction_adjustment,
             None
@@ -1552,15 +1565,15 @@ mod tests {
         let game = reviewed_game();
         let report = game.projections().monthly_reports.latest().unwrap();
 
-        let model =
-            review_model(&game, GameOverView::Summary, &l10n).expect("the month is in review");
+        let model = review_model(&game, GameOverView::Summary, &l10n, &usd_style())
+            .expect("the month is in review");
 
         let lines: Vec<(&str, &str)> = model
             .pnl
             .iter()
             .map(|stat| (stat.label.as_str(), stat.value.as_str()))
             .collect();
-        let money = |amount| format::money(amount);
+        let money = |amount| format::money(amount, &usd_style());
         assert_eq!(
             lines,
             [
@@ -1596,7 +1609,7 @@ mod tests {
             MeritRow {
                 plant: names.plant(first.plant),
                 kind: first.kind.localize(&l10n),
-                marginal_cost: format::price(first.marginal_cost),
+                marginal_cost: format::price(first.marginal_cost, &usd_style()),
                 marginal_cost_fraction: (first.marginal_cost.value()
                     / game
                         .session()
@@ -1614,7 +1627,7 @@ mod tests {
                 .lessons
                 .latest()
                 .iter()
-                .map(|lesson| lesson.localize(&l10n))
+                .map(|lesson| lesson.localize_money(&l10n, &usd_style()))
                 .collect::<Vec<_>>()
         );
         assert!(!model.lessons.is_empty());
@@ -1674,7 +1687,7 @@ mod tests {
             &Names::empty(&l10n),
             &test_region(),
             false,
-            &l10n,
+            (&l10n, &usd_style()),
         );
 
         assert_eq!(model.regulatory.len(), 1);
@@ -1730,12 +1743,12 @@ mod tests {
             "{events:?}"
         );
 
-        let model = review_model(&game, GameOverView::Summary, &l10n).unwrap();
+        let model = review_model(&game, GameOverView::Summary, &l10n, &usd_style()).unwrap();
 
         let names = Names::new(&l10n, game.session());
         let expected: Vec<String> = events
             .iter()
-            .filter_map(|event| event.toast(&l10n, &names))
+            .filter_map(|event| event.toast(&l10n, &names, &usd_style()))
             .collect();
         assert_eq!(model.regulatory, expected);
         assert!(
@@ -1752,7 +1765,7 @@ mod tests {
         let l10n = shipped_l10n();
         let game = reviewed_game();
 
-        let model = review_model(&game, GameOverView::Summary, &l10n).unwrap();
+        let model = review_model(&game, GameOverView::Summary, &l10n, &usd_style()).unwrap();
 
         assert_eq!(model.footer_button.label, "Continue");
         assert_eq!(
@@ -1770,8 +1783,24 @@ mod tests {
         let names = Names::empty(&l10n);
 
         let region = test_region();
-        let over = review_model_for(&report(), &lessons, &[], &names, &region, true, &l10n);
-        let running = review_model_for(&report(), &lessons, &[], &names, &region, false, &l10n);
+        let over = review_model_for(
+            &report(),
+            &lessons,
+            &[],
+            &names,
+            &region,
+            true,
+            (&l10n, &usd_style()),
+        );
+        let running = review_model_for(
+            &report(),
+            &lessons,
+            &[],
+            &names,
+            &region,
+            false,
+            (&l10n, &usd_style()),
+        );
 
         assert_eq!(over.footer_button.label, "Back");
         assert_eq!(over.footer_button.action, UiAction::ShowGameOverSummary);
@@ -1800,7 +1829,7 @@ mod tests {
         let l10n = shipped_l10n();
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
         assert_eq!(
-            review_model(&game, GameOverView::Summary, &l10n),
+            review_model(&game, GameOverView::Summary, &l10n, &usd_style()),
             None,
             "Planning"
         );
@@ -1832,9 +1861,12 @@ mod tests {
         let game = finished_game();
         let report = game.projections().monthly_reports.latest().unwrap();
 
-        assert_eq!(review_model(&game, GameOverView::Summary, &l10n), None);
-        let model =
-            review_model(&game, GameOverView::FinalMonth, &l10n).expect("the final month's review");
+        assert_eq!(
+            review_model(&game, GameOverView::Summary, &l10n, &usd_style()),
+            None
+        );
+        let model = review_model(&game, GameOverView::FinalMonth, &l10n, &usd_style())
+            .expect("the final month's review");
 
         assert_eq!(model.month, format::month_year(report.month));
         assert_eq!(model.footer_button.label, "Back");

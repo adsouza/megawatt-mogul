@@ -30,11 +30,15 @@ pub trait LocalizeWith {
     fn localize_with(&self, l10n: &Localizer, names: &Names) -> String;
 }
 
+pub trait LessonMoneyText {
+    fn localize_money(&self, l10n: &Localizer, style: &format::MoneyStyle) -> String;
+}
+
 /// Text for a domain event that deserves a toast. Most events are bookkeeping (`TickCompleted`,
 /// ledger entries, ...) and return `None`; the `match` is still exhaustive, so a new event must
 /// be classified, but only a toast-worthy one needs words.
 pub trait Toast {
-    fn toast(&self, l10n: &Localizer, names: &Names) -> Option<String>;
+    fn toast(&self, l10n: &Localizer, names: &Names, style: &format::MoneyStyle) -> Option<String>;
 }
 
 /// A numeric id, shown as `#7` in the copy.
@@ -471,8 +475,8 @@ impl LocalizeWith for IncidentKind {
     }
 }
 
-impl Localize for Lesson {
-    fn localize(&self, l10n: &Localizer) -> String {
+impl LessonMoneyText for Lesson {
+    fn localize_money(&self, l10n: &Localizer, style: &format::MoneyStyle) -> String {
         match self {
             Self::ExpensivePeaking {
                 energy,
@@ -482,8 +486,8 @@ impl Localize for Lesson {
                 "lesson-expensive-peaking",
                 &[
                     ("energy", format::megawatt_hours(*energy).into()),
-                    ("cost", format::money(*cost).into()),
-                    ("alternative", format::price(*alternative).into()),
+                    ("cost", format::money(*cost, style).into()),
+                    ("alternative", format::price(*alternative, style).into()),
                 ],
             ),
             Self::RotatingOutages { energy, peak_share } => l10n.args(
@@ -536,7 +540,7 @@ impl Localize for Lesson {
             Self::StartUpCosts { total, share } => l10n.args(
                 "lesson-start-up-costs",
                 &[
-                    ("total", format::money(*total).into()),
+                    ("total", format::money(*total, style).into()),
                     ("share", format::percent(*share).into()),
                 ],
             ),
@@ -546,7 +550,7 @@ impl Localize for Lesson {
             } => l10n.args(
                 "lesson-rate-review",
                 &[
-                    ("tariff", format::price(*tariff).into()),
+                    ("tariff", format::price(*tariff, style).into()),
                     ("allowed_return", format::percent(*allowed_return).into()),
                 ],
             ),
@@ -569,7 +573,7 @@ impl Localize for RampWarning {
 }
 
 impl Toast for DomainEvent {
-    fn toast(&self, l10n: &Localizer, names: &Names) -> Option<String> {
+    fn toast(&self, l10n: &Localizer, names: &Names, style: &format::MoneyStyle) -> Option<String> {
         let text = match self {
             Self::Blackout => l10n.text("event-blackout"),
             Self::BlackoutRestored => l10n.text("event-blackout-restored"),
@@ -640,7 +644,7 @@ impl Toast for DomainEvent {
             } => l10n.args(
                 "event-rate-review-completed",
                 &[
-                    ("tariff", format::price(*tariff).into()),
+                    ("tariff", format::price(*tariff, style).into()),
                     ("allowed_return", format::percent(*allowed_return).into()),
                 ],
             ),

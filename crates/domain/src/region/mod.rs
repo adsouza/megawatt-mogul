@@ -29,7 +29,7 @@ pub use params::{
 pub use plant_spec::{BatterySpec, PlantKind, PlantSpec, SitingRule};
 pub use terrain::{Cell, TerrainGrid};
 
-use crate::units::Ratio;
+use crate::units::{Currency, Ratio};
 
 /// Why a cell cannot host a plant.
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
@@ -88,6 +88,7 @@ pub enum RegionError {
 pub struct RegionDefinitionParts {
     pub id: RegionId,
     pub name_key: String,
+    pub currency: Currency,
     pub geo: GeoBounds,
     pub clock: RegionClock,
     pub city_locales: BTreeMap<CityId, CityLocale>,
@@ -112,6 +113,7 @@ pub struct RegionDefinitionParts {
 pub struct RegionDefinition {
     id: RegionId,
     name_key: String,
+    currency: Currency,
     geo: GeoBounds,
     clock: RegionClock,
     city_locales: BTreeMap<CityId, CityLocale>,
@@ -135,6 +137,10 @@ pub struct RegionDefinition {
 }
 
 impl RegionDefinition {
+    pub fn currency(&self) -> Currency {
+        self.currency
+    }
+
     pub fn id(&self) -> &RegionId {
         &self.id
     }
@@ -570,6 +576,7 @@ impl TryFrom<RegionDefinitionParts> for RegionDefinition {
         Ok(Self {
             id: parts.id,
             name_key: parts.name_key,
+            currency: parts.currency,
             geo: parts.geo,
             clock: parts.clock,
             city_locales: parts.city_locales,

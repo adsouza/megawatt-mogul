@@ -2,6 +2,7 @@
 use crate::hud_smoke::dispatch_in;
 use crate::support::egui_harness::{button, buttons};
 use crate::support::egui_pass::EguiPass;
+use crate::support::usd_style;
 use crate::support::{headless_app, request, shipped_assets, shipped_l10n, update_n};
 use application::Command;
 use bevy::prelude::*;
@@ -337,7 +338,7 @@ fn battery_day_flows_change_line_direction_and_survive_history_review_and_restor
             .stored,
         MegawattHours::ZERO
     );
-    let review = hud::review_model(game, hud::GameOverView::Summary, &l10n).unwrap();
+    let review = hud::review_model(game, hud::GameOverView::Summary, &l10n, &usd_style()).unwrap();
     assert!(!review.storage.is_empty());
     assert!(
         review
@@ -345,7 +346,9 @@ fn battery_day_flows_change_line_direction_and_survive_history_review_and_restor
             .iter()
             .all(|r| r.kind != l10n.text("plant-kind-battery"))
     );
-    let graph = hud::supply_history_model(game, None, &l10n).chart.unwrap();
+    let graph = hud::supply_history_model(game, None, &l10n, &usd_style())
+        .chart
+        .unwrap();
     assert!(graph.has_storage);
     assert_eq!(graph.stored.len(), 1440);
     assert!(

@@ -6,6 +6,57 @@
 use domain::time::{SimDuration, SimMonth, TICKS_PER_HOUR};
 use domain::units::{Hertz, MegawattHours, Megawatts, Money, Price, RampRate, Ratio};
 
+/// Localized currency affixes, resolved once for the active region and font set.
+#[derive(bevy::prelude::Resource, Debug, Clone, PartialEq, Eq)]
+pub struct MoneyStyle {
+    pub prefix: String,
+    pub suffix: String,
+}
+
+impl MoneyStyle {
+    pub fn resolve(
+        currency: domain::units::Currency,
+        l10n: &super::Localizer,
+        has_glyph: impl Fn(char) -> bool,
+    ) -> Self {
+        use domain::units::Currency::*;
+        let (symbol_key, prefix_key, suffix_key) = match currency {
+            Usd => ("currency-usd", "currency-usd-prefix", "currency-usd-suffix"),
+            Eur => ("currency-eur", "currency-eur-prefix", "currency-eur-suffix"),
+            Cny => ("currency-cny", "currency-cny-prefix", "currency-cny-suffix"),
+            Inr => ("currency-inr", "currency-inr-prefix", "currency-inr-suffix"),
+            Rub => ("currency-rub", "currency-rub-prefix", "currency-rub-suffix"),
+            Brl => ("currency-brl", "currency-brl-prefix", "currency-brl-suffix"),
+        };
+        let symbol = l10n.text(symbol_key);
+        if !symbol.chars().all(has_glyph) {
+            return Self {
+                prefix: format!("{} ", currency.iso_code()),
+                suffix: String::new(),
+            };
+        }
+        Self {
+            prefix: l10n.text(prefix_key),
+            suffix: l10n.text(suffix_key),
+        }
+    }
+
+    /// Checks the same proportional font family used by the game's money labels.
+    pub fn resolve_egui(
+        currency: domain::units::Currency,
+        l10n: &super::Localizer,
+        ctx: &bevy_egui::egui::Context,
+    ) -> Self {
+        Self::resolve(currency, l10n, |c| {
+            ctx.fonts_mut(|fonts| fonts.has_glyph(&bevy_egui::egui::FontId::proportional(14.0), c))
+        })
+    }
+
+    pub fn symbol(&self) -> String {
+        format!("{}{}", self.prefix, self.suffix).trim().to_owned()
+    }
+}
+
 /// U+2212, the typographic minus: it lines up with the plus sign and cannot be mistaken for a
 /// hyphen.
 const MINUS: &str = "\u{2212}";
@@ -29,11 +80,12 @@ const MONTH_NAMES: [&str; 12] = [
 ];
 
 /// `$1.23M`, `$45.6k`, `$845.20`, `−$2.00B`: three significant digits from $1,000 up.
-pub fn money(amount: Money) -> String {
+pub fn money(amount: Money, style: &MoneyStyle) -> String {
+    let MoneyStyle { prefix, suffix } = style;
     let sign = if amount.is_negative() { MINUS } else { "" };
     let cents = amount.cents().unsigned_abs();
     if cents < 100_000 {
-        return format!("{sign}${}.{:02}", cents / 100, cents % 100);
+        return format!("{sign}{prefix}{}.{:02}{suffix}", cents / 100, cents % 100);
     }
     let mut value = cents as f64 / 100.0 / 1e3;
     let mut shown = three_significant(value);
@@ -43,7 +95,11 @@ pub fn money(amount: Money) -> String {
         shown = three_significant(value);
         unit += 1;
     }
-    format!("{sign}${}{}", shown.render(), ["k", "M", "B"][unit])
+    format!(
+        "{sign}{prefix}{}{}{suffix}",
+        shown.render(),
+        ["k", "M", "B"][unit]
+    )
 }
 
 /// `1,234 MW`, or `12.3 GW` from 10,000 MW.
@@ -128,7 +184,8 @@ pub fn score(value: f64) -> String {
 }
 
 /// `$45.00/MWh`.
-pub fn price(price: Price) -> String {
+pub fn price(price: Price, style: &MoneyStyle) -> String {
+    let MoneyStyle { prefix, suffix } = style;
     let cents = (price.value().abs() * 100.0).round() as u64;
     let sign = if price.value() < 0.0 && cents > 0 {
         MINUS
@@ -136,7 +193,7 @@ pub fn price(price: Price) -> String {
         ""
     };
     format!(
-        "{sign}${}.{:02}/MWh",
+        "{sign}{prefix}{}.{:02}{suffix}/MWh",
         group_thousands(cents / 100),
         cents % 100
     )
@@ -251,6 +308,7 @@ fn group_thousands(n: u64) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::hud::test_support::usd_style;
     use domain::time::{SimDuration, SimMonth};
     use domain::units::{Hertz, MegawattHours, Megawatts, Money, Price, Ratio};
 
@@ -289,11 +347,68 @@ mod tests {
         );
     }
 
+    fn currency_style(currency: domain::units::Currency) -> MoneyStyle {
+        MoneyStyle::resolve(currency, &crate::hud::test_support::shipped_l10n(), |_| {
+            true
+        })
+    }
+
     #[test]
-    fn money_formats_scale() {
+    fn every_currency_formats_compactly() {
+        use domain::units::Currency::*;
+        for (currency, symbol) in [
+            (Usd, "$"),
+            (Eur, "€"),
+            (Cny, "¥"),
+            (Inr, "₹"),
+            (Rub, "₽"),
+            (Brl, "R$"),
+        ] {
+            let style = currency_style(currency);
+            assert_eq!(
+                money(Money::from_dollars(1_234_000), &style),
+                format!("{symbol}1.23M")
+            );
+            assert_eq!(
+                money(Money::from_dollars(-2_000_000_000), &style),
+                format!("−{symbol}2.00B")
+            );
+            assert_eq!(
+                price(Price::per_mwh(45.0), &style),
+                format!("{symbol}45.00/MWh")
+            );
+        }
+    }
+
+    #[test]
+    fn a_missing_glyph_falls_back_to_the_iso_code() {
+        let style = MoneyStyle::resolve(
+            domain::units::Currency::Inr,
+            &crate::hud::test_support::shipped_l10n(),
+            |c| c != '₹',
+        );
+        assert_eq!(money(Money::from_dollars(1_200_000), &style), "INR 1.20M");
+        assert_eq!(price(Price::per_mwh(-45.0), &style), "−INR 45.00/MWh");
+    }
+
+    #[test]
+    fn money_placement_comes_from_fluent() {
+        let l10n = crate::l10n::Localizer::from_sources([(
+            "test.ftl".into(),
+            "currency-eur = €\ncurrency-eur-prefix = { \"\" }\ncurrency-eur-suffix = { \" €\" }\n"
+                .into(),
+        )])
+        .unwrap();
+        let style = MoneyStyle::resolve(domain::units::Currency::Eur, &l10n, |_| true);
+        assert_eq!(money(Money::from_cents(-123), &style), "−1.23 €");
+        assert_eq!(price(Price::per_mwh(45.0), &style), "45.00 €/MWh");
+    }
+
+    #[test]
+    fn usd_money_text_is_unchanged() {
         let cents = |dollars: f64| Money::from_cents((dollars * 100.0).round() as i64);
         check(
-            money,
+            |amount| money(amount, &currency_style(domain::units::Currency::Usd)),
             &[
                 (Money::ZERO, "$0.00"),
                 (Money::from_cents(5), "$0.05"),
@@ -316,7 +431,7 @@ mod tests {
     fn money_is_signed_with_a_true_minus() {
         let cents = |dollars: f64| Money::from_cents((dollars * 100.0).round() as i64);
         check(
-            money,
+            |amount| money(amount, &currency_style(domain::units::Currency::Usd)),
             &[
                 (cents(-2_000_000_000.0), "\u{2212}$2.00B"),
                 (cents(-45_600.0), "\u{2212}$45.6k"),
@@ -327,15 +442,15 @@ mod tests {
 
     #[test]
     fn money_handles_the_extremes_without_panicking() {
-        assert!(money(Money::from_cents(i64::MAX)).starts_with('$'));
-        assert!(money(Money::from_cents(i64::MIN)).starts_with('\u{2212}'));
+        assert!(money(Money::from_cents(i64::MAX), &usd_style()).starts_with('$'));
+        assert!(money(Money::from_cents(i64::MIN), &usd_style()).starts_with('\u{2212}'));
     }
 
     #[test]
     fn money_rounds_up_into_the_next_band_and_digit_count() {
         let cents = |dollars: f64| Money::from_cents((dollars * 100.0).round() as i64);
         check(
-            money,
+            |amount| money(amount, &currency_style(domain::units::Currency::Usd)),
             &[
                 (cents(9_996.0), "$10.0k"),
                 (cents(99_960.0), "$100k"),
@@ -460,7 +575,7 @@ mod tests {
     #[test]
     fn price_has_cents_and_groups_thousands() {
         check(
-            |v| price(Price::per_mwh(v)),
+            |v| price(Price::per_mwh(v), &usd_style()),
             &[
                 (45.0, "$45.00/MWh"),
                 (0.5, "$0.50/MWh"),

@@ -291,6 +291,11 @@ impl Plugin for HudPlugin {
             .add_systems(
                 Update,
                 (
+                    crate::l10n::currency::refresh_before_events
+                        .after(SimSet::Apply)
+                        .after(crate::l10n::load_localizer)
+                        .before(toasts::collect_toasts)
+                        .run_if(has_l10n),
                     toasts::collect_toasts.after(SimSet::Apply).run_if(has_l10n),
                     prompt::close_stale_prompt
                         .after(SimSet::Apply)
@@ -311,6 +316,10 @@ impl Plugin for HudPlugin {
                 EguiPrimaryContextPass,
                 (
                     theme::apply_theme.in_set(HudSet::Theme),
+                    crate::l10n::currency::refresh_before_paint
+                        .in_set(HudSet::Theme)
+                        .after(theme::apply_theme)
+                        .run_if(has_l10n),
                     layout::reset_hud_area.in_set(HudSet::Begin),
                     planning_cache::refresh.in_set(HudSet::Begin),
                     game_over::snapshot_game_over_view.in_set(HudSet::Begin),
@@ -436,6 +445,14 @@ pub(crate) mod test_support {
     /// The workspace's shipped `assets/`. Tests only read from it.
     pub fn shipped_assets() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")
+    }
+
+    pub fn usd_style() -> crate::l10n::format::MoneyStyle {
+        crate::l10n::format::MoneyStyle::resolve(
+            domain::units::Currency::Usd,
+            &shipped_l10n(),
+            |_| true,
+        )
     }
 
     pub fn shipped_l10n() -> Localizer {

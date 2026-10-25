@@ -1,4 +1,5 @@
 use crate::hud_smoke::dispatch_in;
+use crate::support::usd_style;
 use crate::support::{hud_app, request, update_n};
 use application::Command;
 use bevy::prelude::*;
@@ -744,6 +745,7 @@ fn top_bar(app: &App) -> game::hud::TopBarModel {
         &app.world().resource::<Session>().0,
         app.world().resource::<Persistence>(),
         &crate::support::shipped_l10n(),
+        &usd_style(),
     )
 }
 

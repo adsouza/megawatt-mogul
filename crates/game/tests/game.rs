@@ -65,3 +65,6 @@ mod world;
 
 #[path = "game/wind.rs"]
 mod wind;
+
+#[path = "game/currency.rs"]
+mod currency;

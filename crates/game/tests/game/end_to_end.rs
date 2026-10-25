@@ -12,6 +12,7 @@
 //! (the acceptance runs in `infrastructure` pin it); this test asserts only that the app carries a
 //! month from end to end.
 
+use crate::support::usd_style;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -95,7 +96,7 @@ fn record(
     let names = Names::new(l10n, session.0.session());
     let shown = toasts_model(&view.queue, l10n, view.time.elapsed_secs_f64()).toasts;
     for DomainEventMessage(event) in messages.events.read() {
-        let Some(text) = event.toast(l10n, &names) else {
+        let Some(text) = event.toast(l10n, &names, &usd_style()) else {
             continue;
         };
         // A repeat shows as `text (×n)`, so look for the text inside each toast.
@@ -152,6 +153,7 @@ fn begin_the_day(app: &App) -> UiAction {
         world.resource::<Localizer>(),
         world.resource::<UiState>(),
         world.resource::<CommitmentForm>(),
+        &usd_style(),
     )
     .expect("the Planning panel is up");
     assert!(planning.begin.enabled, "{:?}", planning.begin_hint);
@@ -207,6 +209,7 @@ fn continue_from_review(app: &App) -> UiAction {
         game(app),
         GameOverView::Summary,
         app.world().resource::<Localizer>(),
+        &usd_style(),
     )
     .expect("the month's review is up");
     assert!(review.footer_button.enabled);

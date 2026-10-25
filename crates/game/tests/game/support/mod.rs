@@ -41,6 +41,10 @@ pub fn shipped_assets() -> PathBuf {
 }
 
 /// The shipped en-US translations.
+pub fn usd_style() -> game::l10n::format::MoneyStyle {
+    game::l10n::format::MoneyStyle::resolve(domain::units::Currency::Usd, &shipped_l10n(), |_| true)
+}
+
 pub fn shipped_l10n() -> Localizer {
     Localizer::load(&shipped_assets().join("locales").join(LOCALE))
         .unwrap_or_else(|error| panic!("the shipped translations must load: {error}"))

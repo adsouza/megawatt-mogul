@@ -302,7 +302,7 @@ supply-chart-demand = Demand
 supply-chart-served = Served
 supply-chart-forecast = Forecast
 supply-chart-marginal-cost = System marginal cost
-supply-chart-axis-cost = Marginal cost ($/MWh)
+supply-chart-axis-cost = Marginal cost ({ $symbol }/MWh)
 ramp-warnings-title = Ramp warnings
 ramp-warnings-none = No ramp warnings.
 ramp-warning-row = { $time }: { $warning }
@@ -430,7 +430,7 @@ battery-fleet = All batteries
 
 supply-chart-combine = Combine graphs
 supply-chart-unit-power = MW
-supply-chart-unit-cost = $/MWh
+supply-chart-unit-cost = { $symbol }/MWh
 supply-chart-unit-energy = MWh
 
 tariff-satisfaction-adjustment = Satisfaction adjustment
@@ -452,3 +452,23 @@ wind-build-help = Generates at any hour when wind is available. Nearby farms sha
 plant-capacity-credit = Regulatory capacity credit
 
 review-curtailed-kind = Curtailed { $kind }
+
+# Currency symbol and placement are independently localizable.
+currency-usd = $
+currency-usd-prefix = { currency-usd }
+currency-usd-suffix = { "" }
+currency-eur = €
+currency-eur-prefix = { currency-eur }
+currency-eur-suffix = { "" }
+currency-cny = ¥
+currency-cny-prefix = { currency-cny }
+currency-cny-suffix = { "" }
+currency-inr = ₹
+currency-inr-prefix = { currency-inr }
+currency-inr-suffix = { "" }
+currency-rub = ₽
+currency-rub-prefix = { currency-rub }
+currency-rub-suffix = { "" }
+currency-brl = R$
+currency-brl-prefix = { currency-brl }
+currency-brl-suffix = { "" }

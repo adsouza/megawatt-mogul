@@ -1,5 +1,6 @@
 //! The Planning inspector: selected cells, cities, plants and lines, with construction progress.
 
+use crate::l10n::format::MoneyStyle;
 use application::Game;
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
@@ -118,6 +119,7 @@ pub fn inspector_model(
     game: &Game,
     l10n: &Localizer,
     selection: Selection,
+    style: &MoneyStyle,
 ) -> Option<InspectorModel> {
     if game.session().phase() != DayPhase::Planning {
         return None;
@@ -126,9 +128,9 @@ pub fn inspector_model(
         Selection::Line(id) => line_inspector(game, l10n, id).map(InspectorModel::Line),
         Selection::Cell(at) => cell_inspector(game, l10n, at).map(InspectorModel::Cell),
         Selection::City(city) => city_card_model(game, l10n, city).map(InspectorModel::City),
-        Selection::Plant(plant) => construction_card_model(game, l10n, plant)
+        Selection::Plant(plant) => construction_card_model(game, l10n, plant, style)
             .map(InspectorModel::Construction)
-            .or_else(|| plant_card_model(game, l10n, plant).map(InspectorModel::Plant)),
+            .or_else(|| plant_card_model(game, l10n, plant, style).map(InspectorModel::Plant)),
         _ => None,
     };
     Some(model.unwrap_or_else(|| InspectorModel::Empty {
@@ -269,8 +271,9 @@ pub(super) fn inspector_panel(
     session: Res<Session>,
     l10n: Res<Localizer>,
     mut sink: ActionSink,
+    style: Res<MoneyStyle>,
 ) -> Result {
-    let Some(model) = inspector_model(&session.0, &l10n, sink.selection()) else {
+    let Some(model) = inspector_model(&session.0, &l10n, sink.selection(), &style) else {
         return Ok(());
     };
     let ctx = contexts.ctx_mut()?;
@@ -285,6 +288,7 @@ pub(super) fn inspector_panel(
 
 #[cfg(test)]
 mod tests {
+    use crate::hud::test_support::usd_style;
     use application::{Command, InMemoryCommandLog};
     use domain::region::{RegionDefinition, SiteError};
 
@@ -424,7 +428,7 @@ mod tests {
     }
 
     fn cell_model(game: &Game, l10n: &Localizer, at: CellCoord) -> CellInspector {
-        match inspector_model(game, l10n, Selection::Cell(at)) {
+        match inspector_model(game, l10n, Selection::Cell(at), &usd_style()) {
             Some(InspectorModel::Cell(model)) => model,
             other => panic!("a cell is selected: {other:?}"),
         }
@@ -444,7 +448,7 @@ mod tests {
             Selection::Cell(outside),
         ] {
             assert_eq!(
-                inspector_model(&game, &l10n, selection),
+                inspector_model(&game, &l10n, selection, &usd_style()),
                 Some(InspectorModel::Empty {
                     hint: "Select a cell to see what can be built there".to_owned()
                 }),
@@ -463,13 +467,13 @@ mod tests {
         let plant = order_plant(&mut game, domain::region::PlantKind::Peaker, 0);
 
         assert_eq!(
-            inspector_model(&game, &l10n, Selection::Plant(plant)),
+            inspector_model(&game, &l10n, Selection::Plant(plant), &usd_style()),
             Some(InspectorModel::Construction(
-                construction_card_model(&game, &l10n, plant).expect("a card")
+                construction_card_model(&game, &l10n, plant, &usd_style()).expect("a card")
             ))
         );
         assert!(matches!(
-            inspector_model(&game, &l10n, Selection::Plant(built)),
+            inspector_model(&game, &l10n, Selection::Plant(built), &usd_style()),
             Some(InspectorModel::Plant(_))
         ));
         assert_eq!(l10n.problems(), vec![]);
@@ -482,7 +486,7 @@ mod tests {
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
         for city in game.session().city_views() {
             assert_eq!(
-                inspector_model(&game, &l10n, Selection::City(city.id)),
+                inspector_model(&game, &l10n, Selection::City(city.id), &usd_style()),
                 Some(InspectorModel::City(
                     city_card_model(&game, &l10n, city.id).expect("a known city")
                 )),
@@ -492,7 +496,12 @@ mod tests {
         }
         // A city the session doesn't know keeps the hint.
         assert!(matches!(
-            inspector_model(&game, &l10n, Selection::City(domain::ids::CityId(9_999))),
+            inspector_model(
+                &game,
+                &l10n,
+                Selection::City(domain::ids::CityId(9_999)),
+                &usd_style()
+            ),
             Some(InspectorModel::Empty { .. })
         ));
         assert_eq!(l10n.problems(), vec![]);
@@ -503,11 +512,17 @@ mod tests {
         let l10n = shipped_l10n();
         let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
         let at = CellCoord { x: 10, y: 10 };
-        assert!(inspector_model(&game, &l10n, Selection::Cell(at)).is_some());
+        assert!(inspector_model(&game, &l10n, Selection::Cell(at), &usd_style()).is_some());
 
         game.execute(Command::BeginOperating).unwrap();
 
-        assert_eq!(inspector_model(&game, &l10n, Selection::Cell(at)), None);
-        assert_eq!(inspector_model(&game, &l10n, Selection::None), None);
+        assert_eq!(
+            inspector_model(&game, &l10n, Selection::Cell(at), &usd_style()),
+            None
+        );
+        assert_eq!(
+            inspector_model(&game, &l10n, Selection::None, &usd_style()),
+            None
+        );
     }
 }

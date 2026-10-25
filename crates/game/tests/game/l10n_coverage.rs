@@ -1,6 +1,7 @@
 //! Localisation coverage: every key the code can ask for exists in en-US, every typed value
 //! translates, and a broken `.ftl` fails Boot instead of panicking.
 
+use crate::support::usd_style;
 use std::collections::BTreeMap;
 
 use application::projections::{Lesson, MilestoneKind, MilestoneProgress, RampWarning};
@@ -20,7 +21,7 @@ use domain::session::{
 use domain::time::{Season, SimDuration, SimMonth};
 use domain::units::{Hertz, MegawattHours, Megawatts, Money, Price, Ratio};
 use game::l10n::keys::ALL_UI_KEYS;
-use game::l10n::{Localize, LocalizeWith, Localizer, Names, Toast};
+use game::l10n::{LessonMoneyText, Localize, LocalizeWith, Localizer, Names, Toast};
 use game::state::{AppState, BootError};
 use infrastructure::region::RonRegionCatalog;
 use tempfile::TempDir;
@@ -701,7 +702,11 @@ fn every_error_and_lesson_variant_translates_without_falling_back() {
     assert_translates(&l10n, &region_load_errors());
     assert_translates_with(&l10n, &command_errors());
     assert_translates(&l10n, &site_errors());
-    assert_translates(&l10n, &lessons());
+    assert_texts(
+        lessons()
+            .iter()
+            .map(|lesson| lesson.localize_money(&l10n, &usd_style())),
+    );
     assert_translates(
         &l10n,
         &[CommandLogError {
@@ -782,7 +787,7 @@ fn toast_worthy_events_have_text_and_the_rest_have_none() {
     let names = Names::empty(&l10n);
 
     for (event, worthy) in events() {
-        match (event.toast(&l10n, &names), worthy) {
+        match (event.toast(&l10n, &names, &usd_style()), worthy) {
             (Some(text), true) => {
                 assert!(!looks_like_a_bare_key(&text), "{event:?} fell back: {text}");
                 assert!(!text.contains('{'), "{event:?}: {text}");
@@ -805,8 +810,12 @@ fn rotating_outage_orders_read_differently_when_lifted() {
     let names = Names::empty(&l10n);
     let order = |share| DomainEvent::RotatingOutageOrdered { hour: 18, share };
 
-    let ordered = order(ratio(0.08)).toast(&l10n, &names).unwrap();
-    let lifted = order(Ratio::ZERO).toast(&l10n, &names).unwrap();
+    let ordered = order(ratio(0.08))
+        .toast(&l10n, &names, &usd_style())
+        .unwrap();
+    let lifted = order(Ratio::ZERO)
+        .toast(&l10n, &names, &usd_style())
+        .unwrap();
 
     assert!(
         ordered.contains("18:00") && ordered.contains("8.0%"),
@@ -844,7 +853,7 @@ fn strike_expiry_pluralises() {
     let names = Names::empty(&l10n);
     let expired = |strikes| {
         DomainEvent::StrikeExpired { strikes }
-            .toast(&l10n, &names)
+            .toast(&l10n, &names, &usd_style())
             .unwrap()
     };
 
@@ -862,7 +871,7 @@ fn lessons_use_their_parameters() {
         cost: Money::from_dollars(1_850_000),
         alternative: Price::per_mwh(45.0),
     }
-    .localize(&l10n);
+    .localize_money(&l10n, &usd_style());
 
     assert!(peaking.contains("12.3 GWh"), "{peaking}");
     assert!(peaking.contains("$1.85M"), "{peaking}");
@@ -941,7 +950,7 @@ fn a_city_toast_uses_the_localised_city_name() {
     let city = session.city_views().remove(0);
 
     let toast = DomainEvent::CityConnected { city: city.id }
-        .toast(&l10n, &names)
+        .toast(&l10n, &names, &usd_style())
         .unwrap();
 
     let name = l10n.text(&city.name_key);
@@ -994,7 +1003,7 @@ fn a_plant_toast_uses_the_plant_kind() {
         let kind = plant.kind.localize(&l10n);
         let expected = format!("{kind} {}", plant.id.0);
         let toast = DomainEvent::PlantTripped { plant: plant.id }
-            .toast(&l10n, &names)
+            .toast(&l10n, &names, &usd_style())
             .unwrap();
         assert!(toast.starts_with(&expected), "{toast}");
         let error = DomainError::PlantNotOnline { plant: plant.id }.localize_with(&l10n, &names);
@@ -1014,7 +1023,7 @@ fn a_commissioned_plant_is_named_by_its_event_kind_even_when_unknown() {
         plant: PlantId(9),
         kind: PlantKind::Coal,
     }
-    .toast(&l10n, &names)
+    .toast(&l10n, &names, &usd_style())
     .unwrap();
 
     assert!(toast.starts_with("Coal plant 9"), "{toast}");
@@ -1032,13 +1041,13 @@ fn an_unknown_id_falls_back_to_its_number_without_panicking() {
     let toast = DomainEvent::PlantTripped {
         plant: PlantId(999_999),
     }
-    .toast(&l10n, &names)
+    .toast(&l10n, &names, &usd_style())
     .unwrap();
     assert!(toast.contains("#999999"), "{toast}");
     let empty = Names::empty(&l10n);
     assert!(
         DomainEvent::CityConnected { city: CityId(3) }
-            .toast(&l10n, &empty)
+            .toast(&l10n, &empty, &usd_style())
             .unwrap()
             .contains("#3")
     );

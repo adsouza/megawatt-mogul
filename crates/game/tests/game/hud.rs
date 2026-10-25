@@ -1,5 +1,6 @@
 //! The HUD plugin's wiring (the panels themselves are tested as presenters).
 
+use crate::support::usd_style;
 use bevy::ecs::schedule::Schedules;
 use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
@@ -528,6 +529,7 @@ fn start_the_day(app: &App) -> UiAction {
         world.resource::<Localizer>(),
         world.resource::<UiState>(),
         world.resource::<CommitmentForm>(),
+        &usd_style(),
     )
     .expect("the game is planning")
     .begin

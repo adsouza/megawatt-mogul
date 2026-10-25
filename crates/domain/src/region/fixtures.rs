@@ -332,6 +332,7 @@ pub fn tiny_region_parts() -> RegionDefinitionParts {
     RegionDefinitionParts {
         id: RegionId::new("tiny"),
         name_key: "region-tiny".to_owned(),
+        currency: crate::units::Currency::Usd,
         geo: GeoBounds {
             west: -6.0,
             east: 6.0,

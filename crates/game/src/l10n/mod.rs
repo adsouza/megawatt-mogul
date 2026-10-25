@@ -5,6 +5,7 @@
 //! turns each typed value into text, with an exhaustive `match` per enum, so a new variant fails
 //! to compile until it has a translation.
 
+pub(crate) mod currency;
 pub mod format;
 pub mod keys;
 mod localize;
@@ -21,7 +22,7 @@ use fluent_bundle::concurrent::FluentBundle;
 use fluent_bundle::{FluentArgs, FluentError, FluentResource};
 use unic_langid::LanguageIdentifier;
 
-pub use self::localize::{Localize, LocalizeWith, Toast};
+pub use self::localize::{LessonMoneyText, Localize, LocalizeWith, Toast};
 pub use self::names::Names;
 use crate::paths::AssetRoot;
 use crate::state::{BootChecklistAppExt, BootError, finish_boot};
@@ -250,7 +251,7 @@ impl Plugin for LocalizationPlugin {
     }
 }
 
-fn load_localizer(world: &mut World) {
+pub(crate) fn load_localizer(world: &mut World) {
     let dir = world.resource::<AssetRoot>().0.join("locales").join(LOCALE);
     match Localizer::load(&dir) {
         Ok(localizer) => {

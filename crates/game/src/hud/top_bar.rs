@@ -2,6 +2,7 @@
 //! scores, the recording-stopped and failed-autosave warnings, the Milestones panel's switch,
 //! Save, and the way back to the menu, which asks first.
 
+use crate::l10n::format::MoneyStyle;
 use application::Game;
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
@@ -60,7 +61,12 @@ pub struct TopBarModel {
     pub last_saved: Option<String>,
 }
 
-pub fn top_bar_model(game: &Game, persistence: &Persistence, l10n: &Localizer) -> TopBarModel {
+pub fn top_bar_model(
+    game: &Game,
+    persistence: &Persistence,
+    l10n: &Localizer,
+    style: &MoneyStyle,
+) -> TopBarModel {
     let session = game.session();
     let grid = session.grid_snapshot();
     let company = session.company_view();
@@ -97,7 +103,7 @@ pub fn top_bar_model(game: &Game, persistence: &Persistence, l10n: &Localizer) -
         date: format::month_year(grid.month),
         season: session.region().season(grid.month).localize(l10n),
         phase: grid.phase.localize(l10n),
-        cash: stat("topbar-cash", format::money(company.cash)),
+        cash: stat("topbar-cash", format::money(company.cash, style)),
         reliability: stat("topbar-reliability", format::percent(company.reliability)),
         satisfaction: stat("topbar-satisfaction", format::score(company.satisfaction)),
         strikes: stat(
@@ -284,8 +290,9 @@ pub(super) fn top_bar_panel(
     session: Res<Session>,
     l10n: Res<Localizer>,
     mut sink: ActionSink,
+    style: Res<MoneyStyle>,
 ) -> Result {
-    let model = top_bar_model(&session.0, sink.persistence(), &l10n);
+    let model = top_bar_model(&session.0, sink.persistence(), &l10n, &style);
     let mut ui = area.root_ui(contexts.ctx_mut()?, "top_bar");
     let actions = egui::Panel::top("top_bar")
         .show(&mut ui, |ui| draw_top_bar(ui, &model))
@@ -297,6 +304,7 @@ pub(super) fn top_bar_panel(
 
 #[cfg(test)]
 mod tests {
+    use crate::hud::test_support::usd_style;
     use application::{CheckpointSummary, Command, InMemoryCommandLog};
 
     use super::*;
@@ -310,13 +318,13 @@ mod tests {
         let company = session.company_view();
         let month = session.grid_snapshot().month;
 
-        let model = top_bar_model(&game, &Persistence::default(), &l10n);
+        let model = top_bar_model(&game, &Persistence::default(), &l10n, &usd_style());
 
         assert_eq!(model.date, format::month_year(month));
         assert_eq!(model.season, month.season().localize(&l10n));
         assert_eq!(model.phase, l10n.text("phase-planning"));
         assert_eq!(model.cash.label, l10n.text("topbar-cash"));
-        assert_eq!(model.cash.value, format::money(company.cash));
+        assert_eq!(model.cash.value, format::money(company.cash, &usd_style()));
         assert!(model.cash.value.starts_with('$'), "{}", model.cash.value);
         assert_eq!(
             model.reliability.value,
@@ -418,14 +426,14 @@ mod tests {
         let l10n = shipped_l10n();
         let mut game = eastern_game(Box::new(FullDisk));
         assert_eq!(
-            top_bar_model(&game, &Persistence::default(), &l10n).recording_stopped,
+            top_bar_model(&game, &Persistence::default(), &l10n, &usd_style()).recording_stopped,
             None
         );
 
         // The game carries on after the log fails to record this command.
         game.execute(Command::BeginOperating).unwrap();
 
-        let model = top_bar_model(&game, &Persistence::default(), &l10n);
+        let model = top_bar_model(&game, &Persistence::default(), &l10n, &usd_style());
         let warning = model.recording_stopped.expect("the warning is shown");
         assert!(warning.starts_with("Recording stopped"), "{warning}");
         assert!(warning.contains("disk full"), "{warning}");
@@ -442,7 +450,7 @@ mod tests {
         // A save was confirmed earlier: without the failure the button would say "(saved)".
         persistence.last_summary = Some(failed.clone());
 
-        let model = top_bar_model(&game, &persistence, &l10n);
+        let model = top_bar_model(&game, &persistence, &l10n, &usd_style());
 
         // The warning and the label never contradict each other (Review Focus 2).
         assert_ne!(model.save.label, l10n.text("save-confirmed"));
@@ -466,7 +474,7 @@ mod tests {
         let mut game = eastern_game(Box::new(FullDisk));
         let failed = CheckpointSummary::of(game.session());
         assert_eq!(
-            top_bar_model(&game, &Persistence::default(), &l10n).warnings,
+            top_bar_model(&game, &Persistence::default(), &l10n, &usd_style()).warnings,
             None
         );
 
@@ -475,6 +483,7 @@ mod tests {
             &game,
             &Persistence::with_failed_autosave(failed.clone()),
             &l10n,
+            &usd_style(),
         );
         let message = l10n.args(
             "save-autosave-failed-detail",
@@ -488,7 +497,7 @@ mod tests {
             })
         );
         game.execute(Command::BeginOperating).unwrap();
-        let recording = top_bar_model(&game, &Persistence::default(), &l10n);
+        let recording = top_bar_model(&game, &Persistence::default(), &l10n, &usd_style());
         let reason = recording.recording_stopped.clone().unwrap();
         assert_eq!(
             recording.warnings,
@@ -503,6 +512,7 @@ mod tests {
             &game,
             &Persistence::with_failed_autosave(failed.clone()),
             &l10n,
+            &usd_style(),
         );
         let banner = both.warnings.expect("an indicator");
         assert_eq!(banner.text, "⚠ 2 warnings");
@@ -517,12 +527,14 @@ mod tests {
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
         let mut persistence = Persistence::default();
         assert_eq!(
-            top_bar_model(&game, &persistence, &l10n).save.label,
+            top_bar_model(&game, &persistence, &l10n, &usd_style())
+                .save
+                .label,
             l10n.text("save-title")
         );
         persistence.last_summary = Some(CheckpointSummary::of(game.session()));
 
-        let model = top_bar_model(&game, &persistence, &l10n);
+        let model = top_bar_model(&game, &persistence, &l10n, &usd_style());
 
         assert_eq!(model.autosave_failed, None);
         assert_eq!(model.save.label, l10n.text("save-confirmed"));
@@ -535,7 +547,7 @@ mod tests {
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
         let limit = game.session().region().regulator().strikes_to_revoke;
 
-        let model = top_bar_model(&game, &Persistence::default(), &l10n);
+        let model = top_bar_model(&game, &Persistence::default(), &l10n, &usd_style());
 
         assert_eq!(model.strikes.label, l10n.text("topbar-strikes"));
         assert_eq!(model.strikes.value, format!("0/{limit}"));
@@ -548,7 +560,7 @@ mod tests {
         let l10n = shipped_l10n();
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
 
-        let model = top_bar_model(&game, &Persistence::default(), &l10n);
+        let model = top_bar_model(&game, &Persistence::default(), &l10n, &usd_style());
 
         assert_eq!(model.menu.action, UiAction::Prompt(Some(Prompt::LeaveGame)));
     }
@@ -558,7 +570,7 @@ mod tests {
         let l10n = shipped_l10n();
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
 
-        let model = top_bar_model(&game, &Persistence::default(), &l10n);
+        let model = top_bar_model(&game, &Persistence::default(), &l10n, &usd_style());
 
         assert_eq!(model.milestones.label, "Milestones");
         assert_eq!(model.milestones.action, UiAction::ToggleMilestones);

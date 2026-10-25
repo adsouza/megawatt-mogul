@@ -1,6 +1,7 @@
 //! Smoke tests for the Review modal and the Milestones panel, drawn by the real egui pass on the
 //! real plugins: what shows, what fits at the smallest window, and what a click does.
 
+use crate::support::usd_style;
 use application::Command;
 use bevy::prelude::*;
 use bevy_egui::egui;
@@ -8,7 +9,7 @@ use game::hud::{
     GameOverView, MILESTONES_WIDTH, MilestonesOpen, REVIEW_MARGIN, Selection, ToastQueue, UiAction,
     review_model, toasts_model,
 };
-use game::l10n::Localize;
+use game::l10n::LessonMoneyText;
 use game::sim::{PlayerCommand, Session, SimSpeed};
 use game::state::PhaseState;
 use tempfile::TempDir;
@@ -44,6 +45,7 @@ fn review_colors_distinguish_headings_income_costs_and_supporting_text() {
         &app.world().resource::<Session>().0,
         GameOverView::Summary,
         &shipped_l10n(),
+        &usd_style(),
     )
     .unwrap();
     let output = pass.paint_with(&mut app, 1920.0, 1080.0, vec![]);
@@ -238,6 +240,7 @@ fn the_completed_supply_curve_can_be_opened_from_review() {
                     &app.world().resource::<Session>().0,
                     GameOverView::Summary,
                     &shipped_l10n(),
+                    &usd_style(),
                 )
                 .unwrap();
                 let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, height));
@@ -299,7 +302,12 @@ fn past_supply_curves_remain_selectable_in_planning_and_operating() {
     let logs = TempDir::new().unwrap();
     let mut app = review_app(&logs, WESTERN);
     let l10n = shipped_l10n();
-    let first = supply_history_model(&app.world().resource::<Session>().0, None, &l10n);
+    let first = supply_history_model(
+        &app.world().resource::<Session>().0,
+        None,
+        &l10n,
+        &usd_style(),
+    );
     assert_eq!(first.chart.as_ref().unwrap().x.len(), 1440);
     assert_eq!(first.chart.as_ref().unwrap().now, 24.0);
     let first_month = first.selected.unwrap();
@@ -345,6 +353,7 @@ fn past_supply_curves_remain_selectable_in_planning_and_operating() {
         &app.world().resource::<Session>().0,
         Some(first_month),
         &l10n,
+        &usd_style(),
     );
     assert_eq!(selected.chart, first.chart);
     dispatch_in(&mut app, vec![UiAction::Command(Command::BeginOperating)]);
@@ -377,7 +386,8 @@ fn past_supply_curves_remain_selectable_in_planning_and_operating() {
         supply_history_model(
             &app.world().resource::<Session>().0,
             Some(first_month),
-            &l10n
+            &l10n,
+            &usd_style()
         )
         .chart,
         first.chart
@@ -427,7 +437,7 @@ fn the_review_modal_draws_every_section_after_a_full_day() {
         assert!(has(&widgets, &names.plant(first.plant)), "{region}");
         assert!(has(&widgets, &game::l10n::format::month_year(report.month)));
         assert!(shows(&widgets, "Each played day stands for"), "{region}");
-        let lesson = game.projections().lessons.latest()[0].localize(&l10n);
+        let lesson = game.projections().lessons.latest()[0].localize_money(&l10n, &usd_style());
         assert!(has(&widgets, &lesson), "{region}: {lesson}");
         assert!(!find_button(&widgets, "Continue").disabled);
         assert!(!find_button(&widgets, "Menu").disabled);
@@ -478,6 +488,7 @@ fn at_the_smallest_window_the_review_fits_with_continue_in_view() {
             &app.world().resource::<Session>().0,
             GameOverView::Summary,
             &l10n,
+            &usd_style(),
         )
         .unwrap();
         let mut texts: Vec<&String> = vec![&model.days_note];

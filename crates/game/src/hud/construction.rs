@@ -11,6 +11,7 @@
 //! status, the total from the kind's `build_months` or the line's build time, and the in-service
 //! month from the current month by the month close's own rule ([`in_service_month`]).
 
+use crate::l10n::format::MoneyStyle;
 use application::Game;
 use bevy_egui::egui;
 use domain::generation::PlantStatus;
@@ -212,6 +213,7 @@ pub fn construction_card_model(
     game: &Game,
     l10n: &Localizer,
     plant: PlantId,
+    style: &MoneyStyle,
 ) -> Option<ConstructionCardModel> {
     let session = game.session();
     let view = session.plant_views().into_iter().find(|p| p.id == plant)?;
@@ -230,13 +232,14 @@ pub fn construction_card_model(
             super::plant_panel::grid_connection_stat(l10n, view.connected),
             Stat {
                 label: l10n.text("build-capital"),
-                value: format::money(session.region().spec(view.kind).capital_cost),
+                value: format::money(session.region().spec(view.kind).capital_cost, style),
             },
             Stat {
                 label: l10n.text("build-monthly-payment"),
                 value: super::build::monthly_payment(
                     session.region().spec(view.kind).capital_cost,
                     session.region().spec(view.kind).build_months,
+                    style,
                 ),
             },
         ],
@@ -314,6 +317,7 @@ pub fn draw_construction_card(ui: &mut egui::Ui, model: &ConstructionCardModel) 
 
 #[cfg(test)]
 mod tests {
+    use crate::hud::test_support::usd_style;
     use application::{Command, InMemoryCommandLog};
     use domain::events::DomainEvent;
     use domain::generation::PlantStatus;
@@ -591,7 +595,7 @@ mod tests {
         let total = spec.build_months;
         let due = in_service_month(DayPhase::Planning, session.clock().month(), total);
 
-        let card = construction_card_model(&game, &l10n, plant).expect("a card");
+        let card = construction_card_model(&game, &l10n, plant, &usd_style()).expect("a card");
 
         assert_eq!(card.plant, plant);
         assert_eq!(card.name, Names::new(&l10n, session).plant(plant));
@@ -610,13 +614,14 @@ mod tests {
                 },
                 Stat {
                     label: "Capital cost".to_owned(),
-                    value: format::money(spec.capital_cost),
+                    value: format::money(spec.capital_cost, &usd_style()),
                 },
                 Stat {
                     label: "Per month (approx.)".to_owned(),
                     value: super::super::build::monthly_payment(
                         spec.capital_cost,
-                        spec.build_months
+                        spec.build_months,
+                        &usd_style()
                     ),
                 }
             ]
@@ -635,8 +640,14 @@ mod tests {
             .find(|p| !matches!(p.status, PlantStatus::UnderConstruction { .. }))
             .unwrap()
             .id;
-        assert_eq!(construction_card_model(&game, &l10n, built), None);
-        assert_eq!(construction_card_model(&game, &l10n, PlantId(9_999)), None);
+        assert_eq!(
+            construction_card_model(&game, &l10n, built, &usd_style()),
+            None
+        );
+        assert_eq!(
+            construction_card_model(&game, &l10n, PlantId(9_999), &usd_style()),
+            None
+        );
         assert_eq!(l10n.problems(), vec![]);
     }
 

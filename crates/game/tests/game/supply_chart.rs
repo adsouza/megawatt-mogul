@@ -1,4 +1,5 @@
 //! The supply key must have its own space, with the daily curve unobstructed.
+use crate::support::usd_style;
 use application::Command;
 use bevy_egui::egui::{self, Id, Rect};
 use domain::region::PlantKind;
@@ -20,7 +21,7 @@ fn full_key() -> SupplyModel {
         .execute(Command::AdvanceTicks { n: 1_320 })
         .unwrap();
     let l10n = shipped_l10n();
-    let mut model = supply_model(&app.world().resource::<Session>().0, &l10n);
+    let mut model = supply_model(&app.world().resource::<Session>().0, &l10n, &usd_style());
     // Exercise the largest key even when a starter fleet does not use every kind today.
     model.stacks = PlantKind::ALL
         .into_iter()
@@ -141,6 +142,7 @@ fn operating_supply_labels_every_hour_beside_the_incident_column_and_battery_plo
         &app.world().resource::<Session>().0,
         &l10n,
         OperatingTab::Supply,
+        &usd_style(),
     )
     .unwrap();
     for has_storage in [false, true] {

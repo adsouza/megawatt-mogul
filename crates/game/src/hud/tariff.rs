@@ -2,6 +2,7 @@
 //! stand, and what the December rate review would do on today's state. The player does not set
 //! the tariff; the panel shows how the fleet they are planning will be judged.
 
+use crate::l10n::format::MoneyStyle;
 use application::Game;
 use bevy_egui::egui;
 use domain::time::SimMonth;
@@ -32,7 +33,7 @@ pub fn months_until_review(month: SimMonth) -> u32 {
     12 - u32::from(month.month())
 }
 
-pub fn tariff_model(game: &Game, l10n: &Localizer) -> TariffModel {
+pub fn tariff_model(game: &Game, l10n: &Localizer, style: &MoneyStyle) -> TariffModel {
     let session = game.session();
     let company = session.company_view();
     let regulator = session.region().regulator();
@@ -67,7 +68,7 @@ pub fn tariff_model(game: &Game, l10n: &Localizer) -> TariffModel {
     TariffModel {
         title: l10n.text("tariff-title"),
         current: vec![
-            stat("tariff-current", format::price(company.tariff)),
+            stat("tariff-current", format::price(company.tariff, style)),
             stat(
                 "tariff-allowed-return",
                 format::percent(company.allowed_return),
@@ -90,15 +91,15 @@ pub fn tariff_model(game: &Game, l10n: &Localizer) -> TariffModel {
             ),
             stat(
                 "tariff-held-capital",
-                format::money(estimate.capital_to_hold),
+                format::money(estimate.capital_to_hold, style),
             ),
             stat(
                 "tariff-capital-release",
-                format::money(estimate.capital_to_release),
+                format::money(estimate.capital_to_release, style),
             ),
             stat(
                 "tariff-capital-at-risk",
-                format::money(estimate.capital_at_risk),
+                format::money(estimate.capital_at_risk, style),
             ),
         ],
         review_tones: [
@@ -171,6 +172,7 @@ fn stat_grid(ui: &mut egui::Ui, id: &str, stats: &[Stat], tones: &[TextTone]) {
 
 #[cfg(test)]
 mod tests {
+    use crate::hud::test_support::usd_style;
     use application::InMemoryCommandLog;
 
     use super::*;
@@ -205,7 +207,7 @@ mod tests {
         let company = session.company_view();
         let estimate = session.rate_review_estimate();
 
-        let model = tariff_model(&game, &l10n);
+        let model = tariff_model(&game, &l10n, &usd_style());
 
         let rows = |stats: &[Stat]| -> Vec<(String, String)> {
             stats
@@ -216,7 +218,10 @@ mod tests {
         assert_eq!(
             rows(&model.current),
             [
-                ("Current tariff".to_owned(), format::price(company.tariff)),
+                (
+                    "Current tariff".to_owned(),
+                    format::price(company.tariff, &usd_style())
+                ),
                 (
                     "Allowed return".to_owned(),
                     format::percent(company.allowed_return)
@@ -237,15 +242,15 @@ mod tests {
                 ),
                 (
                     "Capital held out of the rate base".to_owned(),
-                    format::money(estimate.capital_to_hold)
+                    format::money(estimate.capital_to_hold, &usd_style())
                 ),
                 (
                     "Capital released back".to_owned(),
-                    format::money(estimate.capital_to_release)
+                    format::money(estimate.capital_to_release, &usd_style())
                 ),
                 (
                     "Capital at risk of write-off".to_owned(),
-                    format::money(estimate.capital_at_risk)
+                    format::money(estimate.capital_at_risk, &usd_style())
                 ),
             ]
         );

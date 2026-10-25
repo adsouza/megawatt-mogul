@@ -20,6 +20,7 @@
 //! been applied, since the day would begin without it. When the forecast is short (spec §16.4) it
 //! asks first: it opens the shortfall prompt instead of beginning the day.
 
+use crate::l10n::format::MoneyStyle;
 use application::{Command, Game};
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
@@ -83,11 +84,19 @@ pub fn planning_model(
     l10n: &Localizer,
     ui: &UiState,
     form: &CommitmentForm,
+    style: &MoneyStyle,
 ) -> Option<PlanningModel> {
     if game.session().phase() != DayPhase::Planning {
         return None;
     }
-    planning_model_for(game, l10n, ui, form, &PlanningForecast::of(game, l10n))
+    planning_model_for(
+        game,
+        l10n,
+        ui,
+        form,
+        &PlanningForecast::of(game, l10n),
+        style,
+    )
 }
 
 fn planning_model_for(
@@ -96,6 +105,7 @@ fn planning_model_for(
     ui: &UiState,
     form: &CommitmentForm,
     forecast: &PlanningForecast,
+    style: &MoneyStyle,
 ) -> Option<PlanningModel> {
     if game.session().phase() != DayPhase::Planning {
         return None;
@@ -135,12 +145,12 @@ fn planning_model_for(
                 chart.highlight_hour = ui.highlight_hour;
                 PlanningContent::Forecast(Box::new(chart))
             }
-            PlanningTab::Tariff => PlanningContent::Tariff(tariff_model(game, l10n)),
+            PlanningTab::Tariff => PlanningContent::Tariff(tariff_model(game, l10n, style)),
             PlanningTab::Construction => {
                 PlanningContent::Construction(construction_model(game, l10n))
             }
             PlanningTab::History => PlanningContent::History(
-                supply_history_model(game, ui.supply_month, l10n)
+                supply_history_model(game, ui.supply_month, l10n, style)
                     .with_layout(ui.supply_chart_layout),
             ),
         },
@@ -199,14 +209,16 @@ pub(super) fn planning_panel(
     mut area: ResMut<HudArea>,
     session: Res<Session>,
     forecast: Res<PlanningForecastCache>,
-    l10n: Res<Localizer>,
+    text: (Res<Localizer>, Res<MoneyStyle>),
     mut form: ResMut<CommitmentForm>,
     mut sink: ActionSink,
 ) -> Result {
+    let (l10n, style) = text;
     let Some(forecast) = forecast.get() else {
         return Ok(());
     };
-    let Some(model) = planning_model_for(&session.0, &l10n, sink.ui_state(), &form, forecast)
+    let Some(model) =
+        planning_model_for(&session.0, &l10n, sink.ui_state(), &form, forecast, &style)
     else {
         return Ok(());
     };
@@ -219,6 +231,7 @@ pub(super) fn planning_panel(
 
 #[cfg(test)]
 mod tests {
+    use crate::hud::test_support::usd_style;
     use application::InMemoryCommandLog;
 
     use domain::region::PlantKind;
@@ -232,8 +245,14 @@ mod tests {
     };
 
     fn build(game: &Game, ui: &UiState) -> PlanningModel {
-        planning_model(game, &shipped_l10n(), ui, &CommitmentForm::default())
-            .expect("the game is planning")
+        planning_model(
+            game,
+            &shipped_l10n(),
+            ui,
+            &CommitmentForm::default(),
+            &usd_style(),
+        )
+        .expect("the game is planning")
     }
 
     #[test]
@@ -417,7 +436,7 @@ mod tests {
                 tab,
                 ..UiState::default()
             };
-            let begin = planning_model(&game, &l10n, &ui, &CommitmentForm::default())
+            let begin = planning_model(&game, &l10n, &ui, &CommitmentForm::default(), &usd_style())
                 .expect("the game is planning")
                 .begin;
 
@@ -476,7 +495,8 @@ mod tests {
                 &game,
                 &shipped_l10n(),
                 &UiState::default(),
-                &CommitmentForm::default()
+                &CommitmentForm::default(),
+                &usd_style()
             ),
             None
         );

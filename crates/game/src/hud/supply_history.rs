@@ -1,4 +1,5 @@
 //! Archived played-day curves, rebuilt from the command journal on resume.
+use crate::l10n::format::MoneyStyle;
 use application::Game;
 use bevy_egui::egui;
 use domain::time::SimMonth;
@@ -29,6 +30,7 @@ pub fn supply_history_model(
     game: &Game,
     selected: Option<SimMonth>,
     l10n: &Localizer,
+    style: &MoneyStyle,
 ) -> SupplyHistoryModel {
     let days = game.projections().timeline.completed_days();
     let day = selected
@@ -44,8 +46,11 @@ pub fn supply_history_model(
         selected: day.map(|day| day.month),
         note: l10n.text("supply-history-note"),
         empty: l10n.text("supply-history-empty"),
-        chart: day
-            .map(|day| Box::new(super::supply_chart::completed_supply_model(game, day, l10n))),
+        chart: day.map(|day| {
+            Box::new(super::supply_chart::completed_supply_model(
+                game, day, l10n, style,
+            ))
+        }),
     }
 }
 

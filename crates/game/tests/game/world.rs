@@ -1,4 +1,5 @@
 //! Plan 3's CPU geometry contract: no window, renderer or simulation mutation.
+use crate::support::usd_style;
 use bevy::math::Vec3;
 use domain::{
     ids::CellCoord,
@@ -529,6 +530,7 @@ fn world_real_click_on_site_ground_opens_the_building_instead_of_plant_construct
                 &world.resource::<Session>().0,
                 world.resource::<Localizer>(),
                 expected,
+                &usd_style(),
             )
             .unwrap();
             assert!(matches!(model.plant, PlantSection::PickCell { .. }));

@@ -3,6 +3,7 @@
 //! click on the plant's faded marker shows its construction card, in Planning's inspector and in
 //! Operating's selected-object block, which keeps its height so the plant list doesn't move.
 
+use crate::support::usd_style;
 use application::Command;
 use bevy::prelude::*;
 use bevy_egui::egui;
@@ -127,8 +128,13 @@ fn model(app: &App) -> ConstructionModel {
 }
 
 fn card(app: &App, plant: PlantId) -> ConstructionCardModel {
-    construction_card_model(&app.world().resource::<Session>().0, &shipped_l10n(), plant)
-        .expect("the plant is under construction")
+    construction_card_model(
+        &app.world().resource::<Session>().0,
+        &shipped_l10n(),
+        plant,
+        &usd_style(),
+    )
+    .expect("the plant is under construction")
 }
 
 /// A label reading `text` inside `rect`.

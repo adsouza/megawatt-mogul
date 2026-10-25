@@ -46,6 +46,7 @@ pub fn map_region(mut file: RegionFile) -> Result<RegionDefinition> {
     let parts = RegionDefinitionParts {
         id: RegionId::new(&file.id),
         name_key: file.name_key.clone(),
+        currency: domain::units::Currency::Usd,
         geo: GeoBounds {
             west: file.bounds.west,
             east: file.bounds.east,

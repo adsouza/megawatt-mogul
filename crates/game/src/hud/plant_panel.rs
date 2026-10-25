@@ -9,6 +9,7 @@
 //! `SetDispatchTarget` when a drag ends or a keyboard step lands, never while it is being dragged,
 //! and it is clamped to the plant's minimum stable output and capacity first.
 
+use crate::l10n::format::MoneyStyle;
 use application::{Command, Game};
 use bevy::prelude::*;
 use bevy_egui::egui;
@@ -294,7 +295,12 @@ fn wind_stats(l10n: &Localizer, wind: &domain::session::WindView) -> Vec<PlantSt
     ]
 }
 
-pub fn plant_card_model(game: &Game, l10n: &Localizer, id: PlantId) -> Option<PlantCardModel> {
+pub fn plant_card_model(
+    game: &Game,
+    l10n: &Localizer,
+    id: PlantId,
+    style: &MoneyStyle,
+) -> Option<PlantCardModel> {
     let session = game.session();
     let plant = session.plant_views().into_iter().find(|p| p.id == id)?;
     if matches!(plant.status, PlantStatus::UnderConstruction { .. }) {
@@ -317,13 +323,23 @@ pub fn plant_card_model(game: &Game, l10n: &Localizer, id: PlantId) -> Option<Pl
             ),
             stat("plant-ramp", format::ramp_rate(spec.ramp)).with_color(colors.ramp),
             stat("plant-startup-time", format::duration(spec.startup)).with_color(colors.startup),
-            stat("plant-startup-cost", format::money(spec.startup_cost))
-                .with_color(colors.startup_cost),
+            stat(
+                "plant-startup-cost",
+                format::money(spec.startup_cost, style),
+            )
+            .with_color(colors.startup_cost),
         ]);
     }
     stats.extend([
-        stat("plant-marginal-cost", format::price(spec.marginal_cost)).with_color(colors.cost),
-        stat("plant-fixed-om", format::money(spec.fixed_om_per_month)),
+        stat(
+            "plant-marginal-cost",
+            format::price(spec.marginal_cost, style),
+        )
+        .with_color(colors.cost),
+        stat(
+            "plant-fixed-om",
+            format::money(spec.fixed_om_per_month, style),
+        ),
     ]);
     if let Some(water) = plant.hydro_day_budget {
         stats.push(stat("plant-hydro-available", format::megawatt_hours(water)));
@@ -340,7 +356,7 @@ pub fn plant_card_model(game: &Game, l10n: &Localizer, id: PlantId) -> Option<Pl
         stats = battery_stats(l10n, b, plant.connected, spec.capacity);
         stats.push(stat(
             "plant-fixed-om",
-            format::money(spec.fixed_om_per_month),
+            format::money(spec.fixed_om_per_month, style),
         ));
     }
     Some(PlantCardModel {
@@ -476,7 +492,12 @@ pub fn plant_list_model(game: &Game, l10n: &Localizer, selection: Selection) -> 
     }
 }
 
-pub fn plant_panel_model(game: &Game, l10n: &Localizer, selection: Selection) -> PlantPanelModel {
+pub fn plant_panel_model(
+    game: &Game,
+    l10n: &Localizer,
+    selection: Selection,
+    style: &MoneyStyle,
+) -> PlantPanelModel {
     let session = game.session();
     let plant = match selection {
         Selection::Plant(id) => session
@@ -520,7 +541,11 @@ pub fn plant_panel_model(game: &Game, l10n: &Localizer, selection: Selection) ->
             target.map_or_else(|| l10n.text("plant-target-none"), format::megawatts),
         ),
         stat("plant-ramp", format::ramp_rate(spec.ramp)).with_color(colors.ramp),
-        stat("plant-marginal-cost", format::price(spec.marginal_cost)).with_color(colors.cost),
+        stat(
+            "plant-marginal-cost",
+            format::price(spec.marginal_cost, style),
+        )
+        .with_color(colors.cost),
         // The played day's energy, as it happens. It is not priced: revenue is booked once, at
         // the month close, so the money figure covers closed months only.
         stat(
@@ -545,7 +570,7 @@ pub fn plant_panel_model(game: &Game, l10n: &Localizer, selection: Selection) ->
                     ),
                     (
                         "revenue",
-                        format::money(history.map_or(Money::ZERO, |h| h.revenue)).into(),
+                        format::money(history.map_or(Money::ZERO, |h| h.revenue), style).into(),
                     ),
                 ],
             ),
@@ -627,7 +652,7 @@ pub fn plant_panel_model(game: &Game, l10n: &Localizer, selection: Selection) ->
         },
         stats,
         specifications_heading: l10n.text("plant-specifications"),
-        specifications: plant_card_model(game, l10n, plant.id)
+        specifications: plant_card_model(game, l10n, plant.id, style)
             .map_or_else(Vec::new, |card| card.stats),
     }))
 }
@@ -913,6 +938,7 @@ fn battery_stats(
 
 #[cfg(test)]
 mod tests {
+    use crate::hud::test_support::usd_style;
     use application::InMemoryCommandLog;
     use domain::region::PlantKind;
 
@@ -994,7 +1020,7 @@ mod tests {
     }
 
     fn selected(game: &Game, plant: PlantId) -> SelectedPlant {
-        match plant_panel_model(game, &shipped_l10n(), Selection::Plant(plant)) {
+        match plant_panel_model(game, &shipped_l10n(), Selection::Plant(plant), &usd_style()) {
             PlantPanelModel::Plant(model) => *model,
             other => panic!("{other:?}"),
         }
@@ -1117,10 +1143,18 @@ mod tests {
                         .value,
                     expected
                 );
-                let stats =
-                    super::super::construction::construction_card_model(game, &l10n, plant.id)
-                        .map(|card| card.stats.into_iter().map(PlantStat::from).collect())
-                        .unwrap_or_else(|| plant_card_model(game, &l10n, plant.id).unwrap().stats);
+                let stats = super::super::construction::construction_card_model(
+                    game,
+                    &l10n,
+                    plant.id,
+                    &usd_style(),
+                )
+                .map(|card| card.stats.into_iter().map(PlantStat::from).collect())
+                .unwrap_or_else(|| {
+                    plant_card_model(game, &l10n, plant.id, &usd_style())
+                        .unwrap()
+                        .stats
+                });
                 assert_eq!(
                     stats
                         .iter()
@@ -1198,18 +1232,24 @@ mod tests {
         }
         for view in game.session().plant_views() {
             let spec = game.session().region().spec(view.kind);
-            let card = plant_card_model(&game, &l10n, view.id).unwrap();
+            let card = plant_card_model(&game, &l10n, view.id, &usd_style()).unwrap();
             assert_eq!(selected(&game, view.id).specifications, card.stats);
             let stat = |label| &card.stats.iter().find(|s| s.label == label).unwrap().value;
             assert_eq!(stat("Capacity"), &format::megawatts(spec.capacity));
             assert_eq!(
                 stat("Fixed O&M / month"),
-                &format::money(spec.fixed_om_per_month)
+                &format::money(spec.fixed_om_per_month, &usd_style())
             );
-            assert_eq!(stat("Marginal cost"), &format::price(spec.marginal_cost));
+            assert_eq!(
+                stat("Marginal cost"),
+                &format::price(spec.marginal_cost, &usd_style())
+            );
             if view.kind.is_dispatchable() {
                 assert_eq!(stat("Start-up time"), &format::duration(spec.startup));
-                assert_eq!(stat("Start-up cost"), &format::money(spec.startup_cost));
+                assert_eq!(
+                    stat("Start-up cost"),
+                    &format::money(spec.startup_cost, &usd_style())
+                );
                 assert_eq!(
                     stat("Minimum output"),
                     &format::megawatts(spec.min_output())
@@ -1232,7 +1272,10 @@ mod tests {
                 );
             }
         }
-        assert_eq!(plant_card_model(&game, &l10n, PlantId(u32::MAX)), None);
+        assert_eq!(
+            plant_card_model(&game, &l10n, PlantId(u32::MAX), &usd_style()),
+            None
+        );
         assert!(l10n.problems().is_empty());
     }
 
@@ -1401,7 +1444,10 @@ mod tests {
                 ),
                 ("Target", format::megawatts(target).as_str()),
                 ("Ramp rate", format::ramp_rate(spec.ramp).as_str()),
-                ("Marginal cost", format::price(spec.marginal_cost).as_str()),
+                (
+                    "Marginal cost",
+                    format::price(spec.marginal_cost, &usd_style()).as_str()
+                ),
                 ("Energy today", format::megawatt_hours(today).as_str()),
                 ("Closed months", "0.0 MWh, $0.00"),
             ]
@@ -1452,7 +1498,10 @@ mod tests {
                 "plant-closed-months-value",
                 &[
                     ("energy", format::megawatt_hours(history.energy).into()),
-                    ("revenue", format::money(history.revenue).into()),
+                    (
+                        "revenue",
+                        format::money(history.revenue, &usd_style()).into()
+                    ),
                 ],
             )
         );
@@ -1461,7 +1510,7 @@ mod tests {
             format!(
                 "{}, {}",
                 format::megawatt_hours(history.energy),
-                format::money(history.revenue)
+                format::money(history.revenue, &usd_style())
             )
         );
         assert_eq!(l10n.problems(), vec![]);
@@ -1540,7 +1589,7 @@ mod tests {
             Selection::Plant(PlantId(9_999)),
         ] {
             assert_eq!(
-                plant_panel_model(&game, &shipped_l10n(), selection),
+                plant_panel_model(&game, &shipped_l10n(), selection, &usd_style()),
                 PlantPanelModel::Empty {
                     hint: "Select a plant in the list or on the map.".to_owned()
                 },
