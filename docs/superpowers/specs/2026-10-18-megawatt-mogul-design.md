@@ -3374,13 +3374,14 @@ American interconnections, each one 60 Hz copper plate priced in US$. Every earl
 (A1–A13) belongs to Milestone 1.
 
 **Status:** **Plan 6 global foundations is implemented under rules 16** (§28.4–§28.8,
-§28.10–§28.11, and the North American schema-4 migration). Automated acceptance and the native
-120-frame launch smoke pass; the isolated full representative-day visual playtest in each North
-American region remains pending because the Mac is locked. **Plan 7** (five single-area regions,
-B, D, E, F, H in §28.3) and **Plan 8** (multi-area regions with HVDC links and SGCC, §28.9)
-remain pending. Each plan bumps `SIM_RULES_VERSION` once, from whatever the previous
-implemented amendment left. The source for boundaries, inclusions and exclusions is the research
-edition of 18 October 2026, copied to
+§28.10–§28.11, and the North American schema-4 migration). Automated acceptance, the native
+120-frame launch smoke, and the isolated full representative-day native playtests in both North
+American regions pass. The dated playtest observations and durable receipts are recorded in
+[`native-playtest.md`](../../.superpowers/sdd/2026-10-24-plan-6-global-foundations/native-playtest.md)
+and Plan 6 Task 10. **Plan 7** (five single-area regions, B, D, E, F, H in §28.3) and **Plan 8**
+(multi-area regions with HVDC links and SGCC, §28.9) remain pending. Each plan bumps
+`SIM_RULES_VERSION` once, from whatever the previous implemented amendment left. The source for
+boundaries, inclusions and exclusions is the research edition of 18 October 2026, copied to
 [docs/research/2026-10-18-world-power-grids-top-8.md](../../research/2026-10-18-world-power-grids-top-8.md).
 Its capacity figures set relative region scale only; no capacity label migrates into game data.
 

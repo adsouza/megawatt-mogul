@@ -826,11 +826,13 @@ Run: `cargo nextest run --workspace`, clippy, `cargo fmt --all --check`, and
 `cargo run -p game -- --exit-after-frames 120`
 Expected: everything is green.
 
-- [ ] **Step 5: Isolated playtest.** **Pending:** the Mac is locked, so the full-day visual
-  acceptance has not run. Automated acceptance and the 120-frame native launch smoke passed;
-  resume this check once the desktop is accessible. Run a full representative day in each North American region
-  in a scratch save directory. Check zone-labelled time, season, lighting arc, currency text and
-  picker selection. Don't open the window while the user may be playtesting.
+- [x] **Step 5: Isolated playtest (2026-10-25).** On the unlocked Mac, actual native CUA mouse
+  and keyboard playtests used seed 7 and isolated scratch saves/logs. Eastern completed January;
+  Western completed January and February, including night, morning, midday and dusk lighting
+  observations. Picker, zone-labelled ET/CT and PT/MST clocks, USD, Winter-to-Spring transition,
+  and Arizona's fixed MST across the March DST boundary were verified. Review and Continue worked;
+  the owned process exited 0 and final process inventory was clear. Durable observations and
+  log/save receipts: `.superpowers/sdd/2026-10-24-plan-6-global-foundations/native-playtest.md`.
 
 - [x] **Step 6: Commit and update the spec status**
 
