@@ -38,6 +38,10 @@ cargo mutants -p domain -p application         # mutation testing
 Property tests use `proptest`; set `PROPTEST_CASES` to run more cases locally. Note that nextest does
 not run doctests; run `cargo test --doc --workspace` for those.
 
+Test builds optimize the `domain` crate at level 2, including when downstream integration tests
+exercise it. Debug assertions and integer overflow checks remain enabled. Ordinary development
+builds keep their existing settings; this does not switch tests to the release profile.
+
 ### Behavioral contracts across features
 
 Line coverage, replay equality and pinned outcomes do not establish physical correctness. Keep
@@ -78,10 +82,23 @@ small physical oracles and explicit transition coverage over blessing changed sn
 
 The three year-one checks in `infrastructure::shipped_regions`—
 `hands_off_plan_survives_year_one`, `no_commands_survive_year_one` and
-`shipped_regions_never_order_outages_hands_off`—each take about 18 s (two regions × eight seeds ×
-twelve months). A12's three-review battery comparison is longer: sixteen independent region/seed
-tests each play two companies for 36 months. Nextest can schedule those cases in parallel; use a
-focused filter when changing a rule unrelated to that acceptance.
+`shipped_regions_never_order_outages_hands_off`—cover two regions × eight seeds × twelve months.
+A12's three-review battery comparison has sixteen independent region/seed tests, each playing two
+companies for 36 months. They use `GameSession` through the real core command handler and invariant
+checks, without application projections or recording, and disable added batteries immediately after
+commissioning to isolate idle-capital abuse. They retain the assets' firm capacity and capital and
+assert that storage flows stay zero. Two additional seed-7 cases, one per region, run the full
+application pipeline with enabled batteries and require actual storage operation. A state-byte
+comparison through construction, commissioning and the first battery operating month checks the
+streamlined driver against the application. Nextest can schedule the cases in parallel; use a
+focused filter when changing an unrelated rule.
+
+These scenarios check every added battery and its dedicated line at the first review, including
+the line's matching held fraction. Focused domain tests use a fully excess fixture to check exact
+book values for both asset kinds at holding and write-off. A fast property test independently
+calculates cent-exact partial holdings, eligible returns and subsequent depreciation across
+generated costs, lives, first-review lengths and one to four associated lines; it also checks that
+capital adjustments are non-cash and written-off value is not recovered again.
 
 ## The game crate
 

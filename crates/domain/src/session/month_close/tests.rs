@@ -4,7 +4,7 @@ use proptest::prelude::*;
 
 use super::super::*;
 use super::{LedgerTotals, is_zero_capital, share};
-use crate::company::{LedgerCategory, ReserveReviewInputs};
+use crate::company::{AssetProfile, LedgerCategory, ReserveReviewInputs};
 use crate::generation::PlantStatus;
 use crate::grid::GridMode;
 use crate::ids::CityId;
@@ -281,23 +281,68 @@ fn storage_need_session(batteries: usize, reserve_gap: bool) -> (GameSession, Ve
 #[test]
 fn excess_batteries_are_held_then_written_off() {
     let (mut s, batteries) = storage_need_session(2, false);
+    let nodes: Vec<_> = batteries
+        .iter()
+        .map(|id| s.power().plant(*id).unwrap().node())
+        .collect();
     for year in [2027, 2028] {
         while s.clock().month().month() != 12 || s.clock().month().year() != year {
             play_day(&mut s);
             s.finish_review().unwrap();
         }
         let events = play_day(&mut s);
-        for id in &batteries {
-            assert!(
-                events.iter().any(|e| match e {
-                    DomainEvent::CapitalHeld { asset, amount } if year == 2027 =>
-                        *asset == AssetRef::Plant(*id) && *amount > Money::ZERO,
-                    DomainEvent::CapitalDisallowed { asset, amount } if year == 2028 =>
-                        *asset == AssetRef::Plant(*id) && *amount > Money::ZERO,
-                    _ => false,
-                }),
-                "battery {id:?}, review {year}"
-            );
+        // A line can commission at this same close, before depreciation and the reserve review.
+        let expected: Vec<_> = s
+            .company()
+            .rate_base()
+            .assets()
+            .filter(|asset| {
+                !asset.legacy
+                    && match asset.asset {
+                        AssetRef::Plant(id) => batteries.contains(&id),
+                        AssetRef::Line(_) => matches!(asset.profile,
+                            AssetProfile::Line { from, to } if nodes.contains(&from) || nodes.contains(&to)),
+                    }
+            })
+            .map(|asset| {
+                let life = match asset.asset {
+                    AssetRef::Plant(_) => s.region().spec(PlantKind::Battery).book_life_months,
+                    AssetRef::Line(_) => s.region().lines().book_life_months,
+                };
+                let months = i64::from(s.clock().month().months_since(asset.added_on)) + 1;
+                let monthly = Money::from_cents(asset.original.cents() / i64::from(life));
+                (asset.asset, asset.original - monthly * months)
+            })
+            .collect();
+        assert_eq!(
+            expected.len(),
+            batteries.len() * 2,
+            "each battery has one line"
+        );
+        for (asset, remaining_book) in expected {
+            assert!(remaining_book > Money::ZERO);
+            let expected = if year == 2027 {
+                DomainEvent::CapitalHeld {
+                    asset,
+                    amount: remaining_book,
+                }
+            } else {
+                DomainEvent::CapitalDisallowed {
+                    asset,
+                    amount: remaining_book,
+                }
+            };
+            assert!(events.contains(&expected), "{asset:?}, review {year}");
+            let capital = s.company().rate_base().asset(asset).unwrap();
+            assert_eq!(capital.eligible(), Money::ZERO);
+            if year == 2027 {
+                assert_eq!(capital.held(), remaining_book);
+                assert_eq!(capital.written_off(), Money::ZERO);
+            } else {
+                assert_eq!(capital.held(), Money::ZERO);
+                assert_eq!(capital.remaining, Money::ZERO);
+                assert_eq!(capital.written_off(), remaining_book);
+            }
         }
         s.finish_review().unwrap();
     }

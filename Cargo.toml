@@ -49,8 +49,8 @@ all = { level = "warn", priority = -1 }
 
 # Dev builds (the test profile inherits these). Bevy is huge: unoptimised with full debug info it
 # makes debug binaries of ~300 MB and a target/ of 20 GB, and the game runs too slowly to play.
-# Our own crates keep the defaults: opt-level 0 and full debug info, for fast rebuilds and good
-# debugging of the code we change.
+# Our own crates keep the dev defaults: opt-level 0 and full debug info, for fast rebuilds and
+# debugging of the code we change. The simulation is optimized separately in test builds below.
 [profile.dev]
 debug = true # full debug info for workspace crates (the default, stated so it isn't "fixed")
 split-debuginfo = "packed" # bundle macOS debug info into dSYMs instead of retaining loose objects
@@ -59,6 +59,13 @@ split-debuginfo = "packed" # bundle macOS debug info into dSYMs instead of retai
 [profile.dev.package."*"]
 opt-level = 3 # dependencies run at release speed, so the game is playable in debug builds
 debug = false # no debug info for dependencies: much smaller binaries and target/
+
+# Multi-year simulation regressions spend their time in this crate. Optimize test builds while
+# retaining the same invariant assertions and checked integer arithmetic as ordinary debug tests.
+[profile.test.package.domain]
+opt-level = 2
+debug-assertions = true
+overflow-checks = true
 
 # Money is plain i64 arithmetic: an overflow must panic, never wrap, in every profile.
 [profile.release]

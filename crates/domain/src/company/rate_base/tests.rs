@@ -63,6 +63,151 @@ fn disallowed(asset: AssetRef, amount: i64) -> DomainEvent {
     }
 }
 
+/// An independent cents oracle: all monthly amounts are multiples of 100, so generated whole
+/// percentage holdings have exact cent values without borrowing the production share allocator.
+fn assert_storage_financial_lifecycle(
+    plant_monthly: i64,
+    line_monthly: &[i64],
+    life: u32,
+    first_months: u32,
+    excess_percent: i64,
+) -> Result<(), TestCaseError> {
+    use crate::region::{PlantKind, fixtures::tiny_region};
+    use crate::regulation::{RateReviewInputs, YearTally, compute_rate_review};
+
+    let region = tiny_region();
+    let params = region.regulator();
+    let firm = region
+        .spec(PlantKind::Battery)
+        .firm_capacity(&params.storage_accreditation);
+    prop_assert!(firm > Megawatts::ZERO);
+    let mut company = Company::new(cents(1_000_000), params.satisfaction_target);
+    let rb = company.rate_base_mut();
+    let legacy_cost = cents(600_000_000);
+    let legacy_monthly = cents(1_000_000);
+    rb.add_legacy(
+        plant(0),
+        legacy_cost,
+        600,
+        month(2027, 1),
+        plant_at(1000.0, 10),
+    );
+    let added = month(2028, 13 - first_months as u8);
+    let monthly = cents(plant_monthly * 100);
+    let cost = monthly * i64::from(life);
+    rb.add(plant(1), cost, life, added, plant_at(firm.value(), 1));
+    let mut assets = vec![(plant(1), cost, monthly)];
+    for (index, amount) in line_monthly.iter().enumerate() {
+        let asset = line(index as u32 + 2);
+        let monthly = cents(amount * 100);
+        let cost = monthly * i64::from(life + 120);
+        rb.add(
+            asset,
+            cost,
+            life + 120,
+            added,
+            line_between(1, index as u32 + 100),
+        );
+        assets.push((asset, cost, monthly));
+    }
+    let monthly_total = assets.iter().map(|(_, _, amount)| *amount).sum::<Money>() + legacy_monthly;
+    for _ in 0..first_months {
+        prop_assert_eq!(rb.depreciate_month(), monthly_total);
+    }
+
+    let excess = firm.value() * excess_percent as f64 / 100.0;
+    let events = rb.apply_reserve_review(&review(2028, excess));
+    prop_assert_eq!(events.len(), assets.len());
+    let mut eligible = legacy_cost - legacy_monthly * i64::from(first_months);
+    for (id, original, monthly) in &assets {
+        let remaining = *original - *monthly * i64::from(first_months);
+        let expected_held = cents(remaining.cents() * excess_percent / 100);
+        let asset = rb.asset(*id).unwrap();
+        prop_assert!(events.contains(&held(*id, expected_held.cents())));
+        prop_assert_eq!(asset.held(), expected_held);
+        prop_assert_eq!(asset.eligible(), remaining - expected_held);
+        prop_assert_eq!(asset.written_off(), Money::ZERO);
+        if matches!(id, AssetRef::Line(_)) {
+            prop_assert_eq!(asset.held_slice().unwrap().follows(), Some(PlantId(1)));
+        }
+        eligible += remaining - expected_held;
+    }
+    prop_assert_eq!(rb.eligible_total(), eligible);
+
+    let depreciation = monthly_total * i64::from(first_months);
+    let outcome = compute_rate_review(
+        &RateReviewInputs {
+            satisfaction: params.satisfaction_target,
+            tally: YearTally {
+                months: first_months as u8,
+                ..YearTally::default()
+            },
+            depreciation,
+            eligible_rate_base: rb.eligible_total(),
+            firm_capacity: firm,
+            projected_peak: Megawatts::ZERO,
+            previous_tariff: params.starting_tariff,
+            previous_cost_per_mwh: None,
+        },
+        params,
+    );
+    let expected_return = cents(
+        (params.base_return.value() * eligible.cents() as f64 * (f64::from(first_months) / 12.0))
+            .round_ties_even() as i64,
+    );
+    prop_assert_eq!(outcome.allowed_return, params.base_return);
+    prop_assert_eq!(outcome.revenue_requirement, depreciation + expected_return);
+
+    for _ in 0..12 {
+        prop_assert_eq!(rb.depreciate_month(), monthly_total);
+    }
+    let events = rb.apply_reserve_review(&review(2029, excess));
+    prop_assert_eq!(events.len(), assets.len());
+    for (id, original, monthly) in &assets {
+        let before = *original - *monthly * i64::from(first_months + 12);
+        let expected_write_off = cents(before.cents() * excess_percent / 100);
+        let asset = rb.asset(*id).unwrap();
+        prop_assert!(events.contains(&disallowed(*id, expected_write_off.cents())));
+        prop_assert_eq!(asset.written_off(), expected_write_off);
+        prop_assert_eq!(asset.remaining, before - expected_write_off);
+        prop_assert_eq!(asset.held(), Money::ZERO);
+        prop_assert_eq!(
+            asset.depreciated() + asset.written_off() + asset.remaining,
+            *original
+        );
+    }
+    prop_assert!(rb.apply_reserve_review(&review(2030, excess)).is_empty());
+    let future_depreciation = legacy_monthly
+        + assets
+            .iter()
+            .map(|(_, _, monthly)| cents(monthly.cents() * (100 - excess_percent) / 100))
+            .sum::<Money>();
+    prop_assert_eq!(rb.depreciate_month(), future_depreciation);
+    prop_assert_eq!(company.cash(), cents(1_000_000));
+    prop_assert!(company.ledger().is_empty());
+    Ok(())
+}
+
+proptest! {
+    #[test]
+    fn storage_and_every_associated_line_follow_the_exact_financial_lifecycle(
+        plant_monthly in 1i64..1_000_000,
+        line_monthly in prop::collection::vec(1i64..100_000, 1..5),
+        life in 36u32..600,
+        first_months in 1u32..=12,
+        excess_percent in 1i64..=100,
+    ) {
+        assert_storage_financial_lifecycle(
+            plant_monthly, &line_monthly, life, first_months, excess_percent,
+        )?;
+    }
+}
+
+#[test]
+fn fully_excess_storage_and_all_its_lines_lose_future_capital_recovery() {
+    assert_storage_financial_lifecycle(1_250, &[50, 123, 321], 180, 11, 100).unwrap();
+}
+
 #[test]
 fn depreciation_puts_remainder_in_final_month() {
     let mut rb = RateBase::default();

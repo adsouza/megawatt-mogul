@@ -3329,8 +3329,11 @@ design goal of building only what the reserve margin justifies.
   and band property still holds.
 - **The loophole is closed.** Scripted gold-plating, using batteries or lines beyond what
   reserves or connectivity need, does not raise cumulative cash over three review years compared
-  with the same game without it, on both regions, seeds 0–7. With the tariff above the reference,
-  the satisfaction term is negative.
+  with the same game without it, on both regions, seeds 0–7. This financial matrix disables added
+  batteries after commissioning, retaining their accredited capacity and capital while keeping
+  storage flows zero. An additional full-application scenario per region on seed 7 leaves storage
+  enabled and verifies actual storage operation alongside the same three-review cash comparison.
+  With the tariff above the reference, the satisfaction term is negative.
 - **Beginner checks still pass.** The no-command and hands-off year-one runs (§14.5, §16.5,
   §18.1) stay Active on both regions, seeds 0–7. The §18.3 early-expansion acceptance still passes.
   Fix a failure by retuning region data, never the rules.

@@ -751,13 +751,189 @@ proptest::proptest! {
 /// Separate cases let nextest parallelize independent seeds and name any failure.
 mod gold_plated_batteries_do_not_raise_cash_over_three_reviews {
     use super::*;
-    use domain::company::AssetRef;
+    use application::pipeline::{CoreHandler, InvariantCheckLayer};
+    use application::{CommandError, CommandHandler};
+    use domain::company::{AssetProfile, AssetRef};
     use domain::error::DomainError;
+    use domain::generation::BatteryTotals;
     use domain::ids::CellCoord;
+    use domain::session::GameSession;
 
-    fn compare(region_id: &str, seed: u64) {
-        let mut baseline = hands_off_game(&catalog(), region_id, seed);
-        let mut gold = hands_off_game(&catalog(), region_id, seed);
+    #[derive(Clone, Copy)]
+    enum Driver {
+        Domain,
+        Application,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum StorageUse {
+        Idle,
+        Enabled,
+    }
+
+    fn idle_commissioned_storage(company: &mut FinancialCompany, batteries: &[PlantId]) {
+        let enabled: Vec<_> = batteries
+            .iter()
+            .copied()
+            .filter(|id| {
+                let plant = company.session().power().plant(*id).unwrap();
+                !matches!(plant.status(), PlantStatus::UnderConstruction { .. })
+                    && plant.battery().unwrap().enabled()
+            })
+            .collect();
+        for plant in enabled {
+            company
+                .execute(Command::SetBatteryEnabled { plant, on: false })
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn idle_storage_preserves_regulatory_capacity_without_dispatch() {
+        for region in [EAST, WEST] {
+            let mut company = FinancialCompany::new(region, 7, Driver::Domain);
+            let batteries = add_excess_storage(&mut company);
+            for _ in 0..2 {
+                company.play_month();
+                company.execute(Command::FinishReview).unwrap();
+            }
+            let firm = company
+                .session()
+                .power()
+                .firm_capacity(&company.session().region().regulator().storage_accreditation);
+            let capital = company.session().company().rate_base().clone();
+            idle_commissioned_storage(&mut company, &batteries);
+            for id in &batteries {
+                assert!(
+                    !company
+                        .session()
+                        .power()
+                        .plant(*id)
+                        .unwrap()
+                        .battery()
+                        .unwrap()
+                        .enabled(),
+                    "{region}: financial regressions must keep commissioned storage idle"
+                );
+            }
+            assert_eq!(company.session().company().rate_base(), &capital);
+            assert_eq!(
+                company
+                    .session()
+                    .power()
+                    .firm_capacity(&company.session().region().regulator().storage_accreditation,),
+                firm
+            );
+            let events = company.play_month();
+            let report = events
+                .iter()
+                .find_map(|e| match e {
+                    DomainEvent::MonthClosed(report) => Some(report.as_ref()),
+                    _ => None,
+                })
+                .unwrap();
+            for id in batteries {
+                assert_eq!(report.storage.get(&id), Some(&BatteryTotals::default()));
+            }
+        }
+    }
+
+    /// The broad financial matrix needs the real commands and invariant checks, but not charts,
+    /// ramp warnings or a recording. The two application cases retain that wider integration.
+    enum FinancialCompany {
+        Domain(Box<GameSession>),
+        Application(Box<Game>),
+    }
+
+    impl FinancialCompany {
+        fn new(region: &str, seed: u64, driver: Driver) -> Self {
+            let mut company = match driver {
+                Driver::Domain => {
+                    let loaded = catalog().load(&RegionId::new(region)).unwrap();
+                    Self::Domain(Box::new(GameSession::new(
+                        loaded.definition,
+                        seed,
+                        GameSettings::default(),
+                    )))
+                }
+                Driver::Application => {
+                    Self::Application(Box::new(new_game(&catalog(), region, seed)))
+                }
+            };
+            let plants: Vec<_> = company
+                .session()
+                .plant_views()
+                .into_iter()
+                .filter(|p| {
+                    p.kind.is_dispatchable()
+                        && !matches!(p.status, PlantStatus::UnderConstruction { .. })
+                })
+                .map(|p| p.id)
+                .collect();
+            for plant in plants {
+                company
+                    .execute(Command::CommitPlant {
+                        plant,
+                        hours: [true; 24],
+                    })
+                    .unwrap();
+                company
+                    .execute(Command::SetAutoFollow { plant, on: true })
+                    .unwrap();
+            }
+            company
+        }
+
+        fn session(&self) -> &GameSession {
+            match self {
+                Self::Domain(session) => session,
+                Self::Application(game) => game.session(),
+            }
+        }
+
+        fn execute(&mut self, command: Command) -> Result<Vec<DomainEvent>, CommandError> {
+            match self {
+                Self::Domain(session) => {
+                    InvariantCheckLayer::new(CoreHandler).handle(session, &command)
+                }
+                Self::Application(game) => game.execute(command),
+            }
+        }
+
+        fn play_month(&mut self) -> Vec<DomainEvent> {
+            self.execute(Command::BeginOperating).unwrap();
+            self.execute(Command::AdvanceTicks { n: TICKS_PER_DAY })
+                .unwrap()
+        }
+    }
+
+    #[test]
+    fn financial_driver_matches_application_through_commissioning() {
+        for region in [EAST, WEST] {
+            let mut direct = FinancialCompany::new(region, 7, Driver::Domain);
+            let mut application = FinancialCompany::new(region, 7, Driver::Application);
+            let batteries = add_excess_storage(&mut direct);
+            assert_eq!(batteries, add_excess_storage(&mut application));
+            for month in 0..3 {
+                direct.play_month();
+                application.play_month();
+                assert!(
+                    direct.session().snapshot_state() == application.session().snapshot_state(),
+                    "{region} month {month}: projections must not change simulation state"
+                );
+                if month < 2 {
+                    direct.execute(Command::FinishReview).unwrap();
+                    application.execute(Command::FinishReview).unwrap();
+                }
+            }
+            assert!(batteries.iter().all(|id| !matches!(
+                direct.session().power().plant(*id).unwrap().status(),
+                PlantStatus::UnderConstruction { .. }
+            )));
+        }
+    }
+
+    fn add_excess_storage(gold: &mut FinancialCompany) -> Vec<PlantId> {
         let home = gold.session().anchor_node();
         let home_cell = gold.session().power().network().node(home).unwrap().cell;
         let other = gold.session().plant_views()[0].node;
@@ -814,19 +990,94 @@ mod gold_plated_batteries_do_not_raise_cash_over_three_reviews {
             ));
             batteries.push(plant);
         }
+        batteries
+    }
+
+    fn assert_every_storage_asset_is_held(
+        company: &FinancialCompany,
+        batteries: &[PlantId],
+        events: &[DomainEvent],
+    ) {
+        let rate_base = company.session().company().rate_base();
+        for id in batteries {
+            let plant = company.session().power().plant(*id).unwrap();
+            let capital = rate_base.asset(AssetRef::Plant(*id)).unwrap();
+            assert!(
+                capital.held() > domain::units::Money::ZERO,
+                "battery {id:?}"
+            );
+            assert!(events.contains(&DomainEvent::CapitalHeld {
+                asset: capital.asset,
+                amount: capital.held(),
+            }));
+            let fraction = capital.held_slice().unwrap().fraction();
+            let lines: Vec<_> = rate_base
+                .assets()
+                .filter(|asset| {
+                    !asset.legacy
+                        && matches!(asset.profile,
+                    AssetProfile::Line { from, to } if from == plant.node() || to == plant.node())
+                })
+                .collect();
+            assert_eq!(lines.len(), 1, "one dedicated line for battery {id:?}");
+            for line in lines {
+                assert!(line.held() > domain::units::Money::ZERO);
+                assert!(events.contains(&DomainEvent::CapitalHeld {
+                    asset: line.asset,
+                    amount: line.held(),
+                }));
+                let slice = line.held_slice().unwrap();
+                assert_eq!(slice.follows(), Some(*id));
+                assert_eq!(slice.fraction(), fraction);
+            }
+        }
+    }
+
+    fn compare(region_id: &str, seed: u64, driver: Driver, storage_use: StorageUse) {
+        let mut baseline = FinancialCompany::new(region_id, seed, driver);
+        let mut gold = FinancialCompany::new(region_id, seed, driver);
+        let batteries = add_excess_storage(&mut gold);
         let mut first_december_held = false;
         let mut first_commission = None;
+        let mut storage_operated = false;
         for month in 0..36 {
-            play_month(&mut baseline);
-            gold.execute(Command::BeginOperating).unwrap();
-            let events = gold
-                .execute(Command::AdvanceTicks { n: TICKS_PER_DAY })
+            if storage_use == StorageUse::Idle {
+                idle_commissioned_storage(&mut gold, &batteries);
+            }
+            baseline.play_month();
+            let events = gold.play_month();
+            let report = events
+                .iter()
+                .find_map(|e| match e {
+                    DomainEvent::MonthClosed(report) => Some(report.as_ref()),
+                    _ => None,
+                })
                 .unwrap();
+            let dispatched = report
+                .storage
+                .values()
+                .any(|totals| totals.input.value() > 0.0 || totals.output.value() > 0.0);
+            storage_operated |= dispatched;
+            if storage_use == StorageUse::Idle {
+                assert!(
+                    report
+                        .storage
+                        .values()
+                        .all(|totals| *totals == BatteryTotals::default()),
+                    "{region_id} seed {seed} month {month}: idle storage must have no flows"
+                );
+            }
             let now = gold.session().clock().month();
-            if events.iter().any(|e| matches!(e, DomainEvent::PlantCommissioned { plant, .. } if batteries.contains(plant))) { first_commission.get_or_insert(now); }
+            if events.iter().any(|e| {
+                matches!(e,
+                DomainEvent::PlantCommissioned { plant, .. } if batteries.contains(plant))
+            }) {
+                first_commission.get_or_insert(now);
+            }
             if now.month() == 12 && first_commission.is_some_and(|first| first.year() == now.year())
             {
-                first_december_held = events.iter().any(|e| matches!(e, DomainEvent::CapitalHeld { asset: AssetRef::Plant(plant), .. } if batteries.contains(plant)));
+                assert_every_storage_asset_is_held(&gold, &batteries, &events);
+                first_december_held = true;
             }
             if month < 35 {
                 baseline.execute(Command::FinishReview).unwrap();
@@ -836,6 +1087,11 @@ mod gold_plated_batteries_do_not_raise_cash_over_three_reviews {
         assert!(
             first_december_held,
             "{region_id} seed {seed}: first review must hold excess storage"
+        );
+        assert_eq!(
+            storage_operated,
+            storage_use == StorageUse::Enabled,
+            "{region_id} seed {seed}: exercise the intended {storage_use:?} storage mode"
         );
         assert!(
             gold.session().company_view().cash <= baseline.session().company_view().cash,
@@ -849,7 +1105,7 @@ mod gold_plated_batteries_do_not_raise_cash_over_three_reviews {
         ($name:ident, $region:expr, $seed:expr) => {
             #[test]
             fn $name() {
-                compare($region, $seed);
+                compare($region, $seed, Driver::Domain, StorageUse::Idle);
             }
         };
     }
@@ -869,4 +1125,14 @@ mod gold_plated_batteries_do_not_raise_cash_over_three_reviews {
     case!(western_5, WEST, 5);
     case!(western_6, WEST, 6);
     case!(western_7, WEST, 7);
+
+    #[test]
+    fn application_eastern_enabled() {
+        compare(EAST, 7, Driver::Application, StorageUse::Enabled);
+    }
+
+    #[test]
+    fn application_western_enabled() {
+        compare(WEST, 7, Driver::Application, StorageUse::Enabled);
+    }
 }
