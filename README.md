@@ -28,11 +28,15 @@ balancing area:
 
 ## Status
 
-Plans 1, 2, 2b and 3 are implemented: the simulation core, playable client, save/resume and
-interactive 3D tabletop. Pick a region and seed, plan the day's commitments, operate the grid at
+Plans 1, 2, 2b, 3, 4 and 5 are implemented: the simulation core, playable client, save/resume,
+interactive 3D tabletop, daily-cycle battery storage and onshore wind farms. Pick a region and
+seed, plan the day's commitments, operate the grid at
 up to 8× and read the month's review. The diorama shows terrain, resource layers, cities, plants
 and transmission construction. The [playtest checklist](docs/superpowers/plans/2026-10-19-plan-2-playtest.md)
 covers the original shell; [Plan 3](docs/superpowers/plans/2026-10-20-plan-3-diorama.md) records the 3D checks.
+[Plan 4](docs/superpowers/plans/2026-10-23-plan-4-battery-storage.md) records battery storage;
+[Plan 5](docs/superpowers/plans/2026-10-23-plan-5-wind-farms.md) adds wind farms and extends battery
+charging to 00:00–18:00.
 
 ## Run
 
