@@ -38,6 +38,10 @@ cargo mutants -p domain -p application         # mutation testing
 Property tests use `proptest`; set `PROPTEST_CASES` to run more cases locally. Note that nextest does
 not run doctests; run `cargo test --doc --workspace` for those.
 
+Test builds optimize the `domain` crate at level 2, including when downstream integration tests
+exercise it. Debug assertions and integer overflow checks remain enabled. Ordinary development
+builds keep their existing settings; this does not switch tests to the release profile.
+
 ### Behavioral contracts across features
 
 Line coverage, replay equality and pinned outcomes do not establish physical correctness. Keep
