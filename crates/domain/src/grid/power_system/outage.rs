@@ -29,16 +29,12 @@ const SNAP: f64 = 1e-9;
 /// The last minute of an hour, relative to its start.
 const LAST_MINUTE: u32 = TICKS_PER_HOUR - 1;
 
-/// The minutes at which an hour is judged: demand is interpolated linearly
-/// within an hour, so its extremes are at the two ends.
-const HOUR_ENDS: [u32; 2] = [0, LAST_MINUTE];
-
 struct PlannedGeneration {
     total: Megawatts,
     by_kind: BTreeMap<PlantKind, Megawatts>,
 }
 
-/// One end of an hour (minute 0 or 59), judged against a fleet rule: the
+/// One hourly assessment point (an endpoint or local-hour bend), judged against a fleet rule: the
 /// evaluation shared by operating-time sizing (spec §15.3) and the two
 /// Planning-time warnings (spec §14.3 and §15.5).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -70,17 +66,22 @@ impl HourEnd {
         Self::worse_by(ends, HourEnd::shortfall)
     }
 
-    /// The end of an hour that scores higher on `badness`, minute 0 on a tie:
-    /// one tie rule for every warning that judges an hour by its worse end.
+    /// The sample scoring highest on `badness`, keeping the first on ties.
+    /// Callers supply samples in minute order, with at least the two endpoints.
     pub(crate) fn worse_by(
-        [first, last]: [HourEnd; 2],
+        samples: impl IntoIterator<Item = HourEnd>,
         badness: impl Fn(HourEnd) -> Megawatts,
     ) -> HourEnd {
-        if badness(last) > badness(first) {
-            last
-        } else {
-            first
-        }
+        samples
+            .into_iter()
+            .reduce(|first, next| {
+                if badness(next) > badness(first) {
+                    next
+                } else {
+                    first
+                }
+            })
+            .expect("an hour has assessment samples")
     }
 
     /// The shortfall as a share of demand, floored at 0; 0 with no demand.
@@ -93,7 +94,7 @@ impl HourEnd {
 }
 
 /// What committed dispatchable `plant` could deliver in `hour` by the
-/// Planning check's rules (spec §15.5), the same at both ends of the hour: on
+/// Planning check's rules (spec §15.5), the same at every sample in the hour: on
 /// AGC its availability, which for a dispatchable non-hydro plant is its
 /// capacity at every minute, and for scheduled hydro its allocation for
 /// `hour` in `preview` (the pure hour-0 plan with the coming day's budgets),
@@ -149,8 +150,11 @@ impl PowerSystem {
         region: &RegionDefinition,
         month: SimMonth,
     ) -> SupplyForecast {
+        let hour_sample_minutes =
+            region.hour_sample_minutes(self.connected_cities().map(|city| city.id()), month);
         if self.has_batteries() || self.has_wind() {
             return SupplyForecast {
+                hour_sample_minutes,
                 has_storage: self.has_batteries(),
                 assess_every_minute: true,
                 minutes: if self.has_batteries() {
@@ -181,6 +185,7 @@ impl PowerSystem {
         SupplyForecast {
             has_storage: false,
             assess_every_minute: false,
+            hour_sample_minutes,
             minutes,
         }
     }
@@ -207,8 +212,8 @@ impl PowerSystem {
         self.outage = outage;
     }
 
-    /// Both ends of `hour` in `month` (see [`HourEnd`]): at minute 0 and
-    /// minute 59, the connected demand forecast and `fleet(minute)` plus
+    /// Endpoints and connected cities' local-hour bends in `hour` of `month`
+    /// (see [`HourEnd`]): the connected demand forecast and `fleet(minute)` plus
     /// expected solar, all taken at that minute. Operating sizing and the
     /// Planning check differ only in `fleet`, the rule for what the
     /// dispatchable plants deliver.
@@ -218,27 +223,31 @@ impl PowerSystem {
         month: SimMonth,
         hour: u8,
         fleet: impl Fn(u32) -> Megawatts,
-    ) -> [HourEnd; 2] {
+    ) -> Vec<HourEnd> {
         let start = u32::from(hour) * TICKS_PER_HOUR;
-        HOUR_ENDS.map(|minute| {
-            let tick = start + minute;
-            let solar = self.expected_variable(region, month, tick);
-            HourEnd {
-                demand: self.connected_demand_forecast(region, month, tick),
-                deliverable: fleet(minute) + solar,
-                solar,
-            }
-        })
+        region
+            .hour_sample_minutes(self.connected_cities().map(|city| city.id()), month)
+            .into_iter()
+            .map(|minute| {
+                let tick = start + minute;
+                let solar = self.expected_variable(region, month, tick);
+                HourEnd {
+                    demand: self.connected_demand_forecast(region, month, tick),
+                    deliverable: fleet(minute) + solar,
+                    solar,
+                }
+            })
+            .collect()
     }
 
     /// Sizes the rotating outage for `hour`, from the state at its first
-    /// instant (spec §15.3). Demand within an hour is interpolated linearly,
-    /// so its worst minute is one of its ends: at minute 0 and minute 59 the
+    /// instant (spec §15.3). Demand is piecewise linear between local-hour
+    /// bends: at each bend and the system hour's endpoints the
     /// shortfall share is `(demand − deliverable) / demand`, floored at 0,
     /// with demand the connected forecast at that minute and deliverable as
     /// in [`PowerSystem::deliverable`] (see [`PowerSystem::hour_ends`]). The
-    /// result is the larger share, exactly, clamped to `0..=1`: 0 when the
-    /// fleet covers both ends.
+    /// result is the largest assessed share, exactly, clamped to `0..=1`: 0
+    /// when the fleet covers every assessed point.
     ///
     /// *Builder's call (controller ruling R3): no rounding up to `shed_step`.*
     /// A shortage costs the load the fleet could not serve, not a whole
@@ -269,7 +278,8 @@ impl PowerSystem {
         ratio(ends.into_iter().map(HourEnd::share).fold(0.0, f64::max))
     }
 
-    /// Both ends of every hour of the coming day in `month`, judged by the
+    /// Endpoints and local-hour bends of every hour of the coming day in
+    /// `month`, judged by the
     /// Planning check's upper bound (spec §15.5): each connected,
     /// commissioned, dispatchable plant committed in the hour by its pattern
     /// (not today's suppression override) counts as in
@@ -283,7 +293,7 @@ impl PowerSystem {
         &self,
         region: &RegionDefinition,
         month: SimMonth,
-    ) -> [[HourEnd; 2]; 24] {
+    ) -> [Vec<HourEnd>; 24] {
         let forecast = self.supply_forecast(region, month);
         let end = |point: &SupplyForecastPoint| HourEnd {
             demand: point.demand,
@@ -299,9 +309,13 @@ impl PowerSystem {
                     .map(end)
                     .reduce(|a, b| if b.shortfall() > a.shortfall() { b } else { a })
                     .expect("sixty minutes");
-                [worst; 2]
+                vec![worst; 2]
             } else {
-                [end(&minutes[0]), end(&minutes[LAST_MINUTE as usize])]
+                forecast
+                    .hour_sample_minutes
+                    .iter()
+                    .map(|&minute| end(&minutes[minute as usize]))
+                    .collect()
             }
         })
     }
@@ -466,16 +480,17 @@ impl PowerSystem {
         }
     }
 
-    /// Both ends of every hour of the coming day in `month`, judged by the
+    /// Endpoints and local-hour bends of every hour of the coming day in
+    /// `month`, judged by the
     /// minimum-generation rule (spec §14.3), each with the hour's committed
-    /// minimum: the fleet is [`PowerSystem::hourly_committed_minimum`] at both
-    /// ends, so an end's [`HourEnd::net_load`] is the load the committed
+    /// minimum: the fleet is [`PowerSystem::hourly_committed_minimum`] at each
+    /// sample, so its [`HourEnd::net_load`] is the load the committed
     /// minimums must fit under. Pure.
     pub(crate) fn committed_minimum_hour_ends(
         &self,
         region: &RegionDefinition,
         month: SimMonth,
-    ) -> [(Megawatts, [HourEnd; 2]); 24] {
+    ) -> [(Megawatts, Vec<HourEnd>); 24] {
         let committed = self.hourly_committed_minimum();
         std::array::from_fn(|h| {
             let fleet = committed[h];

@@ -8,7 +8,7 @@ use crate::region::{BatterySpec, PlantKind, RegionDefinition};
 use crate::time::{SimMonth, TICKS_PER_DAY, TICKS_PER_HOUR};
 use crate::units::{MegawattHours, Megawatts, Ratio};
 use std::cell::OnceCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlantBatteryScheduleView {
@@ -43,21 +43,24 @@ impl SupplyForecastPoint {
 /// Shared supply source for Planning charts and shortfall checks.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SupplyForecast {
-    /// Storage requires every minute to be assessed; other fleets use hour endpoints.
+    /// Whether the forecast models storage flows.
     pub has_storage: bool,
     pub assess_every_minute: bool,
+    /// Ordered hourly assessment minutes for fleets without storage or wind.
+    pub hour_sample_minutes: BTreeSet<u32>,
     pub minutes: Vec<SupplyForecastPoint>,
 }
 
 impl SupplyForecast {
-    /// Points assessed by the warning: all minutes with storage, hour endpoints otherwise.
+    /// Points assessed by the warning: all minutes with storage or wind,
+    /// otherwise the hour endpoints and connected cities' local-hour bends.
     pub fn assessed_minutes(&self) -> impl Iterator<Item = (u32, &SupplyForecastPoint)> {
         self.minutes
             .iter()
             .enumerate()
             .filter(|(tick, _)| {
                 let minute = tick % TICKS_PER_HOUR as usize;
-                self.assess_every_minute || minute == 0 || minute == TICKS_PER_HOUR as usize - 1
+                self.assess_every_minute || self.hour_sample_minutes.contains(&(minute as u32))
             })
             .map(|(tick, point)| (tick as u32, point))
     }

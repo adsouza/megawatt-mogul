@@ -261,8 +261,9 @@ impl GameSession {
 
     /// The coming day's expected supply, using the shortfall check's rules for
     /// connectivity, commissioning, commitments, manual targets, hydro and storage.
-    /// With storage, every minute is assessed; otherwise the warning assesses
-    /// minute 0 and 59 of each hour. Pure: no live water, energy or RNG changes.
+    /// With storage or wind, every minute is assessed; otherwise the warning
+    /// assesses hour endpoints and connected cities' local-hour bends.
+    /// Pure: no live water, energy or RNG changes.
     pub fn supply_forecast(&self) -> crate::grid::SupplyForecast {
         self.power.supply_forecast(&self.region, self.clock.month())
     }
@@ -541,11 +542,11 @@ impl GameSession {
     /// exceeds its forecast net load by the most, earliest on ties; `None`
     /// when every hour's minimums fit under its net load.
     ///
-    /// Each hour is judged at both ends, minute 0 and minute 59, where its
-    /// interpolated load has its extremes, by the evaluator the capacity
-    /// check and operating-time sizing use ([`HourEnd`]); the hour's excess
-    /// is that of its worse end, the one with the lower net load, minute 0 on
-    /// a tie, and the warning's `net_load` is that end's. Reads the plants'
+    /// Each hour is judged at its endpoints and connected cities' local-hour
+    /// bends by the evaluator the capacity check and operating-time sizing use
+    /// ([`HourEnd`]); the hour's excess is that of the sample with the lower
+    /// net load, earliest on ties, and the warning's `net_load` is that sample's.
+    /// Reads the plants'
     /// commitment patterns (not the per-day suppression override), so it is
     /// meaningful while planning. Pure: no randomness, no state change.
     pub fn minimum_generation_check(&self) -> Option<MinimumGenerationWarning> {
@@ -575,10 +576,10 @@ impl GameSession {
     /// committed fleet could deliver by the most, earliest on ties; `None`
     /// when every hour is covered.
     ///
-    /// Each hour is judged at both ends, minute 0 and minute 59, where its
-    /// interpolated demand has its extremes, by the evaluator operating-time
-    /// sizing uses (spec §15.3); the hour's shortfall is that of its worse
-    /// end, minute 0 on a tie. An upper bound: it reads the plants'
+    /// Each hour is judged at its endpoints and connected cities' local-hour
+    /// bends, or every minute for fleets with storage or wind, matching
+    /// operating-time sizing (spec §15.3). The worst sample determines the
+    /// hour's shortfall, earliest on ties. An upper bound: it reads the plants'
     /// commitment patterns (not the per-day suppression override), ignores
     /// start-up and ramp limits, and counts scheduled hydro from a pure
     /// preview of the coming day's plan, since the live plan is empty during

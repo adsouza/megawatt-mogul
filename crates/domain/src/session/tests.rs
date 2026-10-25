@@ -1937,3 +1937,75 @@ fn plant_view_previews_the_days_hydro_budget_while_planning() {
         assert_eq!(other.hydro_day_budget, None, "{:?}", other.kind);
     }
 }
+
+// Removing the connected city's local-hour bend must hide these interior extrema.
+fn fractional_zone_session(peak: f64) -> GameSession {
+    let mut s = session_with(|p| {
+        p.start.connected_cities = vec![CityId(1)];
+        p.cities[0].base_load = Megawatts::new(100.0);
+        p.clock.zones.push(crate::region::TimeZone {
+            id: crate::region::ZoneId(1),
+            name_key: None,
+            standard_offset_minutes: 330,
+            dst_months: [false; 12],
+        });
+        p.city_locales.get_mut(&CityId(1)).unwrap().zone = crate::region::ZoneId(1);
+        // A disconnected city must not contribute its :15 bend.
+        p.clock.zones.push(crate::region::TimeZone {
+            id: crate::region::ZoneId(2),
+            name_key: None,
+            standard_offset_minutes: 345,
+            dst_months: [false; 12],
+        });
+        p.city_locales.get_mut(&CityId(2)).unwrap().zone = crate::region::ZoneId(2);
+        p.climates[0].shapes = vec![[1.0; 24]];
+        p.climates[0].shapes[0][6] = peak;
+        p.climates[0].month_shapes = [0; 12];
+        p.climates[0].monthly = [1.0; 12];
+    });
+    s.empty_start();
+    s
+}
+
+#[test]
+fn a_peak_at_a_half_hour_bend_is_found() {
+    let mut s = fractional_zone_session(2.0);
+    let peaker = plant_of(&s, PlantKind::Peaker);
+    commit_manual(&mut s, peaker, 0..=23, 199.0);
+    let before = s.state_hash();
+    let warning = s
+        .capacity_shortfall_check()
+        .expect("200 MW peak at system 00:30");
+    assert_eq!(warning.hour, 0);
+    assert_eq!(warning.demand, Megawatts::new(200.0));
+    assert_eq!(warning.deliverable, Megawatts::new(199.0));
+    assert_eq!(warning.shortfall, Megawatts::new(1.0));
+    assert_eq!(s.state_hash(), before);
+}
+
+#[test]
+fn a_trough_at_a_half_hour_bend_is_found() {
+    let mut s = fractional_zone_session(0.1);
+    let peaker = plant_of(&s, PlantKind::Peaker);
+    commit_manual(&mut s, peaker, 0..=23, 40.0);
+    let warning = s
+        .minimum_generation_check()
+        .expect("40 MW exceeds the 10 MW trough");
+    assert_eq!(warning.hour, 0);
+    assert_eq!(warning.net_load, Megawatts::new(10.0));
+    assert_eq!(warning.excess, Megawatts::new(30.0));
+}
+
+#[test]
+fn hourly_samples_include_only_connected_cities_half_hour_bends() {
+    let s = fractional_zone_session(2.0);
+    let forecast = s.supply_forecast();
+    let minutes: Vec<_> = forecast
+        .assessed_minutes()
+        .take(4)
+        .map(|(t, _)| t)
+        .collect();
+    assert_eq!(minutes, vec![0, 30, 59, 60]);
+    assert_eq!(forecast.assessed_minutes().count(), 72);
+    assert_eq!(session().supply_forecast().assessed_minutes().count(), 48);
+}

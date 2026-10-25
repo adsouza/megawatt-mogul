@@ -92,6 +92,20 @@ impl RegionDefinition {
         ((tick % 1440) as i32 + delta).rem_euclid(1440) as u32
     }
 
+    /// Minutes at which to assess each system hour: its endpoints and each
+    /// supplied city's local-hour boundary. Callers supply only connected cities.
+    pub fn hour_sample_minutes(
+        &self,
+        cities: impl IntoIterator<Item = CityId>,
+        month: SimMonth,
+    ) -> BTreeSet<u32> {
+        let mut minutes = BTreeSet::from([0, 59]);
+        for city in cities {
+            minutes.insert((60 - self.local_minute(city, month, 0) % 60) % 60);
+        }
+        minutes
+    }
+
     fn zone(&self, id: ZoneId) -> &TimeZone {
         self.clock
             .zones
@@ -239,6 +253,38 @@ mod tests {
     }
 
     #[test]
+    fn ist_cities_add_the_half_hour_bend() {
+        let mut p = parts(vec![zone(0, 0, [false; 12]), zone(1, 330, [false; 12])]);
+        p.city_locales.get_mut(&CityId(1)).unwrap().zone = ZoneId(1);
+        let r = RegionDefinition::try_from(p).unwrap();
+        assert_eq!(
+            r.hour_sample_minutes([CityId(1)], month(1)),
+            BTreeSet::from([0, 30, 59])
+        );
+        assert_eq!(
+            r.hour_sample_minutes([CityId(2)], month(1)),
+            BTreeSet::from([0, 59])
+        );
+        assert_eq!(r.hour_sample_minutes([], month(1)), BTreeSet::from([0, 59]));
+    }
+
+    #[test]
+    fn quarter_hour_bends_use_offsets_relative_to_the_system_zone() {
+        let mut p = parts(vec![
+            zone(0, 345, [true; 12]),
+            zone(1, 330, [false; 12]),
+            zone(2, 0, [false; 12]),
+        ]);
+        p.city_locales.get_mut(&CityId(1)).unwrap().zone = ZoneId(1);
+        p.city_locales.get_mut(&CityId(2)).unwrap().zone = ZoneId(2);
+        let r = RegionDefinition::try_from(p).unwrap();
+        assert_eq!(
+            r.hour_sample_minutes([CityId(1), CityId(2), CityId(1)], month(7)),
+            BTreeSet::from([0, 15, 45, 59])
+        );
+    }
+
+    #[test]
     fn cell_centres_span_the_bounds() {
         let mut p = fixtures::tiny_region_parts();
         p.geo = GeoBounds {
@@ -351,6 +397,22 @@ mod tests {
     }
 
     proptest! {
+        #[test]
+        fn hourly_samples_cover_every_local_hour_boundary(
+            system_quarters in -48i32..=56, city_quarters in -48i32..=56,
+            system_dst in any::<[bool; 12]>(), city_dst in any::<[bool; 12]>(), m in 1u8..=12,
+        ) {
+            let mut p = parts(vec![zone(0, system_quarters * 15, system_dst), zone(1, city_quarters * 15, city_dst)]);
+            p.city_locales.get_mut(&CityId(1)).unwrap().zone = ZoneId(1);
+            let r = RegionDefinition::try_from(p).unwrap();
+            let samples = r.hour_sample_minutes([CityId(1)], month(m));
+            prop_assert!(samples.contains(&0) && samples.contains(&59));
+            for minute in 1..59 {
+                prop_assert_eq!(samples.contains(&minute), r.local_minute(CityId(1), month(m), minute) % 60 == 0);
+            }
+            prop_assert_eq!(r.hour_sample_minutes([CityId(2)], month(m)), BTreeSet::from([0, 59]));
+        }
+
         #[test]
         fn local_minute_is_normalized_with_the_monthly_offset_difference(
             system_quarters in -48i32..=56, city_quarters in -48i32..=56,

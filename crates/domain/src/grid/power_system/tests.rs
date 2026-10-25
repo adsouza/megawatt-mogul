@@ -5188,3 +5188,27 @@ fn astronomical_solar_actual_forecast_and_curtailment_use_each_plant_cell() {
     assert!((split[&PlantKind::Solar].value() - actual * 0.25).abs() < 1e-9);
     assert!((split[&PlantKind::Wind].value() - wind * 0.25).abs() < 1e-9);
 }
+
+#[test]
+fn outage_sizing_finds_a_peak_at_a_half_hour_bend() {
+    let region = region_with(|p| {
+        p.start.connected_cities = vec![crate::ids::CityId(1)];
+        p.cities[0].base_load = Megawatts::new(100.0);
+        p.clock.zones.push(crate::region::TimeZone {
+            id: crate::region::ZoneId(1),
+            name_key: None,
+            standard_offset_minutes: 330,
+            dst_months: [false; 12],
+        });
+        p.city_locales.get_mut(&crate::ids::CityId(1)).unwrap().zone = crate::region::ZoneId(1);
+        p.climates[0].shapes = vec![[1.0; 24]];
+        p.climates[0].shapes[0][6] = 2.0;
+        p.climates[0].month_shapes = [0; 12];
+        p.climates[0].monthly = [1.0; 12];
+    });
+    let mut sys = system_with(&region, &[connected(PlantKind::Peaker, cell(5, 1))]);
+    place(&mut sys, 1, 199.0, Some(199.0));
+    let before = sys.clone();
+    assert!((sys.size_outage(&region, april(), 0).value() - 0.005).abs() < 1e-12);
+    assert_eq!(sys, before);
+}
