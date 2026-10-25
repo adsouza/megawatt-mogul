@@ -577,8 +577,8 @@ fn map_regulator_v4(r: &RegulatorDtoV4) -> Result<RegulatorParams> {
     })
 }
 
-/// Maps strictly authored schema 4. No legacy defaults enter this path.
-pub fn map_region_v4(file: RegionFileV4) -> Result<RegionDefinition> {
+/// The schema-4 checks that make `rasterize_geometry(file.geography())` safe to call.
+pub(super) fn check_v4_geography(file: &RegionFileV4) -> Result<()> {
     if file.region_schema != 4 {
         return Err(RegionError::UnsupportedRegionSchema(file.region_schema));
     }
@@ -586,7 +586,12 @@ pub fn map_region_v4(file: RegionFileV4) -> Result<RegionDefinition> {
         return Err(invalid("grid"));
     }
     check_geometry(file.geography())?;
-    check_field(&file.wind_potential, "wind_potential")?;
+    check_field(&file.wind_potential, "wind_potential")
+}
+
+/// Maps strictly authored schema 4. No legacy defaults enter this path.
+pub fn map_region_v4(file: RegionFileV4) -> Result<RegionDefinition> {
+    check_v4_geography(&file)?;
     let mut line_names = std::collections::BTreeMap::new();
     for (city, name) in &file.start.line_names {
         if line_names.insert(CityId(*city), name.clone()).is_some() {

@@ -2,9 +2,14 @@
 //! domain's cell grid. Pure and deterministic: the same file always gives the
 //! same grid.
 
-use domain::ids::CellCoord;
-use domain::region::{Cell, TerrainGrid};
+use std::collections::BTreeSet;
+use std::fmt::Write as _;
+
+use application::RegionLoadError;
+use domain::ids::{CellCoord, RegionId};
+use domain::region::{Cell, RegionError, TerrainGrid};
 use domain::units::Ratio;
+use serde::Deserialize;
 
 use super::dto::{Bounds, Field, GridSize, IrradianceV4, RegionFile, RegionFileV4};
 
@@ -106,6 +111,90 @@ fn cell_centre(file: Geography<'_>, x: u16, y: u16) -> (f64, f64) {
     let lon = b.west + (f64::from(x) + 0.5) / f64::from(file.grid.width) * (b.east - b.west);
     let lat = b.north - (f64::from(y) + 0.5) / f64::from(file.grid.height) * (b.north - b.south);
     (lon, lat)
+}
+
+/// One economic zone's authored coverage, for offline authoring of `economic_zones.cells`.
+/// A point belongs to the zone when it lies in any of `polygons` (even-odd per ring, as land).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ZonePolygons {
+    pub id: u16,
+    pub polygons: Vec<Vec<(f64, f64)>>,
+}
+
+/// Rasterises zone polygons into `economic_zones.cells`, row-major from the northwest cell.
+///
+/// Each cell is sampled at its centre, as land is. A cell that is not playable in the terrain
+/// the loader builds from `file` gets 0, as does a playable cell in no zone. A playable cell in
+/// exactly one zone gets that zone's id; one in two zones is an `InvalidShape` error.
+pub fn economic_zone_cells(
+    file: &RegionFileV4,
+    zones: &[ZonePolygons],
+) -> Result<Vec<u16>, RegionLoadError> {
+    let fail = |error| RegionLoadError::Invalid {
+        region: RegionId::new(&file.id),
+        error,
+    };
+    let invalid = |field| fail(RegionError::InvalidShape { field });
+    super::mapping::check_v4_geography(file).map_err(fail)?;
+    let mut ids = BTreeSet::new();
+    for zone in zones {
+        if zone.id == 0 || !ids.insert(zone.id) {
+            return Err(invalid("economic_zones.id"));
+        }
+        if zone
+            .polygons
+            .iter()
+            .flatten()
+            .any(|(lon, lat)| !lon.is_finite() || !lat.is_finite())
+        {
+            return Err(invalid("economic_zones.polygons"));
+        }
+    }
+    let geography = file.geography();
+    let terrain = rasterize_geometry(geography);
+    let GridDims { width, height } = dims(geography);
+    let mut cells = Vec::with_capacity(usize::from(width) * usize::from(height));
+    for y in 0..height {
+        for x in 0..width {
+            if !terrain
+                .get(CellCoord { x, y })
+                .is_some_and(|cell| cell.land)
+            {
+                cells.push(0);
+                continue;
+            }
+            let (lon, lat) = cell_centre(geography, x, y);
+            let mut claims = zones
+                .iter()
+                .filter(|zone| zone.polygons.iter().any(|ring| contains(ring, lon, lat)));
+            cells.push(match (claims.next(), claims.next()) {
+                (None, _) => 0,
+                (Some(zone), None) => zone.id,
+                (Some(_), Some(_)) => return Err(invalid("economic_zones.cells")),
+            });
+        }
+    }
+    Ok(cells)
+}
+
+/// The `cells: [...]` member of an `economic_zones` block: a comment before each grid row and
+/// at most 20 values per line.
+pub fn format_economic_zone_cells(cells: &[u16], width: u16) -> String {
+    let mut out = String::from("        cells: [\n");
+    for (y, row) in cells.chunks(usize::from(width.max(1))).enumerate() {
+        let _ = writeln!(out, "            // Row {y}");
+        for line in row.chunks(20) {
+            out.push_str("            ");
+            for id in line {
+                let _ = write!(out, "{id}, ");
+            }
+            out.pop();
+            out.push('\n');
+        }
+    }
+    out.push_str("        ],\n");
+    out
 }
 
 /// Even-odd ray casting against an implicitly closed ring.
@@ -310,6 +399,154 @@ mod tests {
     fn rasterising_is_deterministic() {
         let file = base_file();
         assert_eq!(rasterize(&file), rasterize(&file));
+    }
+
+    /// `square_file`'s geography in schema 4: 10 x 10 over 0..10 degrees, land 2..8.
+    fn square_file_v4() -> RegionFileV4 {
+        let mut file: RegionFileV4 =
+            ron::de::from_str(include_str!("../../tests/support/minimal_region_v4.ron"))
+                .expect("minimal v4 region parses");
+        file.bounds.west = 0.0;
+        file.bounds.east = 10.0;
+        file.bounds.south = 0.0;
+        file.bounds.north = 10.0;
+        file.grid.width = 10;
+        file.grid.height = 10;
+        file.land = vec![vec![(2.0, 2.0), (8.0, 2.0), (8.0, 8.0), (2.0, 8.0)]];
+        file.exclude = vec![];
+        file
+    }
+
+    fn zone(id: u16, west: f64, east: f64, south: f64, north: f64) -> ZonePolygons {
+        ZonePolygons {
+            id,
+            polygons: vec![vec![
+                (west, south),
+                (east, south),
+                (east, north),
+                (west, north),
+            ]],
+        }
+    }
+
+    fn zone_at(cells: &[u16], x: usize, y: usize) -> u16 {
+        cells[y * 10 + x]
+    }
+
+    fn invalid_field(result: Result<Vec<u16>, RegionLoadError>) -> &'static str {
+        match result {
+            Err(RegionLoadError::Invalid {
+                error: RegionError::InvalidShape { field },
+                ..
+            }) => field,
+            other => panic!("expected InvalidShape, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn zone_cells_follow_cell_centres() {
+        // The split at lon 4.6 and lat 5.4 is off the cell boundaries, so only the
+        // centre convention decides: x = 4 (centre 4.5) is west, y = 4 (centre 5.5) is north.
+        let zones = [
+            zone(1, 0.0, 4.6, 5.4, 10.0),
+            zone(2, 4.6, 10.0, 5.4, 10.0),
+            zone(3, 0.0, 10.0, 0.0, 5.4),
+        ];
+        let cells = economic_zone_cells(&square_file_v4(), &zones).unwrap();
+        assert_eq!(cells.len(), 100);
+        for y in 2..8 {
+            for x in 2..8 {
+                let want = match (x, y) {
+                    (_, 5..) => 3,
+                    (..=4, _) => 1,
+                    _ => 2,
+                };
+                assert_eq!(zone_at(&cells, x, y), want, "cell ({x}, {y})");
+            }
+        }
+    }
+
+    #[test]
+    fn zone_cells_are_zero_off_land_and_outside_every_zone() {
+        let mut file = square_file_v4();
+        file.exclude = vec![vec![(4.0, 4.0), (6.0, 4.0), (6.0, 6.0), (4.0, 6.0)]];
+        // Zone 7 covers the whole map but only land outside the hole may take it. Zone 9 covers
+        // only water, and the land strip x = 7 lies in no zone.
+        let zones = [
+            zone(7, -1.0, 7.0, -1.0, 11.0),
+            zone(9, 8.0, 11.0, -1.0, 11.0),
+        ];
+        let cells = economic_zone_cells(&file, &zones).unwrap();
+        let terrain = rasterize_geometry(file.geography());
+        for y in 0..10 {
+            for x in 0..10 {
+                let land = terrain
+                    .get(CellCoord {
+                        x: x as u16,
+                        y: y as u16,
+                    })
+                    .unwrap()
+                    .land;
+                let want = if land && x < 7 { 7 } else { 0 };
+                assert_eq!(zone_at(&cells, x, y), want, "cell ({x}, {y})");
+            }
+        }
+        assert_eq!(
+            zone_at(&cells, 4, 4),
+            0,
+            "the excluded hole is not playable"
+        );
+        assert_eq!(zone_at(&cells, 7, 5), 0, "playable but in no zone");
+        assert!(
+            economic_zone_cells(&file, &[])
+                .unwrap()
+                .iter()
+                .all(|&id| id == 0)
+        );
+    }
+
+    #[test]
+    fn a_cell_claimed_by_two_zones_is_rejected() {
+        let file = square_file_v4();
+        let overlap = [zone(1, 0.0, 5.0, 0.0, 10.0), zone(2, 4.0, 10.0, 0.0, 10.0)];
+        assert_eq!(
+            invalid_field(economic_zone_cells(&file, &overlap)),
+            "economic_zones.cells"
+        );
+        // An overlap over water only is harmless: those cells use the regional default.
+        let wet = [zone(1, 0.0, 2.0, 0.0, 10.0), zone(2, 1.0, 10.0, 0.0, 10.0)];
+        let cells = economic_zone_cells(&file, &wet).unwrap();
+        assert_eq!(zone_at(&cells, 1, 5), 0);
+        assert_eq!(zone_at(&cells, 2, 5), 2);
+        // The reserved default and repeated IDs cannot be authored.
+        for zones in [
+            vec![zone(0, 0.0, 10.0, 0.0, 10.0)],
+            vec![zone(4, 0.0, 3.0, 0.0, 10.0), zone(4, 6.0, 10.0, 0.0, 10.0)],
+        ] {
+            assert_eq!(
+                invalid_field(economic_zone_cells(&file, &zones)),
+                "economic_zones.id"
+            );
+        }
+        let mut broken = file.clone();
+        broken.grid.width = 0;
+        assert_eq!(invalid_field(economic_zone_cells(&broken, &wet)), "grid");
+    }
+
+    #[test]
+    fn zone_cell_blocks_have_a_row_comment_and_twenty_values_per_line() {
+        let cells: Vec<u16> = (0..50).map(|i| i % 3).collect();
+        let text = format_economic_zone_cells(&cells, 25);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines[0], "        cells: [");
+        assert_eq!(lines[1], "            // Row 0");
+        assert_eq!(lines[2].matches(',').count(), 20);
+        assert_eq!(lines[3].matches(',').count(), 5);
+        assert_eq!(lines[4], "            // Row 1");
+        assert_eq!(*lines.last().unwrap(), "        ],");
+        let body = text.split_once('[').unwrap().1.rsplit_once(']').unwrap().0;
+        let parsed: Vec<u16> = ron::de::from_str(&format!("[{body}]")).unwrap();
+        assert_eq!(parsed, cells);
     }
 
     #[test]

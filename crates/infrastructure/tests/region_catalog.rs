@@ -1463,3 +1463,42 @@ fn overflowing_economic_work_rates_keep_the_typed_zone_diagnostic() {
         "{error:?}"
     );
 }
+
+#[test]
+fn generated_zone_cells_load_through_the_catalog() {
+    use infrastructure::region::{
+        RegionFileV4, ZonePolygons, economic_zone_cells, format_economic_zone_cells,
+    };
+    let source = include_str!("support/economic_region_v4.ron");
+    let file: RegionFileV4 = ron::from_str(source).unwrap();
+    // Unlike the fixture's split at lon 6, these polygons split the map at lon 4.
+    let square = |id, west: f64, east: f64| ZonePolygons {
+        id,
+        polygons: vec![vec![(west, -1.0), (east, -1.0), (east, 9.0), (west, 9.0)]],
+    };
+    let cells = economic_zone_cells(&file, &[square(1, -1.0, 4.0), square(2, 4.0, 13.0)]).unwrap();
+    let block = format_economic_zone_cells(&cells, file.grid.width);
+    let start = source.find("        cells: [").unwrap();
+    let end = start + source[start..].find("        ],\n").unwrap() + "        ],\n".len();
+    let generated = format!("{}{block}{}", &source[..start], &source[end..]);
+    assert_ne!(generated, source);
+
+    let dir = dir_with(&[("minimal.ron", &generated)]);
+    let loaded = catalog(dir.path()).load(&RegionId::new("minimal")).unwrap();
+    let zone = |x, y| {
+        loaded
+            .definition
+            .economic_zone_at(CellCoord { x, y })
+            .unwrap()
+            .0
+    };
+    for y in 0..8 {
+        assert_eq!(zone(0, y), 0, "water column, row {y}");
+        for x in 1..4 {
+            assert_eq!(zone(x, y), 1, "cell ({x}, {y})");
+        }
+        for x in 4..12 {
+            assert_eq!(zone(x, y), 2, "cell ({x}, {y})");
+        }
+    }
+}
