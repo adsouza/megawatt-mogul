@@ -15,9 +15,9 @@ The spec's currency, route arithmetic, default behavior and compatibility contra
 **Sequence:** Completed Plan 6 / rules 16 → **Plan 6a** → Plan 7's five single-area regions →
 Plan 8's multi-area/HVDC work. Plan 6a bumps rules once (16→17),
 keeps region schema 4 and portable state schema 3. Plans 7/8 bump from their actual predecessors;
-Plan 8 retains its own planned state-schema change. Plan 7/8 detailed plans do not yet exist in
-this checkout; Tasks 6–7 below are mandatory handoffs when they are written, not broken links to
-imaginary files. Do not re-execute or reopen Plan 6's completed checklist.
+Plan 8 retains its own planned state-schema change. Task 6 is now scheduled in
+[Plan 7](2026-10-25-plan-7-single-area-regions.md) (its Tasks 1, 2 and 9). Plan 8's detailed plan
+does not exist yet; Task 7 below is a mandatory handoff for when it is written. Do not re-execute or reopen Plan 6's completed checklist.
 
 ## Architecture and constraints
 
