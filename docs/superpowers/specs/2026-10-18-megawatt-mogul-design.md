@@ -3899,7 +3899,9 @@ old reports stay as recorded.
   regions cannot cover it.
 - **Region cards.** Each card adds frequency, currency, time-zone span and hemisphere to the
   existing description and home city. The panel to the globe's right uses two columns when both
-  cards remain comfortably readable, and one column at narrower widths. Catalog order and keyboard
+  cards remain comfortably readable, and one column at narrower widths. When the cards don't fit the panel's
+  height, the card panel alone scrolls vertically (the globe stays put); keyboard focus scrolls
+  the focused card into view (decided 2026-10-25 for seven and eight regions). Catalog order and keyboard
   focus proceed across each row before moving to the next. Clicking an enabled card's body
   selects and highlights its region without starting a game, including a region on the far side.
   Smoothly rotate through the shortest longitude arc in 0.6 seconds to put the midpoint of its
