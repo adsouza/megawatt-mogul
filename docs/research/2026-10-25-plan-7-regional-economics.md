@@ -90,7 +90,7 @@ From `assets/regions/{eastern,western}_interconnection.ron` (catalog, `lines`, `
 | Nuclear | 2,181.8 ÷ 7,861 = **0.2775** (P7-US-004) | 18 ÷ 52 = **0.3462** (P7-US-005) | 120.0 ÷ 156.20 = **0.7682** (P7-US-006) | 10 ÷ 9.16 = **1.092** (P7-US-025, -029) | gap |
 | Coal | 1,166.7 ÷ 4,103 = **0.2843** (P7-US-007) | 8 ÷ 36 = **0.2222** (P7-US-008) | 40.0 ÷ 61.60 = **0.6494** (P7-US-009) | 30 ÷ 27.30 = **1.099** (P7-US-026, -030) | gap |
 | Ccgt | 600 ÷ 921 = **0.6515** (P7-US-010) | 4 ÷ 22 = **0.1818** (P7-US-011) | 14.4 ÷ 15.51 = **0.9284** (P7-US-012) | 45 ÷ 27.30 = **1.648** (P7-US-027, -031) | gap |
-| Peaker | 500 ÷ 1,606 = **0.3113** (P7-US-013) | 2 ÷ 22 = **0.09091** (P7-US-014) | 10.2 ÷ 9.56 = **1.067** (P7-US-015) | 150 ÷ 42.07 = **3.565** (P7-US-028, -031) | 25.0 ÷ 55.13 = **0.4535** (P7-US-032) |
+| Peaker | 500 ÷ 1,606 = **0.3113** (P7-US-013) | 2 ÷ 22 = **0.09091** (P7-US-014) | 10.2 ÷ 9.56 = **1.067** (P7-US-015) | 150 ÷ 42.07 = **3.565** (P7-US-028, -031) | 25.0 ÷ 55.13 = **0.4535** (P7-US-032), superseded by ruling 2 (no local start-up source exists) |
 | Solar | 500 ÷ 1,502 = **0.3329** (P7-US-016) | 2 ÷ 12 = **0.1667** (P7-US-017) | 20.0 ÷ 20.23 = **0.9886** (P7-US-018) | n/a (game 0) | n/a |
 | Hydro | 1,500 ÷ 7,073 = **0.2121** (P7-US-019) | 12 ÷ 36 = **0.3333** (P7-US-020) | 40.5 ÷ 33.54 = **1.208** (P7-US-021) | n/a (game 0) | gap |
 | Battery | 500 ÷ 1,744 = **0.2867** (P7-US-022) | 2 ÷ 12 = **0.1667** (P7-US-023) | 6.0 ÷ 40.00 = **0.1500** (P7-US-024) | n/a (game 0) | n/a |
@@ -114,7 +114,8 @@ rows.
 - **Start-up costs.** Use `local game startup = NA game startup × (local game marginal ÷ NA game
   marginal)`, per kind. The NA values are 1,000,000 (Nuclear), 150,000 (Coal), 40,000 (Ccgt) and
   5,000 (Peaker), against marginals of 10, 30, 45 and 150. Hydro's NA marginal is 0, so the
-  formula is undefined for Hydro's 1,000 start-up; the region task must record a judgment.
+  ratio has no Hydro term of its own; ruling 2 below uses the Ccgt marginal ratio for Hydro's
+  1,000 start-up, and the region task records it as an authoring judgment.
 - **Line build speed.** Keep East's km per month, converted to each region's cells. East builds
   4 cells × 50.27 km = 201.07 km per game month, so
   `cells_per_month = max(1, round(201.07 ÷ region cell_km))`. The rounding is the application
@@ -124,6 +125,130 @@ rows.
     `fuel per MWh = price per MMBtu × heat rate in MMBtu/MWh`, where 1 MMBtu = 1.055056 GJ.
   - Rows priced on a net (lower) calorific basis are marked LHV. The region task records how it
     treats the basis as a pacing judgment.
+
+## Region-authoring rulings (Plan 7)
+
+These 28 rulings bound the region tasks (Tasks 5–9). Region RON files and
+`crates/infrastructure/tests/shipped_regions.rs` cite them as "ruling N". They are authoring
+rules, not sourced figures, and need no rows. Where a ruling says "authoring judgment", the region
+file's comment carries that label.
+
+**Money method.** The pacing formula is in [Pacing method](#pacing-method); apply it exactly.
+
+1. Unsourced baseline build duration: inherit the shipped NA game months for that kind. The comment
+   says "authoring judgment: no sourced local duration". Sourced local durations go through
+   `month_ratio`, clamped to the pacing ceilings.
+2. Start-up cost = NA game start-up for the kind × (local game marginal ÷ NA game marginal) for the
+   same kind. Hydro, whose NA marginal is 0, uses the Ccgt marginal ratio. Record it as an authoring
+   judgment. A P7-US-032-style ratio applies only where a local start-up source exists.
+3. Unsourced plant capital = the region's nearest sourced kind's local capital per kW × the NA
+   shipped per-kW ratio between the two kinds. The pairs are Ccgt↔Coal, Peaker↔Ccgt,
+   Battery↔Solar and Nuclear↔Coal. Label it "authoring judgment: derived from <row> by NA kind
+   relativity", and cite that row.
+4. Unsourced fixed O&M = local capital × the NA shipped (fixed O&M ÷ capital) ratio for that kind,
+   labelled the same way.
+5. Line `cells_per_month` keeps the Eastern Interconnection's km per month: 4 cells × East's
+   middle-latitude cell width in km, converted to this region's middle-latitude cell width and
+   rounded to the nearest whole cell, minimum 1. Record it as an authoring judgment.
+6. Every catalog entry, `lines:`, `starting_tariff_per_mwh` and `cash:` line, and every
+   economic-zone profile, gets a comment directly above it citing at least one `[P7-…]` row and
+   showing the arithmetic. The test `new_region_entries_cite_research_rows` (Plan 7 Task 3)
+   enforces this.
+
+**Geography.**
+
+7. Use `tools/region_authoring/natural_earth.py` with the approved files already in
+   `target/natural-earth/` (Natural Earth v5.1.2 `ne_50m_admin_0_countries.geojson` and
+   `ne_10m_admin_1_states_provinces.geojson`). Download nothing else. Run Python with `-I`.
+8. Use `--dissolve` for any multi-feature selection.
+9. Check that the extractor's output exclude ring count equals the selection's exclusions.
+   Simplification can drop a collapsed exclude ring and silently re-admit land.
+10. A pair involving a new region must have zero overlapping playable cell centres
+    (`shipped_regions_do_not_overlap`). Where regions share a border, make sure no cell centre is
+    playable in both.
+11. The canonical Crimea extent (`crates/infrastructure/authoring/ukraine_ips_operating_extent.ron`)
+    must appear verbatim in `exclude` for Europe–Maghreb and IPS/UPS only (user decision: Crimea and
+    Sevastopol only; mainland Ukraine is in Europe–Maghreb).
+
+**Process.**
+
+12. Stage explicit paths only. Never `git commit -a`/`-am` or `git add -A`/`.`. Leave files you did
+    not touch alone, since another session may work in the same worktree.
+13. Commit with hooks enabled. Never use `--no-verify`. Do not push. Do not open a game window.
+14. If a task test cannot pass without changing a rule, or without relaxing a shared check, stop and
+    report BLOCKED. Never change rules.
+15. The region's tests go in `crates/infrastructure/tests/shipped_regions.rs` as a module named for
+    the region. Insert the region ID into every Task 3 table: `SHIPPED`, `NEW_REGIONS`,
+    `RESEARCH_CAPACITY_GW`, `HOME_CITY`, `EXPANSION_CITY`, `NOMINAL_HZ`, the `year_one_cases!` macro
+    list and the game binary's `SHIPPED_REGIONS`. The table-coverage tests report any miss.
+16. Measure optimised timings (when needed) with `CARGO_PROFILE_DEV_OPT_LEVEL=3
+    CARGO_PROFILE_DEV_DEBUG=0`. Never `--release`.
+
+**Names** (user requirement, 2026-10-25).
+
+17. Every player-facing region, city, zone, economic-zone and line name in
+    `assets/locales/en-US/*.ftl` is its English name, which shows on both the HUD and the 3D map
+    labels. Use the title of the English Wikipedia article: Guangzhou, Moscow, Kyiv, Tbilisi,
+    São Paulo, Málaga. Latin diacritics are fine where that English title uses them. Never use
+    non-Latin scripts or local-language forms (no 广州, Москва or 東莞). Keep the `city-<kebab>` keys
+    ASCII.
+18. Glyph coverage: `every_shipped_name_paints_with_the_shipped_fonts`, in the game binary next to
+    the currency glyph test, paints every shipped region, city, zone and economic-zone name with the
+    real egui fonts. It asserts that no character renders as the replacement glyph. Task 5 adds it;
+    later regions extend its coverage automatically.
+
+**Added after Task 5.**
+
+19. Unsourced fuel or marginal cost = NA game marginal for the kind × (local reference tariff ÷ NA
+    reference tariff), a price-level proxy. Record it as an authoring judgment citing the tariff
+    row. A sourced local fuel row always wins.
+20. Unsourced AC line cost per km = local coal capital per kW × the NA shipped (line cost per km ÷
+    coal capital per kW), by ruling 3's relativity, labelled the same way and citing the coal row.
+21. Ruling 5's "cell width" means this note's `cell_km` definition, as used in its pacing table, for
+    consistency.
+22. Admin-1 features (for example Hong Kong and Macau in the 1:10m admin-1 file) may replace admin-0
+    where the 1:50m outlines leave gaps. Record which features were used.
+23. Facts not from memory. City populations or demand shares, plant names and coordinates, and
+    climate and resource sources are read from a source now (reading pages with WebSearch or
+    WebFetch is allowed; small page fetches are not "downloads"). Cite each in the RON comment with
+    a locator (publisher, page or table, date). If no source can be found, say so in the comment and
+    report it.
+
+**Added after the Task 5 review (binding for Tasks 6–9).**
+
+24. Where a local unit's `capacity_mw` differs from NA's for the same kind, scale per-unit
+    quantities per MW: start-up cost (after ruling 2's marginal ratio) and `ramp_mw_per_min`.
+    Example: 150,000 × 150 ÷ 30 × 1,000 ÷ 600 for a 1,000 MW coal unit. Say so in that entry's
+    comment.
+25. Derivations use full-precision intermediates, such as the unrounded local tariff 501.378. Round
+    only the final RON value, to 3 significant figures, round half away from zero.
+26. Every catalog entry's own comment repeats its "authoring judgment …" label and the ruling
+    number. A preamble alone is not enough.
+27. A city name that is ambiguous across shipped regions takes the English Wikipedia qualifier in
+    its display text, for example "Yulin, Guangxi". Keys stay unique.
+
+**Added after Task 8.**
+
+28. Privacy: every web request (WebFetch, curl or API calls) uses a generic user agent. Never put
+    the user's email, name or any personal identifier in a header, URL or payload, even if an API's
+    etiquette asks for contact details.
+
+## Tariff bases
+
+Every new region scales its local tariff by the US all-sector ratio (P7-US-034, 135.6 USD/MWh,
+all sectors, 2025): starting tariff × 95 ÷ 135.6 and reference tariff × 100 ÷ 135.6. The local
+rows do not share that basis, and none was re-based. The region files label this "authoring
+judgment: basis differs from the US all-sector reference; not re-based", and no number changed.
+Ruling 19's fuel proxy scales by the same reference tariff, so where a region applies it (Southern
+China, India, IPS/UPS and the Europe–Maghreb nuclear fuel) it inherits the same basis.
+
+| Region | Row | Basis |
+|---|---|---|
+| IPS/UPS | P7-IPS-001 | Moscow household tariff |
+| Southern China | P7-SC-005 | Commercial and industrial, 1–10 kV, tax included |
+| Europe–Maghreb | P7-EM-008, P7-EM-009 | Unweighted household and non-household mean, excluding taxes |
+| India–Nepal–Bhutan | P7-IN-011 | All consumers |
+| Brazil | P7-BR-029 | All consumer classes |
 
 ## Row table
 
@@ -306,7 +431,7 @@ schedule, which the rows use as `build_months_real`.
 | P7-IPS-002 | IPS/UPS | Russia | Nuclear | capital_per_kw | 13,785 billion for 29.299 million kW | RUB (incl. VAT, forecast prices of each year) | 2025–2042 | derived 13,785e9 ÷ 29.299e6 kW = 470,494 RUB/kW; FX: none | Government of the Russian Federation — Order No. 4153-r of 30 Dec 2024 approving the *General Scheme for the Location of Electric Power Facilities to 2042* — http://static.government.ru/media/files/Rwf9Akjf5FwAnustDEL2m7PEvZ26i7k3.pdf (downloaded; SHA-256 d50d7cd30c93f4f34a836eea0a6a7b832ecd388bcbc3f1676814cb5849d2f07c) — pub. 2024-12-30 — acc. 2026-10-25 — loc. Annex 31, Total, nuclear (PDF p. 153); §IV, nuclear additions (p. 14) | Planner aggregate: investment ÷ planned additions, not one project; includes VAT and future-year nominal prices; includes decentralised-zone units |
 | P7-IPS-003 | IPS/UPS | Russia | Hydro | capital_per_kw | 2,517 billion for 7.756 million kW | RUB (incl. VAT, forecast prices) | 2025–2042 | derived 324,523 RUB/kW; FX: none | Government of the Russian Federation — Order No. 4153-r of 30 Dec 2024 approving the *General Scheme for the Location of Electric Power Facilities to 2042* — http://static.government.ru/media/files/Rwf9Akjf5FwAnustDEL2m7PEvZ26i7k3.pdf (downloaded; SHA-256 d50d7cd30c93f4f34a836eea0a6a7b832ecd388bcbc3f1676814cb5849d2f07c) — pub. 2024-12-30 — acc. 2026-10-25 — loc. Annex 31, Total, hydro and pumped storage (PDF p. 153); §IV, hydro additions (p. 14) | Planner aggregate; includes pumped storage |
 | P7-IPS-004 | IPS/UPS | Russia (Zabaykalsky Krai) | Coal | capital_per_kw | about 172 billion for 2 × 230 MW | RUB | 2025 | derived 172e9 ÷ 460,000 kW = 373,913 RUB/kW; FX: none | Investfuture, reporting Inter RAO CEO S. Dregval at SPIEF — Inter RAO building new Kharanorskaya GRES units by 2029 — https://investfuture.ru/articles/inter-rao-vedet-stroitelstvo-novykh-energoblokov-kharanorskoy-gres-k-2029-godu-36855650 — pub. 2026-06-09 — acc. 2026-10-25 — loc. investment and schedule paragraphs | Whole project, steam units in the Siberian south-east (Far-East-adjacent remote site); press report of company statement. The General Scheme thermal aggregate (4,782 bn RUB ÷ 35.378 million kW = 135,169 RUB/kW, PDF p. 153 and p. 15) mixes gas, coal and reconstruction and is not used |
-| P7-IPS-005 | IPS/UPS | Russia (Zabaykalsky Krai) | Coal | build_months_real | construction launched 2025-10; commissioning planned 2029 | dates | — | derived *planned* 39–50 months; FX: none | Investfuture (as P7-IPS-004) — https://investfuture.ru/articles/inter-rao-vedet-stroitelstvo-novykh-energoblokov-kharanorskoy-gres-k-2029-godu-36855650 — pub. 2026-06-09 — acc. 2026-10-25 — loc. schedule paragraph | Planned; not needed under the duration ruling but recorded |
+| P7-IPS-005 | IPS/UPS | Russia (Zabaykalsky Krai) | Coal | build_months_real | construction launched 2025-10; commissioning planned 2029 | dates | — | derived *planned* 39–50 months; FX: none | Investfuture (as P7-IPS-004) — https://investfuture.ru/articles/inter-rao-vedet-stroitelstvo-novykh-energoblokov-kharanorskoy-gres-k-2029-godu-36855650 — pub. 2026-06-09 — acc. 2026-10-25 — loc. schedule paragraph | Planned. `ips_ups.ron` uses it: the midpoint of the range, 44.5 months, paced through the coal month ratio to 10 game months (authoring judgment on the midpoint; ruling 1 sources the duration) |
 | P7-IPS-006 | IPS/UPS | Russia (Krasnodar Krai) | Ccgt | capital_per_kw | 275 | million RUB/MW | 2025 | 275,000 RUB/kW; FX: none | Kommersant — southern TPP projects and capex prepared for government approval — https://www.kommersant.ru/doc/8159614 — pub. 2025-10-27 — acc. 2026-10-25 — loc. Udarnaya TPP paragraph | Udarnaya TPP expansion, three CCGT units, 555 MW, from government-commission materials as reported; Tavricheskaya (Crimea) excluded by footprint |
 | P7-IPS-007 | IPS/UPS | Russia | Wind | capital_per_kw | 1,818 | USD/kW | 2025 | derived 1,818 × 83.6525 = 152,080 RUB/kW; FX: P7-FX-023 | IRENA — *Renewable Power Generation Costs in 2025* — https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_in_2025_2026.pdf (downloaded; SHA-256 38c8c70b848187c89d64b8817f0ebe831a9587c00257c1cc93195f22833a0eab) — pub. 2026-07 — acc. 2026-10-25 — loc. Figure 2.4, Russian Federation, 2025 label, p. 47 | Country market weighted average of commissioned onshore wind (+54% on 2024) |
 | P7-IPS-008 | IPS/UPS | Russia (Stavropol Krai) | Wind | capital_per_kw | 64.86 | thousand RUB/kW | 2019 bid (COD 2024) | 64,860 RUB/kW; FX: none | Kommersant, reporting ATS-published bids in the 2019 renewables CSA selection — https://www.kommersant.ru/doc/3998706 — pub. 2019-06-11 — acc. 2026-10-25 — loc. wind paragraph (cap 109.23) | Bid capex of a 71.25 MW project; dated; cap was 109.23 thousand RUB/kW |
@@ -507,36 +632,51 @@ northern Algeria, Tunisia, and any micro-states and areas Task 9 rules into the 
 What was searched and not found or not usable, after round 2. "Not reached" means the source exists
 but could not be read without a login, a bot check or a download beyond the round-2 budget.
 
-- **Closed by ruling, not by rows:** baseline durations, start-up costs and line build speed (see
-  [Controller rulings](#controller-rulings-round-2-25-october-2026)).
+- **Closed by ruling, not by rows:** baseline durations (ruling 1), start-up costs (ruling 2, with
+  ruling 24's per-MW scaling) and line build speed (rulings 5 and 21). See
+  [Controller rulings](#controller-rulings-round-2-25-october-2026) and
+  [Region-authoring rulings](#region-authoring-rulings-plan-7). A gap closed by a derivation
+  below says "closed by ruling N (derived, labelled in the region file)"; the derived value is
+  an authoring judgment, not a sourced figure.
 - **All regions**
   - IEA WEO 2025 technology-cost tables: behind a Cloudflare bot check, not bypassed.
   - NEA/IEA *Projected Costs of Generating Electricity 2020*: HTTP 403.
   - IAEA PRIS reactor timelines: a script-only app.
 - **Brazil**
-  - Hydro (UHE) construction duration: inherits North American months under the duration ruling.
+  - Hydro (UHE) construction duration: closed by ruling 1 (derived, labelled in the region file);
+    it inherits North American months.
   - Per-voltage line cost: only the all-voltage average (P7-BR-028); the ANEEL price bank was not
-    reached within the download budget.
+    reached within the download budget. The region uses P7-BR-028, because a sourced row wins over
+    ruling 20's coal relativity.
 - **India**
   - Capital: CCGT and peaker. The CEA plan models no new gas build; no CERC benchmark was found.
-  - Fuel or energy charges.
-  - Per-km line cost: CEA gives only a per-MW-km figure (P7-IN-010).
-  - Nuclear, CCGT and peaker durations (ruling applies).
+    Closed by ruling 3 (derived, labelled in the region file).
+  - Fuel or energy charges: closed by ruling 19 (derived, labelled in the region file).
+  - Per-km line cost: CEA gives only a per-MW-km figure (P7-IN-010). Closed by ruling 20
+    (derived, labelled in the region file).
+  - Nuclear, CCGT and peaker durations: closed by ruling 1 (derived, labelled in the region
+    file).
 - **Southern China**
   - Capital: nuclear (only media estimates of about 20 billion CNY per unit; not used), CCGT,
-    peaker and battery.
+    peaker and battery. Closed by ruling 3 (derived, labelled in the region file).
     - A Shenzhen Gas announcement gives 22.81 billion CNY for two combined-cycle sets, but no
       capacity, so it is not used.
-  - Fixed O&M, fuel prices (no Guangdong gate price for generation found) and line cost.
-  - Observed durations (ruling applies; P7-SC-004 is planned).
+  - Fixed O&M: closed by ruling 4 (derived, labelled in the region file).
+  - Fuel prices (no Guangdong gate price for generation found): closed by ruling 19 (derived,
+    labelled in the region file).
+  - Line cost: closed by ruling 20 (derived, labelled in the region file).
+  - Observed durations: closed by ruling 1 (derived, labelled in the region file); P7-SC-004 is
+    planned.
 - **IPS/UPS**
-  - Fixed O&M for every kind; coal price.
+  - Fixed O&M for every kind: closed by ruling 4 (derived, labelled in the region file).
+  - Coal price: closed by ruling 19 (derived, labelled in the region file).
   - Hydro and nuclear project-level costs (only the General Scheme aggregates, P7-IPS-002 and
     P7-IPS-003).
   - The current Minenergo line norm (Order No. 131 of 2024); the superseded 2019 norm is used.
   - The current ATS renewable-selection bids, which since 2021 use a price-based bid and not capex.
 - **Europe–Maghreb**
-  - Nuclear fuel: ERAA's value is an EIA (US) figure, so it is excluded.
+  - Nuclear fuel: ERAA's value is an EIA (US) figure, so it is excluded. Closed by ruling 19
+    (derived, labelled in the region file).
   - Spanish and Moroccan line costs (zones inherit the regional line).
   - Whole-project rows for France, Italy, Poland, Türkiye, Algeria and Tunisia. IRENA market
     averages cover the first four (P7-FR-*, P7-IT-*, P7-PL-*, P7-TR-*); none cover Algeria or

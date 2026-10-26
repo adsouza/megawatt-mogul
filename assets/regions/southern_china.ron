@@ -31,7 +31,8 @@
 // their cell centres, so four short nudge rings after the generated rings
 // put those coastal cities on land. Points are (lon, lat) in degrees.
 //
-// Grid: 104 to 117.5 E and 18 to 29.5 N on 124 x 115 cells. At the middle
+// Grid: 104 to 117.5 E and 18 to 29.5 N on 124 x 115 cells. The 104.0 E west
+// bound clips far-western Guizhou (about 103.6 to 104.0 E). At the middle
 // latitude, 23.75 N, a cell is 11.08 km east-west by 11.12 km north-south
 // (aspect 1.004, cell_km 11.100).
 //
@@ -655,6 +656,11 @@
         // Tariffs [P7-SC-005] [P7-US-034]: 679.869 CNY/MWh x (95 / 135.6 =
         // 0.70059) = 476.3, so 476 to start, and x (100 / 135.6 = 0.73746) =
         // 501.4, so a reference of 501 (the same 0.95 relation as shipped).
+        // Basis: P7-SC-005 is the commercial and industrial single-part
+        // 1-10 kV energy price, tax included, while P7-US-034 is an
+        // all-sector average (authoring judgment: basis differs from the US
+        // all-sector reference; not re-based). The fuel proxy (ruling 19)
+        // scales by this same 501.378 reference, so it inherits that basis.
         starting_tariff_per_mwh: 476.0,
         reference_tariff_per_mwh: 501.0,
         base_return: 0.09,
@@ -701,7 +707,7 @@
         // nuclear and pumped-storage tables, read 2026-10-25). Dams: each
         // dam's English Wikipedia infobox. Each plant's cell is land.
         fleet: [
-            // Coastal nuclear: Daya Bay, Shenzhen (2 x 900 MW).
+            // Coastal nuclear: Daya Bay, Shenzhen (2 x 944 MW).
             (Nuclear, 114.5444, 22.5972),
             // Coal: Hengyi, Foshan (2 x 600 MW). Shajiao (Humen, 22.7472 N,
             // 113.6775 E) falls in a Pearl River water cell at this grid.

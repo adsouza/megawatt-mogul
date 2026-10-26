@@ -808,7 +808,9 @@
         // INR/kW x 500,000 kW = 7,100,000,000. Fixed O&M [P7-IN-004]
         // [P7-US-012]: CERC's gas-turbine and combined-cycle norm, 1,818
         // INR/kW-yr x (14.4 / 15.51 = 0.92843) = 1,687.9, so 1,690 x 500,000 /
-        // 12 = 70,416,667. Marginal (ruling 19, authoring judgment: no sourced
+        // 12 = 70,416,667. This is 0.99% of capital per month (North America
+        // 0.2%), because capital is derived (ruling 3) while O&M is sourced.
+        // Marginal (ruling 19, authoring judgment: no sourced
         // local fuel row): 45 x 51.84366 = 2,333.0, so 2,330 [P7-IN-011].
         // Start-up (ruling 2, authoring judgment: no sourced local start-up):
         // 40,000 x 2,332.965 / 45 = 2,073,746, so 2,070,000. Build 4 months
@@ -1110,6 +1112,11 @@
         // average revenue realised, 7,030 INR/MWh x (95 / 135.6 = 0.70059) =
         // 4,925.1, so 4,930 to start, and x (100 / 135.6 = 0.73746) = 5,184.4,
         // so a reference of 5,180 (the same 0.95 relation as shipped).
+        // Basis: P7-IN-011 is the average revenue realised across all
+        // consumers of state distribution utilities, while P7-US-034 is an
+        // all-sector retail average (authoring judgment: basis differs from
+        // the US all-sector reference; not re-based). The fuel proxy (ruling
+        // 19) scales by this same reference, so it inherits that basis.
         starting_tariff_per_mwh: 4930.0,
         reference_tariff_per_mwh: 5180.0,
         base_return: 0.09,

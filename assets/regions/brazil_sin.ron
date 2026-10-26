@@ -715,6 +715,10 @@
         // Tariffs [P7-BR-029] [P7-US-034]: 748.41 BRL/MWh x (95 / 135.6 =
         // 0.70059) = 524.3, so 524 to start, and x (100 / 135.6 = 0.73746) =
         // 551.9, so a reference of 552 (the same 0.95 relation as shipped).
+        // Basis: P7-BR-029 is the average billed tariff across all consumer
+        // classes, while P7-US-034 is an all-sector retail average
+        // (authoring judgment: basis differs from the US all-sector
+        // reference; not re-based).
         starting_tariff_per_mwh: 524.0,
         reference_tariff_per_mwh: 552.0,
         base_return: 0.09,

@@ -2621,7 +2621,12 @@
         // sources give no sector weights, and P7-US-034 is an all-sector
         // average) to 173.1 EUR/MWh x (95 / 135.6 = 0.70059) = 121.27, so 121
         // to start, and x (100 / 135.6 = 0.73746) = 127.65, so a reference of
-        // 128 (the same 0.95 relation as shipped).
+        // 128 (the same 0.95 relation as shipped). Basis: an unweighted mean
+        // of a household and a non-household row, both excluding taxes and
+        // levies, while P7-US-034 is an all-sector average that includes
+        // them (authoring judgment: basis differs from the US all-sector
+        // reference; not re-based). The nuclear fuel proxy (ruling 19) scales
+        // by this same reference, so it inherits that basis.
         starting_tariff_per_mwh: 121.0,
         reference_tariff_per_mwh: 128.0,
         base_return: 0.09,

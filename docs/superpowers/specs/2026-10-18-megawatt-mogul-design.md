@@ -3394,8 +3394,13 @@ unchanged. Seven regions now ship; Europe–Maghreb opts into the country constr
 §28.7.1 and its Gibraltar link is pre-built. Automated acceptance passes (the per-region year-one
 checks, the picker over all seven listings, the research-row provenance test and the 256 × 128
 frame budgets, which pass under the optimised dev profile (a `--release` proxy)). The isolated
-native 120-frame launch smoke passed on 2026-10-26. The IPS/UPS and Brazil native playtests
-(§28.12) are pending: the user plays them by hand, and they are not claimed. Its implementation record is
+native 120-frame launch smoke passed on 2026-10-26. The user's native playtest on 2026-10-26
+(isolated `/tmp/mm-playtest` saves and logs) covered a full year in Brazil and a few months in
+IPS/UPS and exited cleanly with no panics. The user reported that the game works nicely, that
+Brazil feels easy (abundant hydro; cities use very little power; a balance observation), that Russia
+uses little power in summer and more in winter, and that the picker did not feel sluggish. Seed 7
+and the specific lighting checklist were not played, so the §28.12 representative-day playtest is
+not claimed in full. Its implementation record is
 [Plan 7](../plans/2026-10-25-plan-7-single-area-regions.md). **Plan 8**
 (multi-area regions with HVDC links and SGCC, §28.9) remains pending. Each plan bumps
 `SIM_RULES_VERSION` once, from whatever the previous implemented amendment left. The source for

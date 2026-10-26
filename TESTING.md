@@ -29,7 +29,7 @@ cargo nextest run -p domain                    # domain only (never compiles Bev
 cargo nextest run -p application               # unit, property and scenario tests
 cargo nextest run -p infrastructure            # adapter tests
 cargo nextest run -p game                      # presenter, glue, egui-pass and end-to-end tests
-cargo nextest run -p game end_to_end           # one month through the app, per shipped region
+cargo nextest run -p game end_to_end           # one month through the app, Eastern and Western regions only
 cargo nextest run --workspace --profile ci     # what CI runs (no retries)
 cargo insta review                             # review snapshot changes
 cargo mutants -p domain -p application         # mutation testing
@@ -125,15 +125,16 @@ nextest schedules them in parallel and names a failure: `year_one_hands_off_<id>
 `year_one_no_commands_<id>` for each of the seven shipped regions, each playing eight seeds ×
 twelve months. `year_one_cases_cover_every_shipped_region` fails if a shipped region lacks its
 pair. `shipped_regions_never_order_outages_hands_off` covers every shipped region and seed too.
-A12's three-review battery comparison has sixteen independent region/seed tests, each playing two
-companies for 36 months. They use `GameSession` through the real core command handler and invariant
-checks, without application projections or recording, and disable added batteries immediately after
-commissioning to isolate idle-capital abuse. They retain the assets' firm capacity and capital and
-assert that storage flows stay zero. Two additional seed-7 cases, one per region, run the full
-application pipeline with enabled batteries and require actual storage operation. A state-byte
-comparison through construction, commissioning and the first battery operating month checks the
-streamlined driver against the application. Nextest can schedule the cases in parallel; use a
-focused filter when changing an unrelated rule.
+A12's three-review battery comparison covers the Eastern and Western regions only, with sixteen
+independent region/seed tests (seeds 0-7 each), each playing two companies for 36 months. They use
+`GameSession` through the real core command handler and invariant checks, without application
+projections or recording, and disable added batteries immediately after commissioning to isolate
+idle-capital abuse. They retain the assets' firm capacity and capital and assert that storage flows
+stay zero. Two additional seed-7 cases, one each for Eastern and Western, run the full application
+pipeline with enabled batteries and require actual storage operation. A state-byte comparison
+through construction, commissioning and the first battery operating month checks the streamlined
+driver against the application. Nextest can schedule the cases in parallel; use a focused filter
+when changing an unrelated rule.
 
 These scenarios check every added battery and its dedicated line at the first review, including
 the line's matching held fraction. Focused domain tests use a fully excess fixture to check exact

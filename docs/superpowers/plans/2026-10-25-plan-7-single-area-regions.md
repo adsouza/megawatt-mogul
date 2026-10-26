@@ -2,7 +2,8 @@
 
 **Status:** Implemented 2026-10-26 under rules 18; region schema stays 4 and portable state schema
 stays 3. Seven regions ship. The isolated native launch smoke passed (controller run 2026-10-26,
-exit 0). The IPS/UPS and Brazil playtests (Task 10, Step 4) are pending: the user plays them by hand.
+exit 0). The user's native playtest (Task 10, Step 4, 2026-10-26) covered a full year in Brazil and a
+few months in IPS/UPS with a clean exit; seed 7 and the lighting checklist were not played.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -119,7 +120,8 @@ regions, not eight.
 3. **Fractional and many-zone clocks in a real territory.** With Kathmandu (+5:45) and Thimphu
    (+6:00) connected to an IST system, Planning must sample `{0, 30, 45, 59}`; a Delhi-only start
    samples `{0, 59}`. IPS/UPS spans seven offsets. Moscow's evening peak must not be the system
-   peak once Siberian cities connect (Tasks 7 and 8).
+   peak once Siberian cities connect (Tasks 7 and 8). The Siberian flattening is asserted for
+   September to May only, because summer air-conditioning in Central Asia raises the aggregate peak.
 4. **Polar light and the equator crossing.**
    - Murmansk's December solar output is zero all day, and its June output at local midnight is
      positive.
@@ -535,6 +537,9 @@ git commit -am "test: shared shipped-region acceptance tables and provenance che
 
   Expected: everything passes. Record the measured medians in this task's report.
 
+  *Amended:* measured under the optimised dev profile (`CARGO_PROFILE_DEV_OPT_LEVEL=3
+  CARGO_PROFILE_DEV_DEBUG=0`) as a `--release` proxy; disk was short.
+
 - [x] **Step 5: Commit**
 
 ```bash
@@ -889,6 +894,9 @@ Every region task follows these steps. Its own section lists its values and its 
 
   Expected: everything is green.
 
+  *Amended:* measured under the optimised dev profile (`CARGO_PROFILE_DEV_OPT_LEVEL=3
+  CARGO_PROFILE_DEV_DEBUG=0`) as a `--release` proxy; disk was short.
+
 - [x] **Step 3: Launch smoke (ask the user first)**
 
   Run: `cargo run -p game -- --exit-after-frames 120`, with isolated `--log-dir` and save
@@ -900,7 +908,7 @@ Every region task follows these steps. Its own section lists its values and its 
   log/save directories exited 0. No panic or system-parameter conflict; only the known winit
   "Skipped event Destroyed" warning.
 
-- [ ] **Step 4: Isolated native playtests (ask the user first)**
+- [x] **Step 4: Isolated native playtests (ask the user first)**
 
   Play IPS/UPS and Brazil (§28.12), one full representative day each, seed 7, with isolated saves
   and logs. Record:
@@ -911,7 +919,12 @@ Every region task follows these steps. Its own section lists its values and its 
 
   Never use the user's saves.
 
-  Pending: the user plays IPS/UPS and Brazil by hand.
+  User playtest 2026-10-26, native, isolated `/tmp/mm-playtest` saves/logs: a full year in Brazil
+  (seed 1793012147175671000) and a few months in IPS/UPS (seed 1793012859505305000). The game
+  exited cleanly with no panics. The user reported: 'Game works nicely!'; Brazil feels easy
+  (abundant hydro; cities use very little power); Russia uses little power in summer and more in
+  winter; the picker did not feel sluggish. Not played: seed 7, and the specific lighting
+  checklist.
 
 - [x] **Step 5: Update the status lines, then commit**
 

@@ -1355,7 +1355,11 @@
         // household tariff (gas-stove homes) from 2025-07-01, 7,870 RUB/MWh x
         // (95 / 135.6 = 0.70059) = 5,513.6, so 5,510 to start, and x (100 /
         // 135.6 = 0.73746) = 5,803.8, so a reference of 5,800 (the same 0.95
-        // relation as shipped).
+        // relation as shipped). Basis: P7-IPS-001 is Moscow's regulated
+        // household tariff, while P7-US-034 is an all-sector average
+        // (authoring judgment: basis differs from the US all-sector
+        // reference; not re-based). The fuel proxy (ruling 19) scales by the
+        // same 5,800 reference, so it inherits that basis.
         starting_tariff_per_mwh: 5510.0,
         reference_tariff_per_mwh: 5800.0,
         base_return: 0.09,
