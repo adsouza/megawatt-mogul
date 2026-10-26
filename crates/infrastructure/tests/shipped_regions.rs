@@ -2829,6 +2829,8 @@ mod continental_europe_maghreb {
             ("Kaliningrad", 20.51, 54.71),
             ("Bornholm (DK2)", 14.92, 55.13),
             ("Nicosia", 33.36, 35.17),
+            ("Algeria south of 30 N at the Morocco border", -6.05, 29.64),
+            ("Libya at the Ghadames tripoint", 9.55, 30.24),
         ] {
             assert!(!map.land_at(lon, lat), "{name} is outside the footprint");
         }
@@ -3013,6 +3015,16 @@ mod continental_europe_maghreb {
         let (es_cost, ma_cost) = (es.capital_cost.cents(), ma.capital_cost.cents());
         let gap = (ma_cost - es_cost).abs() as f64 / es_cost.min(ma_cost) as f64;
         assert!(gap >= 0.10, "wind capital {es_cost} vs {ma_cost}: {gap:.3}");
+        // The 2024-25 pairing of record: Spain 845 and Morocco 751 EUR/kW paced, so Morocco
+        // is cheaper. The 2021 pair would also pass the gap check above.
+        assert_eq!(
+            (es.capital_cost, ma.capital_cost),
+            (
+                domain::units::Money::from_dollars(253_500_000),
+                domain::units::Money::from_dollars(225_300_000)
+            )
+        );
+        assert!(ma_cost < es_cost, "Morocco's wind is cheaper");
         assert!(
             es.build_months.abs_diff(ma.build_months) >= 1,
             "wind months {} vs {}",
@@ -3025,6 +3037,28 @@ mod continental_europe_maghreb {
             });
             assert!(overshoots.is_empty(), "{overshoots:?}");
         }
+    }
+
+    /// Isolated southern Algeria is out (the schematic 30 N boundary), so no Algerian
+    /// construction-zone cell has its centre south of 30 N.
+    #[test]
+    fn algeria_zone_stays_north_of_30n() {
+        let file = region_file(ID);
+        let region = region(ID);
+        let algeria = domain::region::EconomicZoneId(3);
+        assert_eq!(
+            region.economic_zone(algeria).unwrap().name_key,
+            "economic-zone-algeria"
+        );
+        let (north, south) = (file.bounds.north, file.bounds.south);
+        let height = f64::from(file.grid.height);
+        let terrain = region.terrain();
+        let southern: Vec<CellCoord> = (0..terrain.height())
+            .flat_map(|y| (0..terrain.width()).map(move |x| CellCoord { x, y }))
+            .filter(|cell| region.economic_zone_at(*cell).unwrap() == algeria)
+            .filter(|cell| north - (f64::from(cell.y) + 0.5) / height * (north - south) < 30.0)
+            .collect();
+        assert!(southern.is_empty(), "{southern:?}");
     }
 
     /// The research note's "Algeria and Tunisia zone proposal (follow-up 2026-10-26)": Algiers

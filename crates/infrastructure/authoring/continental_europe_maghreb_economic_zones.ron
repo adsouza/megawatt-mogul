@@ -12,8 +12,9 @@
 // 2-cell floor, none of them playable; MAR: 0.194%; DZA, added 2026-10-26: 0.050%, 1 land ring;
 // TUN, added 2026-10-26: 0.635%, 1 land ring, Djerba and Kerkennah under the 2-cell floor).
 // Each extraction is separate, so Algeria's borders with Morocco and Tunisia are simplified
-// once per side; the rasteriser rejects a cell centre claimed by two zones. Each zone also takes the region file's
-// nudge rings in that country, so a nudged coastal cell keeps its country's market.
+// once per side; the rasteriser rejects a cell centre claimed by two zones. Each zone also
+// takes the region file's nudge rings in that country, so a nudged coastal cell keeps its
+// country's market.
 // Every other playable cell (all other countries, and water) is the regional default, 0.
 (zones: [
     // 1: Spain (ISO:ESP; the peninsula, the Balearic ring is excluded from the region).
@@ -121,8 +122,10 @@
             (-6.080, 35.559), (-5.957, 35.559), (-5.957, 35.685), (-6.080, 35.685),
         ],
     ]),
-    // 3: Algeria (ISO:DZA; north of the region's 30 N schematic cut, which leaves the cells
-    // south of it unplayable and so 0).
+    // 3: Algeria (ISO:DZA). The ring runs south of 30 N, but the region excludes Algeria
+    // there twice: by the 1:10m admin-1 southern provinces and by this same ring clipped to
+    // 22.87-30.0 N, which covers the Morocco-border seam the admin-1 cut misses. Those cells
+    // are unplayable, so they rasterise to 0, and zone 3 holds only cells north of 30 N.
     (id: 3, polygons: [
         [
             (8.127, 36.910), (7.910, 36.856), (7.792, 36.880), (7.608, 37.000), (7.432, 37.059),

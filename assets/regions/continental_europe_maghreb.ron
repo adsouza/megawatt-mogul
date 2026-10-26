@@ -33,7 +33,8 @@
 //   only under consideration (Enerdata, "Sonelgaz launches a 700 km
 //   transmission project to link Algeria's power grids", 2023-05-04). The
 //   exclusion is 1:10m admin-1 Adrar, Tamanghasset, Tindouf, Bechar, Ouargla,
-//   Illizi and Ghardaia south of 30 N.
+//   Illizi and Ghardaia south of 30 N, plus 1:50m admin-0 DZA south of 30 N
+//   for the Morocco-border seam the admin-1 cut misses.
 // - Areas the notes don't address (spec section 28.3):
 //   - Transnistria is in. Its Moldavskaya GRES supplied about 70% of
 //     Moldova's electricity before Moldova's grid synchronised with
@@ -85,8 +86,17 @@
 // collapses is a 4-point Haute-Corse islet (9.46-9.48 E, 42.62-42.65 N) that
 // lies in no included land ring, so no land is re-admitted. The southern
 // Algeria run (continental_europe_maghreb_algeria_south.args, extent mode)
-// reports 1 exclude ring from 1 dissolved ring meeting its bounds.
-// Tolerance: 0.02 degrees in both runs, the same as assets/regions/ips_ups.ron
+// reports 1 exclude ring from 1 dissolved ring meeting its bounds. Its 1:10m
+// admin-1 edge leaves a seam against the 1:50m Morocco-Algeria border, so a
+// second southern-Algeria ring follows it: the 1:50m admin-0 DZA ring of the
+// economic-zone authoring file (python3 -I tools/region_authoring/
+// natural_earth.py --admin0 target/natural-earth/ne_50m_admin_0_countries.geojson
+// --include ISO:DZA --bounds=-16.65,44.95,22.87,59.87 --grid 154,123
+// --tolerance-deg 0.02 --dissolve, which reports 1 land and 0 exclude rings)
+// clipped to 22.87-30.0 N, 40 points. The exclude list holds 38 rings: the
+// 22 and 1 generated, that derived ring, the canonical Crimea extent, the ten
+// IPS/UPS seam cells and three schematic exclusions.
+// Tolerance: 0.02 degrees in all three runs, the same as assets/regions/ips_ups.ron
 // and the canonical Crimea extent, so the shared IPS/UPS borders (Ukraine,
 // Moldova, the Baltic states, Poland and Turkiye against Russia, Belarus and
 // Georgia) are the same 1:50m admin-0 lines simplified alike.
@@ -99,7 +109,9 @@
 // Nudge rings after the generated land put coastal cities and starter plants
 // whose cell centres fall offshore on land, and give Malta, Crete and Sicily
 // a land cell at Valletta, Heraklion and Palermo. Schematic exclusions open
-// the Strait of Messina and cut Western Sahara south of Dakhla. The grid's
+// the Strait of Messina, cut Western Sahara south of Dakhla and take out the
+// one Libyan cell centre at the Ghadames tripoint that the simplified outline
+// admits. The grid's
 // rows are placed so a row of centres lies in the Strait of Gibraltar, so
 // the starter link crosses one water cell.
 // Points are (lon, lat) in degrees.
@@ -789,6 +801,22 @@
             (-7.619, 29.389), (-8.036, 29.100), (-8.368, 28.917), (-8.430, 28.841), (-8.668, 28.712),
             (-8.682, 27.285),
         ],
+        // 1:50m admin-0 DZA south of 30 N, the Morocco-border seam the admin-1 cut misses: the
+        // 1:10m admin-1 outline above runs up to about 0.25 degree south of the 1:50m
+        // Morocco-Algeria border, which left four playable Algerian cell centres at 29.6-29.9 N
+        // (5.2-6.5 W). This is the zone-3 DZA ring (crates/infrastructure/authoring/
+        // continental_europe_maghreb_economic_zones.ron, same extractor run) clipped to
+        // 22.87-30.0 N, so the cut and the zone come from one source scale.
+        [
+            (-5.394, 30.000), (-5.449, 29.957), (-6.004, 29.831), (-6.480, 29.820), (-6.521, 29.660),
+            (-6.635, 29.569), (-7.142, 29.620), (-7.486, 29.392), (-7.685, 29.350), (-8.265, 28.981),
+            (-8.678, 28.689), (-8.683, 27.286), (-4.823, 24.996), (-1.558, 22.870), (10.869, 22.870),
+            (11.968, 23.518), (11.508, 24.314), (10.686, 24.551), (10.396, 24.486), (10.256, 24.591),
+            (10.120, 24.790), (10.028, 25.051), (10.001, 25.332), (9.448, 26.067), (9.422, 26.147),
+            (9.438, 26.246), (9.491, 26.334), (9.859, 26.552), (9.883, 26.631), (9.894, 26.848),
+            (9.837, 26.916), (9.795, 27.045), (9.748, 27.331), (9.916, 27.786), (9.858, 28.043),
+            (9.816, 28.560), (9.843, 28.967), (9.805, 29.177), (9.640, 29.636), (9.389, 30.000),
+        ],
         // The canonical Crimea and Sevastopol extent, pasted verbatim from
         // crates/infrastructure/authoring/ukraine_ips_operating_extent.ron (ruling 11).
         [
@@ -868,6 +896,13 @@
         // cell (on its peninsula, off the 1:50m coast) is water with or without the cut.
         [
             (-17.000, 22.500), (-12.000, 22.500), (-12.000, 23.550), (-17.000, 23.550),
+        ],
+        // Libya at the Ghadames tripoint: simplification admits one LBY centre. The cell at
+        // 9.35-9.75 E, 30.09-30.39 N has its centre (9.55 E, 30.24 N) in Libya in the
+        // unsimplified 1:50m data, but inside the simplified Maghreb outline. A schematic
+        // square inside that cell only takes it out.
+        [
+            (9.450, 30.150), (9.650, 30.150), (9.650, 30.330), (9.450, 30.330),
         ],
     ],
     // Relief: the Alps, the Pyrenees, the Atlas, the Carpathians, the Dinaric
@@ -1393,7 +1428,7 @@
             ),
         ],
         // Offline author_economic_zone_cells: continental_europe_maghreb.ron with continental_europe_maghreb_economic_zones.ron
-        // Zones SHA256: eb502b9abbea618bc9304e1bd0bd30597e979c25891e41806831ba5abd2735a5
+        // Zones SHA256: b47c3d5caf71698f5cf15accd17afaced5af522cbd4661848b8287decb389452
         // Cell-centre sampling; non-playable cells and cells in no zone are 0.
         cells: [
             // Row 0
@@ -2289,7 +2324,7 @@
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             // Row 99
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2,
-            2, 2, 2, 2, 2, 2, 2, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            2, 2, 2, 2, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -2298,7 +2333,7 @@
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             // Row 100
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2,
-            2, 2, 2, 2, 2, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            2, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
