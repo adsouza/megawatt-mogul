@@ -1,7 +1,7 @@
-//! One whole month through the app, for each shipped region: a new game, which already runs the
-//! hands-off plan, so the player sends no planning command at all; *Start the day*, which begins
-//! it directly on a forecast with no shortfall; the day run at 8× by the fixed-step driver; and
-//! the review continued into the next Planning. And a month with nothing committed, for the path
+//! One whole month through the app, for the Eastern and Western regions: a new game, which
+//! already runs the hands-off plan, so the player sends no planning command at all; *Start the
+//! day*, which begins it directly on a forecast with no shortfall; the day run at 8× by the
+//! fixed-step driver; and the review continued into the next Planning. And a month with nothing committed, for the path
 //! from a domain event to a toast on screen: its *Start the day* asks first, and *Start anyway*
 //! begins it.
 //!

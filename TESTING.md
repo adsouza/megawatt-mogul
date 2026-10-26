@@ -622,7 +622,7 @@ Headless `WorldViewPlugin` tests reconcile stable IDs without a renderer, check 
 counts through idle frames, rebuild on new games and free every owned asset on leave. A fixed command
 script compares checkpoints and monthly reports with a client lacking the world plugin. Construction
 state and identity stay visible. Mid-day save/resume tests include world reconciliation and paused
-entry in the Eastern and Western regions. Real egui passes exercise projected selection, click/drag separation, dialogs,
+entry in every shipped region. Real egui passes exercise projected selection, click/drag separation, dialogs,
 Review, legend/panel capture, Shift + left-drag and right/middle-drag panning without orbiting or
 selecting, all resource layers and text contrast at 1024×640 / 1280×800 and 1× / 1.25×
 zoom (the input rectangle is in logical points, as bevy_egui supplies it). The compact layer
