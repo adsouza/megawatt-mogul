@@ -567,7 +567,18 @@ fn shipped_europe_maghreb_profiles_quote_pay_and_commission_by_their_terms() {
         }
         id += 1;
     }
-    assert!(id > 2, "the region authors at least two zones");
+    let mut covered: Vec<&str> = orders.iter().map(|(zone, _, _)| zone.as_str()).collect();
+    covered.dedup();
+    assert_eq!(
+        covered,
+        [
+            "economic-zone-spain",
+            "economic-zone-morocco",
+            "economic-zone-algeria",
+            "economic-zone-tunisia",
+        ],
+        "every authored zone is built in"
+    );
     let longest = orders.iter().map(|(_, _, q)| q.months).max().unwrap();
     for month in 1..=longest {
         close(&mut game);

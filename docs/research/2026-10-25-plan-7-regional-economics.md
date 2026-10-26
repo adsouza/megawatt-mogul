@@ -460,7 +460,7 @@ schedule, which the rows use as `build_months_real`.
 | P7-ES-003 | Europe–Maghreb | Spain | Wind | build_months_real | 8 | months | — | 8 months; FX: none | Iberdrola España — Iberdrola puts the Puylobo wind farm into operation — https://www.iberdrolaespana.com/sala-comunicacion/noticias/detalle/201130_np_01_parque_eolico_puylobo — pub. 2020-11-29 — acc. 2026-10-25 — loc. paragraph 1 (construction time) | 49 MW, 14 × SG 3.4-132, Zaragoza; built during the pandemic; the company calls it record time |
 | P7-ES-004 | Europe–Maghreb | Spain | Solar | capital_per_kw | nearly 300 million for 500 MWp (391 MW grid connection) | EUR | 2019 | derived ≤ 300e6 ÷ 391,000 kWac = 767 EUR/kWac (600 EUR/kWp); FX: none | Iberdrola — Núñez de Balboa completed — https://www.iberdrola.com/press-room/news/detail/nunez-balboa-completed-iberdrola-finalizes-construction-largest-photovoltaic-plant-europe-within-year — pub. 2019-12-27 — acc. 2026-10-25 — loc. paragraph 2 (500 MW, investment); AC rating from Iberdrola project page https://www.iberdrola.com/about-us/power/solar-photovoltaic-energy/nunez-de-balboa-photovoltaic-plant (undated page), installed-capacity line | Badajoz. "Nearly" makes 767 an upper bound per kWac |
 | P7-ES-005 | Europe–Maghreb | Spain | Solar | build_months_real | 12 | months | — | 12 months; FX: none | Iberdrola — https://www.iberdrola.com/press-room/news/detail/nunez-balboa-completed-iberdrola-finalizes-construction-largest-photovoltaic-plant-europe-within-year — Núñez de Balboa completed (as P7-ES-004) — pub. 2019-12-27 — acc. 2026-10-25 — loc. headline and paragraph 1 (construction in one year) | Construction completed December 2019; operation forecast for Q1 2020 |
-| P7-ES-006 | Europe–Maghreb | Spain | Wind | capital_per_kw | 1,422 | USD/kW | 2025 | derived 1,422 × 0.884969 = 1,258 EUR/kW; FX: P7-FX-011 | IRENA — *Renewable Power Generation Costs in 2025* — https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_in_2025_2026.pdf (downloaded; SHA-256 38c8c70b848187c89d64b8817f0ebe831a9587c00257c1cc93195f22833a0eab) — pub. 2026-07 — acc. 2026-10-25 — loc. Figure 2.4, Spain, 2025 label, p. 47 | Market weighted average; disclosed in the contrast (same-era comparison with P7-MA-004) |
+| P7-ES-006 | Europe–Maghreb | Spain | Wind | capital_per_kw | 1,422 | USD/kW | 2025 | derived 1,422 × 0.884969 = 1,258 EUR/kW; FX: P7-FX-011 | IRENA — *Renewable Power Generation Costs in 2025* — https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_in_2025_2026.pdf (downloaded; SHA-256 38c8c70b848187c89d64b8817f0ebe831a9587c00257c1cc93195f22833a0eab) — pub. 2026-07 — acc. 2026-10-25 — loc. Figure 2.4, Spain, 2025 label, p. 47 | Market weighted average, not a single project; Spain's wind capital of record in the 2024–25 pairing with P7-MA-004 (user decision 2026-10-26; see the contrast) |
 | P7-ES-007 | Europe–Maghreb | Spain | Solar | capital_per_kw | 690 | USD/kW | 2025 | derived 610.6 EUR/kW; FX: P7-FX-011 | IRENA — *Renewable Power Generation Costs in 2025* — https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_in_2025_2026.pdf (downloaded; SHA-256 38c8c70b848187c89d64b8817f0ebe831a9587c00257c1cc93195f22833a0eab) — pub. 2026-07 — acc. 2026-10-25 — loc. Figure 3.2, Spain, 2025 label, p. 63 | Market weighted average |
 
 ### Morocco (`MA`, EUR via MAD)
@@ -470,7 +470,7 @@ schedule, which the rows use as `build_months_real`.
 | P7-MA-001 | Europe–Maghreb | Morocco | Wind | capital_per_kw | total project cost 130,000,000 for 100 MW | EUR | 2021 | derived 130e6 ÷ 100,000 kW = 1,300 EUR/kW; FX: none (stated in EUR) | EBRD — Koudia Al Baida Wind Farm, Project Summary Document 50957 — https://www.ebrd.com/work-with-us/projects/psd/50957.html — pub. 2021-12-23 — acc. 2026-10-25 — loc. Total Project Cost; Project Description | Repowering of the 50 MW Koudia Al Baida farm near Tangier to 100 MW with 5 MW turbines. Includes replacing the old units; reuses the site and grid connection |
 | P7-MA-002 | Europe–Maghreb | Morocco | Wind | build_months_real | works launched 2022-07-18; construction complete and first MW injected by 2024-03-06 | dates | — | derived 597 days = 19.6 months; FX: none | Masen — press release on financial close and launch of works for Nassim Koudia Al Baida — https://www.masen.ma/sites/default/files/documents_presse/Communiqu%C3%A9%20de%20presse_KOUDIA_LANCEMENT_REPOWERING.pdf — pub. 2022-07-18 — acc. 2026-10-25 — loc. p. 1, paragraphs 2 and 4; and Le360, reporting a Masen communiqué — https://fr.le360.ma/economie/energies-renouvelables-les-parcs-eoliens-nassim-koudia-al-baida-et-nassim-jbel-lahdid-operationnels_J3YN6WL2KRBRBAXMOJE2FTIFDY/ — pub. 2024-03-06 — acc. 2026-10-25 — loc. Koudia paragraph | Launch to completion of construction; commercial operation was expected in the first half of 2024 |
 | P7-MA-003 | Europe–Maghreb | Morocco | Wind | build_months_real | commercial operation planned for Q2 2024 | target date | — | derived *planned* 20.5–23.4 months from 2022-07-18; FX: none | Masen — https://www.masen.ma/sites/default/files/documents_presse/Communiqu%C3%A9%20de%20presse_KOUDIA_LANCEMENT_REPOWERING.pdf — Koudia release (as P7-MA-002) — pub. 2022-07-18 — acc. 2026-10-25 — loc. p. 1, paragraph 4 | Planned launch-to-operation window; corroborates P7-MA-002 |
-| P7-MA-004 | Europe–Maghreb | Morocco | Wind | capital_per_kw | about 3.25 billion for 270 MW | MAD | 2024 | derived 3.25e9 ÷ 270,000 kW = 12,037 MAD/kW ÷ 10.7614 = 1,119 EUR/kW; FX: P7-FX-005, P7-FX-006 | Enerdata, reporting ONEE — Morocco starts operations of 270 MW Jbel Lahdid wind project — https://www.enerdata.net/publications/daily-energy-news/morocco-starts-operations-270-mw-jbel-lahdid-wind-project.html — pub. 2024-10-15 — acc. 2026-10-25 — loc. paragraph 1 | 54 × 5 MW, Essaouira; ONEE with Nareva and Enel Green Power. Counter-evidence to the Spain–Morocco capital gap (see contrast) |
+| P7-MA-004 | Europe–Maghreb | Morocco | Wind | capital_per_kw | about 3.25 billion for 270 MW | MAD | 2024 | derived 3.25e9 ÷ 270,000 kW = 12,037 MAD/kW ÷ 10.7614 = 1,119 EUR/kW; FX: P7-FX-005, P7-FX-006 | Enerdata, reporting ONEE — Morocco starts operations of 270 MW Jbel Lahdid wind project — https://www.enerdata.net/publications/daily-energy-news/morocco-starts-operations-270-mw-jbel-lahdid-wind-project.html — pub. 2024-10-15 — acc. 2026-10-25 — loc. paragraph 1 | 54 × 5 MW, Essaouira; ONEE with Nareva and Enel Green Power. An announced project total; Morocco's wind capital of record in the 2024–25 pairing with P7-ES-006 (user decision 2026-10-26; see the contrast) |
 | P7-MA-005 | Europe–Maghreb | Morocco | Solar | capital_per_kw | more than 750 million for 72 MW | MAD | 2017 | derived 750e6 ÷ 72,000 kW = 10,417 MAD/kW ÷ 10.9489 = 951 EUR/kW; FX: P7-FX-001, P7-FX-002 | Masen — press release on the launch of works at Noor Ouarzazate IV — https://www.masen.ma/sites/default/files/documents_presse/17.pdf — pub. 2017-04-01 — acc. 2026-10-25 — loc. p. 1, paragraph 3 | Estimated investment at launch; 72 MW maximum capacity, single-axis tracking PV; ACWA Power consortium. "More than" makes 951 a lower bound |
 | P7-MA-006 | Europe–Maghreb | Morocco | Solar | build_months_real | works launched 2017-04-01; commissioning planned for Q1 2018 | dates | — | derived *planned* 9–12 months; FX: none | Masen — https://www.masen.ma/sites/default/files/documents_presse/17.pdf — Noor Ouarzazate IV release (as P7-MA-005) — pub. 2017-04-01 — acc. 2026-10-25 — loc. p. 1, paragraphs 1 and 3 | Planned; actual commissioning date not found |
 | P7-MA-007 | Europe–Maghreb | Morocco | Wind | capital_per_kw | actual investment 215.85 million for 140 MW | EUR | 2011 (commissioned) | derived 1,542 EUR/kW; FX: none (stated in EUR) | KfW Development Bank — *Ex post evaluation – Morocco: Wind Farm Tangier II* (evaluation report 2015) — https://www.kfw-entwicklungsbank.de/PDF/Evaluierung/Ergebnisse-und-Publikationen/PDF-Dokumente-L-P_EN/Marokko_Windpark_E_2016.pdf (downloaded; SHA-256 1da025e6b444762c8e5c3651ba2a52f415d8157a06c807bbfcf015e24be408d9) — pub. 2016-05 (PDF) — acc. 2026-10-25 — loc. p. 1 header table (actual); p. 4 efficiency section | ONEE Tangier II, 165 × 850 kW; 29% over the planned 167 million; old turbine class and price year, so not used for the paced contrast |
@@ -596,13 +596,17 @@ are illustrative checks; Task 9 recomputes them with the method of record.
 
 | Zone id | name_key | Covers | Plant overrides (rows) | AC overrides |
 |---|---|---|---|---|
-| 1 | `economic-zone-spain` | Spain's playable territory (the peninsula inside the footprint; the Balearics are already excluded by §28.3) | Wind: `capital_cost` from P7-ES-001 (P7-ES-002 corroborates), `build_months` from P7-ES-003. Solar: `capital_cost` from P7-ES-004, `build_months` from P7-ES-005 | none: no sourced Spanish line rows, so AC terms inherit the regional `lines` |
-| 2 | `economic-zone-morocco` | Morocco's playable territory, as the region file assigns it under the grid-operation rule. Western Sahara cells are Task 9's ruling, recorded with an operator source | Wind: `capital_cost` from P7-MA-001, `build_months` from P7-MA-002 (P7-MA-003 corroborates). Solar: `capital_cost` from P7-MA-005, `build_months` from P7-MA-006 (*planned*) | none: no sourced Moroccan line rows |
+| 1 | `economic-zone-spain` | Spain's playable territory (the peninsula inside the footprint; the Balearics are already excluded by §28.3) | Wind: `capital_cost` from P7-ES-006 by user decision on 2026-10-26 (originally P7-ES-001, with P7-ES-002 corroborating; see the contrast), `build_months` from P7-ES-003. Solar: `capital_cost` from P7-ES-004, `build_months` from P7-ES-005 | none: no sourced Spanish line rows, so AC terms inherit the regional `lines` |
+| 2 | `economic-zone-morocco` | Morocco's playable territory, as the region file assigns it under the grid-operation rule. Western Sahara cells are Task 9's ruling, recorded with an operator source | Wind: `capital_cost` from P7-MA-004 by user decision on 2026-10-26 (originally P7-MA-001; see the contrast), `build_months` from P7-MA-002 (P7-MA-003 corroborates). Solar: `capital_cost` from P7-MA-005, `build_months` from P7-MA-006 (*planned*) | none: no sourced Moroccan line rows |
 
-Every other country stays in the regional default, zone 0 (next section). The Spain and Morocco
-profiles override only the kinds with whole-project sources. Other kinds inherit the regional
-catalog. Neither profile is a discount: the Moroccan rows are dearer and slower than the Spanish
-ones, and that comes from the projects, not from a wage assumption.
+Every other country stays in the regional default, zone 0 (next section), except northern Algeria
+and Tunisia, which became zones 3 and 4 on 2026-10-26 (see the
+[Algeria and Tunisia zone proposal](#algeria-and-tunisia-zone-proposal-follow-up-2026-10-26)). The
+Spain and Morocco profiles override only the kinds with project sources, except Spain's wind
+capital, a market average used by user decision. Other kinds inherit the regional catalog. Neither
+profile is a blanket discount: Moroccan wind is cheaper but slower than Spanish wind in the
+2024–25 pairing, and Moroccan solar is dearer, and that comes from the sources, not from a wage
+assumption.
 
 Zone 0 is the regional default and needs a baseline catalog. **Proposed by authoring choice:**
 
@@ -623,39 +627,44 @@ non-US source.
 
 ## Spain–Morocco contrast
 
-The required contrast (§28.7.1; Plan 7 Task 1, Step 5.2) is met by **onshore wind**:
+The required contrast (§28.7.1; Plan 7 Task 1, Step 5.2) is met by **onshore wind**. **The pairing
+of record is the 2024–25 one, by user decision on 2026-10-26:** IRENA's 2025 Spain market average
+(P7-ES-006) against the 2024 Jbel Lahdid project (P7-MA-004). The 2021 project pair below is kept
+as recorded alternative evidence.
 
 | | Spain | Morocco | Difference |
 |---|---|---|---|
-| Real capital | 1,111 EUR/kW (P7-ES-001, 2021) | 1,300 EUR/kW (P7-MA-001, 2021) | +17.0% |
-| Paced capital (× 0.6716, 3 s.f.) | 746 EUR/kW | 873 EUR/kW | **+17.0%** (≥ 10%) |
+| Real capital | 1,258.4 EUR/kW (P7-ES-006, 2025 market average) | 1,118.5 EUR/kW (P7-MA-004, 2024) | −11.1% |
+| Paced capital (× 0.6716, 3 s.f.) | 845 EUR/kW | 751 EUR/kW | **−11.1%**; \|845 − 751\| ÷ 751 = 12.5% (≥ 10%) |
 | Real duration | 8 months (P7-ES-003) | 19.6 months (P7-MA-002) | +11.6 months |
 | Paced months (× 3/9, rounded) | round(2.67) = **3** | round(6.54) = **7** | **+4 game months** (≥ 1) |
 
-- Wind has no pacing ceiling, so neither value is clamped. Both capital rows are 2021 figures.
-- With the planned Moroccan window (P7-MA-003, 20.5–23.4 months), Morocco paces to 7–8 months.
-  With Spain's corroborating Cofrentes capital (P7-ES-002, 1,060 EUR/kW), the gap widens to 22.6%.
-- **Fragility (disclosed).** The capital gap rests on Koudia Al Baida, a repowering. Jbel Lahdid
-  (P7-MA-004, 2024) is 1,119 EUR/kW, which paces to 751 EUR/kW: only +0.7% above Spain, so it
-  alone would not meet 10%.
-  - Averaging both Moroccan projects (1,209 EUR/kW) against both Spanish ones (1,086 EUR/kW) gives
-    812 against 729 EUR/kW paced, a gap of +11.4%.
-  - The duration contrast does not depend on Koudia's cost. Its only duration evidence is Koudia
-    itself (P7-MA-002, P7-MA-003); no sourced Jbel Lahdid start date was found.
-- **Round 2 evidence.** Two independent Moroccan wind sources were added:
-  - KfW's Tangier II evaluation: 1,542 EUR/kW actual (P7-MA-007), with commissioning 25 months
-    later than planned (P7-MA-008).
-  - EIB's 2013 programme appraisal: 1,564 EUR/kW (P7-MA-009).
-  - Both independently support "Moroccan wind is dearer and slower". Their price years (2011,
-    2013) predate the Spanish rows, so they corroborate the direction rather than replace the
-    2021 pair.
-  - **Counter-evidence (disclosed).** IRENA's 2025 Spain market average is 1,258 EUR/kW
-    (P7-ES-006). Against the 2024 Jbel Lahdid cost (1,119 EUR/kW), Morocco is about 11% *cheaper*
-    in the same era. The capital difference exceeds 10% in both pairings, but its sign is not
-    robust across eras.
-  - The duration difference is robust: P7-MA-002 and P7-MA-008 against P7-ES-003.
-  - Recommendation: keep the same-year, project-to-project 2021 pair. The user may prefer to
-    confirm.
+- Morocco's wind is cheaper but slower. Wind has no pacing ceiling, so neither value is clamped.
+- The Spanish figure is a country market weighted average, not a single whole project. It is used
+  by user decision. The Jbel Lahdid figure is an announced project total ("about" 3.25 billion MAD).
+- Paced with full-precision intermediates (ruling 25): 1,422 × 0.884969 = 1,258.43 EUR/kW ×
+  0.671592 = 845.15, so 845; 3.25e9 ÷ 270,000 = 12,037.0 MAD/kW ÷ 10.76141 = 1,118.54 EUR/kW ×
+  0.671592 = 751.20, so 751 (the rounded 1,119 would give 751.51, so 752).
+- The test checks the capital difference in either direction, \|a − b\| ÷ min(a, b) ≥ 0.10, so
+  it does not depend on which country is dearer.
+- The duration contrast is unchanged. Its only Moroccan duration evidence is Koudia Al Baida
+  (P7-MA-002, P7-MA-003); no sourced Jbel Lahdid start date was found. With the planned Moroccan
+  window (P7-MA-003, 20.5–23.4 months), Morocco paces to 7–8 months. P7-MA-008 (Tangier II, 25
+  months late) independently supports long Moroccan schedules.
+- **Recorded alternative evidence: the 2021 project pair.** Herrera II (P7-ES-001, 1,111 EUR/kW)
+  against the Koudia Al Baida repowering (P7-MA-001, 1,300 EUR/kW) paces to 746 against 873
+  EUR/kW: Morocco +17.0% dearer. This was the pair of record until 2026-10-26.
+  - With Spain's corroborating Cofrentes capital (P7-ES-002, 1,060 EUR/kW), that gap widens to
+    22.6%.
+  - Averaging the two Moroccan projects (P7-MA-001 and P7-MA-004, 1,209 EUR/kW) against the two
+    Spanish ones (P7-ES-001 and P7-ES-002, 1,086 EUR/kW) gives 812 against 729 EUR/kW paced,
+    +11.4%.
+  - KfW's Tangier II evaluation (1,542 EUR/kW actual, P7-MA-007) and EIB's 2013 programme
+    appraisal (1,564 EUR/kW, P7-MA-009) also point to dearer Moroccan wind, with 2011 and 2013
+    price years.
+- **The sign of the capital gap differs between the pairs.** The 2021 pair has Morocco dearer;
+  the 2024–25 pair has Morocco cheaper. Both differ by more than 10%, and the duration difference
+  (P7-MA-002 and P7-MA-008 against P7-ES-003) holds in both.
 - **No second qualifying technology.** IRENA has no Moroccan solar or wind country value. Solar
   durations stay about 12 months on both sides. No Spanish or Moroccan CCGT build source was
   found.
@@ -687,10 +696,11 @@ Portugal, France, Belgium, the Netherlands, Luxembourg, Germany, Switzerland, Au
 (including Sicily), Malta, Slovenia, Croatia, Bosnia and Herzegovina, Serbia, Montenegro, North
 Macedonia, Albania, Greece (including Crete), Bulgaria, Romania, Hungary, Slovakia, Czechia,
 Poland, Lithuania, Latvia, Estonia, Denmark (DK1), Ukraine (connected part), Moldova, Türkiye,
-northern Algeria, Tunisia, and any micro-states and areas Task 9 rules into the footprint.
+and any micro-states and areas Task 9 rules into the footprint.
 
-Northern Algeria and Tunisia stay here unless the controller accepts the
-[Algeria and Tunisia zone proposal](#algeria-and-tunisia-zone-proposal-follow-up-2026-10-26).
+Northern Algeria and Tunisia left this list on 2026-10-26, when the
+[Algeria and Tunisia zone proposal](#algeria-and-tunisia-zone-proposal-follow-up-2026-10-26) was
+accepted: they are zones 3 and 4.
 
 ## Algeria and Tunisia zone proposal (follow-up 2026-10-26)
 

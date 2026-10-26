@@ -2986,9 +2986,10 @@ mod continental_europe_maghreb {
         assert!(region.has_economic_zones());
     }
 
-    /// Spec section 28.7.1 and Plan 7 Task 1's contrast of record: onshore wind at Seville
-    /// (Spain) and Tangier (Morocco) differs by at least 10% in capital and at least one game
-    /// month in build time, and both stay within the pacing ceilings.
+    /// Spec section 28.7.1 and the contrast of record (the 2024-25 pairing, user decision
+    /// 2026-10-26): onshore wind at Seville (Spain) and Tangier (Morocco) differs by at least
+    /// 10% in capital, in either direction, and by at least one game month in build time, and
+    /// both stay within the pacing ceilings.
     #[test]
     fn spain_and_morocco_differ_in_cost_and_duration() {
         let region = region(ID);
@@ -3023,6 +3024,56 @@ mod continental_europe_maghreb {
                 region.plant_spec_at(kind, cell).unwrap().build_months
             });
             assert!(overshoots.is_empty(), "{overshoots:?}");
+        }
+    }
+
+    /// The research note's "Algeria and Tunisia zone proposal (follow-up 2026-10-26)": Algiers
+    /// and Tunis resolve solar and CCGT construction from their zones, and every other kind,
+    /// wind included, and the AC line terms inherit the regional default, zone 0.
+    #[test]
+    fn algeria_and_tunisia_use_their_profiles() {
+        use domain::units::Money;
+        let region = region(ID);
+        for (city, name_key, solar, ccgt) in [
+            (
+                "city-algiers",
+                "economic-zone-algeria",
+                (78_900_000, 3),
+                (287_000_000, 6),
+            ),
+            (
+                "city-tunis",
+                "economic-zone-tunisia",
+                (92_700_000, 3),
+                (235_500_000, 6),
+            ),
+        ] {
+            let cell = city_named(&region, city).cell;
+            let zone = region
+                .economic_zone(region.economic_zone_at(cell).unwrap())
+                .unwrap_or_else(|| panic!("{city} is in an authored zone"));
+            assert_eq!(zone.name_key, name_key, "{city}");
+            assert_eq!(
+                (zone.ac_lines.cost_per_cell, zone.ac_lines.cells_per_month),
+                (None, None),
+                "{city}: AC lines stay regional"
+            );
+            for kind in PlantKind::ALL {
+                let spec = region.plant_spec_at(kind, cell).unwrap();
+                let expected = match kind {
+                    PlantKind::Solar => (Money::from_dollars(solar.0), solar.1),
+                    PlantKind::Ccgt => (Money::from_dollars(ccgt.0), ccgt.1),
+                    _ => (
+                        region.spec(kind).capital_cost,
+                        region.spec(kind).build_months,
+                    ),
+                };
+                assert_eq!(
+                    (spec.capital_cost, spec.build_months),
+                    expected,
+                    "{city} {kind:?}"
+                );
+            }
         }
     }
 

@@ -481,5 +481,7 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "zone-trt",
     "economic-zone-spain",
     "economic-zone-morocco",
+    "economic-zone-algeria",
+    "economic-zone-tunisia",
     "line-spain-morocco",
 ];

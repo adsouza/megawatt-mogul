@@ -531,6 +531,8 @@ zone-trt = TRT
 # Continental Europe–Maghreb construction markets and its named starter line.
 economic-zone-spain = Spain
 economic-zone-morocco = Morocco
+economic-zone-algeria = Algeria
+economic-zone-tunisia = Tunisia
 line-spain-morocco = Spain–Morocco interconnector
 
 # Optional construction economics. All prices use the region's currency.
