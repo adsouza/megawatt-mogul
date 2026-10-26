@@ -21,14 +21,19 @@ use super::speed::LastSpeed;
 use super::theme;
 use super::ui_state::{PlanningTab, UiState};
 use crate::sim::{
-    NewGameRequest, PersistAction, Persistence, PlayerCommand, ReturnToMenu, SessionGeneration,
-    SimSpeed,
+    NewGameRequest, PersistAction, Persistence, PlayerCommand, ReturnToMenu, Session,
+    SessionGeneration, SimSpeed,
 };
 use crate::state::AppState;
 
 /// Something the player asked for through the HUD.
 #[derive(Debug, Clone, PartialEq)]
 pub enum UiAction {
+    ConfirmConnection {
+        kind: domain::session::ConnectionKind,
+        from: domain::ids::NodeId,
+        to: domain::ids::NodeId,
+    },
     SelectIsland(Option<domain::ids::NodeId>),
     ShowLinks(bool),
     World(crate::world::WorldAction),
@@ -103,6 +108,12 @@ impl From<MenuScreen> for AppState {
 /// A question the HUD asks before doing something it can't undo.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Prompt {
+    Connection {
+        kind: domain::session::ConnectionKind,
+        from: domain::ids::NodeId,
+        to: domain::ids::NodeId,
+        warning: domain::session::ConnectionWarning,
+    },
     CancelLinkConstruction {
         link: domain::ids::LinkId,
     },
@@ -235,6 +246,7 @@ pub fn add_enabled(ui: &mut egui::Ui, enabled: bool, widget: impl egui::Widget) 
 /// Everything [`dispatch`] can write to. A panel system takes it as a parameter and passes it on.
 #[derive(SystemParam)]
 pub struct ActionSink<'w> {
+    session: Option<Res<'w, Session>>,
     world: ResMut<'w, crate::world::WorldControls>,
     commands: MessageWriter<'w, PlayerCommand>,
     persistence: ResMut<'w, Persistence>,
@@ -318,6 +330,48 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
     for action in actions {
         sink.ui.apply(&action);
         match action {
+            UiAction::ConfirmConnection { kind, from, to } => {
+                if sink.persistence.frozen() {
+                    continue;
+                }
+                let Some(Prompt::Connection {
+                    kind: shown_kind,
+                    from: shown_from,
+                    to: shown_to,
+                    warning: shown,
+                }) = sink.prompt.0
+                else {
+                    continue;
+                };
+                if (kind, from, to) != (shown_kind, shown_from, shown_to) {
+                    continue;
+                }
+                let Some(session) = sink.session.as_ref() else {
+                    continue;
+                };
+                let current = match session.0.session().connection_warning(kind, from, to) {
+                    Ok(value) => value,
+                    Err(_) => {
+                        sink.prompt.0 = None;
+                        continue;
+                    }
+                };
+                if let Some(current) = current
+                    && current != shown
+                {
+                    sink.prompt.0 = Some(Prompt::Connection {
+                        kind,
+                        from,
+                        to,
+                        warning: current,
+                    });
+                    continue;
+                }
+                sink.prompt.0 = None;
+                let command = connection_command(kind, from, to);
+                sink.commands
+                    .write(PlayerCommand(command, sink.generation.0));
+            }
             UiAction::SelectIsland(_) | UiAction::ShowLinks(_) => {}
             UiAction::World(action) => sink.world.apply(action),
             UiAction::Persistence(action) => {
@@ -328,6 +382,28 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             }
             UiAction::Command(command) => {
                 if !sink.persistence.frozen() {
+                    let route = match command {
+                        Command::BuildLine { from, to } => {
+                            Some((domain::session::ConnectionKind::Ac, from, to))
+                        }
+                        Command::BuildLink { from, to } => {
+                            Some((domain::session::ConnectionKind::Dc, from, to))
+                        }
+                        _ => None,
+                    };
+                    if let Some((kind, from, to)) = route
+                        && let Some(session) = sink.session.as_ref()
+                        && let Ok(Some(warning)) =
+                            session.0.session().connection_warning(kind, from, to)
+                    {
+                        sink.prompt.0 = Some(Prompt::Connection {
+                            kind,
+                            from,
+                            to,
+                            warning,
+                        });
+                        continue;
+                    }
                     sink.commands
                         .write(PlayerCommand(command, sink.generation.0));
                 }
@@ -395,5 +471,16 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
                 sink.exit.write(AppExit::Success);
             }
         }
+    }
+}
+
+fn connection_command(
+    kind: domain::session::ConnectionKind,
+    from: domain::ids::NodeId,
+    to: domain::ids::NodeId,
+) -> Command {
+    match kind {
+        domain::session::ConnectionKind::Ac => Command::BuildLine { from, to },
+        domain::session::ConnectionKind::Dc => Command::BuildLink { from, to },
     }
 }

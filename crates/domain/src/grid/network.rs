@@ -237,6 +237,31 @@ impl Network {
         &self.connected
     }
 
+    /// Construction-only projection for expansion forecasts. No live topology changes.
+    pub(crate) fn projected_after(&self, months: u32) -> Self {
+        let mut next = self.clone();
+        let advance = |status: &mut LineStatus| {
+            if let LineStatus::UnderConstruction { months_left } = status {
+                *status = if *months_left <= months {
+                    LineStatus::InService
+                } else {
+                    LineStatus::UnderConstruction {
+                        months_left: *months_left - months,
+                    }
+                };
+            }
+        };
+        for line in next.lines.values_mut() {
+            advance(&mut line.status);
+        }
+        for link in next.links.values_mut() {
+            advance(&mut link.status);
+            link.override_mw = None;
+        }
+        next.recompute_connectivity();
+        next
+    }
+
     pub fn node(&self, id: NodeId) -> Option<&Node> {
         self.nodes.get(&id)
     }

@@ -1890,6 +1890,28 @@ remain spent, with no refund. The route can be ordered again. In-service lines c
 and line construction cannot be cancelled in Operating or Review. **Cancel drawing** in the build
 menu only abandons choosing endpoints, without cancelling an existing order.
 
+### 16.10 Connection capacity confirmation (2026-10-26)
+
+Clicking Build line or Build HVDC link asks **Proceed / Cancel**, with Cancel initially focused,
+when the order would energise new cities and create or worsen a forecast shortfall. Enter on the
+initial focus, Escape and backdrop dismissal all cancel without ordering or charging anything.
+Proceed submits the original order once. Safe orders continue directly.
+
+The pure forecast considers the entire newly energised component, including cities reached
+through existing orders. It assesses each accelerated connection date, using the first playable
+month after construction completes. Only plants and routes ready by that date count. Ready
+generators are assumed committed all day, resources and storage use the existing Planning model,
+and HVDC uses the current schedules, rating, losses and synchronous-terminal requirement. Current
+commitment settings alone do not cause this capacity warning. Compare the same future baseline
+without the order to avoid warning for an unchanged shortfall elsewhere.
+
+The prompt states the added city count and coincident peak, the projected month, and the affected
+island's demand, deliverable supply, shortfall and hour. It states the forecast assumptions.
+Revalidate when Proceed is clicked; changed figures require confirmation again. A stale prompt
+cannot order after the phase or route eligibility changes. The start-of-day confirmation (§16.4)
+remains the separate assessment of the actual commitment plan. This is a read-side/UI change;
+simulation commands, replay rules and portable state are unchanged.
+
 ## 17. Amendment A6: Save/resume before Plan 3 (2026-10-20)
 
 ### 17.1 Scope and player experience

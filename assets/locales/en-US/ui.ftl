@@ -144,6 +144,15 @@ build-months-value = { $months ->
 }
 build-marginal-cost = Fuel cost
 build-line = Build line
+connection-warning-question =
+    { $cities ->
+        [one] This order would connect one new city by { $month }, adding a forecast peak of { $added }.
+       *[other] This order would connect { $cities } new cities by { $month }, adding a forecast peak of { $added }.
+    }
+    In the island around { $island } at { $time }, forecast demand is { $demand } and supply after planned transfers is { $supply }: a shortfall of { $shortfall }.
+    This assumes ready generators run all day and current HVDC schedules are used. Proceed with construction?
+connection-proceed = Proceed
+connection-cancel = Cancel
 build-line-heading = Transmission line
 build-line-hint-from = Choose where the line starts.
 build-line-hint-to = Starting at { $node }. Choose where it ends.

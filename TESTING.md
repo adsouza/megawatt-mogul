@@ -896,3 +896,13 @@ to All. All three phases use the same scoped history presenter.
 
 Validation uses focused nextest selections, workspace clippy with warnings denied, formatting,
 and isolated native smoke checks. Do not run the entire local suite without advance permission.
+
+## Connection capacity confirmation
+
+`session::connection` covers entire new components, ready versus late generation, future backbone
+commissioning, HVDC ratings/losses and synchronous terminals. A property checks preview purity
+and AC endpoint-order invariance. The game tests in `tests/game/hvdc.rs` exercise real AC/DC
+orders through `dispatch`: Enter/Escape default to Cancel, both buttons remain reachable at the
+smallest window, cancellation leaves the checkpoint unchanged, Proceed orders once, isolated
+orders skip the prompt, and stale confirmations cannot order after Planning. Changed capacity
+refreshes the warning and requires another confirmation before placing the order.

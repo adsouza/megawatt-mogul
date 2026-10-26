@@ -11,6 +11,7 @@
 #[cfg(test)]
 mod battery_tests;
 mod commands;
+mod connection;
 #[cfg(test)]
 mod forecast_contract_tests;
 mod invariants;
@@ -26,6 +27,7 @@ mod wind_tests;
 mod tests;
 
 pub use commands::{LineQuote, PlantQuote};
+pub use connection::{ConnectionKind, ConnectionWarning};
 pub use invariants::InvariantViolation;
 pub use report::{
     Incident, IncidentKind, IslandMonthReport, MeritOrderEntry, MonthAccumulator, MonthlyReport,

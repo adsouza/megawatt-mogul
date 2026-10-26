@@ -126,3 +126,260 @@ fn sgcc_real_hud_scopes_frequency_and_keeps_selection_when_operating_begins() {
     let widgets = pass.settled(&mut app, 1024.0, 640.0);
     assert!(!has(&widgets, &shipped_l10n().text("frequency-title")));
 }
+
+#[test]
+fn connection_warning_cancel_is_safe_and_proceed_orders_exactly_once_for_ac_and_dc() {
+    use super::{
+        hud_smoke::dispatch_in,
+        support::{hud_app, request, update_n},
+    };
+    use domain::session::ConnectionKind;
+    use game::sim::Session;
+    for (kind, key) in [
+        (ConnectionKind::Ac, "city-shijiazhuang"),
+        (ConnectionKind::Dc, "city-shanghai"),
+    ] {
+        let logs = tempfile::TempDir::new().unwrap();
+        let mut app = hud_app(logs.path());
+        request(&mut app, "sgcc");
+        let pass = super::support::egui_pass::EguiPass::attach(&mut app);
+        let s = &app.world().resource::<Session>().0;
+        let from = s.session().anchor_node();
+        let to = s
+            .session()
+            .city_views()
+            .into_iter()
+            .find(|c| c.name_key == key)
+            .unwrap()
+            .node;
+        let command = if kind == ConnectionKind::Ac {
+            Command::BuildLine { from, to }
+        } else {
+            Command::BuildLink { from, to }
+        };
+        let before = s.checkpoint();
+        dispatch_in(&mut app, vec![UiAction::Command(command.clone())]);
+        let open = *app.world().resource::<OpenPrompt>();
+        assert!(
+            matches!(open.0, Some(Prompt::Connection { .. })),
+            "unsafe expansion must ask before ordering"
+        );
+        assert_eq!(app.world().resource::<Session>().0.checkpoint(), before);
+        let model = prompt_model(
+            open,
+            Some(&app.world().resource::<Session>().0),
+            &shipped_l10n(),
+        )
+        .unwrap();
+        assert_eq!(model.confirm.label, "Proceed");
+        assert_eq!(model.cancel.label, "Cancel");
+        assert!(model.question.contains("one new city"));
+        let widgets = pass.settled(&mut app, 1024.0, 640.0);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1024.0, 640.0));
+        for label in ["Proceed", "Cancel"] {
+            assert!(
+                screen.contains_rect(super::support::egui_harness::widget(&widgets, label).rect)
+            );
+        }
+        let draw = |ui: &mut egui::Ui| {
+            egui::Modal::new(egui::Id::new("connection_warning"))
+                .show(ui.ctx(), |ui| draw_prompt(ui, &model))
+                .inner
+        };
+        let harness = Harness::with_screen(1024.0, 640.0);
+        harness.draw(draw);
+        let cancel = harness.press_key(egui::Key::Enter, draw);
+        assert_eq!(cancel, vec![UiAction::Prompt(None)]);
+        assert_eq!(
+            harness.press_key(egui::Key::Escape, draw),
+            vec![UiAction::Prompt(None)]
+        );
+        dispatch_in(&mut app, cancel);
+        update_n(&mut app, 2);
+        assert_eq!(app.world().resource::<Session>().0.checkpoint(), before);
+        dispatch_in(&mut app, vec![UiAction::Command(command.clone())]);
+        let proceed = harness.click("Proceed", draw);
+        assert_eq!(
+            proceed,
+            vec![UiAction::ConfirmConnection { kind, from, to }]
+        );
+        dispatch_in(&mut app, proceed.clone());
+        update_n(&mut app, 2);
+        let after = app.world().resource::<Session>().0.checkpoint();
+        assert_eq!(after.command_count, before.command_count + 1);
+        assert_eq!(after.commands.last(), Some(&command));
+        assert!(app.world().resource::<OpenPrompt>().0.is_none());
+        dispatch_in(&mut app, proceed);
+        update_n(&mut app, 2);
+        assert_eq!(app.world().resource::<Session>().0.checkpoint(), after);
+    }
+}
+
+#[test]
+fn isolated_connection_orders_do_not_warn_and_stale_confirms_cannot_order() {
+    use super::{
+        hud_smoke::dispatch_in,
+        support::{hud_app, request, update_n},
+    };
+    use game::sim::Session;
+    let logs = tempfile::TempDir::new().unwrap();
+    let mut app = hud_app(logs.path());
+    request(&mut app, "sgcc");
+    let node = |app: &bevy::prelude::App, key: &str| {
+        app.world()
+            .resource::<Session>()
+            .0
+            .session()
+            .city_views()
+            .into_iter()
+            .find(|c| c.name_key == key)
+            .unwrap()
+            .node
+    };
+    let (from, to) = (node(&app, "city-shanghai"), node(&app, "city-nanjing"));
+    dispatch_in(
+        &mut app,
+        vec![UiAction::Command(Command::BuildLine { from, to })],
+    );
+    assert!(app.world().resource::<OpenPrompt>().0.is_none());
+    update_n(&mut app, 2);
+    assert_eq!(
+        app.world()
+            .resource::<Session>()
+            .0
+            .checkpoint()
+            .command_count,
+        1
+    );
+    let home = app.world().resource::<Session>().0.session().anchor_node();
+    dispatch_in(
+        &mut app,
+        vec![UiAction::Command(Command::BuildLink {
+            from: home,
+            to: from,
+        })],
+    );
+    let model = prompt_model(
+        *app.world().resource::<OpenPrompt>(),
+        Some(&app.world().resource::<Session>().0),
+        &shipped_l10n(),
+    )
+    .unwrap();
+    dispatch_in(&mut app, vec![UiAction::Command(Command::BeginOperating)]);
+    update_n(&mut app, 2);
+    assert!(app.world().resource::<OpenPrompt>().0.is_none());
+    let before = app.world().resource::<Session>().0.checkpoint();
+    dispatch_in(&mut app, vec![model.confirm.action]);
+    update_n(&mut app, 2);
+    assert_eq!(app.world().resource::<Session>().0.checkpoint(), before);
+}
+
+#[test]
+fn connection_proceed_refreshes_changed_capacity_before_ordering() {
+    use super::{
+        hud_smoke::dispatch_in,
+        support::{hud_app, request, update_n},
+    };
+    use domain::{ids::CellCoord, region::PlantKind};
+    use game::sim::Session;
+    let logs = tempfile::TempDir::new().unwrap();
+    let mut app = hud_app(logs.path());
+    request(&mut app, "sgcc");
+    let s = app.world().resource::<Session>().0.session();
+    let home = s.anchor_node();
+    let city = s
+        .city_views()
+        .into_iter()
+        .find(|c| c.name_key == "city-shanghai")
+        .unwrap();
+    let terrain = s.region().terrain();
+    let cell = (0..terrain.height())
+        .flat_map(|y| (0..terrain.width()).map(move |x| CellCoord { x, y }))
+        .filter(|&c| {
+            s.region().area_at(c) == s.region().area_at(city.cell)
+                && s.plant_quote(PlantKind::Peaker, c).is_ok()
+        })
+        .min_by_key(|c| c.x.abs_diff(city.cell.x) + c.y.abs_diff(city.cell.y))
+        .unwrap();
+    dispatch_in(
+        &mut app,
+        vec![UiAction::Command(Command::BuildLink {
+            from: home,
+            to: city.node,
+        })],
+    );
+    let old = *app.world().resource::<OpenPrompt>();
+    let action = prompt_model(
+        old,
+        Some(&app.world().resource::<Session>().0),
+        &shipped_l10n(),
+    )
+    .unwrap()
+    .confirm
+    .action;
+    dispatch_in(
+        &mut app,
+        vec![UiAction::Command(Command::BuildPlant {
+            kind: PlantKind::Peaker,
+            cell,
+        })],
+    );
+    update_n(&mut app, 2);
+    let node = app
+        .world()
+        .resource::<Session>()
+        .0
+        .session()
+        .plant_views()
+        .into_iter()
+        .find(|p| p.cell == cell)
+        .unwrap()
+        .node;
+    dispatch_in(
+        &mut app,
+        vec![UiAction::Command(Command::BuildLine {
+            from: node,
+            to: city.node,
+        })],
+    );
+    update_n(&mut app, 2);
+    let count = app
+        .world()
+        .resource::<Session>()
+        .0
+        .checkpoint()
+        .command_count;
+    dispatch_in(&mut app, vec![action.clone()]);
+    update_n(&mut app, 2);
+    assert_ne!(*app.world().resource::<OpenPrompt>(), old);
+    assert_eq!(
+        app.world()
+            .resource::<Session>()
+            .0
+            .checkpoint()
+            .command_count,
+        count
+    );
+    assert_eq!(
+        app.world()
+            .resource::<Session>()
+            .0
+            .session()
+            .power()
+            .network()
+            .links()
+            .count(),
+        0
+    );
+    dispatch_in(&mut app, vec![action]);
+    update_n(&mut app, 2);
+    assert!(app.world().resource::<OpenPrompt>().0.is_none());
+    assert_eq!(
+        app.world()
+            .resource::<Session>()
+            .0
+            .checkpoint()
+            .command_count,
+        count + 1
+    );
+}

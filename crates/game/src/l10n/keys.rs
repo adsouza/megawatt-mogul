@@ -10,6 +10,9 @@
 
 /// Every literal key the HUD uses, grouped as in `ui.ftl`.
 pub const ALL_UI_KEYS: &[&str] = &[
+    "connection-warning-question",
+    "connection-proceed",
+    "connection-cancel",
     "error-line-crosses-areas",
     "error-link-within-area",
     "error-hvdc-unavailable",
