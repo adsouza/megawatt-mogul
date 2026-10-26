@@ -360,7 +360,7 @@ fn the_active_map_layer_is_shown_as_selected() {
         "Sunshine",
         "Cooling water",
         "Hydro potential",
-        "Suitability: Wind farm",
+        "Wind potential",
     ];
     let logs = TempDir::new().unwrap();
     let mut app = app_in(&logs, EASTERN, DayPhase::Planning);
@@ -394,11 +394,7 @@ fn the_active_map_layer_is_shown_as_selected() {
 
     for (label, layer, index) in [
         ("Sunshine", MapLayer::Irradiance, 1),
-        (
-            "Suitability: Wind farm",
-            MapLayer::Suitability(domain::region::PlantKind::Wind),
-            4,
-        ),
+        ("Wind potential", MapLayer::WindPotential, 4),
     ] {
         for _ in 0..2 {
             click_button(&mut app, &pass, MEDIUM, label);

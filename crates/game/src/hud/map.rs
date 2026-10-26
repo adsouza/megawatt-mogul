@@ -37,8 +37,8 @@ pub enum MapLayer {
 }
 
 impl MapLayer {
-    /// Every selectable layer, in display order. Gas and peaker siting accepts any land cell,
-    /// so their suitability maps add no useful information.
+    /// Every selectable layer, in display order. Only restricted siting rules
+    /// need suitability maps; sunshine and wind potential show resource quality.
     pub fn all() -> impl Iterator<Item = Self> {
         [
             Self::Terrain,
@@ -49,15 +49,9 @@ impl MapLayer {
         ]
         .into_iter()
         .chain(
-            [
-                PlantKind::Nuclear,
-                PlantKind::Coal,
-                PlantKind::Solar,
-                PlantKind::Wind,
-                PlantKind::Hydro,
-            ]
-            .into_iter()
-            .map(Self::Suitability),
+            [PlantKind::Nuclear, PlantKind::Coal, PlantKind::Hydro]
+                .into_iter()
+                .map(Self::Suitability),
         )
     }
 }
@@ -1908,6 +1902,7 @@ mod tests {
                 MapLayer::Irradiance,
                 (|c: &domain::region::Cell| c.irradiance.value()) as fn(&_) -> f64,
             ),
+            (MapLayer::WindPotential, |c| c.wind_potential.value()),
             (MapLayer::CoolingWater, |c| c.cooling_water.value()),
             (MapLayer::HydroPotential, |c| c.hydro_potential.value()),
         ] {
@@ -1959,8 +1954,6 @@ mod tests {
                 MapLayer::HydroPotential,
                 MapLayer::Suitability(PlantKind::Nuclear),
                 MapLayer::Suitability(PlantKind::Coal),
-                MapLayer::Suitability(PlantKind::Solar),
-                MapLayer::Suitability(PlantKind::Wind),
                 MapLayer::Suitability(PlantKind::Hydro),
             ]
         );
@@ -1987,9 +1980,7 @@ mod tests {
         assert_eq!(labels[4], "Hydro potential");
         assert_eq!(labels[5], "Suitability: Nuclear plant");
         assert_eq!(labels[6], "Suitability: Coal plant");
-        assert_eq!(labels[7], "Suitability: Solar farm");
-        assert_eq!(labels[8], "Suitability: Wind farm");
-        assert_eq!(labels[9], "Suitability: Hydro plant");
+        assert_eq!(labels[7], "Suitability: Hydro plant");
         assert_eq!(model.layer, MapLayer::Terrain);
         assert_eq!(l10n.problems(), vec![]);
 
@@ -1997,7 +1988,7 @@ mod tests {
         let model = map_model(
             &game,
             &l10n,
-            MapLayer::Suitability(PlantKind::Solar),
+            MapLayer::Irradiance,
             LegendChoice::default(),
             Selection::None,
         );
@@ -2007,7 +1998,7 @@ mod tests {
             .filter(|t| t.on)
             .map(|t| t.button.label.as_str())
             .collect();
-        assert_eq!(selected, ["Suitability: Solar farm"]);
+        assert_eq!(selected, ["Sunshine"]);
     }
 
     #[test]

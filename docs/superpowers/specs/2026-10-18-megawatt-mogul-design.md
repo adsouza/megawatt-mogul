@@ -750,11 +750,11 @@ run through the ordinary generating-plant step or acquire synthetic opening outp
   with a visible 0–100% solar-potential key outside the map viewport. Use the same absolute scale
   in every region. This is the site's static game resource rating, not the percentage of sunny
   days or current weather; season, sun angle and cloud cover separately affect solar output.
-- **Selectable map layers:** terrain, sunshine, cooling water, hydro potential, and suitability
-  for nuclear, coal, solar, wind and hydro. Omit gas (CCGT) and peaker suitability overlays: those
-  plants accept any land cell, so separate overlays add no siting information. Batteries likewise
-  have no suitability overlay (§20.7). The cell inspector
-  still reports suitability for every plant kind.
+- **Selectable map layers:** terrain, sunshine, wind potential, cooling water, hydro potential,
+  and suitability for nuclear, coal and hydro. Solar and wind use their resource-quality maps;
+  their binary suitability overlays are redundant because they accept any land cell. Gas (CCGT),
+  peakers and batteries likewise have no suitability overlay. The cell inspector still reports
+  suitability for every plant kind.
 - **Operating overlay:** supply indicators over the warm, lit diorama: distinct warm yellow
   facade windows showing supply status and deep-blue energised lines with bright cyan moving dots.
   Plant output gauges are omitted. Window groups go dark as the common supplied-demand fraction
