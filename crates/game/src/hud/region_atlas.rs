@@ -32,6 +32,7 @@ const COLOURS: [Color32; 4] = [
 pub(super) struct Artwork {
     outline: RegionOutline,
     mesh: Vec<[[f32; 3]; 4]>,
+    boundaries: Vec<[[f32; 3]; 2]>,
 }
 
 /// Optional RON geography cached once on entering the menu. Unknown catalog formats still have
@@ -48,7 +49,15 @@ impl RegionAtlas {
                     && let Ok(outline) = region_outline(&loaded.source_bytes, &listing.id)
                 {
                     let mesh = mesh(&outline);
-                    regions.insert(listing.id.clone(), Arc::new(Artwork { outline, mesh }));
+                    let boundaries = area_boundaries(&loaded.definition);
+                    regions.insert(
+                        listing.id.clone(),
+                        Arc::new(Artwork {
+                            outline,
+                            mesh,
+                            boundaries,
+                        }),
+                    );
                 }
             }
         }
@@ -62,6 +71,12 @@ impl RegionSelectModel {
             if let UiAction::NewGame { region, .. } = &choice.button.action
                 && let Some(art) = atlas.0.get(region)
             {
+                choice.area_names = art
+                    .outline
+                    .areas
+                    .iter()
+                    .map(|a| (a.name_key.clone(), l10n.text(&a.name_key)))
+                    .collect();
                 let offset = |minutes: i32| {
                     l10n.args(
                         "region-select-zone",
@@ -356,6 +371,19 @@ pub(super) fn draw_globe(
                         .is_some_and(|art| art.outline.contains(lon, lat))
             })
         });
+    if let Some(index) = hovered
+        && let Some(pos) = response.hover_pos()
+        && let Some((lon, lat)) = view.unproject(rect, pos)
+        && let Some(art) = &model.regions[index].artwork
+        && let Some(area) = art
+            .outline
+            .areas
+            .iter()
+            .find(|a| a.polygons.iter().any(|p| point_in_ring(p, lon, lat)))
+        && let Some(name) = model.regions[index].area_names.get(&area.name_key)
+    {
+        response.clone().on_hover_text(name);
+    }
     let selected_id = egui::Id::new("region_globe_selected");
     if response.dragged() {
         ui.ctx()
@@ -452,6 +480,20 @@ pub(super) fn draw_globe(
             egui::Vec2::ZERO,
         );
     }
+    for choice in &model.regions {
+        if let Some(art) = &choice.artwork {
+            for edge in &art.boundaries {
+                let a = view.rotate(Vec3::from_array(edge[0]));
+                let b = view.rotate(Vec3::from_array(edge[1]));
+                if a.z > 0.0 && b.z > 0.0 {
+                    painter.line_segment(
+                        [view.screen(rect, a), view.screen(rect, b)],
+                        Stroke::new(0.8, Color32::from_rgb(250, 220, 200)),
+                    );
+                }
+            }
+        }
+    }
     painter.circle_stroke(
         rect.center(),
         radius,
@@ -519,4 +561,64 @@ pub(super) fn colour(choice: &super::menu::RegionChoice, index: usize) -> Color3
         .and_then(|hex| u32::from_str_radix(hex, 16).ok())
         .map(|rgb| Color32::from_rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8))
         .unwrap_or(COLOURS[index % COLOURS.len()])
+}
+
+fn point_in_ring(ring: &[(f64, f64)], x: f64, y: f64) -> bool {
+    if ring.len() < 3 {
+        return false;
+    }
+    let mut inside = false;
+    let mut previous = ring[ring.len() - 1];
+    for &(bx, by) in ring {
+        let (ax, ay) = previous;
+        if (ay > y) != (by > y) && x < (bx - ax) * (y - ay) / (by - ay) + ax {
+            inside = !inside;
+        }
+        previous = (bx, by);
+    }
+    inside
+}
+fn area_boundaries(region: &domain::region::RegionDefinition) -> Vec<[[f32; 3]; 2]> {
+    if region.areas().is_none() {
+        return Vec::new();
+    }
+    let grid = region.terrain();
+    let geo = region.geo();
+    let point = |x: f64, y: f64| {
+        sphere(
+            geo.west + x / f64::from(grid.width()) * (geo.east - geo.west),
+            geo.north - y / f64::from(grid.height()) * (geo.north - geo.south),
+        )
+        .to_array()
+    };
+    let mut edges = Vec::new();
+    for y in 0..grid.height() {
+        for x in 0..grid.width() {
+            let cell = domain::ids::CellCoord { x, y };
+            let id = region.area_at(cell);
+            if id.0 == 0 {
+                continue;
+            }
+            for (next, a, b) in [
+                (
+                    domain::ids::CellCoord { x: x + 1, y },
+                    (f64::from(x) + 1.0, f64::from(y)),
+                    (f64::from(x) + 1.0, f64::from(y) + 1.0),
+                ),
+                (
+                    domain::ids::CellCoord { x, y: y + 1 },
+                    (f64::from(x), f64::from(y) + 1.0),
+                    (f64::from(x) + 1.0, f64::from(y) + 1.0),
+                ),
+            ] {
+                if grid.get(next).is_some()
+                    && region.area_at(next).0 != 0
+                    && region.area_at(next) != id
+                {
+                    edges.push([point(a.0, a.1), point(b.0, b.1)]);
+                }
+            }
+        }
+    }
+    edges
 }

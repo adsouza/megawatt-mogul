@@ -211,6 +211,7 @@ impl SelectedObject {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct OperatingSideModel {
+    pub show_frequency: bool,
     pub frequency: FrequencyModel,
     pub plants: PlantListModel,
     pub selected: SelectedObject,
@@ -227,6 +228,7 @@ pub fn operating_side_model(
         return None;
     }
     Some(OperatingSideModel {
+        show_frequency: game.session().region().areas().is_none(),
         frequency: frequency_model(game, l10n),
         plants: plant_list_model(game, l10n, selection),
         selected: match selection {
@@ -300,7 +302,9 @@ fn draw_operating_side_contents(
     let width = ui.available_width();
     ui.allocate_ui(egui::vec2(width, FREQUENCY_GAUGE_HEIGHT), |ui| {
         ui.set_min_size(egui::vec2(width, FREQUENCY_GAUGE_HEIGHT));
-        actions.extend(draw_frequency(ui, &model.frequency));
+        if model.show_frequency {
+            actions.extend(draw_frequency(ui, &model.frequency));
+        }
     });
     ui.add(egui::Separator::default().spacing(SIDE_SEPARATOR_SPACING));
     let details = egui::vec2(width, plant_details_height(ui.ctx()));
@@ -338,7 +342,7 @@ pub(super) fn operating_panel(
     mut sink: ActionSink,
     style: Res<MoneyStyle>,
 ) -> Result {
-    let Some(model) = operating_model_with_history(
+    let Some(mut model) = operating_model_with_history(
         &session.0,
         &l10n,
         sink.operating_tab(),
@@ -348,6 +352,16 @@ pub(super) fn operating_panel(
     ) else {
         return Ok(());
     };
+    if let Some(id) = sink.ui_state().island {
+        apply_island_scope(
+            &mut model,
+            &session.0,
+            id,
+            &l10n,
+            &style,
+            sink.ui_state().supply_chart_layout,
+        );
+    }
     let ctx = contexts.ctx_mut()?;
     // The side panel shares the height above this panel with the map. The map's own minimum is
     // already left; reserve what the side panel's minimum needs beyond it.
@@ -368,14 +382,72 @@ pub(super) fn operating_side(
     mut sink: ActionSink,
     style: Res<MoneyStyle>,
 ) -> Result {
-    let Some(model) = operating_side_model(&session.0, &l10n, sink.selection(), &style) else {
+    let Some(mut model) = operating_side_model(&session.0, &l10n, sink.selection(), &style) else {
         return Ok(());
     };
+    if let Some(id) = sink.ui_state().island
+        && let Some(scoped) = session.0.session().island_session(id)
+    {
+        model.frequency =
+            super::frequency_model_for(&scoped.grid_snapshot(), scoped.region().frequency(), &l10n);
+        model.show_frequency = true;
+    }
     let actions = area.show_panel(contexts.ctx_mut()?, OPERATING_SIDE_PANEL, 0.0, |ui| {
         draw_operating_side(ui, &model, &mut form)
     });
     dispatch(actions, &mut sink);
     Ok(())
+}
+
+fn apply_island_scope(
+    model: &mut OperatingPanelModel,
+    game: &Game,
+    id: domain::ids::NodeId,
+    l10n: &Localizer,
+    style: &MoneyStyle,
+    layout: super::SupplyChartLayout,
+) {
+    let Some(scoped) = game.session().island_session(id) else {
+        return;
+    };
+    model.incidents = super::incidents_for(
+        scoped.incidents_today(),
+        &crate::l10n::Names::new(l10n, &scoped),
+        l10n,
+    );
+    let now = scoped.clock().tick();
+    let horizon = 60;
+    let warning = application::projections::ramp_warning(
+        now.saturating_sub(1),
+        scoped.forecast_dispatch_net_load(now),
+        scoped.forecast_dispatch_net_load((now + horizon).min(1439)),
+        scoped
+            .power()
+            .ramp_capability_up(domain::time::SimDuration::from_minutes(horizon)),
+    );
+    model.ramp = super::ramp_warnings::ramp_warnings_for(warning.as_ref(), now, l10n);
+    if let OperatingContent::Supply(chart) = &mut model.content {
+        **chart =
+            super::supply_chart::island_supply_model(game, id, l10n, style).with_layout(layout);
+    }
+    if let OperatingContent::History(history) = &mut model.content {
+        *history = super::supply_history::supply_history_model_scoped(
+            game,
+            history.selected,
+            Some(id),
+            l10n,
+            style,
+        )
+        .with_layout(layout);
+    }
+    if let OperatingContent::Hydro(hydro) = &mut model.content {
+        *hydro = super::hydro_model_for(
+            &scoped.hydro_schedule(),
+            &crate::l10n::Names::new(l10n, &scoped),
+            (now / 60).min(24) as u8,
+            l10n,
+        );
+    }
 }
 
 #[cfg(test)]
@@ -385,6 +457,56 @@ mod tests {
 
     use super::*;
     use crate::hud::test_support::{eastern_game, order_plant, shipped_l10n};
+
+    #[test]
+    fn selected_island_scopes_the_archived_day_without_using_todays_forecast() {
+        let assets =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/regions");
+        let mut game = Game::start_new(
+            &infrastructure::region::RonRegionCatalog::new(assets),
+            &domain::ids::RegionId::new("sgcc"),
+            7,
+            domain::session::GameSettings::default(),
+            Box::new(InMemoryCommandLog::default()),
+        )
+        .unwrap();
+        let id = game.session().anchor_node();
+        for command in [
+            Command::BeginOperating,
+            Command::AdvanceTicks { n: 1440 },
+            Command::FinishReview,
+            Command::BeginOperating,
+            Command::AdvanceTicks { n: 60 },
+        ] {
+            game.execute(command).unwrap();
+        }
+        let l10n = shipped_l10n();
+        let style = usd_style();
+        let mut model = operating_panel_model(&game, &l10n, OperatingTab::History, &style).unwrap();
+        apply_island_scope(
+            &mut model,
+            &game,
+            id,
+            &l10n,
+            &style,
+            super::super::SupplyChartLayout::default(),
+        );
+        let OperatingContent::History(history) = model.content else {
+            panic!("history")
+        };
+        let chart = history.chart.unwrap();
+        assert_eq!(chart.x.len(), 1440);
+        assert_eq!(chart.transfers.len(), 2);
+        let archived = &game.projections().timeline.completed_days()[0];
+        assert_eq!(
+            chart.forecast[0][1],
+            archived.island_forecasts[&id][0].mean.value()
+        );
+        assert_eq!(
+            chart.demand[0],
+            archived.points[0].islands[&id].demand.value()
+        );
+    }
 
     #[test]
     fn the_panels_are_operating_only() {

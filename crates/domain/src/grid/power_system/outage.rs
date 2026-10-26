@@ -176,7 +176,10 @@ impl PowerSystem {
                 SupplyForecastPoint {
                     demand: self.connected_demand_forecast(region, month, tick),
                     generation,
-                    gross_supply: hour.total + solar + wind,
+                    gross_supply: hour.total
+                        + solar
+                        + wind
+                        + Megawatts::new(self.injections[(tick / TICKS_PER_HOUR) as usize]),
                     battery_charge: Megawatts::ZERO,
                     battery_discharge: Megawatts::ZERO,
                 }
@@ -230,7 +233,8 @@ impl PowerSystem {
             .into_iter()
             .map(|minute| {
                 let tick = start + minute;
-                let solar = self.expected_variable(region, month, tick);
+                let solar = self.expected_variable(region, month, tick)
+                    + Megawatts::new(self.injections[usize::from(hour)]);
                 HourEnd {
                     demand: self.connected_demand_forecast(region, month, tick),
                     deliverable: fleet(minute) + solar,

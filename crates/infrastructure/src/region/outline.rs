@@ -13,6 +13,7 @@ pub enum Hemisphere {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RegionOutline {
+    pub areas: Vec<super::dto::AreaDto>,
     pub bounds: Bounds,
     pub land: Vec<Vec<(f64, f64)>>,
     pub exclude: Vec<Vec<(f64, f64)>>,
@@ -81,6 +82,7 @@ pub fn region_outline(source: &[u8], id: &RegionId) -> Result<RegionOutline, Reg
                 .find(|c| c.id == file.start.home_city)
                 .map(|c| (c.name_key.clone(), c.lon, c.lat));
             Ok(RegionOutline {
+                areas: Vec::new(),
                 bounds: file.bounds,
                 land: file.land,
                 exclude: file.exclude,
@@ -137,6 +139,7 @@ pub fn region_outline(source: &[u8], id: &RegionId) -> Result<RegionOutline, Reg
                 .find(|c| c.id == file.start.home_city)
                 .map(|c| (c.name_key.clone(), c.lon, c.lat));
             Ok(RegionOutline {
+                areas: file.areas,
                 bounds: file.bounds,
                 land: file.land,
                 exclude: file.exclude,

@@ -17,7 +17,8 @@
   regions, the first Milestone 2 amendment (§28, 2026-10-24; Plan 6 global foundations
   implemented under rules 16; optional construction economic zones implemented in Plan 6a
   under rules 17, 2026-10-25; Plan 7's five single-area regions implemented under rules 18,
-  2026-10-26; Plan 8 pending)
+  2026-10-26; Plan 8 synchronous islands, HVDC and SGCC implemented under rules 19,
+  portable state schema 4, 2026-10-26)
 - **Engine:** Rust 1.98, Bevy 0.20, bevy_egui 0.43, bevy-inspector-egui 0.38
 
 ## 1. Vision and goals
@@ -3403,7 +3404,10 @@ uses little power in summer and more in winter, and that the picker did not feel
 and the specific lighting checklist were not played, so the §28.12 representative-day playtest is
 not claimed in full. Its implementation record is
 [Plan 7](../plans/2026-10-25-plan-7-single-area-regions.md). **Plan 8**
-(multi-area regions with HVDC links and SGCC, §28.9) remains pending. Each plan bumps
+(multi-area regions with HVDC links and SGCC, §28.9) is implemented under rules 19 and portable
+state schema 4. Its focused checks, native SGCC scheduled-link day and frame-budget results are
+recorded in [Plan 8](../plans/2026-10-26-plan-8-sgcc-hvdc.md). The entire local suite and a human
+SGCC playtest are not claimed. Each plan bumps
 `SIM_RULES_VERSION` once, from whatever the previous implemented amendment left. The source for
 boundaries, inclusions and exclusions is the research edition of 18 October 2026, copied to
 [docs/research/2026-10-18-world-power-grids-top-8.md](../../research/2026-10-18-world-power-grids-top-8.md).
@@ -3719,8 +3723,8 @@ cancellation and commissioning original rate-base value must agree. In particula
 must not recompute a local order with the old single regional `line_cost` helper. Starter lines
 use the same route valuation; no construction delay is applied to already in-service assets.
 
-**HVDC handoff (Plan 8).** Plan 6a adds no HVDC implementation or accepted HVDC zone fields. Plan 8
-extends the strict zone DTO with optional `hvdc` overrides: `converter_cost_per_end`,
+**HVDC handoff (implemented in Plan 8).** Plan 6a added no HVDC implementation or accepted HVDC
+zone fields. Plan 8 extends the strict zone DTO with optional `hvdc` overrides: `converter_cost_per_end`,
 `converter_build_months`, `cost_per_cell` and `cells_per_month`. The route follows the same work-unit
 rule, with base HVDC `cost_per_cell` and base AC `cells_per_month` as the regional route defaults
 (the existing §28.9 line-months rule). Each terminal uses its own cell's converter terms;
@@ -3831,7 +3835,8 @@ fields are `rating_mw`, `converter_cost` (for both ends), `cost_per_cell`, `conv
   count.
 - **Runback.** While the sending island is below its under-frequency shedding threshold, the
   link's flow ramps toward zero. It never reverses automatically, and it releases once the island
-  is back inside its normal band.
+  is back inside its normal band. The triggering converter terminal remains latched at zero
+  flow, even if a later schedule or override requests the opposite direction.
 - **Timing.** Blocking and runback read the previous tick's island states and take effect this
   tick, in ascending LinkId order.
 - **Balance per island.** Supply is generation, battery discharge and received link energy. Load is
@@ -3862,7 +3867,10 @@ the sender's warnings show it, and it is the player's call.
   *(Builder's call: this prorates like A2, §13, so a new link is not held for months it could not
   run.)*
 - **Hold, release, write-off.** The §2.5 and §26 history applies unchanged: hold, re-test, release,
-  and write off a portion only when it is excess at two consecutive reviews.
+  and write off a portion only when it is excess at two consecutive reviews. Newly excess
+  portions start their own first-review hold when an older held portion is written off. The
+  excess fraction is of the original rated link; already written-off shares count toward that
+  fraction, so steady partial utilisation cannot repeatedly disallow the same unused capacity.
 - **Why.** This follows China's pricing of cross-regional dedicated transmission, which is set from
   each project's costs and a designed annual transfer volume, so an underused line under-recovers.
   *(Builder's call: the hold-and-write-off adaptation is ours.)*
@@ -3934,8 +3942,8 @@ old reports stay as recorded.
   `demand_noise`, `calendar`, the computed-sun `solar` block (no `daylight`), `currency` with
   unsuffixed money fields, optional `areas`, optional `hvdc`, optional `start.line_names` and
   optional `atlas`. Plan 6a adds optional `economic_zones` (§28.7.1); Plan 8 adds its optional HVDC
-  economic terms. The economic-zone plant/AC extension is implemented; HVDC fields remain
-  reserved for Plan 8 and are rejected by the current loader. A schema-4 file missing a required
+  economic terms. Both the plant/AC extension and Plan 8's area/HVDC fields are implemented.
+  A schema-4 file missing a required
   field fails to load with a typed error naming it.
 - **Schema-4 irradiance authoring.** `irradiance` is either the existing Gaussian field
   `(base: value, blobs: [...])` or an exact cell field `(cells: [...])`. The forms are mutually
@@ -3986,7 +3994,7 @@ such as nudge rings, relief or comments, stays in the main file.
 **On disk.** A region is still `assets/regions/<id>.ron`. Its sidecars live in the directory
 `assets/regions/<id>/` beside it. Each sidecar is a RON document with its own provenance header
 comment. The main file names each sidecar by a plain file name matching `[a-z0-9_]+\.ron`, with no
-path separators. Three schema-4 reference points exist:
+path separators. Four schema-4 reference points exist:
 
 - `irradiance: (cells_file: "irradiance_cells.ron")` is a third irradiance form, exclusive with the
   Gaussian and inline-cell forms. The sidecar is the inline form, `(cells: [...])`.
@@ -3997,6 +4005,11 @@ path separators. Three schema-4 reference points exist:
   sidecar's land, in reference order, followed by the inline `land`. `exclude` works the same way.
   Ring order has no meaning, because a cell centre is land when it lies in *any* land ring and in
   no exclude ring. This order is only a convention.
+- Each `areas` entry may name `geography: ["area_boundary.ron", ...]`. Its sidecars use the same
+  geography format; their `land` rings are combined with the area's inline `polygons` before
+  partition validation. The same member may supply both region land and area polygons and is
+  included only once in the canonical bundle. Only their `land` rings supply area polygons;
+  the region's effective land mask determines which cells need an area assignment.
 
 The catalog lists `.ron` files only, so a sidecar directory never appears as a region. Listing
 reads only the main file. Loading reads the referenced sidecars and rejects any `.ron` file in

@@ -40,9 +40,19 @@ const WRITE_OFF_AT_REVIEW: u8 = 2;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AssetProfile {
     /// A plant: its accredited firm capacity and its node.
-    Plant { firm: Megawatts, node: NodeId },
+    Plant {
+        firm: Megawatts,
+        node: NodeId,
+    },
     /// A line and the nodes it joins.
-    Line { from: NodeId, to: NodeId },
+    Line {
+        from: NodeId,
+        to: NodeId,
+    },
+    Link {
+        from: NodeId,
+        to: NodeId,
+    },
 }
 
 /// The part of an asset currently held for future use, with its review history.
@@ -177,7 +187,7 @@ impl RateBaseAsset {
     fn firm(&self) -> Option<Megawatts> {
         match self.profile {
             AssetProfile::Plant { firm, .. } => Some(firm),
-            AssetProfile::Line { .. } => None,
+            AssetProfile::Line { .. } | AssetProfile::Link { .. } => None,
         }
     }
 
@@ -419,6 +429,59 @@ impl RateBase {
             .collect()
     }
 
+    /// Link capital uses transfer utilisation, never firm MW. Re-testing shares reuses
+    /// the same cent-exact hold/release/write-off history as generation assets.
+    pub fn review_link_utilisation(
+        &mut self,
+        year: i32,
+        utilisation: &BTreeMap<crate::ids::LinkId, f64>,
+    ) -> Vec<DomainEvent> {
+        if self.last_review_year.is_some_and(|last| year <= last) {
+            return Vec::new();
+        }
+        let mut changes = Vec::new();
+        for (id, u) in utilisation {
+            let key = AssetRef::Link(*id);
+            let Some(asset) = self.assets.get(&key) else {
+                continue;
+            };
+            if asset.legacy || asset.live_share == 0 {
+                continue;
+            }
+            if asset
+                .held
+                .as_ref()
+                .is_some_and(|h| h.last_excess_review == year)
+            {
+                continue;
+            }
+            let excess = 1.0 - u.clamp(0.0, 1.0);
+            // Utilisation describes the original link rating. Already-disallowed capacity
+            // accounts for part of that excess; it must not be held or written off again.
+            let total_excess = (SHARE_UNITS as f64 * excess).round_ties_even() as u64;
+            let desired = total_excess.saturating_sub(SHARE_UNITS - asset.live_share);
+            let old_excess = asset
+                .held
+                .as_ref()
+                .map_or(0, |held| desired.min(held.share));
+            if let Some(held) = &asset.held {
+                self.retest_slice(key, desired.min(held.share), year, None, &mut changes);
+            }
+            // The old slice has now been released or disallowed at its second review.
+            // Excess beyond that slice starts a fresh first-review hold this year.
+            let newly_excess = desired - old_excess;
+            if newly_excess > 0 {
+                let asset = self.assets.get_mut(&key).expect("listed link");
+                asset.held = Some(HeldSlice::new(newly_excess, None, year));
+                changes.push(CapitalChange::Held {
+                    asset: key,
+                    amount: asset.held(),
+                });
+            }
+        }
+        changes.into_iter().map(CapitalChange::into_event).collect()
+    }
+
     fn review(&mut self, inputs: &ReserveReviewInputs) -> Vec<CapitalChange> {
         let year = inputs.year;
         if self.last_review_year.is_some_and(|last| year <= last) {
@@ -450,7 +513,7 @@ impl RateBase {
             .filter(|a| a.is_new_in(year) && a.held.is_none())
             .filter_map(|a| match a.asset {
                 AssetRef::Plant(id) => Some((id, a.live_firm())),
-                AssetRef::Line(_) => None,
+                AssetRef::Line(_) | AssetRef::Link(_) => None,
             })
             .filter(|(_, mw)| *mw > 0.0)
             .collect();
@@ -687,6 +750,11 @@ impl crate::state::State for AssetProfile {
                 crate::state::State::write(firm, out);
                 crate::state::State::write(node, out);
             }
+            Self::Link { from, to } => {
+                crate::state::State::write(&2u8, out);
+                crate::state::State::write(from, out);
+                crate::state::State::write(to, out);
+            }
             Self::Line { from, to } => {
                 crate::state::State::write(&1u8, out);
                 crate::state::State::write(from, out);
@@ -699,6 +767,10 @@ impl crate::state::State for AssetProfile {
             0 => Self::Plant {
                 firm: crate::state::State::read(input)?,
                 node: crate::state::State::read(input)?,
+            },
+            2 => Self::Link {
+                from: crate::state::State::read(input)?,
+                to: crate::state::State::read(input)?,
             },
             1 => Self::Line {
                 from: crate::state::State::read(input)?,

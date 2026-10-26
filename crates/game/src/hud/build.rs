@@ -424,12 +424,29 @@ fn line_end_section(
     let mut targets: Vec<LineTarget> = others
         .into_iter()
         .map(|(_, to)| {
-            let quote = session.line_quote(from.node, to.node);
+            let dc = session.region().area_at(from.cell) != session.region().area_at(to.cell);
+            let link_quote = dc.then(|| session.link_quote(from.node, to.node));
+            let quote = match link_quote {
+                Some(result) => result.map(|q| domain::region::LineConstructionTerms {
+                    cells: q.route.cells,
+                    capital: q.capital,
+                    months: q.months,
+                    zones: q.route.zones,
+                }),
+                None => session.line_quote(from.node, to.node),
+            };
             let build = ButtonModel::new(
-                l10n.text("build-line"),
-                UiAction::Command(Command::BuildLine {
-                    from: from.node,
-                    to: to.node,
+                l10n.text(if dc { "hvdc-build" } else { "build-line" }),
+                UiAction::Command(if dc {
+                    Command::BuildLink {
+                        from: from.node,
+                        to: to.node,
+                    }
+                } else {
+                    Command::BuildLine {
+                        from: from.node,
+                        to: to.node,
+                    }
                 }),
             )
             .enabled_if(quote.is_ok());
@@ -452,6 +469,12 @@ fn line_end_section(
                         l10n,
                         style,
                     ));
+                    if dc {
+                        stats.push(stat(
+                            "build-ac-status",
+                            l10n.text("error-line-crosses-areas"),
+                        ));
+                    }
                     LinePreview::Quote(stats)
                 }
                 Err(error) => LinePreview::Rejected(error.localize_with(l10n, &names)),

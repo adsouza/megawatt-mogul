@@ -29,6 +29,8 @@ use crate::state::AppState;
 /// Something the player asked for through the HUD.
 #[derive(Debug, Clone, PartialEq)]
 pub enum UiAction {
+    SelectIsland(Option<domain::ids::NodeId>),
+    ShowLinks(bool),
     World(crate::world::WorldAction),
     Persistence(PersistAction),
     /// A command for the running game.
@@ -101,6 +103,9 @@ impl From<MenuScreen> for AppState {
 /// A question the HUD asks before doing something it can't undo.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Prompt {
+    CancelLinkConstruction {
+        link: domain::ids::LinkId,
+    },
     /// Leaving the running game for the menu, which drops it.
     LeaveGame,
     /// Starting a day the forecast says the committed fleet can't cover (spec §16.4). It holds
@@ -313,6 +318,7 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
     for action in actions {
         sink.ui.apply(&action);
         match action {
+            UiAction::SelectIsland(_) | UiAction::ShowLinks(_) => {}
             UiAction::World(action) => sink.world.apply(action),
             UiAction::Persistence(action) => {
                 let generation = sink.generation.0;

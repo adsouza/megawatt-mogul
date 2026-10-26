@@ -860,3 +860,39 @@ Game `save_snapshots` tests compare restored schema-3 captures to the immutable 
 using source-schema canonical gameplay/projection bytes. They also check upgraded battery cutoff,
 header rules, journal, command count, summary, archived region, provenance and unchanged disk bytes.
 A new capture's schema/hash may change; elapsed history and original save files may not.
+
+
+## SGCC, synchronous islands and HVDC (Plan 8, rules 19)
+
+Focused domain tests cover DC energisation without AC synchronisation, cross-area AC refusal,
+parallel links, exact terminal and route economics, atomic schedule validation, ramping, blocking,
+runback hysteresis, signed energy conservation, commissioning instalments and rate base, weighted
+island frequency performance, utilisation hold/release/write-off and a mid-day portable continuation
+through month close. `region::areas` and the DC energy/quote tests include properties.
+
+The shipped-region tables include SGCC. Year-one beginner acceptance and first expansion cover
+seeds 0–7. The shared overlap check includes all eight regions. Raw Natural Earth shared borders
+partition SGCC's land exactly; the operating exclusion sidecar accounts for differing peer cell
+sizes. `python3 -I tools/region_authoring/test_region_authoring.py` regenerates geography and the
+operating exclusions. The canonical bundle contains every area sidecar once, even when referenced
+both as region land and an electrical area.
+
+`tests/game/hvdc.rs`, included by the existing game binary, checks real SGCC build previews and
+link cards, Escape dismissal, and cancellation's default keyboard focus. Existing picker and
+localisation coverage includes SGCC. Save codec gates admit schemas 1–4 and reject schema 5;
+older source captures and journals remain the compatibility oracle. Island selection scopes live
+and archived supply charts; the latter retain the original month's island demand forecast.
+The real HUD test checks selection through the Planning-to-Operating transition and hides the
+frequency gauge for All. A scripted native SGCC day with a scheduled link is recorded in the
+Plan 8 checklist.
+
+Adversarial regressions cover runback through zero flow in both directions and portable restore,
+hydro AGC off/on invalidation of the owning island's ceiling without erasing frozen history,
+worsening link utilisation with a fresh hold for newly excess capital, and steady partial use
+without repeated disallowance. A generated utilisation-sequence property checks capital
+conservation and review idempotence. Planning and Review history tests play real SGCC construction
+months and a two-island day, compare each island's archived curves and forecast, and switch back
+to All. All three phases use the same scoped history presenter.
+
+Validation uses focused nextest selections, workspace clippy with warnings denied, formatting,
+and isolated native smoke checks. Do not run the entire local suite without advance permission.

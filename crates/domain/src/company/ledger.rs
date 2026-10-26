@@ -22,6 +22,7 @@ pub enum LedgerCategory {
 pub enum AssetRef {
     Plant(PlantId),
     Line(LineId),
+    Link(crate::ids::LinkId),
 }
 
 /// One movement of cash. Revenue is positive and costs are negative.
@@ -41,6 +42,10 @@ impl crate::state::State for AssetRef {
                 crate::state::State::write(&0u8, out);
                 crate::state::State::write(v0, out);
             }
+            Self::Link(id) => {
+                crate::state::State::write(&2u8, out);
+                crate::state::State::write(id, out);
+            }
             Self::Line(v0) => {
                 crate::state::State::write(&1u8, out);
                 crate::state::State::write(v0, out);
@@ -50,6 +55,7 @@ impl crate::state::State for AssetRef {
     fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
         Ok(match <u8 as crate::state::State>::read(input)? {
             0 => Self::Plant(crate::state::State::read(input)?),
+            2 => Self::Link(crate::state::State::read(input)?),
             1 => Self::Line(crate::state::State::read(input)?),
             _ => return Err(crate::state::StateError::Invalid),
         })

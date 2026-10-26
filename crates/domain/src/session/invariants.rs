@@ -144,7 +144,13 @@ fn conserves(s: &TickSummary) -> bool {
     let by_kind: Megawatts = s.by_kind.values().copied().sum();
     near(s.generation, by_plant)
         && near(s.generation, by_kind)
-        && near(s.generation, s.served + s.battery_charge + s.imbalance)
+        && near(
+            s.generation,
+            s.served
+                + s.battery_charge
+                + s.imbalance
+                + s.islands.values().map(|r| r.losses).sum::<Megawatts>(),
+        )
         && near(s.served + s.unserved, s.demand)
         && planned_is_within_unserved(s)
         && at_least(s.served, Megawatts::ZERO)
@@ -323,6 +329,7 @@ mod tests {
         by_plant: &[f64],
     ) -> TickSummary {
         TickSummary {
+            islands: Default::default(),
             tick: 7,
             demand: Megawatts::new(demand),
             served: Megawatts::new(served),

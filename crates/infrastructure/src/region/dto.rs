@@ -360,6 +360,14 @@ impl Serialize for IrradianceV4 {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RegionFileV4 {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub areas: Vec<AreaDto>,
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub hvdc: Option<HvdcDto>,
     pub region_schema: u32,
     pub id: String,
     pub name_key: String,
@@ -655,6 +663,8 @@ pub struct EconomicZoneDto {
     pub plants: Vec<PlantConstructionDto>,
     #[serde(default)]
     pub ac_lines: LineConstructionDto,
+    #[serde(default)]
+    pub hvdc: HvdcConstructionDto,
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -676,6 +686,58 @@ pub struct PlantConstructionDto {
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LineConstructionDto {
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cost_per_cell: Option<i64>,
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cells_per_month: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AreaDto {
+    pub id: u32,
+    pub name_key: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub polygons: Vec<Vec<(f64, f64)>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub geography: Vec<String>,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HvdcDto {
+    pub rating_mw: f64,
+    pub converter_cost: i64,
+    pub cost_per_cell: i64,
+    pub converter_build_months: u32,
+    pub ramp_mw_per_min: f64,
+    pub converter_loss: f64,
+    pub loss_per_cell: f64,
+    pub book_life_months: u32,
+    pub designed_hours_per_year: f64,
+}
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HvdcConstructionDto {
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub converter_cost_per_end: Option<i64>,
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub converter_build_months: Option<u32>,
     #[serde(
         default,
         with = "present_option",

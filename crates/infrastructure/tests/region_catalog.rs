@@ -1411,7 +1411,10 @@ fn economics_rejects_malformed_present_data_and_legacy_extensions() {
             "kind: Wind, capital_cost: 1000000",
             "kind: Unknown, capital_cost: 1000000",
         ),
-        ("id: 1, name_key:", "id: 1, hvdc: (), name_key:"),
+        (
+            "id: 1, name_key:",
+            "id: 1, hvdc: (cells_per_month: 0), name_key:",
+        ),
         (
             "kind: Wind, capital_cost: 1000000",
             "kind: Wind, capacity_mw: 400.0, capital_cost: 1000000",

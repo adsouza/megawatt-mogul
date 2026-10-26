@@ -14,6 +14,7 @@ mod commands;
 #[cfg(test)]
 mod forecast_contract_tests;
 mod invariants;
+mod links;
 mod month_close;
 mod report;
 mod settings;
@@ -26,7 +27,9 @@ mod tests;
 
 pub use commands::{LineQuote, PlantQuote};
 pub use invariants::InvariantViolation;
-pub use report::{Incident, IncidentKind, MeritOrderEntry, MonthAccumulator, MonthlyReport};
+pub use report::{
+    Incident, IncidentKind, IslandMonthReport, MeritOrderEntry, MonthAccumulator, MonthlyReport,
+};
 pub use settings::{GameSettings, SimulationFidelity};
 pub use views::{
     BatteryView, CapacityShortfallWarning, CityDetail, CityView, CompanyView, GridSnapshot,
@@ -173,7 +176,10 @@ impl GameSession {
             plants.insert(id, plant);
         }
 
-        let power = PowerSystem::new(network, plants, cities, settings.fidelity.network);
+        let mut power = PowerSystem::new(network, plants, cities, settings.fidelity.network);
+        if region.areas().is_some() {
+            power.recompute_islands();
+        }
         let mut company = Company::new(start.cash, region.satisfaction().starting);
         let rate_base = company.rate_base_mut();
         for plant in power.plants().values() {
@@ -242,6 +248,9 @@ impl GameSession {
             .power
             .begin_day(&self.region, self.clock.month(), &mut self.rng);
         self.month_to_date.reset();
+        for (id, share) in init.island_outages {
+            self.month_to_date.record_island_start(id, share);
+        }
         self.month_to_date
             .record_boundary_starts(init.boundary_starts);
         self.month_to_date
@@ -668,6 +677,67 @@ impl GameSession {
                 return Err(StateError::Invalid);
             }
             max_id = max_id.max(line.id.0);
+        }
+        for link in self.power.network().links() {
+            let spec = self.region.hvdc().ok_or(StateError::Invalid)?;
+            let network = self.power.network();
+            if self
+                .region
+                .area_at(network.node(link.from).ok_or(StateError::Invalid)?.cell)
+                == self
+                    .region
+                    .area_at(network.node(link.to).ok_or(StateError::Invalid)?.cell)
+                || link
+                    .schedule
+                    .iter()
+                    .any(|v| !v.is_finite() || v.abs() > spec.rating_mw)
+                || link
+                    .override_mw
+                    .is_some_and(|v| !v.is_finite() || v.abs() > spec.rating_mw)
+                || link.flow.value().abs() > spec.rating_mw
+                || link.sent.value() < 0.0
+                || link.loss.value() < 0.0
+                || link.runback != link.runback_terminal.is_some()
+                || link
+                    .runback_terminal
+                    .is_some_and(|node| node != link.from && node != link.to)
+                || self.link_construction(link.id).is_none()
+            {
+                return Err(StateError::Invalid);
+            }
+            max_id = max_id.max(link.id.0);
+        }
+        if self.region.areas().is_some() {
+            if self
+                .power
+                .island_state_invalid(&self.region, self.clock.month(), self.clock.tick())
+            {
+                return Err(StateError::Invalid);
+            }
+            for line in self.power.network().lines() {
+                let network = self.power.network();
+                if self
+                    .region
+                    .area_at(network.node(line.from).ok_or(StateError::Invalid)?.cell)
+                    != self
+                        .region
+                        .area_at(network.node(line.to).ok_or(StateError::Invalid)?.cell)
+                {
+                    return Err(StateError::Invalid);
+                }
+            }
+            if self.power.island_nodes() != &self.power.network().islands() {
+                return Err(StateError::Invalid);
+            }
+            if self.phase == DayPhase::Operating
+                && self
+                    .power
+                    .island_states()
+                    .keys()
+                    .ne(self.power.island_nodes().keys())
+            {
+                return Err(StateError::Invalid);
+            }
         }
         for (id, plant) in self.power.plants() {
             max_id = max_id.max(id.0);

@@ -354,6 +354,14 @@ pub fn finish_surface(
         dispatch([UiAction::Select(selected)], &mut sink);
     }
     let painter = ctx.layer_painter(response.layer_id).with_clip_rect(rect);
+    super::electrical::draw(
+        &painter,
+        rect,
+        pose,
+        session.0.session(),
+        &l10n,
+        ctx.input(|input| input.time),
+    );
     let mut occupied = surface.legend.into_iter().collect::<Vec<_>>();
     // Construction labels and selected/hovered objects take priority over city names.
     let hover = if owns {

@@ -33,6 +33,17 @@ impl PowerSystem {
         month: SimMonth,
         tick: u32,
     ) -> (Megawatts, Megawatts, Megawatts) {
+        if !self.island_nodes().is_empty() && !self.island_states().is_empty() {
+            return self
+                .island_nodes()
+                .keys()
+                .filter_map(|id| self.scoped_island(*id, region))
+                .map(|p| p.wind_forecast(region, month, tick))
+                .fold(
+                    (Megawatts::ZERO, Megawatts::ZERO, Megawatts::ZERO),
+                    |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2),
+                );
+        }
         let (factor, low, high) = self.wind_factor_forecast(region, month, tick);
         let potential: Megawatts = self
             .connected_plants()

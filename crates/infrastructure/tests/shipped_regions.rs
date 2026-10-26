@@ -32,6 +32,7 @@ const BRAZIL: &str = "brazil_sin";
 const EUROPE_MAGHREB: &str = "continental_europe_maghreb";
 const INDIA: &str = "india_nepal_bhutan";
 const IPS: &str = "ips_ups";
+const SGCC: &str = "sgcc";
 
 /// The research note whose row tables the region files cite (`[P7-XX-NNN]`).
 const RESEARCH_NOTE: &str = concat!(
@@ -47,6 +48,7 @@ const SHIPPED: &[&str] = &[
     EAST,
     INDIA,
     IPS,
+    SGCC,
     SOUTHERN_CHINA,
     WEST,
 ];
@@ -63,6 +65,7 @@ const RESEARCH_CAPACITY_GW: &[(&str, f64)] = &[
     (EAST, 980.0),
     (INDIA, 520.0),
     (IPS, 345.0),
+    (SGCC, 3170.0),
     (SOUTHERN_CHINA, 500.0),
     (WEST, 340.0),
 ];
@@ -74,6 +77,7 @@ const HOME_CITY: &[(&str, &str)] = &[
     (EAST, "city-columbus"),
     (INDIA, "city-delhi"),
     (IPS, "city-moscow"),
+    (SGCC, "city-beijing"),
     (SOUTHERN_CHINA, "city-guangzhou"),
     (WEST, "city-seattle"),
 ];
@@ -85,6 +89,7 @@ const EXPANSION_CITY: &[(&str, &str)] = &[
     (EAST, "city-cleveland"),
     (INDIA, "city-faridabad"),
     (IPS, "city-kaluga"),
+    (SGCC, "city-baoding"),
     (SOUTHERN_CHINA, "city-shenzhen"),
     (WEST, "city-vancouver"),
 ];
@@ -96,6 +101,7 @@ const NOMINAL_HZ: &[(&str, f64)] = &[
     (EAST, 60.0),
     (INDIA, 50.0),
     (IPS, 50.0),
+    (SGCC, 50.0),
     (SOUTHERN_CHINA, 50.0),
     (WEST, 60.0),
 ];
@@ -983,6 +989,7 @@ year_one_cases! {
         year_one_no_commands_ips_ups,
         IPS
     ),
+    (year_one_hands_off_sgcc,year_one_no_commands_sgcc,SGCC),
     (
         year_one_hands_off_southern_china,
         year_one_no_commands_southern_china,
@@ -3218,5 +3225,23 @@ mod continental_europe_maghreb {
                 .all(|work| work.zone.0 <= 2 && work.cells > 0),
             "{terms:?}"
         );
+    }
+}
+
+mod sgcc {
+    use super::*;
+    #[test]
+    fn sgcc_loads_as_five_areas_with_beijing_starter_and_dc_catalog() {
+        let r = region("sgcc");
+        assert_eq!(r.areas().unwrap().areas.len(), 5);
+        assert!(r.hvdc().is_some());
+        assert_eq!(
+            r.city(r.start().home_city).unwrap().name_key,
+            "city-beijing"
+        );
+        let mut game = new_game(&catalog(), "sgcc", 7);
+        game.execute(Command::BeginOperating).unwrap();
+        game.execute(Command::AdvanceTicks { n: 120 }).unwrap();
+        game.session().check_invariants().unwrap();
     }
 }

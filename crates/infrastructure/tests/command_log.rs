@@ -524,3 +524,44 @@ fn missing_log_file_is_an_io_error() {
         ReplayLoadError::Io { .. }
     ));
 }
+
+#[test]
+fn hvdc_commands_round_trip_through_logs_and_portable_command_tags() {
+    use domain::{ids::LinkId, state::State};
+    let link = LinkId(31);
+    for command in [
+        Command::BuildLink {
+            from: NodeId(1),
+            to: NodeId(2),
+        },
+        Command::CancelLinkConstruction { link },
+        Command::SetLinkSchedule {
+            link,
+            mw: Box::new([-100.0; 24]),
+        },
+        Command::SetLinkTarget { link, mw: 50.0 },
+        Command::ClearLinkOverride { link },
+    ] {
+        let text = ron::ser::to_string(&CommandDto::from(&command)).unwrap();
+        let decoded = Command::try_from(ron::from_str::<CommandDto>(&text).unwrap()).unwrap();
+        assert_eq!(decoded, command);
+        assert_eq!(
+            Command::from_state_bytes(&command.state_bytes()).unwrap(),
+            command
+        );
+    }
+    assert!(
+        Command::try_from(CommandDto::SetLinkTarget {
+            link: 31,
+            mw: f64::NAN
+        })
+        .is_err()
+    );
+    assert!(
+        Command::try_from(CommandDto::SetLinkSchedule {
+            link: 31,
+            mw: [f64::INFINITY; 24]
+        })
+        .is_err()
+    );
+}

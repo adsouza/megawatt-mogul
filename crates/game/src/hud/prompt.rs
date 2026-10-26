@@ -44,6 +44,26 @@ pub fn prompt_model(
     l10n: &Localizer,
 ) -> Option<PromptModel> {
     match open.0? {
+        Prompt::CancelLinkConstruction { link } => {
+            let session = game?.session();
+            prompt_in_phase(prompt_after(open, session.status()), session.phase()).0?;
+            let asset = session.power().network().link(link)?;
+            if !matches!(
+                asset.status,
+                domain::grid::LineStatus::UnderConstruction { .. }
+            ) {
+                return None;
+            }
+            Some(PromptModel {
+                question: l10n.text("hvdc-cancel-question"),
+                confirm: ButtonModel::new(
+                    l10n.text("line-cancel-confirm"),
+                    UiAction::Command(Command::CancelLinkConstruction { link }),
+                ),
+                cancel: ButtonModel::new(l10n.text("line-cancel-keep"), UiAction::Prompt(None)),
+                dismiss: UiAction::Prompt(None),
+            })
+        }
         Prompt::CancelLineConstruction { line } => {
             let session = game?.session();
             prompt_in_phase(prompt_after(open, session.status()), session.phase()).0?;
@@ -117,11 +137,11 @@ pub fn prompt_after(open: OpenPrompt, status: SessionStatus) -> OpenPrompt {
 /// Planning actions close once the day begins. The leave prompt is for every phase.
 pub fn prompt_in_phase(open: OpenPrompt, phase: DayPhase) -> OpenPrompt {
     match open.0 {
-        Some(Prompt::ShortfallStart { .. } | Prompt::CancelLineConstruction { .. })
-            if phase != DayPhase::Planning =>
-        {
-            OpenPrompt(None)
-        }
+        Some(
+            Prompt::ShortfallStart { .. }
+            | Prompt::CancelLineConstruction { .. }
+            | Prompt::CancelLinkConstruction { .. },
+        ) if phase != DayPhase::Planning => OpenPrompt(None),
         _ => open,
     }
 }
@@ -134,7 +154,9 @@ pub fn draw_prompt(ui: &mut egui::Ui, model: &PromptModel) -> Vec<UiAction> {
     ui.horizontal(|ui| {
         if matches!(
             model.confirm.action,
-            UiAction::Command(Command::CancelLineConstruction { .. })
+            UiAction::Command(
+                Command::CancelLineConstruction { .. } | Command::CancelLinkConstruction { .. }
+            )
         ) {
             let response = button(ui, &model.cancel, &mut actions);
             let frame = ui.ctx().cumulative_frame_nr();

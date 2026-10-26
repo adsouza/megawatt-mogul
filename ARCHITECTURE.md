@@ -47,8 +47,8 @@ never as code constants. Shipped files declare `region_schema: 4`, including exp
 climate, calendar, currency, and astronomical-sun data. Legacy region schemas retain frozen
 defaults in `infrastructure::region::legacy`; old-source integrity is checked before any
 upcast. Unexpected new fields on legacy sources and unsupported schemas fail with typed errors.
-Region schema versions are independent of portable state schema 3, written by current saves;
-readers retain schemas 1–3.
+Region schema versions are independent of portable state schema 4, written by current saves;
+readers retain schemas 1–4.
 
 **Sidecars and the region bundle.** Spec §28.11.1 describes the format. Tool-generated blocks
 live in sidecars under `assets/regions/<id>/`, and the hand-authored main file references them:
@@ -60,13 +60,14 @@ container. The bundle is the region's source bytes: it is parsed, fingerprinted 
 one unit. Sidecars are inlined before mapping, so the region schema stays 4. Missing,
 unreferenced or misnamed sidecars, and malformed framing, are typed `RegionLoadError`s.
 
-Seven regions ship in `assets/regions/`, each a single synchronous balancing area (a copper plate)
+Eight regions ship in `assets/regions/`, each a single synchronous balancing area (a copper plate)
 priced in its own currency:
 
 | Region ID | Name | Grid | Currency |
 |---|---|---|---|
 | `eastern_interconnection` | Eastern Interconnection | 60 Hz | USD |
 | `western_interconnection` | Western Interconnection | 60 Hz | USD |
+| `sgcc` | SGCC system group (five electrical areas) | 50 Hz | CNY |
 | `southern_china` | Southern China | 50 Hz | CNY |
 | `brazil_sin` | Brazil | 60 Hz | BRL |
 | `india_nepal_bhutan` | India–Nepal–Bhutan | 50 Hz | INR |
@@ -74,7 +75,36 @@ priced in its own currency:
 | `continental_europe_maghreb` | Continental Europe–Maghreb | 50 Hz | EUR |
 
 Plan 7 (rules 18) added the five non-North-American regions as region data and tools only; no
-simulation rule changed. Multi-area regions, HVDC links and SGCC are Plan 8.
+simulation rule changed. Plan 8 (rules 19) adds SGCC, separate synchronous islands and scheduled HVDC exchange.
+Its implementation checklist is [Plan 8](docs/superpowers/plans/2026-10-26-plan-8-sgcc-hvdc.md).
+
+**Synchronous islands and HVDC (rules 19).** Explicit electrical areas partition all land cells.
+AC lines join nodes only within an area; DC links energise remote territory without merging AC
+components. Each energised AC component runs the existing `PowerSystem` controller with its own
+frequency, protection, hydro, storage and dispatch state, in ascending minimum-NodeId order.
+Regional weather and demand-noise draws happen once before islands step, preserving the RNG
+contract independently of the island count. The original scalar controller remains the implicit island for every earlier single-area region,
+so old sources and state schemas preserve their original single-bus behavior.
+
+`BuildLink`, `CancelLinkConstruction`, `SetLinkSchedule`, `SetLinkTarget` and `ClearLinkOverride`
+are ordinary journalled commands. DC ramps, blocking and runback read the previous terminal states
+before islands step. Runback persists the triggering converter terminal through zero flow and
+save/resume. Hydro AGC commands invalidate the owning island's cached plan as well as the scalar
+controller plan. Reports sum customer energy over islands, track received/sent/lost transfer
+energy separately, and weight each minute’s frequency performance by island demand. Transfers do
+not create revenue or fuel ledger entries. Link capital uses the same instalments and rate-base
+history as plants and AC lines; its annual assessment uses prorated designed transfer volume.
+
+HVDC construction resolves converter terms at canonical endpoints and exact route work separately
+from AC economics. Canonical pricing never changes stored flow orientation. State schema 4 adds
+links, schedules, overrides, flows and island controller/report/chart rows; readers retain schemas
+1–3. New command-only journals are fenced by rules 19. UI island selection is transient and only
+scopes presenters. The All view has totals and no frequency gauge.
+
+SGCC authoring decisions and illustrative HVDC tuning live in
+[the Plan 8 research note](docs/research/2026-10-26-plan-8-sgcc.md). Its generated area geography
+is shared between main land and `areas[].geography` references in the canonical bundle. The
+`sgcc_exclusions.py` authoring tool preserves other shipped land rasters at coarse grid seams.
 
 **Offline region authoring.** Two directories hold what is used to write a region file, and none of
 it runs in the game or in the release build:

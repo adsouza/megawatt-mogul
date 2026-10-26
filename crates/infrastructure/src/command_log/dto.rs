@@ -3,7 +3,7 @@
 
 use application::{Command, LogHeader, LogRecord, RegionFingerprint};
 use domain::grid::NetworkModel;
-use domain::ids::{CellCoord, LineId, NodeId, PlantId, RegionId};
+use domain::ids::{CellCoord, LineId, LinkId, NodeId, PlantId, RegionId};
 use domain::region::PlantKind;
 use domain::session::{GameSettings, SimulationFidelity};
 use domain::units::Megawatts;
@@ -184,6 +184,11 @@ impl TryFrom<LogHeaderDto> for LogHeader {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum CommandDto {
+    BuildLink { from: u32, to: u32 },
+    CancelLinkConstruction { link: u32 },
+    SetLinkSchedule { link: u32, mw: [f64; 24] },
+    SetLinkTarget { link: u32, mw: f64 },
+    ClearLinkOverride { link: u32 },
     BuildPlant { kind: PlantKindDto, cell: CellDto },
     BuildLine { from: u32, to: u32 },
     CommitPlant { plant: u32, hours: [bool; 24] },
@@ -201,6 +206,19 @@ pub enum CommandDto {
 impl From<&Command> for CommandDto {
     fn from(command: &Command) -> Self {
         match *command {
+            Command::BuildLink { from, to } => Self::BuildLink {
+                from: from.0,
+                to: to.0,
+            },
+            Command::CancelLinkConstruction { link } => {
+                Self::CancelLinkConstruction { link: link.0 }
+            }
+            Command::SetLinkSchedule { link, ref mw } => Self::SetLinkSchedule {
+                link: link.0,
+                mw: **mw,
+            },
+            Command::SetLinkTarget { link, mw } => Self::SetLinkTarget { link: link.0, mw },
+            Command::ClearLinkOverride { link } => Self::ClearLinkOverride { link: link.0 },
             Command::BuildPlant { kind, cell } => Self::BuildPlant {
                 kind: kind.into(),
                 cell: CellDto {
@@ -241,6 +259,34 @@ impl TryFrom<CommandDto> for Command {
 
     fn try_from(dto: CommandDto) -> Result<Self, LogDtoError> {
         Ok(match dto {
+            CommandDto::BuildLink { from, to } => Self::BuildLink {
+                from: NodeId(from),
+                to: NodeId(to),
+            },
+            CommandDto::CancelLinkConstruction { link } => {
+                Self::CancelLinkConstruction { link: LinkId(link) }
+            }
+            CommandDto::SetLinkSchedule { link, mw } => {
+                if let Some(value) = mw.iter().find(|v| !v.is_finite()) {
+                    return Err(LogDtoError::NonFiniteMegawatts(*value));
+                }
+                Self::SetLinkSchedule {
+                    link: LinkId(link),
+                    mw: Box::new(mw),
+                }
+            }
+            CommandDto::SetLinkTarget { link, mw } => {
+                if !mw.is_finite() {
+                    return Err(LogDtoError::NonFiniteMegawatts(mw));
+                }
+                Self::SetLinkTarget {
+                    link: LinkId(link),
+                    mw,
+                }
+            }
+            CommandDto::ClearLinkOverride { link } => {
+                Self::ClearLinkOverride { link: LinkId(link) }
+            }
             CommandDto::BuildPlant { kind, cell } => Self::BuildPlant {
                 kind: kind.into(),
                 cell: CellCoord {

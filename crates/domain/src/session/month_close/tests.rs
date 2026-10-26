@@ -300,6 +300,7 @@ fn excess_batteries_are_held_then_written_off() {
                 !asset.legacy
                     && match asset.asset {
                         AssetRef::Plant(id) => batteries.contains(&id),
+                        AssetRef::Link(_) => false,
                         AssetRef::Line(_) => matches!(asset.profile,
                             AssetProfile::Line { from, to } if nodes.contains(&from) || nodes.contains(&to)),
                     }
@@ -308,6 +309,7 @@ fn excess_batteries_are_held_then_written_off() {
                 let life = match asset.asset {
                     AssetRef::Plant(_) => s.region().spec(PlantKind::Battery).book_life_months,
                     AssetRef::Line(_) => s.region().lines().book_life_months,
+                    AssetRef::Link(_) => s.region().hvdc().unwrap().book_life_months,
                 };
                 let months = i64::from(s.clock().month().months_since(asset.added_on)) + 1;
                 let monthly = Money::from_cents(asset.original.cents() / i64::from(life));

@@ -28,7 +28,11 @@ impl PlanningForecast {
                 &UiState::default(),
                 &supply,
             ),
-            shortfall: GameSession::capacity_shortfall_for(&supply),
+            shortfall: if session.region().areas().is_some() {
+                session.capacity_shortfall_check()
+            } else {
+                GameSession::capacity_shortfall_for(&supply)
+            },
             minimum: session.minimum_generation_check(),
             dry_hydro: super::planning_warnings::dry_hydro_plants(
                 &session.plant_views(),

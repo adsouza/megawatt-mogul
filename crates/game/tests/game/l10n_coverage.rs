@@ -112,6 +112,19 @@ fn site_errors() -> Vec<SiteError> {
 
 fn domain_errors() -> Vec<DomainError> {
     vec![
+        DomainError::LineCrossesAreas,
+        DomainError::LinkWithinArea,
+        DomainError::HvdcUnavailable,
+        DomainError::UnknownLink {
+            link: domain::ids::LinkId(1),
+        },
+        DomainError::LinkNotUnderConstruction {
+            link: domain::ids::LinkId(1),
+        },
+        DomainError::LinkNotInService {
+            link: domain::ids::LinkId(1),
+        },
+        DomainError::InvalidLinkTarget,
         DomainError::ConstructionOverflow,
         DomainError::InvalidConstructionCell {
             cell: CellCoord { x: 99, y: 99 },
@@ -386,6 +399,7 @@ fn milestone_progress() -> Vec<MilestoneProgress> {
 fn month_report() -> MonthlyReport {
     let zero = MegawattHours::ZERO;
     MonthlyReport {
+        islands: Default::default(),
         storage: BTreeMap::new(),
         month: SimMonth::new(2027, 3).unwrap(),
         days: 31,
@@ -419,6 +433,7 @@ fn month_report() -> MonthlyReport {
 
 fn tick_summary() -> TickSummary {
     TickSummary {
+        islands: Default::default(),
         tick: 0,
         demand: Megawatts::ZERO,
         served: Megawatts::ZERO,
@@ -588,7 +603,15 @@ fn events() -> Vec<(DomainEvent, bool)> {
 
 #[test]
 fn the_variant_tables_cover_every_variant() {
-    assert_covers_every_variant("DomainError", &domain_errors(), 27, |e| match e {
+    assert_covers_every_variant("DomainError", &domain_errors(), 34, |e| match e {
+        DomainError::LineCrossesAreas => 27,
+        DomainError::LinkWithinArea => 28,
+        DomainError::HvdcUnavailable => 29,
+        DomainError::UnknownLink { .. } => 30,
+        DomainError::LinkNotUnderConstruction { .. } => 31,
+        DomainError::LinkNotInService { .. } => 32,
+        DomainError::InvalidLinkTarget => 33,
+
         DomainError::ConstructionOverflow => 25,
         DomainError::InvalidConstructionCell { .. } => 26,
         DomainError::InvalidRatio { .. } => 0,

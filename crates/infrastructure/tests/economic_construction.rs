@@ -249,7 +249,20 @@ fn rules16_construction_capture_keeps_original_bytes_and_continuation() {
             &|| false,
         )
         .unwrap();
-    assert_eq!(game.checkpoint().snapshot, original.snapshot);
+    // New captures use schema 4; compare the frozen schema-3 representation without
+    // rewriting or regenerating any historical bytes or expected outcomes.
+    use domain::state::State;
+    let historical_snapshot = |game: &Game| application::PortableState {
+        journal_hash: game.checkpoint().snapshot.unwrap().journal_hash,
+        origin: None,
+        schema: 3,
+        session: game.session().snapshot_state_schema(3),
+        projections: game.projections().state_bytes_schema(3),
+    };
+    assert_eq!(
+        historical_snapshot(&game),
+        original.snapshot.clone().unwrap()
+    );
     for index in 1..=3 {
         if index > 1 {
             game.execute(Command::FinishReview).unwrap();
@@ -258,7 +271,7 @@ fn rules16_construction_capture_keeps_original_bytes_and_continuation() {
         game.execute(Command::AdvanceTicks { n: 1440 }).unwrap();
         if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
             assert_eq!(
-                game.checkpoint().state_hash,
+                historical_snapshot(&game).state_hash(),
                 value(&format!("close_{index}_hash"))
             );
         }

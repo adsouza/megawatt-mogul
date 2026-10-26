@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::error::DomainError;
-use crate::ids::{CellCoord, CityId, LineId, NodeId, PlantId};
+use crate::ids::{CellCoord, CityId, LineId, LinkId, NodeId, PlantId};
 
 /// What a network node represents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +55,7 @@ pub struct Network {
     nodes: BTreeMap<NodeId, Node>,
     lines: BTreeMap<LineId, Line>,
     connected: BTreeSet<NodeId>,
+    links: BTreeMap<LinkId, super::DcLink>,
 }
 
 impl Network {
@@ -64,6 +65,7 @@ impl Network {
             root,
             nodes: BTreeMap::from([(root, node)]),
             lines: BTreeMap::new(),
+            links: BTreeMap::new(),
             connected: BTreeSet::from([root]),
         }
     }
@@ -189,6 +191,10 @@ impl Network {
         Ok(())
     }
 
+    pub fn root(&self) -> NodeId {
+        self.root
+    }
+
     pub fn is_connected(&self, node: NodeId) -> bool {
         self.connected.contains(&node)
     }
@@ -203,17 +209,15 @@ impl Network {
             if from == node {
                 return Some(months);
             }
-            for line in self
+            for (a, b, status) in self
                 .lines
                 .values()
-                .filter(|line| line.from == from || line.to == from)
+                .map(|l| (l.from, l.to, l.status))
+                .chain(self.links.values().map(|l| (l.from, l.to, l.status)))
+                .filter(|(a, b, _)| *a == from || *b == from)
             {
-                let to = if line.from == from {
-                    line.to
-                } else {
-                    line.from
-                };
-                let ready = match line.status {
+                let to = if a == from { b } else { a };
+                let ready = match status {
                     LineStatus::InService => 0,
                     LineStatus::UnderConstruction { months_left } => months_left.max(1),
                 };
@@ -251,6 +255,99 @@ impl Network {
         self.lines.values()
     }
 
+    pub fn links(&self) -> impl Iterator<Item = &super::DcLink> {
+        self.links.values()
+    }
+    pub fn links_mut(&mut self) -> impl Iterator<Item = &mut super::DcLink> {
+        self.links.values_mut()
+    }
+    pub fn link(&self, id: LinkId) -> Option<&super::DcLink> {
+        self.links.get(&id)
+    }
+    pub fn link_mut(&mut self, id: LinkId) -> Option<&mut super::DcLink> {
+        self.links.get_mut(&id)
+    }
+    pub fn add_link(
+        &mut self,
+        id: LinkId,
+        from: NodeId,
+        to: NodeId,
+        status: LineStatus,
+    ) -> Result<(), DomainError> {
+        for node in [from, to] {
+            if self.node(node).is_none() {
+                return Err(DomainError::UnknownNode { node });
+            }
+        }
+        if from == to {
+            return Err(DomainError::LineToSelf { node: from });
+        }
+        if self.links.contains_key(&id) {
+            return Err(DomainError::ConstructionOverflow);
+        }
+        let length_cells = distance_cells(self.nodes[&from].cell, self.nodes[&to].cell);
+        self.links
+            .insert(id, super::DcLink::new(id, from, to, status, length_cells));
+        self.recompute_connectivity();
+        Ok(())
+    }
+    pub fn cancel_link(&mut self, link: LinkId) -> Result<(), DomainError> {
+        let current = self.link(link).ok_or(DomainError::UnknownLink { link })?;
+        if !matches!(current.status, LineStatus::UnderConstruction { .. }) {
+            return Err(DomainError::LinkNotUnderConstruction { link });
+        }
+        self.links.remove(&link);
+        self.recompute_connectivity();
+        Ok(())
+    }
+    pub fn advance_links(&mut self) -> Vec<LinkId> {
+        let mut commissioned = Vec::new();
+        for link in self.links.values_mut() {
+            if let LineStatus::UnderConstruction { months_left } = &mut link.status {
+                *months_left = months_left.saturating_sub(1);
+                if *months_left == 0 {
+                    link.status = LineStatus::InService;
+                    commissioned.push(link.id);
+                }
+            }
+        }
+        self.recompute_connectivity();
+        commissioned
+    }
+    /// Energised AC components; DC joins service territory but never synchronises it.
+    pub fn islands(&self) -> BTreeMap<NodeId, BTreeSet<NodeId>> {
+        let mut unseen = self.connected.clone();
+        let mut result = BTreeMap::new();
+        while let Some(root) = unseen.pop_first() {
+            let mut nodes = BTreeSet::from([root]);
+            let mut queue = VecDeque::from([root]);
+            while let Some(node) = queue.pop_front() {
+                for line in self
+                    .lines
+                    .values()
+                    .filter(|l| l.status == LineStatus::InService)
+                {
+                    let next = if line.from == node {
+                        line.to
+                    } else if line.to == node {
+                        line.from
+                    } else {
+                        continue;
+                    };
+                    if unseen.remove(&next) {
+                        nodes.insert(next);
+                        queue.push_back(next);
+                    }
+                }
+            }
+            result.insert(root, nodes);
+        }
+        result
+    }
+    pub(crate) fn scope_connected(&mut self, nodes: BTreeSet<NodeId>) -> BTreeSet<NodeId> {
+        std::mem::replace(&mut self.connected, nodes)
+    }
+
     fn recompute_connectivity(&mut self) {
         let mut adjacency: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
         for line in self
@@ -260,6 +357,14 @@ impl Network {
         {
             adjacency.entry(line.from).or_default().push(line.to);
             adjacency.entry(line.to).or_default().push(line.from);
+        }
+        for link in self
+            .links
+            .values()
+            .filter(|l| l.status == LineStatus::InService)
+        {
+            adjacency.entry(link.from).or_default().push(link.to);
+            adjacency.entry(link.to).or_default().push(link.from);
         }
         let mut reached = BTreeSet::from([self.root]);
         let mut queue = VecDeque::from([self.root]);
@@ -330,7 +435,7 @@ crate::state_record!(Network {
     root,
     nodes,
     lines,
-    connected
+    connected; since4 { links: Default::default() }
 });
 
 impl Network {
@@ -344,6 +449,25 @@ impl Network {
                 || !self.nodes.contains_key(&line.from)
                 || !self.nodes.contains_key(&line.to)
                 || line.length_cells < 0.0
+            {
+                return false;
+            }
+        }
+        for (id, link) in &self.links {
+            if *id != link.id
+                || link.from == link.to
+                || !self.nodes.contains_key(&link.from)
+                || !self.nodes.contains_key(&link.to)
+                || link.length_cells < 0.0
+                || !link.length_cells.is_finite()
+                || (link.length_cells
+                    - distance_cells(self.nodes[&link.from].cell, self.nodes[&link.to].cell))
+                .abs()
+                    > 1e-9
+                || matches!(
+                    link.status,
+                    LineStatus::UnderConstruction { months_left: 0 }
+                )
             {
                 return false;
             }
@@ -635,5 +759,101 @@ mod tests {
                 .collect();
             prop_assert_eq!(n.connected_nodes(), &expected);
         }
+    }
+}
+
+#[cfg(test)]
+mod island_topology_tests {
+    use super::*;
+    use crate::ids::LinkId;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn islands_match_independent_components_of_the_energised_graph(
+            edges in prop::collection::vec((0usize..8, 0usize..8, any::<bool>(), any::<bool>()), 0..40)
+        ) {
+            let node = |i| Node {
+                kind: NodeKind::City(CityId(i as u32)),
+                cell: CellCoord { x: i as u16, y: 0 },
+            };
+            let mut network = Network::new(NodeId(0), node(0));
+            for i in 1..8 {
+                network.add_node(NodeId(i), node(i as usize)).unwrap();
+            }
+            // Transitive closure is independent of the production breadth-first search.
+            let mut ac = [[false; 8]; 8];
+            let mut energised = ac;
+            for i in 0..8 {
+                ac[i][i] = true;
+                energised[i][i] = true;
+            }
+            for (id, (a, b, dc, live)) in edges.into_iter().enumerate() {
+                let status = if live { LineStatus::InService } else {
+                    LineStatus::UnderConstruction { months_left: 1 }
+                };
+                let accepted = if dc {
+                    network.add_link(LinkId(id as u32), NodeId(a as u32), NodeId(b as u32), status)
+                } else {
+                    network.add_line(LineId(id as u32), NodeId(a as u32), NodeId(b as u32), status)
+                }.is_ok();
+                if accepted && live {
+                    energised[a][b] = true;
+                    energised[b][a] = true;
+                    if !dc {
+                        ac[a][b] = true;
+                        ac[b][a] = true;
+                    }
+                }
+            }
+            for k in 0..8 {
+                for a in 0..8 {
+                    for b in 0..8 {
+                        ac[a][b] |= ac[a][k] && ac[k][b];
+                        energised[a][b] |= energised[a][k] && energised[k][b];
+                    }
+                }
+            }
+            let mut expected = BTreeMap::<NodeId, BTreeSet<NodeId>>::new();
+            for i in 0..8 {
+                if energised[0][i] {
+                    let root = (0..8).find(|&j| ac[i][j]).unwrap();
+                    expected.entry(NodeId(root as u32)).or_default().insert(NodeId(i as u32));
+                }
+            }
+            prop_assert_eq!(network.islands(), expected);
+        }
+    }
+
+    #[test]
+    fn dc_energises_without_synchronising_or_satisfying_the_ac_need_test() {
+        let mut network = Network::new(
+            NodeId(0),
+            Node {
+                kind: NodeKind::City(CityId(0)),
+                cell: CellCoord { x: 0, y: 0 },
+            },
+        );
+        network
+            .add_node(
+                NodeId(1),
+                Node {
+                    kind: NodeKind::City(CityId(1)),
+                    cell: CellCoord { x: 4, y: 0 },
+                },
+            )
+            .unwrap();
+        network
+            .add_link(LinkId(2), NodeId(0), NodeId(1), LineStatus::InService)
+            .unwrap();
+        assert!(network.is_connected(NodeId(1)));
+        assert!(!network.joined(NodeId(0), NodeId(1)));
+        assert_eq!(
+            network.islands(),
+            BTreeMap::from([
+                (NodeId(0), BTreeSet::from([NodeId(0)])),
+                (NodeId(1), BTreeSet::from([NodeId(1)])),
+            ])
+        );
     }
 }

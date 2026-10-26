@@ -331,6 +331,8 @@ fn start() -> StartDef {
 pub fn tiny_region_parts() -> RegionDefinitionParts {
     RegionDefinitionParts {
         start_line_names: Default::default(),
+        areas: None,
+        hvdc: None,
         economic_zones: None,
         id: RegionId::new("tiny"),
         name_key: "region-tiny".to_owned(),
@@ -545,6 +547,7 @@ pub fn economic_region_parts() -> RegionDefinitionParts {
                 capital_cost: Some(Money::from_cents(cost)),
                 build_months: Some(months),
             }],
+            hvdc: Default::default(),
             ac_lines: LineConstructionOverride {
                 cost_per_cell: Some(Money::from_cents(line)),
                 cells_per_month: Some(speed),
@@ -566,4 +569,46 @@ pub fn economic_region_parts() -> RegionDefinitionParts {
             .collect(),
     });
     parts
+}
+
+/// Two independently balanced areas with a small DC catalog (all tuning belongs here).
+pub fn two_area_parts() -> RegionDefinitionParts {
+    let mut p = tiny_region_parts();
+    p.areas = Some(super::ElectricalAreas {
+        areas: vec![
+            super::ElectricalArea {
+                id: super::AreaId(1),
+                name_key: "area-east".into(),
+            },
+            super::ElectricalArea {
+                id: super::AreaId(2),
+                name_key: "area-west".into(),
+            },
+        ],
+        cells: (0..p.terrain.height())
+            .flat_map(|_| {
+                (0..p.terrain.width()).map(|x| {
+                    super::AreaId(if x == 0 {
+                        0
+                    } else if x < 6 {
+                        2
+                    } else {
+                        1
+                    })
+                })
+            })
+            .collect(),
+    });
+    p.hvdc = Some(super::HvdcSpec {
+        rating_mw: 200.0,
+        converter_cost: Money::from_cents(101),
+        cost_per_cell: Money::from_cents(7),
+        converter_build_months: 2,
+        ramp_mw_per_min: 20.0,
+        converter_loss: 0.01,
+        loss_per_cell: 0.001,
+        book_life_months: 240,
+        designed_hours_per_year: 4000.0,
+    });
+    p
 }

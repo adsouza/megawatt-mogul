@@ -40,6 +40,7 @@ pub struct SupplyStack {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SupplyModel {
+    pub transfers: Vec<(String, Vec<f64>)>,
     pub money_style: MoneyStyle,
     pub layout: SupplyChartLayout,
     pub layout_label: String,
@@ -165,6 +166,7 @@ fn supply_model_for(
         })
         .collect();
     SupplyModel {
+        transfers: Vec::new(),
         money_style: style.clone(),
         layout: SupplyChartLayout::default(),
         layout_label: l10n.text("supply-chart-combine"),
@@ -413,6 +415,14 @@ pub fn draw_supply_chart(ui: &mut egui::Ui, model: &SupplyModel) -> Vec<UiAction
                         .style(LineStyle::dashed_loose())
                         .width(1.0),
                 );
+                for (label, series) in &model.transfers {
+                    plot.line(
+                        Line::new(label, points(series))
+                            .color(egui::Color32::from_rgb(110, 220, 240))
+                            .style(LineStyle::dashed_loose())
+                            .width(1.5),
+                    );
+                }
                 let cost: Vec<[f64; 2]> = model
                     .marginal_cost
                     .iter()
@@ -510,6 +520,102 @@ pub fn draw_supply_chart(ui: &mut egui::Ui, model: &SupplyModel) -> Vec<UiAction
         power(ui);
     }
     actions
+}
+
+pub fn island_supply_model(
+    game: &Game,
+    id: domain::ids::NodeId,
+    l10n: &Localizer,
+    style: &MoneyStyle,
+) -> SupplyModel {
+    let session = game.session();
+    let now = session.clock().tick();
+    let scoped = session.island_session(id).expect("selected island");
+    scoped_supply_model(
+        game,
+        id,
+        todays_points(game.projections().timeline.points(), now),
+        &scoped.hourly_forecast(),
+        now,
+        l10n,
+        style,
+    )
+}
+
+pub(super) fn island_completed_supply_model(
+    game: &Game,
+    id: domain::ids::NodeId,
+    day: &CompletedDay,
+    l10n: &Localizer,
+    style: &MoneyStyle,
+) -> Option<SupplyModel> {
+    Some(scoped_supply_model(
+        game,
+        id,
+        day.points.iter().collect(),
+        day.island_forecasts.get(&id)?,
+        TICKS_PER_DAY,
+        l10n,
+        style,
+    ))
+}
+
+fn scoped_supply_model(
+    game: &Game,
+    id: domain::ids::NodeId,
+    points: Vec<&TimelinePoint>,
+    forecast: &[ForecastPoint; 24],
+    now: u32,
+    l10n: &Localizer,
+    style: &MoneyStyle,
+) -> SupplyModel {
+    let session = game.session();
+    let scoped = session.island_session(id).expect("selected island");
+    let points: Vec<_> = points
+        .into_iter()
+        .filter_map(|point| {
+            let row = point.islands.get(&id)?;
+            let mut p = point.clone();
+            p.demand = row.demand;
+            p.served = row.served;
+            p.frequency = row.frequency;
+            p.by_kind = row.by_kind.clone();
+            p.marginal_cost = row
+                .by_kind
+                .iter()
+                .filter(|(kind, mw)| **kind != PlantKind::Battery && mw.value() > 0.0)
+                .map(|(kind, _)| session.region().spec(*kind).marginal_cost)
+                .max_by(|a, b| a.value().total_cmp(&b.value()));
+            p.batteries
+                .retain(|plant, _| scoped.power().plant(*plant).is_some());
+            Some(p)
+        })
+        .collect();
+    let mut chart = supply_model_for(
+        points.iter().collect(),
+        forecast,
+        now,
+        session.region(),
+        l10n,
+        style,
+    );
+    chart.transfers = vec![
+        (
+            l10n.text("hvdc-chart-imports"),
+            points
+                .iter()
+                .map(|p| p.islands[&id].imports.value())
+                .collect(),
+        ),
+        (
+            l10n.text("hvdc-chart-exports"),
+            points
+                .iter()
+                .map(|p| -p.islands[&id].exports.value())
+                .collect(),
+        ),
+    ];
+    chart
 }
 
 #[cfg(test)]
@@ -624,6 +730,7 @@ mod tests {
 
     fn point(tick: u32) -> TimelinePoint {
         TimelinePoint {
+            islands: Default::default(),
             batteries: Default::default(),
             tick,
             demand: Megawatts::new(100.0),

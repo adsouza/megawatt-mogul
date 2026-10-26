@@ -2,10 +2,14 @@
 //! parameters and the starting scenario. Constructing one validates it, so the
 //! rest of the domain can rely on its invariants.
 
+mod areas;
+pub use areas::{
+    AreaId, ElectricalArea, ElectricalAreas, HvdcConstructionOverride, HvdcSpec,
+    LinkConstructionTerms,
+};
 mod economics;
 #[cfg(test)]
 mod economics_tests;
-#[cfg(test)]
 pub(crate) use economics::whole_cells;
 pub use economics::{
     EconomicZone, EconomicZoneId, EconomicZones, LineConstructionOverride, LineConstructionTerms,
@@ -121,6 +125,8 @@ pub struct RegionDefinitionParts {
     pub lines: LineParams,
     pub start: StartDef,
     pub start_line_names: BTreeMap<CityId, String>,
+    pub areas: Option<ElectricalAreas>,
+    pub hvdc: Option<HvdcSpec>,
     pub economic_zones: Option<EconomicZones>,
 }
 
@@ -151,8 +157,11 @@ pub struct RegionDefinition {
     lines: LineParams,
     start: StartDef,
     start_line_names: BTreeMap<CityId, String>,
+    areas: Option<ElectricalAreas>,
+    hvdc: Option<HvdcSpec>,
     economic_zones: Option<EconomicZones>,
     ac_work_denominator: u64,
+    hvdc_work_denominator: u64,
 }
 
 impl RegionDefinition {
@@ -593,7 +602,8 @@ impl TryFrom<RegionDefinitionParts> for RegionDefinition {
         validate_catalog_values(&catalog)?;
         validate_frequency(&parts.frequency)?;
         validate_lines(&parts.lines)?;
-        let ac_work_denominator = economics::validate(&parts)?;
+        areas::validate(&parts)?;
+        let (ac_work_denominator, hvdc_work_denominator) = economics::validate(&parts)?;
         let solar_rows = if matches!(parts.solar.model, SolarModel::Astronomical) {
             let equator = crate::generation::annual_sun_integral(0.0);
             (0..parts.terrain.height())
@@ -608,8 +618,11 @@ impl TryFrom<RegionDefinitionParts> for RegionDefinition {
             Vec::new()
         };
         let region = Self {
+            areas: parts.areas,
+            hvdc: parts.hvdc,
             economic_zones: parts.economic_zones,
             ac_work_denominator,
+            hvdc_work_denominator,
             id: parts.id,
             name_key: parts.name_key,
             currency: parts.currency,

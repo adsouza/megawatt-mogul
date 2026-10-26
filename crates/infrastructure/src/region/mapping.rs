@@ -57,6 +57,8 @@ pub fn map_region(mut file: RegionFile) -> Result<RegionDefinition> {
         clock: locale.clock,
         city_locales: locale.city_locales,
         start_line_names: Default::default(),
+        areas: None,
+        hvdc: None,
         economic_zones: None,
         terrain: rasterize_geometry(file.geography()),
         catalog: file
@@ -668,6 +670,8 @@ pub fn map_region_v4(file: RegionFileV4) -> Result<RegionDefinition> {
             })
             .collect(),
         start_line_names: line_names,
+        areas: map_areas(&file)?,
+        hvdc: file.hvdc.as_ref().map(map_hvdc).transpose()?,
         economic_zones: map_economic_zones(file.economic_zones.as_ref())?,
         terrain: rasterize_geometry(file.geography()),
         catalog: file
@@ -782,6 +786,20 @@ fn map_economic_zones(
                             })
                         })
                         .collect::<Result<_>>()?,
+                    hvdc: domain::region::HvdcConstructionOverride {
+                        converter_cost_per_end: z
+                            .hvdc
+                            .converter_cost_per_end
+                            .map(|v| money(v, "economic_zones.hvdc.converter_cost_per_end"))
+                            .transpose()?,
+                        converter_build_months: z.hvdc.converter_build_months,
+                        cost_per_cell: z
+                            .hvdc
+                            .cost_per_cell
+                            .map(|v| money(v, "economic_zones.hvdc.cost_per_cell"))
+                            .transpose()?,
+                        cells_per_month: z.hvdc.cells_per_month,
+                    },
                     ac_lines: LineConstructionOverride {
                         cost_per_cell: z
                             .ac_lines
@@ -799,4 +817,78 @@ fn map_economic_zones(
         })
     })
     .transpose()
+}
+
+fn map_hvdc(h: &HvdcDto) -> Result<domain::region::HvdcSpec> {
+    Ok(domain::region::HvdcSpec {
+        rating_mw: h.rating_mw,
+        converter_cost: major_units(h.converter_cost, "hvdc.converter_cost")?,
+        cost_per_cell: major_units(h.cost_per_cell, "hvdc.cost_per_cell")?,
+        converter_build_months: h.converter_build_months,
+        ramp_mw_per_min: h.ramp_mw_per_min,
+        converter_loss: h.converter_loss,
+        loss_per_cell: h.loss_per_cell,
+        book_life_months: h.book_life_months,
+        designed_hours_per_year: h.designed_hours_per_year,
+    })
+}
+fn map_areas(file: &RegionFileV4) -> Result<Option<domain::region::ElectricalAreas>> {
+    use domain::region::{AreaId, ElectricalArea, ElectricalAreas};
+    if file.areas.is_empty() {
+        return Ok(None);
+    }
+    for area in &file.areas {
+        if area.polygons.is_empty()
+            || area
+                .polygons
+                .iter()
+                .any(|p| p.len() < 3 || p.iter().any(|(x, y)| !x.is_finite() || !y.is_finite()))
+        {
+            return Err(invalid("areas.polygons"));
+        }
+    }
+    let terrain = rasterize_geometry(file.geography());
+    let indices: Vec<_> = file
+        .areas
+        .iter()
+        .map(|a| super::raster::PolygonIndex::new(&a.polygons))
+        .collect();
+    let mut cells = Vec::new();
+    for y in 0..file.grid.height {
+        for x in 0..file.grid.width {
+            let cell = CellCoord { x, y };
+            if !terrain.get(cell).is_some_and(|c| c.land) {
+                cells.push(AreaId(0));
+                continue;
+            }
+            let lon = file.bounds.west
+                + (f64::from(x) + 0.5) / f64::from(file.grid.width)
+                    * (file.bounds.east - file.bounds.west);
+            let lat = file.bounds.north
+                - (f64::from(y) + 0.5) / f64::from(file.grid.height)
+                    * (file.bounds.north - file.bounds.south);
+            let matches: Vec<_> = file
+                .areas
+                .iter()
+                .zip(&indices)
+                .filter(|(_, index)| index.contains(lon, lat))
+                .map(|(area, _)| area)
+                .collect();
+            if matches.len() != 1 {
+                return Err(invalid("areas.partition"));
+            }
+            cells.push(AreaId(matches[0].id));
+        }
+    }
+    Ok(Some(ElectricalAreas {
+        areas: file
+            .areas
+            .iter()
+            .map(|a| ElectricalArea {
+                id: AreaId(a.id),
+                name_key: a.name_key.clone(),
+            })
+            .collect(),
+        cells,
+    }))
 }

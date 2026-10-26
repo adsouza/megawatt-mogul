@@ -60,6 +60,8 @@ pub struct PendingCommit {
 /// What the Planning panel remembers between frames.
 #[derive(Resource, Debug, Clone, PartialEq, Eq, Default)]
 pub struct UiState {
+    pub island: Option<domain::ids::NodeId>,
+    pub links_open: bool,
     pub tab: PlanningTab,
     pub supply_chart_layout: SupplyChartLayout,
     /// The archived supply chart's month; `None` selects the latest completed month.
@@ -87,6 +89,8 @@ impl UiState {
     /// Takes in one action. The only writer of this state.
     pub fn apply(&mut self, action: &UiAction) {
         match action {
+            UiAction::SelectIsland(id) => self.island = *id,
+            UiAction::ShowLinks(open) => self.links_open = *open,
             UiAction::SetSupplyChartLayout(layout) => self.supply_chart_layout = *layout,
             UiAction::SelectSupplyMonth(month) => self.supply_month = Some(*month),
             UiAction::ShowReviewSupply(show) => {
@@ -145,6 +149,16 @@ pub struct CommitmentForm {
 
 pub(super) fn reset_ui_state(mut ui: ResMut<UiState>, mut form: ResMut<CommitmentForm>) {
     *ui = UiState {
+        supply_chart_layout: ui.supply_chart_layout,
+        ..Default::default()
+    };
+    *form = CommitmentForm::default();
+}
+
+pub(super) fn reset_planning_state(mut ui: ResMut<UiState>, mut form: ResMut<CommitmentForm>) {
+    *ui = UiState {
+        island: ui.island,
+        links_open: ui.links_open,
         supply_chart_layout: ui.supply_chart_layout,
         ..Default::default()
     };

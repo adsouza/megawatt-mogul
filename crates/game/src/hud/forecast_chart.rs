@@ -18,7 +18,7 @@ use egui_plot::{Bar, BarChart, FilledArea, Line, Plot, VLine};
 
 use super::action::UiAction;
 use super::map::{Rgb, color32, kind_color};
-use super::plant_list::{kinds_in_merit_order, plants_by_kind};
+use super::plant_list::{kinds_in_merit_order, plants_by_kind_session};
 use super::ui_state::UiState;
 use crate::l10n::{Localize, Localizer};
 
@@ -85,13 +85,17 @@ pub struct ForecastModel {
 /// its net battery output is the first stack, keeping the top at generation + discharge − charge.
 pub fn stacked_committed_capacity(game: &Game, l10n: &Localizer) -> Vec<StackModel> {
     let forecast = game.session().supply_forecast();
-    stacked_supply(game, l10n, &forecast)
+    stacked_supply(game.session(), l10n, &forecast)
 }
 
-fn stacked_supply(game: &Game, l10n: &Localizer, forecast: &SupplyForecast) -> Vec<StackModel> {
+fn stacked_supply(
+    session: &domain::session::GameSession,
+    l10n: &Localizer,
+    forecast: &SupplyForecast,
+) -> Vec<StackModel> {
     let storage = &forecast.minutes;
-    let groups = plants_by_kind(game);
-    let order = kinds_in_merit_order(game.session().region());
+    let groups = plants_by_kind_session(session);
+    let order = kinds_in_merit_order(session.region());
     // Put the signed battery contribution below generation: charging lowers
     // the baseline, so the top of the stack remains net supply in both directions.
     let kinds = std::iter::once(PlantKind::Battery)
@@ -142,14 +146,21 @@ pub(super) fn forecast_model_for(
     ui: &UiState,
     forecast_supply: &SupplyForecast,
 ) -> ForecastModel {
-    let session = game.session();
+    forecast_model_for_session(game.session(), l10n, ui, forecast_supply)
+}
+pub(super) fn forecast_model_for_session(
+    session: &domain::session::GameSession,
+    l10n: &Localizer,
+    ui: &UiState,
+    forecast_supply: &SupplyForecast,
+) -> ForecastModel {
     let forecast: [ForecastPoint; 24] = session.hourly_forecast();
     let at = |read: fn(&ForecastPoint) -> Megawatts| -> [f64; 24] {
         std::array::from_fn(|hour| read(&forecast[hour]).value())
     };
     let mean = at(|point| point.mean);
     let storage = &forecast_supply.minutes;
-    let stacks = stacked_supply(game, l10n, forecast_supply);
+    let stacks = stacked_supply(session, l10n, forecast_supply);
     let solar = stacks
         .iter()
         .find(|stack| stack.kind == PlantKind::Solar)

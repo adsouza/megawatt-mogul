@@ -24,6 +24,8 @@ mod hydro_panel;
 mod incidents;
 mod inspector;
 mod layout;
+mod links;
+pub use links::{LinkCardModel, LinksModel, draw_links, links_model};
 pub(crate) mod map;
 mod menu;
 mod milestones;
@@ -290,7 +292,7 @@ impl Plugin for HudPlugin {
                 ),
             )
             // A highlighted hour or an unapplied edit belongs to the month being planned.
-            .add_systems(OnExit(PhaseState::Planning), ui_state::reset_ui_state)
+            .add_systems(OnExit(PhaseState::Planning), ui_state::reset_planning_state)
             .add_systems(
                 Update,
                 (
@@ -340,6 +342,9 @@ impl Plugin for HudPlugin {
                             .and_then(resource_exists::<RegionListings>),
                     ),
                     // All in-game phases (spec §8.4), so gated by `AppState` only.
+                    links::links_panel
+                        .in_set(HudSet::Overlays)
+                        .run_if(in_game.clone().and_then(has_l10n)),
                     top_bar::top_bar_panel
                         .in_set(HudSet::Bars)
                         .run_if(in_game.clone().and_then(has_l10n)),
@@ -466,6 +471,39 @@ pub(crate) mod test_support {
     /// A new game in the shipped region `region`, seed 7, in Planning, recording to `sink`.
     pub fn shipped_game(region: &str, sink: Box<dyn CommandLogSink>) -> Game {
         game_in_dir(&shipped_assets().join("regions"), region, sink)
+    }
+
+    /// A closed SGCC day with a supplied home island and an unserved remote island.
+    /// The preceding construction months contain only the home island's history.
+    pub fn sgcc_review_with_two_islands() -> Game {
+        let mut game = shipped_game("sgcc", Box::new(application::InMemoryCommandLog::default()));
+        let from = game.session().anchor_node();
+        let to = game
+            .session()
+            .city_views()
+            .into_iter()
+            .find(|c| c.name_key == "city-shanghai")
+            .unwrap()
+            .node;
+        let months = game.session().link_quote(from, to).unwrap().months;
+        game.execute(Command::BuildLink { from, to }).unwrap();
+        for _ in 0..months {
+            game.execute(Command::BeginOperating).unwrap();
+            game.execute(Command::AdvanceTicks { n: 1440 }).unwrap();
+            game.execute(Command::FinishReview).unwrap();
+        }
+        game.execute(Command::BeginOperating).unwrap();
+        game.execute(Command::AdvanceTicks { n: 1440 }).unwrap();
+        assert_eq!(
+            game.projections()
+                .monthly_reports
+                .latest()
+                .unwrap()
+                .islands
+                .len(),
+            2
+        );
+        game
     }
 
     fn shipped_game_in(dir: &Path, region: &str) -> Game {

@@ -43,6 +43,7 @@ pub const SHIPPED_REGIONS: &[&str] = &[
     "eastern_interconnection",
     "india_nepal_bhutan",
     "ips_ups",
+    "sgcc",
     "southern_china",
     "western_interconnection",
 ];

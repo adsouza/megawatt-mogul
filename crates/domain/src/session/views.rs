@@ -211,7 +211,7 @@ impl GameSession {
             BatteryMode::Disabled
         } else if !connected {
             BatteryMode::Disconnected
-        } else if self.power.protection().mode == GridMode::Blackout {
+        } else if self.power.mode_at(p.node()) == GridMode::Blackout {
             BatteryMode::GridSuspended
         } else if f.charge > Megawatts::ZERO {
             BatteryMode::Charging
@@ -240,6 +240,17 @@ impl GameSession {
         })
     }
     pub fn battery_schedule(&self) -> crate::grid::BatteryScheduleView {
+        if self.region.areas().is_some() && !self.power.island_nodes().is_empty() {
+            let mut total = crate::grid::BatteryScheduleView::default();
+            for id in self.power.island_nodes().keys() {
+                if let Some(scoped) = self.island_session(*id) {
+                    let next = scoped.battery_schedule();
+                    total.plants.extend(next.plants);
+                    total.expected_charging |= next.expected_charging;
+                }
+            }
+            return total;
+        }
         if self.phase == DayPhase::Planning {
             self.power
                 .preview_batteries(&self.region, self.clock.month())
@@ -265,6 +276,31 @@ impl GameSession {
     /// assesses hour endpoints and connected cities' local-hour bends.
     /// Pure: no live water, energy or RNG changes.
     pub fn supply_forecast(&self) -> crate::grid::SupplyForecast {
+        if self.region.areas().is_some() && !self.power.island_nodes().is_empty() {
+            let mut forecasts = self
+                .power
+                .island_nodes()
+                .keys()
+                .filter_map(|id| self.power.scoped_island(*id, &self.region))
+                .map(|p| p.supply_forecast(&self.region, self.clock.month()));
+            if let Some(mut total) = forecasts.next() {
+                for next in forecasts {
+                    total.has_storage |= next.has_storage;
+                    total.assess_every_minute |= next.assess_every_minute;
+                    total.hour_sample_minutes.extend(next.hour_sample_minutes);
+                    for (a, b) in total.minutes.iter_mut().zip(next.minutes) {
+                        a.demand += b.demand;
+                        a.gross_supply += b.gross_supply;
+                        a.battery_charge += b.battery_charge;
+                        a.battery_discharge += b.battery_discharge;
+                        for (k, v) in b.generation {
+                            *a.generation.entry(k).or_insert(Megawatts::ZERO) += v;
+                        }
+                    }
+                }
+                return total;
+            }
+        }
         self.power.supply_forecast(&self.region, self.clock.month())
     }
 
@@ -297,12 +333,13 @@ impl GameSession {
                     .get(plant.cell())
                     .map_or(Ratio::ZERO, |c| c.wind_potential);
                 let rating = plant.spec().capacity * potential.value();
-                let (central, low, high) = self.power.wind_factor_forecast(
+                let (actual, (central, low, high)) = self.power.wind_for_node(
+                    plant.node(),
                     &self.region,
                     self.clock.month(),
                     self.clock.tick(),
                 );
-                let available = rating * self.power.wind_factor();
+                let available = rating * actual;
                 let online = plant.is_online() && self.power.network().is_connected(plant.node());
                 WindView {
                     potential,
@@ -395,6 +432,25 @@ impl GameSession {
                 Ratio::ZERO
             }
         });
+        let served_now = live.zip(live_share).map(|(tick, weight)| {
+            let row = self
+                .power
+                .island_nodes()
+                .iter()
+                .find(|(_, nodes)| nodes.contains(&city.node()))
+                .and_then(|(island, _)| tick.islands.get(island));
+            row.map_or_else(
+                || weight.of(tick.served),
+                |row| {
+                    if row.demand <= Megawatts::ZERO {
+                        return Megawatts::ZERO;
+                    }
+                    // Shared regional noise preserves city demand shares. Service cuts are local
+                    // to the island, so a neighbouring island cannot cover this city's outage.
+                    row.served * (weight.of(tick.demand) / row.demand).clamp(0.0, 1.0)
+                },
+            )
+        });
         Some(CityDetail {
             id,
             name_key: city.def().name_key.clone(),
@@ -406,9 +462,7 @@ impl GameSession {
             demand_now: live
                 .zip(live_share)
                 .map(|(tick, weight)| weight.of(tick.demand)),
-            served_now: live
-                .zip(live_share)
-                .map(|(tick, weight)| weight.of(tick.served)),
+            served_now,
         })
     }
 
@@ -458,6 +512,15 @@ impl GameSession {
     /// frozen during Review, and empty during Planning (see
     /// [`crate::grid::PowerSystem::hydro_schedule`]).
     pub fn hydro_schedule(&self) -> HydroScheduleView {
+        if self.region.areas().is_some() && !self.power.island_nodes().is_empty() {
+            let mut total = HydroScheduleView::default();
+            for id in self.power.island_nodes().keys() {
+                if let Some(p) = self.power.scoped_island(*id, &self.region) {
+                    total.plants.extend(p.hydro_schedule().plants);
+                }
+            }
+            return total;
+        }
         self.power.hydro_schedule()
     }
 
@@ -525,6 +588,7 @@ impl GameSession {
         self.power
             .connected_demand_forecast(&self.region, month, tick)
             - self.power.expected_variable(&self.region, month, tick)
+            - self.power.scheduled_injection(tick)
     }
 
     /// The generators' dispatch requirement, including planned charging.
@@ -549,6 +613,20 @@ impl GameSession {
     /// commitment patterns (not the per-day suppression override), so it is
     /// meaningful while planning. Pure: no randomness, no state change.
     pub fn minimum_generation_check(&self) -> Option<MinimumGenerationWarning> {
+        if self.region.areas().is_some() && !self.power.island_nodes().is_empty() {
+            return self
+                .power
+                .island_nodes()
+                .keys()
+                .filter_map(|id| self.island_session(*id)?.minimum_generation_check())
+                .reduce(|first, next| {
+                    if next.excess > first.excess {
+                        next
+                    } else {
+                        first
+                    }
+                });
+        }
         let hours = self
             .power
             .committed_minimum_hour_ends(&self.region, self.clock.month());
@@ -587,6 +665,20 @@ impl GameSession {
     /// live allocation can exceed the preview. Pure: no randomness, no state
     /// change.
     pub fn capacity_shortfall_check(&self) -> Option<CapacityShortfallWarning> {
+        if self.region.areas().is_some() && !self.power.island_nodes().is_empty() {
+            return self
+                .power
+                .island_nodes()
+                .keys()
+                .filter_map(|id| self.island_session(*id)?.capacity_shortfall_check())
+                .reduce(|first, next| {
+                    if next.shortfall > first.shortfall {
+                        next
+                    } else {
+                        first
+                    }
+                });
+        }
         Self::capacity_shortfall_for(&self.supply_forecast())
     }
 
@@ -630,6 +722,10 @@ impl GameSession {
                         .firm_capacity(&self.region.regulator().storage_accreditation)
                 })
         });
+        let link_changes = rate_base.review_link_utilisation(
+            self.clock.month().year(),
+            &self.link_utilisation(self.clock.month()),
+        );
         let capital = rate_base.preview_reserve_review(&inputs.reserve);
         let (firm, review_peak) = (inputs.firm_capacity(), inputs.review_peak());
         let outcome = compute_rate_review(
@@ -643,6 +739,14 @@ impl GameSession {
                 CapitalChange::Held { amount, .. } => hold += *amount,
                 CapitalChange::Released { amount, .. } => release += *amount,
                 CapitalChange::Disallowed { amount, .. } => at_risk += *amount,
+            }
+        }
+        for event in link_changes {
+            match event {
+                crate::events::DomainEvent::CapitalHeld { amount, .. } => hold += amount,
+                crate::events::DomainEvent::CapitalReleased { amount, .. } => release += amount,
+                crate::events::DomainEvent::CapitalDisallowed { amount, .. } => at_risk += amount,
+                _ => {}
             }
         }
         RateReviewEstimate {
