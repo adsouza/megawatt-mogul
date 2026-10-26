@@ -1,11 +1,14 @@
 use super::OrbitCamera;
 use bevy::prelude::*;
+use domain::ids::PlantId;
 use domain::session::DayPhase;
 
 /// Presentation controls. Never serialised into the simulation or exposed as domain tuning.
 #[derive(Resource, Debug, Clone)]
 pub struct WorldControls {
     pub orbit: OrbitCamera,
+    /// Consumed by the map once its current viewport and plant positions are available.
+    pub(crate) focus_plant: Option<PlantId>,
     pub overlay: bool,
     pub effects: bool,
     pub resource_mode: bool,
@@ -15,6 +18,7 @@ impl Default for WorldControls {
     fn default() -> Self {
         Self {
             orbit: default(),
+            focus_plant: None,
             overlay: true,
             effects: true,
             resource_mode: false,
@@ -33,6 +37,8 @@ pub enum WorldAction {
         size: Vec2,
         aspect: f32,
     },
+    /// Apply the camera resolved for a list selection and consume its one-shot request.
+    FocusResolved(OrbitCamera),
     Reset,
     ToggleOverlay,
     ToggleEffects,
@@ -64,6 +70,10 @@ impl WorldControls {
                 size,
                 aspect,
             } => self.orbit.zoom_at(delta, anchor, size, aspect),
+            WorldAction::FocusResolved(orbit) => {
+                self.orbit = orbit;
+                self.focus_plant = None;
+            }
             WorldAction::Reset => self.orbit = default(),
             WorldAction::ToggleOverlay => self.overlay = !self.overlay,
             WorldAction::ToggleEffects => self.effects = !self.effects,

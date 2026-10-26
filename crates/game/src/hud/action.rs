@@ -42,6 +42,8 @@ pub enum UiAction {
     ReturnToMenu,
     SetSpeed(SimSpeed),
     Select(Selection),
+    /// Select a plant from a list and bring it into view on the map.
+    InspectPlant(PlantId),
     /// Colour the map by another layer.
     SetLayer(MapLayer),
     /// Show the map legend, or hide it: the player's choice, for the rest of the game.
@@ -346,7 +348,14 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             UiAction::SelectSupplyMonth(_)
             | UiAction::ShowReviewSupply(_)
             | UiAction::SetSupplyChartLayout(_) => {}
-            UiAction::Select(selection) => *sink.selection = selection,
+            UiAction::Select(selection) => {
+                *sink.selection = selection;
+                sink.world.focus_plant = None;
+            }
+            UiAction::InspectPlant(plant) => {
+                *sink.selection = Selection::Plant(plant);
+                sink.world.focus_plant = Some(plant);
+            }
             UiAction::SetLayer(layer) => {
                 *sink.layer = layer;
                 sink.world.resource_mode = true;

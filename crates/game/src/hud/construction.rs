@@ -19,6 +19,7 @@ use domain::ids::{LineId, PlantId};
 use domain::session::DayPhase;
 use domain::time::SimMonth;
 
+use super::UiAction;
 use super::theme::{TextTone, heading_color};
 use super::top_bar::Stat;
 use crate::l10n::{Localizer, Names, format};
@@ -36,6 +37,8 @@ pub struct ConstructionRow {
     pub project: Project,
     /// `Gas peaker 12`, or `Line 9: Pittsburgh to Columbus`.
     pub name: String,
+    /// Plant rows select the plant and reveal it on the map; line rows have no action.
+    pub inspect: Option<UiAction>,
     pub months_left: u32,
     /// The whole build time, in months.
     pub total: u32,
@@ -164,6 +167,10 @@ pub fn construction_model(game: &Game, l10n: &Localizer) -> ConstructionModel {
         .map(|p| ConstructionRow {
             project: p.project,
             name: name(p.project),
+            inspect: match p.project {
+                Project::Plant(plant) => Some(UiAction::InspectPlant(plant)),
+                Project::Line(_) => None,
+            },
             months_left: p.months_left,
             total: p.total,
             months: p.months(l10n),
@@ -260,11 +267,12 @@ pub fn construction_card_model(
 }
 
 /// The tab's body: the rows in a grid that scrolls when there are more than fit, or the one line
-/// that says nothing is being built. It has no controls.
-pub fn draw_construction(ui: &mut egui::Ui, model: &ConstructionModel) {
+/// that says nothing is being built. Clicking a plant row opens its card and reveals its marker.
+pub fn draw_construction(ui: &mut egui::Ui, model: &ConstructionModel) -> Vec<UiAction> {
+    let mut actions = Vec::new();
     if let Some(empty) = &model.empty {
         ui.weak(empty.as_str());
-        return;
+        return actions;
     }
     egui::ScrollArea::vertical()
         .id_salt("construction_rows")
@@ -275,21 +283,49 @@ pub fn draw_construction(ui: &mut egui::Ui, model: &ConstructionModel) {
                 .spacing(egui::vec2(16.0, 4.0))
                 .show(ui, |ui| {
                     for row in &model.rows {
-                        ui.colored_label(heading_color(), &row.name);
-                        progress_bar(ui, row.progress);
-                        ui.colored_label(TextTone::Information.color(), &row.months);
-                        ui.colored_label(TextTone::Caution.color(), &row.in_service_text);
+                        let name = if row.inspect.is_some() {
+                            ui.add(
+                                egui::Button::new(
+                                    egui::RichText::new(&row.name).color(heading_color()),
+                                )
+                                .frame(false),
+                            )
+                        } else {
+                            ui.colored_label(heading_color(), &row.name)
+                        };
+                        let progress = progress_bar(ui, row.progress);
+                        let months = ui.colored_label(TextTone::Information.color(), &row.months);
+                        let service =
+                            ui.colored_label(TextTone::Caution.color(), &row.in_service_text);
+                        if let Some(action) = &row.inspect {
+                            // Every cell in the row is clickable, with the name also available
+                            // as a keyboard-focusable button to accessibility tools.
+                            let clicked = [progress, months, service].into_iter().fold(
+                                name.clicked(),
+                                |clicked, response| {
+                                    response
+                                        .interact(egui::Sense::click())
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                        .clicked()
+                                        || clicked
+                                },
+                            );
+                            if clicked {
+                                actions.push(action.clone());
+                            }
+                        }
                         ui.end_row();
                     }
                 });
         });
+    actions
 }
 
 /// The width of a progress bar, on the tab and on the card.
 const PROGRESS_WIDTH: f32 = 120.0;
 
-fn progress_bar(ui: &mut egui::Ui, share: f32) {
-    ui.add(egui::ProgressBar::new(share).desired_width(PROGRESS_WIDTH));
+fn progress_bar(ui: &mut egui::Ui, share: f32) -> egui::Response {
+    ui.add(egui::ProgressBar::new(share).desired_width(PROGRESS_WIDTH))
 }
 
 /// The card: the name as a heading, its status, the capacity, then the progress. No controls.
@@ -394,6 +430,7 @@ mod tests {
             (ccgt, PlantKind::Ccgt),
         ] {
             let row = row(&model, Project::Plant(project));
+            assert_eq!(row.inspect, Some(UiAction::InspectPlant(project)));
             let total = build(kind);
             assert_eq!(row.name, names.plant(project));
             assert_eq!((row.months_left, row.total), (total, total), "{kind:?}");
@@ -407,6 +444,7 @@ mod tests {
             );
         }
         let line_row = row(&model, Project::Line(line));
+        assert_eq!(line_row.inspect, None);
         let view = session
             .line_views()
             .into_iter()

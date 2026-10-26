@@ -251,6 +251,16 @@ pub fn finish_surface(
             && !egui::Popup::is_any_open(ctx)
     });
     let allowed = !surface.blocked && !blocked(&session, &sink);
+    if allowed && let Some(plant) = sink.world().focus_plant {
+        let mut orbit = sink.world().orbit;
+        if let Some(plant) = model.plants.get(&plant) {
+            orbit.reveal(plant.at, model.size(), rect, surface.legend);
+        }
+        dispatch(
+            [UiAction::World(WorldAction::FocusResolved(orbit))],
+            &mut sink,
+        );
+    }
     let mut actions = Vec::new();
     if allowed && owns {
         let primary_drag = response.dragged_by(egui::PointerButton::Primary);
