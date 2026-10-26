@@ -17,4 +17,4 @@ lesson-start-up-costs = Starting plants cost { $total }, { $share } of operating
 lesson-rate-review = The annual rate review set your tariff at { $tariff } and your allowed return at { $allowed_return }. The regulator lets you earn that return only on capital it counts as useful.
 lesson-all-clear = Nothing went noticeably wrong this month. Keep matching supply to demand, and plan for the next peak.
 
-lesson-renewable-curtailed = { $energy } of renewable output was curtailed because the grid had nowhere to put it. Reduce inflexible generation, connect demand, or absorb surplus in batteries before 18:00.
+lesson-renewable-curtailed = { $energy } of renewable output was curtailed because the grid had nowhere to put it. Reduce inflexible generation, connect demand, or absorb surplus in batteries during their charging window.

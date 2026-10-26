@@ -90,12 +90,13 @@ pub(super) struct BatteryPlanningInputs<'a> {
     dispatchable: Vec<&'a Plant>,
     thermal: Vec<&'a Plant>,
     cities: Vec<&'a crate::demand::DemandCenter>,
-    solar: Vec<(Megawatts, Ratio, CellCoord)>,
+    solar: Vec<(Megawatts, CellCoord)>,
     wind_potential: Megawatts,
     minutes: Vec<OnceCell<PlanningMinute>>,
 }
 
 pub(super) struct PlanningMinute {
+    pub(super) injection: Megawatts,
     pub(super) demand: Megawatts,
     pub(super) solar: Megawatts,
     pub(super) wind: Megawatts,
@@ -131,13 +132,7 @@ impl<'a> BatteryPlanningInputs<'a> {
             solar: plants
                 .iter()
                 .filter(|p| p.kind() == PlantKind::Solar)
-                .map(|p| {
-                    (
-                        p.spec().capacity,
-                        super::cell_ratio(region, p.cell(), |c| c.irradiance),
-                        p.cell(),
-                    )
-                })
+                .map(|p| (p.spec().capacity, p.cell()))
                 .collect(),
             wind_potential: plants
                 .iter()
@@ -153,8 +148,9 @@ impl<'a> BatteryPlanningInputs<'a> {
 
     pub(super) fn minute(&self, tick: u32) -> &PlanningMinute {
         self.minutes[tick as usize].get_or_init(|| {
-            let clearness = self.region.solar().clearness_mean[self.month.index0()];
+            let clearness = self.region.expected_clearness(self.month);
             PlanningMinute {
+                injection: Megawatts::new(self.power.injections[(tick / TICKS_PER_HOUR) as usize]),
                 demand: crate::demand::forecast_demand(
                     self.cities.iter().copied(),
                     self.region,
@@ -164,13 +160,9 @@ impl<'a> BatteryPlanningInputs<'a> {
                 solar: self
                     .solar
                     .iter()
-                    .map(|&(capacity, irradiance, cell)| {
-                        crate::generation::solar_available(
-                            capacity,
-                            irradiance,
-                            self.region.sun(cell, self.month, tick),
-                            clearness,
-                        )
+                    .map(|&(capacity, cell)| {
+                        self.region
+                            .solar_available(capacity, cell, self.month, tick, clearness)
                     })
                     .sum(),
                 wind: self.wind_potential
@@ -229,12 +221,14 @@ impl<'a> BatteryPlanningInputs<'a> {
 
 impl PowerSystem {
     pub(crate) fn invalidate_battery_plan(&mut self) {
+        self.invalidate_island_plans();
         self.battery_plan_dirty = true;
     }
     /// A generator command or trip actually changed the fleet: storage re-plans
     /// on the next tick. Without any battery there is no plan to refresh, so
     /// the state is left alone.
     pub(crate) fn generators_changed(&mut self) {
+        self.invalidate_island_plans();
         if self.plants.values().any(|p| p.battery().is_some()) {
             self.invalidate_battery_plan();
         }
@@ -358,7 +352,7 @@ impl PowerSystem {
         let mut charge_residual: Vec<_> = (0..TICKS_PER_DAY)
             .map(|t| {
                 let point = inputs.minute(t);
-                point.demand - (point.solar + point.wind)
+                point.demand - (point.solar + point.wind + point.injection)
             })
             .collect();
         // No battery can use headroom outside this window. The residual still spans
@@ -434,7 +428,8 @@ impl PowerSystem {
         self.connected_plants()
             .filter(|p| p.kind() != PlantKind::Battery)
             .map(Plant::output)
-            .sum()
+            .sum::<Megawatts>()
+            + Megawatts::new(self.injection)
     }
     /// Sharing thermal ramp cover prevents several batteries each reserving the whole fleet.
     fn battery_ramp_share(&self) -> f64 {
@@ -722,7 +717,7 @@ impl PowerSystem {
             let hour = (tick / 60) as u8;
             let point = inputs.minute(tick);
             let (solar, demand, wind) = (point.solar, point.demand, point.wind);
-            let mut primary = solar + wind;
+            let mut primary = solar + wind + point.injection;
             // Schedule-only callers need the flows, not a map and point for every minute.
             let mut generation = collect_forecast
                 .then(|| BTreeMap::from([(PlantKind::Solar, solar), (PlantKind::Wind, wind)]));

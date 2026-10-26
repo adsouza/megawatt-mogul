@@ -39,7 +39,9 @@ pub fn kinds_in_merit_order(region: &RegionDefinition) -> Vec<PlantKind> {
 /// Every commissioned dispatchable plant, grouped by kind in merit order (see
 /// [`kinds_in_merit_order`]). Kinds with no plant are left out.
 pub fn plants_by_kind(game: &Game) -> Vec<KindPlants> {
-    let session = game.session();
+    plants_by_kind_session(game.session())
+}
+pub(super) fn plants_by_kind_session(session: &domain::session::GameSession) -> Vec<KindPlants> {
     let views = session.plant_views();
     kinds_in_merit_order(session.region())
         .into_iter()

@@ -62,6 +62,7 @@ pub struct MeritOrderEntry {
 /// was demanded), not the company's rolling score.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MonthlyReport {
+    pub islands: BTreeMap<crate::ids::NodeId, IslandMonthReport>,
     pub month: SimMonth,
     pub days: u32,
     pub revenue: Money,
@@ -117,6 +118,9 @@ pub struct MonthlyReport {
 /// [`add_command_events`](Self::add_command_events) for manual commands.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MonthAccumulator {
+    islands: BTreeMap<crate::ids::NodeId, IslandMonthReport>,
+    weighted_frequency_minutes: f64,
+    frequency_minutes: u32,
     /// Energy of every plant that appeared in a tick's `by_plant`.
     energy: BTreeMap<PlantId, MegawattHours>,
     storage: BTreeMap<PlantId, BatteryTotals>,
@@ -149,6 +153,9 @@ pub struct MonthAccumulator {
 impl Default for MonthAccumulator {
     fn default() -> Self {
         Self {
+            islands: BTreeMap::new(),
+            weighted_frequency_minutes: 0.0,
+            frequency_minutes: 0,
             energy: BTreeMap::new(),
             storage: BTreeMap::new(),
             daily_starts: BTreeMap::new(),
@@ -172,6 +179,16 @@ impl Default for MonthAccumulator {
 }
 
 impl MonthAccumulator {
+    pub(super) fn record_island_start(&mut self, id: crate::ids::NodeId, share: Ratio) {
+        self.islands
+            .entry(id)
+            .or_default()
+            .incidents
+            .push(Incident {
+                tick: 0,
+                kind: IncidentKind::RotatingOutage { share },
+            });
+    }
     /// Adds one tick: its energies (one minute of each power), the peak, the
     /// starts and incidents among `events`, and which plants produced.
     ///
@@ -214,6 +231,41 @@ impl MonthAccumulator {
             self.normal_ticks += 1;
             if deviation.value().abs() > band.value() {
                 self.out_of_band_ticks += 1;
+            }
+        }
+        if !summary.islands.is_empty() {
+            let normal_demand: f64 = summary
+                .islands
+                .values()
+                .filter(|r| r.mode == GridMode::Normal)
+                .map(|r| r.demand.value())
+                .sum();
+            let bad_demand: f64 = summary
+                .islands
+                .values()
+                .filter(|r| {
+                    r.mode == GridMode::Normal
+                        && (r.frequency - summary.frequency).value().abs() > band.value()
+                })
+                .map(|r| r.demand.value())
+                .sum();
+            if normal_demand > 0.0 {
+                self.frequency_minutes += 1;
+                self.weighted_frequency_minutes += bad_demand / normal_demand;
+            }
+            for (id, row) in &summary.islands {
+                let acc = self.islands.entry(*id).or_default();
+                acc.served += minute(row.served);
+                acc.unserved += minute(row.unserved);
+                acc.imports += minute(row.imports);
+                acc.exports += minute(row.exports);
+                acc.losses += minute(row.losses);
+                if row.mode == GridMode::Normal
+                    && (row.frequency - summary.frequency).value().abs() > band.value()
+                {
+                    acc.minutes_outside_band += 1;
+                }
+                acc.incidents.extend(row.incidents.iter().copied());
             }
         }
         self.add_events(summary.tick, events);
@@ -372,7 +424,39 @@ impl MonthAccumulator {
     }
 
     /// Out-of-band ticks over Normal-mode ticks; zero when there were none.
+    pub(super) fn for_island(&self, id: crate::ids::NodeId) -> Self {
+        let mut scoped = self.clone();
+        scoped.incidents = self
+            .islands
+            .get(&id)
+            .map(|r| r.incidents.clone())
+            .unwrap_or_default();
+        scoped
+    }
+    pub fn island_reports(&self, weight: f64) -> BTreeMap<crate::ids::NodeId, IslandMonthReport> {
+        self.islands
+            .iter()
+            .map(|(id, r)| {
+                (
+                    *id,
+                    IslandMonthReport {
+                        served: r.served * weight,
+                        unserved: r.unserved * weight,
+                        imports: r.imports * weight,
+                        exports: r.exports * weight,
+                        losses: r.losses * weight,
+                        minutes_outside_band: r.minutes_outside_band,
+                        incidents: r.incidents.clone(),
+                    },
+                )
+            })
+            .collect()
+    }
     pub fn out_of_band_share(&self) -> Ratio {
+        if self.frequency_minutes > 0 {
+            return Ratio::new(self.weighted_frequency_minutes / f64::from(self.frequency_minutes))
+                .unwrap_or(Ratio::ZERO);
+        }
         if self.normal_ticks == 0 {
             return Ratio::ZERO;
         }
@@ -382,26 +466,79 @@ impl MonthAccumulator {
 }
 
 // Portable state schema 1: explicit field order and enum tags.
-crate::state_record!(MonthAccumulator {
-    energy,
-    daily_starts,
-    boundary_starts,
-    operated,
-    demand,
-    served,
-    unserved,
-    curtailed,
-    imbalance,
-    overgeneration,
-    rotating_outage,
-    peak_outage_share,
-    peak_demand,
-    incidents,
-    normal_ticks,
-    out_of_band_ticks,
-    storage;
-    curtailed_by_kind: Default::default()
-});
+impl crate::state::State for MonthAccumulator {
+    fn write(&self, out: &mut Vec<u8>) {
+        self.write_schema(out, crate::state::CURRENT_STATE_SCHEMA);
+    }
+    fn write_schema(&self, out: &mut Vec<u8>, schema: u32) {
+        self.energy.write_schema(out, schema);
+        self.daily_starts.write_schema(out, schema);
+        self.boundary_starts.write_schema(out, schema);
+        self.operated.write_schema(out, schema);
+        self.demand.write_schema(out, schema);
+        self.served.write_schema(out, schema);
+        self.unserved.write_schema(out, schema);
+        self.curtailed.write_schema(out, schema);
+        self.imbalance.write_schema(out, schema);
+        self.overgeneration.write_schema(out, schema);
+        self.rotating_outage.write_schema(out, schema);
+        self.peak_outage_share.write_schema(out, schema);
+        self.peak_demand.write_schema(out, schema);
+        self.incidents.write_schema(out, schema);
+        self.normal_ticks.write_schema(out, schema);
+        self.out_of_band_ticks.write_schema(out, schema);
+        self.storage.write_schema(out, schema);
+        if schema >= 2 {
+            self.curtailed_by_kind.write_schema(out, schema);
+        }
+        if schema >= 4 {
+            self.islands.write_schema(out, schema);
+            self.weighted_frequency_minutes.write_schema(out, schema);
+            self.frequency_minutes.write_schema(out, schema);
+        }
+    }
+    fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
+        Ok(Self {
+            energy: crate::state::State::read(input)?,
+            daily_starts: crate::state::State::read(input)?,
+            boundary_starts: crate::state::State::read(input)?,
+            operated: crate::state::State::read(input)?,
+            demand: crate::state::State::read(input)?,
+            served: crate::state::State::read(input)?,
+            unserved: crate::state::State::read(input)?,
+            curtailed: crate::state::State::read(input)?,
+            imbalance: crate::state::State::read(input)?,
+            overgeneration: crate::state::State::read(input)?,
+            rotating_outage: crate::state::State::read(input)?,
+            peak_outage_share: crate::state::State::read(input)?,
+            peak_demand: crate::state::State::read(input)?,
+            incidents: crate::state::State::read(input)?,
+            normal_ticks: crate::state::State::read(input)?,
+            out_of_band_ticks: crate::state::State::read(input)?,
+            storage: crate::state::State::read(input)?,
+            curtailed_by_kind: if input.schema >= 2 {
+                crate::state::State::read(input)?
+            } else {
+                Default::default()
+            },
+            islands: if input.schema >= 4 {
+                crate::state::State::read(input)?
+            } else {
+                Default::default()
+            },
+            weighted_frequency_minutes: if input.schema >= 4 {
+                crate::state::State::read(input)?
+            } else {
+                0.0
+            },
+            frequency_minutes: if input.schema >= 4 {
+                crate::state::State::read(input)?
+            } else {
+                0
+            },
+        })
+    }
+}
 impl crate::state::State for IncidentKind {
     fn write(&self, out: &mut Vec<u8>) {
         match self {
@@ -449,40 +586,168 @@ crate::state_record!(MeritOrderEntry {
     marginal_cost,
     energy
 });
-crate::state_record!(MonthlyReport {
-    month,
-    days,
-    revenue,
-    fuel,
-    start_up,
-    fixed_om,
-    construction,
-    net,
-    energy_by_kind,
-    merit_order,
-    demand,
+impl crate::state::State for MonthlyReport {
+    fn write(&self, out: &mut Vec<u8>) {
+        self.write_schema(out, crate::state::CURRENT_STATE_SCHEMA);
+    }
+    fn write_schema(&self, out: &mut Vec<u8>, schema: u32) {
+        self.month.write_schema(out, schema);
+        self.days.write_schema(out, schema);
+        self.revenue.write_schema(out, schema);
+        self.fuel.write_schema(out, schema);
+        self.start_up.write_schema(out, schema);
+        self.fixed_om.write_schema(out, schema);
+        self.construction.write_schema(out, schema);
+        self.net.write_schema(out, schema);
+        self.energy_by_kind.write_schema(out, schema);
+        self.merit_order.write_schema(out, schema);
+        self.demand.write_schema(out, schema);
+        self.served.write_schema(out, schema);
+        self.unserved.write_schema(out, schema);
+        self.curtailed.write_schema(out, schema);
+        self.imbalance.write_schema(out, schema);
+        self.overgeneration.write_schema(out, schema);
+        self.rotating_outage.write_schema(out, schema);
+        self.peak_outage_share.write_schema(out, schema);
+        self.peak_demand.write_schema(out, schema);
+        self.reliability.write_schema(out, schema);
+        self.incidents.write_schema(out, schema);
+        self.over_frequency_trips.write_schema(out, schema);
+        self.out_of_band_share.write_schema(out, schema);
+        self.frequency_failed.write_schema(out, schema);
+        self.frequency_notice.write_schema(out, schema);
+        self.rate_review.write_schema(out, schema);
+        self.storage.write_schema(out, schema);
+        if schema >= 2 {
+            self.curtailed_by_kind.write_schema(out, schema);
+        }
+        if schema >= 4 {
+            self.islands.write_schema(out, schema);
+        }
+    }
+    fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
+        Ok(Self {
+            month: crate::state::State::read(input)?,
+            days: crate::state::State::read(input)?,
+            revenue: crate::state::State::read(input)?,
+            fuel: crate::state::State::read(input)?,
+            start_up: crate::state::State::read(input)?,
+            fixed_om: crate::state::State::read(input)?,
+            construction: crate::state::State::read(input)?,
+            net: crate::state::State::read(input)?,
+            energy_by_kind: crate::state::State::read(input)?,
+            merit_order: crate::state::State::read(input)?,
+            demand: crate::state::State::read(input)?,
+            served: crate::state::State::read(input)?,
+            unserved: crate::state::State::read(input)?,
+            curtailed: crate::state::State::read(input)?,
+            imbalance: crate::state::State::read(input)?,
+            overgeneration: crate::state::State::read(input)?,
+            rotating_outage: crate::state::State::read(input)?,
+            peak_outage_share: crate::state::State::read(input)?,
+            peak_demand: crate::state::State::read(input)?,
+            reliability: crate::state::State::read(input)?,
+            incidents: crate::state::State::read(input)?,
+            over_frequency_trips: crate::state::State::read(input)?,
+            out_of_band_share: crate::state::State::read(input)?,
+            frequency_failed: crate::state::State::read(input)?,
+            frequency_notice: crate::state::State::read(input)?,
+            rate_review: crate::state::State::read(input)?,
+            storage: crate::state::State::read(input)?,
+            curtailed_by_kind: if input.schema >= 2 {
+                crate::state::State::read(input)?
+            } else {
+                Default::default()
+            },
+            islands: if input.schema >= 4 {
+                crate::state::State::read(input)?
+            } else {
+                Default::default()
+            },
+        })
+    }
+}
+
+/// Physical energy in one island; transfers never create cash ledger entries.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IslandMonthReport {
+    pub served: MegawattHours,
+    pub unserved: MegawattHours,
+    pub imports: MegawattHours,
+    pub exports: MegawattHours,
+    pub losses: MegawattHours,
+    pub minutes_outside_band: u32,
+    pub incidents: Vec<Incident>,
+}
+crate::state_record!(IslandMonthReport {
     served,
     unserved,
-    curtailed,
-    imbalance,
-    overgeneration,
-    rotating_outage,
-    peak_outage_share,
-    peak_demand,
-    reliability,
-    incidents,
-    over_frequency_trips,
-    out_of_band_share,
-    frequency_failed,
-    frequency_notice,
-    rate_review,
-    storage;
-    curtailed_by_kind: Default::default()
+    imports,
+    exports,
+    losses,
+    minutes_outside_band,
+    incidents
 });
+
+impl Default for IslandMonthReport {
+    fn default() -> Self {
+        Self {
+            served: MegawattHours::ZERO,
+            unserved: MegawattHours::ZERO,
+            imports: MegawattHours::ZERO,
+            exports: MegawattHours::ZERO,
+            losses: MegawattHours::ZERO,
+            minutes_outside_band: 0,
+            incidents: Vec::new(),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn island_frequency_performance_weights_each_minute_by_customer_demand() {
+        use crate::{grid::power_system::IslandTickSummary, ids::NodeId, region::AreaId};
+        let row = |demand: f64, frequency: f64| IslandTickSummary {
+            area: AreaId(1),
+            demand: Megawatts::new(demand),
+            served: Megawatts::new(demand),
+            unserved: Megawatts::ZERO,
+            generation: Megawatts::new(demand),
+            imports: Megawatts::ZERO,
+            exports: Megawatts::ZERO,
+            losses: Megawatts::ZERO,
+            frequency: Hertz::new(frequency),
+            mode: GridMode::Normal,
+            outage: Ratio::ZERO,
+            shed: Ratio::ZERO,
+            by_kind: BTreeMap::new(),
+            incidents: Vec::new(),
+        };
+        let mut tick = summary(0, 1000.0, 1000.0, &[]);
+        tick.islands =
+            BTreeMap::from([(NodeId(0), row(100.0, 60.0)), (NodeId(1), row(900.0, 61.0))]);
+        let mut acc = MonthAccumulator::default();
+        acc.add_tick(&tick, &[], Hertz::ZERO, band());
+        assert_eq!(acc.out_of_band_share(), Ratio::new(0.9).unwrap());
+        tick.tick = 1;
+        tick.islands =
+            BTreeMap::from([(NodeId(0), row(100.0, 61.0)), (NodeId(1), row(900.0, 60.0))]);
+        acc.add_tick(&tick, &[], Hertz::ZERO, band());
+        assert_eq!(acc.out_of_band_share(), Ratio::new(0.5).unwrap());
+        assert!(
+            (acc.island_reports(30.0)
+                .values()
+                .map(|r| r.served)
+                .sum::<MegawattHours>()
+                .value()
+                - acc.served().value() * 30.0)
+                .abs()
+                < 1e-9
+        );
+    }
 
     fn band() -> Hertz {
         Hertz::new(0.2)
@@ -495,6 +760,7 @@ mod tests {
             .collect();
         let generation: Megawatts = by_plant.values().copied().sum();
         TickSummary {
+            islands: Default::default(),
             tick,
             demand: Megawatts::new(demand),
             served: Megawatts::new(served),

@@ -78,7 +78,10 @@ impl Model {
 fn allowed_phases(command: &Command) -> &'static [DayPhase] {
     use DayPhase::{Operating, Planning, Review};
     match command {
-        Command::BuildPlant { .. }
+        Command::BuildLink { .. }
+        | Command::CancelLinkConstruction { .. }
+        | Command::SetLinkSchedule { .. }
+        | Command::BuildPlant { .. }
         | Command::BuildLine { .. }
         | Command::CancelLineConstruction { .. }
         | Command::CommitPlant { .. }
@@ -88,7 +91,9 @@ fn allowed_phases(command: &Command) -> &'static [DayPhase] {
         | Command::SetBatteryEnabled { .. }
         | Command::StartPlant { .. }
         | Command::StopPlant { .. } => &[Planning, Operating],
-        Command::AdvanceTicks { .. } => &[Operating],
+        Command::AdvanceTicks { .. }
+        | Command::SetLinkTarget { .. }
+        | Command::ClearLinkOverride { .. } => &[Operating],
         Command::FinishReview => &[Review],
     }
 }

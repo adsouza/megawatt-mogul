@@ -43,6 +43,14 @@ pub(crate) struct PlantHydroPlan {
     pub(crate) planned: bool,
 }
 
+impl PlantHydroPlan {
+    pub(super) fn unplan(&mut self) {
+        self.level = None;
+        self.hourly = [Megawatts::ZERO; HOURS];
+        self.planned = false;
+    }
+}
+
 /// Where the emergency override of the hydro cap stands (spec §12.4), as of
 /// the last AGC pass (see [`PowerSystem::retarget_agc`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -106,6 +114,7 @@ impl PowerSystem {
             let tick = mid_hour_tick(h as u8);
             self.connected_demand_forecast(region, month, tick)
                 - self.expected_variable(region, month, tick)
+                - Megawatts::new(self.injections[h])
         })
     }
 
@@ -247,10 +256,9 @@ impl PowerSystem {
     /// frozen record of elapsed hours stays visible. The next hourly re-plan
     /// treats it by the normal criteria.
     pub(super) fn unplan_hydro(&mut self, id: PlantId) {
+        self.unplan_island_hydro(id);
         if let Some(plan) = self.hydro_plan.get_mut(&id) {
-            plan.level = None;
-            plan.hourly = [Megawatts::ZERO; HOURS];
-            plan.planned = false;
+            plan.unplan();
         }
     }
 
@@ -284,12 +292,14 @@ impl PowerSystem {
     /// [`PowerSystem::hydro_schedule`] shows each hour's allocation as it
     /// stood when the hour began, for plan-versus-actual review.
     pub(crate) fn finish_hydro_day(&mut self) {
+        self.finish_island_hydro(false);
         self.hydro_planned_from = HOURS as u8;
     }
 
     /// Clears the schedule when the next Planning phase begins: nothing is
     /// planned until `begin_day` plans the new day.
     pub(crate) fn clear_hydro_plan(&mut self) {
+        self.finish_island_hydro(true);
         self.hydro_plan.clear();
         self.hydro_planned_from = 0;
     }

@@ -8,7 +8,8 @@ still quits immediately without saving game progress.
 
 ## Plan 2b additions (2026-10-21)
 
-- [ ] Save a named Planning slot, change the applied plan, and explicitly confirm overwrite.
+- [x] Create a named Planning slot and exercise separate overwrite confirmation.
+- [ ] Change the applied plan, overwrite the Planning slot and reload to inspect those changes.
 - [ ] Save at a non-hour Operating minute, close via the OS button, relaunch with the same save
   directory, and resume paused with the same clock, fleet, water and historical charts.
 - [ ] Finish a month and load its automatic Review; retain December's rate review and terminal
@@ -21,6 +22,12 @@ still quits immediately without saving game progress.
   that the window and panel controls remain reachable.
 
 
+Reconciled 2026-10-26 against Plan 2b's [native verification record](2026-10-20-plan-2b-save-resume.md#implementation-and-verification-2026-10-21)
+and Plan 8's [launch smoke](2026-10-26-plan-8-sgcc-hvdc.md#implementation-and-evidence).
+Only fully evidenced manual items are checked. Partially exercised combinations remain open;
+passing automated tests does not complete this native checklist. The numbered steps below retain
+their historical menus/layout; later amendments supersede those instructions.
+
 Plan 2's headless tests cover the presenters, the glue around `dispatch`, the real egui pass and a
 whole month through the app. They can't watch a real window. This checklist is the part a person
 has to look at. Run each step in order and tick it when the expected result matches. If a step
@@ -32,7 +39,7 @@ first. Steps that need a fresh game say so; the others follow on from the step b
 
 ## 0. Launch smoke
 
-- [ ] **0.1** Run `cargo run -p game -- --exit-after-frames 120`.
+- [x] **0.1** Run `cargo run -p game -- --exit-after-frames 120`.
   **Expected:** a window titled *Megawatt Mogul* opens on the main menu, draws for about two
   seconds and closes by itself. The command exits with status 0 (`echo $?` prints `0`), and the
   log shows `boot complete` and no `ERROR` or panic.

@@ -27,10 +27,10 @@ fn flat_system(demand: f64) -> (PowerSystem, RegionDefinition, SimRng) {
 }
 
 #[test]
-fn charged_battery_holds_after_six_pm_when_generators_already_meet_demand() {
+fn charged_battery_holds_after_ten_pm_when_generators_already_meet_demand() {
     let (mut sys, region, mut rng) = flat_system(400.0);
     let opening = sys.plant(PlantId(2)).unwrap().battery().unwrap().stored();
-    for tick in 1080..1200 {
+    for tick in 1320..1440 {
         let (summary, _) = sys.tick(&region, april(), tick, &mut rng);
         assert_eq!(summary.battery_discharge, Megawatts::ZERO, "minute {tick}");
         assert!((sys.primary_supply().value() - 400.0).abs() < 1e-7);
@@ -44,20 +44,40 @@ fn charged_battery_holds_after_six_pm_when_generators_already_meet_demand() {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(24))]
     #[test]
-    fn battery_discharge_begins_at_four_pm_and_covers_a_live_gap(gap in 30.0f64..80.0) {
+    fn battery_discharge_begins_at_six_am_and_covers_a_live_gap(gap in 30.0f64..80.0) {
         let (mut sys, region, mut rng) = flat_system(400.0);
-        place(&mut sys, 1, 400.0 - gap, Some(400.0 - gap));
+        place(&mut sys, 1, 400.0 - gap, None);
         sys.set_auto_follow(PlantId(1), true).unwrap();
         let demand = Megawatts::new(400.0);
-        let before = sys.propose_battery_flows(&region, april(), 16 * 60 - 1, demand, demand);
+        let before = sys.propose_battery_flows(&region, april(), 6 * 60 - 1, demand, demand);
         prop_assert_eq!(before[&PlantId(2)].discharge, Megawatts::ZERO);
-        let at_start = sys.propose_battery_flows(&region, april(), 16 * 60, demand, demand);
+        let at_start = sys.propose_battery_flows(&region, april(), 6 * 60, demand, demand);
         prop_assert!((at_start[&PlantId(2)].discharge.value() - gap).abs() < 1e-7);
         prop_assert_eq!(at_start[&PlantId(2)].charge, Megawatts::ZERO);
-        let (summary, _) = sys.tick(&region, april(), 16 * 60, &mut rng);
+        let (summary, _) = sys.tick(&region, april(), 6 * 60, &mut rng);
         prop_assert!(summary.battery_discharge > Megawatts::ZERO);
         prop_assert_eq!(summary.battery_charge, Megawatts::ZERO);
         prop_assert_eq!(summary.unserved, Megawatts::ZERO);
+    }
+
+    #[test]
+    fn battery_overlap_selects_only_the_direction_of_the_actual_balance(
+        tick in 360u32..1320,
+        gap in 30.0f64..80.0,
+    ) {
+        let (mut sys, region, _) = flat_system(400.0);
+        let demand = Megawatts::new(400.0);
+        let opening = sys.plant(PlantId(2)).unwrap().battery().unwrap().stored();
+        place(&mut sys, 1, 400.0 - gap, None);
+        let deficit = sys.propose_battery_flows(&region, april(), tick, demand, demand);
+        prop_assert!((deficit[&PlantId(2)].discharge.value() - gap).abs() < 1e-7);
+        prop_assert_eq!(deficit[&PlantId(2)].charge, Megawatts::ZERO);
+        place(&mut sys, 1, 400.0 + gap, None);
+        let surplus = sys.propose_battery_flows(&region, april(), tick, demand, demand);
+        prop_assert!(surplus[&PlantId(2)].charge > Megawatts::ZERO);
+        prop_assert!(surplus[&PlantId(2)].charge.value() <= gap + 1e-7);
+        prop_assert_eq!(surplus[&PlantId(2)].discharge, Megawatts::ZERO);
+        prop_assert_eq!(sys.plant(PlantId(2)).unwrap().battery().unwrap().stored(), opening);
     }
 
     #[test]
@@ -67,15 +87,15 @@ proptest! {
         sys.set_auto_follow(PlantId(1), true).unwrap();
         let opening = sys.plant(PlantId(2)).unwrap().battery().unwrap().stored().value();
         let mut delivered = 0.0;
-        for tick in 1080..1140 {
+        for tick in 1320..1380 {
             let (summary, events) = sys.tick(&region, april(), tick, &mut rng);
-            if tick == 1080 { prop_assert!(summary.battery_discharge.value() > 0.0); }
+            if tick == 1320 { prop_assert!(summary.battery_discharge.value() > 0.0); }
             let deficit = (summary.served.value() - sys.primary_supply().value()).max(0.0);
             prop_assert!((summary.battery_discharge.value() - deficit).abs() < 1e-6);
             prop_assert_eq!(summary.unserved, Megawatts::ZERO);
             prop_assert!(!events.iter().any(|e| matches!(e, DomainEvent::LoadShed { .. } | DomainEvent::Blackout)), "battery covers the ramp without shedding");
             delivered += summary.battery_discharge.value() / 60.0;
-            if tick >= 1110 {
+            if tick >= 1350 {
                 prop_assert!(summary.battery_discharge.value() < 1e-6);
                 prop_assert!((sys.primary_supply().value() - demand).abs() < 1e-6);
             }
@@ -84,6 +104,60 @@ proptest! {
         let left = sys.plant(PlantId(2)).unwrap().battery().unwrap().stored().value();
         prop_assert!((opening - left - delivered).abs() < 1e-6);
     }
+}
+
+#[test]
+fn battery_charging_stops_at_ten_pm_even_with_actual_surplus() {
+    let (mut sys, region, _) = flat_system(400.0);
+    place(&mut sys, 1, 450.0, None);
+    let demand = Megawatts::new(400.0);
+    let before = sys.propose_battery_flows(&region, april(), 22 * 60 - 1, demand, demand);
+    assert!(before[&PlantId(2)].charge > Megawatts::ZERO);
+    for tick in [22 * 60, 22 * 60 + 1, 1439] {
+        let after = sys.propose_battery_flows(&region, april(), tick, demand, demand);
+        assert_eq!(after[&PlantId(2)].charge, Megawatts::ZERO);
+        assert_eq!(after[&PlantId(2)].discharge, Megawatts::ZERO);
+    }
+}
+
+#[test]
+fn late_grid_charging_tapers_into_the_ten_pm_cutoff_without_shedding() {
+    let (mut sys, region, mut rng) = flat_system(400.0);
+    sys.plant_mut(PlantId(2))
+        .unwrap()
+        .battery_mut()
+        .unwrap()
+        .close_day();
+    sys.plan_batteries(&region, april(), 21 * 60);
+    let mut charged_late = false;
+    for tick in 21 * 60..23 * 60 {
+        let (summary, events) = sys.tick(&region, april(), tick, &mut rng);
+        if (21 * 60 + 30..22 * 60).contains(&tick) {
+            charged_late |= summary.battery_charge > Megawatts::ZERO;
+        }
+        if tick >= 22 * 60 {
+            assert_eq!(summary.battery_charge, Megawatts::ZERO, "minute {tick}");
+        }
+        assert_eq!(summary.battery_discharge, Megawatts::ZERO);
+        assert_eq!(summary.unserved, Megawatts::ZERO);
+        assert_eq!(summary.mode, GridMode::Normal);
+        assert!(
+            !events.iter().any(|event| matches!(
+                event,
+                DomainEvent::LoadShed { .. }
+                    | DomainEvent::Blackout
+                    | DomainEvent::OverFrequencyTrip { .. }
+            )),
+            "minute {tick}: {events:?}"
+        );
+        assert!(
+            (summary.generation - summary.served - summary.battery_charge - summary.imbalance)
+                .value()
+                .abs()
+                < 1e-7
+        );
+    }
+    assert!(charged_late, "exercise actual grid charging after 21:30");
 }
 
 #[test]

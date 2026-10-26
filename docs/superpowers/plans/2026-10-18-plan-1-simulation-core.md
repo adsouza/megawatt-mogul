@@ -1,6 +1,16 @@
 # Megawatt Mogul Plan 1: Simulation Core Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+**Completion reconciliation (2026-10-26):** Implemented.
+
+- [x] Deterministic domain simulation, construction, accounting and regulation are implemented.
+- [x] Application commands/projections, regional data loading and command logging are implemented.
+- [x] Scenario/property regressions and the original mutation baseline are recorded in [TESTING.md](../../../TESTING.md#mutation-testing-status).
+
+The original execution recipe is retained below as plain steps. This reconciliation records
+landed deliverables, without claiming a fresh run of each historical RED test, command or commit
+sequence. Native checks without a complete receipt remain unchecked.
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. The step sequence below is the historical execution recipe.
 
 **Goal:** Build the complete headless simulation of Milestone 1: the `domain`, `application` and
 `infrastructure` crates, plus both shipped region files. A full game can then be played, replayed
@@ -119,13 +129,13 @@ build on this plan's public API.
 - Produces: the workspace layout and the `[workspace.dependencies]` table that every later task
   uses with `{ workspace = true }`. Also the domain feature `test-fixtures = []`.
 
-- [ ] **Step 1: Install the test tooling**
+- **Step 1: Install the test tooling**
 
 Run: `cargo install --locked cargo-nextest cargo-mutants cargo-insta`
 Expected: `cargo nextest --version` prints 0.9.x, `cargo mutants --version` prints 27.x, and
 `cargo insta --version` prints 1.x.
 
-- [ ] **Step 2: Write the failing dependency-rule test**
+- **Step 2: Write the failing dependency-rule test**
 
 ```rust
 // crates/domain/tests/dependency_rule.rs
@@ -139,12 +149,12 @@ fn domain_manifest_has_no_framework_or_io_dependencies() {
 }
 ```
 
-- [ ] **Step 3: Run it to verify it fails**
+- **Step 3: Run it to verify it fails**
 
 Run: `cargo nextest run -p domain`
 Expected: FAIL, because the workspace and crate don't exist yet.
 
-- [ ] **Step 4: Create the workspace**
+- **Step 4: Create the workspace**
 
 - Root `Cargo.toml`: `members = ["crates/domain", "crates/application", "crates/infrastructure"]`.
 - `[workspace.package]` holds the values from Global Constraints.
@@ -161,7 +171,7 @@ Expected: FAIL, because the workspace and crate don't exist yet.
   `cargo clippy --workspace --all-targets -- -D warnings` and
   `cargo nextest run --workspace --profile ci`.
 
-- [ ] **Step 5: Write the four docs**
+- **Step 5: Write the four docs**
 
 - **`README.md`**: pitch (from spec §1); the three goals; the two regions; status ("Plan 1:
   headless simulation core; the Bevy client is coming in Plans 2–3"); build and test commands
@@ -192,12 +202,12 @@ Expected: FAIL, because the workspace and crate don't exist yet.
   - *Don'ts*: no `HashMap` iteration in the domain, no `unwrap` on player input, no Bevy outside
     `game`.
 
-- [ ] **Step 6: Run the verification**
+- **Step 6: Run the verification**
 
 Run: `cargo nextest run --workspace && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check`
 Expected: 1 test passes, with no clippy warnings and no fmt diff.
 
-- [ ] **Step 7: Commit**
+- **Step 7: Commit**
 
 ```bash
 git add -A && git commit -m "chore: scaffold workspace, CI and project docs"
@@ -234,7 +244,7 @@ git add -A && git commit -m "chore: scaffold workspace, CI and project docs"
   - **`DomainError`** (`thiserror::Error`, `Debug, Clone, PartialEq`) with the first variant
     `InvalidRatio { value: f64 }`. Later tasks add more variants.
 
-- [ ] **Step 1: Write the failing tests**
+- **Step 1: Write the failing tests**
 
 ```rust
 #[test] fn money_from_dollars_is_cents() { assert_eq!(Money::from_dollars(3).cents(), 300); }
@@ -267,19 +277,19 @@ proptest! {
 #[test] fn ratio_rejects_nan() { assert!(Ratio::new(f64::NAN).is_err()); }
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- **Step 2: Run them to verify they fail**
 
 Run: `cargo nextest run -p domain units`
 Expected: FAIL to compile (`Money` not found).
 
-- [ ] **Step 3: Implement `units.rs` and `error.rs`** with the signatures above. Use `f64::round_ties_even` and cast the result to `i64`.
+- **Step 3: Implement `units.rs` and `error.rs`** with the signatures above. Use `f64::round_ties_even` and cast the result to `i64`.
 
-- [ ] **Step 4: Run them to verify they pass**
+- **Step 4: Run them to verify they pass**
 
 Run: `cargo nextest run -p domain units`
 Expected: PASS (8 tests).
 
-- [ ] **Step 5: Commit**: `git commit -am "feat(domain): value objects with exact money"`
+- **Step 5: Commit**: `git commit -am "feat(domain): value objects with exact money"`
 
 ---
 
@@ -309,7 +319,7 @@ Expected: PASS (8 tests).
     shared counter serves every ID type.
   - New `DomainError::InvalidMonth { month: u8 }`.
 
-- [ ] **Step 1: Write the failing tests**
+- **Step 1: Write the failing tests**
 
 ```rust
 #[test] fn leap_years_follow_gregorian_rules() {
@@ -345,10 +355,10 @@ proptest! { #[test] fn year_has_365_or_366_days(y in 1900i32..2400) {
 }
 ```
 
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain time ids`. Expected: FAIL to compile.
-- [ ] **Step 3: Implement `time.rs` and `ids.rs`** with the signatures above.
-- [ ] **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain`. Expected: PASS.
-- [ ] **Step 5: Commit**: `git commit -am "feat(domain): calendar, clock and ids"`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain time ids`. Expected: FAIL to compile.
+- **Step 3: Implement `time.rs` and `ids.rs`** with the signatures above.
+- **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain`. Expected: PASS.
+- **Step 5: Commit**: `git commit -am "feat(domain): calendar, clock and ids"`
 
 ---
 
@@ -369,7 +379,7 @@ proptest! { #[test] fn year_has_365_or_366_days(y in 1900i32..2400) {
   distribution algorithms can change between `rand` versions, which would silently change saved
   games.
 
-- [ ] **Step 1: Write the failing tests**
+- **Step 1: Write the failing tests**
 
 ```rust
 #[test] fn same_seed_same_stream() {
@@ -394,10 +404,10 @@ proptest! { #[test] fn year_has_365_or_366_days(y in 1900i32..2400) {
 }
 ```
 
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain rng`. Expected: FAIL to compile.
-- [ ] **Step 3: Implement `rng.rs`.**
-- [ ] **Step 4: Run them, accept the snapshot, then re-run.** Run: `cargo insta test -p domain --accept && cargo nextest run -p domain rng`. Expected: PASS, with the snapshot file created.
-- [ ] **Step 5: Commit**: `git add -A && git commit -m "feat(domain): deterministic SimRng"`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain rng`. Expected: FAIL to compile.
+- **Step 3: Implement `rng.rs`.**
+- **Step 4: Run them, accept the snapshot, then re-run.** Run: `cargo insta test -p domain --accept && cargo nextest run -p domain rng`. Expected: PASS, with the snapshot file created.
+- **Step 5: Commit**: `git add -A && git commit -m "feat(domain): deterministic SimRng"`
 
 ---
 
@@ -481,7 +491,7 @@ proptest! { #[test] fn year_has_365_or_366_days(y in 1900i32..2400) {
     `smoothing 0.2`.
   - Lines: $40,000,000 per cell, 2 cells per month, book life 600 months.
 
-- [ ] **Step 1: Write the failing tests**
+- **Step 1: Write the failing tests**
 
 ```rust
 #[test] fn tiny_region_is_valid() { assert!(RegionDefinition::try_from(fixtures::tiny_region_parts()).is_ok()); }
@@ -516,10 +526,10 @@ proptest! { #[test] fn year_has_365_or_366_days(y in 1900i32..2400) {
 }
 ```
 
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain region`. Expected: FAIL to compile.
-- [ ] **Step 3: Implement the region module.** Validation runs in this order: grid → catalog → cities → start → shapes → bands. Report the first error found.
-- [ ] **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain region`. Expected: PASS.
-- [ ] **Step 5: Commit**: `git add -A && git commit -m "feat(domain): validated region definition and test fixture"`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain region`. Expected: FAIL to compile.
+- **Step 3: Implement the region module.** Validation runs in this order: grid → catalog → cities → start → shapes → bands. Report the first error found.
+- **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain region`. Expected: PASS.
+- **Step 5: Commit**: `git add -A && git commit -m "feat(domain): validated region definition and test fixture"`
 
 ---
 
@@ -583,7 +593,7 @@ proptest! { #[test] fn year_has_365_or_366_days(y in 1900i32..2400) {
       only on the transition to zero.
   - `set_target` is only valid `Online`, and requires `min_output ≤ mw ≤ capacity`.
 
-- [ ] **Step 1: Write the failing tests**
+- **Step 1: Write the failing tests**
 
 ```rust
 // helper: fn plant(kind) -> Plant { Plant::new_commissioned(PlantId(1), NodeId(1), CellCoord{x:7,y:3}, tiny_region().spec(kind).clone(), april()) }
@@ -622,10 +632,10 @@ proptest! { #[test] fn online_output_respects_ramp_and_bounds(targets in prop::c
 
 `online(kind)` is a test helper that starts the plant and steps it until `is_online()`.
 
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain generation`. Expected: FAIL to compile.
-- [ ] **Step 3: Implement `plant.rs` and `events.rs`** per the rules above.
-- [ ] **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain generation`. Expected: PASS.
-- [ ] **Step 5: Commit**: `git add -A && git commit -m "feat(domain): plant lifecycle and ramping"`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain generation`. Expected: FAIL to compile.
+- **Step 3: Implement `plant.rs` and `events.rs`** per the rules above.
+- **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain generation`. Expected: PASS.
+- **Step 5: Commit**: `git add -A && git commit -m "feat(domain): plant lifecycle and ramping"`
 
 ---
 
@@ -666,7 +676,7 @@ proptest! { #[test] fn online_output_respects_ramp_and_bounds(targets in prop::c
     start charge, not `days` starts. A scheduled recurring restart already covers returning from
     offline; do not add a duplicate boundary charge. Task 16 handles the weighted ledger entries.
 
-- [ ] **Step 1: Write the failing tests**
+- **Step 1: Write the failing tests**
 
 ```rust
 #[test] fn ccgt_starts_exactly_at_lead_time() { // committed hours 6..=17, startup 2 h
@@ -698,10 +708,10 @@ proptest! { #[test] fn accepted_patterns_fit_all_cyclic_gaps(hours in any::<[boo
 }
 ```
 
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain commitment`. Expected: FAIL to compile.
-- [ ] **Step 3: Implement validating construction, boundary initialisation and `commitment_actions`.**
-- [ ] **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain commitment`. Expected: PASS.
-- [ ] **Step 5: Commit**: `git commit -am "feat(domain): automatic commitment actions"`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain commitment`. Expected: FAIL to compile.
+- **Step 3: Implement validating construction, boundary initialisation and `commitment_actions`.**
+- **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain commitment`. Expected: PASS.
+- **Step 5: Commit**: `git commit -am "feat(domain): automatic commitment actions"`
 
 ---
 
@@ -731,7 +741,7 @@ proptest! { #[test] fn accepted_patterns_fit_all_cyclic_gaps(hours in any::<[boo
     `clamp(normal(mean[m], sd), 0.2, 1.0)`.
   - **`fn solar_available(capacity: Megawatts, irradiance: Ratio, sun: f64, clearness: f64) -> Megawatts`**.
 
-- [ ] **Step 1: Write the failing tests**
+- **Step 1: Write the failing tests**
 
 ```rust
 #[test] fn shape_at_hour_start_is_table_value() {
@@ -754,10 +764,10 @@ proptest! { #[test] fn clearness_is_clamped(seed in any::<u64>()) {
 }}
 ```
 
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain demand solar`. Expected: FAIL to compile.
-- [ ] **Step 3: Implement the functions above.**
-- [ ] **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain demand solar`. Expected: PASS.
-- [ ] **Step 5: Commit**: `git add -A && git commit -m "feat(domain): demand profiles, forecast and solar availability"`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain demand solar`. Expected: FAIL to compile.
+- **Step 3: Implement the functions above.**
+- **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain demand solar`. Expected: PASS.
+- **Step 5: Commit**: `git add -A && git commit -m "feat(domain): demand profiles, forecast and solar availability"`
 
 ---
 
@@ -784,7 +794,7 @@ proptest! { #[test] fn clearness_is_clamped(seed in any::<u64>()) {
     status.
 - **Connectivity** is a BFS from the root over `InService` lines, recomputed on every change.
 
-- [ ] **Step 1: Write the failing tests**
+- **Step 1: Write the failing tests**
 
 ```rust
 #[test] fn root_is_connected_alone() { /* new network: connected == {root} */ }
@@ -798,10 +808,10 @@ proptest! { #[test] fn connectivity_matches_union_find(edges in prop::collection
 }}
 ```
 
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain network`. Expected: FAIL to compile.
-- [ ] **Step 3: Implement `network.rs`.**
-- [ ] **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain network`. Expected: PASS.
-- [ ] **Step 5: Commit**: `git add -A && git commit -m "feat(domain): network topology and connectivity"`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain network`. Expected: FAIL to compile.
+- **Step 3: Implement `network.rs`.**
+- **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain network`. Expected: PASS.
+- **Step 5: Commit**: `git add -A && git commit -m "feat(domain): network topology and connectivity"`
 
 ---
 
@@ -825,7 +835,7 @@ proptest! { #[test] fn connectivity_matches_union_find(edges in prop::collection
     target to `output − alloc`.
   - Plants that receive no allocation are held, with target = output.
 
-- [ ] **Step 1: Write the failing tests**
+- **Step 1: Write the failing tests**
 
 ```rust
 #[test] fn merit_order_sorts_by_cost_then_id_and_skips_solar_and_offline() { /* nuclear, coal, ccgt, peaker online + solar + offline ccgt → [nuclear, coal, ccgt, peaker] ids */ }
@@ -840,10 +850,10 @@ proptest! { #[test] fn never_raises_expensive_while_cheaper_has_headroom(
 }}
 ```
 
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain dispatch`. Expected: FAIL to compile.
-- [ ] **Step 3: Implement `dispatch.rs`.**
-- [ ] **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain dispatch`. Expected: PASS.
-- [ ] **Step 5: Commit**: `git commit -am "feat(domain): merit order and ramp-limited AGC"`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain dispatch`. Expected: FAIL to compile.
+- **Step 3: Implement `dispatch.rs`.**
+- **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain dispatch`. Expected: PASS.
+- **Step 5: Commit**: `git commit -am "feat(domain): merit order and ramp-limited AGC"`
 
 ---
 
@@ -876,7 +886,7 @@ proptest! { #[test] fn never_raises_expensive_while_cheaper_has_headroom(
 - **Rules in Blackout mode:** if `supply ≥ demand × (1 − shed + step)`, then `shed −= step`. When
   shed reaches 0, switch back to Normal and return `BlackoutRestored`.
 
-- [ ] **Step 1: Write the failing tests**
+- **Step 1: Write the failing tests**
 
 ```rust
 #[test] fn deviation_converges_to_inertia_over_damping() {
@@ -892,10 +902,10 @@ proptest! { #[test] fn never_raises_expensive_while_cheaper_has_headroom(
 proptest! { #[test] fn shed_stays_in_unit_interval(devs in prop::collection::vec(-3.0f64..3.0, 1..300), supply in 0.0f64..2000.0) { /* shed ∈ [0,1] after each */ } }
 ```
 
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain frequency protection`. Expected: FAIL to compile.
-- [ ] **Step 3: Implement both modules.**
-- [ ] **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain frequency protection`. Expected: PASS.
-- [ ] **Step 5: Commit**: `git add -A && git commit -m "feat(domain): frequency model and protection with black-start restoration"`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain frequency protection`. Expected: FAIL to compile.
+- **Step 3: Implement both modules.**
+- **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain frequency protection`. Expected: PASS.
+- **Step 5: Commit**: `git add -A && git commit -m "feat(domain): frequency model and protection with black-start restoration"`
 
 ---
 
@@ -953,7 +963,7 @@ proptest! { #[test] fn shed_stays_in_unit_interval(devs in prop::collection::vec
   9. `served = demand × (1 − shed)`, `unserved = demand × shed`, and the signed
      `imbalance = supply − curtailed − served`.
 
-- [ ] **Step 1: Write the failing tests**
+- **Step 1: Write the failing tests**
 
 ```rust
 #[test] fn ample_auto_follow_capacity_serves_all_demand() { /* tiny fleet all online + auto_follow, April, 1440 ticks → Σ unserved == 0 */ }
@@ -966,10 +976,10 @@ proptest! { #[test] fn energy_is_conserved_every_tick(seed in any::<u64>(), targ
 }}
 ```
 
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain power_system`. Expected: FAIL to compile.
-- [ ] **Step 3: Implement `PowerSystem`** in the order above.
-- [ ] **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain`. Expected: PASS (all domain tests).
-- [ ] **Step 5: Commit**: `git add -A && git commit -m "feat(domain): PowerSystem aggregate tick"`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain power_system`. Expected: FAIL to compile.
+- **Step 3: Implement `PowerSystem`** in the order above.
+- **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain`. Expected: PASS (all domain tests).
+- **Step 5: Commit**: `git add -A && git commit -m "feat(domain): PowerSystem aggregate tick"`
 
 ---
 
@@ -1025,7 +1035,7 @@ proptest! { #[test] fn energy_is_conserved_every_tick(seed in any::<u64>(), targ
       permanent write-off removes only the remaining book value and its future depreciation.
   - New `DomainEvent::LedgerEntryRecorded(LedgerEntry)`.
 
-- [ ] **Step 1: Write the failing tests**
+- **Step 1: Write the failing tests**
 
 ```rust
 proptest! { #[test] fn cash_change_equals_ledger_sum(amounts in prop::collection::vec(-1_000_000_000i64..1_000_000_000, 0..100)) {
@@ -1050,10 +1060,10 @@ proptest! { #[test] fn capital_adjustments_are_bounded_and_non_cash(actions in a
 #[test] fn satisfaction_moves_by_smoothing() { /* from 50 toward target 100 with α 0.2 → 60.0 */ }
 ```
 
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain company`. Expected: FAIL to compile.
-- [ ] **Step 3: Implement the company module.**
-- [ ] **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain company`. Expected: PASS.
-- [ ] **Step 5: Commit**: `git add -A && git commit -m "feat(domain): company ledger, rate base and satisfaction"`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain company`. Expected: FAIL to compile.
+- **Step 3: Implement the company module.**
+- **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain company`. Expected: PASS.
+- **Step 5: Commit**: `git add -A && git commit -m "feat(domain): company ledger, rate base and satisfaction"`
 
 ---
 
@@ -1104,7 +1114,7 @@ proptest! { #[test] fn capital_adjustments_are_bounded_and_non_cash(actions in a
     decrement `strikes`, emit `StrikeExpired`, and reset `clean_months` to 0.
   - When `strikes ≥ strikes_to_revoke`, set `Revoked` and emit `LicenseRevoked` (once).
 
-- [ ] **Step 1: Write the failing tests**
+- **Step 1: Write the failing tests**
 
 ```rust
 proptest! {
@@ -1124,10 +1134,10 @@ proptest! {
 #[test] fn no_strike_without_demand() { /* demand 0 → no StrikeIssued */ }
 ```
 
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain regulation`. Expected: FAIL to compile.
-- [ ] **Step 3: Implement the regulation module.**
-- [ ] **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain regulation`. Expected: PASS.
-- [ ] **Step 5: Commit**: `git add -A && git commit -m "feat(domain): regulator strikes and performance-based rate review"`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain regulation`. Expected: FAIL to compile.
+- **Step 3: Implement the regulation module.**
+- **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain regulation`. Expected: PASS.
+- **Step 5: Commit**: `git add -A && git commit -m "feat(domain): regulator strikes and performance-based rate review"`
 
 ---
 
@@ -1200,7 +1210,7 @@ proptest! {
 - **Rules:** every command checks `status == Active` first and then the phase. Every command
   validates fully before mutating anything (`Err` means no change).
 
-- [ ] **Step 1: Write the failing tests**
+- **Step 1: Write the failing tests**
 
 ```rust
 #[test] fn new_session_matches_start_definition() {
@@ -1231,10 +1241,10 @@ proptest! {
 #[test] fn same_seed_and_commands_give_same_hash() { /* two sessions seed 5: same commands + 1440 ticks → equal state_hash; seed 6 → different */ }
 ```
 
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain session`. Expected: FAIL to compile.
-- [ ] **Step 3: Implement the session module.** The tick's step 11 (accounting) is not in this task: add the summary to a `MonthAccumulator` field that Task 16 defines; until then, a field holding a `Vec<TickSummary>` is enough.
-- [ ] **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain`. Expected: PASS.
-- [ ] **Step 5: Commit**: `git add -A && git commit -m "feat(domain): GameSession phases, commands and tick"`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain session`. Expected: FAIL to compile.
+- **Step 3: Implement the session module.** The tick's step 11 (accounting) is not in this task: add the summary to a `MonthAccumulator` field that Task 16 defines; until then, a field holding a `Vec<TickSummary>` is enough.
+- **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain`. Expected: PASS.
+- **Step 5: Commit**: `git add -A && git commit -m "feat(domain): GameSession phases, commands and tick"`
 
 ---
 
@@ -1289,7 +1299,7 @@ proptest! {
      Newly commissioned plants start with `previous_month_offline = true`; do not overwrite this
      from missing operating data. The next `BeginOperating` derives fresh lifecycle state.
 
-- [ ] **Step 1: Write the failing tests**
+- **Step 1: Write the failing tests**
 
 ```rust
 proptest! { #[test] fn revenue_is_weighted_and_rounded_once(seed in any::<u64>()) {
@@ -1312,10 +1322,10 @@ proptest! { #[test] fn revenue_is_weighted_and_rounded_once(seed in any::<u64>()
 #[test] fn report_merit_order_sorted_by_cost() { /* entries' marginal_cost non-decreasing */ }
 ```
 
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain month_close`. Expected: FAIL to compile.
-- [ ] **Step 3: Implement `month_close.rs` and `report.rs`**, following the sequence above.
-- [ ] **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain`. Expected: PASS.
-- [ ] **Step 5: Commit**: `git add -A && git commit -m "feat(domain): month close accounting, construction, regulation and game over"`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain month_close`. Expected: FAIL to compile.
+- **Step 3: Implement `month_close.rs` and `report.rs`**, following the sequence above.
+- **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain`. Expected: PASS.
+- **Step 5: Commit**: `git add -A && git commit -m "feat(domain): month close accounting, construction, regulation and game over"`
 
 ---
 
@@ -1383,7 +1393,7 @@ proptest! { #[test] fn revenue_is_weighted_and_rounded_once(seed in any::<u64>()
   - **`fn auto_select_region(regions: &[RegionSummary]) -> Option<&RegionId>`**: `Some` only
     when there is exactly one region.
 
-- [ ] **Step 1: Write the failing tests** (in `tests/pipeline.rs`, with a `StaticCatalog` returning
+- **Step 1: Write the failing tests** (in `tests/pipeline.rs`, with a `StaticCatalog` returning
   a `LoadedRegion` fixture; use a shared `tiny_loaded_region()` helper for live/replay inputs)
 
 ```rust
@@ -1407,10 +1417,10 @@ proptest! { #[test] fn revenue_is_weighted_and_rounded_once(seed in any::<u64>()
 #[test] fn auto_select_only_with_exactly_one_region() { /* 0 → None, 1 → Some(id), 2 → None */ }
 ```
 
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p application`. Expected: FAIL to compile.
-- [ ] **Step 3: Implement the application modules.** Annotate `CoreHandler::handle` with `#[tracing::instrument(skip(self, session))]`, as spec §9 requires.
-- [ ] **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p application`. Expected: PASS.
-- [ ] **Step 5: Commit**: `git add -A && git commit -m "feat(application): command pipeline, ports and Game service"`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p application`. Expected: FAIL to compile.
+- **Step 3: Implement the application modules.** Annotate `CoreHandler::handle` with `#[tracing::instrument(skip(self, session))]`, as spec §9 requires.
+- **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p application`. Expected: PASS.
+- **Step 5: Commit**: `git add -A && git commit -m "feat(application): command pipeline, ports and Game service"`
 
 ---
 
@@ -1446,7 +1456,7 @@ proptest! { #[test] fn revenue_is_weighted_and_rounded_once(seed in any::<u64>()
     - `ConnectCities` counts connected cities via `session.city_views()` whenever `CityConnected`
       is emitted.
 
-- [ ] **Step 1: Write the failing tests**
+- **Step 1: Write the failing tests**
 
 ```rust
 #[test] fn timeline_keeps_last_1440_points() { /* apply 2000 TickCompleted → 1440 points, first tick == 560 */ }
@@ -1457,10 +1467,10 @@ proptest! { #[test] fn revenue_is_weighted_and_rounded_once(seed in any::<u64>()
 #[test] fn game_updates_projections_after_execute() { /* BeginOperating + AdvanceTicks{10} → timeline has 10 points */ }
 ```
 
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p application projections`. Expected: FAIL to compile.
-- [ ] **Step 3: Implement the four projections and `Projections`.**
-- [ ] **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p application`. Expected: PASS.
-- [ ] **Step 5: Commit**: `git add -A && git commit -m "feat(application): timeline, report, history and milestone projections"`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p application projections`. Expected: FAIL to compile.
+- **Step 3: Implement the four projections and `Projections`.**
+- **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p application`. Expected: PASS.
+- **Step 5: Commit**: `git add -A && git commit -m "feat(application): timeline, report, history and milestone projections"`
 
 ---
 
@@ -1508,7 +1518,7 @@ proptest! { #[test] fn revenue_is_weighted_and_rounded_once(seed in any::<u64>()
     6. If none of the above apply → `[AllClear]`.
   - **`LessonsProjection`**: `latest() -> &[Lesson]`, updated on `MonthClosed`.
 
-- [ ] **Step 1: Write the failing tests**
+- **Step 1: Write the failing tests**
 
 ```rust
 #[test] fn warns_when_net_load_rise_exceeds_capability() {
@@ -1522,10 +1532,10 @@ proptest! { #[test] fn revenue_is_weighted_and_rounded_once(seed in any::<u64>()
 #[test] fn ramp_projection_updates_every_fifth_tick() { /* TickCompleted ticks 1..=4 → current None-evaluated; tick 5 evaluated (use a duck-curve fixture: 1500 MW solar at sunset hour, assert Some) */ }
 ```
 
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p application projections`. Expected: FAIL to compile.
-- [ ] **Step 3: Implement the domain queries and the three projections.**
-- [ ] **Step 4: Run them to verify they pass.** Run: `cargo nextest run --workspace`. Expected: PASS.
-- [ ] **Step 5: Commit**: `git add -A && git commit -m "feat(application): ramp warning, rate review estimate and lessons projections"`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p application projections`. Expected: FAIL to compile.
+- **Step 3: Implement the domain queries and the three projections.**
+- **Step 4: Run them to verify they pass.** Run: `cargo nextest run --workspace`. Expected: PASS.
+- **Step 5: Commit**: `git add -A && git commit -m "feat(application): ramp warning, rate review estimate and lessons projections"`
 
 ---
 
@@ -1554,7 +1564,7 @@ proptest! { #[test] fn revenue_is_weighted_and_rounded_once(seed in any::<u64>()
     - `overbuild()`: start month January, with the plan building 4 CCGTs plus lines in month 1, then
       playing 48 months so that they commission and two consecutive December reviews run.
 
-- [ ] **Step 1: Write the scenario snapshot tests**
+- **Step 1: Write the scenario snapshot tests**
 
 ```rust
 #[test] fn winter_peak_month() { let (mut g, _) = game_on(winter_peak(), 11); play_month(&mut g, auto_follow_all);
@@ -1564,7 +1574,7 @@ proptest! { #[test] fn revenue_is_weighted_and_rounded_once(seed in any::<u64>()
 #[test] fn overbuild_rate_review_disallowance() { /* first December after commissioning: CapitalHeld, no writeoff; next December still excess: CapitalDisallowed > 0; snapshot second review */ }
 ```
 
-- [ ] **Step 2: Write the determinism property**
+- **Step 2: Write the determinism property**
 
 ```rust
 proptest! { #![proptest_config(ProptestConfig::with_cases(32))]
@@ -1580,7 +1590,7 @@ proptest! { #![proptest_config(ProptestConfig::with_cases(32))]
 }}
 ```
 
-- [ ] **Step 3: Write the state-machine test** (`proptest-state-machine`)
+- **Step 3: Write the state-machine test** (`proptest-state-machine`)
 
 - The reference state is `{ phase: DayPhase, game_over: bool }`.
 - Transitions are drawn from all `Command` variants. Plant and node IDs come from the current
@@ -1591,7 +1601,7 @@ proptest! { #![proptest_config(ProptestConfig::with_cases(32))]
 - Config: `cases = 64`, up to 40 transitions each. The test runs in debug, so
   `InvariantCheckLayer` is active.
 
-- [ ] **Step 3b: Write the rules-version guard**
+- **Step 3b: Write the rules-version guard**
 
 ```rust
 // tests/rules_version_guard.rs — fixed seed 2027 + a fixed scripted month (auto_follow_all, then one
@@ -1607,13 +1617,13 @@ If this snapshot changes, outcomes changed: either the change is a bug, or `SIM_
 be bumped in the same commit (the snapshot's first line makes a missing bump visible in review).
 Add a matching line to `TESTING.md` under "Writing a new test".
 
-- [ ] **Step 4: Run them, review and accept the snapshots, then re-run**
+- **Step 4: Run them, review and accept the snapshots, then re-run**
 
 Run: `cargo insta test -p application --review` (accept after reading each report for plausibility:
 reliability in 0–1, revenue > 0), then `cargo nextest run -p application`.
 Expected: PASS, with 4 snapshot files committed.
 
-- [ ] **Step 5: Commit**: `git add -A && git commit -m "test(application): scenario snapshots, determinism and state-machine properties"`
+- **Step 5: Commit**: `git add -A && git commit -m "test(application): scenario snapshots, determinism and state-machine properties"`
 
 ---
 
@@ -1656,7 +1666,7 @@ Expected: PASS, with 4 snapshot files committed.
       can load archived source with exactly the same parser/mapper/fingerprinting contract.
     - RON errors become `Parse { message }`, including the line and column.
 
-- [ ] **Step 1: Write the failing tests**
+- **Step 1: Write the failing tests**
 
 ```rust
 // raster.rs
@@ -1673,10 +1683,10 @@ Expected: PASS, with 4 snapshot files committed.
 proptest! { #[test] fn garbage_never_panics(s in "\\PC{0,400}") { /* write s as x.ron; load returns Err, no panic */ } }
 ```
 
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p infrastructure`. Expected: FAIL to compile.
-- [ ] **Step 3: Implement the DTOs, rasteriser, mapping and catalog.** Write `minimal_region.ron` from the `tiny_region` values (a 12 × 8 grid over 0–12° lon and 0–8° lat, with water at `x = 0` expressed as a land polygon starting at 1°).
-- [ ] **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p infrastructure`. Expected: PASS.
-- [ ] **Step 5: Commit**: `git add -A && git commit -m "feat(infrastructure): RON region DTOs, rasteriser and catalog"`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p infrastructure`. Expected: FAIL to compile.
+- **Step 3: Implement the DTOs, rasteriser, mapping and catalog.** Write `minimal_region.ron` from the `tiny_region` values (a 12 × 8 grid over 0–12° lon and 0–8° lat, with water at `x = 0` expressed as a land polygon starting at 1°).
+- **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p infrastructure`. Expected: PASS.
+- **Step 5: Commit**: `git add -A && git commit -m "feat(infrastructure): RON region DTOs, rasteriser and catalog"`
 
 ---
 
@@ -1713,7 +1723,7 @@ proptest! { #[test] fn garbage_never_panics(s in "\\PC{0,400}") { /* write s as 
     frequency, satisfaction and lines params use the Task 5 fixture values. Start month is
     2027-01; start cash is $5,000,000,000 (East) and $3,000,000,000 (West).
 
-- [ ] **Step 1: Write the failing tests**
+- **Step 1: Write the failing tests**
 
 ```rust
 fn catalog() -> RonRegionCatalog { RonRegionCatalog::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/regions")) }
@@ -1727,10 +1737,10 @@ fn catalog() -> RonRegionCatalog { RonRegionCatalog::new(concat!(env!("CARGO_MAN
 #[test] fn one_month_smoke_run_is_reliable() { /* each region: Game::start_new, then a local helper (infrastructure tests can't see application's tests/support) that commits every dispatchable plant for hours 0–23 and turns on AGC; play one month → reliability ≥ 0.99, no GameOver */ }
 ```
 
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p infrastructure shipped`. Expected: FAIL (no files).
-- [ ] **Step 3: Author both RON files** per the data decisions above. Use polygons of 40–80 vertices each. Comment each polygon and blob group with what it represents.
-- [ ] **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p infrastructure shipped`. Expected: PASS. If the smoke run fails, adjust the start fleet, not the rules.
-- [ ] **Step 5: Commit**: `git add -A && git commit -m "feat(data): Eastern and Western interconnection regions"`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p infrastructure shipped`. Expected: FAIL (no files).
+- **Step 3: Author both RON files** per the data decisions above. Use polygons of 40–80 vertices each. Comment each polygon and blob group with what it represents.
+- **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p infrastructure shipped`. Expected: PASS. If the smoke run fails, adjust the start fleet, not the rules.
+- **Step 5: Commit**: `git add -A && git commit -m "feat(data): Eastern and Western interconnection regions"`
 
 ---
 
@@ -1764,7 +1774,7 @@ fn catalog() -> RonRegionCatalog { RonRegionCatalog::new(concat!(env!("CARGO_MAN
     or application. The region archive allows recovery after data retuning; a changed rules version
     still requires the matching engine or an explicit future migration.
 
-- [ ] **Step 1: Write the failing tests** (each with its own `TempDir`)
+- **Step 1: Write the failing tests** (each with its own `TempDir`)
 
 ```rust
 proptest! { #[test] fn round_trips_any_command_sequence(cmds in prop::collection::vec(arb_command(), 0..50)) {
@@ -1787,10 +1797,10 @@ proptest! { #[test] fn round_trips_any_command_sequence(cmds in prop::collection
 #[test] fn refuses_to_overwrite_existing_archive() { /* exclusive sidecar creation */ }
 ```
 
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p infrastructure command_log`. Expected: FAIL to compile.
-- [ ] **Step 3: Implement the DTOs and the file log.**
-- [ ] **Step 4: Run them to verify they pass.** Run: `cargo nextest run --workspace`. Expected: PASS.
-- [ ] **Step 5: Commit**: `git add -A && git commit -m "feat(infrastructure): file command log with replay round-trip"`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p infrastructure command_log`. Expected: FAIL to compile.
+- **Step 3: Implement the DTOs and the file log.**
+- **Step 4: Run them to verify they pass.** Run: `cargo nextest run --workspace`. Expected: PASS.
+- **Step 5: Commit**: `git add -A && git commit -m "feat(infrastructure): file command log with replay round-trip"`
 
 ---
 
@@ -1807,19 +1817,19 @@ proptest! { #[test] fn round_trips_any_command_sequence(cmds in prop::collection
   - **`mutants.yml`**: `schedule: cron "0 6 * * 1"` plus `workflow_dispatch`. It runs
     `cargo mutants --in-place=false -j 4` and uploads `mutants.out/` as an artifact.
 
-- [ ] **Step 1: Run the baseline**
+- **Step 1: Run the baseline**
 
 Run: `cargo mutants -p domain -p application -j 4`
 Expected: a report in `mutants.out/`. Record the `missed` count.
 
-- [ ] **Step 2: Kill the domain survivors.** For each `missed` mutant in `crates/domain`, add a test that fails against the mutant. Prefer extending the property tests with boundary values, e.g. ramp exactly equal to the limit, or a reserve margin exactly at its threshold. Only provably equivalent mutants get an `exclude_re` entry with a justification.
+- **Step 2: Kill the domain survivors.** For each `missed` mutant in `crates/domain`, add a test that fails against the mutant. Prefer extending the property tests with boundary values, e.g. ramp exactly equal to the limit, or a reserve margin exactly at its threshold. Only provably equivalent mutants get an `exclude_re` entry with a justification.
 
-- [ ] **Step 3: Re-run until clean.** Run: `cargo mutants -p domain -j 4`. Expected: `0 missed`.
+- **Step 3: Re-run until clean.** Run: `cargo mutants -p domain -j 4`. Expected: `0 missed`.
 
-- [ ] **Step 4: Triage the application survivors.** Run: `cargo mutants -p application -j 4`. Kill the ones in `pipeline/` and `projections/`. Record the remaining count, with reasons, in `TESTING.md` under "Mutation testing status".
+- **Step 4: Triage the application survivors.** Run: `cargo mutants -p application -j 4`. Kill the ones in `pipeline/` and `projections/`. Record the remaining count, with reasons, in `TESTING.md` under "Mutation testing status".
 
-- [ ] **Step 5: Update `TESTING.md`** with the exact commands, the zero-survivor target for `domain`, how to read `mutants.out/`, and the scheduled job.
+- **Step 5: Update `TESTING.md`** with the exact commands, the zero-survivor target for `domain`, how to read `mutants.out/`, and the scheduled job.
 
-- [ ] **Step 6: Run the full verification.** Run: `cargo nextest run --workspace && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check`. Expected: everything passes.
+- **Step 6: Run the full verification.** Run: `cargo nextest run --workspace && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check`. Expected: everything passes.
 
-- [ ] **Step 7: Commit**: `git add -A && git commit -m "test: mutation testing pass, config and weekly job"`
+- **Step 7: Commit**: `git add -A && git commit -m "test: mutation testing pass, config and weekly job"`

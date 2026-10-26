@@ -1676,7 +1676,13 @@ fn world_compact_layer_selector_changes_layer_without_picking_through_its_popup(
     pass.click_at(&mut app, 819.2, 512.0, combo.rect.center());
     let widgets = pass.settled(&mut app, 819.2, 512.0);
     let sunshine = crate::support::egui_harness::button(&widgets, "Sunshine");
-    for label in ["Suitability: Gas plant (CCGT)", "Suitability: Gas peaker"] {
+    for label in [
+        "Suitability: Gas plant (CCGT)",
+        "Suitability: Gas peaker",
+        "Suitability: Battery storage",
+        "Suitability: Solar farm",
+        "Suitability: Wind farm",
+    ] {
         assert!(
             !widgets.iter().any(|w| w.text == label),
             "removed layer {label}"
@@ -1685,8 +1691,8 @@ fn world_compact_layer_selector_changes_layer_without_picking_through_its_popup(
     for label in [
         "Suitability: Nuclear plant",
         "Suitability: Coal plant",
-        "Suitability: Solar farm",
         "Suitability: Hydro plant",
+        "Wind potential",
     ] {
         crate::support::egui_harness::button(&widgets, label);
     }

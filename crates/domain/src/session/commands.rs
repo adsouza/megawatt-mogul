@@ -158,6 +158,20 @@ impl GameSession {
     /// price a line at any time; only ordering one needs Planning.
     pub fn line_quote(&self, from: NodeId, to: NodeId) -> Result<LineQuote, DomainError> {
         let length = self.line_length(from, to)?;
+        let network = self.power.network();
+        if self.region.area_at(
+            network
+                .node(from)
+                .ok_or(DomainError::UnknownNode { node: from })?
+                .cell,
+        ) != self.region.area_at(
+            network
+                .node(to)
+                .ok_or(DomainError::UnknownNode { node: to })?
+                .cell,
+        ) {
+            return Err(DomainError::LineCrossesAreas);
+        }
         self.power.network().check_line(from, to)?;
         if self.power.network().joined(from, to) {
             return Err(DomainError::LineNotNeeded { from, to });
@@ -179,7 +193,7 @@ impl GameSession {
     }
 
     /// Distance between two distinct existing nodes, in cells.
-    fn line_length(&self, from: NodeId, to: NodeId) -> Result<f64, DomainError> {
+    pub(super) fn line_length(&self, from: NodeId, to: NodeId) -> Result<f64, DomainError> {
         if from == to {
             return Err(DomainError::LineToSelf { node: from });
         }

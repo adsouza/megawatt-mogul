@@ -88,6 +88,27 @@ fn a_refused_new_game_becomes_a_localised_toast() {
 }
 
 #[test]
+fn commissioning_shows_the_all_day_agc_notification_once() {
+    let logs = TempDir::new().unwrap();
+    let mut app = hud_app(&logs);
+    app.world_mut().write_message(game::sim::DomainEventMessage(
+        domain::events::DomainEvent::PlantCommissioned {
+            plant: domain::ids::PlantId(9),
+            kind: domain::region::PlantKind::Coal,
+        },
+    ));
+    app.update();
+    let shown = toasts(&app);
+    assert_eq!(shown.len(), 1);
+    assert!(shown[0].contains("Coal plant 9"));
+    assert!(shown[0].contains("All-day operation and AGC are enabled"));
+    assert!(shown[0].contains("Planning"));
+    // Reading the same frame's event again must not repeat the notification.
+    app.update();
+    assert_eq!(toasts(&app), shown);
+}
+
+#[test]
 fn leaving_a_game_resets_the_selection_the_prompt_and_the_seed() {
     let logs = TempDir::new().unwrap();
     let mut app = hud_app(&logs);

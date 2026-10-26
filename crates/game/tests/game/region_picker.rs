@@ -19,9 +19,9 @@ fn model(seed: Option<u64>) -> game::hud::RegionSelectModel {
         .with_atlas(&RegionAtlas::load(&catalog, &listings), &shipped_l10n())
 }
 
-// Independent orthographic equations at the rendered-image boundary. Initial view faces 100°W.
+// Independent orthographic equations at the rendered-image boundary. Initial view faces the IDL.
 fn point(rect: Rect, lon: f32, lat: f32) -> Pos2 {
-    point_at(rect, lon, lat, -100.0)
+    point_at(rect, lon, lat, -180.0)
 }
 fn point_at(rect: Rect, lon: f32, lat: f32, centre: f32) -> Pos2 {
     let longitude = (lon - centre).to_radians();
@@ -210,10 +210,11 @@ fn hovering_the_map_highlights_a_region_without_starting_a_game() {
     assert!(shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Mesh(mesh) if mesh.vertices.iter().any(|v| v.color == highlighted))));
     assert!(shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Rect(rect) if rect.stroke.width == 2.0 && rect.stroke.color == highlighted)));
     // This point is halfway along an overlapping land ring's old interior seam. Inspect the
-    // actual tessellated paint: the visible colour must be the region fill, not a white stroke.
+    // geographic paint before the later marker/title overlays, which may cover this point
+    // from the IDL view: the seam must contain region fill rather than a white stroke.
     let at = point(rect, -96.025, 46.5);
     let mut visible = None;
-    for primitive in ctx.tessellate(shapes, pixels_per_point) {
+    for primitive in ctx.tessellate(shapes[..=last_fill].to_vec(), pixels_per_point) {
         if !primitive.clip_rect.contains(at) {
             continue;
         }
@@ -853,7 +854,7 @@ fn actual_globe_drag_pauses_then_resumes_and_rotated_clicks_use_visible_geograph
         "automatic rotation resumes"
     );
 
-    // A fresh context advances exactly a quarter turn in six seconds. Pick the western grid
+    // A fresh context advances exactly a quarter turn in six seconds. Pick SGCC
     // at its new visible location, rather than its old screen coordinates.
     let model = model.clone();
     let mut form = MenuForm::new(42);
@@ -877,7 +878,7 @@ fn actual_globe_drag_pauses_then_resumes_and_rotated_clicks_use_visible_geograph
     };
     at_time(0.0, vec![]);
     at_time(6.0, vec![]);
-    let target = point_at(globe, -122.33, 47.61, 170.0);
+    let target = point_at(globe, 116.4, 39.9, 90.0);
     assert!(
         at_time(
             6.0,
@@ -888,7 +889,7 @@ fn actual_globe_drag_pauses_then_resumes_and_rotated_clicks_use_visible_geograph
     assert_eq!(
         at_time(6.0, vec![button(target, false)]),
         vec![UiAction::NewGame {
-            region: RegionId::new("western_interconnection"),
+            region: RegionId::new("sgcc"),
             seed: 42
         }]
     );
@@ -923,28 +924,28 @@ fn outside_the_globe_and_back_hemisphere_cannot_start_a_region() {
         (actions, rect)
     };
     frame(0.0, vec![]);
-    let globe = frame(12.0, vec![]).1;
+    let globe = frame(6.0, vec![]).1;
     let button = |pos, pressed| egui::Event::PointerButton {
         pos,
         pressed,
         button: egui::PointerButton::Primary,
         modifiers: egui::Modifiers::NONE,
     };
-    // At 12 seconds the Eastern grid is behind the globe. Its projected back-face coordinate
+    // At six seconds the Eastern grid is behind the globe. Its projected back-face coordinate
     // lies inside the disc, but the visible geographic point there belongs to another continent.
     for target in [
         globe.left_top() + egui::vec2(2.0, 2.0),
-        point_at(globe, -83.0, 40.0, 80.0),
+        point_at(globe, -83.0, 40.0, 90.0),
     ] {
         assert!(
             frame(
-                12.0,
+                6.0,
                 vec![egui::Event::PointerMoved(target), button(target, true)]
             )
             .0
             .is_empty()
         );
-        assert!(frame(12.0, vec![button(target, false)]).0.is_empty());
+        assert!(frame(6.0, vec![button(target, false)]).0.is_empty());
     }
 }
 

@@ -33,6 +33,10 @@ pub struct WarningsBanner {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TopBarModel {
+    pub islands: Vec<super::ToggleModel>,
+    pub island_dots: Vec<super::map::Rgb>,
+    pub island_dot: String,
+    pub links: Option<ButtonModel>,
     /// `March 2027`.
     pub date: String,
     pub time: String,
@@ -101,6 +105,36 @@ pub fn top_bar_model(
         l10n,
     );
     TopBarModel {
+        islands: island_chips(session, None, l10n),
+        island_dot: l10n.text("island-frequency-dot"),
+        island_dots: session
+            .power()
+            .island_nodes()
+            .keys()
+            .map(|id| {
+                let deviation = session
+                    .power()
+                    .island_states()
+                    .get(id)
+                    .map(|s| s.frequency(session.region()) - session.region().frequency().nominal)
+                    .unwrap_or(domain::units::Hertz::ZERO);
+                let band = if session
+                    .power()
+                    .island_states()
+                    .get(id)
+                    .is_some_and(|s| s.mode() == domain::grid::GridMode::Blackout)
+                {
+                    domain::grid::FrequencyBand::Shedding
+                } else {
+                    domain::grid::band(deviation, session.region().frequency())
+                };
+                super::band_color(band)
+            })
+            .collect(),
+        links: session
+            .region()
+            .hvdc()
+            .map(|_| ButtonModel::new(l10n.text("hvdc-title"), UiAction::ShowLinks(true))),
         date: format::month_year(grid.month),
         time: format::zoned_clock(session.clock().tick(), session.region().system_zone(), l10n),
         season: session.region().season(grid.month).localize(l10n),
@@ -351,6 +385,19 @@ pub fn draw_top_bar(ui: &mut egui::Ui, model: &TopBarModel) -> Vec<UiAction> {
             });
         });
     }
+    if !model.islands.is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            for (index, chip) in model.islands.iter().enumerate() {
+                if let Some(color) = index.checked_sub(1).and_then(|i| model.island_dots.get(i)) {
+                    ui.colored_label(super::map::color32(*color), &model.island_dot);
+                }
+                super::toggle_button(ui, chip, &mut actions);
+            }
+            if let Some(link) = &model.links {
+                button(ui, link, &mut actions);
+            }
+        });
+    }
     actions
 }
 
@@ -362,7 +409,8 @@ pub(super) fn top_bar_panel(
     mut sink: ActionSink,
     style: Res<MoneyStyle>,
 ) -> Result {
-    let model = top_bar_model(&session.0, sink.persistence(), &l10n, &style);
+    let mut model = top_bar_model(&session.0, sink.persistence(), &l10n, &style);
+    model.islands = island_chips(session.0.session(), sink.ui_state().island, &l10n);
     let mut ui = area.root_ui(contexts.ctx_mut()?, "top_bar");
     let actions = egui::Panel::top("top_bar")
         .show(&mut ui, |ui| draw_top_bar(ui, &model))
@@ -370,6 +418,75 @@ pub(super) fn top_bar_panel(
     area.claim(&ui);
     dispatch(actions, &mut sink);
     Ok(())
+}
+
+pub fn island_chips(
+    session: &domain::session::GameSession,
+    selected: Option<domain::ids::NodeId>,
+    l10n: &Localizer,
+) -> Vec<super::ToggleModel> {
+    let Some(areas) = session.region().areas() else {
+        return Vec::new();
+    };
+    let mut chips = vec![super::ToggleModel {
+        button: ButtonModel::new(l10n.text("islands-all"), UiAction::SelectIsland(None)),
+        on: selected.is_none(),
+    }];
+    for (id, nodes) in session.power().island_nodes() {
+        let cell = session
+            .power()
+            .network()
+            .node(*nodes.first().expect("island node"))
+            .expect("island node")
+            .cell;
+        let area_id = session.region().area_at(cell);
+        let name = areas
+            .areas
+            .iter()
+            .find(|a| a.id == area_id)
+            .map(|a| l10n.text(&a.name_key))
+            .unwrap_or_default();
+        let count = session
+            .power()
+            .island_nodes()
+            .keys()
+            .filter(|root| {
+                session
+                    .power()
+                    .network()
+                    .node(**root)
+                    .is_some_and(|n| session.region().area_at(n.cell) == area_id)
+            })
+            .count();
+        let label = if count > 1 {
+            l10n.args(
+                "island-suffix",
+                &[("area", name.into()), ("id", id.0.to_string().into())],
+            )
+        } else {
+            name
+        };
+        let dev = session
+            .power()
+            .island_states()
+            .get(id)
+            .map(|s| s.frequency(session.region()) - session.region().frequency().nominal)
+            .unwrap_or(domain::units::Hertz::ZERO);
+        chips.push(super::ToggleModel {
+            button: ButtonModel::new(
+                l10n.args(
+                    "island-chip",
+                    &[
+                        ("area", label.into()),
+                        ("frequency", format::hertz_deviation(dev).into()),
+                    ],
+                ),
+                UiAction::SelectIsland(Some(*id)),
+            ),
+            on: selected == Some(*id),
+        });
+    }
+    chips
 }
 
 #[cfg(test)]

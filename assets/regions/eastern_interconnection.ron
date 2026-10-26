@@ -219,7 +219,7 @@
     // Great Lakes cloud.
     // Generated site quality (spec section 28.11.1): irradiance_cells.ron, whose header
     // records its offline source.
-    irradiance: (cells_file: "irradiance_cells.ron"),
+    irradiance: (cells_file: "solar_clearness_cells.ron"),
     // Water for thermal plants: the Great Lakes shores, the Mississippi, Ohio
     // and Tennessee rivers, and the coasts.
     cooling_water: (
@@ -456,7 +456,7 @@
          fixed_om_per_month: 100000, capital_cost: 100000000, build_months: 2,
          capacity_credit: 0.0, book_life_months: 180, siting: Anywhere,
          battery: Some((charge_mw: 200.0, energy_mwh: 800.0, charge_efficiency: 0.9,
-                        discharge_efficiency: 1.0, discharge_start_hour: 16, charge_end_hour: 18))),
+                        discharge_efficiency: 1.0, discharge_start_hour: 6, charge_end_hour: 22))),
     ],
     // Each city is a demand centre for its metro and the hinterland it
     // anchors; base loads are proportional to that demand at the game's
@@ -512,7 +512,8 @@
     )],
     demand_noise: (forecast_error: 0.03, error_persistence: 0.995),
     // Computed sun supplies latitude and longitude; regional cloud is unchanged.
-    solar: (
+    // A16: NASA POWER annual all-sky / clear-sky energy; receipts in docs/research/2026-10-26-solar-calibration-anchors.json.
+    solar: (calibration: ClearSkyFraction,
         clearness_mean: [0.50, 0.53, 0.56, 0.58, 0.60, 0.63, 0.64, 0.63, 0.62, 0.59, 0.51, 0.48],
         clearness_sd: 0.18,
     ),

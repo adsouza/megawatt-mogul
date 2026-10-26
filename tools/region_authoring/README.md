@@ -152,3 +152,17 @@ playable cell that two zones claim is an `InvalidShape { field: "economic_zones.
 python3 -I tools/region_authoring/test_region_authoring.py
 cargo nextest run -p infrastructure -E 'test(zone_cells) | test(claimed_by_two_zones) | test(generated_zone_cells)'
 ```
+
+
+## SGCC areas and operating seams
+
+`sgcc_*.args` generates the seven shared-border geography sidecars. SGCC reuses those files in
+both `geography` and `areas[].geography`; the canonical bundle stores each referenced file once.
+The zero simplification tolerance preserves shared provincial borders. Hand-authored coastal
+nudges appear in the main land and the matching area’s inline `polygons`.
+
+`python3 -I tools/region_authoring/sgcc_exclusions.py > assets/regions/sgcc/operating_exclusions.ron`
+regenerates the peer operating seam. It reads the existing India, Southern China and IPS/UPS
+land rasters and excludes SGCC cells intersecting their land cells. Using outlines alone is
+insufficient where raster resolutions differ. The generated header records input bundle hashes.
+This is a schematic grid-operation exclusion, documented in the Plan 8 research note.

@@ -265,10 +265,15 @@ fn a_city_with_a_line_under_construction_says_when_it_connects() {
             .expect("an unconnected city can be reached");
         dispatch_in(
             &mut app,
-            vec![UiAction::Command(application::Command::BuildLine {
-                from,
-                to,
-            })],
+            vec![
+                UiAction::Command(application::Command::BuildLine { from, to }),
+                // Proceed if this expansion opens the capacity warning.
+                UiAction::ConfirmConnection {
+                    kind: domain::session::ConnectionKind::Ac,
+                    from,
+                    to,
+                },
+            ],
         );
         update_n(&mut app, 1);
         let l10n = shipped_l10n();

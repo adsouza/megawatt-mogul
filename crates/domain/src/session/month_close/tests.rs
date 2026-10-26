@@ -211,6 +211,23 @@ fn peaker_commissions_after_twelve_months_with_exact_instalments() {
     );
     // A newly commissioned plant is treated as returning from a month offline.
     assert!(s.power().plant(peaker).unwrap().previous_month_offline());
+    let plant = s.power().plant(peaker).unwrap();
+    assert_eq!(plant.commitment(), CommitmentSchedule::all_day());
+    assert!(plant.auto_follow());
+
+    // Saving after commissioning retains the defaults, and the next day starts
+    // the new plant without any scheduling or AGC command from the player.
+    let region = Arc::clone(&s.region);
+    let mut restored = GameSession::from_snapshot_state(&s.snapshot_state(), region).unwrap();
+    assert_eq!(s.state_hash(), restored.state_hash());
+    assert_eq!(
+        s.begin_operating().unwrap(),
+        restored.begin_operating().unwrap()
+    );
+    let plant = restored.power().plant(peaker).unwrap();
+    assert!(plant.is_online());
+    assert!(plant.auto_follow());
+    assert_eq!(plant.commitment(), CommitmentSchedule::all_day());
 }
 
 /// Flat, noise-free demand so peaks are exact: city 1 (1,000 MW) is
@@ -300,6 +317,7 @@ fn excess_batteries_are_held_then_written_off() {
                 !asset.legacy
                     && match asset.asset {
                         AssetRef::Plant(id) => batteries.contains(&id),
+                        AssetRef::Link(_) => false,
                         AssetRef::Line(_) => matches!(asset.profile,
                             AssetProfile::Line { from, to } if nodes.contains(&from) || nodes.contains(&to)),
                     }
@@ -308,6 +326,7 @@ fn excess_batteries_are_held_then_written_off() {
                 let life = match asset.asset {
                     AssetRef::Plant(_) => s.region().spec(PlantKind::Battery).book_life_months,
                     AssetRef::Line(_) => s.region().lines().book_life_months,
+                    AssetRef::Link(_) => s.region().hvdc().unwrap().book_life_months,
                 };
                 let months = i64::from(s.clock().month().months_since(asset.added_on)) + 1;
                 let monthly = Money::from_cents(asset.original.cents() / i64::from(life));

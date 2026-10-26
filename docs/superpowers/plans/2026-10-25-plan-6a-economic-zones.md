@@ -227,21 +227,34 @@ This is required scope of Plan 7, not new live country-price data fabricated by 
 
 ## Task 7: Mandatory Plan 8 HVDC integration handoff
 
-Plan 6a does not implement HVDC; add these steps to the future detailed Plan 8 before SGCC data:
+Plan 6a deferred HVDC to Plan 8. Reconciled 2026-10-26 against the implemented link terms in
+[`areas.rs`](../../../crates/domain/src/region/areas.rs), route resolver in
+[`economics.rs`](../../../crates/domain/src/region/economics.rs), and link/save regressions:
 
-- [ ] Extend the zone DTO/resolver with the spec's optional HVDC construction overrides only
+- [x] Extend the zone DTO/resolver with the spec's optional HVDC construction overrides only
   when implementing links. Resolve terminals independently. Inherit a base combined converter
   cost by exact even splitting, with the odd cent assigned by canonical endpoint-cell order;
   do not charge the combined base at each end or floor away its remainder.
-- [ ] Resolve route cost from HVDC `cost_per_cell` and route speed from regional line
+- [x] Resolve route cost from HVDC `cost_per_cell` and route speed from regional line
   `cells_per_month` unless the zone's HVDC terms override them. Quote duration is the maximum
   of both terminal durations and exact route months. Validate a separate HVDC work-rate LCM.
-- [ ] Cost canonicalization must not swap the link's stored `from`/`to` or scheduled-flow sign.
+- [x] Cost canonicalization must not swap the link's stored `from`/`to` or scheduled-flow sign.
   Preserve link losses, physics, need checks and synchronous-island boundaries unchanged.
-- [ ] Test distinct terminal zones, one/two missing overrides, odd combined converter cents,
-  cross-zone route work, endpoint reversal, snapshot restore and all-default equivalence to
-  §28.9's existing formula. Apply effective total to cancellation/progress/commissioning/rate base.
-- [ ] Retain Plan 8's own rules/state changes; do not give economic zones another independent
+- [x] Cover distinct terminal zones, odd combined converter cents, cross-zone route work,
+  endpoint reversal and all-default equivalence in `region/areas.rs`; cover link payments,
+  cancellation, commissioning/rate base and snapshot restore in `session/links.rs` and the
+  infrastructure save-codec regressions.
+- [x] Complete the partial-override and zoned-lifecycle regression matrix: explicitly test only
+  one terminal overriding converter terms and authored zones whose HVDC overrides are absent,
+  then carry zone-derived totals through payments, cancellation, commissioning and save/resume.
+  Completed 2026-10-26: two `region::areas` properties exercise every field-presence mask,
+  odd converter cents, zero-price overrides, exact route work and endpoint reversal. The
+  `zoned_hvdc_partial_overrides_survive_payments_cancellation_commissioning_and_resume` test in
+  [`economic_construction.rs`](../../../crates/infrastructure/tests/economic_construction.rs)
+  covers absent, west-only, east-only and both-terminal overrides in both endpoint orders,
+  with exact instalments, cancellation after payment, commission dates/rate base and repeated
+  standalone save/resume after replacing the installed region source.
+- [x] Retain Plan 8's own rules/state changes; do not give economic zones another independent
   state bump or overwrite earlier archived source/canonical history.
 
 ## Task 8: Release verification and version/status update
@@ -307,7 +320,15 @@ Validation on macOS/aarch64:
   `infrastructure/tests/{region_catalog,economic_construction}.rs` and
   `game/tests/game/economics.rs`; scratch native files are not an acceptance dependency.
 
-No real country estimates were fabricated and no shipped region was retuned. Task 6 requires
-Plan 7 to author sourced Europe–Maghreb profiles and record the IPS/UPS choice; Task 7 requires
-Plan 8 to implement/test HVDC terms. This completes the optional infrastructure and its handoffs,
-not those later plans. No push or merge is included.
+No real country estimates were fabricated and no shipped region was retuned by Plan 6a. Task 6
+was subsequently completed in Plan 7. Task 7's HVDC implementation landed in Plan 8; its remaining
+partial-override and zoned-lifecycle regression matrix was completed on 2026-10-26 above.
+Plan 6a's original completion record covers its own infrastructure and validation, not execution
+of those later plans.
+
+Follow-up regression validation (2026-10-26): 21 focused domain tests, 12 infrastructure
+economics/codec/loader tests and the application rules guard passed. Controlled faults that
+double-charge default converters or discard zoned capital at commissioning made the new tests
+fail; both production mutations were restored. The eight hook-selection tests, workspace
+Clippy with warnings denied, formatting, diff checks and added Markdown links/anchors passed.
+This follow-up changes tests and documentation only; simulation rules remain 20.

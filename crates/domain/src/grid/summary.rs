@@ -30,6 +30,7 @@ use crate::units::{Hertz, Megawatts, Ratio};
 #[derive(Debug, Clone, PartialEq)]
 pub struct TickSummary {
     pub tick: u32,
+    pub islands: BTreeMap<crate::ids::NodeId, super::power_system::IslandTickSummary>,
     /// Actual (noisy) demand of connected cities, before any outage or
     /// shedding.
     pub demand: Megawatts,
@@ -63,22 +64,62 @@ pub struct TickSummary {
 }
 
 // Portable state schema 1: explicit field order and enum tags.
-crate::state_record!(TickSummary {
-    tick,
-    demand,
-    served,
-    unserved,
-    generation,
-    curtailed,
-    imbalance,
-    by_kind,
-    by_plant,
-    frequency,
-    mode,
-    shed,
-    outage,
-    battery_charge,
-    battery_discharge,
-    batteries;
-    curtailed_by_kind: Default::default()
-});
+impl crate::state::State for TickSummary {
+    fn write(&self, out: &mut Vec<u8>) {
+        self.write_schema(out, crate::state::CURRENT_STATE_SCHEMA);
+    }
+    fn write_schema(&self, out: &mut Vec<u8>, schema: u32) {
+        self.tick.write_schema(out, schema);
+        self.demand.write_schema(out, schema);
+        self.served.write_schema(out, schema);
+        self.unserved.write_schema(out, schema);
+        self.generation.write_schema(out, schema);
+        self.curtailed.write_schema(out, schema);
+        self.imbalance.write_schema(out, schema);
+        self.by_kind.write_schema(out, schema);
+        self.by_plant.write_schema(out, schema);
+        self.frequency.write_schema(out, schema);
+        self.mode.write_schema(out, schema);
+        self.shed.write_schema(out, schema);
+        self.outage.write_schema(out, schema);
+        self.battery_charge.write_schema(out, schema);
+        self.battery_discharge.write_schema(out, schema);
+        self.batteries.write_schema(out, schema);
+        if schema >= 2 {
+            self.curtailed_by_kind.write_schema(out, schema);
+        }
+        if schema >= 4 {
+            self.islands.write_schema(out, schema);
+        }
+    }
+    fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
+        Ok(Self {
+            tick: crate::state::State::read(input)?,
+            demand: crate::state::State::read(input)?,
+            served: crate::state::State::read(input)?,
+            unserved: crate::state::State::read(input)?,
+            generation: crate::state::State::read(input)?,
+            curtailed: crate::state::State::read(input)?,
+            imbalance: crate::state::State::read(input)?,
+            by_kind: crate::state::State::read(input)?,
+            by_plant: crate::state::State::read(input)?,
+            frequency: crate::state::State::read(input)?,
+            mode: crate::state::State::read(input)?,
+            shed: crate::state::State::read(input)?,
+            outage: crate::state::State::read(input)?,
+            battery_charge: crate::state::State::read(input)?,
+            battery_discharge: crate::state::State::read(input)?,
+            batteries: crate::state::State::read(input)?,
+            curtailed_by_kind: if input.schema >= 2 {
+                crate::state::State::read(input)?
+            } else {
+                Default::default()
+            },
+            islands: if input.schema >= 4 {
+                crate::state::State::read(input)?
+            } else {
+                Default::default()
+            },
+        })
+    }
+}

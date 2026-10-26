@@ -1,6 +1,16 @@
 # Megawatt Mogul Plan 1a: Spec Amendments A1–A3 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+**Completion reconciliation (2026-10-26):** Implemented.
+
+- [x] Hydro peak shaving, partial-year rate-review proration and over-frequency protection are implemented.
+- [x] Frequency notices/strikes, minimum-generation warnings and their reports/lessons are implemented.
+- [x] The rules-2 regression and mutation results are recorded in [TESTING.md](../../../TESTING.md#mutation-testing-status).
+
+The original execution recipe is retained below as plain steps. This reconciliation records
+landed deliverables, without claiming a fresh run of each historical RED test, command or commit
+sequence. Native checks without a complete receipt remain unchecked.
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. The step sequence below is the historical execution recipe.
 
 **Goal:** Implement the three spec amendments on top of the finished Plan 1 simulation core, before
 Plan 2:
@@ -84,7 +94,7 @@ Plan 2:
   Don't rescale the result to hit the budget exactly. Accept a bisection residual of
   ≤ 1e-6 × budget, and assert it in tests.
 
-- [ ] **Step 1: Write the failing tests**
+- **Step 1: Write the failing tests**
 
 ```rust
 #[test] fn fills_the_peak_first() {
@@ -106,10 +116,10 @@ proptest! {
 }
 ```
 
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain hydro_schedule`. Expected: FAIL to compile.
-- [ ] **Step 3: Implement `water_fill`** as specified.
-- [ ] **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain hydro_schedule`. Expected: PASS.
-- [ ] **Step 5: Commit**: `feat(domain): water-filling hydro allocation`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain hydro_schedule`. Expected: FAIL to compile.
+- **Step 3: Implement `water_fill`** as specified.
+- **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain hydro_schedule`. Expected: PASS.
+- **Step 5: Commit**: `feat(domain): water-filling hydro allocation`
 
 ---
 
@@ -155,7 +165,7 @@ proptest! {
     Hours before the current hour report `frozen[h]` (0 if `None`); later hours report the latest
     plan.
 
-- [ ] **Step 1: Write the failing tests**
+- **Step 1: Write the failing tests**
 
 ```rust
 #[test] fn hydro_is_spent_on_the_evening_peak() { /* West-like fixture: one hydro (budget < cap·24) + thermal, auto-follow all; after the day, hydro output during the peak net-load hour > 0 and its energy before 06:00 < energy during 17:00–21:00 */ }
@@ -168,10 +178,10 @@ proptest! {
 #[test] fn planning_draws_no_rng() { /* RNG after begin_day + 120 ticks == a reference SimRng advanced by 1 + 120 standard_normal draws */ }
 ```
 
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain power_system`. Expected: the new tests FAIL.
-- [ ] **Step 3: Implement** per Interfaces. Document the cap-versus-physical distinction in a doc comment on `retarget_agc`.
-- [ ] **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain`, excluding the snapshot tests per Global Constraints. Expected: PASS.
-- [ ] **Step 5: Commit**: `feat(domain): hydro peak-shaving schedule with ramp-aware AGC ceiling`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain power_system`. Expected: the new tests FAIL.
+- **Step 3: Implement** per Interfaces. Document the cap-versus-physical distinction in a doc comment on `retarget_agc`.
+- **Step 4: Run them to verify they pass.** Run: `cargo nextest run -p domain`, excluding the snapshot tests per Global Constraints. Expected: PASS.
+- **Step 5: Commit**: `feat(domain): hydro peak-shaving schedule with ramp-aware AGC ceiling`
 
 ---
 
@@ -189,7 +199,7 @@ proptest! {
     `round_ties_even(return × eligible_rate_base × months ÷ 12)`. When `months == 0` the term is 0.
     Nothing else changes.
 
-- [ ] **Step 1: Write the failing tests**
+- **Step 1: Write the failing tests**
 
 ```rust
 #[test] fn full_year_return_is_unchanged() { /* months 12 → identical RateReviewOutcome to the pre-change formula on the same inputs */ }
@@ -200,10 +210,10 @@ proptest! { #[test] fn return_term_is_linear_in_months(months in 1u8..=12, rb in
 }
 ```
 
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain regulation month_close`. Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run them to verify they pass.** Run the same command. Expected: PASS.
-- [ ] **Step 5: Commit**: `feat(domain): prorate the partial-year rate review return`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain regulation month_close`. Expected: FAIL.
+- **Step 3: Implement.**
+- **Step 4: Run them to verify they pass.** Run the same command. Expected: PASS.
+- **Step 5: Commit**: `feat(domain): prorate the partial-year rate review return`
 
 ---
 
@@ -227,11 +237,11 @@ proptest! { #[test] fn return_term_is_linear_in_months(months in 1u8..=12, rb in
     - `regulator.frequency_band > 0` and finite.
   - All three RON files and the fixture use the Global Constraints defaults.
 
-- [ ] **Step 1: Write the failing tests.** Extend `out_of_range_numbers_are_rejected` / `range_boundaries_are_accepted` with one negative and one boundary case per new field, and assert the fixture and both shipped regions load with the defaults.
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain region && cargo nextest run -p infrastructure`. Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run them to verify they pass.** Run the same command. Expected: PASS.
-- [ ] **Step 5: Commit**: `feat: region parameters for over-frequency trips and frequency performance`
+- **Step 1: Write the failing tests.** Extend `out_of_range_numbers_are_rejected` / `range_boundaries_are_accepted` with one negative and one boundary case per new field, and assert the fixture and both shipped regions load with the defaults.
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain region && cargo nextest run -p infrastructure`. Expected: FAIL.
+- **Step 3: Implement.**
+- **Step 4: Run them to verify they pass.** Run the same command. Expected: PASS.
+- **Step 5: Commit**: `feat: region parameters for over-frequency trips and frequency performance`
 
 ---
 
@@ -258,7 +268,7 @@ proptest! { #[test] fn return_term_is_linear_in_months(months in 1u8..=12, rb in
     `DomainEvent::OverFrequencyTrip { plant }`. When no plant qualifies, nothing happens.
   - **`IncidentKind::OverFrequencyTrip { plant: PlantId }`**, recorded by `MonthAccumulator`.
 
-- [ ] **Step 1: Write the failing tests**
+- **Step 1: Write the failing tests**
 
 ```rust
 #[test] fn never_arms_at_or_below_trip_above() { /* 1_000 ticks at dev = trip_above → no trip */ }
@@ -268,10 +278,10 @@ proptest! { #[test] fn return_term_is_linear_in_months(months in 1u8..=12, rb in
 #[test] fn overbuild_surplus_clears_and_stays_cleared() { /* fixture: extra committed CCGTs, all auto-follow, night surplus → deviation ≤ curtail_above within bounded ticks and for the rest of the day */ }
 ```
 
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain protection power_system`. Expected: the new tests FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run them to verify they pass.** Run the same command. Expected: PASS.
-- [ ] **Step 5: Commit**: `feat(domain): over-frequency generator trips with arming`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain protection power_system`. Expected: the new tests FAIL.
+- **Step 3: Implement.**
+- **Step 4: Run them to verify they pass.** Run the same command. Expected: PASS.
+- **Step 5: Commit**: `feat(domain): over-frequency generator trips with arming`
 
 ---
 
@@ -303,7 +313,7 @@ proptest! { #[test] fn return_term_is_linear_in_months(months in 1u8..=12, rb in
   - **`out_of_band`** = `out_of_band_ticks / normal_ticks`, or 0 when `normal_ticks == 0`.
   - **`MonthlyReport.out_of_band_share: Ratio`** and **`MonthlyReport.frequency_notice: bool`.**
 
-- [ ] **Step 1: Write the failing tests**
+- **Step 1: Write the failing tests**
 
 ```rust
 #[test] fn first_frequency_only_failure_draws_a_notice_not_a_strike() {}
@@ -316,10 +326,10 @@ proptest! { #[test] fn return_term_is_linear_in_months(months in 1u8..=12, rb in
 #[test] fn full_season_milestone_ignores_notices() { /* application */ }
 ```
 
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain regulation month_close report && cargo nextest run -p application milestones`. Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run them to verify they pass.** Run the same commands. Expected: PASS.
-- [ ] **Step 5: Commit**: `feat(domain): frequency-performance strikes with a notice first`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain regulation month_close report && cargo nextest run -p application milestones`. Expected: FAIL.
+- **Step 3: Implement.**
+- **Step 4: Run them to verify they pass.** Run the same commands. Expected: PASS.
+- **Step 5: Commit**: `feat(domain): frequency-performance strikes with a notice first`
 
 ---
 
@@ -350,7 +360,7 @@ proptest! { #[test] fn return_term_is_linear_in_months(months in 1u8..=12, rb in
 
     The cap of three lessons and the `[AllClear]` fallback are unchanged.
 
-- [ ] **Step 1: Write the failing tests**
+- **Step 1: Write the failing tests**
 
 ```rust
 #[test] fn minimum_generation_check_reports_the_worst_hour() { /* crafted fleet: committed minimum 900 MW vs 03:00 net load 600 → hour 3, excess 300 */ }
@@ -361,10 +371,10 @@ proptest! { #[test] fn return_term_is_linear_in_months(months in 1u8..=12, rb in
 #[test] fn lesson_priority_places_new_lessons_after_unserved() {}
 ```
 
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain session && cargo nextest run -p application lessons`. Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run them to verify they pass.** Run the same commands. Expected: PASS.
-- [ ] **Step 5: Commit**: `feat: minimum-generation warning and overgeneration/frequency lessons`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain session && cargo nextest run -p application lessons`. Expected: FAIL.
+- **Step 3: Implement.**
+- **Step 4: Run them to verify they pass.** Run the same commands. Expected: PASS.
+- **Step 5: Commit**: `feat: minimum-generation warning and overgeneration/frequency lessons`
 
 ---
 
@@ -383,7 +393,7 @@ proptest! { #[test] fn return_term_is_linear_in_months(months in 1u8..=12, rb in
   a spring freshet in May and June with an autumn low. Small adjustments are allowed. Winter must not
   exceed 0.9.
 
-- [ ] **Step 1: Write the failing tests**
+- **Step 1: Write the failing tests**
 
 ```rust
 #[test] fn west_october_smoke_run_is_reliable() { /* start month overridden via parts/dto to October; reliability ≥ 0.99, Active */ }
@@ -393,10 +403,10 @@ proptest! { #[test] fn return_term_is_linear_in_months(months in 1u8..=12, rb in
 }
 ```
 
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p infrastructure --test shipped_regions`. Expected: the January-cliff test fails with today's data, or passes only because the data is inflated. Record which.
-- [ ] **Step 3: Re-author the flows,** then iterate on region data only until all three tests pass. Record every data change and its reason in the commit message.
-- [ ] **Step 4: Run the tests to verify they pass.** Run: `cargo nextest run -p infrastructure --test shipped_regions`. Expected: PASS. Report the total runtime; it must stay under about 60 s in debug.
-- [ ] **Step 5: Commit**: `feat(data): realistic Western hydrograph; late-year smoke and hands-off acceptance`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p infrastructure --test shipped_regions`. Expected: the January-cliff test fails with today's data, or passes only because the data is inflated. Record which.
+- **Step 3: Re-author the flows,** then iterate on region data only until all three tests pass. Record every data change and its reason in the commit message.
+- **Step 4: Run the tests to verify they pass.** Run: `cargo nextest run -p infrastructure --test shipped_regions`. Expected: PASS. Report the total runtime; it must stay under about 60 s in debug.
+- **Step 5: Commit**: `feat(data): realistic Western hydrograph; late-year smoke and hands-off acceptance`
 
 ---
 
@@ -409,8 +419,8 @@ proptest! { #[test] fn return_term_is_linear_in_months(months in 1u8..=12, rb in
 
 **Interfaces:** none new.
 
-- [ ] **Step 1: Bump the version.** Set `SIM_RULES_VERSION = 2`.
-- [ ] **Step 2: Regenerate and review the snapshots.** Run `cargo insta test --workspace --review`.
+- **Step 1: Bump the version.** Set `SIM_RULES_VERSION = 2`.
+- **Step 2: Regenerate and review the snapshots.** Run `cargo insta test --workspace --review`.
   For each changed snapshot, check that the diff is explained by A1, A2 or A3:
   - hydro shifts toward peak hours;
   - April-start returns are prorated;
@@ -418,16 +428,16 @@ proptest! { #[test] fn return_term_is_linear_in_months(months in 1u8..=12, rb in
   - the guard's first line reads `SIM_RULES_VERSION=2`.
 
   Accept only explained diffs, and list them in the commit message.
-- [ ] **Step 3: Update the docs.**
+- **Step 3: Update the docs.**
   - `ARCHITECTURE.md`: the tick order gains the hourly hydro re-plan and the over-frequency trip; the
     determinism notes are unchanged.
   - `TESTING.md`: add the new properties and the acceptance check.
   - Follow-ups doc: mark Q2 and Q3 and the first-year review as **implemented**.
-- [ ] **Step 4: Run targeted mutation testing.** Run
+- **Step 4: Run targeted mutation testing.** Run
   `cargo mutants -p domain -F 'water_fill|plan_hydro|retarget_agc|balance_boundary|evaluate|assess_month|minimum_generation_check|compute_rate_review' -j 4`,
   sharded so that each run takes under 10 minutes. Expected: 0 missed. Kill any survivors with
   tests.
-- [ ] **Step 5: Run the full verification.** Run
+- **Step 5: Run the full verification.** Run
   `cargo nextest run --workspace && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check`.
   Expected: all pass.
-- [ ] **Step 6: Commit**: `chore: SIM_RULES_VERSION 2 — regenerate snapshots for amendments A1–A3`
+- **Step 6: Commit**: `chore: SIM_RULES_VERSION 2 — regenerate snapshots for amendments A1–A3`

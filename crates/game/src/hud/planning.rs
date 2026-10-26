@@ -40,7 +40,7 @@ use super::planning_warnings::{WarningsModel, draw_warnings, warnings_for};
 use super::tariff::{TariffModel, draw_tariff, tariff_model};
 use super::theme::TextTone;
 use super::ui_state::{CommitmentForm, PlanningTab, UiState};
-use super::{SupplyHistoryModel, draw_supply_history, supply_history_model};
+use super::{SupplyHistoryModel, draw_supply_history};
 use crate::l10n::Localizer;
 use crate::sim::Session;
 
@@ -114,6 +114,7 @@ fn planning_model_for(
         button: ButtonModel::new(label, UiAction::SetPlanningTab(tab)),
         on: ui.tab == tab,
     };
+    let scoped = ui.island.and_then(|id| game.session().island_session(id));
     let unsaved = has_unsaved_draft(game, ui);
     Some(PlanningModel {
         tabs: vec![
@@ -132,16 +133,37 @@ fn planning_model_for(
         content: match ui.tab {
             PlanningTab::Commitments => PlanningContent::Commitments {
                 warnings: warnings_for(
-                    forecast.shortfall,
-                    forecast.minimum,
-                    &forecast.dry_hydro,
+                    scoped
+                        .as_ref()
+                        .map_or(forecast.shortfall, |s| s.capacity_shortfall_check()),
+                    scoped
+                        .as_ref()
+                        .map_or(forecast.minimum, |s| s.minimum_generation_check()),
+                    &scoped
+                        .as_ref()
+                        .map(|s| {
+                            super::planning_warnings::dry_hydro_plants(
+                                &s.plant_views(),
+                                &crate::l10n::Names::new(l10n, s),
+                            )
+                        })
+                        .unwrap_or_else(|| forecast.dry_hydro.clone()),
                     ui.warnings_open,
                     l10n,
                 ),
                 grid: commitment_model(game, l10n, ui, form),
             },
             PlanningTab::Forecast => {
-                let mut chart = forecast.chart.clone();
+                let mut chart = if let Some(s) = &scoped {
+                    super::forecast_chart::forecast_model_for_session(
+                        s,
+                        l10n,
+                        ui,
+                        &s.supply_forecast(),
+                    )
+                } else {
+                    forecast.chart.clone()
+                };
                 chart.highlight_hour = ui.highlight_hour;
                 PlanningContent::Forecast(Box::new(chart))
             }
@@ -150,8 +172,14 @@ fn planning_model_for(
                 PlanningContent::Construction(construction_model(game, l10n))
             }
             PlanningTab::History => PlanningContent::History(
-                supply_history_model(game, ui.supply_month, l10n, style)
-                    .with_layout(ui.supply_chart_layout),
+                super::supply_history::supply_history_model_scoped(
+                    game,
+                    ui.supply_month,
+                    ui.island,
+                    l10n,
+                    style,
+                )
+                .with_layout(ui.supply_chart_layout),
             ),
         },
     })
@@ -255,6 +283,67 @@ mod tests {
             &usd_style(),
         )
         .expect("the game is planning")
+    }
+
+    #[test]
+    fn planning_history_scopes_each_island_and_all_restores_region_totals() {
+        let mut game = crate::hud::test_support::sgcc_review_with_two_islands();
+        game.execute(Command::FinishReview).unwrap();
+        let day = game.projections().timeline.completed_days().last().unwrap();
+        let mut ui = UiState {
+            tab: PlanningTab::History,
+            supply_month: Some(day.month),
+            ..Default::default()
+        };
+        for &id in game.session().power().island_nodes().keys() {
+            ui.island = Some(id);
+            let PlanningContent::History(history) = build(&game, &ui).content else {
+                panic!("history")
+            };
+            let chart = history.chart.unwrap();
+            assert_eq!(
+                chart.demand,
+                day.points
+                    .iter()
+                    .map(|p| p.islands[&id].demand.value())
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                chart.served,
+                day.points
+                    .iter()
+                    .map(|p| p.islands[&id].served.value())
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(chart.transfers.len(), 2);
+            assert_eq!(
+                chart.forecast[0][1],
+                day.island_forecasts[&id][0].mean.value()
+            );
+            for (month, _) in &history.months {
+                assert!(
+                    game.projections()
+                        .timeline
+                        .completed_days()
+                        .iter()
+                        .find(|d| d.month == *month)
+                        .unwrap()
+                        .island_forecasts
+                        .contains_key(&id)
+                );
+            }
+        }
+        ui.island = None;
+        let PlanningContent::History(history) = build(&game, &ui).content else {
+            panic!("history")
+        };
+        assert_eq!(
+            history.chart.unwrap().demand,
+            day.points
+                .iter()
+                .map(|p| p.demand.value())
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]

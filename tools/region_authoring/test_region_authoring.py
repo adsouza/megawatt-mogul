@@ -33,6 +33,7 @@ def load(name):
 
 ne = load("natural_earth")
 svg = load("research_svg_extent")
+sgcc = load("sgcc_exclusions")
 
 
 def square(west, east, south, north):
@@ -47,6 +48,16 @@ def feature(properties, *polygons):
         "properties": properties,
         "geometry": {"type": "MultiPolygon", "coordinates": coords},
     }
+
+
+class SgccExclusionsTest(unittest.TestCase):
+    def test_committed_operating_exclusion_is_reproducible(self):
+        self.assertEqual(sgcc.generate(ROOT), (ROOT / "assets/regions/sgcc/operating_exclusions.ron").read_text())
+
+    def test_lexical_arrays_ignore_comments_and_quoted_brackets(self):
+        source = '(\n land: [ // ]\n [(1,2),(3,4),(5,6)],\n ],\n geography: ["a.ron"],\n)'
+        self.assertEqual(sgcc.array_field(source, "geography"), '["a.ron"]')
+        self.assertIn('(5,6)', sgcc.array_field(source, "land"))
 
 
 class DouglasPeuckerTest(unittest.TestCase):

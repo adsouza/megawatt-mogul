@@ -324,6 +324,7 @@ pub(super) fn reseed_menu(mut form: ResMut<MenuForm>) {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RegionChoice {
+    pub area_names: std::collections::BTreeMap<String, String>,
     pub button: ButtonModel,
     pub description: Option<String>,
     pub detail: Option<String>,
@@ -397,6 +398,7 @@ pub fn region_select_model(
 fn region_choice(listing: &RegionListing, seed: Option<u64>, l10n: &Localizer) -> RegionChoice {
     match &listing.entry {
         Ok(summary) => RegionChoice {
+            area_names: Default::default(),
             description: {
                 // Each region's copy sits in `regions.ftl` beside its name; a region without
                 // any shows none.
@@ -417,6 +419,7 @@ fn region_choice(listing: &RegionListing, seed: Option<u64>, l10n: &Localizer) -
             problem: None,
         },
         Err(error) => RegionChoice {
+            area_names: Default::default(),
             description: None,
             detail: None,
             metadata: None,

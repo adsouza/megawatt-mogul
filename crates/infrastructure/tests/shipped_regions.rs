@@ -32,6 +32,7 @@ const BRAZIL: &str = "brazil_sin";
 const EUROPE_MAGHREB: &str = "continental_europe_maghreb";
 const INDIA: &str = "india_nepal_bhutan";
 const IPS: &str = "ips_ups";
+const SGCC: &str = "sgcc";
 
 /// The research note whose row tables the region files cite (`[P7-XX-NNN]`).
 const RESEARCH_NOTE: &str = concat!(
@@ -47,6 +48,7 @@ const SHIPPED: &[&str] = &[
     EAST,
     INDIA,
     IPS,
+    SGCC,
     SOUTHERN_CHINA,
     WEST,
 ];
@@ -63,6 +65,7 @@ const RESEARCH_CAPACITY_GW: &[(&str, f64)] = &[
     (EAST, 980.0),
     (INDIA, 520.0),
     (IPS, 345.0),
+    (SGCC, 3170.0),
     (SOUTHERN_CHINA, 500.0),
     (WEST, 340.0),
 ];
@@ -74,6 +77,7 @@ const HOME_CITY: &[(&str, &str)] = &[
     (EAST, "city-columbus"),
     (INDIA, "city-delhi"),
     (IPS, "city-moscow"),
+    (SGCC, "city-beijing"),
     (SOUTHERN_CHINA, "city-guangzhou"),
     (WEST, "city-seattle"),
 ];
@@ -85,6 +89,7 @@ const EXPANSION_CITY: &[(&str, &str)] = &[
     (EAST, "city-cleveland"),
     (INDIA, "city-faridabad"),
     (IPS, "city-kaluga"),
+    (SGCC, "city-baoding"),
     (SOUTHERN_CHINA, "city-shenzhen"),
     (WEST, "city-vancouver"),
 ];
@@ -96,6 +101,7 @@ const NOMINAL_HZ: &[(&str, f64)] = &[
     (EAST, 60.0),
     (INDIA, 50.0),
     (IPS, 50.0),
+    (SGCC, 50.0),
     (SOUTHERN_CHINA, 50.0),
     (WEST, 60.0),
 ];
@@ -559,12 +565,12 @@ fn shipped_first_expansion_acceptance_seeds_zero_through_seven() {
 }
 
 #[test]
-fn both_regions_allow_battery_discharge_from_four_pm() {
-    for id in [EAST, WEST] {
+fn every_shipped_region_allows_battery_discharge_from_six_am_and_charge_until_ten_pm() {
+    for &id in SHIPPED {
         let region = region(id);
         let battery = region.spec(PlantKind::Battery).battery.unwrap();
-        assert_eq!(battery.discharge_start_hour, 16, "{id}");
-        assert_eq!(battery.charge_end_hour, 18, "{id}");
+        assert_eq!(battery.discharge_start_hour, 6, "{id}");
+        assert_eq!(battery.charge_end_hour, 22, "{id}");
     }
 }
 
@@ -983,6 +989,7 @@ year_one_cases! {
         year_one_no_commands_ips_ups,
         IPS
     ),
+    (year_one_hands_off_sgcc,year_one_no_commands_sgcc,SGCC),
     (
         year_one_hands_off_southern_china,
         year_one_no_commands_southern_china,
@@ -1727,7 +1734,18 @@ fn solar_migration_preserves_authored_site_rankings() {
         )
         .unwrap();
         let before = map_region(old.clone()).unwrap();
-        let after = region(id);
+        // A14's immutable sidecars preserve strict legacy ranks before A16's new scale.
+        let mut migrated = region_file(id);
+        migrated.solar.calibration = infrastructure::region::SolarCalibrationDto::Legacy;
+        migrated.irradiance = ron::from_str(
+            &std::fs::read_to_string(format!(
+                "{}/tests/support/global-foundations/{id}-irradiance-v4.ron",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        let after = map_region_v4(migrated).unwrap();
         let mut sites = std::collections::BTreeMap::new();
         for b in &old.irradiance.blobs {
             let cell = to_cell(&old, b.lon, b.lat);
@@ -1786,7 +1804,18 @@ fn solar_migration_preserves_every_playable_strict_site_ranking() {
         ))
         .unwrap();
         let before = map_region(ron::from_str::<RegionFile>(&source).unwrap()).unwrap();
-        let after = region(id);
+        // A14's immutable sidecars preserve strict legacy ranks before A16's new scale.
+        let mut migrated = region_file(id);
+        migrated.solar.calibration = infrastructure::region::SolarCalibrationDto::Legacy;
+        migrated.irradiance = ron::from_str(
+            &std::fs::read_to_string(format!(
+                "{}/tests/support/global-foundations/{id}-irradiance-v4.ron",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        let after = map_region_v4(migrated).unwrap();
         let mut cells: Vec<_> = (0..before.terrain().height())
             .flat_map(|y| {
                 (0..before.terrain().width()).map(move |x| domain::ids::CellCoord { x, y })
@@ -2671,7 +2700,6 @@ mod ips_ups {
     /// sun at any December tick, and in June it still produces at Murmansk's local midnight.
     #[test]
     fn murmansk_polar_night_and_midnight_sun() {
-        use domain::generation::solar_available;
         let region = region(ID);
         let murmansk = city_named(&region, "city-murmansk");
         let solar = region.spec(PlantKind::Solar);
@@ -2683,13 +2711,9 @@ mod ips_ups {
         assert!(irradiance.value() > 0.0);
         assert!(region.site_check(PlantKind::Solar, murmansk.cell).is_ok());
         let output = |m: u8, tick: u32, clearness: f64| {
-            solar_available(
-                solar.capacity,
-                irradiance,
-                region.sun(murmansk.cell, month(m), tick),
-                clearness,
-            )
-            .value()
+            region
+                .solar_available(solar.capacity, murmansk.cell, month(m), tick, clearness)
+                .value()
         };
         for tick in 0..TICKS_PER_DAY {
             assert_eq!(output(12, tick, 1.0), 0.0, "December tick {tick}");
@@ -3218,5 +3242,229 @@ mod continental_europe_maghreb {
                 .all(|work| work.zone.0 <= 2 && work.cells > 0),
             "{terms:?}"
         );
+    }
+}
+
+mod sgcc {
+    use super::*;
+    #[test]
+    fn sgcc_loads_as_five_areas_with_beijing_starter_and_dc_catalog() {
+        let r = region("sgcc");
+        assert_eq!(r.areas().unwrap().areas.len(), 5);
+        assert!(r.hvdc().is_some());
+        assert_eq!(
+            r.city(r.start().home_city).unwrap().name_key,
+            "city-beijing"
+        );
+        let mut game = new_game(&catalog(), "sgcc", 7);
+        game.execute(Command::BeginOperating).unwrap();
+        game.execute(Command::AdvanceTicks { n: 120 }).unwrap();
+        game.session().check_invariants().unwrap();
+    }
+}
+
+/// Every current region opts into the same clear-sky scale, with weather applied once.
+#[test]
+fn solar_calibration_uses_one_scale_in_all_shipped_regions() {
+    for id in SHIPPED {
+        let r = region(id);
+        assert!(
+            r.solar().annual_site_clearness,
+            "{id} still uses legacy double attenuation"
+        );
+        let mut source = region_file(id);
+        let calibration = source.solar.calibration;
+        source.solar.calibration = infrastructure::region::SolarCalibrationDto::Legacy;
+        let raw = map_region_v4(source).unwrap();
+        for y in 0..r.terrain().height() {
+            for x in 0..r.terrain().width() {
+                let cell = domain::ids::CellCoord { x, y };
+                let input = raw.terrain().get(cell).unwrap().irradiance.value();
+                let expected = match calibration {
+                    infrastructure::region::SolarCalibrationDto::AngstromPrescott => {
+                        (input / 0.75).min(1.0)
+                    }
+                    infrastructure::region::SolarCalibrationDto::ClearSkyFraction => input,
+                    infrastructure::region::SolarCalibrationDto::Legacy => {
+                        panic!("{id} has no calibration")
+                    }
+                };
+                assert!(
+                    (r.terrain().get(cell).unwrap().irradiance.value() - expected).abs() < 1e-12,
+                    "{id} {cell:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn solar_calibration_puts_spain_and_morocco_on_the_north_american_scale() {
+    let europe = region(EUROPE_MAGHREB);
+    let west = region(WEST);
+    let potential = |r: &RegionDefinition, name: &str| {
+        r.solar_potential(r.cities().iter().find(|c| c.name_key == name).unwrap().cell)
+            .value()
+    };
+    let seville = potential(&europe, "city-seville");
+    let file = region_file(EUROPE_MAGHREB);
+    let (w, h) = (europe.terrain().width(), europe.terrain().height());
+    let at = domain::ids::CellCoord {
+        x: ((-6.9 - file.bounds.west) / (file.bounds.east - file.bounds.west) * f64::from(w))
+            as u16,
+        y: ((file.bounds.north - 30.93) / (file.bounds.north - file.bounds.south) * f64::from(h))
+            as u16,
+    };
+    let ouarzazate = europe.solar_potential(at).value();
+    let phoenix = potential(&west, "city-phoenix");
+    assert!(
+        seville > 0.65 && ouarzazate > 0.73,
+        "{seville} {ouarzazate}"
+    );
+    assert!(
+        phoenix > seville && phoenix - ouarzazate < 0.12,
+        "{phoenix} {ouarzazate}"
+    );
+}
+
+/// Independent NASA POWER annual-energy receipts, not the runtime conversion formula.
+#[test]
+fn solar_clearness_matches_independent_nasa_anchor_energies() {
+    let regions: std::collections::BTreeMap<_, _> = [WEST, EAST, SGCC]
+        .into_iter()
+        .map(|id| (id, (region(id), region_file(id))))
+        .collect();
+    for (id, lon, lat, all_sky, clear_sky) in [
+        ("western_interconnection", -112.074, 33.448, 5.8476, 6.3326),
+        ("western_interconnection", -122.332, 47.606, 3.4178, 5.0875),
+        ("western_interconnection", -106.485, 31.762, 5.8987, 6.5273),
+        ("western_interconnection", -123.12, 49.283, 3.2184, 4.95),
+        ("western_interconnection", -122.419, 37.775, 4.7354, 5.9237),
+        ("western_interconnection", -114.071, 51.045, 3.5086, 4.9553),
+        ("western_interconnection", -119.814, 39.53, 5.2282, 6.0595),
+        ("western_interconnection", -111.891, 40.761, 4.8036, 6.0358),
+        ("western_interconnection", -116.202, 43.615, 4.5629, 5.6002),
+        ("western_interconnection", -117.426, 47.659, 3.8357, 5.1936),
+        ("eastern_interconnection", -80.192, 25.762, 5.0112, 6.2542),
+        ("eastern_interconnection", -81.694, 41.499, 3.6271, 5.3326),
+        ("eastern_interconnection", -79.383, 43.653, 3.6518, 5.2229),
+        ("eastern_interconnection", -101.831, 35.222, 5.2246, 6.1507),
+        ("eastern_interconnection", -104.619, 50.445, 3.755, 4.8888),
+        ("eastern_interconnection", -87.63, 41.878, 3.8441, 5.3381),
+        ("eastern_interconnection", -90.072, 29.951, 4.7405, 6.0103),
+        ("eastern_interconnection", -71.059, 42.36, 3.8134, 5.322),
+        ("eastern_interconnection", -84.388, 33.749, 4.5134, 5.8596),
+        ("eastern_interconnection", -97.138, 49.895, 3.6953, 4.919),
+        ("sgcc", 116.407, 39.904, 3.953, 4.8427),
+        ("sgcc", 87.617, 43.825, 4.3032, 5.4086),
+        ("sgcc", 104.067, 30.573, 3.1493, 5.293),
+        ("sgcc", 91.172, 29.652, 5.7055, 7.1225),
+        ("sgcc", 126.535, 45.803, 3.8506, 4.9553),
+        ("sgcc", 121.474, 31.23, 3.7433, 5.4221),
+        ("sgcc", 111.75, 40.842, 4.6476, 5.6681),
+        ("sgcc", 114.305, 30.593, 3.5107, 5.1259),
+        ("sgcc", 102.718, 25.038, 4.4657, 6.3984),
+        ("sgcc", 108.94, 34.342, 3.8381, 5.3638),
+    ] {
+        let (r, file) = &regions[id];
+        let cell = domain::ids::CellCoord {
+            x: ((lon - file.bounds.west) / (file.bounds.east - file.bounds.west)
+                * f64::from(r.terrain().width())) as u16,
+            y: ((file.bounds.north - lat) / (file.bounds.north - file.bounds.south)
+                * f64::from(r.terrain().height())) as u16,
+        };
+        let actual = r.terrain().get(cell).unwrap().irradiance.value();
+        assert!(
+            (actual - all_sky / clear_sky).abs() < 1e-12,
+            "{id} ({lon}, {lat}): {actual}"
+        );
+    }
+}
+
+/// New-game economics must allow growth without financing several reactors from monthly sales.
+#[test]
+fn south_china_profitability_has_headroom_without_parallel_reactor_windfalls() {
+    for seed in 0..8 {
+        let mut game = hands_off_game(&catalog(), SOUTHERN_CHINA, seed);
+        let nuclear = game.session().region().spec(PlantKind::Nuclear);
+        let capital = nuclear.capital_cost.cents();
+        let payment = nuclear.capital_cost.split_even(nuclear.build_months)[0].cents();
+        let mut year_profit = 0;
+        let mut january_profit = 0;
+        for index in 0..13 {
+            let played = play_month(&mut game);
+            let net = played.report.net.cents();
+            assert!(
+                net > 0,
+                "seed {seed}, month {index}: starter economy loses money"
+            );
+            assert!(
+                net < 2 * payment,
+                "seed {seed}, month {index}: operating profit {net} finances multiple reactors ({payment} each)"
+            );
+            if index == 0 {
+                january_profit = net;
+            }
+            if index < 12 {
+                year_profit += net;
+            }
+            if index == 12 {
+                assert!(
+                    net >= january_profit / 2 && net <= january_profit * 3 / 2,
+                    "seed {seed}: first review creates a cash-flow cliff: {january_profit} -> {net}"
+                );
+            }
+            assert_eq!(game.session().status(), SessionStatus::Active);
+            game.execute(Command::FinishReview).unwrap();
+        }
+        assert!(
+            year_profit < capital,
+            "seed {seed}: year-one profit {year_profit} exceeds reactor cost {capital}"
+        );
+    }
+}
+
+#[test]
+fn south_china_three_parallel_reactor_orders_consume_cash() {
+    use domain::ids::CellCoord;
+    for seed in 0..8 {
+        let mut game = hands_off_game(&catalog(), SOUTHERN_CHINA, seed);
+        let nuclear = game.session().region().spec(PlantKind::Nuclear);
+        let payment = nuclear.capital_cost.split_even(nuclear.build_months)[0];
+        let starting_cash = game.session().company_view().cash;
+        for _ in 0..3 {
+            let r = game.session().region();
+            let cell = (0..r.terrain().height())
+                .flat_map(|y| (0..r.terrain().width()).map(move |x| CellCoord { x, y }))
+                .find(|c| game.session().plant_quote(PlantKind::Nuclear, *c).is_ok())
+                .unwrap();
+            game.execute(Command::BuildPlant {
+                kind: PlantKind::Nuclear,
+                cell,
+            })
+            .unwrap();
+        }
+        let played = play_month(&mut game);
+        assert_eq!(played.report.construction, -(payment * 3));
+        assert!(
+            played.report.net.cents() < 0,
+            "seed {seed}: triple reactor construction is funded by operating profit"
+        );
+        assert!(game.session().company_view().cash < starting_cash);
+    }
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(16))]
+    #[test]
+    fn south_china_profitability_is_bounded_for_other_seeds_and_months(seed in proptest::prelude::any::<u64>(), month in 1u8..=12) {
+        let override_catalog = StartMonthOverride::new(SOUTHERN_CHINA, month);
+        let mut game = hands_off_game(&override_catalog, SOUTHERN_CHINA, seed);
+        let nuclear = game.session().region().spec(PlantKind::Nuclear);
+        let payment = nuclear.capital_cost.split_even(nuclear.build_months)[0].cents();
+        let played = play_month(&mut game);
+        proptest::prop_assert!(played.report.net.cents()>0);
+        proptest::prop_assert!(played.report.net.cents()<2*payment);
+        proptest::prop_assert_eq!(game.session().status(), SessionStatus::Active);
     }
 }

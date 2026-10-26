@@ -100,6 +100,7 @@ pub(crate) mod test_support {
 
     pub fn tick_summary(tick: u32) -> TickSummary {
         TickSummary {
+            islands: Default::default(),
             tick,
             demand: Megawatts::new(100.0),
             served: Megawatts::new(100.0),
@@ -122,6 +123,7 @@ pub(crate) mod test_support {
 
     pub fn report(year: i32, month: u8, peak_mw: f64) -> MonthlyReport {
         MonthlyReport {
+            islands: Default::default(),
             storage: BTreeMap::new(),
             month: SimMonth::new(year, month).unwrap(),
             days: 30,

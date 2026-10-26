@@ -26,7 +26,7 @@ use super::incidents::incident_tone;
 use super::layout::HudArea;
 pub use super::theme::TextTone as ReviewTone;
 use super::theme::{marginal_cost_fraction, severity_color as marginal_cost_color};
-use super::{SupplyHistoryModel, UiState, draw_supply_history, supply_history_model};
+use super::{SupplyHistoryModel, UiState, draw_supply_history};
 use crate::l10n::{LessonMoneyText, Localize, LocalizeWith, Localizer, Names, Toast, format};
 use crate::sim::Session;
 
@@ -155,8 +155,14 @@ fn review_model_with_history(
     model.satisfaction_adjustment = current_satisfaction_adjustment(session, report, l10n);
     if ui.review_supply {
         model.supply = Some(
-            supply_history_model(game, ui.supply_month, l10n, style)
-                .with_layout(ui.supply_chart_layout),
+            super::supply_history::supply_history_model_scoped(
+                game,
+                ui.supply_month,
+                ui.island,
+                l10n,
+                style,
+            )
+            .with_layout(ui.supply_chart_layout),
         );
         model.supply_button = ButtonModel::new(
             l10n.text("review-summary"),
@@ -784,6 +790,59 @@ fn storage_review_rows(
 #[cfg(test)]
 mod tests {
     use crate::hud::test_support::usd_style;
+
+    #[test]
+    fn review_history_scopes_each_island_and_all_restores_region_totals() {
+        let game = crate::hud::test_support::sgcc_review_with_two_islands();
+        let day = game.projections().timeline.completed_days().last().unwrap();
+        let l10n = crate::hud::test_support::shipped_l10n();
+        let style = usd_style();
+        let mut ui = UiState {
+            review_supply: true,
+            supply_month: Some(day.month),
+            ..Default::default()
+        };
+        for &id in game.session().power().island_nodes().keys() {
+            ui.island = Some(id);
+            let history =
+                review_model_with_history(&game, GameOverView::default(), &ui, &l10n, &style)
+                    .unwrap()
+                    .supply
+                    .unwrap();
+            let chart = history.chart.unwrap();
+            assert_eq!(
+                chart.demand,
+                day.points
+                    .iter()
+                    .map(|p| p.islands[&id].demand.value())
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                chart.served,
+                day.points
+                    .iter()
+                    .map(|p| p.islands[&id].served.value())
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(chart.transfers.len(), 2);
+            assert_eq!(
+                chart.forecast[0][1],
+                day.island_forecasts[&id][0].mean.value()
+            );
+        }
+        ui.island = None;
+        let history = review_model_with_history(&game, GameOverView::default(), &ui, &l10n, &style)
+            .unwrap()
+            .supply
+            .unwrap();
+        assert_eq!(
+            history.chart.unwrap().demand,
+            day.points
+                .iter()
+                .map(|p| p.demand.value())
+                .collect::<Vec<_>>()
+        );
+    }
     use domain::region::PlantKind;
     use std::collections::BTreeMap;
 
@@ -1147,6 +1206,7 @@ mod tests {
     /// A quiet month to vary one field at a time.
     fn report() -> MonthlyReport {
         MonthlyReport {
+            islands: Default::default(),
             storage: Default::default(),
             month: SimMonth::new(2027, 3).unwrap(),
             days: 31,

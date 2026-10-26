@@ -44,6 +44,73 @@ pub fn prompt_model(
     l10n: &Localizer,
 ) -> Option<PromptModel> {
     match open.0? {
+        Prompt::Connection {
+            kind,
+            from,
+            to,
+            warning,
+        } => {
+            let session = game?.session();
+            prompt_in_phase(prompt_after(open, session.status()), session.phase()).0?;
+            match kind {
+                domain::session::ConnectionKind::Ac => {
+                    session.line_quote(from, to).ok()?;
+                }
+                domain::session::ConnectionKind::Dc => {
+                    session.link_quote(from, to).ok()?;
+                }
+            }
+            Some(PromptModel {
+                question: l10n.args(
+                    "connection-warning-question",
+                    &[
+                        ("cities", warning.cities.into()),
+                        ("month", format::month_year(warning.month).into()),
+                        ("added", format::megawatts(warning.added_peak).into()),
+                        (
+                            "island",
+                            Names::new(l10n, session).node(warning.island).into(),
+                        ),
+                        ("time", time_of(warning.shortage.hour).into()),
+                        ("demand", format::megawatts(warning.shortage.demand).into()),
+                        (
+                            "supply",
+                            format::megawatts(warning.shortage.deliverable).into(),
+                        ),
+                        (
+                            "shortfall",
+                            format::megawatts(warning.shortage.shortfall).into(),
+                        ),
+                    ],
+                ),
+                confirm: ButtonModel::new(
+                    l10n.text("connection-proceed"),
+                    UiAction::ConfirmConnection { kind, from, to },
+                ),
+                cancel: ButtonModel::new(l10n.text("connection-cancel"), UiAction::Prompt(None)),
+                dismiss: UiAction::Prompt(None),
+            })
+        }
+        Prompt::CancelLinkConstruction { link } => {
+            let session = game?.session();
+            prompt_in_phase(prompt_after(open, session.status()), session.phase()).0?;
+            let asset = session.power().network().link(link)?;
+            if !matches!(
+                asset.status,
+                domain::grid::LineStatus::UnderConstruction { .. }
+            ) {
+                return None;
+            }
+            Some(PromptModel {
+                question: l10n.text("hvdc-cancel-question"),
+                confirm: ButtonModel::new(
+                    l10n.text("line-cancel-confirm"),
+                    UiAction::Command(Command::CancelLinkConstruction { link }),
+                ),
+                cancel: ButtonModel::new(l10n.text("line-cancel-keep"), UiAction::Prompt(None)),
+                dismiss: UiAction::Prompt(None),
+            })
+        }
         Prompt::CancelLineConstruction { line } => {
             let session = game?.session();
             prompt_in_phase(prompt_after(open, session.status()), session.phase()).0?;
@@ -117,11 +184,12 @@ pub fn prompt_after(open: OpenPrompt, status: SessionStatus) -> OpenPrompt {
 /// Planning actions close once the day begins. The leave prompt is for every phase.
 pub fn prompt_in_phase(open: OpenPrompt, phase: DayPhase) -> OpenPrompt {
     match open.0 {
-        Some(Prompt::ShortfallStart { .. } | Prompt::CancelLineConstruction { .. })
-            if phase != DayPhase::Planning =>
-        {
-            OpenPrompt(None)
-        }
+        Some(
+            Prompt::ShortfallStart { .. }
+            | Prompt::Connection { .. }
+            | Prompt::CancelLineConstruction { .. }
+            | Prompt::CancelLinkConstruction { .. },
+        ) if phase != DayPhase::Planning => OpenPrompt(None),
         _ => open,
     }
 }
@@ -134,11 +202,14 @@ pub fn draw_prompt(ui: &mut egui::Ui, model: &PromptModel) -> Vec<UiAction> {
     ui.horizontal(|ui| {
         if matches!(
             model.confirm.action,
-            UiAction::Command(Command::CancelLineConstruction { .. })
+            UiAction::ConfirmConnection { .. }
+                | UiAction::Command(
+                    Command::CancelLineConstruction { .. } | Command::CancelLinkConstruction { .. }
+                )
         ) {
             let response = button(ui, &model.cancel, &mut actions);
             let frame = ui.ctx().cumulative_frame_nr();
-            let id = ui.make_persistent_id("line_cancel_focus");
+            let id = ui.make_persistent_id(("prompt_cancel_focus", &model.question));
             let first = ui.data_mut(|data| {
                 let last = data.get_temp::<u64>(id);
                 data.insert_temp(id, frame);
@@ -187,6 +258,14 @@ pub(super) fn close_stale_prompt(session: Res<Session>, mut open: ResMut<OpenPro
     let session = session.0.session();
     let after = prompt_in_phase(prompt_after(*open, session.status()), session.phase());
     let after = match after.0 {
+        Some(Prompt::Connection { kind, from, to, .. })
+            if match kind {
+                domain::session::ConnectionKind::Ac => session.line_quote(from, to).is_err(),
+                domain::session::ConnectionKind::Dc => session.link_quote(from, to).is_err(),
+            } =>
+        {
+            OpenPrompt(None)
+        }
         Some(Prompt::CancelLineConstruction { line })
             if !session.line_views().iter().any(|view| {
                 view.id == line

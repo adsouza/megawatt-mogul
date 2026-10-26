@@ -16,6 +16,16 @@ fn restored(bytes: &[u8]) -> Game {
         )
         .unwrap()
 }
+
+/// Keep historical hash receipts in their recorded schema while new captures evolve.
+fn hash_in_schema(game: &Game, schema: u32) -> u64 {
+    let mut snapshot = game.checkpoint().snapshot.unwrap();
+    snapshot.schema = schema;
+    snapshot.session = game.session().snapshot_state_schema(schema);
+    snapshot.projections = game.projections().state_bytes_schema(schema);
+    snapshot.state_hash()
+}
+
 #[test]
 fn released_portable_schema1_golden_saves_restore_and_continue_without_replaying_history() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/support/portable-saves");
@@ -42,7 +52,10 @@ fn released_portable_schema1_golden_saves_restore_and_continue_without_replaying
         );
         let source = &bundle.checkpoint;
         let snapshot = source.snapshot.as_ref().unwrap();
-        assert_eq!(before.snapshot.as_ref().unwrap().schema, 3);
+        assert_eq!(
+            before.snapshot.as_ref().unwrap().schema,
+            domain::state::CURRENT_STATE_SCHEMA
+        );
         assert!(
             game.session().snapshot_state_schema(1) == snapshot.session,
             "all schema-1 gameplay fields and RNG preserved"
@@ -492,7 +505,10 @@ fn archived_na_saves_resume_identically() {
             game.checkpoint().region_source,
             original.checkpoint.region_source
         );
-        assert_eq!(game.checkpoint().state_hash, original.checkpoint.state_hash);
+        assert_eq!(
+            hash_in_schema(&game, snapshot.schema),
+            original.checkpoint.state_hash
+        );
         assert_eq!(game.checkpoint().summary.tick, 900);
         assert!(game.session().plant_views().iter().any(|p| {
             p.battery
@@ -512,7 +528,11 @@ fn archived_na_saves_resume_identically() {
             "{id} after 60 ticks"
         );
         if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-            assert_eq!(game.checkpoint().state_hash, after60, "{id} after 60 ticks");
+            assert_eq!(
+                hash_in_schema(&game, snapshot.schema),
+                after60,
+                "{id} after 60 ticks"
+            );
         }
         bundle.checkpoint = resumed.checkpoint();
         let mut resumed = restored(&encode_save(&bundle).unwrap());
@@ -520,14 +540,21 @@ fn archived_na_saves_resume_identically() {
         resumed.execute(Command::AdvanceTicks { n: 480 }).unwrap();
         assert_eq!(resumed.checkpoint(), game.checkpoint(), "{id} at review");
         if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-            assert_eq!(game.checkpoint().state_hash, review, "{id} at review");
+            assert_eq!(
+                hash_in_schema(&game, snapshot.schema),
+                review,
+                "{id} at review"
+            );
         }
         bundle.compatibility = replay_compatibility();
         bundle.checkpoint = game.checkpoint();
         let rewritten = encode_save(&bundle).unwrap();
         let resumed = restored(&rewritten);
         assert_eq!(resumed.checkpoint(), game.checkpoint());
-        assert_eq!(resumed.checkpoint().snapshot.as_ref().unwrap().schema, 3);
+        assert_eq!(
+            resumed.checkpoint().snapshot.as_ref().unwrap().schema,
+            domain::state::CURRENT_STATE_SCHEMA
+        );
         assert_eq!(
             resumed.checkpoint().region_source,
             original.checkpoint.region_source
@@ -536,6 +563,145 @@ fn archived_na_saves_resume_identically() {
         assert_eq!(
             std::fs::read(baseline.join(format!("{id}-schema3.mgsave.z"))).unwrap(),
             compressed
+        );
+    }
+}
+
+#[test]
+fn calibrated_solar_regions_resume_identically_with_their_archived_calibration() {
+    use infrastructure::region::RonRegionCatalog;
+    let catalog =
+        RonRegionCatalog::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/regions"));
+    for listing in catalog.list().unwrap() {
+        let mut game = Game::start_new(
+            &catalog,
+            &listing.id,
+            7,
+            domain::session::GameSettings::default(),
+            Box::new(InMemoryCommandLog::default()),
+        )
+        .unwrap();
+        assert!(game.session().region().solar().annual_site_clearness);
+        use domain::{ids::CellCoord, region::PlantKind};
+        let home = game
+            .session()
+            .city_views()
+            .into_iter()
+            .find(|c| c.id == game.session().home_city())
+            .unwrap();
+        let r = game.session().region();
+        let mut cells: Vec<_> = (0..r.terrain().height())
+            .flat_map(|y| (0..r.terrain().width()).map(move |x| CellCoord { x, y }))
+            .collect();
+        cells.sort_by_key(|c| {
+            u32::from(c.x.abs_diff(home.cell.x)) + u32::from(c.y.abs_diff(home.cell.y))
+        });
+        let cell = cells
+            .into_iter()
+            .find(|c| game.session().plant_quote(PlantKind::Solar, *c).is_ok())
+            .unwrap();
+        let months = game
+            .session()
+            .plant_quote(PlantKind::Solar, cell)
+            .unwrap()
+            .months;
+        game.execute(Command::BuildPlant {
+            kind: PlantKind::Solar,
+            cell,
+        })
+        .unwrap();
+        let solar = game
+            .session()
+            .plant_views()
+            .into_iter()
+            .find(|p| p.cell == cell)
+            .unwrap();
+        let line_months = game
+            .session()
+            .line_quote(home.node, solar.node)
+            .unwrap()
+            .months;
+        game.execute(Command::BuildLine {
+            from: home.node,
+            to: solar.node,
+        })
+        .unwrap();
+        for _ in 0..months.max(line_months) {
+            game.execute(Command::BeginOperating).unwrap();
+            game.execute(Command::AdvanceTicks { n: 1440 }).unwrap();
+            game.execute(Command::FinishReview).unwrap();
+        }
+        let month = game.session().clock().month();
+        let peak = (0..1440)
+            .max_by(|a, b| {
+                game.session()
+                    .region()
+                    .sun(cell, month, *a)
+                    .total_cmp(&game.session().region().sun(cell, month, *b))
+            })
+            .unwrap();
+        let saved_tick = peak + 1;
+        game.execute(Command::BeginOperating).unwrap();
+        game.execute(Command::AdvanceTicks { n: saved_tick })
+            .unwrap();
+        let output = game
+            .session()
+            .plant_views()
+            .into_iter()
+            .find(|p| p.id == solar.id)
+            .unwrap()
+            .output;
+        assert!(
+            output.value() > 0.0,
+            "{} solar must be generating at capture",
+            listing.id.as_str()
+        );
+        let bundle = SaveBundle {
+            compatibility: replay_compatibility(),
+            metadata: SaveMetadata {
+                slot: SaveId::new("a".repeat(32)).unwrap(),
+                run: SaveId::new("b".repeat(32)).unwrap(),
+                kind: SaveKind::Manual,
+                name: "Solar calibration".into(),
+                saved_at: 42,
+            },
+            checkpoint: game.checkpoint(),
+        };
+        let encoded = encode_save(&bundle).unwrap();
+        let mut resumed = restored(&encoded);
+        assert_eq!(
+            resumed.checkpoint(),
+            game.checkpoint(),
+            "{}",
+            listing.id.as_str()
+        );
+        assert!(resumed.session().region().solar().annual_site_clearness);
+        let restored_output = resumed
+            .session()
+            .plant_views()
+            .into_iter()
+            .find(|p| p.id == solar.id)
+            .unwrap()
+            .output;
+        assert_eq!(restored_output, output);
+        // Cross the next weather draw as well as the persisted intra-day boundary.
+        for command in [
+            Command::AdvanceTicks {
+                n: 1440 - saved_tick,
+            },
+            Command::FinishReview,
+            Command::BeginOperating,
+            Command::AdvanceTicks { n: saved_tick },
+        ] {
+            let uninterrupted = game.execute(command.clone()).unwrap();
+            let continued = resumed.execute(command).unwrap();
+            assert_eq!(continued, uninterrupted, "{}", listing.id.as_str());
+        }
+        assert_eq!(
+            resumed.checkpoint(),
+            game.checkpoint(),
+            "{}",
+            listing.id.as_str()
         );
     }
 }

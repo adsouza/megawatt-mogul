@@ -16,6 +16,11 @@ impl CommandHandler for CoreHandler {
         command: &Command,
     ) -> Result<Vec<DomainEvent>, CommandError> {
         let events = match command {
+            Command::BuildLink { from, to } => session.build_link(*from, *to)?.1,
+            Command::CancelLinkConstruction { link } => session.cancel_link_construction(*link)?,
+            Command::SetLinkSchedule { link, mw } => session.set_link_schedule(*link, **mw)?,
+            Command::SetLinkTarget { link, mw } => session.set_link_target(*link, *mw)?,
+            Command::ClearLinkOverride { link } => session.clear_link_override(*link)?,
             Command::BuildPlant { kind, cell } => session.build_plant(*kind, *cell)?.1,
             Command::BuildLine { from, to } => session.build_line(*from, *to)?.1,
             Command::CancelLineConstruction { line } => session.cancel_line_construction(*line)?,

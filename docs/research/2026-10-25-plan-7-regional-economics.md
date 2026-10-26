@@ -130,7 +130,7 @@ rows.
 
 ## Region-authoring rulings (Plan 7)
 
-These 28 rulings bound the region tasks (Tasks 5–9). Region RON files and
+These authoring rulings bound the region tasks (Tasks 5–9). Region RON files and
 `crates/infrastructure/tests/shipped_regions.rs` cite them as "ruling N". They are authoring
 rules, not sourced figures, and need no rows. Where a ruling says "authoring judgment", the region
 file's comment carries that label.
@@ -237,10 +237,12 @@ file's comment carries that label.
 
 ## Tariff bases
 
-Every new region scales its local tariff by the US all-sector ratio (P7-US-034, 135.6 USD/MWh,
+The original Plan 7 method scales each local tariff by the US all-sector ratio (P7-US-034, 135.6 USD/MWh,
 all sectors, 2025): starting tariff × 95 ÷ 135.6 and reference tariff × 100 ÷ 135.6. The local
 rows do not share that basis, and none was re-based. The region files label this "authoring
-judgment: basis differs from the US all-sector reference; not re-based", and no number changed.
+judgment: basis differs from the US all-sector reference; not re-based". A17 (2026-10-26)
+overrides Southern China's starting game tariff to 200 CNY/MWh for play balance; this is not a
+new observed retail price. Its 501 CNY/MWh reference and fuel proxies keep the original basis.
 Ruling 19's fuel proxy scales by the same reference tariff, so where a region applies it (Southern
 China, India, IPS/UPS and the Europe–Maghreb nuclear fuel) it inherits the same basis.
 
@@ -431,6 +433,7 @@ schedule, which the rows use as `build_months_real`.
 | P7-SC-006 | Southern China | China (national) | Hydro | capital_per_kw | 2,302 | USD/kW | 2018–2025 (2025 USD) | derived 2,302 × 7.189847 = 16,551 CNY/kW; FX: P7-FX-020 | IRENA — *Renewable Power Generation Costs in 2025* — https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_in_2025_2026.pdf (downloaded; SHA-256 38c8c70b848187c89d64b8817f0ebe831a9587c00257c1cc93195f22833a0eab) — pub. 2026-07 — acc. 2026-10-25 — loc. Figure 6.5, large hydropower weighted average 2018–2025, China label, p. 107 | Country-specific international measurement; no local-currency hydro source found |
 | P7-SC-007 | Southern China | China (national) | Wind | capital_per_kw | 789 | USD/kW | 2025 | derived 789 × 7.189847 = 5,673 CNY/kW; FX: P7-FX-020 | IRENA — *Renewable Power Generation Costs in 2025* — https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_in_2025_2026.pdf (downloaded; SHA-256 38c8c70b848187c89d64b8817f0ebe831a9587c00257c1cc93195f22833a0eab) — pub. 2026-07 — acc. 2026-10-25 — loc. Table 2.1, China, 2025 weighted average, p. 46 | Cross-check; 38% above CREEI P7-SC-001. CREEI (local currency, national planner) stays the baseline |
 | P7-SC-008 | Southern China | China (national) | Solar | capital_per_kw | 533 | USD/kW | 2025 | derived 533 × 7.189847 = 3,832 CNY/kW; FX: P7-FX-020 | IRENA — *Renewable Power Generation Costs in 2025* — https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_in_2025_2026.pdf (downloaded; SHA-256 38c8c70b848187c89d64b8817f0ebe831a9587c00257c1cc93195f22833a0eab) — pub. 2026-07 — acc. 2026-10-25 — loc. Table 3.1, China, 2025 weighted average, p. 62 | Cross-check of P7-SC-002 (+20%) |
+| P7-SC-009 | Southern China | China (national) | Nuclear | capital_per_kw | about 16,000 | CNY/kW | 2022 | paced 16,000 × ((2,400,000,000 / 1,100,000) / 7,861) = 4,440.795 CNY/kW, rounded to 4,440; FX: none | China National Nuclear Power Co., Ltd. — 2022 Q4 investor communication, record 2022-07 — https://sns.sseinfo.com/resources/images/upload/202301/202301131708001713528722.pdf — upload path 2023-01-13 — acc. 2026-10-26 — loc. p. 2, first answer, Hualong One cost | Primary issuer disclosure on the Shanghai Stock Exchange investor-relations service; national technology proxy, not a Guangdong project outturn; replaces the coal-relative nuclear estimate under A17 |
 
 ### IPS/UPS (`IPS`, RUB)
 
@@ -817,8 +820,8 @@ but could not be read without a login, a bot check or a download beyond the roun
   - Nuclear, CCGT and peaker durations: closed by ruling 1 (derived, labelled in the region
     file).
 - **Southern China**
-  - Capital: nuclear (only media estimates of about 20 billion CNY per unit; not used), CCGT,
-    peaker and battery. Closed by ruling 3 (derived, labelled in the region file).
+  - Nuclear capital: closed on 2026-10-26 by primary issuer disclosure P7-SC-009 and the
+    original nuclear pacing ratio. CCGT, peaker and battery remain derived under ruling 3.
     - A Shenzhen Gas announcement gives 22.81 billion CNY for two combined-cycle sets, but no
       capacity, so it is not used.
   - Fixed O&M: closed by ruling 4 (derived, labelled in the region file).
@@ -887,3 +890,25 @@ but could not be read without a login, a bot check or a download beyond the roun
 - Downloaded files (round 2, and the follow-up's two PDFs in `target/research/dz-tn/`) are kept
   outside git in `target/research/`. Each row names its URL and
   SHA-256, so a reviewer can re-download it and check the bytes.
+
+
+## A17 balance acceptance (2026-10-26)
+
+Southern China's old 476 CNY/MWh starting tariff and coal-proxy nuclear cost of 2.288 billion CNY
+allowed six simultaneous reactor projects while adding 2.71 billion CNY cash in year one (seed 7).
+The first annual review then created a sharp revenue cliff. Upper profitability bounds were missing
+from the earlier survival and first-expansion acceptance.
+
+The starting tariff is now an explicit game-balance override of 200 CNY/MWh. The retail-derived
+reference remains 501; other fuel prices, construction durations and starting cash are unchanged.
+Nuclear capital is now 4.884 billion CNY from P7-SC-009 through the original nuclear pacing ratio.
+Fixed O&M scales consistently under ruling 4 to 22.4 million CNY/month. This supersedes only the
+nuclear application of ruling 3 and the starting-tariff formula for Southern China.
+
+Acceptance covers seeds 0–7 through the first annual review: positive baseline cash flow, monthly
+profit below two nuclear construction payments, annual profit below one reactor's capital, and no
+more than a 50% January-to-January cash-flow discontinuity. Three real simultaneous nuclear orders
+must consume cash after the first construction payment. A property check also samples other seeds
+and start months. Beginner survival and the first-city expansion remain required. These are game
+pacing limits, not assertions about real Chinese utility profitability. Archived saves retain their
+original prices and plant specifications; new-game rules advance to 23 without a state-schema bump.

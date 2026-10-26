@@ -586,9 +586,10 @@ impl Plant {
         }
     }
 
-    /// Counts down construction. At zero the plant commissions in `month`:
-    /// solar comes online at 0 MW, everything else sits offline. No effect
-    /// unless the plant is under construction.
+    /// Counts down construction. At zero the plant commissions in `month`.
+    /// Dispatchable plants receive all-day commitment and AGC for the next
+    /// pattern day; variable generation and storage operate automatically.
+    /// No effect unless the plant is under construction.
     pub fn advance_construction(&mut self, month: SimMonth) -> Vec<DomainEvent> {
         let PlantStatus::UnderConstruction { months_left } = self.status else {
             return Vec::new();
@@ -600,6 +601,10 @@ impl Plant {
         }
         self.status = Self::commissioned_status(&self.spec);
         self.commissioned_on = Some(month);
+        if self.kind().is_dispatchable() {
+            self.commitment = CommitmentSchedule::all_day();
+            self.auto_follow = true;
+        }
         vec![DomainEvent::PlantCommissioned {
             plant: self.id,
             kind: self.spec.kind,
@@ -933,6 +938,47 @@ mod tests {
         assert_eq!(p.status(), PlantStatus::Offline);
         assert_eq!(p.commissioned_on(), Some(second));
         assert!(p.advance_construction(second.next()).is_empty());
+    }
+
+    proptest! {
+        #[test]
+        fn commissioning_enables_all_day_agc_once(
+            kind_index in 0usize..PlantKind::ALL.len(),
+            build_months in 1u32..25,
+        ) {
+            let kind = PlantKind::ALL[kind_index];
+            let mut spec = tiny_region().spec(kind).clone();
+            spec.build_months = build_months;
+            let mut plant = Plant::new_under_construction(
+                PlantId(1), NodeId(1), CellCoord { x: 7, y: 3 }, spec,
+            );
+            let mut month = april();
+            for _ in 1..build_months {
+                prop_assert!(plant.advance_construction(month).is_empty());
+                prop_assert_eq!(plant.commitment(), CommitmentSchedule::none());
+                prop_assert!(!plant.auto_follow());
+                month = month.next();
+            }
+            prop_assert_eq!(plant.advance_construction(month), vec![DomainEvent::PlantCommissioned {
+                plant: PlantId(1), kind,
+            }]);
+            prop_assert_eq!(plant.commissioned_on(), Some(month));
+            prop_assert_eq!(plant.auto_follow(), kind.is_dispatchable());
+            if kind.is_dispatchable() {
+                prop_assert_eq!(plant.commitment(), CommitmentSchedule::all_day());
+                prop_assert_eq!(plant.initialise_pattern_day(), BoundaryStart::Charged);
+                prop_assert!(plant.is_online());
+                // Subsequent closes must preserve the player's edits.
+                plant.set_commitment(CommitmentSchedule::none());
+                plant.set_auto_follow(false).unwrap();
+            } else {
+                prop_assert_eq!(plant.commitment(), CommitmentSchedule::none());
+                prop_assert!(plant.is_online());
+            }
+            let edited = plant.clone();
+            prop_assert!(plant.advance_construction(month.next()).is_empty());
+            prop_assert_eq!(plant, edited);
+        }
     }
 
     #[test]

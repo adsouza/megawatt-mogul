@@ -1,0 +1,15 @@
+--admin0
+target/natural-earth/ne_50m_admin_0_countries.geojson
+--admin1
+target/natural-earth/ne_10m_admin_1_states_provinces.geojson
+--include-admin1
+CHN:Heilongjiang,CHN:Jilin,CHN:Liaoning
+--bounds=73,135,23,54
+--grid
+196,128
+--tolerance-deg
+0
+--comment
+SGCC electrical-area administrative proxy; raw shared borders preserve the land partition. See docs/research/2026-10-26-plan-8-sgcc.md.
+--out
+assets/regions/sgcc/northeast.ron

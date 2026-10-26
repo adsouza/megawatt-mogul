@@ -576,17 +576,15 @@
         // (ruling 4, authoring judgment: derived from [P7-IPS-010] by NA kind
         // relativity): 27,791.34 x (6.0 / 500 = 0.012) = 333.5, so 333 x
         // 200,000 / 12 = 5,550,000. Build 2 months (ruling 1, authoring
-        // judgment: no sourced local duration). Windows on the MSK system
-        // clock (spec section 28.4): the starter territory has no solar, and
-        // its net load is highest in the heated winter evening (17:00 to
-        // 20:00), so discharge may start at 16:00; charging fills the night
-        // valley before then, which a solar fleet moves to midday.
+        // judgment: no sourced local duration). Storage windows (spec section 29):
+        // discharge may support real gaps from 06:00; charging remains eligible until
+        // 22:00 on the system clock. The actual balance chooses one direction.
         (kind: Battery, capacity_mw: 200.0, min_stable: 0.0, ramp_mw_per_min: 0.0,
          startup_hours: 0.0, startup_cost: 0, marginal_cost_per_mwh: 0.0,
          fixed_om_per_month: 5550000, capital_cost: 5560000000, build_months: 2,
          capacity_credit: 0.0, book_life_months: 180, siting: Anywhere,
          battery: Some((charge_mw: 200.0, energy_mwh: 800.0, charge_efficiency: 0.9,
-                        discharge_efficiency: 1.0, discharge_start_hour: 16, charge_end_hour: 16))),
+                        discharge_efficiency: 1.0, discharge_start_hour: 6, charge_end_hour: 22))),
     ],
     // Each city is its 2021 Russian census population (city proper) or, for
     // the capitals and cities outside Russia, the national statistics office
@@ -748,7 +746,8 @@
     // a = 0.25, b = 0.50), normalised to clear sky (0.75): (0.25 + 0.5 x
     // share) / 0.75. The dark, overcast winter is the cloudiest (December
     // 0.39 against June 0.69).
-    solar: (
+    // A16: authored FAO Rs/Ra -> clear-sky fraction (/0.75); annual clouds counted once.
+    solar: (calibration: AngstromPrescott,
         clearness_mean: [0.43, 0.52, 0.57, 0.61, 0.69, 0.69, 0.68, 0.68, 0.6, 0.5, 0.42, 0.39],
         clearness_sd: 0.13,
     ),

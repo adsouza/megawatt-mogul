@@ -15,6 +15,21 @@ use crate::units::Megawatts;
 /// leaves the session unchanged.
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum DomainError {
+    #[error("AC endpoints lie in different electrical areas")]
+    LineCrossesAreas,
+    #[error("HVDC endpoints lie in the same electrical area")]
+    LinkWithinArea,
+    #[error("region has no HVDC catalog")]
+    HvdcUnavailable,
+    #[error("unknown link {link:?}")]
+    UnknownLink { link: crate::ids::LinkId },
+    #[error("link {link:?} is not under construction")]
+    LinkNotUnderConstruction { link: crate::ids::LinkId },
+    #[error("link {link:?} is not in service")]
+    LinkNotInService { link: crate::ids::LinkId },
+    #[error("link target must be finite and within its rating")]
+    InvalidLinkTarget,
+
     #[error("invalid construction cell {cell:?}")]
     InvalidConstructionCell { cell: CellCoord },
     #[error("construction terms exceed representable money, duration or completion date")]

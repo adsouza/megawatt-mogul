@@ -35,8 +35,8 @@ up to 8× and read the month's review. The diorama shows terrain, resource layer
 and transmission construction. The [playtest checklist](docs/superpowers/plans/2026-10-19-plan-2-playtest.md)
 covers the original shell; [Plan 3](docs/superpowers/plans/2026-10-20-plan-3-diorama.md) records the 3D checks.
 [Plan 4](docs/superpowers/plans/2026-10-23-plan-4-battery-storage.md) records battery storage;
-[Plan 5](docs/superpowers/plans/2026-10-23-plan-5-wind-farms.md) adds wind farms and extends battery
-charging to 00:00–18:00.
+[Plan 5](docs/superpowers/plans/2026-10-23-plan-5-wind-farms.md) adds wind farms. Current new-game
+batteries can charge from 00:00 until 22:00 and support generation gaps from 06:00 until midnight.
 
 ## Run
 

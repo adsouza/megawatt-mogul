@@ -220,6 +220,13 @@ through the real `dispatch` in an app. It then asserts the shortfall or state it
 `short_app` in `shortfall_prompt.rs` asserts `capacity_shortfall_check()` is `Some`, so the test
 can't pass for the wrong reason on a healthy fleet.
 
+**Commissioning defaults (rules 20).** The plant property test varies kind and construction
+duration: defaults apply exactly when construction finishes, dispatchable plants receive all-day
+commitment and AGC, automatic resources remain automatic, and later closes preserve player edits.
+The month-close peaker test saves and restores after commissioning and begins the next day without
+scheduling commands. Localization covers all eight kinds; the HUD wiring test checks that the
+commissioning event displays the all-day/AGC notification exactly once.
+
 `tests/game/l10n_coverage.rs` checks the translations: every literal key in `l10n::keys` exists in
 en-US, every typed value (errors, events, lessons, kinds) translates through an exhaustive table,
 and a broken `.ftl` fails Boot visibly.
@@ -670,7 +677,7 @@ those units explicitly; generic fleet tests derive expected counts from the regi
 
 ## Battery storage (Plan 4)
 
-Domain tests exercise 00:00–18:00 grid charging, evening gap support, efficiency and capacity limits,
+Domain tests exercise 00:00–22:00 grid charging, 06:00–24:00 gap support, efficiency and capacity limits,
 blackout/islanding, shared-grid accounting, daily inventory close and monthly weighting. Property
 tests cover energy conservation, schedule bounds and arbitrary save boundaries. Application tests
 compare tick batches, preserved inventory, reports and completed curves after portable restore.
@@ -828,10 +835,22 @@ simulation ticks. Keep the full 16-case, three-review shipped acceptance when op
 `domain/grid/power_system/tests/wind.rs` independently checks 120 MW from a 300 MW farm at 80%
 site potential and 50% resource throughout a whole day, shared RNG across farm counts, correlated
 forecast bands, proportional Solar/Wind curtailment, a sudden lull with finite storage, and the
-17:00–18:00 overlap/18:00 cutoff. `generation/wind.rs` property-tests the bounded AR(1) formula.
+configured overlap and charging cutoff. `generation/wind.rs` property-tests the bounded AR(1) formula.
 `session/forecast_contract_tests.rs` includes wind in the independent mixed hydro/solar/storage
 oracle. `session/wind_tests.rs` refuses thermal controls atomically and compares continuation/RNG
 at midnight, hourly, overlap, cutoff and Review save boundaries, including next-month Planning.
+
+Rules 21 regressions pin 05:59/06:00 discharge and 21:59/22:00 charging, including an actual
+morning ramp gap and existing surplus just before the charging cutoff. A property samples the
+whole 06:00–22:00 overlap and requires the real primary balance to select exactly one flow
+direction. All eight shipped regions use these windows. Build/card hints show the loaded
+configuration, and archived save tests retain their older windows and historical hash receipts.
+The reviewed rules-21 guard changes only its version label and battery energy/fuel row;
+non-storage scenario outcomes are unchanged.
+The live late-charging regression also verifies grid charging after 21:30 tapers through 22:00
+without shedding, blackout or a generator trip. Validation on 2026-10-26 passed 61 focused domain,
+14 application, 78 infrastructure and 43 game tests, workspace Clippy with warnings denied,
+formatting and diff checks. Released golden saves and frozen legacy tuning remain untouched.
 
 Region adapters require schema-3 wind data and cutoff fields; frozen legacy extension RON payloads
 are pinned by independent SHA-256 values. The released schema-1 golden saves stay immutable and
@@ -860,3 +879,59 @@ Game `save_snapshots` tests compare restored schema-3 captures to the immutable 
 using source-schema canonical gameplay/projection bytes. They also check upgraded battery cutoff,
 header rules, journal, command count, summary, archived region, provenance and unchanged disk bytes.
 A new capture's schema/hash may change; elapsed history and original save files may not.
+
+
+## SGCC, synchronous islands and HVDC (Plan 8, rules 19)
+
+Focused domain tests cover DC energisation without AC synchronisation, cross-area AC refusal,
+parallel links, exact terminal and route economics, atomic schedule validation, ramping, blocking,
+runback hysteresis, signed energy conservation, commissioning instalments and rate base, weighted
+island frequency performance, utilisation hold/release/write-off and a mid-day portable continuation
+through month close. `region::areas` and the DC energy/quote tests include properties.
+
+The partial-override properties exercise all converter-cost/duration and route-cost/speed
+presence masks across two authored construction markets. They check independent regional
+fallbacks, canonical odd-cent converter splitting, zero-priced overrides, exact route work
+rounded once, and endpoint reversal. `infrastructure/tests/economic_construction.rs` loads
+zoned RON data for no, west-only, east-only and both-terminal overrides in both endpoint orders.
+It hand-checks quote totals and durations, each instalment and its remainder, cancellation
+after a payment, commissioning progress/date and original rate base. Repeated codec round trips
+preserve the whole checkpoint through construction and operation even after the installed region
+file is replaced, including the cancelled link's absence and the retained link's signed schedule.
+
+The shipped-region tables include SGCC. Year-one beginner acceptance and first expansion cover
+seeds 0–7. The shared overlap check includes all eight regions. Raw Natural Earth shared borders
+partition SGCC's land exactly; the operating exclusion sidecar accounts for differing peer cell
+sizes. `python3 -I tools/region_authoring/test_region_authoring.py` regenerates geography and the
+operating exclusions. The canonical bundle contains every area sidecar once, even when referenced
+both as region land and an electrical area.
+
+`tests/game/hvdc.rs`, included by the existing game binary, checks real SGCC build previews and
+link cards, Escape dismissal, and cancellation's default keyboard focus. Existing picker and
+localisation coverage includes SGCC. Save codec gates admit schemas 1–4 and reject schema 5;
+older source captures and journals remain the compatibility oracle. Island selection scopes live
+and archived supply charts; the latter retain the original month's island demand forecast.
+The real HUD test checks selection through the Planning-to-Operating transition and hides the
+frequency gauge for All. A scripted native SGCC day with a scheduled link is recorded in the
+Plan 8 checklist.
+
+Adversarial regressions cover runback through zero flow in both directions and portable restore,
+hydro AGC off/on invalidation of the owning island's ceiling without erasing frozen history,
+worsening link utilisation with a fresh hold for newly excess capital, and steady partial use
+without repeated disallowance. A generated utilisation-sequence property checks capital
+conservation and review idempotence. Planning and Review history tests play real SGCC construction
+months and a two-island day, compare each island's archived curves and forecast, and switch back
+to All. All three phases use the same scoped history presenter.
+
+Validation uses focused nextest selections, workspace clippy with warnings denied, formatting,
+and isolated native smoke checks. Do not run the entire local suite without advance permission.
+
+## Connection capacity confirmation
+
+`session::connection` covers entire new components, ready versus late generation, future backbone
+commissioning, HVDC ratings/losses and synchronous terminals. A property checks preview purity
+and AC endpoint-order invariance. The game tests in `tests/game/hvdc.rs` exercise real AC/DC
+orders through `dispatch`: Enter/Escape default to Cancel, both buttons remain reachable at the
+smallest window, cancellation leaves the checkpoint unchanged, Proceed orders once, isolated
+orders skip the prompt, and stale confirmations cannot order after Planning. Changed capacity
+refreshes the warning and requires another confirmation before placing the order.

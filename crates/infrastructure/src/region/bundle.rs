@@ -140,6 +140,7 @@ pub(super) fn references(file: &ParsedRegionFile) -> BTreeSet<&str> {
         .and_then(|z| z.cells_file.as_ref());
     file.geography
         .iter()
+        .chain(file.areas.iter().flat_map(|a| a.geography.iter()))
         .chain(irradiance)
         .chain(zones)
         .map(String::as_str)
@@ -203,6 +204,12 @@ pub(super) fn resolve<S: AsRef<[u8]>>(
             .ok_or_else(|| sidecar_error(region, name, SidecarProblem::Missing))
     };
 
+    for area in &mut file.areas {
+        for name in std::mem::take(&mut area.geography) {
+            let rings: GeographySidecar = parse_sidecar(read(&name)?, &name, region)?;
+            area.polygons.extend(rings.land);
+        }
+    }
     let (mut land, mut exclude) = (Vec::new(), Vec::new());
     for name in std::mem::take(&mut file.geography) {
         let rings: GeographySidecar = parse_sidecar(read(&name)?, &name, region)?;

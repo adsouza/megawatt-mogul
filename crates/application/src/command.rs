@@ -1,7 +1,7 @@
 //! Player commands and the handler trait every pipeline layer implements.
 
 use domain::events::DomainEvent;
-use domain::ids::{CellCoord, LineId, NodeId, PlantId};
+use domain::ids::{CellCoord, LineId, LinkId, NodeId, PlantId};
 use domain::region::PlantKind;
 use domain::session::GameSession;
 use domain::units::Megawatts;
@@ -11,6 +11,24 @@ use crate::error::CommandError;
 /// Everything the player (or a replay) can ask the game to do.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
+    BuildLink {
+        from: NodeId,
+        to: NodeId,
+    },
+    CancelLinkConstruction {
+        link: LinkId,
+    },
+    SetLinkSchedule {
+        link: LinkId,
+        mw: Box<[f64; 24]>,
+    },
+    SetLinkTarget {
+        link: LinkId,
+        mw: f64,
+    },
+    ClearLinkOverride {
+        link: LinkId,
+    },
     BuildPlant {
         kind: PlantKind,
         cell: CellCoord,
@@ -78,6 +96,29 @@ impl<H: CommandHandler + ?Sized> CommandHandler for Box<H> {
 impl domain::state::State for Command {
     fn write(&self, out: &mut Vec<u8>) {
         match self {
+            Self::BuildLink { from, to } => {
+                domain::state::State::write(&12u8, out);
+                domain::state::State::write(from, out);
+                domain::state::State::write(to, out);
+            }
+            Self::CancelLinkConstruction { link } => {
+                domain::state::State::write(&13u8, out);
+                domain::state::State::write(link, out);
+            }
+            Self::SetLinkSchedule { link, mw } => {
+                domain::state::State::write(&14u8, out);
+                domain::state::State::write(link, out);
+                domain::state::State::write(mw, out);
+            }
+            Self::SetLinkTarget { link, mw } => {
+                domain::state::State::write(&15u8, out);
+                domain::state::State::write(link, out);
+                domain::state::State::write(mw, out);
+            }
+            Self::ClearLinkOverride { link } => {
+                domain::state::State::write(&16u8, out);
+                domain::state::State::write(link, out);
+            }
             Self::BuildPlant { kind, cell } => {
                 domain::state::State::write(&0u8, out);
                 domain::state::State::write(kind, out);
@@ -134,6 +175,24 @@ impl domain::state::State for Command {
     }
     fn read(input: &mut domain::state::StateReader<'_>) -> Result<Self, domain::state::StateError> {
         Ok(match <u8 as domain::state::State>::read(input)? {
+            12 => Self::BuildLink {
+                from: domain::state::State::read(input)?,
+                to: domain::state::State::read(input)?,
+            },
+            13 => Self::CancelLinkConstruction {
+                link: domain::state::State::read(input)?,
+            },
+            14 => Self::SetLinkSchedule {
+                link: domain::state::State::read(input)?,
+                mw: domain::state::State::read(input)?,
+            },
+            15 => Self::SetLinkTarget {
+                link: domain::state::State::read(input)?,
+                mw: domain::state::State::read(input)?,
+            },
+            16 => Self::ClearLinkOverride {
+                link: domain::state::State::read(input)?,
+            },
             0 => Self::BuildPlant {
                 kind: domain::state::State::read(input)?,
                 cell: domain::state::State::read(input)?,

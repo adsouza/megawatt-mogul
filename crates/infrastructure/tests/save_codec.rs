@@ -419,7 +419,8 @@ fn unknown_rules_are_rejected_before_mapping_their_archived_region() {
 fn battery_codec_restores_mid_charge_with_exact_archived_tuning_and_continuation() {
     let dir = tempfile::TempDir::new().unwrap();
     let source = include_str!("support/minimal_region.ron")
-        .replace("discharge_start_hour: 16", "discharge_start_hour: 17")
+        .replace("discharge_start_hour: 6", "discharge_start_hour: 17")
+        .replace("charge_end_hour: 22", "charge_end_hour: 18")
         .replacen("fleet: [", "fleet: [(Battery, 5.5, 6.5),", 1);
     std::fs::write(dir.path().join("minimal.ron"), &source).unwrap();
     let catalog = RonRegionCatalog::new(dir.path());
@@ -448,7 +449,8 @@ fn battery_codec_restores_mid_charge_with_exact_archived_tuning_and_continuation
         dir.path().join("minimal.ron"),
         source
             .replace("energy_mwh: 800.0", "energy_mwh: 1.0")
-            .replace("discharge_start_hour: 17", "discharge_start_hour: 16"),
+            .replace("discharge_start_hour: 17", "discharge_start_hour: 6")
+            .replace("charge_end_hour: 18", "charge_end_hour: 22"),
     )
     .unwrap();
     let (decoded, loaded) = decode_save(&bytes, &identity()).unwrap();
@@ -479,6 +481,19 @@ fn battery_codec_restores_mid_charge_with_exact_archived_tuning_and_continuation
         "resume preserves the archived battery window instead of installed defaults"
     );
     assert_eq!(resumed.projections(), live.projections());
+    assert_eq!(
+        resumed
+            .session()
+            .power()
+            .plant(battery.id)
+            .unwrap()
+            .spec()
+            .battery
+            .unwrap()
+            .charge_end_hour,
+        18,
+        "resume also preserves the archived charging cutoff"
+    );
     for command in [
         Command::SetBatteryEnabled {
             plant: battery.id,
@@ -699,11 +714,11 @@ fn format1_ticks_reencode_to_rle_and_replay_with_identical_projections_and_conti
 }
 
 #[test]
-fn new_schema_three_save_round_trips_on_disk_and_restores() {
+fn new_schema_four_save_round_trips_on_disk_and_restores() {
     let dir = tempfile::TempDir::new().unwrap();
     let saved = bundle();
-    assert_eq!(saved.checkpoint.snapshot.as_ref().unwrap().schema, 3);
-    let path = dir.path().join("schema3.mgsave");
+    assert_eq!(saved.checkpoint.snapshot.as_ref().unwrap().schema, 4);
+    let path = dir.path().join("schema4.mgsave");
     std::fs::write(&path, encode_save(&saved).unwrap()).unwrap();
     let (decoded, region) = decode_save(&std::fs::read(path).unwrap(), &identity()).unwrap();
     assert_eq!(decoded, saved);
@@ -718,11 +733,11 @@ fn new_schema_three_save_round_trips_on_disk_and_restores() {
 }
 
 #[test]
-fn every_save_gate_accepts_schemas_one_through_three_and_rejects_four() {
+fn every_save_gate_accepts_schemas_one_through_four_and_rejects_five() {
     use application::{RestoreError, SaveStore};
     use domain::state::State;
     use infrastructure::save::FileSaveStore;
-    for schema in [0, 1, 2, 3, 4] {
+    for schema in [0, 1, 2, 3, 4, 5] {
         let dir = tempfile::TempDir::new().unwrap();
         let mut saved = bundle();
         let (_, region) = decode_save(&encode_save(&saved).unwrap(), &identity()).unwrap();
@@ -753,7 +768,7 @@ fn every_save_gate_accepts_schemas_one_through_three_and_rejects_four() {
             Box::new(InMemoryCommandLog::default()),
             &|| false,
         );
-        if matches!(schema, 1..=3) {
+        if matches!(schema, 1..=4) {
             assert!(rows[0].entry.is_ok(), "listing schema {schema}");
             let (read, region) = decoded.unwrap();
             assert_eq!(read, saved);
@@ -908,4 +923,155 @@ fn foreign_stamp_diagnosis_keeps_generic_shapes_identity_and_integrity_guards() 
         decode_save(&bad_version, &identity()),
         Err(SaveError::SaveFormatVersionMismatch { .. })
     ));
+}
+
+#[test]
+fn hvdc_codec_preserves_two_live_islands_flow_override_and_archived_region() {
+    use domain::{ids::CellCoord, region::PlantKind};
+    use infrastructure::region::{AreaDto, HvdcDto, RegionFileV4};
+    let dir = tempfile::TempDir::new().unwrap();
+    let mut file: RegionFileV4 =
+        ron::from_str(include_str!("support/minimal_region_v4.ron")).unwrap();
+    file.catalog
+        .iter_mut()
+        .find(|p| matches!(p.kind, infrastructure::region::PlantKindDto::Peaker))
+        .unwrap()
+        .build_months = 2;
+    file.areas = vec![
+        AreaDto {
+            id: 1,
+            name_key: "area-east".into(),
+            polygons: vec![vec![(6.0, 0.0), (12.0, 0.0), (12.0, 8.0), (6.0, 8.0)]],
+            geography: Vec::new(),
+        },
+        AreaDto {
+            id: 2,
+            name_key: "area-west".into(),
+            polygons: vec![vec![(1.0, 0.0), (6.0, 0.0), (6.0, 8.0), (1.0, 8.0)]],
+            geography: Vec::new(),
+        },
+    ];
+    file.hvdc = Some(HvdcDto {
+        rating_mw: 200.0,
+        converter_cost: 1_000_000,
+        cost_per_cell: 1000,
+        converter_build_months: 2,
+        ramp_mw_per_min: 20.0,
+        converter_loss: 0.01,
+        loss_per_cell: 0.001,
+        book_life_months: 240,
+        designed_hours_per_year: 4000.0,
+    });
+    std::fs::write(
+        dir.path().join("minimal.ron"),
+        ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default()).unwrap(),
+    )
+    .unwrap();
+    let catalog = RonRegionCatalog::new(dir.path());
+    let mut live = Game::start_new(
+        &catalog,
+        &RegionId::new("minimal"),
+        7,
+        GameSettings::default(),
+        Box::new(InMemoryCommandLog::default()),
+    )
+    .unwrap();
+    let from = live.session().anchor_node();
+    let to = live
+        .session()
+        .city_views()
+        .into_iter()
+        .find(|c| c.name_key == "city-tiny-3")
+        .unwrap()
+        .node;
+    let cell = CellCoord { x: 4, y: 2 };
+    live.execute(Command::BuildPlant {
+        kind: PlantKind::Peaker,
+        cell,
+    })
+    .unwrap();
+    let plant = live
+        .session()
+        .plant_views()
+        .into_iter()
+        .find(|p| p.cell == cell)
+        .unwrap();
+    live.execute(Command::BuildLine {
+        from: to,
+        to: plant.node,
+    })
+    .unwrap();
+    live.execute(Command::BuildLink { from, to }).unwrap();
+    let link = live.session().power().network().links().next().unwrap().id;
+    for _ in 0..2 {
+        live.execute(Command::BeginOperating).unwrap();
+        live.execute(Command::AdvanceTicks { n: 1440 }).unwrap();
+        live.execute(Command::FinishReview).unwrap();
+    }
+    live.execute(Command::StartPlant { plant: plant.id })
+        .unwrap();
+    live.execute(Command::SetAutoFollow {
+        plant: plant.id,
+        on: true,
+    })
+    .unwrap();
+    live.execute(Command::SetLinkSchedule {
+        link,
+        mw: Box::new([50.0; 24]),
+    })
+    .unwrap();
+    live.execute(Command::BeginOperating).unwrap();
+    live.execute(Command::AdvanceTicks { n: 120 }).unwrap();
+    assert_eq!(live.session().power().island_states().len(), 2);
+    assert!(
+        live.session()
+            .power()
+            .network()
+            .link(link)
+            .unwrap()
+            .flow
+            .value()
+            > 0.0
+    );
+    live.execute(Command::SetLinkTarget { link, mw: -20.0 })
+        .unwrap();
+    let mut saved = bundle();
+    saved.checkpoint = live.checkpoint();
+    let (decoded, region) = decode_save(&encode_save(&saved).unwrap(), &identity()).unwrap();
+    assert_eq!(decoded, saved);
+    // Exercise the native directory format too: it splits live and completed chart months.
+    use application::{SaveStore, SaveTarget};
+    let disk = tempfile::TempDir::new().unwrap();
+    let store = infrastructure::save::FileSaveStore::new(disk.path().into()).with_monthly_charts();
+    let mut on_disk = saved.clone();
+    on_disk.compatibility = store.compatibility();
+    let receipt = store
+        .write(&on_disk, &SaveTarget::Create, &|| false)
+        .unwrap();
+    let (disk_copy, _) = store.read(&on_disk.metadata.slot).unwrap();
+    assert_eq!(disk_copy.checkpoint, on_disk.checkpoint);
+    let mut restored = Game::restore(
+        region,
+        decoded.checkpoint,
+        Box::new(InMemoryCommandLog::default()),
+        &|| false,
+    )
+    .unwrap();
+    assert_eq!(live.checkpoint(), restored.checkpoint());
+    for command in [
+        Command::AdvanceTicks { n: 20 },
+        Command::ClearLinkOverride { link },
+        Command::AdvanceTicks { n: 1300 },
+    ] {
+        assert_eq!(live.execute(command.clone()), restored.execute(command));
+        assert_eq!(live.checkpoint(), restored.checkpoint());
+    }
+    on_disk.checkpoint = live.checkpoint();
+    store
+        .write(&on_disk, &SaveTarget::Replace(receipt.revision), &|| false)
+        .unwrap();
+    assert_eq!(
+        store.read(&on_disk.metadata.slot).unwrap().0.checkpoint,
+        on_disk.checkpoint
+    );
 }

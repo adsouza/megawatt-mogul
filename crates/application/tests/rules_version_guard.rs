@@ -148,6 +148,7 @@ fn outcome_digest() -> String {
     for entry in game.session().company().ledger() {
         let subject = match entry.subject {
             Some(AssetRef::Plant(plant)) => format!("plant {}", plant.0),
+            Some(AssetRef::Link(link)) => format!("link {}", link.0),
             Some(AssetRef::Line(line)) => format!("line {}", line.0),
             None => "-".to_owned(),
         };

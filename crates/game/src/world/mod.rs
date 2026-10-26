@@ -40,6 +40,7 @@ pub fn region_terrain_colors(
 }
 
 mod camera;
+mod electrical;
 pub use camera::{CameraPose, OrbitCamera, physical_viewport};
 
 mod flow;

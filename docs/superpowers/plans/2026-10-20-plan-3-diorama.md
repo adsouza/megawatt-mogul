@@ -163,6 +163,10 @@ format unchanged. Use the pinned Bevy 0.20 and bevy_egui 0.43.1 sources for API 
 
 ## Acceptance evidence (2026-10-21)
 
+- [ ] Verify native orbit/drag feel on a computer-use surface that delivers pointer motion.
+  Reconciled 2026-10-26: the real-egui regressions and native scroll/reset checks recorded below
+  pass, but do not close the documented native drag limitation.
+
 - Production uses the 3D world. The existing flat draw adapter remains available to HUD-only
   consumers and its tests; it is not a player-selectable fallback. Session identity controls the
   terrain cache, resource-layer changes update mesh colours, and leaving releases owned assets.

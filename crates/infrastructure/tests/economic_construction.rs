@@ -35,6 +35,260 @@ fn close(game: &mut Game) {
     game.execute(Command::BeginOperating).unwrap();
     game.execute(Command::AdvanceTicks { n: 1440 }).unwrap();
 }
+
+fn zoned_hvdc_game(mask: u8) -> (tempfile::TempDir, Game) {
+    use infrastructure::region::{AreaDto, HvdcConstructionDto, HvdcDto, RegionFileV4};
+    let dir = tempfile::TempDir::new().unwrap();
+    let mut file: RegionFileV4 =
+        ron::from_str(include_str!("support/economic_region_v4.ron")).unwrap();
+    // This fixture's flat demand keeps the longer construction cases about
+    // pricing and persistence; stochastic protection failures are tested elsewhere.
+    file.demand_noise.forecast_error = 0.0;
+    file.areas = vec![
+        AreaDto {
+            id: 1,
+            name_key: "area-east".into(),
+            polygons: vec![vec![(6.0, 0.0), (12.0, 0.0), (12.0, 8.0), (6.0, 8.0)]],
+            geography: Vec::new(),
+        },
+        AreaDto {
+            id: 2,
+            name_key: "area-west".into(),
+            polygons: vec![vec![(1.0, 0.0), (6.0, 0.0), (6.0, 8.0), (1.0, 8.0)]],
+            geography: Vec::new(),
+        },
+    ];
+    file.hvdc = Some(HvdcDto {
+        rating_mw: 200.0,
+        converter_cost: 101,
+        cost_per_cell: 7,
+        converter_build_months: 2,
+        ramp_mw_per_min: 20.0,
+        converter_loss: 0.01,
+        loss_per_cell: 0.001,
+        book_life_months: 240,
+        designed_hours_per_year: 4000.0,
+    });
+    let zones = &mut file.economic_zones.as_mut().unwrap().zones;
+    if mask & 1 != 0 {
+        zones[0].hvdc = HvdcConstructionDto {
+            converter_cost_per_end: Some(41),
+            converter_build_months: Some(3),
+            cost_per_cell: Some(11),
+            cells_per_month: Some(1),
+        };
+    }
+    if mask & 2 != 0 {
+        zones[1].hvdc = HvdcConstructionDto {
+            converter_cost_per_end: Some(59),
+            converter_build_months: Some(5),
+            cost_per_cell: Some(13),
+            cells_per_month: Some(3),
+        };
+    }
+    std::fs::write(
+        dir.path().join("minimal.ron"),
+        ron::to_string(&file).unwrap(),
+    )
+    .unwrap();
+    let game = Game::start_new(
+        &RonRegionCatalog::new(dir.path()),
+        &RegionId::new("minimal"),
+        7,
+        GameSettings::default(),
+        Box::new(InMemoryCommandLog::default()),
+    )
+    .unwrap();
+    (dir, game)
+}
+
+fn economic_round_trip(game: &Game) -> Game {
+    let compatibility = ReplayCompatibility {
+        build: "test".into(),
+        platform: "test".into(),
+    };
+    let bundle = SaveBundle {
+        compatibility: compatibility.clone(),
+        metadata: SaveMetadata {
+            slot: SaveId::new("a".repeat(32)).unwrap(),
+            run: SaveId::new("b".repeat(32)).unwrap(),
+            name: "HVDC markets".into(),
+            kind: SaveKind::Manual,
+            saved_at: 0,
+        },
+        checkpoint: game.checkpoint(),
+    };
+    let (decoded, region) = decode_save(&encode_save(&bundle).unwrap(), &compatibility).unwrap();
+    let restored = decoded
+        .restore(
+            region,
+            &compatibility,
+            Box::new(InMemoryCommandLog::default()),
+            &|| false,
+        )
+        .unwrap();
+    assert_eq!(restored.checkpoint(), game.checkpoint());
+    restored
+}
+
+#[test]
+fn zoned_hvdc_partial_overrides_survive_payments_cancellation_commissioning_and_resume() {
+    use domain::{company::LedgerCategory, grid::LineStatus, units::Money};
+    // For home (6,3) to remote (3,5), four samples cross west three times and east once.
+    // Base converters cost EUR 50.50 per end. Route terms and terminal durations
+    // deliberately dominate in different cases; west-only instalments have a remainder.
+    for (mask, expected_cents, expected_months) in [
+        (0, 12_900, 2),
+        (1, 13_150, 4),
+        (2, 14_350, 5),
+        (3, 14_600, 5),
+    ] {
+        for reverse in [false, true] {
+            let (dir, mut live) = zoned_hvdc_game(mask);
+            let home = live.session().anchor_node();
+            let far = live
+                .session()
+                .city_views()
+                .into_iter()
+                .find(|c| c.id.0 == 3)
+                .unwrap()
+                .node;
+            let (from, to) = if reverse { (far, home) } else { (home, far) };
+            let before = live.checkpoint();
+            let quote = live.session().link_quote(from, to).unwrap();
+            assert_eq!(
+                (quote.capital.cents(), quote.months),
+                (expected_cents, expected_months)
+            );
+            assert_eq!(quote, live.session().link_quote(to, from).unwrap());
+            assert_eq!(live.checkpoint(), before, "quotes must be pure");
+            let started = live.session().clock().month();
+            live.execute(Command::BuildLink { from, to }).unwrap();
+            live.execute(Command::BuildLink { from: to, to: from })
+                .unwrap();
+            let links: Vec<_> = live
+                .session()
+                .power()
+                .network()
+                .links()
+                .map(|link| link.id)
+                .collect();
+            let (kept, cancelled) = (links[0], links[1]);
+            assert_eq!(live.session().link_construction(kept), Some(quote.clone()));
+            let link = live.session().power().network().link(kept).unwrap();
+            assert_eq!(
+                (link.from, link.to),
+                (from, to),
+                "pricing must not reverse flow orientation"
+            );
+            live.execute(Command::BeginOperating).unwrap();
+            live.execute(Command::AdvanceTicks { n: 100 }).unwrap();
+            // The standalone save must retain the authored partial overrides, not re-read
+            // changed installed data. This capture still has every instalment pending.
+            std::fs::write(dir.path().join("minimal.ron"), b"changed installed source").unwrap();
+            let mut resumed = economic_round_trip(&live);
+            let base = expected_cents / i64::from(expected_months);
+            let mut expected_paid = Vec::new();
+            for month in 1..=expected_months {
+                for game in [&mut live, &mut resumed] {
+                    if month > 1 {
+                        game.execute(Command::BeginOperating).unwrap();
+                    }
+                    game.execute(Command::AdvanceTicks { n: 1440 }).unwrap();
+                }
+                expected_paid.push(-if month == expected_months {
+                    expected_cents - base * i64::from(expected_months - 1)
+                } else {
+                    base
+                });
+                assert_eq!(
+                    live.session().status(),
+                    domain::session::SessionStatus::Active,
+                    "mask={mask}, reverse={reverse}, month={month}"
+                );
+                let payments = |game: &Game, id| {
+                    game.session()
+                        .company()
+                        .ledger()
+                        .iter()
+                        .filter(|entry| {
+                            entry.category == LedgerCategory::Construction
+                                && entry.subject == Some(AssetRef::Link(id))
+                        })
+                        .map(|entry| entry.amount.cents())
+                        .collect::<Vec<_>>()
+                };
+                assert_eq!(payments(&live, kept), expected_paid);
+                assert_eq!(live.checkpoint(), resumed.checkpoint());
+                assert_eq!(live.session().link_construction(kept), Some(quote.clone()));
+                let status = if month == expected_months {
+                    LineStatus::InService
+                } else {
+                    LineStatus::UnderConstruction {
+                        months_left: expected_months - month,
+                    }
+                };
+                assert_eq!(
+                    live.session().power().network().link(kept).unwrap().status,
+                    status
+                );
+                let asset = live
+                    .session()
+                    .company()
+                    .rate_base()
+                    .asset(AssetRef::Link(kept));
+                if month < expected_months {
+                    assert!(asset.is_none());
+                } else {
+                    let asset = asset.unwrap();
+                    assert_eq!(asset.original, Money::from_cents(expected_cents));
+                    assert_eq!(
+                        asset.added_on,
+                        started.checked_add_months(expected_months - 1).unwrap()
+                    );
+                }
+                for game in [&mut live, &mut resumed] {
+                    game.execute(Command::FinishReview).unwrap();
+                    if month == 1 {
+                        game.execute(Command::CancelLinkConstruction { link: cancelled })
+                            .unwrap();
+                    }
+                    assert!(game.session().power().network().link(cancelled).is_none());
+                    assert!(
+                        game.session()
+                            .company()
+                            .rate_base()
+                            .asset(AssetRef::Link(cancelled))
+                            .is_none()
+                    );
+                    assert_eq!(
+                        payments(game, cancelled),
+                        [-base],
+                        "cancellation keeps only the paid instalment"
+                    );
+                    game.session().check_invariants().unwrap();
+                }
+                // Re-save after every close/cancel, including the commissioning boundary.
+                resumed = economic_round_trip(&resumed);
+                assert_eq!(live.checkpoint(), resumed.checkpoint());
+            }
+            for game in [&mut live, &mut resumed] {
+                game.execute(Command::SetLinkSchedule {
+                    link: kept,
+                    mw: Box::new([-50.0; 24]),
+                })
+                .unwrap();
+                game.execute(Command::BeginOperating).unwrap();
+                game.execute(Command::AdvanceTicks { n: 10 }).unwrap();
+            }
+            assert_eq!(live.checkpoint(), resumed.checkpoint());
+            let restored = economic_round_trip(&resumed);
+            let link = restored.session().power().network().link(kept).unwrap();
+            assert_eq!((link.from, link.to, link.schedule), (from, to, [-50.0; 24]));
+        }
+    }
+}
+
 #[test]
 fn local_orders_quotes_payments_progress_and_rate_base_agree() {
     let (_dir, mut game) = game();
@@ -249,7 +503,20 @@ fn rules16_construction_capture_keeps_original_bytes_and_continuation() {
             &|| false,
         )
         .unwrap();
-    assert_eq!(game.checkpoint().snapshot, original.snapshot);
+    // New captures use schema 4; compare the frozen schema-3 representation without
+    // rewriting or regenerating any historical bytes or expected outcomes.
+    use domain::state::State;
+    let historical_snapshot = |game: &Game| application::PortableState {
+        journal_hash: game.checkpoint().snapshot.unwrap().journal_hash,
+        origin: None,
+        schema: 3,
+        session: game.session().snapshot_state_schema(3),
+        projections: game.projections().state_bytes_schema(3),
+    };
+    assert_eq!(
+        historical_snapshot(&game),
+        original.snapshot.clone().unwrap()
+    );
     for index in 1..=3 {
         if index > 1 {
             game.execute(Command::FinishReview).unwrap();
@@ -258,7 +525,7 @@ fn rules16_construction_capture_keeps_original_bytes_and_continuation() {
         game.execute(Command::AdvanceTicks { n: 1440 }).unwrap();
         if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
             assert_eq!(
-                game.checkpoint().state_hash,
+                historical_snapshot(&game).state_hash(),
                 value(&format!("close_{index}_hash"))
             );
         }

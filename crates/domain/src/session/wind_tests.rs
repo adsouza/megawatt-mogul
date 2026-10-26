@@ -39,7 +39,7 @@ fn wind_storage_resume_preserves_rng_history_and_midnight_at_each_policy_boundar
         );
     }
     live.begin_operating().unwrap();
-    for boundary in [0, 1, 60, 1019, 1020, 1079, 1080, 1439, 1440] {
+    for boundary in [0, 1, 60, 359, 360, 1319, 1320, 1439, 1440] {
         while live.clock.tick() < boundary {
             live.tick().unwrap();
         }

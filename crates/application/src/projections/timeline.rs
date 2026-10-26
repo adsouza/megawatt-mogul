@@ -20,6 +20,7 @@ pub const TIMELINE_CAPACITY: usize = 1_440;
 /// The grid at the end of one tick.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TimelinePoint {
+    pub islands: BTreeMap<domain::ids::NodeId, domain::grid::power_system::IslandTickSummary>,
     pub tick: u32,
     pub demand: Megawatts,
     pub batteries: BTreeMap<PlantId, BatteryFlow>,
@@ -39,11 +40,13 @@ pub struct TimelineProjection {
     pub(super) points: VecDeque<TimelinePoint>,
     pub(super) forecast: Option<[ForecastPoint; 24]>,
     pub(super) completed: Vec<CompletedDay>,
+    pub(super) island_forecasts: BTreeMap<domain::ids::NodeId, [ForecastPoint; 24]>,
 }
 
 /// The played day representing a closed month, with its original demand forecast.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompletedDay {
+    pub island_forecasts: BTreeMap<domain::ids::NodeId, [ForecastPoint; 24]>,
     pub month: SimMonth,
     pub points: Vec<TimelinePoint>,
     pub forecast: [ForecastPoint; 24],
@@ -81,11 +84,18 @@ impl Projection for TimelineProjection {
         {
             // Capture before month-close commissioning or later months change the forecast.
             self.forecast = Some(session.hourly_forecast());
+            self.island_forecasts = session
+                .power()
+                .island_nodes()
+                .keys()
+                .filter_map(|id| Some((*id, session.island_session(*id)?.hourly_forecast())))
+                .collect();
         }
         if let DomainEvent::MonthClosed(report) = event
             && let Some(forecast) = self.forecast.take()
         {
             self.completed.push(CompletedDay {
+                island_forecasts: std::mem::take(&mut self.island_forecasts),
                 month: report.month,
                 points: self.points.iter().cloned().collect(),
                 forecast,
@@ -96,6 +106,7 @@ impl Projection for TimelineProjection {
                 self.points.pop_front();
             }
             self.points.push_back(TimelinePoint {
+                islands: summary.islands.clone(),
                 tick: summary.tick,
                 demand: summary.demand,
                 batteries: summary.batteries.clone(),
@@ -112,7 +123,7 @@ impl Projection for TimelineProjection {
 domain::state_record!(TimelineProjection {
     points,
     forecast,
-    completed
+    completed; since4 { island_forecasts: Default::default() }
 });
 domain::state_record!(TimelinePoint {
     tick,
@@ -121,12 +132,12 @@ domain::state_record!(TimelinePoint {
     frequency,
     by_kind,
     marginal_cost,
-    batteries
+    batteries; since4 {islands:Default::default()}
 });
 domain::state_record!(CompletedDay {
     month,
     points,
-    forecast
+    forecast; since4 { island_forecasts: Default::default() }
 });
 
 #[cfg(test)]
@@ -163,6 +174,7 @@ mod tests {
         assert_eq!(
             timeline.points().next(),
             Some(&TimelinePoint {
+                islands: Default::default(),
                 batteries: BTreeMap::new(),
                 tick: 7,
                 demand: summary.demand,

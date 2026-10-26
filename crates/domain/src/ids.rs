@@ -31,6 +31,11 @@ numeric_id!(
     LineId
 );
 
+numeric_id!(
+    /// Identifies a direct-current interconnector.
+    LinkId
+);
+
 /// Identifies a selectable region (data-driven, so a string rather than an enum).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RegionId(String);
@@ -76,6 +81,7 @@ crate::state_tuple!(PlantId);
 crate::state_tuple!(CityId);
 crate::state_tuple!(NodeId);
 crate::state_tuple!(LineId);
+crate::state_tuple!(LinkId);
 crate::state_tuple!(RegionId);
 
 impl IdAllocator {

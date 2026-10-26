@@ -1110,3 +1110,149 @@ fn zero_firm_storage_does_not_shield_a_shared_generator_line_in_either_id_order(
         );
     }
 }
+
+#[test]
+fn hvdc_utilisation_holds_releases_and_writes_off_without_firm_capacity() {
+    use crate::ids::LinkId;
+    let mut base = RateBase::default();
+    let link = LinkId(41);
+    let key = AssetRef::Link(link);
+    base.add(
+        key,
+        Money::from_cents(10001),
+        120,
+        SimMonth::new(2027, 11).unwrap(),
+        AssetProfile::Link {
+            from: NodeId(1),
+            to: NodeId(2),
+        },
+    );
+    let events = base.review_link_utilisation(2027, &BTreeMap::from([(link, 0.25)]));
+    assert!(!events.is_empty());
+    let asset = base.assets().next().unwrap();
+    assert!((asset.held_slice().unwrap().fraction() - 0.75).abs() < 1e-9);
+    assert_eq!(asset.held_firm(), None);
+    assert!(
+        base.review_link_utilisation(2027, &BTreeMap::from([(link, 0.25)]))
+            .is_empty()
+    );
+    base.review_link_utilisation(2028, &BTreeMap::from([(link, 0.5)]));
+    let asset = base.assets().next().unwrap();
+    assert!(asset.held_slice().is_none());
+    assert!(asset.written_off() > Money::ZERO);
+    let mut release = RateBase::default();
+    release.add(
+        key,
+        Money::from_cents(10001),
+        120,
+        SimMonth::new(2027, 11).unwrap(),
+        AssetProfile::Link {
+            from: NodeId(1),
+            to: NodeId(2),
+        },
+    );
+    release.review_link_utilisation(2027, &BTreeMap::from([(link, 0.0)]));
+    release.review_link_utilisation(2028, &BTreeMap::from([(link, 1.0)]));
+    assert_eq!(release.assets().next().unwrap().held(), Money::ZERO);
+    assert_eq!(release.assets().next().unwrap().written_off(), Money::ZERO);
+}
+
+#[test]
+fn hvdc_worsening_utilisation_holds_new_excess_with_a_fresh_review_history() {
+    use crate::ids::LinkId;
+    let mut base = RateBase::default();
+    let link = LinkId(41);
+    let key = AssetRef::Link(link);
+    base.add(
+        key,
+        Money::from_cents(10000),
+        120,
+        SimMonth::new(2027, 1).unwrap(),
+        AssetProfile::Link {
+            from: NodeId(1),
+            to: NodeId(2),
+        },
+    );
+    base.review_link_utilisation(2027, &BTreeMap::from([(link, 0.9)]));
+    let events = base.review_link_utilisation(2028, &BTreeMap::from([(link, 0.0)]));
+    let asset = base.assets().next().unwrap();
+    assert_eq!(asset.written_off(), Money::from_cents(1000));
+    assert_eq!(asset.held(), Money::from_cents(9000));
+    assert_eq!(asset.eligible(), Money::ZERO);
+    assert_eq!(asset.held_slice().unwrap().consecutive_excess_reviews(), 1);
+    assert_eq!(asset.held_slice().unwrap().last_excess_review(), 2028);
+    assert!(events.contains(&DomainEvent::CapitalHeld {
+        asset: key,
+        amount: Money::from_cents(9000)
+    }));
+    assert!(
+        base.review_link_utilisation(2028, &BTreeMap::from([(link, 0.0)]))
+            .is_empty()
+    );
+    base.review_link_utilisation(2029, &BTreeMap::from([(link, 0.0)]));
+    let asset = base.assets().next().unwrap();
+    assert_eq!(asset.written_off(), Money::from_cents(10000));
+    assert_eq!(asset.held(), Money::ZERO);
+}
+
+#[test]
+fn hvdc_steady_utilisation_does_not_disallow_the_same_fraction_again() {
+    use crate::ids::LinkId;
+    let mut base = RateBase::default();
+    let link = LinkId(41);
+    base.add(
+        AssetRef::Link(link),
+        Money::from_cents(10000),
+        120,
+        SimMonth::new(2027, 1).unwrap(),
+        AssetProfile::Link {
+            from: NodeId(1),
+            to: NodeId(2),
+        },
+    );
+    for year in 2027..=2030 {
+        base.review_link_utilisation(year, &BTreeMap::from([(link, 0.5)]));
+        let asset = base.assets().next().unwrap();
+        if year == 2027 {
+            assert_eq!(asset.held(), Money::from_cents(5000));
+        } else {
+            assert_eq!(asset.written_off(), Money::from_cents(5000));
+            assert_eq!(asset.held(), Money::ZERO);
+            assert_eq!(asset.eligible(), Money::from_cents(5000));
+        }
+    }
+}
+
+proptest! {
+    #[test]
+    fn hvdc_reviews_preserve_capital_and_are_idempotent(
+        utilisation in prop::collection::vec(0u8..=4, 1..20)
+    ) {
+        use crate::ids::LinkId;
+        let mut base = RateBase::default();
+        let link = LinkId(41);
+        base.add(AssetRef::Link(link), Money::from_cents(10001), 120,
+            SimMonth::new(2027, 1).unwrap(),
+            AssetProfile::Link { from: NodeId(1), to: NodeId(2) });
+        let mut disallowed = Money::ZERO;
+        for (index, u) in utilisation.into_iter().enumerate() {
+            let year = 2027 + index as i32;
+            base.depreciate_month();
+            let volumes = BTreeMap::from([(link, f64::from(u) / 4.0)]);
+            base.review_link_utilisation(year, &volumes);
+            let asset = base.assets().next().unwrap();
+            prop_assert_eq!(asset.eligible() + asset.held(), asset.remaining);
+            prop_assert_eq!(asset.remaining + asset.written_off() + asset.depreciated(), asset.original);
+            prop_assert!(asset.held() >= Money::ZERO && asset.held() <= asset.remaining);
+            prop_assert!(asset.written_off() >= disallowed);
+            disallowed = asset.written_off();
+            if let Some(held) = asset.held_slice() {
+                prop_assert_eq!(held.consecutive_excess_reviews(), 1);
+                prop_assert_eq!(held.last_excess_review(), year);
+            }
+            let before = base.clone();
+            prop_assert!(base.review_link_utilisation(year, &volumes).is_empty());
+            prop_assert_eq!(&base, &before);
+        }
+    }
+}

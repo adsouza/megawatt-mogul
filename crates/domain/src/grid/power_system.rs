@@ -7,6 +7,8 @@
 
 use std::collections::BTreeMap;
 
+mod islands;
+pub use islands::{IslandState, IslandTickSummary};
 mod battery;
 pub use battery::{
     BatteryScheduleView, PlantBatteryScheduleView, SupplyForecast, SupplyForecastPoint,
@@ -29,7 +31,6 @@ use crate::error::DomainError;
 use crate::events::DomainEvent;
 use crate::generation::{
     BoundaryStart, CommitmentAction, Plant, PlantStatus, commitment_actions, draw_clearness,
-    solar_available,
 };
 use crate::ids::{CellCoord, CityId, NodeId, PlantId};
 use crate::region::{Cell, FrequencyParams, PlantKind, RegionDefinition};
@@ -52,6 +53,7 @@ pub enum NetworkModel {
 /// What starting a representative day reported to the session.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DayInitialisation {
+    pub island_outages: BTreeMap<NodeId, Ratio>,
     /// One-off month-boundary starts per plant (see [`BoundaryStart::Charged`]).
     pub boundary_starts: BTreeMap<PlantId, u32>,
     /// The rotating-outage share ordered for hour 0 (spec §15.3); zero when
@@ -91,6 +93,14 @@ fn wind_fall_uncovered(lost: Megawatts, fall: Megawatts, reach: Megawatts) -> bo
 /// frequency and protection state between ticks.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PowerSystem {
+    island_states: BTreeMap<NodeId, IslandState>,
+    island_nodes: BTreeMap<NodeId, std::collections::BTreeSet<NodeId>>,
+    injections: [f64; 24],
+    injection: f64,
+    /// Derived in a scoped tick; never part of the parent capture.
+    transfer_exports: f64,
+    /// Frozen region-wide weather/noise input while stepping a synchronous island.
+    shared_error: Option<f64>,
     network: Network,
     plants: BTreeMap<PlantId, Plant>,
     cities: BTreeMap<CityId, DemandCenter>,
@@ -171,6 +181,12 @@ impl PowerSystem {
         model: NetworkModel,
     ) -> Self {
         Self {
+            island_states: BTreeMap::new(),
+            island_nodes: BTreeMap::new(),
+            injections: [0.0; 24],
+            injection: 0.0,
+            transfer_exports: 0.0,
+            shared_error: None,
             network,
             plants,
             cities,
@@ -312,15 +328,29 @@ impl PowerSystem {
         month: SimMonth,
         rng: &mut SimRng,
     ) -> DayInitialisation {
+        if region.areas().is_some() {
+            return self.begin_islands(region, month, rng);
+        }
+        self.begin_single_day(region, month, rng)
+    }
+    fn begin_single_day(
+        &mut self,
+        region: &RegionDefinition,
+        month: SimMonth,
+        rng: &mut SimRng,
+    ) -> DayInitialisation {
         for plant in self.plants.values_mut() {
             if plant.kind() == PlantKind::Hydro && is_commissioned(plant) {
                 plant.reset_hydro_budget(day_hydro_budget(region, month, plant));
             }
         }
-        self.clearness = draw_clearness(region.solar(), month, rng);
-        let wind = region.wind();
-        self.wind_factor = (wind.monthly[month.index0()] + wind.initial_sd * rng.standard_normal())
+        if self.shared_error.is_none() {
+            self.clearness = draw_clearness(region.solar(), month, rng);
+            let wind = region.wind();
+            self.wind_factor = (wind.monthly[month.index0()]
+                + wind.initial_sd * rng.standard_normal())
             .clamp(0.0, 1.0);
+        }
         self.wind_tick = Some(0);
         self.wind_month = Some(month);
         self.battery_bus_surplus = None;
@@ -351,6 +381,7 @@ impl PowerSystem {
             self.balance_boundary(region, month);
         }
         DayInitialisation {
+            island_outages: BTreeMap::new(),
             boundary_starts,
             outage: self.outage,
         }
@@ -376,7 +407,10 @@ impl PowerSystem {
             .sum();
         let forecast = self.connected_demand_forecast(region, month, 0);
         let solar = self.expected_variable(region, month, 0);
-        let load = forecast * (1.0 - self.outage.value()) - solar - fixed;
+        let load = forecast * (1.0 - self.outage.value())
+            - solar
+            - fixed
+            - Megawatts::new(self.injections[0]);
         let (mut available, _, _) = self.availability(region, month, 0);
         for (id, ceiling) in self.hydro_ceilings(0) {
             if let Some(mw) = available.get_mut(&id) {
@@ -401,15 +435,13 @@ impl PowerSystem {
         tick: u32,
     ) -> Megawatts {
         match plant.kind() {
-            PlantKind::Solar => {
-                let irradiance = cell_ratio(region, plant.cell(), |c| c.irradiance);
-                solar_available(
-                    plant.spec().capacity,
-                    irradiance,
-                    region.sun(plant.cell(), month, tick),
-                    self.clearness,
-                )
-            }
+            PlantKind::Solar => region.solar_available(
+                plant.spec().capacity,
+                plant.cell(),
+                month,
+                tick,
+                self.clearness,
+            ),
             PlantKind::Wind => crate::generation::wind_available(
                 plant.spec().capacity,
                 cell_ratio(region, plant.cell(), |c| c.wind_potential),
@@ -510,10 +542,18 @@ impl PowerSystem {
         tick: u32,
         rng: &mut SimRng,
     ) -> (TickSummary, Vec<DomainEvent>) {
-        self.battery_tick = tick;
-        let params = region.frequency();
-        let mut events = Vec::new();
-        let hour = u8::try_from(tick / TICKS_PER_HOUR).unwrap_or(u8::MAX);
+        if region.areas().is_some() {
+            return self.tick_islands(region, month, tick, rng);
+        }
+        self.tick_single(region, month, tick, rng)
+    }
+    fn draw_tick_weather(
+        &mut self,
+        region: &RegionDefinition,
+        month: SimMonth,
+        tick: u32,
+        rng: &mut SimRng,
+    ) -> f64 {
         let error = self.noise.step(region.demand_noise(), rng);
         if tick > 0 {
             let w = region.wind();
@@ -527,6 +567,22 @@ impl PowerSystem {
         }
         self.wind_tick = Some(tick);
         self.wind_month = Some(month);
+        error
+    }
+    fn tick_single(
+        &mut self,
+        region: &RegionDefinition,
+        month: SimMonth,
+        tick: u32,
+        rng: &mut SimRng,
+    ) -> (TickSummary, Vec<DomainEvent>) {
+        self.battery_tick = tick;
+        let params = region.frequency();
+        let mut events = Vec::new();
+        let hour = u8::try_from(tick / TICKS_PER_HOUR).unwrap_or(u8::MAX);
+        let error = self
+            .shared_error
+            .unwrap_or_else(|| self.draw_tick_weather(region, month, tick, rng));
         let demand = (self.connected_demand_forecast(region, month, tick) * (1.0 + error))
             .max(Megawatts::ZERO);
 
@@ -587,7 +643,11 @@ impl PowerSystem {
         let provisional = self.propose_battery_flows(region, month, tick, demand, served_before);
         self.stage_batteries(&provisional);
         let charging: Megawatts = provisional.values().map(|f| f.charge).sum();
-        let supply: Megawatts = self.connected_plants().map(Plant::output).sum();
+        let supply: Megawatts = self
+            .connected_plants()
+            .map(Plant::output)
+            .sum::<Megawatts>()
+            + Megawatts::new(self.injection);
 
         let mode = self.protection.mode;
         let shed = self.protection.shed.value();
@@ -596,7 +656,8 @@ impl PowerSystem {
         let (wind_fall, wind_horizon) = self.wind_fall(region, month, tick);
         let load = demand * (1.0 - self.outage.value());
         // No load energised this tick: fully cut by the outage in effect.
-        let dark = mode == GridMode::Normal && load <= Megawatts::ZERO;
+        let system_size = load + Megawatts::new(self.transfer_exports);
+        let dark = mode == GridMode::Normal && system_size <= Megawatts::ZERO;
         if mode == GridMode::Normal && self.outage != self.outage_target {
             let served = load * (1.0 - shed);
             let cover = self.outage_cover(
@@ -660,7 +721,9 @@ impl PowerSystem {
         // below 1.0 (after a re-size, for example when a plant comes online)
         // the frequency model resumes.
         self.deviation = match mode {
-            GridMode::Normal if !dark => next_deviation(self.deviation, imbalance, load, params),
+            GridMode::Normal if !dark => {
+                next_deviation(self.deviation, imbalance, system_size, params)
+            }
             GridMode::Normal | GridMode::Blackout => Hertz::ZERO,
         };
         let outcome = evaluate(
@@ -751,7 +814,8 @@ impl PowerSystem {
             batteries: final_flows,
             curtailed: withheld,
             curtailed_by_kind,
-            imbalance: generation - served - battery_charge,
+            imbalance: generation + Megawatts::new(self.injection) - served - battery_charge,
+            islands: BTreeMap::new(),
             by_kind,
             by_plant,
             frequency: params.nominal + self.deviation,
@@ -1301,18 +1365,10 @@ impl PowerSystem {
         month: SimMonth,
         tick: u32,
     ) -> Megawatts {
-        let clearness = region.solar().clearness_mean[month.index0()];
+        let clearness = region.expected_clearness(month);
         self.connected_plants()
             .filter(|p| p.kind() == PlantKind::Solar)
-            .map(|p| {
-                let irradiance = cell_ratio(region, p.cell(), |c| c.irradiance);
-                solar_available(
-                    p.spec().capacity,
-                    irradiance,
-                    region.sun(p.cell(), month, tick),
-                    clearness,
-                )
-            })
+            .map(|p| region.solar_available(p.spec().capacity, p.cell(), month, tick, clearness))
             .sum()
     }
 
@@ -1391,31 +1447,113 @@ impl crate::state::State for NetworkModel {
         })
     }
 }
-crate::state_record!(PowerSystem {
-    network,
-    plants,
-    cities,
-    model,
-    noise,
-    clearness,
-    deviation,
-    band,
-    protection,
-    curtailment,
-    hydro_plan,
-    hydro_planned_from,
-    hydro_override,
-    outage,
-    outage_target,
-    battery_plan,
-    battery_plan_dirty,
-    battery_tick;
-    wind_factor: 0.0,
-    wind_tick: None,
-    wind_month: None,
-    battery_bus_surplus: None,
-    wind_needs_replan: false
-});
+impl crate::state::State for PowerSystem {
+    fn write(&self, out: &mut Vec<u8>) {
+        self.write_schema(out, crate::state::CURRENT_STATE_SCHEMA);
+    }
+    fn write_schema(&self, out: &mut Vec<u8>, schema: u32) {
+        self.network.write_schema(out, schema);
+        self.plants.write_schema(out, schema);
+        self.cities.write_schema(out, schema);
+        self.model.write_schema(out, schema);
+        self.noise.write_schema(out, schema);
+        self.clearness.write_schema(out, schema);
+        self.deviation.write_schema(out, schema);
+        self.band.write_schema(out, schema);
+        self.protection.write_schema(out, schema);
+        self.curtailment.write_schema(out, schema);
+        self.hydro_plan.write_schema(out, schema);
+        self.hydro_planned_from.write_schema(out, schema);
+        self.hydro_override.write_schema(out, schema);
+        self.outage.write_schema(out, schema);
+        self.outage_target.write_schema(out, schema);
+        self.battery_plan.write_schema(out, schema);
+        self.battery_plan_dirty.write_schema(out, schema);
+        self.battery_tick.write_schema(out, schema);
+        if schema >= 2 {
+            self.wind_factor.write_schema(out, schema);
+            self.wind_tick.write_schema(out, schema);
+            self.wind_month.write_schema(out, schema);
+            self.battery_bus_surplus.write_schema(out, schema);
+            self.wind_needs_replan.write_schema(out, schema);
+        }
+        if schema >= 4 {
+            self.island_states.write_schema(out, schema);
+            self.island_nodes.write_schema(out, schema);
+            self.injections.write_schema(out, schema);
+            self.injection.write_schema(out, schema);
+        }
+    }
+    fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
+        Ok(Self {
+            transfer_exports: 0.0,
+            shared_error: None,
+            network: crate::state::State::read(input)?,
+            plants: crate::state::State::read(input)?,
+            cities: crate::state::State::read(input)?,
+            model: crate::state::State::read(input)?,
+            noise: crate::state::State::read(input)?,
+            clearness: crate::state::State::read(input)?,
+            deviation: crate::state::State::read(input)?,
+            band: crate::state::State::read(input)?,
+            protection: crate::state::State::read(input)?,
+            curtailment: crate::state::State::read(input)?,
+            hydro_plan: crate::state::State::read(input)?,
+            hydro_planned_from: crate::state::State::read(input)?,
+            hydro_override: crate::state::State::read(input)?,
+            outage: crate::state::State::read(input)?,
+            outage_target: crate::state::State::read(input)?,
+            battery_plan: crate::state::State::read(input)?,
+            battery_plan_dirty: crate::state::State::read(input)?,
+            battery_tick: crate::state::State::read(input)?,
+            wind_factor: if input.schema >= 2 {
+                crate::state::State::read(input)?
+            } else {
+                0.0
+            },
+            wind_tick: if input.schema >= 2 {
+                crate::state::State::read(input)?
+            } else {
+                None
+            },
+            wind_month: if input.schema >= 2 {
+                crate::state::State::read(input)?
+            } else {
+                None
+            },
+            battery_bus_surplus: if input.schema >= 2 {
+                crate::state::State::read(input)?
+            } else {
+                None
+            },
+            wind_needs_replan: if input.schema >= 2 {
+                crate::state::State::read(input)?
+            } else {
+                false
+            },
+            island_states: if input.schema >= 4 {
+                crate::state::State::read(input)?
+            } else {
+                Default::default()
+            },
+            island_nodes: if input.schema >= 4 {
+                crate::state::State::read(input)?
+            } else {
+                Default::default()
+            },
+            injections: if input.schema >= 4 {
+                crate::state::State::read(input)?
+            } else {
+                [0.0; 24]
+            },
+            injection: if input.schema >= 4 {
+                crate::state::State::read(input)?
+            } else {
+                0.0
+            },
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests;

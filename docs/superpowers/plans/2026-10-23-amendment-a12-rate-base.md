@@ -1,6 +1,16 @@
 # Amendment A12: Rate-Base Need Tests Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+**Completion reconciliation (2026-10-26):** Implemented.
+
+- [x] Duration-based battery accreditation, satisfaction-adjusted returns and the line need test are implemented.
+- [x] Region validation, HUD copy, compatibility and loophole regressions are implemented.
+- [x] Completion is recorded under rules 13 in [spec §26](../specs/2026-10-18-megawatt-mogul-design.md#26-amendment-a12-close-the-rate-base-loophole-and-make-satisfaction-count-2026-10-23); later amendments supersede the historical rules-11 instructions below.
+
+The original execution recipe is retained below as plain steps. This reconciliation records
+landed deliverables, without claiming a fresh run of each historical RED test, command or commit
+sequence. Native checks without a complete receipt remain unchecked.
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. The step sequence below is the historical execution recipe.
 
 **Goal:** Every asset that earns a regulated return passes a need test. Batteries are accredited by
 duration, redundant lines are refused when ordered, and satisfaction moves the allowed return.
@@ -99,7 +109,7 @@ No outcome changes. This task only plumbs the data and its validation.
   - `infrastructure::region::CURRENT_REGION_SCHEMA: u32 = 2`.
   - `infrastructure::region::legacy::{A12_STORAGE_ACCREDITATION: [(f64, f64); 4], A12_SATISFACTION_TARGET: f64, A12_RETURN_PER_SATISFACTION_POINT: f64}`.
 
-- [ ] **Step 1: Write the failing ladder tests** (inline `#[cfg(test)]` in `params.rs`).
+- **Step 1: Write the failing ladder tests** (inline `#[cfg(test)]` in `params.rs`).
 
 ```rust
 fn shipped() -> StorageAccreditation {
@@ -134,16 +144,16 @@ proptest! {
 }
 ```
 
-- [ ] **Step 2: Run them and see them fail.** Run `cargo nextest run -p domain storage_accreditation credit_is malformed_ladders`.
+- **Step 2: Run them and see them fail.** Run `cargo nextest run -p domain storage_accreditation credit_is malformed_ladders`.
   Expected: compile error, because `StorageAccreditation` does not exist yet.
 
-- [ ] **Step 3: Implement `StorageAccreditation`** in `params.rs` and re-export it from
+- **Step 3: Implement `StorageAccreditation`** in `params.rs` and re-export it from
   `domain::region`. Rejections return `RegionError::InvalidShape { field: "regulator.storage_accreditation" }`.
   `credit` clamps a negative or NaN `hours` to `Ratio::ZERO`. Add the three `RegulatorParams`
   fields. Add the shipped values to `fixtures.rs` `regulator()`. Add the two new `RegionError`
   variants, with `thiserror` messages in the existing style.
 
-- [ ] **Step 4: Write the failing mapping tests** in `crates/infrastructure/tests/region_catalog.rs`.
+- **Step 4: Write the failing mapping tests** in `crates/infrastructure/tests/region_catalog.rs`.
   Each builds its RON in its own `TempDir` from `support/minimal_region.ron`, edited as text.
   - `a_schema2_region_maps_the_a12_fields`: the minimal region (now `region_schema: 2`) maps
     `storage_accreditation.credit(4.0) == 0.85`, `satisfaction_target == 90.0` and
@@ -159,10 +169,10 @@ proptest! {
   - `satisfaction_parameters_are_validated`: a target outside `0..=100`, or a non-finite value,
     fails with `InvalidShape` naming the field.
 
-- [ ] **Step 5: Run them and see them fail.** Run `cargo nextest run -p infrastructure region_catalog`.
+- **Step 5: Run them and see them fail.** Run `cargo nextest run -p infrastructure region_catalog`.
   Expected: they fail, because the fields are unknown (`deny_unknown_fields`).
 
-- [ ] **Step 6: Implement the DTO and mapping.**
+- **Step 6: Implement the DTO and mapping.**
   - `RegionFile` gains `#[serde(default)] pub region_schema: Option<u32>`.
   - `RegulatorDto` gains `#[serde(default)]` options:
     - `storage_accreditation: Option<Vec<(f64, f64)>>`;
@@ -180,18 +190,18 @@ proptest! {
     - `satisfaction_target: 90.0`;
     - `return_per_satisfaction_point: 0.0005` inside `regulator`.
 
-- [ ] **Step 7: Add localisation for the two new `RegionError` variants.**
+- **Step 7: Add localisation for the two new `RegionError` variants.**
   - `region-error-missing-field = The region file is missing { $field }.`
   - `region-error-unsupported-schema = The region file uses schema { $schema }, which this version can't read.`
 
   Add their match arms in `localize.rs` and their keys in `keys.rs`.
 
-- [ ] **Step 8: Run the whole workspace.** Run `cargo nextest run --workspace`. Expected: PASS,
+- **Step 8: Run the whole workspace.** Run `cargo nextest run --workspace`. Expected: PASS,
   including `save_snapshots` (the golden saves' schema-1 regions take the legacy path) and the
   unchanged rules-version guard. Shipped fingerprints change, and so do any tests that pin them:
   update those pins deliberately.
 
-- [ ] **Step 9: Commit.** `feat: add region schema 2 with storage accreditation and satisfaction-return parameters`
+- **Step 9: Commit.** `feat: add region schema 2 with storage accreditation and satisfaction-return parameters`
 
 ---
 
@@ -222,7 +232,7 @@ proptest! {
   - `RateBase::refresh_plant_firm(&mut self, firm_of: impl Fn(PlantId) -> Option<Megawatts>)`. It
     overwrites `AssetProfile::Plant.firm` for every plant asset where `firm_of` returns `Some`.
 
-- [ ] **Step 1: Write the failing tests.**
+- **Step 1: Write the failing tests.**
   - `the_shipped_battery_is_accredited_at_170_mw` (`plant_spec.rs`): the fixture battery spec's
     `firm_capacity(&shipped ladder)` equals `Megawatts::new(170.0)`. Every generating spec equals
     `capacity_credit.of(capacity)`.
@@ -242,10 +252,10 @@ proptest! {
     `firm_of` returning 170. Afterwards `firm == 170`, and line assets and held slices are
     unchanged.
 
-- [ ] **Step 2: Run them and see them fail.** Run `cargo nextest run -p domain`. Expected:
+- **Step 2: Run them and see them fail.** Run `cargo nextest run -p domain`. Expected:
   compile errors or failures in exactly these tests.
 
-- [ ] **Step 3: Implement.**
+- **Step 3: Implement.**
   - Replace the three `capacity_credit.of(capacity)` sites with `spec.firm_capacity(&region.regulator().storage_accreditation)`.
   - In `annual_review`, call `refresh_plant_firm` with each commissioned plant's derived firm before
     `apply_reserve_review`. Do it inside the closing command, so a restored boundary is never
@@ -256,17 +266,17 @@ proptest! {
     reads it.
   - Set `SIM_RULES_VERSION = 11`.
 
-- [ ] **Step 4: Run them and see them pass.** Run `cargo nextest run -p domain`. Expected: PASS.
+- **Step 4: Run them and see them pass.** Run `cargo nextest run -p domain`. Expected: PASS.
 
-- [ ] **Step 5: Regenerate the snapshots deliberately.** Run `cargo nextest run -p application`,
+- **Step 5: Regenerate the snapshots deliberately.** Run `cargo nextest run -p application`,
   then `cargo insta review`. Expected changes: the rules guard records version 11. Scenario digests
   change only where batteries exist. If a storage-free scenario's digest changes, stop: that is a
   bug.
 
-- [ ] **Step 6: Run the whole workspace.** Run `cargo nextest run --workspace`. Expected: PASS.
+- **Step 6: Run the whole workspace.** Run `cargo nextest run --workspace`. Expected: PASS.
   The golden saves (rules 8) still restore byte-identically, because restore refreshes nothing.
 
-- [ ] **Step 7: Commit.** `feat: accredit batteries by duration in the reserve review (rules 11)`
+- **Step 7: Commit.** `feat: accredit batteries by duration in the reserve review (rules 11)`
 
 ---
 
@@ -289,7 +299,7 @@ proptest! {
   - `GameSession::satisfaction_return_adjustment(&self) -> f64`: the adjustment for the company's
     current satisfaction.
 
-- [ ] **Step 1: Write the failing tests** in `rate_review.rs`, using the fixture regulator. In each,
+- **Step 1: Write the failing tests** in `rate_review.rs`, using the fixture regulator. In each,
   reliability sits at the target and there is no previous cost, so only the base and the
   satisfaction term apply.
 
@@ -314,26 +324,26 @@ proptest! {
   Also add `a_session_reports_its_satisfaction_adjustment` in `session/tests.rs`: a new game at the
   starting satisfaction of 70 reports `0.0005 × (70 − 90) = −0.01`.
 
-- [ ] **Step 2: Run them and see them fail.** Run `cargo nextest run -p domain satisfaction`. Expected: FAIL or a compile error.
+- **Step 2: Run them and see them fail.** Run `cargo nextest run -p domain satisfaction`. Expected: FAIL or a compile error.
 
-- [ ] **Step 3: Implement.** Add the term before `clamp_return`. Set `satisfaction` from
+- **Step 3: Implement.** Add the term before `clamp_return`. Set `satisfaction` from
   `self.company.satisfaction()` in `review_inputs`. Month close updates satisfaction at step 5,
   before the review at step 6, so December's review sees December's value. The estimate inherits
   the term through `review_inputs`. Update any existing test literals of `RateReviewInputs`.
 
-- [ ] **Step 4: Run them and see them pass.** Run `cargo nextest run -p domain`. Expected: PASS. All
+- **Step 4: Run them and see them pass.** Run `cargo nextest run -p domain`. Expected: PASS. All
   the existing A2 proration and band properties still pass.
 
-- [ ] **Step 5: Regenerate the snapshots deliberately.** Run `cargo insta review`. Every scenario
+- **Step 5: Regenerate the snapshots deliberately.** Run `cargo insta review`. Every scenario
   that reaches a December review changes its allowed return and tariff. The version stays 11:
   it is unreleased, so a second regeneration under the same bump is the plan's ruling, recorded in
   the ledger.
 
-- [ ] **Step 6: Run the beginner checks.** Run `cargo nextest run -p infrastructure shipped_regions`.
+- **Step 6: Run the beginner checks.** Run `cargo nextest run -p infrastructure shipped_regions`.
   Expected: PASS. If a year-one run fails, retune the shipped satisfaction values in region data,
   never the rule, and say so in the commit body.
 
-- [ ] **Step 7: Commit.** `feat: let satisfaction adjust the performance-based allowed return`
+- **Step 7: Commit.** `feat: let satisfaction adjust the performance-based allowed return`
 
 ---
 
@@ -359,7 +369,7 @@ proptest! {
     existing `check_line`, so an exact duplicate still returns `DuplicateLine`. `build_line`
     inherits the rule through `line_quote`.
 
-- [ ] **Step 1: Write the failing tests** (`session/commands/tests.rs`, using `tiny_region`).
+- **Step 1: Write the failing tests** (`session/commands/tests.rs`, using `tiny_region`).
   - `a_line_between_joined_nodes_is_refused`: a starter city to another starter city returns
     `LineNotNeeded`. The session's `state_hash` and the ID counter are unchanged.
   - `an_exact_duplicate_still_reports_duplicate_line`.
@@ -379,19 +389,19 @@ proptest! {
     accepting it because the rule lives in `line_quote`. Play to the next month close: the line
     commissions, enters the rate base as before, and connectivity is unchanged.
 
-- [ ] **Step 2: Run them and see them fail.** Run `cargo nextest run -p domain line`. Expected: FAIL.
+- **Step 2: Run them and see them fail.** Run `cargo nextest run -p domain line`. Expected: FAIL.
 
-- [ ] **Step 3: Implement `Network::joined`, the error variant and the `line_quote` check.** Add
+- **Step 3: Implement `Network::joined`, the error variant and the `line_quote` check.** Add
   the copy:
   - `error-line-not-needed = { $from } and { $to } are already joined by lines in service or under construction, so the regulator won't approve another line between them.`
 
   Add its key, and its match arm (with the `from` and `to` names, like `DuplicateLine`).
 
-- [ ] **Step 4: Run the workspace.** Run `cargo nextest run --workspace`. Fix the tests that relied on
+- **Step 4: Run the workspace.** Run `cargo nextest run --workspace`. Fix the tests that relied on
   redundant lines, as listed under Files. If a scenario's script ordered a redundant line,
   re-aim the script and regenerate its snapshot deliberately.
 
-- [ ] **Step 5: Commit.** `feat: refuse transmission lines whose ends are already joined`
+- **Step 5: Commit.** `feat: refuse transmission lines whose ends are already joined`
 
 ---
 
@@ -411,7 +421,7 @@ proptest! {
 - Produces: `format::signed_points(fraction: f64) -> String`. For example `0.005` → `+0.50 pp`,
   `−0.01` → `−1.00 pp` using the existing `MINUS`, and a value that rounds to zero shows `0.00 pp`.
 
-- [ ] **Step 1: Write the failing tests.**
+- **Step 1: Write the failing tests.**
   - `signed_points_formats_percentage_points` (`format.rs`), with the three cases above.
   - `the_tariff_panel_shows_the_satisfaction_adjustment` (`tariff.rs`). On a new game, the review
     stats contain `("Satisfaction adjustment", "−1.00 pp")`, directly after the projected return.
@@ -427,21 +437,21 @@ proptest! {
     whole: assert on painted glyphs (`contrast::painted_glyphs`), not AccessKit. It meets 4.5:1
     against its backing, and `l10n.problems()` is empty.
 
-- [ ] **Step 2: Run them and see them fail.** Run `cargo nextest run -p game satisfaction_adjustment signed_points joined_target`. Expected: FAIL.
+- **Step 2: Run them and see them fail.** Run `cargo nextest run -p game satisfaction_adjustment signed_points joined_target`. Expected: FAIL.
 
-- [ ] **Step 3: Implement.** Add the copy:
+- **Step 3: Implement.** Add the copy:
   - `tariff-satisfaction-adjustment = Satisfaction adjustment`
   - `review-satisfaction-adjustment = Satisfaction moved your allowed return by { $points }.`
 
   Add both keys. The Review line shows when `report.rate_review.is_some()`, the phase is Review,
   and `report.month` is the month the session just closed.
 
-- [ ] **Step 4: Run the game tests.** Run `cargo nextest run -p game`. Expected: PASS.
+- **Step 4: Run the game tests.** Run `cargo nextest run -p game`. Expected: PASS.
 
-- [ ] **Step 5: Run the launch smoke.** Run `cargo run -p game -- --exit-after-frames 120`.
+- **Step 5: Run the launch smoke.** Run `cargo run -p game -- --exit-after-frames 120`.
   Expected: exit 0.
 
-- [ ] **Step 6: Commit.** `feat: show the satisfaction adjustment and the line need test in the HUD`
+- **Step 6: Commit.** `feat: show the satisfaction adjustment and the line need test in the HUD`
 
 ---
 
@@ -457,7 +467,7 @@ proptest! {
 - Consumes: everything above. Golden saves live in
   `crates/infrastructure/tests/support/portable-saves/`. Use the `restored(bytes)` helper.
 
-- [ ] **Step 1: Write the compatibility tests** in `save_snapshots.rs`.
+- **Step 1: Write the compatibility tests** in `save_snapshots.rs`.
   - `an_old_battery_is_accredited_without_rewriting_the_save`, using
     `schema1-charged-battery.mgsave`:
     1. After restore, `game.checkpoint()` equals the decoded checkpoint, with only the header's
@@ -473,7 +483,7 @@ proptest! {
     the next Planning commands, count `RateReviewCompleted` events: exactly 0. The December
     report's `rate_review` is equal before and after.
 
-- [ ] **Step 2: Write the loophole acceptance** in `shipped_regions.rs`.
+- **Step 2: Write the loophole acceptance** in `shipped_regions.rs`.
   `gold_plated_batteries_do_not_raise_cash_over_three_reviews` runs for both regions, seeds 0–7,
   over 36 months from the start:
   1. Compare the hands-off game with the same game plus 10 batteries.
@@ -484,19 +494,19 @@ proptest! {
   5. Assert that ordering a second line from any battery to another starter node returns
      `LineNotNeeded`.
 
-- [ ] **Step 3: Run them.** Run `cargo nextest run -p infrastructure save_snapshots shipped_regions`.
+- **Step 3: Run them.** Run `cargo nextest run -p infrastructure save_snapshots shipped_regions`.
   Expected: PASS. A failure of the loophole acceptance means the rules are wrong; fix them, not
   the test.
 
-- [ ] **Step 4: Run every beginner check.** Run `cargo nextest run --workspace`. This includes
+- **Step 4: Run every beginner check.** Run `cargo nextest run --workspace`. This includes
   `hands_off_plan_survives_year_one`, `no_commands_survive_year_one`,
   `shipped_regions_never_order_outages_hands_off`, `shipped_projects_fit_tycoon_pacing` and the
   §18.3 early-expansion acceptance. Expected: PASS. Run clippy with `-D warnings` and
   `fmt --check` too.
 
-- [ ] **Step 5: Run the launch smoke and update the docs.** Run
+- **Step 5: Run the launch smoke and update the docs.** Run
   `cargo run -p game -- --exit-after-frames 120`, expecting exit 0. Then update the docs listed
   under Files.
 
-- [ ] **Step 6: Commit.** `test: pin A12 compatibility and the closed rate-base loophole` and
+- **Step 6: Commit.** `test: pin A12 compatibility and the closed rate-base loophole` and
   `docs: mark Amendment A12 implemented`.

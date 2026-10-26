@@ -485,17 +485,15 @@
         // Fixed O&M [P7-BR-009] [P7-US-024]: 140 x (6.0 / 40.0 = 0.15) =
         // 21.0 x 200,000 / 12 = 350,000. Build [P7-BR-008] [P7-US-023]: 12
         // months x (2 / 12) = 2 months (ruling 1, sourced; storage has no
-        // ceiling). Windows on the BRT system clock (spec section 28.4): the
-        // starter territory has no solar, and its net load is highest from the
-        // summer afternoon air-conditioning peak (14:00 to 16:00) through the
-        // winter evening peak (18:00 to 20:00), so discharge may start at
-        // 14:00; charging fills the night and morning valley before then.
+        // ceiling). Storage windows (spec section 29):
+        // discharge may support real gaps from 06:00; charging remains eligible until
+        // 22:00 on the system clock. The actual balance chooses one direction.
         (kind: Battery, capacity_mw: 200.0, min_stable: 0.0, ramp_mw_per_min: 0.0,
          startup_hours: 0.0, startup_cost: 0, marginal_cost_per_mwh: 0.0,
          fixed_om_per_month: 350000, capital_cost: 316000000, build_months: 2,
          capacity_credit: 0.0, book_life_months: 180, siting: Anywhere,
          battery: Some((charge_mw: 200.0, energy_mwh: 800.0, charge_efficiency: 0.9,
-                        discharge_efficiency: 1.0, discharge_start_hour: 14, charge_end_hour: 14))),
+                        discharge_efficiency: 1.0, discharge_start_hour: 6, charge_end_hour: 22))),
     ],
     // Each city is an IBGE urban agglomeration (concentracao urbana): the
     // metro and the hinterland it anchors. Base loads are 110 MW per million
@@ -621,7 +619,8 @@
     // Irrigation and Drainage Paper 56, 1998, equation 35: a = 0.25, b =
     // 0.50), normalised to clear sky (0.75): (0.25 + 0.5 x share) / 0.75. The
     // wet summer is the cloudiest, the dry winter the clearest.
-    solar: (
+    // A16: authored FAO Rs/Ra -> clear-sky fraction (/0.75); annual clouds counted once.
+    solar: (calibration: AngstromPrescott,
         clearness_mean: [0.56, 0.62, 0.62, 0.66, 0.67, 0.67, 0.67, 0.67, 0.60, 0.60, 0.59, 0.57],
         clearness_sd: 0.13,
     ),

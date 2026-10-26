@@ -1,6 +1,8 @@
 //! The transmission grid: topology, connectivity, dispatch, frequency and
 //! protection, combined by the [`PowerSystem`] aggregate.
 
+pub mod hvdc;
+pub use hvdc::DcLink;
 pub mod dispatch;
 pub mod frequency;
 pub mod network;

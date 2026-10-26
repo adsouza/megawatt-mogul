@@ -76,3 +76,6 @@ mod global_foundations;
 
 #[path = "game/economics.rs"]
 mod economics;
+
+#[path = "game/hvdc.rs"]
+mod hvdc;

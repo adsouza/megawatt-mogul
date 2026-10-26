@@ -1,6 +1,16 @@
 # Review fixes: disabled controls, autosave warning, directory sync
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+**Completion reconciliation (2026-10-26):** Implemented.
+
+- [x] Disabled controls and the active map layer have distinct visuals, covered by the [contrast tests](../../../crates/game/tests/game/contrast.rs) and [map legend tests](../../../crates/game/tests/game/map_legend.rs).
+- [x] Failed autosaves keep warning until confirmed saving succeeds, covered by the [save/resume tests](../../../crates/game/tests/game/save_resume.rs).
+- [x] Directory synchronization and uncertain-publication retry behavior are covered by the [save-store tests](../../../crates/infrastructure/tests/save_store.rs) and [preferences tests](../../../crates/infrastructure/tests/client_preferences.rs).
+
+The original execution recipe is retained below as plain steps. This reconciliation records
+landed deliverables, without claiming a fresh run of each historical RED test, command or commit
+sequence. Native checks without a complete receipt remain unchecked.
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. The step sequence below is the historical execution recipe.
 
 **Goal:** Fix the three Important findings from the review of commits d7eef29..261e40e.
 - Disabled controls must look disabled.
@@ -79,7 +89,7 @@ No domain or application changes. `SIM_RULES_VERSION` is unchanged.
 - The active map layer is shown as **selected**: `Button::selected(true)`, or the existing toggle
   helper. Don't show it as disabled. Clicking the active layer stays harmless.
 
-- [ ] **Step 1: Write the failing tests.**
+- **Step 1: Write the failing tests.**
   - `a_disabled_button_paints_differently_from_an_enabled_one`. Use the real pass. Use the painted
     shapes, the fill and text colour of two buttons, one enabled and one disabled, laid out the
     same way. Assert they differ and that the disabled text still meets 4.5:1 against its actual
@@ -91,10 +101,10 @@ No domain or application changes. `SIM_RULES_VERSION` is unchanged.
     - check disabled text with the real disabled rendering, not `disabled_alpha` compared with
       itself;
     - keep the existing audit's checked-count floors.
-- [ ] **Step 2: Run them; see them fail.**
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run everything.**
-- [ ] **Step 5: Commit**: `fix(game): disabled controls look disabled; the active map layer is selected`.
+- **Step 2: Run them; see them fail.**
+- **Step 3: Implement.**
+- **Step 4: Run everything.**
+- **Step 5: Commit**: `fix(game): disabled controls look disabled; the active map layer is selected`.
 
 ---
 
@@ -127,7 +137,7 @@ No domain or application changes. `SIM_RULES_VERSION` is unchanged.
 - Starting the warning, and clearing it, are writes made through the existing persistence path,
   not new `dispatch` writes, unless a new `UiAction` is genuinely needed. If one is, glue-test it.
 
-- [ ] **Step 1: Write the failing tests.**
+- **Step 1: Write the failing tests.**
   - `a_failed_autosave_keeps_warning_after_continue_without_saving`. Inject an autosave failure
     with the store's fault hooks, then click *Continue without saving*:
     - the warning is in the top bar model, and in the real pass, with the failed month;
@@ -138,10 +148,10 @@ No domain or application changes. `SIM_RULES_VERSION` is unchanged.
   - At 1024×640, with both the recording-stopped banner and this warning shown, Menu, Milestones
     and Save are inside the screen and clickable. Use the real pass and the existing top-bar fit
     pattern.
-- [ ] **Step 2: Run them; see them fail.**
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run everything.**
-- [ ] **Step 5: Commit**: `fix(game): a failed autosave keeps warning until a save succeeds`.
+- **Step 2: Run them; see them fail.**
+- **Step 3: Implement.**
+- **Step 4: Run everything.**
+- **Step 5: Commit**: `fix(game): a failed autosave keeps warning until a save succeeds`.
 
 ---
 
@@ -184,7 +194,7 @@ No domain or application changes. `SIM_RULES_VERSION` is unchanged.
   A cfg-gated unit test asserts that the Windows path returns `Ok` without opening the directory.
 - Preferences reuse the narrowed helper.
 
-- [ ] **Step 1: Write the failing tests.** Make the set of directories synced observable to the
+- **Step 1: Write the failing tests.** Make the set of directories synced observable to the
   test, for example through an injectable sync function or the existing fault hooks, rather than
   real fsync counts.
   - `a_save_into_an_existing_root_syncs_only_the_root`: none of its ancestors.
@@ -193,7 +203,7 @@ No domain or application changes. `SIM_RULES_VERSION` is unchanged.
     `SyncDirectory` fault on the first attempt.
   - `a_sync_failure_on_the_root_is_still_durability_unconfirmed`, so the error path stays honest.
   - The preferences writer syncs only its own directory.
-- [ ] **Step 2: Run them; see them fail.**
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run everything.**
-- [ ] **Step 5: Commit**: `fix(infrastructure): sync only the directories a save created`.
+- **Step 2: Run them; see them fail.**
+- **Step 3: Implement.**
+- **Step 4: Run everything.**
+- **Step 5: Commit**: `fix(infrastructure): sync only the directories a save created`.

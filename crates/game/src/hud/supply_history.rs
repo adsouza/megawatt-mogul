@@ -2,7 +2,7 @@
 use crate::l10n::format::MoneyStyle;
 use application::Game;
 use bevy_egui::egui;
-use domain::time::SimMonth;
+use domain::{ids::NodeId, time::SimMonth};
 
 use super::{SupplyModel, UiAction};
 use crate::l10n::{Localizer, format};
@@ -32,7 +32,25 @@ pub fn supply_history_model(
     l10n: &Localizer,
     style: &MoneyStyle,
 ) -> SupplyHistoryModel {
-    let days = game.projections().timeline.completed_days();
+    supply_history_model_scoped(game, selected, None, l10n, style)
+}
+
+/// One shared history presenter for Planning, Operating and Review. An island's
+/// month list includes only days for which that island has an archived forecast.
+pub(super) fn supply_history_model_scoped(
+    game: &Game,
+    selected: Option<SimMonth>,
+    island: Option<NodeId>,
+    l10n: &Localizer,
+    style: &MoneyStyle,
+) -> SupplyHistoryModel {
+    let days: Vec<_> = game
+        .projections()
+        .timeline
+        .completed_days()
+        .iter()
+        .filter(|day| island.is_none_or(|id| day.island_forecasts.contains_key(&id)))
+        .collect();
     let day = selected
         .and_then(|month| days.iter().find(|day| day.month == month))
         .or_else(|| days.last());
@@ -46,10 +64,13 @@ pub fn supply_history_model(
         selected: day.map(|day| day.month),
         note: l10n.text("supply-history-note"),
         empty: l10n.text("supply-history-empty"),
-        chart: day.map(|day| {
-            Box::new(super::supply_chart::completed_supply_model(
-                game, day, l10n, style,
-            ))
+        chart: day.and_then(|day| {
+            Some(Box::new(match island {
+                Some(id) => {
+                    super::supply_chart::island_completed_supply_model(game, id, day, l10n, style)?
+                }
+                None => super::supply_chart::completed_supply_model(game, day, l10n, style),
+            }))
         }),
     }
 }

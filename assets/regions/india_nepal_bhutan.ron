@@ -462,19 +462,15 @@
         // 200,000 kW = 5,380,000,000. Fixed O&M [P7-IN-023] [P7-US-024]: 1% of
         // that capex, 940 INR/kW-yr x (6.0 / 40.0 = 0.15) = 141 x 200,000 / 12
         // = 2,350,000. Build [P7-IN-024] [P7-US-023]: 6 months x (2 / 12) = 1
-        // month (ruling 1, sourced; storage has no ceiling). Windows on the
-        // IST system clock (spec section 28.4): the starter territory has no
-        // solar, and its net load is highest from the summer afternoon plateau
-        // (13:00 to 15:00) through the evening and the air-conditioned summer
-        // night (19:00 to 22:00), so discharge may start at 14:00; charging
-        // fills the early-morning valley before then, which a solar fleet
-        // moves to midday.
+        // month (ruling 1, sourced; storage has no ceiling). Storage windows (spec section 29):
+        // discharge may support real gaps from 06:00; charging remains eligible until
+        // 22:00 on the system clock. The actual balance chooses one direction.
         (kind: Battery, capacity_mw: 200.0, min_stable: 0.0, ramp_mw_per_min: 0.0,
          startup_hours: 0.0, startup_cost: 0, marginal_cost_per_mwh: 0.0,
          fixed_om_per_month: 2350000, capital_cost: 5380000000, build_months: 1,
          capacity_credit: 0.0, book_life_months: 180, siting: Anywhere,
          battery: Some((charge_mw: 200.0, energy_mwh: 800.0, charge_efficiency: 0.9,
-                        discharge_efficiency: 1.0, discharge_start_hour: 14, charge_end_hour: 14))),
+                        discharge_efficiency: 1.0, discharge_start_hour: 6, charge_end_hour: 22))),
     ],
     // Each Indian city is a Census of India 2011 urban agglomeration (or city)
     // and the hinterland it anchors. Base loads are 150 MW per million
@@ -622,7 +618,8 @@
     // Drainage Paper 56, 1998, equation 35: a = 0.25, b = 0.50), normalised to
     // clear sky (0.75): (0.25 + 0.5 x share) / 0.75. The monsoon months are
     // the cloudiest (June to September mean 0.67 against 0.76 for the year).
-    solar: (
+    // A16: authored FAO Rs/Ra -> clear-sky fraction (/0.75); annual clouds counted once.
+    solar: (calibration: AngstromPrescott,
         clearness_mean: [0.79, 0.82, 0.79, 0.82, 0.79, 0.69, 0.62, 0.63, 0.73, 0.83, 0.85, 0.80],
         clearness_sd: 0.13,
     ),

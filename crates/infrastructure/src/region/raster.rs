@@ -45,12 +45,13 @@ pub fn rasterize(file: &RegionFile) -> TerrainGrid {
 
 pub(super) fn rasterize_geometry(file: Geography<'_>) -> TerrainGrid {
     let GridDims { width, height } = dims(file);
+    let land_index = PolygonIndex::new(file.land);
+    let exclude_index = PolygonIndex::new(file.exclude);
     let mut cells = Vec::with_capacity(usize::from(width) * usize::from(height));
     for y in 0..height {
         for x in 0..width {
             let (lon, lat) = cell_centre(file, x, y);
-            let land = file.land.iter().any(|p| contains(p, lon, lat))
-                && !file.exclude.iter().any(|p| contains(p, lon, lat));
+            let land = land_index.contains(lon, lat) && !exclude_index.contains(lon, lat);
             cells.push(Cell {
                 land,
                 height: sample(file.height, lon, lat),
@@ -295,6 +296,39 @@ impl RegionFileV4 {
             hydro_potential: &self.hydro_potential,
             wind_potential: Some(&self.wind_potential),
         }
+    }
+}
+
+/// Cache ring extents once; detailed shared area borders otherwise scan every province
+/// for every cell, even when the point lies thousands of kilometres away.
+type BoundedRing<'a> = (&'a [(f64, f64)], [f64; 4]);
+pub(super) struct PolygonIndex<'a> {
+    rings: Vec<BoundedRing<'a>>,
+}
+impl<'a> PolygonIndex<'a> {
+    pub(super) fn new(rings: &'a [Vec<(f64, f64)>]) -> Self {
+        Self {
+            rings: rings
+                .iter()
+                .map(|r| {
+                    let bounds = r.iter().fold(
+                        [
+                            f64::INFINITY,
+                            f64::NEG_INFINITY,
+                            f64::INFINITY,
+                            f64::NEG_INFINITY,
+                        ],
+                        |b, (x, y)| [b[0].min(*x), b[1].max(*x), b[2].min(*y), b[3].max(*y)],
+                    );
+                    (r.as_slice(), bounds)
+                })
+                .collect(),
+        }
+    }
+    pub(super) fn contains(&self, x: f64, y: f64) -> bool {
+        self.rings.iter().any(|(ring, b)| {
+            x >= b[0] && x <= b[1] && y >= b[2] && y <= b[3] && contains(ring, x, y)
+        })
     }
 }
 

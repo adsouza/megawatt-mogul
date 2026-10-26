@@ -112,6 +112,19 @@ fn site_errors() -> Vec<SiteError> {
 
 fn domain_errors() -> Vec<DomainError> {
     vec![
+        DomainError::LineCrossesAreas,
+        DomainError::LinkWithinArea,
+        DomainError::HvdcUnavailable,
+        DomainError::UnknownLink {
+            link: domain::ids::LinkId(1),
+        },
+        DomainError::LinkNotUnderConstruction {
+            link: domain::ids::LinkId(1),
+        },
+        DomainError::LinkNotInService {
+            link: domain::ids::LinkId(1),
+        },
+        DomainError::InvalidLinkTarget,
         DomainError::ConstructionOverflow,
         DomainError::InvalidConstructionCell {
             cell: CellCoord { x: 99, y: 99 },
@@ -386,6 +399,7 @@ fn milestone_progress() -> Vec<MilestoneProgress> {
 fn month_report() -> MonthlyReport {
     let zero = MegawattHours::ZERO;
     MonthlyReport {
+        islands: Default::default(),
         storage: BTreeMap::new(),
         month: SimMonth::new(2027, 3).unwrap(),
         days: 31,
@@ -419,6 +433,7 @@ fn month_report() -> MonthlyReport {
 
 fn tick_summary() -> TickSummary {
     TickSummary {
+        islands: Default::default(),
         tick: 0,
         demand: Megawatts::ZERO,
         served: Megawatts::ZERO,
@@ -588,7 +603,15 @@ fn events() -> Vec<(DomainEvent, bool)> {
 
 #[test]
 fn the_variant_tables_cover_every_variant() {
-    assert_covers_every_variant("DomainError", &domain_errors(), 27, |e| match e {
+    assert_covers_every_variant("DomainError", &domain_errors(), 34, |e| match e {
+        DomainError::LineCrossesAreas => 27,
+        DomainError::LinkWithinArea => 28,
+        DomainError::HvdcUnavailable => 29,
+        DomainError::UnknownLink { .. } => 30,
+        DomainError::LinkNotUnderConstruction { .. } => 31,
+        DomainError::LinkNotInService { .. } => 32,
+        DomainError::InvalidLinkTarget => 33,
+
         DomainError::ConstructionOverflow => 25,
         DomainError::InvalidConstructionCell { .. } => 26,
         DomainError::InvalidRatio { .. } => 0,
@@ -1133,6 +1156,30 @@ fn a_commissioned_plant_is_named_by_its_event_kind_even_when_unknown() {
     .unwrap();
 
     assert!(toast.starts_with("Coal plant 9"), "{toast}");
+}
+
+#[test]
+fn commissioning_notification_explains_automatic_operation_for_each_plant_kind() {
+    let l10n = shipped();
+    let names = Names::empty(&l10n);
+    for kind in PlantKind::ALL {
+        let toast = DomainEvent::PlantCommissioned {
+            plant: PlantId(9),
+            kind,
+        }
+        .toast(&l10n, &names, &usd_style())
+        .expect("commissioning is news");
+        assert!(toast.contains(&names.plant_as(PlantId(9), kind)), "{toast}");
+        if kind.is_dispatchable() {
+            assert!(
+                toast.contains("All-day operation and AGC are enabled"),
+                "{toast}"
+            );
+        } else {
+            assert!(toast.contains("operates automatically"), "{toast}");
+            assert!(!toast.contains("AGC"), "{toast}");
+        }
+    }
 }
 
 #[test]

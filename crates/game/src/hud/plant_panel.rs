@@ -989,13 +989,18 @@ mod tests {
             .spec(PlantKind::Battery)
             .battery
             .unwrap();
-        assert_eq!(spec.discharge_start_hour, 16);
+        assert_eq!(spec.discharge_start_hour, 6);
+        assert_eq!(spec.charge_end_hour, 22);
         for key in ["battery-grid-charging-hint", "battery-cycle-hint"] {
-            assert!(battery_hint(&l10n, key, spec).contains("16:00–24:00"));
+            assert!(battery_hint(&l10n, key, spec).contains("06:00–24:00"));
+            assert!(battery_hint(&l10n, key, spec).contains("00:00–22:00"));
             let archived_start = spec.discharge_start_hour;
             spec.discharge_start_hour = 17;
+            spec.charge_end_hour = 18;
             assert!(battery_hint(&l10n, key, spec).contains("17:00–24:00"));
+            assert!(battery_hint(&l10n, key, spec).contains("00:00–18:00"));
             spec.discharge_start_hour = archived_start;
+            spec.charge_end_hour = 22;
         }
         assert!(l10n.problems().is_empty());
     }
@@ -1187,6 +1192,10 @@ mod tests {
                     .status,
                 PlantStatus::Offline
             );
+            // Commissioning now enables all-day AGC. Explicitly leave the unit
+            // idle so this test can still distinguish connection from operation.
+            game.execute(Command::StopPlant { plant: plant.id })
+                .unwrap();
             let quote = game.session().line_quote(anchor, plant.node).unwrap();
             game.execute(Command::BuildLine {
                 from: anchor,

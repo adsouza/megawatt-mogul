@@ -144,6 +144,15 @@ build-months-value = { $months ->
 }
 build-marginal-cost = Fuel cost
 build-line = Build line
+connection-warning-question =
+    { $cities ->
+        [one] This order would connect one new city by { $month }, adding a forecast peak of { $added }.
+       *[other] This order would connect { $cities } new cities by { $month }, adding a forecast peak of { $added }.
+    }
+    In the island around { $island } at { $time }, forecast demand is { $demand } and supply after planned transfers is { $supply }: a shortfall of { $shortfall }.
+    This assumes ready generators run all day and current HVDC schedules are used. Proceed with construction?
+connection-proceed = Proceed
+connection-cancel = Cancel
 build-line-heading = Transmission line
 build-line-hint-from = Choose where the line starts.
 build-line-hint-to = Starting at { $node }. Choose where it ends.
@@ -540,3 +549,40 @@ construction-economic-zone = Market
 construction-regional-default = Regional default
 build-plant-heading-market = Build at ({ $x }, { $y }) · { $market }
 construction-route-work = { $cells } cells · { $capital } · { $numerator }/{ $denominator } months of work
+
+# Synchronous islands and DC transfer
+error-line-crosses-areas = AC lines cannot cross electrical areas. Build an HVDC link.
+error-link-within-area = HVDC links must join different electrical areas.
+error-hvdc-unavailable = This region has no HVDC catalog.
+error-unknown-link = This HVDC link no longer exists.
+error-link-not-building = This HVDC link is already in service.
+error-link-not-in-service = This HVDC link is still under construction.
+error-link-target = Enter a finite MW target within the link rating.
+hvdc-title = HVDC links
+hvdc-close = Close
+hvdc-empty = Choose two nodes in different electrical areas in the build menu.
+hvdc-build = Build HVDC link
+hvdc-route = { $from } → { $to }
+hvdc-rating = Rating: { $value }
+hvdc-flow = Actual signed flow: { $value }
+hvdc-loss = Transfer losses: { $value }
+hvdc-capital = Capital: { $value } · { $months } game months
+hvdc-utilisation = Year-to-date utilisation: { $value }%
+hvdc-blocked = Blocked: both ends need an online synchronous generator and a live AC grid.
+hvdc-runback = Runback: reducing exports while the sending island recovers.
+hvdc-schedule = Hourly schedule (MW; positive follows the arrow)
+hvdc-target = Override for the rest of today (MW)
+hvdc-clear-override = Return to schedule
+hvdc-cancel-question = Cancel this unfinished HVDC link? Paid instalments remain spent.
+islands-all = All
+island-chip = { $area } { $frequency }
+island-suffix = { $area } ({ $id })
+hvdc-map-legend = DC pulses show actual flow and direction; AC pulses illustrate routes.
+
+hvdc-payment = Monthly instalment: { $value }
+
+hvdc-chart-imports = DC imports
+hvdc-chart-exports = DC exports
+
+island-frequency-dot = ●
+build-ac-status = AC connection

@@ -77,6 +77,13 @@ impl Localize for CommandLogError {
 impl LocalizeWith for DomainError {
     fn localize_with(&self, l10n: &Localizer, names: &Names) -> String {
         match self {
+            Self::LineCrossesAreas => l10n.text("error-line-crosses-areas"),
+            Self::LinkWithinArea => l10n.text("error-link-within-area"),
+            Self::HvdcUnavailable => l10n.text("error-hvdc-unavailable"),
+            Self::UnknownLink { .. } => l10n.text("error-unknown-link"),
+            Self::LinkNotUnderConstruction { .. } => l10n.text("error-link-not-building"),
+            Self::LinkNotInService { .. } => l10n.text("error-link-not-in-service"),
+            Self::InvalidLinkTarget => l10n.text("error-link-target"),
             Self::ConstructionOverflow => l10n.text("error-construction-overflow"),
             Self::InvalidConstructionCell { .. } => l10n.text("error-construction-cell"),
             Self::InvalidRatio { value: _ } => l10n.text("error-invalid-ratio"),
@@ -691,7 +698,11 @@ impl Toast for DomainEvent {
                 &[("city", names.city(*city).into())],
             ),
             Self::PlantCommissioned { plant, kind } => l10n.args(
-                "event-plant-commissioned",
+                if kind.is_dispatchable() {
+                    "event-plant-commissioned-agc"
+                } else {
+                    "event-plant-commissioned"
+                },
                 &[("plant", names.plant_as(*plant, *kind).into())],
             ),
             Self::LineCommissioned { line } => l10n.args(

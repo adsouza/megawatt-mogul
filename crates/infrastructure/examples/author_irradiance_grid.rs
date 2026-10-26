@@ -27,6 +27,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = Path::new(&args[1]);
     let mut file: RegionFileV4 = ron::from_str(&std::fs::read_to_string(path)?)?;
     let legacy = load_region_bytes(std::fs::read(&args[0])?, &RegionId::new(&file.id))?;
+    // Reproduce the historical Plan-6 migration; A16 calibration is a separate authoring step.
+    file.solar.calibration = infrastructure::region::SolarCalibrationDto::Legacy;
     file.irradiance = IrradianceV4::Gaussian(Field {
         base: 1.0,
         blobs: Vec::new(),

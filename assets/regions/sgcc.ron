@@ -1,0 +1,290 @@
+// SGCC system group: five synchronous components, one company, scheduled DC exchange.
+// Authoring decisions, source reuse and illustrative tuning:
+// docs/research/2026-10-26-plan-8-sgcc.md. No corporate generating-fleet claim.
+(
+    region_schema: 4,
+    id: "sgcc",
+    name_key: "region-sgcc",
+    bounds: (west: 73.0, east: 135.0, south: 23.0, north: 54.0),
+    grid: (width: 196, height: 128),
+    currency: CNY,
+    atlas: (colour: "#CF414C"),
+    system_zone: 1,
+    time_zones: [(id: 1, name_key: "zone-cst", standard_offset_minutes: 480, dst_months: [false,false,false,false,false,false,false,false,false,false,false,false])],
+    calendar: (seasons: [Winter,Winter,Spring,Spring,Spring,Summer,Summer,Summer,Autumn,Autumn,Autumn,Winter]),
+    // Raw shared Natural Earth boundaries keep area masks an exact land partition.
+    geography: ["north_central.ron","east.ron","northwest.ron","northeast.ron","southwest.ron","inner_mongolia_west.ron","inner_mongolia_east.ron","operating_exclusions.ron"],
+    // Coastal Fuzhou cell nudge, matching East area below.
+    land: [[(119.1,25.9),(119.6,25.9),(119.6,26.3),(119.1,26.3)]], exclude: [],
+    areas: [
+        (id:1,name_key:"area-north-central-china",geography:["north_central.ron","inner_mongolia_west.ron"]),
+        (id:2,name_key:"area-east-china",geography:["east.ron"],polygons:[[(119.1,25.9),(119.6,25.9),(119.6,26.3),(119.1,26.3)]]),
+        (id:3,name_key:"area-northwest-china",geography:["northwest.ron"]),
+        (id:4,name_key:"area-northeast-china",geography:["northeast.ron","inner_mongolia_east.ron"]),
+        (id:5,name_key:"area-southwest-china",geography:["southwest.ron"]),
+    ],
+    // Physical resource layers are schematic geographical contrasts, not measured cell values.
+    height: (base:0.15,blobs:[(lon:87.0,lat:31.0,radius_deg:8.0,value:0.8),(lon:100.0,lat:35.0,radius_deg:5.0,value:0.5)]),
+    irradiance: (cells_file: "solar_clearness_cells.ron"),
+    cooling_water: (base:0.15,blobs:[(lon:117.0,lat:39.0,radius_deg:4.0,value:0.85),(lon:120.0,lat:31.0,radius_deg:6.0,value:0.85),(lon:112.0,lat:30.0,radius_deg:6.0,value:0.85),(lon:104.0,lat:30.0,radius_deg:5.0,value:0.8),(lon:126.0,lat:45.0,radius_deg:5.0,value:0.8)]),
+    hydro_potential: (base:0.0,blobs:[(lon:103.0,lat:29.0,radius_deg:4.0,value:0.95),(lon:111.0,lat:30.0,radius_deg:2.0,value:0.85),(lon:94.0,lat:30.0,radius_deg:3.0,value:0.8)]),
+    wind_potential: (base:0.25,blobs:[(lon:90.0,lat:42.0,radius_deg:8.0,value:0.65),(lon:111.0,lat:42.0,radius_deg:7.0,value:0.6),(lon:124.0,lat:44.0,radius_deg:4.0,value:0.5)]),
+    wind: (monthly:[0.6,0.6,0.65,0.7,0.65,0.5,0.4,0.4,0.5,0.6,0.65,0.65],persistence:0.995,innovation_sd:0.015,initial_sd:0.06,band:0.12),
+    // A16: NASA POWER annual all-sky / clear-sky energy; receipts in docs/research/2026-10-26-solar-calibration-anchors.json.
+    solar: (calibration: ClearSkyFraction,clearness_mean:[0.65,0.65,0.65,0.65,0.65,0.6,0.55,0.55,0.6,0.65,0.65,0.65],clearness_sd:0.1),
+    hydro: (monthly_flow:[0.6,0.55,0.6,0.75,1.0,1.4,1.7,1.7,1.4,1.1,0.8,0.65]),
+    // National construction proxies [P7-SC-001..006] retain Plan 7 arithmetic.
+    catalog: [
+        // Wind [P7-SC-001] [P7-US-001]: 4,100 CNY/kW x (1,000 / 1,489 =
+        // 0.67159) = 2,753.5, so 2,750 CNY/kW x 300,000 kW = 825,000,000.
+        // Fixed O&M (ruling 4): 825,000,000 x (500,000 / 300,000,000) =
+        // 1,375,000, so 1,380,000. Build 3 months (ruling 1).
+        (kind: Wind, capacity_mw: 300.0, min_stable: 0.0, ramp_mw_per_min: 0.0, startup_hours: 0.0, startup_cost: 0, marginal_cost_per_mwh: 0.0, fixed_om_per_month: 1380000, capital_cost: 825000000, build_months: 3, capacity_credit: 0.2, book_life_months: 300, siting: Anywhere),
+        // Nuclear (Daya Bay, Ling Ao and Taishan are the coastal fleet).
+        // Capital (ruling 3, authoring judgment: derived from [P7-SC-003] by
+        // NA kind relativity): local game coal 1,109.88 CNY/kW x NA nuclear
+        // / coal (2,181.82 / 1,166.67 = 1.87013) = 2,075.6, so 2,080 CNY/kW
+        // x 1,100,000 kW = 2,288,000,000. Fixed O&M (ruling 4):
+        // 2,288,000,000 x (11,000,000 / 2,400,000,000) = 10,486,667, so
+        // 10,500,000. Marginal (ruling 19): 10 x 5.01378 = 50.1
+        // [P7-SC-005]. Start-up (ruling 2): 1,000,000 x 50.1 / 10 =
+        // 5,010,000. Build 18 months (ruling 1).
+        (
+            kind: Nuclear,
+            capacity_mw: 1100.0,
+            min_stable: 0.7,
+            ramp_mw_per_min: 5.0,
+            startup_hours: 48.0,
+            startup_cost: 5010000,
+            marginal_cost_per_mwh: 50.1,
+            fixed_om_per_month: 10500000,
+            capital_cost: 2288000000,
+            build_months: 18,
+            capacity_credit: 0.95,
+            book_life_months: 480,
+            siting: CoolingWater(0.5),
+        ),
+        // Coal [P7-SC-003] [P7-US-007]: 7.80656e9 CNY / 2,000,000 kW =
+        // 3,903.28 CNY/kW x (1,166.67 / 4,103 = 0.28434) = 1,109.88, so
+        // 1,110 CNY/kW x 1,000,000 kW = 1,110,000,000. Fixed O&M (ruling 4):
+        // 1,110,000,000 x (2,000,000 / 700,000,000) = 3,171,429, so
+        // 3,170,000. Marginal (ruling 19): 30 x 5.01378 = 150.4, so 150
+        // [P7-SC-005]. Start-up (ruling 2, per MW because the unit is 1,000 MW rather
+        // than 600): 150,000 / 600 MW x 1,000 MW x 150 / 30 = 1,250,000.
+        // Build 8 months (ruling 1).
+        (
+            kind: Coal,
+            capacity_mw: 1000.0,
+            min_stable: 0.4,
+            ramp_mw_per_min: 10.0,
+            startup_hours: 8.0,
+            startup_cost: 1250000,
+            marginal_cost_per_mwh: 150.0,
+            fixed_om_per_month: 3170000,
+            capital_cost: 1110000000,
+            build_months: 8,
+            capacity_credit: 0.95,
+            book_life_months: 480,
+            siting: CoolingWater(0.5),
+        ),
+        // Combined cycle. Capital (ruling 3, authoring judgment: derived from
+        // [P7-SC-003] by NA kind relativity): 1,109.88 x NA CCGT / coal
+        // (600 / 1,166.67 = 0.51429) = 570.8, so 571 CNY/kW x 500,000 kW =
+        // 285,500,000. Fixed O&M (ruling 4): 285,500,000 x (600,000 /
+        // 300,000,000) = 571,000. Marginal (ruling 19): 45 x 5.01378 =
+        // 225.6, so 226 [P7-SC-005]. Start-up (ruling 2): 40,000 x 226 / 45 =
+        // 200,889, so 201,000. Build 4 months (ruling 1).
+        (
+            kind: Ccgt,
+            capacity_mw: 500.0,
+            min_stable: 0.3,
+            ramp_mw_per_min: 25.0,
+            startup_hours: 2.0,
+            startup_cost: 201000,
+            marginal_cost_per_mwh: 226.0,
+            fixed_om_per_month: 571000,
+            capital_cost: 285500000,
+            build_months: 4,
+            capacity_credit: 0.95,
+            book_life_months: 360,
+            siting: Anywhere,
+        ),
+        // Peaker. Capital (ruling 3, authoring judgment: derived from
+        // [P7-SC-003] by NA kind relativity, through the CCGT): 570.79 x NA
+        // peaker / CCGT (500 / 600 = 0.83333) = 475.7, so 476 CNY/kW x
+        // 200,000 kW = 95,200,000. Fixed O&M (ruling 4): 95,200,000 x
+        // (170,000 / 100,000,000) = 161,840, so 162,000. Marginal (ruling
+        // 19): 150 x 5.01378 = 752.1, so 752 [P7-SC-005]. Start-up (ruling 2):
+        // 5,000 x 752 / 150 = 25,067, so 25,100. Build 2 months (ruling 1).
+        (
+            kind: Peaker,
+            capacity_mw: 200.0,
+            min_stable: 0.2,
+            ramp_mw_per_min: 40.0,
+            startup_hours: 0.16666666666666666,
+            startup_cost: 25100,
+            marginal_cost_per_mwh: 752.0,
+            fixed_om_per_month: 162000,
+            capital_cost: 95200000,
+            build_months: 2,
+            capacity_credit: 0.95,
+            book_life_months: 360,
+            siting: Anywhere,
+        ),
+        // Solar [P7-SC-002] [P7-US-016]: 3,200 CNY/kW x (500 / 1,502 =
+        // 0.33289) = 1,065.2, so 1,070 CNY/kW x 300,000 kW = 321,000,000.
+        // Fixed O&M (ruling 4): 321,000,000 x (500,000 / 150,000,000) =
+        // 1,070,000. Build 2 months (ruling 1).
+        (
+            kind: Solar,
+            capacity_mw: 300.0,
+            min_stable: 0.0,
+            ramp_mw_per_min: 300.0,
+            startup_hours: 0.0,
+            startup_cost: 0,
+            marginal_cost_per_mwh: 0.0,
+            fixed_om_per_month: 1070000,
+            capital_cost: 321000000,
+            build_months: 2,
+            capacity_credit: 0.3,
+            book_life_months: 300,
+            siting: Anywhere,
+        ),
+        // Hydro [P7-SC-006] [P7-US-019] [P7-FX-020]: 2,302 USD/kW x 7.189847
+        // = 16,551 CNY/kW x (1,500 / 7,073 = 0.21207) = 3,510.0, so 3,510
+        // CNY/kW x 800,000 kW = 2,808,000,000. Fixed O&M (ruling 4):
+        // 2,808,000,000 x (2,700,000 / 1,200,000,000) = 6,318,000, so
+        // 6,320,000. Start-up (ruling 2 with the hydro judgment: the CCGT
+        // marginal ratio): 1,000 x 226 / 45 = 5,022, so 5,020. Build 12
+        // months (ruling 1).
+        (
+            kind: Hydro,
+            capacity_mw: 800.0,
+            min_stable: 0.0,
+            ramp_mw_per_min: 100.0,
+            startup_hours: 0.08333333333333333,
+            startup_cost: 5020,
+            marginal_cost_per_mwh: 0.0,
+            fixed_om_per_month: 6320000,
+            capital_cost: 2808000000,
+            build_months: 12,
+            capacity_credit: 0.8,
+            book_life_months: 600,
+            siting: HydroSite(0.5),
+        ),
+        // Storage, standing in for pumped hydro such as the Guangzhou and
+        // Huizhou pumped-storage stations. Capital (ruling 3, authoring
+        // judgment: derived from [P7-SC-002] by NA kind relativity): local
+        // game solar 1,065.25 CNY/kW x NA battery / solar (500 / 500 = 1) =
+        // 1,065.2, so 1,070 CNY/kW x 200,000 kW = 214,000,000. Fixed O&M
+        // (ruling 4): 214,000,000 x (100,000 / 100,000,000) = 214,000. Build 2
+        // months (ruling 1). Storage windows (spec section 29):
+        // discharge may support real gaps from 06:00; charging remains eligible until
+        // 22:00 on the system clock. The actual balance chooses one direction.
+        (kind: Battery, capacity_mw: 200.0, min_stable: 0.0, ramp_mw_per_min: 0.0,
+         startup_hours: 0.0, startup_cost: 0, marginal_cost_per_mwh: 0.0,
+         fixed_om_per_month: 214000, capital_cost: 214000000, build_months: 2,
+         capacity_credit: 0.0, book_life_months: 180, siting: Anywhere,
+         battery: Some((charge_mw: 200.0, energy_mwh: 800.0, charge_efficiency: 0.9,
+                        discharge_efficiency: 1.0, discharge_start_hour: 6, charge_end_hour: 22))),
+    ],
+    // Loads are pacing weights; total approximates 40,850 MW × 3,170/980. Starter metros are deliberately smaller.
+    cities: [
+        (id:1,name_key:"city-beijing",lon:116.4,lat:39.9,base_load_mw:1500.0,zone:1,climate:1),
+        (id:2,name_key:"city-tianjin",lon:117.2,lat:39.12,base_load_mw:750.0,zone:1,climate:1),
+        (id:3,name_key:"city-langfang",lon:116.7,lat:39.52,base_load_mw:250.0,zone:1,climate:1),
+        (id:4,name_key:"city-baoding",lon:115.48,lat:38.87,base_load_mw:500.0,zone:1,climate:1),
+        (id:5,name_key:"city-shijiazhuang",lon:114.51,lat:38.04,base_load_mw:4500.0,zone:1,climate:1),
+        (id:6,name_key:"city-jinan",lon:117.12,lat:36.65,base_load_mw:6500.0,zone:1,climate:1),
+        (id:7,name_key:"city-taiyuan",lon:112.55,lat:37.87,base_load_mw:4500.0,zone:1,climate:1),
+        (id:8,name_key:"city-hohhot",lon:111.75,lat:40.84,base_load_mw:2500.0,zone:1,climate:1),
+        (id:9,name_key:"city-zhengzhou",lon:113.63,lat:34.75,base_load_mw:7000.0,zone:1,climate:1),
+        (id:10,name_key:"city-wuhan",lon:114.31,lat:30.59,base_load_mw:8500.0,zone:1,climate:1),
+        (id:11,name_key:"city-changsha",lon:112.94,lat:28.23,base_load_mw:5500.0,zone:1,climate:1),
+        (id:12,name_key:"city-nanchang",lon:115.86,lat:28.68,base_load_mw:4500.0,zone:1,climate:1),
+        (id:13,name_key:"city-shanghai",lon:121.47,lat:31.23,base_load_mw:14000.0,zone:1,climate:1),
+        (id:14,name_key:"city-nanjing",lon:118.8,lat:32.06,base_load_mw:7000.0,zone:1,climate:1),
+        (id:15,name_key:"city-hangzhou",lon:120.16,lat:30.27,base_load_mw:7000.0,zone:1,climate:1),
+        (id:16,name_key:"city-hefei",lon:117.23,lat:31.82,base_load_mw:5000.0,zone:1,climate:1),
+        (id:17,name_key:"city-fuzhou",lon:119.3,lat:26.08,base_load_mw:4500.0,zone:1,climate:1),
+        (id:18,name_key:"city-xian",lon:108.94,lat:34.34,base_load_mw:6000.0,zone:1,climate:1),
+        (id:19,name_key:"city-lanzhou",lon:103.83,lat:36.06,base_load_mw:3000.0,zone:1,climate:1),
+        (id:20,name_key:"city-xining",lon:101.78,lat:36.62,base_load_mw:1800.0,zone:1,climate:1),
+        (id:21,name_key:"city-yinchuan",lon:106.23,lat:38.49,base_load_mw:1800.0,zone:1,climate:1),
+        (id:22,name_key:"city-urumqi",lon:87.62,lat:43.83,base_load_mw:3800.0,zone:1,climate:1),
+        (id:23,name_key:"city-shenyang",lon:123.43,lat:41.8,base_load_mw:5500.0,zone:1,climate:1),
+        (id:24,name_key:"city-changchun",lon:125.32,lat:43.9,base_load_mw:4000.0,zone:1,climate:1),
+        (id:25,name_key:"city-harbin",lon:126.64,lat:45.76,base_load_mw:4500.0,zone:1,climate:1),
+        (id:26,name_key:"city-chifeng",lon:118.89,lat:42.26,base_load_mw:1500.0,zone:1,climate:1),
+        (id:27,name_key:"city-chengdu",lon:104.07,lat:30.57,base_load_mw:8500.0,zone:1,climate:1),
+        (id:28,name_key:"city-chongqing",lon:106.55,lat:29.56,base_load_mw:9000.0,zone:1,climate:1),
+        (id:29,name_key:"city-lhasa",lon:91.13,lat:29.65,base_load_mw:800.0,zone:1,climate:1),
+    ],
+    // CST industry/evening load; regional averages are illustrative tuning.
+    climates: [(id:1,shapes:[
+        ("winter",[0.72,0.68,0.65,0.64,0.64,0.68,0.78,0.9,1.0,1.04,1.05,1.03,1.0,1.0,1.02,1.04,1.08,1.15,1.2,1.18,1.1,1.0,0.9,0.8]),
+        ("summer",[0.75,0.71,0.68,0.66,0.66,0.7,0.8,0.9,1.0,1.08,1.13,1.15,1.12,1.18,1.22,1.23,1.2,1.14,1.1,1.12,1.1,1.02,0.92,0.82]),
+        ("shoulder",[0.7,0.66,0.64,0.63,0.64,0.68,0.76,0.85,0.9,0.92,0.93,0.94,0.94,0.94,0.95,0.96,0.98,1.0,0.99,0.96,0.91,0.85,0.78,0.73])],
+        month_shapes:["winter","winter","shoulder","shoulder","shoulder","summer","summer","summer","shoulder","shoulder","shoulder","winter"],
+        monthly:[1.0,0.92,0.95,0.92,0.95,1.0,1.08,1.08,1.0,0.95,0.97,1.02])],
+    demand_noise:(forecast_error:0.03,error_persistence:0.995),
+    frequency: (
+        nominal_hz: 50.0,
+        k_inertia: 5.0,
+        k_damping: 0.2,
+        normal_band_hz: 0.05,
+        shed_below_hz: -0.5,
+        blackout_below_hz: -1.5,
+        blackout_after_shed_ticks: 30,
+        curtail_above_hz: 0.5,
+        trip_above_hz: 1.5,
+        trip_after_ticks: 5,
+        shed_stage_spacing_hz: 0.2,
+        shed_step: 0.05,
+    ),
+    regulator: (
+        storage_accreditation: [(2.0, 0.65), (4.0, 0.85), (6.0, 0.93), (8.0, 0.96)],
+        satisfaction_target: 90.0,
+        return_per_satisfaction_point: 0.0005,
+        // Tariffs [P7-SC-005] [P7-US-034]: 679.869 CNY/MWh x (95 / 135.6 =
+        // 0.70059) = 476.3, so 476 to start, and x (100 / 135.6 = 0.73746) =
+        // 501.4, so a reference of 501 (the same 0.95 relation as shipped).
+        // Basis: P7-SC-005 is the commercial and industrial single-part
+        // 1-10 kV energy price, tax included, while P7-US-034 is an
+        // all-sector average (authoring judgment: basis differs from the US
+        // all-sector reference; not re-based). The fuel proxy (ruling 19)
+        // scales by this same 501.378 reference, so it inherits that basis.
+        starting_tariff_per_mwh: 476.0,
+        reference_tariff_per_mwh: 501.0,
+        base_return: 0.09,
+        min_return: 0.07,
+        max_return: 0.11,
+        reliability_target: 0.999,
+        return_per_reliability: 2.0,
+        return_per_cost_improvement: 0.05,
+        reserve_margin: 0.2,
+        strike_threshold: 0.005,
+        strikes_to_revoke: 3,
+        clean_months_to_expire: 3,
+        frequency_band_hz: 0.2,
+        frequency_violation_share: 0.05,
+    ),
+    satisfaction: (
+        starting: 70.0,
+        reliability_floor: 0.95,
+        price_sensitivity: 2.0,
+        smoothing: 0.2,
+    ),
+    // [P8-GAME-AC] National line cost proxy 444,000 CNY/km × 26.95 km/cell; 201.07/26.95 ≈ 7 cells/month.
+    lines:(cost_per_cell:11966000,cells_per_month:7,book_life_months:600),
+    // [P8-GAME-DC] Explicit game tuning; no real project or currency conversion claim.
+    hvdc:(rating_mw:1000.0,converter_cost:400000000,cost_per_cell:12000000,
+        converter_build_months:4,ramp_mw_per_min:50.0,converter_loss:0.01,
+        loss_per_cell:0.0002,book_life_months:600,designed_hours_per_year:4000.0),
+    // Beijing, Tianjin, Langfang. National capital relativity [P7-SC-003]; freely tuned cash.
+    start:(year:2027,month:1,cash:4760000000,home_city:1,connected_cities:[1,2,3],
+        // North–Central fleet; schematic sites near named generating centres, all on separate cells.
+        fleet:[(Coal,117.8,39.4),(Coal,116.4,40.3),
+            (Ccgt,116.1,39.7),(Ccgt,117.5,39.1),(Ccgt,116.9,40.0),
+            (Peaker,115.7,39.4),(Peaker,117.2,40.5)]),
+)

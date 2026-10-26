@@ -287,6 +287,24 @@ impl GameSession {
             events.push(DomainEvent::LineCommissioned { line: line_id });
         }
 
+        for id in self.power.network_mut().advance_links() {
+            let link = self.power.network().link(id).expect("commissioned link");
+            let capital = self
+                .link_construction(id)
+                .expect("immutable link terms")
+                .capital;
+            self.company.rate_base_mut().add(
+                AssetRef::Link(id),
+                capital,
+                self.region.hvdc().expect("link catalog").book_life_months,
+                month,
+                AssetProfile::Link {
+                    from: link.from,
+                    to: link.to,
+                },
+            );
+        }
+        self.power.recompute_islands();
         let connected_after = self.connected_cities();
         events.extend(
             connected_after
@@ -322,6 +340,12 @@ impl GameSession {
                 .filter(|p| !matches!(p.status(), PlantStatus::UnderConstruction { .. }))
                 .map(|p| p.spec().firm_capacity(accreditation))
         });
+        let utilisation = self.link_utilisation(month);
+        events.extend(
+            self.company
+                .rate_base_mut()
+                .review_link_utilisation(month.year(), &utilisation),
+        );
         // Connectivity is already this close's: December's new cities count.
         let inputs = self.review_inputs(month);
         let capital = self
@@ -400,6 +424,7 @@ impl GameSession {
         let served = acc.served() * weight;
         let out_of_band = acc.out_of_band_share();
         MonthlyReport {
+            islands: acc.island_reports(weight),
             month,
             days,
             revenue: totals.revenue,

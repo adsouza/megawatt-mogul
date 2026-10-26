@@ -15,13 +15,14 @@ pub struct ArchivedChartMonth {
 struct LiveChart {
     points: VecDeque<TimelinePoint>,
     forecast: Option<[ForecastPoint; 24]>,
+    island_forecasts: BTreeMap<domain::ids::NodeId, [ForecastPoint; 24]>,
 }
 struct ChartMonth {
     month: SimMonth,
     completed: Option<CompletedDay>,
     live: Option<LiveChart>,
 }
-domain::state_record!(LiveChart { points, forecast });
+domain::state_record!(LiveChart { points, forecast; since4 { island_forecasts: Default::default() } });
 domain::state_record!(ChartMonth {
     month,
     completed,
@@ -32,7 +33,7 @@ impl Projections {
         self,
         current: SimMonth,
     ) -> Result<(Self, Vec<ArchivedChartMonth>), StateError> {
-        self.split_charts_schema(current, 2)
+        self.split_charts_schema(current, domain::state::CURRENT_STATE_SCHEMA)
     }
     pub fn split_charts_schema(
         mut self,
@@ -73,6 +74,7 @@ impl Projections {
                 .live = Some(LiveChart {
                 points: timeline.points,
                 forecast: timeline.forecast,
+                island_forecasts: timeline.island_forecasts,
             });
         }
         let charts = months
@@ -85,7 +87,7 @@ impl Projections {
         Ok((self, charts))
     }
     pub fn restore_charts(self, charts: Vec<ArchivedChartMonth>) -> Result<Self, StateError> {
-        self.restore_charts_schema(charts, 2)
+        self.restore_charts_schema(charts, domain::state::CURRENT_STATE_SCHEMA)
     }
     pub fn restore_charts_schema(
         mut self,
@@ -119,6 +121,7 @@ impl Projections {
                 live = true;
                 self.timeline.points = value.points;
                 self.timeline.forecast = value.forecast;
+                self.timeline.island_forecasts = value.island_forecasts;
             }
         }
         Ok(self)

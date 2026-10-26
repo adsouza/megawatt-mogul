@@ -62,14 +62,14 @@ fn setup(
     );
     (app, saves, logs, id, bytes, expected)
 }
-/// Compare preserved fields using the source schema. A new capture has schema 3 and its
+/// Compare preserved fields using the source schema. A new capture uses the current schema and its
 /// own hash, while elapsed state/history, RNG, source region and provenance remain unchanged.
 fn assert_upgraded_without_rewriting_history(game: &Game, source: &GameCheckpoint) {
     let actual = game.checkpoint();
     let old = source.snapshot.as_ref().unwrap();
     let new = actual.snapshot.as_ref().unwrap();
     assert_eq!(old.schema, 1);
-    assert_eq!(new.schema, 3);
+    assert_eq!(new.schema, domain::state::CURRENT_STATE_SCHEMA);
     let mut header = source.header.clone();
     header.sim_rules_version = domain::SIM_RULES_VERSION;
     assert_eq!(actual.header, header);

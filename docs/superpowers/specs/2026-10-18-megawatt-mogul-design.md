@@ -17,7 +17,13 @@
   regions, the first Milestone 2 amendment (§28, 2026-10-24; Plan 6 global foundations
   implemented under rules 16; optional construction economic zones implemented in Plan 6a
   under rules 17, 2026-10-25; Plan 7's five single-area regions implemented under rules 18,
-  2026-10-26; Plan 8 pending)
+  2026-10-26; Plan 8 synchronous islands, HVDC and SGCC implemented under rules 19,
+  portable state schema 4, 2026-10-26). Rules 20 extend A5's all-day/AGC defaults to newly
+  commissioned dispatchable plants, with a notification (§16.3, 2026-10-26).
+  A15 extends battery discharge eligibility to 06:00–24:00 and charging to 00:00–22:00
+  (§29, 2026-10-26, rules 21). A16 standardizes solar calibration and counts annual clouds once
+  (§30, 2026-10-26, rules 22). A17 rebalances Southern China’s starting economy
+  (§31, 2026-10-26, rules 23).
 - **Engine:** Rust 1.98, Bevy 0.20, bevy_egui 0.43, bevy-inspector-egui 0.38
 
 ## 1. Vision and goals
@@ -78,9 +84,9 @@ stands for.
   implied by that month's pattern, including any start-up already in progress across midnight.
   Physical plant state never carries from March's representative day into April's. Persistent
   construction, company and regulator state still advances by calendar month.
-- **Batteries use a daily cycle (§20, amended by §25).** Every played day starts empty. They may
-  charge immediately from 00:00 until 18:00, independently of daylight, cover evening generation
-  gaps from 16:00 (§27), and report then clear
+- **Batteries use a daily cycle (§20, amended by §29).** Every played day starts empty. They may
+  charge immediately from 00:00 until 22:00, independently of daylight, cover generation
+  gaps from 06:00, and report then clear
   unused energy at midnight. Their energy flows and midnight remainder receive the daily accounting
   weight; instantaneous power, energy capacity and state of charge do not.
 - **Seasons change visibly every few played days.** Months drive the demand shape, solar
@@ -225,13 +231,14 @@ preview remain selectable through their cards; broken entries retain their disab
 - A 3D diorama map built from the region's terrain cell grid, with phase-specific overlays (§8.3).
 - Seven generating plant types plus battery storage (§3.2, §20, §25), plant construction, and
   transmission-line construction for connectivity. Batteries are implemented under Plan 4;
-  wind and the revised charging window are specified under Plan 5, not yet implemented.
+  wind and the revised charging window are implemented under Plan 5 (§25).
 - Demand centres with daily, seasonal and noise profiles, plus forecasts.
 - The full day cycle (one representative day per month), frequency model, protection, economics, regulator, scoring and failure.
 - An egui HUD for every phase, and dev tools behind a `dev` feature.
 - Command logging with versioned replay inputs and an archived region file (§7).
 - Player-facing manual saves, month-close autosaves and resume, implemented before Plan 3 (§17).
 - Localisation scaffolding with en-US only.
+- Presentation-only daily sound cues at 1× during Operating (§8.5).
 
 ### 3.2 Plant types (shipped-region tuning, stored as region data and not in code)
 
@@ -246,7 +253,7 @@ preview remain selectable through their cards; broken entries retain their disab
 | Hydro | 800 MW | 0% | 100 MW/min | 5 min | $1k | $0/MWh | $1.2B | 12 | Energy-limited dispatch |
 
 - **Battery storage** is a buildable asset kind alongside the seven generators: separate
-  charge/discharge MW and stored MWh, automatic 00:00–18:00 charging and evening gap support,
+  charge/discharge MW and stored MWh, automatic 00:00–22:00 charging and 06:00–24:00 gap support,
   and no energy carried past midnight. Its initial tuning is in §20; §25 amends its charging
   contract. It is not a primary energy source.
 - **Hydro** has a **daily water budget** (MWh per day, varying by month and site). Output stops when
@@ -275,7 +282,7 @@ preview remain selectable through their cards; broken entries retain their disab
 - Competitors and markets.
 - Loans.
 - Cross-platform command replay. Portable state and supported save migrations are defined in §21.
-- Audio.
+- Audio beyond the implemented daily time cues (§8.5).
 - A tutorial campaign.
 - More regions (Milestone 2: Amendment A14, §28).
 - Separate minimum-on/minimum-off dwell timers. Existing commitment feasibility already requires
@@ -699,6 +706,7 @@ run through the ordinary generating-plant step or acquire synthetic opening outp
 | `CameraPlugin` | Orbit, pan and zoom, plus a tilt-shift depth-of-field effect. |
 | `HudPlugin` | The egui panels (§8.4). They read only query views and projections, and they write only by sending `PlayerCommand`s. |
 | `LocalizationPlugin` | Fluent bundles; translates typed events, errors and lessons into display text. |
+| `DailyAudioPlugin` | Daily time cues triggered at 1× during active Operating; presentation only (§8.5). |
 | `DevToolsPlugin` (`dev` feature) | A bevy-inspector-egui inspector filtered to render entities, plus reflected visual `TuningConfig` scales/colours. Simulation tuning remains region data for a new session. |
 
 ### 8.2 Art direction
@@ -748,11 +756,11 @@ run through the ordinary generating-plant step or acquire synthetic opening outp
   with a visible 0–100% solar-potential key outside the map viewport. Use the same absolute scale
   in every region. This is the site's static game resource rating, not the percentage of sunny
   days or current weather; season, sun angle and cloud cover separately affect solar output.
-- **Selectable map layers:** terrain, sunshine, cooling water, hydro potential, and suitability
-  for nuclear, coal, solar, wind and hydro. Omit gas (CCGT) and peaker suitability overlays: those
-  plants accept any land cell, so separate overlays add no siting information. Batteries likewise
-  have no suitability overlay (§20.7). The cell inspector
-  still reports suitability for every plant kind.
+- **Selectable map layers:** terrain, sunshine, wind potential, cooling water, hydro potential,
+  and suitability for nuclear, coal and hydro. Solar and wind use their resource-quality maps;
+  their binary suitability overlays are redundant because they accept any land cell. Gas (CCGT),
+  peakers and batteries likewise have no suitability overlay. The cell inspector still reports
+  suitability for every plant kind.
 - **Operating overlay:** supply indicators over the warm, lit diorama: distinct warm yellow
   facade windows showing supply status and deep-blue energised lines with bright cyan moving dots.
   Plant output gauges are omitted. Window groups go dark as the common supplied-demand fraction
@@ -870,6 +878,18 @@ Actual per-line loading still requires a power-flow `NetworkModel`.
   fully legible or are omitted for spacing; opacity fades never make visible labels unreadable.
   Palette/state checks, property tests over arbitrary colour pairs and tests of actual paint
   output guard the requirement. See [WCAG 2.2 contrast guidance](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum).
+
+### 8.5 Daily audio cues
+
+Daily sound cues are implemented: a rooster at the home city's sunrise, metro chimes at 08:30
+and 17:00, a gong followed by laughter at noon, and a doorbell at 17:30, on the system clock.
+Sunrise follows the region's solar model; there is no rooster cue on a day without sunrise.
+Cues trigger only while an active game is Operating at 1× and persistence has not frozen play.
+An already playing clip finishes naturally if speed changes. Paused/fast-forwarded cues are
+skipped, and returning to 1× or loading a save never catches up missed sounds. Replacing or
+leaving a session removes its playback. Audio is client state and changes neither simulation
+RNG nor saves. Asset sources, licenses and preparation are recorded in
+[`assets/audio/README.md`](../../../assets/audio/README.md).
 
 ## 9. Cross-cutting concerns
 
@@ -1687,8 +1707,8 @@ should be asked before starting a day that the forecast already says will need r
   in the shipped regions. It runs the hands-off plan.
 - **Goal:** Start the day asks for confirmation when `capacity_shortfall_check()` (§15.5) reports
   a shortfall.
-- **Non-goal:** committing newly built plants automatically. A plant the player builds still
-  commissions uncommitted, as today.
+- **Goal (rules 20):** newly built dispatchable plants commission with all-day operation and AGC
+  enabled, with a notification explaining those defaults and that they can be changed in Planning.
 - **Non-goal:** changing commitments between months. Patterns already persist.
 - **Anti-goal:** a confirmation that nags. It appears only on a forecast shortfall, never on a
   minimum-generation or dry-hydro warning, and never in Operating.
@@ -1705,6 +1725,13 @@ should be asked before starting a day that the forecast already says will need r
   - the end state is identical to the hands-off plan's commands applied to a fresh game.
 - **Read side.** `plant_views()` reports the inherited pattern and AGC, so the commitment grid
   opens already filled.
+- **Commissioning (rules 20).** When construction completes, dispatchable plants receive the
+  same all-day pattern and AGC defaults. The next representative day initialises them from that
+  pattern, charging the normal boundary start for a plant previously offline. The commissioning
+  notification names the plant, confirms all-day operation and AGC, and points to Planning to
+  change them. Later months preserve the player's edits. Existing commissioned plants retain
+  their settings when a save is loaded. Solar, wind and storage keep their automatic controllers;
+  their commissioning notification confirms automatic operation without claiming AGC.
 
 ### 16.4 The shortfall confirmation (game)
 
@@ -1888,6 +1915,28 @@ the order. Confirming removes the line and all remaining monthly instalments. Co
 remain spent, with no refund. The route can be ordered again. In-service lines cannot be cancelled,
 and line construction cannot be cancelled in Operating or Review. **Cancel drawing** in the build
 menu only abandons choosing endpoints, without cancelling an existing order.
+
+### 16.10 Connection capacity confirmation (2026-10-26)
+
+Clicking Build line or Build HVDC link asks **Proceed / Cancel**, with Cancel initially focused,
+when the order would energise new cities and create or worsen a forecast shortfall. Enter on the
+initial focus, Escape and backdrop dismissal all cancel without ordering or charging anything.
+Proceed submits the original order once. Safe orders continue directly.
+
+The pure forecast considers the entire newly energised component, including cities reached
+through existing orders. It assesses each accelerated connection date, using the first playable
+month after construction completes. Only plants and routes ready by that date count. Ready
+generators are assumed committed all day, resources and storage use the existing Planning model,
+and HVDC uses the current schedules, rating, losses and synchronous-terminal requirement. Current
+commitment settings alone do not cause this capacity warning. Compare the same future baseline
+without the order to avoid warning for an unchanged shortfall elsewhere.
+
+The prompt states the added city count and coincident peak, the projected month, and the affected
+island's demand, deliverable supply, shortfall and hour. It states the forecast assumptions.
+Revalidate when Proceed is clicked; changed figures require confirmation again. A stale prompt
+cannot order after the phase or route eligibility changes. The start-of-day confirmation (§16.4)
+remains the separate assessment of the actual commitment plan. This is a read-side/UI change;
+simulation commands, replay rules and portable state are unchanged.
 
 ## 17. Amendment A6: Save/resume before Plan 3 (2026-10-20)
 
@@ -2875,6 +2924,8 @@ windowed launch smoke and native idle-performance measurement.
 
 ## 25. Amendment A11: Wind farms and midnight-to-18:00 battery charging (2026-10-23)
 
+The battery windows below are the rules-14 history; §29 supersedes them for new games.
+
 **Status:** Implemented under `SIM_RULES_VERSION` **14**, portable state schema **2** and
 region schema **3**. Focused automated checks and isolated native playtests are recorded in
 [Plan 5: Wind farms and revised battery charging](../plans/2026-10-23-plan-5-wind-farms.md).
@@ -3351,6 +3402,8 @@ design goal of building only what the reserve margin justifies.
 
 ## 27. Amendment A13: Battery discharge from 16:00 (2026-10-24)
 
+The battery windows below are the rules-15 history; §29 supersedes them for new games.
+
 **Status:** Implemented under `SIM_RULES_VERSION` **15**. This supersedes the default
 17:00 discharge start in §§20, 23 and 25 for new games. Both shipped regions and the current
 fixtures author `discharge_start_hour: 16`.
@@ -3403,7 +3456,10 @@ uses little power in summer and more in winter, and that the picker did not feel
 and the specific lighting checklist were not played, so the §28.12 representative-day playtest is
 not claimed in full. Its implementation record is
 [Plan 7](../plans/2026-10-25-plan-7-single-area-regions.md). **Plan 8**
-(multi-area regions with HVDC links and SGCC, §28.9) remains pending. Each plan bumps
+(multi-area regions with HVDC links and SGCC, §28.9) is implemented under rules 19 and portable
+state schema 4. Its focused checks, native SGCC scheduled-link day and frame-budget results are
+recorded in [Plan 8](../plans/2026-10-26-plan-8-sgcc-hvdc.md). The entire local suite and a human
+SGCC playtest are not claimed. Each plan bumps
 `SIM_RULES_VERSION` once, from whatever the previous implemented amendment left. The source for
 boundaries, inclusions and exclusions is the research edition of 18 October 2026, copied to
 [docs/research/2026-10-18-world-power-grids-top-8.md](../../research/2026-10-18-world-power-grids-top-8.md).
@@ -3575,7 +3631,8 @@ column lists what the notes exclude, not everything outside.
   Near the equator, day length barely changes. Above the Arctic Circle, a December day can have
   zero sun and a June day can have no sunset. No special cases are needed.
 - **Inputs.** Available solar is `capacity × irradiance × sun × clearness`, as in §3.2, with the
-  per-cell `sun`. Irradiance now rates site quality without latitude, because latitude is in
+  per-cell `sun` (A16, §30, normalizes clearness for newly calibrated regions). Irradiance now
+  rates site quality without latitude, because latitude is in
   `sun`. Re-author it for every schema-4 region. Clearness stays regional, as one draw per day.
 - **Determinism.** The formula is pure. Implementations may cache one 1,440-minute table per cell
   and month. The libm caveat in §5.7 applies.
@@ -3719,8 +3776,8 @@ cancellation and commissioning original rate-base value must agree. In particula
 must not recompute a local order with the old single regional `line_cost` helper. Starter lines
 use the same route valuation; no construction delay is applied to already in-service assets.
 
-**HVDC handoff (Plan 8).** Plan 6a adds no HVDC implementation or accepted HVDC zone fields. Plan 8
-extends the strict zone DTO with optional `hvdc` overrides: `converter_cost_per_end`,
+**HVDC handoff (implemented in Plan 8).** Plan 6a added no HVDC implementation or accepted HVDC
+zone fields. Plan 8 extends the strict zone DTO with optional `hvdc` overrides: `converter_cost_per_end`,
 `converter_build_months`, `cost_per_cell` and `cells_per_month`. The route follows the same work-unit
 rule, with base HVDC `cost_per_cell` and base AC `cells_per_month` as the regional route defaults
 (the existing §28.9 line-months rule). Each terminal uses its own cell's converter terms;
@@ -3831,7 +3888,8 @@ fields are `rating_mw`, `converter_cost` (for both ends), `cost_per_cell`, `conv
   count.
 - **Runback.** While the sending island is below its under-frequency shedding threshold, the
   link's flow ramps toward zero. It never reverses automatically, and it releases once the island
-  is back inside its normal band.
+  is back inside its normal band. The triggering converter terminal remains latched at zero
+  flow, even if a later schedule or override requests the opposite direction.
 - **Timing.** Blocking and runback read the previous tick's island states and take effect this
   tick, in ascending LinkId order.
 - **Balance per island.** Supply is generation, battery discharge and received link energy. Load is
@@ -3862,7 +3920,10 @@ the sender's warnings show it, and it is the player's call.
   *(Builder's call: this prorates like A2, §13, so a new link is not held for months it could not
   run.)*
 - **Hold, release, write-off.** The §2.5 and §26 history applies unchanged: hold, re-test, release,
-  and write off a portion only when it is excess at two consecutive reviews.
+  and write off a portion only when it is excess at two consecutive reviews. Newly excess
+  portions start their own first-review hold when an older held portion is written off. The
+  excess fraction is of the original rated link; already written-off shares count toward that
+  fraction, so steady partial utilisation cannot repeatedly disallow the same unused capacity.
 - **Why.** This follows China's pricing of cross-regional dedicated transmission, which is set from
   each project's costs and a designed annual transfer volume, so an underused line under-recovers.
   *(Builder's call: the hold-and-write-off adaptation is ours.)*
@@ -3889,7 +3950,8 @@ old reports stay as recorded.
 ### 28.10 The world picker
 
 - **Globe.** The new-game region picker uses an orthographic globe with its north pole tilted
-  22° toward the viewer and its south pole away. Automatic rotation follows the tilted polar
+  22° toward the viewer and its south pole away. It initially faces the International Date Line
+  (180° longitude). Automatic rotation follows the tilted polar
   axis, moving the visible surface from left to right, and completes one revolution every 24 real
   seconds (15°/second), independent of frame rate and simulation speed. Horizontal mouse dragging
   takes direct control in either direction,
@@ -3934,8 +3996,8 @@ old reports stay as recorded.
   `demand_noise`, `calendar`, the computed-sun `solar` block (no `daylight`), `currency` with
   unsuffixed money fields, optional `areas`, optional `hvdc`, optional `start.line_names` and
   optional `atlas`. Plan 6a adds optional `economic_zones` (§28.7.1); Plan 8 adds its optional HVDC
-  economic terms. The economic-zone plant/AC extension is implemented; HVDC fields remain
-  reserved for Plan 8 and are rejected by the current loader. A schema-4 file missing a required
+  economic terms. Both the plant/AC extension and Plan 8's area/HVDC fields are implemented.
+  A schema-4 file missing a required
   field fails to load with a typed error naming it.
 - **Schema-4 irradiance authoring.** `irradiance` is either the existing Gaussian field
   `(base: value, blobs: [...])` or an exact cell field `(cells: [...])`. The forms are mutually
@@ -3944,7 +4006,9 @@ old reports stay as recorded.
   These are authored site-quality values, not annual potential: the usual computed sun and
   annual latitude factor still apply unchanged. An offline data tool may invert that factor to
   preserve an existing field's relative solar-site ranking; no runtime compensation or
-  calibration is added. Schemas 3 and earlier keep only their existing Gaussian syntax and math.
+  calibration is added by A14. A16 (§30) adds explicit calibration for current regions;
+  archived data keeps this original interpretation. Schemas 3 and earlier keep only their
+  existing Gaussian syntax and math.
 - **Schemas 3 and earlier.** Version-aware mapping supplies frozen legacy behaviour: one zone at
   offset zero without DST, the authored `daylight` table (the domain keeps
   `SolarModel::DaylightTable` beside `SolarModel::Astronomical`), one climate with northern
@@ -3954,7 +4018,7 @@ old reports stay as recorded.
   (§28.4), the computed sun, re-authored irradiance and climates. Their balance changes. Fix any
   failing beginner check by retuning region data, never the rules. Their fingerprints change.
   Archived bytes do not, so existing saves keep their single clock and daylight table.
-  The migrated annual potential preserves every strict ordering between playable cells in the
+  Before A16 calibration, the migrated annual potential preserves every strict ordering between playable cells in the
   frozen legacy irradiance field; acceptance groups equal old values and requires each group's
   largest new value to be below the next group's smallest, including rejection of collapsed ties.
 - **Portable state.**
@@ -3986,7 +4050,7 @@ such as nudge rings, relief or comments, stays in the main file.
 **On disk.** A region is still `assets/regions/<id>.ron`. Its sidecars live in the directory
 `assets/regions/<id>/` beside it. Each sidecar is a RON document with its own provenance header
 comment. The main file names each sidecar by a plain file name matching `[a-z0-9_]+\.ron`, with no
-path separators. Three schema-4 reference points exist:
+path separators. Four schema-4 reference points exist:
 
 - `irradiance: (cells_file: "irradiance_cells.ron")` is a third irradiance form, exclusive with the
   Gaussian and inline-cell forms. The sidecar is the inline form, `(cells: [...])`.
@@ -3997,6 +4061,11 @@ path separators. Three schema-4 reference points exist:
   sidecar's land, in reference order, followed by the inline `land`. `exclude` works the same way.
   Ring order has no meaning, because a cell centre is land when it lies in *any* land ring and in
   no exclude ring. This order is only a convention.
+- Each `areas` entry may name `geography: ["area_boundary.ron", ...]`. Its sidecars use the same
+  geography format; their `land` rings are combined with the area's inline `polygons` before
+  partition validation. The same member may supply both region land and area polygons and is
+  included only once in the canonical bundle. Only their `land` rings supply area polygons;
+  the region's effective land mask determines which cells need an area assignment.
 
 The catalog lists `.ron` files only, so a sidecar directory never appears as a region. Listing
 reads only the main file. Loading reads the referenced sidecars and rejects any `.ron` file in
@@ -4130,3 +4199,95 @@ recursively, so the sidecar directories ship without further changes.
   - The terrain mesh, picking and the world picker meet frame budgets at 256 × 128 cells.
   - Native launch smoke passes, and an isolated full-day playtest runs in IPS/UPS, Brazil and
     SGCC (with one scheduled link).
+
+## 29. Amendment A15: Battery support from 06:00 and charging until 22:00 (2026-10-26)
+
+**Status:** Implemented under rules 21; region schema 4 and portable state schema 4 are unchanged.
+
+All eight shipped regions and current test fixtures author `discharge_start_hour: 6` and
+`charge_end_hour: 22` for new games. This supersedes the windows in §§20, 25 and 27 and the
+region-specific window choices made during Plan 7.
+
+- A charged, connected, enabled battery may cover a real primary-generation deficit from
+  **06:00 exactly** until midnight. It cannot discharge at 05:59. Available generation still
+  takes priority; eligibility alone does not spend reserves.
+- Charging remains eligible from midnight until **22:00 exactly**. The minute [21:59,22:00)
+  may charge; [22:00,22:01) cannot. Customer priority, available surplus, power and free space
+  still constrain actual charging, and thermal charging requests taper before the cutoff.
+- During the **06:00–22:00 overlap**, a real surplus permits charging and a real deficit permits
+  discharging. The existing single-direction/fleet coordination rules remain: no simultaneous
+  charging and discharging, cross-battery cycling or borrowing future charge. A battery can
+  discharge into a gap and recharge later before the cutoff.
+- Times use the region's system clock. Midnight reset/reporting, efficiencies, capacity,
+  accredited duration, protection and generator-priority rules are unchanged.
+- Live dispatch, forecasts, shortfall checks and HUD hints all read the authored boundaries.
+  Regressions cover both exact boundaries, morning gap support, late charging, the full overlap,
+  conservation and save/resume at the new policy boundaries.
+- Simulation rules advance to **21**; region schema 4 and portable state schema 4 are unchanged.
+  Archived saves retain their exact region bytes, plant specifications, windows and history.
+  Frozen legacy extensions, migration tuning and released golden fixtures are not retuned.
+
+
+## 30. Amendment A16: Consistent solar calibration (2026-10-26)
+
+**Status:** Implemented under rules 22; region schema 4 and portable state schema 4 are unchanged.
+
+All eight shipped regions opt into an explicit `solar.calibration`. Their domain irradiance is
+now the annual fraction of clear-sky solar resource, on one global 0–1 scale, without latitude.
+The sunshine map, inspector and plant cards multiply this by the annual latitude factor in §28.5.
+This is a game resource rating, not a percentage of sunny days or a PV yield forecast.
+
+- **Authored units.** `AngstromPrescott` converts the five Plan 7 regions' existing FAO-56
+  coefficients `Rs/Ra` to clear-sky fractions by dividing by 0.75, capped at 1. The FAO defaults
+  are `Rs/Ra = 0.25 + 0.50 × n/N`; 0.75 is the default sea-level clear-sky reference
+  ([FAO-56, chapter 3](https://www.fao.org/4/X0490E/x0490e07.htm)).
+  `ClearSkyFraction` accepts annual all-sky / clear-sky energy directly. North America and
+  SGCC use NASA POWER SYN1DEG climatology anchors with archived API receipts in
+  `docs/research/2026-10-26-solar-calibration-anchors.json`, interpolated offline by
+  `tools/region_authoring/solar_clearness.py`. The response period is January 2001–December 2025.
+  Interpolation is an authoring judgment; these are not measured cell rasters. Independent anchor
+  regressions check the source annual energies, including Phoenix, Seattle, Miami and Chengdu.
+  A14's original North American cell files move byte-for-byte to the global-foundations test
+  fixtures, where their strict legacy-ranking acceptance remains covered. Archived saves contain
+  their own original bytes and retain their original calibration.
+- **Clouds once.** Let `s` be annual site clearness, `c` the day's bounded cloud draw, and `r`
+  the sunlight-weighted annual mean of that bounded distribution at the cell's latitude. For
+  `0 < s < 1`, the weather response is
+  `s + min(s / (r − 0.2), (1 − s) / (1 − r)) × (c − r)`; endpoints 0 and 1 remain fixed.
+  Infinite endpoint quotients use the finite bound. Output is `capacity × sun × response`.
+  This is the largest nonnegative linear response fitting inside [0,1]. It preserves each
+  site's annual mean and keeps daily and seasonal variation without a second annual attenuation
+  or an optimistic forecast caused by clipping. A final clamp protects floating-point endpoints.
+  Planning uses the mean of the bounded draw, not the unbounded normal's location parameter.
+  Bounded means are integrated once at load by deterministic midpoint quadrature over ±8 standard
+  deviations (4,096 steps); annual references use non-leap month lengths and representative sun.
+- **One calculation.** Live availability, curtailment, shortfall checks, planning previews and
+  battery charging plans use the same region-aware solar calculation. Weather still consumes
+  exactly one regional normal draw per day. Row references are derived caches, not saved state.
+- **Compatibility.** Omitted calibration defaults to `Legacy` and is omitted again on DTO
+  serialization. Archived schema-4 regions and older daylight-table regions preserve their exact
+  original multiplication, terrain values, source bytes and history. New games opt into rules 22;
+  archived saves retain the calibration in their embedded region data. No portable-state fields
+  or schema versions change.
+- **Regression coverage.** Check every cell of all eight regions against the common calibration,
+  Spain/Morocco against North America, seasonal annual normalization, bounded and monotone output,
+  agreement between dispatch/forecast/storage planning/curtailment, and archived-save continuation.
+
+
+## 31. Amendment A17: Southern China economic pacing (2026-10-26)
+
+**Status:** Implemented under rules 23; region schema 4 and portable state schema 4 are unchanged.
+
+- Southern China's starting tariff becomes **200 CNY/MWh**, an explicit game-balance override
+  of the original retail-price pacing formula. Its sourced reference tariff stays 501 CNY/MWh.
+- Nuclear capital becomes **4.884 billion CNY** per 1,100 MW unit. Research row P7-SC-009 replaces
+  the coal-relative proxy with CNNP's national Hualong One capital-cost disclosure, using the
+  existing North American nuclear pacing ratio. Derived fixed O&M becomes **22.4 million
+  CNY/month**. Build duration remains 18 months; fuel, cash and other plant costs do not change.
+- A default, reliable starter company still generates positive cash flow, but monthly profit
+  cannot fund two concurrent reactor construction payments, nor annual profit one whole reactor.
+  The first annual review cannot reduce or increase January baseline profit by more than 50%.
+  Three actual parallel reactor orders consume cash. Regressions cover seeds 0–7 and additional
+  random seeds/start months, plus beginner survival and affordable first-city expansion.
+- This retunes new games only. Archived region bytes and owned plant specifications retain their
+  original terms; no saved state, released fixture, or historical ledger is rewritten.
