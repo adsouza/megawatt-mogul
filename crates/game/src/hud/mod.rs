@@ -533,7 +533,7 @@ pub(crate) mod test_support {
                 )
             })
             .collect();
-        sources.push(("strait.ftl".into(), "zone-msk = MSK\nline-strait = Strait of Gibraltar\ncity-tiny-1 = West shore\ncity-tiny-2 = East shore\ncity-tiny-3 = Inland\n".into()));
+        sources.push(("strait.ftl".into(), "line-strait = Strait of Gibraltar\ncity-tiny-1 = West shore\ncity-tiny-2 = East shore\ncity-tiny-3 = Inland\n".into()));
         Localizer::from_sources(sources).unwrap()
     }
 

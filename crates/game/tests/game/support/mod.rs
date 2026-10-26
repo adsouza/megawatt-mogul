@@ -41,6 +41,7 @@ pub const SHIPPED_REGIONS: &[&str] = &[
     "brazil_sin",
     "eastern_interconnection",
     "india_nepal_bhutan",
+    "ips_ups",
     "southern_china",
     "western_interconnection",
 ];

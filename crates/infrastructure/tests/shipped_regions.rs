@@ -28,6 +28,7 @@ const WEST: &str = "western_interconnection";
 const SOUTHERN_CHINA: &str = "southern_china";
 const BRAZIL: &str = "brazil_sin";
 const INDIA: &str = "india_nepal_bhutan";
+const IPS: &str = "ips_ups";
 
 /// The research note whose row tables the region files cite (`[P7-XX-NNN]`).
 const RESEARCH_NOTE: &str = concat!(
@@ -37,11 +38,11 @@ const RESEARCH_NOTE: &str = concat!(
 
 /// Every shipped region ID, sorted like `RonRegionCatalog::list`. Each Plan 7 region task
 /// inserts its ID here and in the tables below; every region-agnostic test iterates them.
-const SHIPPED: &[&str] = &[BRAZIL, EAST, INDIA, SOUTHERN_CHINA, WEST];
+const SHIPPED: &[&str] = &[BRAZIL, EAST, INDIA, IPS, SOUTHERN_CHINA, WEST];
 
 /// The IDs Plan 7 adds, a subset of `SHIPPED`. The provenance, scale and squareness tests
 /// iterate it: the Eastern and Western files predate those rules.
-const NEW_REGIONS: &[&str] = &[BRAZIL, INDIA, SOUTHERN_CHINA];
+const NEW_REGIONS: &[&str] = &[BRAZIL, INDIA, IPS, SOUTHERN_CHINA];
 
 /// Each region's real system capacity in GW, from the research note: the scale reference for
 /// `new_region_load_scales_with_capacity`.
@@ -49,6 +50,7 @@ const RESEARCH_CAPACITY_GW: &[(&str, f64)] = &[
     (BRAZIL, 250.0),
     (EAST, 980.0),
     (INDIA, 520.0),
+    (IPS, 345.0),
     (SOUTHERN_CHINA, 500.0),
     (WEST, 340.0),
 ];
@@ -58,6 +60,7 @@ const HOME_CITY: &[(&str, &str)] = &[
     (BRAZIL, "city-sao-paulo"),
     (EAST, "city-columbus"),
     (INDIA, "city-delhi"),
+    (IPS, "city-moscow"),
     (SOUTHERN_CHINA, "city-guangzhou"),
     (WEST, "city-seattle"),
 ];
@@ -67,6 +70,7 @@ const EXPANSION_CITY: &[(&str, &str)] = &[
     (BRAZIL, "city-sorocaba"),
     (EAST, "city-cleveland"),
     (INDIA, "city-faridabad"),
+    (IPS, "city-kaluga"),
     (SOUTHERN_CHINA, "city-shenzhen"),
     (WEST, "city-vancouver"),
 ];
@@ -76,6 +80,7 @@ const NOMINAL_HZ: &[(&str, f64)] = &[
     (BRAZIL, 60.0),
     (EAST, 60.0),
     (INDIA, 50.0),
+    (IPS, 50.0),
     (SOUTHERN_CHINA, 50.0),
     (WEST, 60.0),
 ];
@@ -945,6 +950,11 @@ year_one_cases! {
         year_one_hands_off_india_nepal_bhutan,
         year_one_no_commands_india_nepal_bhutan,
         INDIA
+    ),
+    (
+        year_one_hands_off_ips_ups,
+        year_one_no_commands_ips_ups,
+        IPS
     ),
     (
         year_one_hands_off_southern_china,
@@ -2562,5 +2572,183 @@ mod india_nepal_bhutan {
             region.hour_sample_minutes([delhi], month(1)),
             std::collections::BTreeSet::from([0, 59])
         );
+    }
+}
+
+// ---- Region checks: IPS/UPS ------------------------------------------------------------------
+
+mod ips_ups {
+    use super::*;
+
+    const ID: &str = IPS;
+
+    fn month(m: u8) -> SimMonth {
+        SimMonth::new(2027, m).expect("valid month")
+    }
+
+    fn city_named(region: &RegionDefinition, key: &str) -> domain::region::CityDef {
+        region
+            .cities()
+            .iter()
+            .find(|city| city.name_key == key)
+            .unwrap_or_else(|| panic!("{key} is a city"))
+            .clone()
+    }
+
+    /// The footprint is Russia's first synchronous zone with Belarus, Kazakhstan, Uzbekistan,
+    /// mainland Azerbaijan, Kyrgyzstan, main Tajikistan and Georgia (Abkhazia and South Ossetia
+    /// included by the grid-operation rule); Kaliningrad, the Far East, the isolated Norilsk
+    /// system, Armenia, Iran, Mongolia, Nakhchivan, the Pamir and Crimea are out (spec section
+    /// 28.3).
+    #[test]
+    fn ips_landmarks() {
+        let map = LandMap::load(ID);
+        for (name, lon, lat) in [
+            ("Moscow", 37.62, 55.76),
+            ("Minsk", 27.56, 53.90),
+            ("Almaty", 76.95, 43.24),
+            ("Tashkent", 69.28, 41.31),
+            ("Tbilisi", 44.79, 41.72),
+            ("Baku", 49.83, 40.38),
+            ("Novosibirsk", 82.95, 55.05),
+            ("Irkutsk", 104.28, 52.29),
+            ("Chita", 113.47, 52.05),
+            ("Murmansk", 33.08, 68.97),
+            ("Sukhumi", 41.02, 43.00),
+            ("Tskhinvali", 43.96, 42.23),
+        ] {
+            assert!(map.land_at(lon, lat), "{name} is playable land");
+        }
+        for (name, lon, lat) in [
+            ("Kaliningrad", 20.51, 54.71),
+            ("Vladivostok", 131.89, 43.12),
+            ("Khabarovsk", 135.07, 48.48),
+            ("Yerevan", 44.51, 40.18),
+            ("Tehran", 51.39, 35.69),
+            ("Ulaanbaatar", 106.92, 47.92),
+            ("Sevastopol", 33.52, 44.60),
+            ("Simferopol", 34.10, 44.95),
+            ("Norilsk", 88.20, 69.35),
+            ("Nakhchivan", 45.41, 39.21),
+            ("Khorugh", 71.55, 37.49),
+        ] {
+            assert!(!map.land_at(lon, lat), "{name} is outside the footprint");
+        }
+    }
+
+    /// Rulings 10 and 11: the canonical Crimea and Sevastopol extent, shared with
+    /// Europe-Maghreb, appears verbatim among the file's exclusions.
+    #[test]
+    fn ips_exclude_contains_the_canonical_extent() {
+        let file = region_file(ID);
+        let extent = excluded_extent();
+        assert!(!extent.polygons.is_empty());
+        for (i, polygon) in extent.polygons.iter().enumerate() {
+            assert!(
+                file.exclude.iter().any(|ring| ring == polygon),
+                "canonical polygon {i} is not in exclude unchanged"
+            );
+        }
+    }
+
+    /// Spec sections 28.5 and 28.12: above the Arctic Circle a Solar plant at Murmansk sees no
+    /// sun at any December tick, and in June it still produces at Murmansk's local midnight.
+    #[test]
+    fn murmansk_polar_night_and_midnight_sun() {
+        use domain::generation::solar_available;
+        let region = region(ID);
+        let murmansk = city_named(&region, "city-murmansk");
+        let solar = region.spec(PlantKind::Solar);
+        let irradiance = region
+            .terrain()
+            .get(murmansk.cell)
+            .expect("Murmansk's cell is in the grid")
+            .irradiance;
+        assert!(irradiance.value() > 0.0);
+        assert!(region.site_check(PlantKind::Solar, murmansk.cell).is_ok());
+        let output = |m: u8, tick: u32, clearness: f64| {
+            solar_available(
+                solar.capacity,
+                irradiance,
+                region.sun(murmansk.cell, month(m), tick),
+                clearness,
+            )
+            .value()
+        };
+        for tick in 0..TICKS_PER_DAY {
+            assert_eq!(output(12, tick, 1.0), 0.0, "December tick {tick}");
+        }
+        let midnight = (0..TICKS_PER_DAY)
+            .find(|&tick| region.local_minute(murmansk.id, month(6), tick) == 0)
+            .expect("Murmansk has a local midnight");
+        let clearness = region.solar().clearness_mean[5];
+        assert!(
+            output(6, midnight, clearness) > 0.0,
+            "June output at local midnight (tick {midnight})"
+        );
+    }
+
+    /// Spec section 28.12: Novosibirsk, four hours east of Moscow, sees sunrise earlier on the
+    /// MSK system clock in every month.
+    #[test]
+    fn novosibirsk_sunrise_precedes_moscow_on_msk() {
+        let region = region(ID);
+        assert_eq!(region.system_zone().offset_minutes(month(1)), 180);
+        let sunrise = |key: &str, m: u8| {
+            let cell = city_named(&region, key).cell;
+            (0..TICKS_PER_DAY)
+                .find(|&tick| region.sun(cell, month(m), tick) > 0.0)
+                .unwrap_or_else(|| panic!("{key} has a sunrise in month {m}"))
+        };
+        for m in 1..=12 {
+            let (novosibirsk, moscow) = (sunrise("city-novosibirsk", m), sunrise("city-moscow", m));
+            assert!(
+                novosibirsk < moscow,
+                "month {m}: Novosibirsk rises at tick {novosibirsk}, Moscow at {moscow}"
+            );
+        }
+    }
+
+    /// Peak over mean of a day's values.
+    fn peak_to_mean(values: &[f64]) -> f64 {
+        let mean = values.iter().sum::<f64>() / values.len() as f64;
+        values.iter().copied().fold(f64::MIN, f64::max) / mean
+    }
+
+    /// Spec section 28.3's six-time-zone lesson: with every city connected, Siberia and Central
+    /// Asia reach their evening peaks hours before Moscow on the MSK clock, so the aggregate
+    /// forecast is flatter than Moscow's own demand from September to May, the heating season
+    /// that sets the year's peak. (From June to August the southern and Central Asian
+    /// air-conditioning afternoons line up with Moscow's midday plateau instead.)
+    #[test]
+    fn siberian_cities_flatten_the_system_peak() {
+        for m in [1, 2, 3, 4, 5, 9, 10, 11, 12] {
+            let mut loaded = catalog()
+                .load(&RegionId::new(ID))
+                .expect("shipped region loads");
+            let mut file = region_file(ID);
+            file.start.month = m;
+            file.start.connected_cities = file.cities.iter().map(|city| city.id).collect();
+            loaded.definition = Arc::new(map_region_v4(file).expect("all-cities region maps"));
+            let catalog = StartMonthOverride(loaded);
+            let game = new_game(&catalog, ID, 0);
+            let session = game.session();
+            assert!(session.city_views().iter().all(|city| city.connected));
+            let aggregate: Vec<f64> = (0..TICKS_PER_DAY)
+                .map(|tick| session.forecast_net_load(tick).value())
+                .collect();
+            let region = session.region();
+            let moscow = city_named(region, "city-moscow");
+            let own: Vec<f64> = (0..TICKS_PER_DAY)
+                .map(|tick| {
+                    moscow.base_load.value() * region.load_factor(moscow.id, month(m), tick)
+                })
+                .collect();
+            let (system, city) = (peak_to_mean(&aggregate), peak_to_mean(&own));
+            assert!(
+                system < city,
+                "month {m}: the system peaks at {system:.4} of its mean, Moscow at {city:.4}"
+            );
+        }
     }
 }

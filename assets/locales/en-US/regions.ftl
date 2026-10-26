@@ -4,6 +4,7 @@
 region-brazil-sin = Brazil
 region-eastern-interconnection = Eastern Interconnection
 region-india-nepal-bhutan = India–Nepal–Bhutan
+region-ips-ups = IPS/UPS
 region-western-interconnection = Western Interconnection
 region-southern-china = Southern China
 
@@ -11,6 +12,7 @@ region-southern-china = Southern China
 region-brazil-sin-description = Hydro that fills from December to April and runs low through the dry winter, plus northeastern wind. Ride the wet season into the summer peak.
 region-eastern-interconnection-description = Dense cities, big demand, and a legacy coal and nuclear fleet. Keep the industrial heartland humming.
 region-india-nepal-bhutan-description = The monsoon fills the rivers and drives the wind while clouds dim the sun, and demand peaks in May before the rains. Meet the evening ramp as solar falls.
+region-ips-ups-description = One grid across six hours of time zones: Siberia's evening peak passes before Moscow's begins. Ride Siberian hydro and plan for polar night and the midnight sun.
 region-southern-china-description = Guizhou and Guangxi hydro sent east, coastal nuclear, and the booming Pearl River Delta. Ride the flood season into the summer peak.
 region-western-interconnection-description = Mountain crossings, desert sunshine, and Pacific Northwest hydro. Master the evening demand surge.
 
@@ -185,3 +187,44 @@ city-thiruvananthapuram = Thiruvananthapuram
 city-vadodara = Vadodara
 city-varanasi = Varanasi
 city-visakhapatnam = Visakhapatnam
+
+# IPS/UPS. Each name is the title of its English Wikipedia article, without the qualifier
+# three titles carry ("Tula, Russia", "Perm, Russia" and "Chita, Zabaykalsky Krai"): no other
+# shipped region has a city of the same name.
+city-almaty = Almaty
+city-astana = Astana
+city-baku = Baku
+city-barnaul = Barnaul
+city-bishkek = Bishkek
+city-chelyabinsk = Chelyabinsk
+city-chita = Chita
+city-dushanbe = Dushanbe
+city-irkutsk = Irkutsk
+city-kaluga = Kaluga
+city-kazan = Kazan
+city-krasnodar = Krasnodar
+city-krasnoyarsk = Krasnoyarsk
+city-minsk = Minsk
+city-moscow = Moscow
+city-murmansk = Murmansk
+city-nizhny-novgorod = Nizhny Novgorod
+city-novokuznetsk = Novokuznetsk
+city-novosibirsk = Novosibirsk
+city-omsk = Omsk
+city-perm = Perm
+city-rostov-on-don = Rostov-on-Don
+city-saint-petersburg = Saint Petersburg
+city-samara = Samara
+city-saratov = Saratov
+city-shymkent = Shymkent
+city-tashkent = Tashkent
+city-tbilisi = Tbilisi
+city-tomsk = Tomsk
+city-tula = Tula
+city-tver = Tver
+city-ufa = Ufa
+city-ulan-ude = Ulan-Ude
+city-volgograd = Volgograd
+city-voronezh = Voronezh
+city-yaroslavl = Yaroslavl
+city-yekaterinburg = Yekaterinburg

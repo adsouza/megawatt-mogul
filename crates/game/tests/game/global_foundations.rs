@@ -47,7 +47,7 @@ fn strait_l10n() -> Localizer {
             )
         })
         .collect();
-    sources.push(("strait.ftl".into(),"zone-msk = MSK\nline-strait = Strait of Gibraltar\ncity-tiny-1 = West shore\ncity-tiny-2 = East shore\ncity-tiny-3 = Inland\n".into()));
+    sources.push(("strait.ftl".into(),"line-strait = Strait of Gibraltar\ncity-tiny-1 = West shore\ncity-tiny-2 = East shore\ncity-tiny-3 = Inland\n".into()));
     Localizer::from_sources(sources).unwrap()
 }
 fn app(logs: &std::path::Path, world: bool) -> App {

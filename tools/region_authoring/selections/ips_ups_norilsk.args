@@ -1,0 +1,13 @@
+--admin0
+target/natural-earth/ne_50m_admin_0_countries.geojson
+--admin1
+target/natural-earth/ne_10m_admin_1_states_provinces.geojson
+--exclude-admin1
+RUS:Krasnoyarsk
+--bounds=75.0,115.0,66.5,72.0
+--grid
+40,11
+--tolerance-deg
+0.02
+--dissolve
+--extent

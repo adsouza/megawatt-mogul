@@ -510,6 +510,15 @@ zone-ist = IST
 zone-npt = NPT
 zone-btt = BTT
 
+# IPS/UPS: Moscow time and the zones east of it, named by UTC offset (no DST).
+zone-msk = MSK
+zone-utc-plus-4 = UTC+4
+zone-utc-plus-5 = UTC+5
+zone-utc-plus-6 = UTC+6
+zone-utc-plus-7 = UTC+7
+zone-utc-plus-8 = UTC+8
+zone-utc-plus-9 = UTC+9
+
 # Optional construction economics. All prices use the region's currency.
 construction-economic-zone = Market
 construction-regional-default = Regional default

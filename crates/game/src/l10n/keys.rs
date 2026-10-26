@@ -467,4 +467,11 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "zone-ist",
     "zone-npt",
     "zone-btt",
+    "zone-msk",
+    "zone-utc-plus-4",
+    "zone-utc-plus-5",
+    "zone-utc-plus-6",
+    "zone-utc-plus-7",
+    "zone-utc-plus-8",
+    "zone-utc-plus-9",
 ];
