@@ -55,6 +55,17 @@ pub(super) fn parse_region_file(
         region: region.clone(),
         error,
     };
+    // Fast path: a well-formed schema-4 file parses straight into its DTO, exactly as the
+    // probe's `Some(4)` arm below would parse it. The probe has to skip every value it doesn't
+    // read, and RON's skipping costs microseconds per number: about half a second in debug
+    // builds for a file with an `economic_zones.cells` grid, every time a region is listed or
+    // loaded. Anything else (another schema, or a file that fails to parse) takes the probe path
+    // unchanged, so errors and legacy files behave as before.
+    if let Ok(file) = ron::de::from_str::<super::dto::RegionFileV4>(text)
+        && file.region_schema == 4
+    {
+        return check_id(ParsedRegionFile::V4(file), region);
+    }
     let probe: SchemaProbe = ron::de::from_str(text).map_err(|e| parse_error(e.to_string()))?;
     let file = match probe.region_schema {
         None | Some(2 | 3) => ParsedRegionFile::Legacy(
@@ -73,6 +84,14 @@ pub(super) fn parse_region_file(
         }
     };
 
+    check_id(file, region)
+}
+
+/// The parsed file, unless its `id` differs from the one requested.
+fn check_id(
+    file: ParsedRegionFile,
+    region: &RegionId,
+) -> Result<ParsedRegionFile, RegionLoadError> {
     let found = RegionId::new(file.id());
     if found != *region {
         return Err(RegionLoadError::IdMismatch {
