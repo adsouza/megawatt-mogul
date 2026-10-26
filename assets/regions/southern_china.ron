@@ -259,14 +259,15 @@
         // 1,375,000, so 1,380,000. Build 3 months (ruling 1).
         (kind: Wind, capacity_mw: 300.0, min_stable: 0.0, ramp_mw_per_min: 0.0, startup_hours: 0.0, startup_cost: 0, marginal_cost_per_mwh: 0.0, fixed_om_per_month: 1380000, capital_cost: 825000000, build_months: 3, capacity_credit: 0.2, book_life_months: 300, siting: Anywhere),
         // Nuclear (Daya Bay, Ling Ao and Taishan are the coastal fleet).
-        // Capital (ruling 3, authoring judgment: derived from [P7-SC-003] by
-        // NA kind relativity): local game coal 1,109.88 CNY/kW x NA nuclear
-        // / coal (2,181.82 / 1,166.67 = 1.87013) = 2,075.6, so 2,080 CNY/kW
-        // x 1,100,000 kW = 2,288,000,000. Fixed O&M (ruling 4):
-        // 2,288,000,000 x (11,000,000 / 2,400,000,000) = 10,486,667, so
-        // 10,500,000. Marginal (ruling 19): 10 x 5.01378 = 50.1
-        // [P7-SC-005]. Start-up (ruling 2): 1,000,000 x 50.1 / 10 =
-        // 5,010,000. Build 18 months (ruling 1).
+        // Capital [P7-SC-009] [P7-US-004]: CNNP's national Hualong One proxy,
+        // 16,000 CNY/kW x ((2,400,000,000 / 1,100,000) / 7,861) =
+        // 4,440.795 CNY/kW, rounded to 4,440 x 1,100,000 kW = 4,884,000,000.
+        // This sourced nuclear proxy replaces the former coal-kind relativity.
+        // Fixed O&M (ruling 4, authoring judgment): capital x (11,000,000 /
+        // 2,400,000,000) = 22,385,000, rounded to 22,400,000.
+        // Marginal (ruling 19, authoring judgment) [P7-SC-005]: 10 x 5.01378 = 50.1.
+        // Start-up (ruling 2, authoring judgment): 1,000,000 x 50.1 / 10 = 5,010,000.
+        // Build 18 months (ruling 1, authoring judgment: no sourced local duration).
         (
             kind: Nuclear,
             capacity_mw: 1100.0,
@@ -275,8 +276,8 @@
             startup_hours: 48.0,
             startup_cost: 5010000,
             marginal_cost_per_mwh: 50.1,
-            fixed_om_per_month: 10500000,
-            capital_cost: 2288000000,
+            fixed_om_per_month: 22400000,
+            capital_cost: 4884000000,
             build_months: 18,
             capacity_credit: 0.95,
             book_life_months: 480,
@@ -559,13 +560,17 @@
         return_per_satisfaction_point: 0.0005,
         // Tariffs [P7-SC-005] [P7-US-034]: 679.869 CNY/MWh x (95 / 135.6 =
         // 0.70059) = 476.3, so 476 to start, and x (100 / 135.6 = 0.73746) =
-        // 501.4, so a reference of 501 (the same 0.95 relation as shipped).
+        // 501.4, so a reference of 501. A17 overrides only the starting tariff below.
         // Basis: P7-SC-005 is the commercial and industrial single-part
         // 1-10 kV energy price, tax included, while P7-US-034 is an
         // all-sector average (authoring judgment: basis differs from the US
         // all-sector reference; not re-based). The fuel proxy (ruling 19)
         // scales by this same 501.378 reference, so it inherits that basis.
-        starting_tariff_per_mwh: 476.0,
+        // A17 balance override [P7-SC-005]: 200 CNY/MWh is game tuning, not an
+        // observed retail price. It aligns starter cash flow with the paced fleet,
+        // preserving growth without funding several concurrent nuclear builds.
+        // The sourced 501 reference and its fuel-price proxy remain unchanged.
+        starting_tariff_per_mwh: 200.0,
         reference_tariff_per_mwh: 501.0,
         base_return: 0.09,
         min_return: 0.07,

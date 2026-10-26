@@ -2,7 +2,7 @@
 source: crates/application/tests/rules_version_guard.rs
 expression: "format!(\"SIM_RULES_VERSION={}\\n{}{}\", domain::SIM_RULES_VERSION,\noutcome_digest(), battery_outcome_digest())"
 ---
-SIM_RULES_VERSION=22
+SIM_RULES_VERSION=23
 month 2027-04 days=30 revenue=5122032993 fuel=-2182165733 start_up=0 fixed_om=-277000000 construction=-2000000000 net=662867260
   mwh demand=539161.368 served=539161.368 unserved=0.000 curtailed=0.000 imbalance=5.990 peak_mw=890.463 reliability=1.000000
   energy Coal=364324.918

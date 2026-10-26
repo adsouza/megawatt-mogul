@@ -22,7 +22,8 @@
   commissioned dispatchable plants, with a notification (§16.3, 2026-10-26).
   A15 extends battery discharge eligibility to 06:00–24:00 and charging to 00:00–22:00
   (§29, 2026-10-26, rules 21). A16 standardizes solar calibration and counts annual clouds once
-  (§30, 2026-10-26, rules 22).
+  (§30, 2026-10-26, rules 22). A17 rebalances Southern China’s starting economy
+  (§31, 2026-10-26, rules 23).
 - **Engine:** Rust 1.98, Bevy 0.20, bevy_egui 0.43, bevy-inspector-egui 0.38
 
 ## 1. Vision and goals
@@ -4271,3 +4272,22 @@ This is a game resource rating, not a percentage of sunny days or a PV yield for
 - **Regression coverage.** Check every cell of all eight regions against the common calibration,
   Spain/Morocco against North America, seasonal annual normalization, bounded and monotone output,
   agreement between dispatch/forecast/storage planning/curtailment, and archived-save continuation.
+
+
+## 31. Amendment A17: Southern China economic pacing (2026-10-26)
+
+**Status:** Implemented under rules 23; region schema 4 and portable state schema 4 are unchanged.
+
+- Southern China's starting tariff becomes **200 CNY/MWh**, an explicit game-balance override
+  of the original retail-price pacing formula. Its sourced reference tariff stays 501 CNY/MWh.
+- Nuclear capital becomes **4.884 billion CNY** per 1,100 MW unit. Research row P7-SC-009 replaces
+  the coal-relative proxy with CNNP's national Hualong One capital-cost disclosure, using the
+  existing North American nuclear pacing ratio. Derived fixed O&M becomes **22.4 million
+  CNY/month**. Build duration remains 18 months; fuel, cash and other plant costs do not change.
+- A default, reliable starter company still generates positive cash flow, but monthly profit
+  cannot fund two concurrent reactor construction payments, nor annual profit one whole reactor.
+  The first annual review cannot reduce or increase January baseline profit by more than 50%.
+  Three actual parallel reactor orders consume cash. Regressions cover seeds 0–7 and additional
+  random seeds/start months, plus beginner survival and affordable first-city expansion.
+- This retunes new games only. Archived region bytes and owned plant specifications retain their
+  original terms; no saved state, released fixture, or historical ledger is rewritten.

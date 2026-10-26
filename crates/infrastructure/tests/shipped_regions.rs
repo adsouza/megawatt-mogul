@@ -3380,3 +3380,91 @@ fn solar_clearness_matches_independent_nasa_anchor_energies() {
         );
     }
 }
+
+/// New-game economics must allow growth without financing several reactors from monthly sales.
+#[test]
+fn south_china_profitability_has_headroom_without_parallel_reactor_windfalls() {
+    for seed in 0..8 {
+        let mut game = hands_off_game(&catalog(), SOUTHERN_CHINA, seed);
+        let nuclear = game.session().region().spec(PlantKind::Nuclear);
+        let capital = nuclear.capital_cost.cents();
+        let payment = nuclear.capital_cost.split_even(nuclear.build_months)[0].cents();
+        let mut year_profit = 0;
+        let mut january_profit = 0;
+        for index in 0..13 {
+            let played = play_month(&mut game);
+            let net = played.report.net.cents();
+            assert!(
+                net > 0,
+                "seed {seed}, month {index}: starter economy loses money"
+            );
+            assert!(
+                net < 2 * payment,
+                "seed {seed}, month {index}: operating profit {net} finances multiple reactors ({payment} each)"
+            );
+            if index == 0 {
+                january_profit = net;
+            }
+            if index < 12 {
+                year_profit += net;
+            }
+            if index == 12 {
+                assert!(
+                    net >= january_profit / 2 && net <= january_profit * 3 / 2,
+                    "seed {seed}: first review creates a cash-flow cliff: {january_profit} -> {net}"
+                );
+            }
+            assert_eq!(game.session().status(), SessionStatus::Active);
+            game.execute(Command::FinishReview).unwrap();
+        }
+        assert!(
+            year_profit < capital,
+            "seed {seed}: year-one profit {year_profit} exceeds reactor cost {capital}"
+        );
+    }
+}
+
+#[test]
+fn south_china_three_parallel_reactor_orders_consume_cash() {
+    use domain::ids::CellCoord;
+    for seed in 0..8 {
+        let mut game = hands_off_game(&catalog(), SOUTHERN_CHINA, seed);
+        let nuclear = game.session().region().spec(PlantKind::Nuclear);
+        let payment = nuclear.capital_cost.split_even(nuclear.build_months)[0];
+        let starting_cash = game.session().company_view().cash;
+        for _ in 0..3 {
+            let r = game.session().region();
+            let cell = (0..r.terrain().height())
+                .flat_map(|y| (0..r.terrain().width()).map(move |x| CellCoord { x, y }))
+                .find(|c| game.session().plant_quote(PlantKind::Nuclear, *c).is_ok())
+                .unwrap();
+            game.execute(Command::BuildPlant {
+                kind: PlantKind::Nuclear,
+                cell,
+            })
+            .unwrap();
+        }
+        let played = play_month(&mut game);
+        assert_eq!(played.report.construction, -(payment * 3));
+        assert!(
+            played.report.net.cents() < 0,
+            "seed {seed}: triple reactor construction is funded by operating profit"
+        );
+        assert!(game.session().company_view().cash < starting_cash);
+    }
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(16))]
+    #[test]
+    fn south_china_profitability_is_bounded_for_other_seeds_and_months(seed in proptest::prelude::any::<u64>(), month in 1u8..=12) {
+        let override_catalog = StartMonthOverride::new(SOUTHERN_CHINA, month);
+        let mut game = hands_off_game(&override_catalog, SOUTHERN_CHINA, seed);
+        let nuclear = game.session().region().spec(PlantKind::Nuclear);
+        let payment = nuclear.capital_cost.split_even(nuclear.build_months)[0].cents();
+        let played = play_month(&mut game);
+        proptest::prop_assert!(played.report.net.cents()>0);
+        proptest::prop_assert!(played.report.net.cents()<2*payment);
+        proptest::prop_assert_eq!(game.session().status(), SessionStatus::Active);
+    }
+}
