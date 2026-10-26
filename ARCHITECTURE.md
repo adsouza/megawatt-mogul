@@ -444,6 +444,7 @@ layer shown, is a selected toggle, not a disabled button.
 | `LocalizationPlugin` | Loads the en-US Fluent files into the `Localizer` resource. |
 | `SimulationPlugin` | The bridge: the `Session(Game)` resource, the region `Catalog`, new games, the command funnel, the phase mirror and the fixed-step driver. |
 | `PreferencesPlugin` | Retained window geometry, zoom, running speed and panel/tool layout; separate from game checkpoints. |
+| `DailyAudioPlugin` | Presentation-only daily time signals at 1×: rooster at sunrise, metro at 08:30/17:00, gong followed by children laughing at noon, and doorbell at 17:30. Clips finish naturally if the player changes speed. |
 | `HudPlugin` | Every egui panel, toast, prompt and modal, plus its non-egui glue (listing regions, collecting toasts, resetting HUD state between games). |
 
 `CorePlugins` groups the first three. They need no window or renderer, so the tests run them on
@@ -458,6 +459,17 @@ and restored geometry may use the full monitor width and leave at least 40 logic
 and below, budgeting for title bars and system bars. Monitor exposes full display bounds, so this
 is a conservative allowance rather than an OS work-area query. Positions account for physical origins and scaling.
 The sizing system then never runs again, so the player's own resize wins.
+
+`GamePlugins` also installs `DailyAudioPlugin`. Bevy's audio backend and Vorbis decoder play
+the small clips in `audio/`, read once at startup from `AssetRoot` alongside region and locale data.
+The daily schedule follows the simulation clock, with sunrise taken from the same monthly
+daylight table as the diorama sun. Morning and evening metro cues reuse one asset; the noon
+clip combines the louder gong and laughter in sequence with no added gap. Time signals
+observe every clock change, including silent fast-forward, so switching back to 1× cannot replay
+missed cues. A session generation/month change establishes a fresh boundary without playing past
+sounds on load. Audio state belongs only to the client and never changes checkpoints or RNG.
+`assets/audio/README.md` records the schedule, sources, licenses and clip preparation; the original
+metro/gong/doorbell synthesis is reproducible with `tools/audio/generate_cues.py`.
 
 - **Boot** waits for every `require_for_boot::<R>()` resource: `AssetRoot` and `LogDir` (from the
   command line), `Localizer` and `Catalog`. A `BootError` keeps the app in `Boot`, which shows it.

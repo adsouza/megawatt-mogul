@@ -45,6 +45,7 @@ features = [
     "bevy_render",        # the wgpu renderer (also enables bevy_camera, so Camera2d)
     "bevy_core_pipeline", # the 2D/3D main passes bevy_egui draws after
     "bevy_log",           # LogPlugin: tracing subscriber, RUST_LOG filtering
+    "audio",              # Bevy audio playback and the Ogg Vorbis decoder
     "keyboard",           # keyboard input (each bevy_input device is an opt-in feature in 0.20)
     "mouse",              # mouse input
     "x11",                # Linux X11 backend for winit
@@ -54,7 +55,7 @@ features = [
     "bevy_post_process",
     "bevy_picking",       # PickingPlugin, which bevy_egui's default `picking` feature expects
 ]
-# PBR/light/post-process implement the procedural diorama; no glTF/scene assets or audio.
+# PBR/light/post-process implement the procedural diorama; no glTF/scene assets.
 # The inspector is opt-in and shares Bevy 0.20 / egui 0.36 with the normal client.
 
 [dev-dependencies]

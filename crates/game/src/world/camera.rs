@@ -39,6 +39,39 @@ impl Default for OrbitCamera {
     }
 }
 impl OrbitCamera {
+    /// Reveal a plant selected from a panel. Preserve a useful close view; a distant overview
+    /// moves in to a little under half its fit distance. Recheck visibility after that zoom so
+    /// a plant pushed out of the viewport is centered too.
+    pub fn reveal(
+        &mut self,
+        point: Vec3,
+        size: Vec2,
+        viewport: egui::Rect,
+        legend: Option<egui::Rect>,
+    ) {
+        if !point.is_finite() || !viewport.is_finite() || !viewport.is_positive() {
+            return;
+        }
+        self.zoom = self.zoom.min(0.45);
+        let visible = self
+            .pose(size, viewport.width() / viewport.height())
+            .project(point)
+            .is_some_and(|ndc| {
+                let pixel = egui::pos2(
+                    viewport.left() + (ndc.x + 1.0) * 0.5 * viewport.width(),
+                    viewport.top() + (1.0 - ndc.y) * 0.5 * viewport.height(),
+                );
+                viewport.shrink(16.0).contains(pixel)
+                    && !legend.is_some_and(|rect| rect.expand(8.0).contains(pixel))
+            });
+        if !visible {
+            // The orbit looks at y=0. Offset its ground target so the elevated plant itself
+            // projects to the center, while preserving the player's viewing angle.
+            self.target = Vec2::new(point.x, point.z)
+                - Vec2::new(self.yaw.sin(), self.yaw.cos()) * point.y / self.elevation.tan();
+        }
+    }
+
     pub fn orbit(&mut self, delta: Vec2) {
         if !delta.is_finite() {
             return;
@@ -162,5 +195,64 @@ impl CameraPose {
             origin: self.eye,
             direction,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn revealing_a_plant_keeps_it_in_view_without_zooming_out_or_changing_the_angle(
+            width in 20.0f32..140.0, depth in 20.0f32..100.0,
+            x in -0.5f32..0.5, z in -0.5f32..0.5, height in 0.0f32..4.0,
+            target_x in -0.55f32..0.55, target_z in -0.55f32..0.55,
+            yaw in 0.0f32..std::f32::consts::TAU, elevation in 0.3f32..1.42,
+            zoom in 0.08f32..3.0, pixels_x in 320.0f32..1600.0, pixels_y in 200.0f32..900.0,
+        ) {
+            let viewport = egui::Rect::from_min_size(egui::pos2(260.0, 30.0), egui::vec2(pixels_x, pixels_y));
+            let size = Vec2::new(width, depth);
+            let point = Vec3::new(x * width, height, z * depth);
+            let before = OrbitCamera {
+                yaw, elevation, zoom, target: Vec2::new(target_x * width, target_z * depth),
+            };
+            let mut after = before;
+            after.reveal(point, size, viewport, None);
+            let ndc = after.pose(size, pixels_x / pixels_y).project(point).unwrap();
+            prop_assert!(ndc.x.abs() < 1.0 && ndc.y.abs() < 1.0);
+            prop_assert_eq!((after.yaw, after.elevation), (before.yaw, before.elevation));
+            prop_assert!(after.zoom <= before.zoom);
+            if after.target != before.target {
+                prop_assert!(ndc.truncate().length() < 1e-4);
+            }
+            let once = after;
+            after.reveal(point, size, viewport, None);
+            prop_assert_eq!(after, once, "repeated selection keeps the camera still");
+        }
+    }
+
+    #[test]
+    fn a_plant_behind_the_legend_is_centered() {
+        let mut camera = OrbitCamera {
+            zoom: 0.25,
+            ..default()
+        };
+        let size = Vec2::new(100.0, 60.0);
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(500.0, 300.0));
+        let ray = camera
+            .pose(size, viewport.aspect_ratio())
+            .ray(Vec2::new(-0.6, 0.5))
+            .unwrap();
+        let point = ray.get_point((2.0 - ray.origin.y) / ray.direction.y);
+        let legend = egui::Rect::from_min_max(egui::pos2(10.0, 10.0), egui::pos2(180.0, 130.0));
+        camera.reveal(point, size, viewport, Some(legend));
+        let ndc = camera
+            .pose(size, viewport.aspect_ratio())
+            .project(point)
+            .unwrap();
+        assert!(ndc.truncate().length() < 1e-4);
+        assert_eq!(camera.zoom, 0.25);
     }
 }

@@ -4,6 +4,7 @@
 //! player commands through the application layer.
 #![forbid(unsafe_code)]
 
+pub mod audio;
 pub mod crash;
 pub mod hud;
 pub mod l10n;
@@ -45,6 +46,7 @@ impl PluginGroup for GamePlugins {
             .add_group(CorePlugins)
             .add(EguiPlugin::default())
             .add(HudPlugin)
+            .add(audio::DailyAudioPlugin)
             .add(world::WorldViewPlugin)
             .add(world::CameraPlugin)
             .add(preferences::PreferencesPlugin);

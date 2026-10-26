@@ -198,7 +198,9 @@ pub fn draw_planning(
         }
         PlanningContent::Forecast(chart) => actions.extend(draw_forecast_chart(ui, chart)),
         PlanningContent::Tariff(tariff) => actions.extend(draw_tariff(ui, tariff)),
-        PlanningContent::Construction(construction) => draw_construction(ui, construction),
+        PlanningContent::Construction(construction) => {
+            actions.extend(draw_construction(ui, construction))
+        }
         PlanningContent::History(history) => actions.extend(draw_supply_history(ui, history)),
     }
     actions

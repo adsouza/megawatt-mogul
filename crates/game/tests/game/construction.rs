@@ -156,6 +156,142 @@ fn panel(pass: &EguiPass, id: &str) -> egui::Rect {
         .outer_rect
 }
 
+#[test]
+fn clicking_a_construction_row_selects_the_plant_and_shows_its_card() {
+    for region_id in [EASTERN, WESTERN] {
+        let logs = TempDir::new().unwrap();
+        let mut app = hud_app(logs.path());
+        request(&mut app, region_id);
+        let pass = EguiPass::attach(&mut app);
+        let (plant, _) = order_both(&mut app, &pass);
+        dispatch_in(
+            &mut app,
+            vec![UiAction::SetPlanningTab(PlanningTab::Construction)],
+        );
+        let widgets = pass.settled(&mut app, SMALL.0, SMALL.1);
+        let name = card(&app, plant).name;
+        let checkpoint = app.world().resource::<Session>().0.checkpoint();
+
+        pass.click_at(
+            &mut app,
+            SMALL.0,
+            SMALL.1,
+            button(&widgets, &name).rect.center(),
+        );
+
+        assert_eq!(selection(&app), Selection::Plant(plant), "{region_id}");
+        let widgets = pass.settled(&mut app, SMALL.0, SMALL.1);
+        let inspector = panel(&pass, "inspector");
+        label_in(&widgets, &name, inspector);
+        label_in(&widgets, "Under construction", inspector);
+        assert_eq!(app.world().resource::<Session>().0.checkpoint(), checkpoint);
+    }
+}
+
+#[test]
+fn construction_row_reveals_the_plant_in_the_diorama_without_disturbing_a_clear_view() {
+    use game::world::{MapSurface, OrbitCamera, WorldAction, WorldControls, WorldModel};
+
+    for region_id in [EASTERN, WESTERN] {
+        let logs = TempDir::new().unwrap();
+        let mut app = hud_app(logs.path());
+        request(&mut app, region_id);
+        let pass = EguiPass::attach(&mut app);
+        let (plant, _) = order_both(&mut app, &pass);
+        app.add_plugins(game::world::WorldViewPlugin);
+        update_n(&mut app, 1);
+        dispatch_in(
+            &mut app,
+            vec![UiAction::SetPlanningTab(PlanningTab::Construction)],
+        );
+        let world = WorldModel::of(&app.world().resource::<Session>().0);
+        let at = world.plants[&plant].at;
+        let centered =
+            Vec2::new(at.x, at.z) - Vec2::new(0.9_f32.sin(), 0.9_f32.cos()) * at.y / 0.65_f32.tan();
+        let checkpoint = app.world().resource::<Session>().0.checkpoint();
+
+        for (case, zoom, target) in [
+            ("offscreen", 0.25, -centered),
+            ("zoomed out", 1.8, Vec2::ZERO),
+            ("already visible", 0.25, centered + Vec2::new(1.0, 0.0)),
+        ] {
+            let before = OrbitCamera {
+                yaw: 0.9,
+                elevation: 0.65,
+                zoom,
+                target,
+            };
+            app.world_mut().resource_mut::<WorldControls>().orbit = before;
+            dispatch_in(&mut app, vec![UiAction::Select(Selection::None)]);
+            let widgets = pass.settled(&mut app, SMALL.0, SMALL.1);
+            let before_ndc = app
+                .world()
+                .resource::<MapSurface>()
+                .pose
+                .unwrap()
+                .project(at);
+            if case == "offscreen" {
+                assert!(before_ndc.is_none_or(|p| p.x.abs() > 1.0 || p.y.abs() > 1.0));
+            }
+            let name = card(&app, plant).name;
+            pass.click_at(
+                &mut app,
+                SMALL.0,
+                SMALL.1,
+                button(&widgets, &name).rect.center(),
+            );
+            let widgets = pass.settled(&mut app, SMALL.0, SMALL.1);
+
+            assert_eq!(
+                selection(&app),
+                Selection::Plant(plant),
+                "{region_id}: {case}"
+            );
+            label_in(&widgets, &name, panel(&pass, "inspector"));
+            label_in(&widgets, "Under construction", panel(&pass, "inspector"));
+            let after = app.world().resource::<WorldControls>().orbit;
+            let ndc = app
+                .world()
+                .resource::<MapSurface>()
+                .pose
+                .unwrap()
+                .project(at)
+                .unwrap();
+            assert!(
+                ndc.x.abs() < 0.9 && ndc.y.abs() < 0.9,
+                "{region_id}: {case}: {ndc:?}"
+            );
+            assert_eq!((after.yaw, after.elevation), (before.yaw, before.elevation));
+            match case {
+                "offscreen" => {
+                    assert!(ndc.truncate().length() < 1e-4, "centered: {ndc:?}");
+                    assert_eq!(after.zoom, before.zoom);
+                }
+                "zoomed out" => assert!(after.zoom < before.zoom),
+                _ => assert_eq!(after, before, "a clear view stays put"),
+            }
+            assert_eq!(
+                app.world().resource::<UiState>().tab,
+                PlanningTab::Construction
+            );
+            assert_eq!(app.world().resource::<Session>().0.checkpoint(), checkpoint);
+
+            // The reveal is a one-shot request: the player's next pan is kept.
+            dispatch_in(
+                &mut app,
+                vec![UiAction::World(WorldAction::Pan(
+                    Vec2::new(20.0, 0.0),
+                    world.size(),
+                    200.0,
+                ))],
+            );
+            let panned = app.world().resource::<WorldControls>().orbit;
+            pass.settled(&mut app, SMALL.0, SMALL.1);
+            assert_eq!(app.world().resource::<WorldControls>().orbit, panned);
+        }
+    }
+}
+
 /// Clicks the plant's marker on the settled screen `widgets`, then settles.
 fn click_plant(app: &mut App, pass: &EguiPass, widgets: &[Widget], plant: PlantId) -> Vec<Widget> {
     let (layout, legend) = map(app, widgets);
@@ -201,7 +337,12 @@ fn in_planning_the_construction_tab_lists_both_projects_and_a_click_shows_the_ca
         let model = model(&app);
         assert_eq!(model.rows.len(), 2, "{region_id}");
         for row in &model.rows {
-            for text in [&row.name, &row.months, &row.in_service_text] {
+            if matches!(row.project, game::hud::Project::Plant(_)) {
+                assert!(planning.contains_rect(button(&widgets, &row.name).rect));
+            } else {
+                label_in(&widgets, &row.name, planning);
+            }
+            for text in [&row.months, &row.in_service_text] {
                 label_in(&widgets, text, planning);
             }
         }
