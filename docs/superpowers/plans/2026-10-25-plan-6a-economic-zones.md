@@ -1,8 +1,10 @@
 # Plan 6a: Optional Construction Economic Zones (Milestone 2)
 
 **Status:** Implemented 2026-10-25 under rules 17, following user authorization. Region schema
-remains 4 and portable state schema remains 3. Tasks 1–5 and 8 are complete. Tasks 6–7 remain
-mandatory future Plan 7/8 handoffs; they do not claim that country data or HVDC has shipped.
+remains 4 and portable state schema remains 3. Tasks 1–6 and 8 are complete. Task 6 was done by
+[Plan 7](2026-10-25-plan-7-single-area-regions.md) (Tasks 1, 2, 8 and 9, shipped under rules 18):
+Europe–Maghreb carries sourced country profiles. Task 7 remains the mandatory Plan 8 HVDC
+handoff; HVDC has not shipped.
 
 **Goal:** Let a region optionally author country or subnational plant and transmission
 construction costs and build times. Europe–Maghreb will use this to distinguish construction

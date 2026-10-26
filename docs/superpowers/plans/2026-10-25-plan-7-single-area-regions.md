@@ -1,5 +1,9 @@
 # Plan 7: Five Single-Area Regions Implementation Plan (Milestone 2)
 
+**Status:** Implemented 2026-10-26 under rules 18; region schema stays 4 and portable state schema
+stays 3. Seven regions ship. The isolated native launch smoke and IPS/UPS and Brazil playtests
+(Task 10, Steps 3 and 4) are pending user approval.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ship five new playable single-area regions: Southern China, Brazil, India–Nepal–Bhutan,

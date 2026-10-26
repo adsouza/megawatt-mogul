@@ -16,7 +16,8 @@
   A13, battery discharge from 16:00 (§27, 2026-10-24, implemented under rules 15); A14, global
   regions, the first Milestone 2 amendment (§28, 2026-10-24; Plan 6 global foundations
   implemented under rules 16; optional construction economic zones implemented in Plan 6a
-  under rules 17, 2026-10-25; Plans 7 and 8 pending)
+  under rules 17, 2026-10-25; Plan 7's five single-area regions implemented under rules 18,
+  2026-10-26; Plan 8 pending)
 - **Engine:** Rust 1.98, Bevy 0.20, bevy_egui 0.43, bevy-inspector-egui 0.38
 
 ## 1. Vision and goals
@@ -3385,11 +3386,17 @@ American regions pass. [Plan 6 Task 10](../plans/2026-10-24-plan-6-global-founda
 checks. Local scratch logs and saves were temporary receipts. **Plan 6a**, optional construction
 economic zones (§28.7.1), is **implemented under rules 17** on 2026-10-25, with region schema 4
 and portable state schema 3 unchanged. Its isolated two-market native workflow and automated
-accounting/save compatibility checks pass; real country profiles await Plan 7. Its implementation
-record is
+accounting/save compatibility checks pass. Its implementation record is
 [Plan 6a](../plans/2026-10-25-plan-6a-economic-zones.md). **Plan 7** (five single-area regions:
-Europe–Maghreb, India–Nepal–Bhutan, southern China, IPS/UPS and Brazil in §28.3) and **Plan 8**
-(multi-area regions with HVDC links and SGCC, §28.9) remain pending. Each plan bumps
+Europe–Maghreb, India–Nepal–Bhutan, southern China, IPS/UPS and Brazil in §28.3) is
+**implemented under rules 18** on 2026-10-26, with region schema 4 and portable state schema 3
+unchanged. Seven regions now ship; Europe–Maghreb opts into the country construction profiles of
+§28.7.1 and its Gibraltar link is pre-built. Automated acceptance passes (the per-region year-one
+checks, the picker over all seven listings, the research-row provenance test and the 256 × 128
+frame budgets). The isolated native launch smoke and the IPS/UPS and Brazil native playtests
+(§28.12) are pending user approval and are not claimed. Its implementation record is
+[Plan 7](../plans/2026-10-25-plan-7-single-area-regions.md). **Plan 8**
+(multi-area regions with HVDC links and SGCC, §28.9) remains pending. Each plan bumps
 `SIM_RULES_VERSION` once, from whatever the previous implemented amendment left. The source for
 boundaries, inclusions and exclusions is the research edition of 18 October 2026, copied to
 [docs/research/2026-10-18-world-power-grids-top-8.md](../../research/2026-10-18-world-power-grids-top-8.md).
@@ -3619,8 +3626,8 @@ column lists what the notes exclude, not everything outside.
 #### 28.7.1 Optional construction economic zones (specified 2026-10-25; Plan 6a)
 
 **Status:** Implemented under rules 17 on 2026-10-25. The historical heading is retained for links.
-No shipped region opts in yet; country-data acceptance and HVDC integration remain the Plan 7/8
-handoffs recorded in Plan 6a.
+Europe–Maghreb is the first shipped region to opt in (Plan 7, rules 18); HVDC integration remains
+the Plan 8 handoff recorded in Plan 6a.
 
 **Scope and optionality.** This is an opt-in region-data feature, not another new-game toggle.
 Without `economic_zones`, all current construction prices, months, accounting and source behavior
@@ -3954,7 +3961,8 @@ old reports stay as recorded.
 - **Rules versions.** Each plan bumps `SIM_RULES_VERSION` once and regenerates the rules guard and
   the scenario snapshots, reviewing every diff. Command-only logs stay fenced by
   `RulesVersionMismatch`. The delivery order is Plan 6 (implemented, rules 16), Plan 6a (economic
-  zones, implemented under rules 17), Plan 7 (new single-area regions), then Plan 8 (multi-area/HVDC).
+  zones, implemented under rules 17), Plan 7 (five single-area regions, implemented under rules 18),
+  then Plan 8 (multi-area/HVDC).
   Plan 6a reuses state schema 3; it adds no persisted fields. Later plans bump from the preceding implemented rules.
 
 ### 28.12 Acceptance

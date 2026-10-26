@@ -50,7 +50,47 @@ upcast. Unexpected new fields on legacy sources and unsupported schemas fail wit
 Region schema versions are independent of portable state schema 3, written by current saves;
 readers retain schemas 1–3.
 
-Rules 17 add optional construction economic zones to region schema 4. The domain's
+Seven regions ship in `assets/regions/`, each a single synchronous balancing area (a copper plate)
+priced in its own currency:
+
+| Region ID | Name | Grid | Currency |
+|---|---|---|---|
+| `eastern_interconnection` | Eastern Interconnection | 60 Hz | USD |
+| `western_interconnection` | Western Interconnection | 60 Hz | USD |
+| `southern_china` | Southern China | 50 Hz | CNY |
+| `brazil_sin` | Brazil | 60 Hz | BRL |
+| `india_nepal_bhutan` | India–Nepal–Bhutan | 50 Hz | INR |
+| `ips_ups` | IPS/UPS | 50 Hz | RUB |
+| `continental_europe_maghreb` | Continental Europe–Maghreb | 50 Hz | EUR |
+
+Plan 7 (rules 18) added the five non-North-American regions as region data and tools only; no
+simulation rule changed. Multi-area regions, HVDC links and SGCC are Plan 8.
+
+**Offline region authoring.** Two directories hold what is used to write a region file, and none of
+it runs in the game or in the release build:
+
+- `tools/region_authoring/` holds Python helpers (see its `README.md`). `natural_earth.py` turns
+  Natural Earth v5.1.2 admin-0 and admin-1 features into the RON `land` and `exclude` polygons,
+  with a provenance header that records the file hashes, the command and the area lost to
+  simplification. `research_svg_extent.py` checks a committed exclusion against the research map.
+  Their output is reviewed and pasted into region files by hand; downloaded data is never committed.
+- `crates/infrastructure/authoring/` holds committed authoring inputs. The Ukraine–IPS operating
+  extent (Crimea and Sevastopol) is the one canonical exclusion that Continental Europe–Maghreb and
+  IPS/UPS share. The Europe–Maghreb economic-zone polygons are rasterised into that region's
+  `economic_zones.cells` by `cargo run -p infrastructure --example author_economic_zone_cells`,
+  and a shipped-regions test checks that the committed cells are reproducible from the polygons.
+
+**Research-row provenance.** Every real-world money or construction-time figure lives in one
+place: `docs/research/2026-10-25-plan-7-regional-economics.md`, as rows with IDs of the form
+`P7-<area>-<nnn>`. A new region's plant catalog entries, `lines:`, `starting_tariff_per_mwh:`,
+`cash:` and economic-zone profiles must each have a `// ... [P7-…]` comment block directly above
+that cites a row. `new_region_entries_cite_research_rows` in
+`infrastructure/tests/shipped_regions.rs` enforces both directions: an entry without a citation
+fails, and so does a citation that names no row of the note. Capacity labels from the older
+research map set relative scale only; no figure migrates into game data without a row.
+
+Rules 17 add optional construction economic zones to region schema 4; Europe–Maghreb is the first
+shipped region to opt in. The domain's
 `region::economics` validates the dense cell map and partial profiles, resolves plant specs at a
 cell, and prices AC routes by canonical rational midpoint samples. Exact route work uses a checked
 u64 common denominator and u128 sum, rounded once. `plant_quote`/`line_quote` check representable

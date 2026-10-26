@@ -20,4 +20,4 @@ pub mod units;
 /// Bump it whenever a change alters outcomes for the same inputs: game rules,
 /// RNG algorithms, numerical behaviour or the mapping from region data to a
 /// definition. A replay refuses logs recorded under a different version.
-pub const SIM_RULES_VERSION: u32 = 17;
+pub const SIM_RULES_VERSION: u32 = 18;

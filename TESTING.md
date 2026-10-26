@@ -10,7 +10,7 @@ commit leaves `cargo nextest run --workspace`, clippy and `cargo fmt --check` gr
 | Unit | Inline `#[cfg(test)]` in `domain` and `application` | std |
 | Property-based | `domain`, `application` | `proptest`, `proptest-state-machine` |
 | Integration and scenario | `application/tests/`: command scripts against small fixture regions built in code | std, `insta` |
-| Adapter | `infrastructure/tests/` (parses both shipped region files) | std |
+| Adapter | `infrastructure/tests/` (parses every shipped region file) | std |
 | Game | Inline presenter tests in `game/src/hud/`; `game/tests/game.rs`, one binary of headless `App` tests (see [The game crate](#the-game-crate)) | std, Bevy `MinimalPlugins`, egui |
 | Mutation | `domain`, `application` | `cargo-mutants` |
 | Runner | Everything | `cargo-nextest` |
@@ -33,7 +33,16 @@ cargo nextest run -p game end_to_end           # one month through the app, per 
 cargo nextest run --workspace --profile ci     # what CI runs (no retries)
 cargo insta review                             # review snapshot changes
 cargo mutants -p domain -p application         # mutation testing
+CARGO_PROFILE_DEV_OPT_LEVEL=3 CARGO_PROFILE_DEV_DEBUG=0 \
+  cargo nextest run -p game --run-ignored ignored-only -E 'test(max_grid_frame_budgets)'
+                                                 # 256 × 128 frame budgets (timing, ignored by default)
 ```
+
+`max_grid_frame_budgets` (`tests/game/world.rs`) times terrain build, picking, the resource overlay
+and the region picker's paint on the 256 × 128 maximum grid. It is `#[ignore]`, so ordinary runs skip
+it. The command above runs it with the workspace crates optimised, and is a proxy for `--release`
+that spares the disk. A plain-profile run compiles the workspace crates unoptimised, and is
+expected to miss the overlay and picker budgets.
 
 Property tests use `proptest`; set `PROPTEST_CASES` to run more cases locally. Note that nextest does
 not run doctests; run `cargo test --doc --workspace` for those.
@@ -111,9 +120,11 @@ Card-body tests cover selection from the hidden hemisphere, midpoint alignment a
 hold before automatic rotation resumes; pure motion properties pin shortest arcs, frame partition
 independence and manual interruption. Rendering clips the far hemisphere before triangulation.
 
-The three year-one checks in `infrastructure::shipped_regions`—
-`hands_off_plan_survives_year_one`, `no_commands_survive_year_one` and
-`shipped_regions_never_order_outages_hands_off`—cover two regions × eight seeds × twelve months.
+The year-one checks in `infrastructure::shipped_regions` run one test per region and mode, so
+nextest schedules them in parallel and names a failure: `year_one_hands_off_<id>` and
+`year_one_no_commands_<id>` for each of the seven shipped regions, each playing eight seeds ×
+twelve months. `year_one_cases_cover_every_shipped_region` fails if a shipped region lacks its
+pair. `shipped_regions_never_order_outages_hands_off` covers every shipped region and seed too.
 A12's three-review battery comparison has sixteen independent region/seed tests, each playing two
 companies for 36 months. They use `GameSession` through the real core command handler and invariant
 checks, without application projections or recording, and disable added batteries immediately after
@@ -376,8 +387,21 @@ The invariants the property tests must cover:
   capacity-shortfall warning on month 1 with no commands.
 - **Hydro smoke runs:** a Western January keeps every hydro unit producing through the evening peak
   on seeds 0–7, and a Western October start stays reliable with no evening cliff.
-- **No outages hands-off:** the same hands-off plan orders no rotating outage in any of the 192
-  region-seed-months (spec §15.8).
+- **No outages hands-off:** the same hands-off plan orders no rotating outage in any of the 672
+  region-seed-months (seven regions × eight seeds × twelve months; spec §15.8).
+
+The shipped-region catalog is also checked for provenance and geography (Plan 7):
+
+- **Research-row provenance:** `new_region_entries_cite_research_rows` requires every plant entry,
+  `lines:`, `starting_tariff_per_mwh:`, `cash:` and economic-zone profile of the five Plan 7
+  regions to have a `[P7-…]` citation in the comment block directly above it, and every cited ID
+  to be a row of `docs/research/2026-10-25-plan-7-regional-economics.md`. Its parser tests pin what
+  counts as a row and as a citation. Tuning numbers stay in region RON; the note holds sources.
+- **Authoring reproducibility:** `europe_maghreb_zone_cells_are_reproducible` regenerates the
+  Europe–Maghreb `economic_zones.cells` from `crates/infrastructure/authoring/` and compares them
+  with the shipped file. The Python tools under `tools/region_authoring/` (Natural Earth polygon
+  extraction, the research-map extent check) have their own offline tests:
+  `python3 -I tools/region_authoring/test_region_authoring.py`. See that directory's `README.md`.
 
 `application/tests/scenarios.rs` checks the overreach acceptance pair (spec §15.8) on its July
 2027 month, a city connected without the capacity to serve it:
