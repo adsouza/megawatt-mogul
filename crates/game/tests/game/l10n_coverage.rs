@@ -1159,6 +1159,30 @@ fn a_commissioned_plant_is_named_by_its_event_kind_even_when_unknown() {
 }
 
 #[test]
+fn commissioning_notification_explains_automatic_operation_for_each_plant_kind() {
+    let l10n = shipped();
+    let names = Names::empty(&l10n);
+    for kind in PlantKind::ALL {
+        let toast = DomainEvent::PlantCommissioned {
+            plant: PlantId(9),
+            kind,
+        }
+        .toast(&l10n, &names, &usd_style())
+        .expect("commissioning is news");
+        assert!(toast.contains(&names.plant_as(PlantId(9), kind)), "{toast}");
+        if kind.is_dispatchable() {
+            assert!(
+                toast.contains("All-day operation and AGC are enabled"),
+                "{toast}"
+            );
+        } else {
+            assert!(toast.contains("operates automatically"), "{toast}");
+            assert!(!toast.contains("AGC"), "{toast}");
+        }
+    }
+}
+
+#[test]
 fn an_unknown_id_falls_back_to_its_number_without_panicking() {
     let l10n = shipped();
     let session = shipped_session();

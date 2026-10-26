@@ -220,6 +220,13 @@ through the real `dispatch` in an app. It then asserts the shortfall or state it
 `short_app` in `shortfall_prompt.rs` asserts `capacity_shortfall_check()` is `Some`, so the test
 can't pass for the wrong reason on a healthy fleet.
 
+**Commissioning defaults (rules 20).** The plant property test varies kind and construction
+duration: defaults apply exactly when construction finishes, dispatchable plants receive all-day
+commitment and AGC, automatic resources remain automatic, and later closes preserve player edits.
+The month-close peaker test saves and restores after commissioning and begins the next day without
+scheduling commands. Localization covers all eight kinds; the HUD wiring test checks that the
+commissioning event displays the all-day/AGC notification exactly once.
+
 `tests/game/l10n_coverage.rs` checks the translations: every literal key in `l10n::keys` exists in
 en-US, every typed value (errors, events, lessons, kinds) translates through an exhaustive table,
 and a broken `.ftl` fails Boot visibly.

@@ -698,7 +698,11 @@ impl Toast for DomainEvent {
                 &[("city", names.city(*city).into())],
             ),
             Self::PlantCommissioned { plant, kind } => l10n.args(
-                "event-plant-commissioned",
+                if kind.is_dispatchable() {
+                    "event-plant-commissioned-agc"
+                } else {
+                    "event-plant-commissioned"
+                },
                 &[("plant", names.plant_as(*plant, *kind).into())],
             ),
             Self::LineCommissioned { line } => l10n.args(

@@ -18,7 +18,8 @@
   implemented under rules 16; optional construction economic zones implemented in Plan 6a
   under rules 17, 2026-10-25; Plan 7's five single-area regions implemented under rules 18,
   2026-10-26; Plan 8 synchronous islands, HVDC and SGCC implemented under rules 19,
-  portable state schema 4, 2026-10-26)
+  portable state schema 4, 2026-10-26). Rules 20 extend A5's all-day/AGC defaults to newly
+  commissioned dispatchable plants, with a notification (§16.3, 2026-10-26).
 - **Engine:** Rust 1.98, Bevy 0.20, bevy_egui 0.43, bevy-inspector-egui 0.38
 
 ## 1. Vision and goals
@@ -1688,8 +1689,8 @@ should be asked before starting a day that the forecast already says will need r
   in the shipped regions. It runs the hands-off plan.
 - **Goal:** Start the day asks for confirmation when `capacity_shortfall_check()` (§15.5) reports
   a shortfall.
-- **Non-goal:** committing newly built plants automatically. A plant the player builds still
-  commissions uncommitted, as today.
+- **Goal (rules 20):** newly built dispatchable plants commission with all-day operation and AGC
+  enabled, with a notification explaining those defaults and that they can be changed in Planning.
 - **Non-goal:** changing commitments between months. Patterns already persist.
 - **Anti-goal:** a confirmation that nags. It appears only on a forecast shortfall, never on a
   minimum-generation or dry-hydro warning, and never in Operating.
@@ -1706,6 +1707,13 @@ should be asked before starting a day that the forecast already says will need r
   - the end state is identical to the hands-off plan's commands applied to a fresh game.
 - **Read side.** `plant_views()` reports the inherited pattern and AGC, so the commitment grid
   opens already filled.
+- **Commissioning (rules 20).** When construction completes, dispatchable plants receive the
+  same all-day pattern and AGC defaults. The next representative day initialises them from that
+  pattern, charging the normal boundary start for a plant previously offline. The commissioning
+  notification names the plant, confirms all-day operation and AGC, and points to Planning to
+  change them. Later months preserve the player's edits. Existing commissioned plants retain
+  their settings when a save is loaded. Solar, wind and storage keep their automatic controllers;
+  their commissioning notification confirms automatic operation without claiming AGC.
 
 ### 16.4 The shortfall confirmation (game)
 

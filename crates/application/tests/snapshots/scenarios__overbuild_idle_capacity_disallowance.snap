@@ -347,6 +347,7 @@ OverbuildOutcome {
     ],
     minimum_generation: None,
     last_report: MonthlyReport {
+        islands: {},
         month: SimMonth {
             year: 2030,
             month: 12,

@@ -160,6 +160,7 @@ OverbuildOutcome {
         },
     ),
     last_report: MonthlyReport {
+        islands: {},
         month: SimMonth {
             year: 2029,
             month: 11,

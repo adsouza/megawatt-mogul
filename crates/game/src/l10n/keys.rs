@@ -10,6 +10,7 @@
 
 /// Every literal key the HUD uses, grouped as in `ui.ftl`.
 pub const ALL_UI_KEYS: &[&str] = &[
+    "event-plant-commissioned-agc",
     "connection-warning-question",
     "connection-proceed",
     "connection-cancel",

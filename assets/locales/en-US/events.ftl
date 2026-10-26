@@ -21,7 +21,8 @@ event-plant-tripped = { $plant } tripped offline. Other plants must cover its ou
 event-over-frequency-trip = { $plant } was tripped by over-frequency protection: generation outran demand.
 event-hydro-budget-exhausted = { $plant } has used up its water for the day and stops generating.
 event-city-connected = { $city } is now connected and buying power.
-event-plant-commissioned = { $plant } finished construction and is ready to start.
+event-plant-commissioned = { $plant } finished construction and operates automatically.
+event-plant-commissioned-agc = { $plant } finished construction. All-day operation and AGC are enabled. You can change these in Planning.
 event-line-commissioned = { $line } is in service.
 event-rate-review-completed = Rate review complete: your tariff is now { $tariff } and your allowed return is { $allowed_return }.
 
