@@ -14,6 +14,20 @@
 // 49th parallel, the Montana-Dakota line (104.05 W) to the Nebraska-Colorado
 // line, the Colorado border, then south through eastern New Mexico along
 // 104.5 W to the Rio Grande.
+//
+// The two files trace this seam with the same vertices, so the polygons agree
+// exactly. The grids do not (this one is 0.51 x 0.525 degrees, the Western one
+// 0.39 x 0.40), and a cell is playable when its centre is, so three pairs of
+// cells straddled the seam: each Eastern centre fell in a Western land cell
+// and each Western centre in an Eastern one. Two pairs sit on the Colorado
+// border (Eastern cells (14, 36) and (15, 36), centred at 36.8375 N in the
+// Oklahoma Panhandle, against Western cells (58, 57) and (59, 57), whose
+// centres lie on the 37 N border itself). The Panhandle is Eastern (SPS), so
+// those two are cut from the Western file, not this one. The third pair is
+// Eastern cell (12, 39) against Western cell (55, 61) in eastern New Mexico,
+// where both centres are true to their side of the diagonal seam; the
+// coarser grid gives way, so the last `exclude` ring here removes cell
+// (12, 39). With the three cuts no centre is playable in both regions.
 (
     region_schema: 4,
     id: "eastern_interconnection",
@@ -163,6 +177,14 @@
             (-87.05, 45.75), (-85.45, 46.08), (-84.72, 45.87), (-83.9, 46.0),
             (-84.15, 46.2), (-84.4, 46.45), (-84.95, 46.75), (-86.0, 46.65),
             (-87.4, 46.55), (-87.85, 47.4), (-89.3, 46.85), (-90.85, 46.6),
+        ],
+        // Seam cell, cut from the coarser grid (see the seam note in the
+        // header): the cell centred at (-103.625, 35.2625), east of the seam
+        // in eastern New Mexico. A Western cell (0.39 x 0.40 degrees)
+        // centred west of the seam at (-103.7625, 35.4) holds this centre, so
+        // the two grids would both offer the strip around it.
+        [
+            (-103.70, 35.20), (-103.55, 35.20), (-103.55, 35.33), (-103.70, 35.33),
         ],
     ],
     // Relief: low coastal plains rising to the High Plains in the west, the

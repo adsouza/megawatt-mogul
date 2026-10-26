@@ -2150,13 +2150,6 @@ fn a_cited_id_missing_from_the_research_table_fails() {
     assert!(unknown_citations("// [P7-US-001]", &rows).is_empty());
 }
 
-/// Pairs `(a, b, n)` whose grids already share `n` cells along their real border: `n` land
-/// cells of `a` have their centre in a land cell of `b`. The Eastern and Western grids (0.51 and
-/// 0.39 degrees wide) don't line up along the seam through the Oklahoma panhandle and New
-/// Mexico, so three cells each way straddle it. The count is exact: a new overlap fails, and so
-/// does a fix that leaves this entry behind. No other pair may share a cell.
-const KNOWN_SEAM_OVERLAPS: &[(&str, &str, usize)] = &[(EAST, WEST, 3), (WEST, EAST, 3)];
-
 #[test]
 fn shipped_regions_do_not_overlap() {
     let maps: Vec<(&str, LandMap)> = SHIPPED.iter().map(|&id| (id, LandMap::load(id))).collect();
@@ -2165,16 +2158,10 @@ fn shipped_regions_do_not_overlap() {
             if a_id == b_id {
                 continue;
             }
-            let allowed = KNOWN_SEAM_OVERLAPS
-                .iter()
-                .find(|(x, y, _)| x == a_id && y == b_id)
-                .map_or(0, |&(_, _, cells)| cells);
             let shared = a.centres_on_land_in(b);
-            assert_eq!(
-                shared.len(),
-                allowed,
-                "{a_id} has {} land cells whose centre is playable in {b_id} (allowed {allowed}), \
-                 first {:?}",
+            assert!(
+                shared.is_empty(),
+                "{a_id} has {} land cells whose centre is playable in {b_id}, first {:?}",
                 shared.len(),
                 shared.first()
             );

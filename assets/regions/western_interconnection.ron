@@ -14,6 +14,18 @@
 // 49th parallel, the Montana-Dakota line (104.05 W) to the Nebraska-Colorado
 // line, the Colorado border, then south through eastern New Mexico along
 // 104.5 W to the Rio Grande.
+//
+// The two files trace this seam with the same vertices, so the polygons agree
+// exactly. The grids do not (this one is 0.39 x 0.40 degrees, the Eastern one
+// 0.51 x 0.525), and a cell is playable when its centre is, so three pairs of
+// cells straddled the seam. Two pairs sit on the Colorado border: Western
+// cells (58, 57) and (59, 57) have their centres on the 37 N border itself,
+// which a centre-in-polygon test counts as Colorado, while the Eastern cells
+// (14, 36) and (15, 36) centred at 36.8375 N lie in the Oklahoma Panhandle,
+// which is Eastern (SPS). The two Western cells are cut by the `exclude`
+// rings below. The third pair, in eastern New Mexico, is cut from the Eastern
+// file (the coarser grid gives way). With the three cuts no centre is
+// playable in both regions.
 (
     region_schema: 4,
     id: "western_interconnection",
@@ -67,7 +79,18 @@
             (-123.95, 49.17), (-123.7, 48.85), (-123.5, 48.65),
         ],
     ],
-    exclude: [],
+    exclude: [
+        // Seam cells (see the seam note in the header): Western cells (58, 57)
+        // and (59, 57), centred at (-102.5875, 37.0) and (-102.1958, 37.0) on
+        // the Colorado-Oklahoma border. The Eastern cells centred at
+        // 36.8375 N hold these centres and are Panhandle land.
+        [
+            (-102.65, 36.95), (-102.525, 36.95), (-102.525, 37.05), (-102.65, 37.05),
+        ],
+        [
+            (-102.26, 36.95), (-102.13, 36.95), (-102.13, 37.05), (-102.26, 37.05),
+        ],
+    ],
     // Relief: the Rockies from New Mexico to northern BC, the Wasatch, the
     // Sierra Nevada, the Cascades and the Coast Mountains, the Colorado
     // Plateau and Great Basin, with the Central Valley and Columbia Basin
