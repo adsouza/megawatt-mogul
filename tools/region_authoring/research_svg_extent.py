@@ -444,11 +444,11 @@ PAIR = re.compile(rf"\(\s*({NUMBER})\s*,\s*({NUMBER})\s*\)")
 
 
 def parse_extent(text):
-    """Rings of a RON `(polygons: [[(lon, lat), ...], ...])` file; `//` comments allowed."""
+    """Rings of a RON `(exclude: [[(lon, lat), ...], ...])` sidecar; `//` comments allowed."""
     body = re.sub(r"//[^\n]*", "", text)
-    match = re.fullmatch(r"\s*\(\s*polygons\s*:\s*\[(.*)\]\s*,?\s*\)\s*", body, re.DOTALL)
+    match = re.fullmatch(r"\s*\(\s*exclude\s*:\s*\[(.*)\]\s*,?\s*\)\s*", body, re.DOTALL)
     if not match:
-        raise ValueError("extent is not a (polygons: [...]) RON value")
+        raise ValueError("extent is not an (exclude: [...]) RON value")
     rings = []
     for ring_match in re.finditer(r"\[([^\[\]]*)\]", match.group(1)):
         ring = [(float(a), float(b)) for a, b in PAIR.findall(ring_match.group(1))]

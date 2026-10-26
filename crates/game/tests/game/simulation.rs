@@ -213,7 +213,11 @@ fn a_new_game_request_enters_planning_and_writes_a_log() {
     assert!(stamp.chars().all(|c| c.is_ascii_digit() || c == '-'));
 
     let archived = fs::read(logs.join(&names[1])).unwrap();
-    let shipped = fs::read(shipped_assets().join("regions/eastern_interconnection.ron")).unwrap();
+    // The archive is the region's bundle: its main file and sidecars (spec section 28.11.1).
+    let shipped = RonRegionCatalog::new(shipped_assets().join("regions"))
+        .load(&RegionId::new(EASTERN))
+        .unwrap()
+        .source_bytes;
     assert_eq!(archived, shipped);
     assert!(
         fs::read_to_string(logs.join(log))

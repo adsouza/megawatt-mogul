@@ -61,15 +61,22 @@ fn shipped_listings() -> RegionListings {
     listings_in(&shipped_assets().join("regions"))
 }
 
-/// A regions folder holding only the shipped eastern region, plus `extra` files.
+/// A regions folder holding only the shipped eastern region and its sidecars, plus `extra`
+/// files.
 fn regions_with_eastern(extra: &[(&str, &str)]) -> TempDir {
     let dir = TempDir::new().unwrap();
     let eastern = format!("{EASTERN}.ron");
-    fs::copy(
-        shipped_assets().join("regions").join(&eastern),
-        dir.path().join(&eastern),
-    )
-    .unwrap();
+    let shipped = shipped_assets().join("regions");
+    fs::copy(shipped.join(&eastern), dir.path().join(&eastern)).unwrap();
+    fs::create_dir(dir.path().join(EASTERN)).unwrap();
+    for entry in fs::read_dir(shipped.join(EASTERN)).unwrap() {
+        let path = entry.unwrap().path();
+        fs::copy(
+            &path,
+            dir.path().join(EASTERN).join(path.file_name().unwrap()),
+        )
+        .unwrap();
+    }
     for (name, contents) in extra {
         fs::write(dir.path().join(name), contents).unwrap();
     }

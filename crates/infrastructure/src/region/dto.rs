@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// A whole region file. Self-contained: no includes, no external inputs.
+/// A whole legacy region file. Self-contained: no includes, no external inputs.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RegionFile {
@@ -298,12 +298,14 @@ mod present_option {
     }
 }
 
-/// Schema-4 site irradiance: geographic Gaussian field or exact row-major cells.
-/// The wire forms are mutually exclusive and keep existing Gaussian RON valid.
+/// Schema-4 site irradiance: geographic Gaussian field or exact row-major cells, inline or in
+/// a sidecar (spec §28.11.1). The wire forms are mutually exclusive and keep existing Gaussian
+/// RON valid. Loading resolves `CellsFile` to `Cells` before mapping.
 #[derive(Debug, Clone)]
 pub enum IrradianceV4 {
     Gaussian(Field),
     Cells(Vec<f64>),
+    CellsFile(String),
 }
 
 impl<'de> Deserialize<'de> for IrradianceV4 {
@@ -317,17 +319,20 @@ impl<'de> Deserialize<'de> for IrradianceV4 {
             blobs: Option<Vec<Blob>>,
             #[serde(default, deserialize_with = "present_option::deserialize")]
             cells: Option<Vec<f64>>,
+            #[serde(default, deserialize_with = "present_option::deserialize")]
+            cells_file: Option<String>,
         }
         use serde::de::Error;
         let source = Source::deserialize(deserializer)?;
-        match (source.base, source.blobs, source.cells) {
-            (Some(base), Some(blobs), None) => Ok(Self::Gaussian(Field { base, blobs })),
-            (None, None, Some(cells)) => Ok(Self::Cells(cells)),
-            (_, _, Some(_)) => Err(D::Error::custom(
-                "irradiance requires either base and blobs or cells, never both",
+        match (source.base, source.blobs, source.cells, source.cells_file) {
+            (Some(base), Some(blobs), None, None) => Ok(Self::Gaussian(Field { base, blobs })),
+            (None, None, Some(cells), None) => Ok(Self::Cells(cells)),
+            (None, None, None, Some(file)) => Ok(Self::CellsFile(file)),
+            (_, _, Some(_), _) | (_, _, _, Some(_)) => Err(D::Error::custom(
+                "irradiance requires exactly one of base and blobs, cells or cells_file",
             )),
-            (None, _, None) => Err(D::Error::missing_field("base")),
-            (_, None, None) => Err(D::Error::missing_field("blobs")),
+            (None, _, None, None) => Err(D::Error::missing_field("base")),
+            (_, None, None, None) => Err(D::Error::missing_field("blobs")),
         }
     }
 }
@@ -340,6 +345,11 @@ impl Serialize for IrradianceV4 {
             Self::Cells(cells) => {
                 let mut source = serializer.serialize_struct("Field", 1)?;
                 source.serialize_field("cells", cells)?;
+                source.end()
+            }
+            Self::CellsFile(file) => {
+                let mut source = serializer.serialize_struct("Field", 1)?;
+                source.serialize_field("cells_file", file)?;
                 source.end()
             }
         }
@@ -359,6 +369,10 @@ pub struct RegionFileV4 {
     pub land: Vec<Vec<(f64, f64)>>,
     /// Polygons cut out of the land (lakes, bays).
     pub exclude: Vec<Vec<(f64, f64)>>,
+    /// Sidecars holding generated `land` and `exclude` rings, which loading puts ahead of the
+    /// inline rings (spec §28.11.1).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub geography: Vec<String>,
     pub height: Field,
     pub irradiance: IrradianceV4,
     pub cooling_water: Field,
@@ -605,7 +619,32 @@ impl<'de> Deserialize<'de> for SchemaProbe {
 #[serde(deny_unknown_fields)]
 pub struct EconomicZonesDto {
     pub zones: Vec<EconomicZoneDto>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cells: Vec<u32>,
+    /// A sidecar holding `cells`, exclusive with inline cells (spec §28.11.1).
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cells_file: Option<String>,
+}
+
+/// A sidecar of row-major cell values: `(cells: [...])` (spec §28.11.1).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CellsSidecar<T> {
+    pub cells: Vec<T>,
+}
+
+/// A sidecar of generated rings: `(land: [...], exclude: [...])`, either member optional.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GeographySidecar {
+    #[serde(default)]
+    pub land: Vec<Vec<(f64, f64)>>,
+    #[serde(default)]
+    pub exclude: Vec<Vec<(f64, f64)>>,
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

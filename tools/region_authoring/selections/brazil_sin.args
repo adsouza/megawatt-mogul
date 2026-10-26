@@ -8,3 +8,5 @@ ISO:BRA
 --grid
 126,128
 --dissolve
+--out
+assets/regions/brazil_sin/natural_earth.ron

@@ -12,3 +12,5 @@ BGD:Dhaka,BGD:Chittagong,BGD:Sylhet,BGD:Rangpur,BGD:Rajshahi,BGD:Khulna,BGD:Bari
 --tolerance-deg
 0.012
 --dissolve
+--out
+assets/regions/india_nepal_bhutan/natural_earth.ron

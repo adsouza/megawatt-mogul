@@ -68,6 +68,53 @@ pub enum RegionLoadError {
         requested: RegionId,
         found: RegionId,
     },
+    /// A sidecar file (spec §28.11.1), named as the main file references it. The name and
+    /// problem are boxed so this error, and the save errors that carry it, stay small
+    /// (`clippy::result_large_err`).
+    #[error("region {region:?} sidecar {file:?}: {problem}")]
+    Sidecar {
+        region: RegionId,
+        file: Box<str>,
+        problem: Box<SidecarProblem>,
+    },
+    /// The framing of a region bundle, independent of what its files contain.
+    #[error("region {region:?} bundle is malformed: {problem}")]
+    Bundle {
+        region: RegionId,
+        problem: RegionBundleProblem,
+    },
+}
+
+/// Why one sidecar of a region could not be used.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum SidecarProblem {
+    #[error("referenced but missing")]
+    Missing,
+    #[error("present but not referenced")]
+    Unreferenced,
+    #[error("not a plain `[a-z0-9_]+.ron` file name")]
+    InvalidName,
+    #[error("i/o error: {0}")]
+    Io(String),
+    #[error("parse error: {0}")]
+    Parse(String),
+}
+
+/// Why bytes that start like a region bundle are not a canonical one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum RegionBundleProblem {
+    #[error("unsupported bundle version")]
+    UnsupportedVersion,
+    #[error("an entry header is malformed")]
+    BadHeader,
+    #[error("an entry is shorter than its header says")]
+    Truncated,
+    #[error("the first entry is not the region's main file")]
+    MainName,
+    #[error("sidecars are not in strictly ascending name order")]
+    Unsorted,
+    #[error("a framed bundle has no sidecars")]
+    NoSidecars,
 }
 
 /// One region, loaded once. Adapters guarantee all three fields come from the

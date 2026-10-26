@@ -5,7 +5,10 @@ use crate::support::usd_style;
 use std::collections::BTreeMap;
 
 use application::projections::{Lesson, MilestoneKind, MilestoneProgress, RampWarning};
-use application::{CommandError, CommandLogError, RegionCatalog, RegionLoadError};
+use application::{
+    CommandError, CommandLogError, RegionBundleProblem, RegionCatalog, RegionLoadError,
+    SidecarProblem,
+};
 use bevy::prelude::*;
 use domain::company::{AssetRef, LedgerCategory, LedgerEntry};
 use domain::error::DomainError;
@@ -221,9 +224,49 @@ fn region_load_errors() -> Vec<RegionLoadError> {
             error: RegionError::InvalidHomeCity(CityId(99)),
         },
         RegionLoadError::IdMismatch {
-            requested: region,
+            requested: region.clone(),
             found: RegionId::new("lemuria"),
         },
+    ]
+    .into_iter()
+    .chain(
+        sidecar_problems()
+            .into_iter()
+            .map(|problem| RegionLoadError::Sidecar {
+                region: region.clone(),
+                file: "irradiance_cells.ron".into(),
+                problem: Box::new(problem),
+            }),
+    )
+    .chain(
+        bundle_problems()
+            .into_iter()
+            .map(|problem| RegionLoadError::Bundle {
+                region: region.clone(),
+                problem,
+            }),
+    )
+    .collect()
+}
+
+fn sidecar_problems() -> Vec<SidecarProblem> {
+    vec![
+        SidecarProblem::Missing,
+        SidecarProblem::Unreferenced,
+        SidecarProblem::InvalidName,
+        SidecarProblem::Io("permission denied".into()),
+        SidecarProblem::Parse("3:7: expected a comma".into()),
+    ]
+}
+
+fn bundle_problems() -> Vec<RegionBundleProblem> {
+    vec![
+        RegionBundleProblem::UnsupportedVersion,
+        RegionBundleProblem::BadHeader,
+        RegionBundleProblem::Truncated,
+        RegionBundleProblem::MainName,
+        RegionBundleProblem::Unsorted,
+        RegionBundleProblem::NoSidecars,
     ]
 }
 
@@ -591,12 +634,29 @@ fn the_variant_tables_cover_every_variant() {
         RegionError::InvalidShape { .. } => 9,
         RegionError::InvalidBand { .. } => 10,
     });
-    assert_covers_every_variant("RegionLoadError", &region_load_errors(), 5, |e| match e {
+    assert_covers_every_variant("RegionLoadError", &region_load_errors(), 7, |e| match e {
         RegionLoadError::NotFound(_) => 0,
         RegionLoadError::Io { .. } => 1,
         RegionLoadError::Parse { .. } => 2,
         RegionLoadError::Invalid { .. } => 3,
         RegionLoadError::IdMismatch { .. } => 4,
+        RegionLoadError::Sidecar { .. } => 5,
+        RegionLoadError::Bundle { .. } => 6,
+    });
+    assert_covers_every_variant("SidecarProblem", &sidecar_problems(), 5, |p| match p {
+        SidecarProblem::Missing => 0,
+        SidecarProblem::Unreferenced => 1,
+        SidecarProblem::InvalidName => 2,
+        SidecarProblem::Io(_) => 3,
+        SidecarProblem::Parse(_) => 4,
+    });
+    assert_covers_every_variant("RegionBundleProblem", &bundle_problems(), 6, |p| match p {
+        RegionBundleProblem::UnsupportedVersion => 0,
+        RegionBundleProblem::BadHeader => 1,
+        RegionBundleProblem::Truncated => 2,
+        RegionBundleProblem::MainName => 3,
+        RegionBundleProblem::Unsorted => 4,
+        RegionBundleProblem::NoSidecars => 5,
     });
     assert_covers_every_variant("CommandError", &command_errors(), 3, |e| match e {
         CommandError::Domain(_) => 0,

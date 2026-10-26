@@ -1,6 +1,6 @@
 use application::{
-    Command, Game, GameCheckpoint, InMemoryCommandLog, ReplayCompatibility, SaveBundle, SaveError,
-    SaveId, SaveKind, SaveMetadata,
+    Command, Game, GameCheckpoint, InMemoryCommandLog, RegionCatalog, ReplayCompatibility,
+    SaveBundle, SaveError, SaveId, SaveKind, SaveMetadata,
 };
 use domain::ids::RegionId;
 use domain::session::GameSettings;
@@ -805,11 +805,11 @@ fn sealed_payload(payload: String) -> Vec<u8> {
 
 #[test]
 fn foreign_stamp_diagnosis_reads_large_region_and_unknown_nested_dtos_completely() {
-    let region = std::fs::read(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../assets/regions/eastern_interconnection.ron"),
-    )
-    .unwrap();
+    let region =
+        RonRegionCatalog::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/regions"))
+            .load(&RegionId::new("eastern_interconnection"))
+            .unwrap()
+            .source_bytes;
     let bytes = sealed_payload(format!(
         "(region:{region:?},future:FutureCommand(details:(build:\"nested-decoy\",platform:\"fake\",extra:Some([Variant((x:1)),Variant((x:2))]))),build:\"older\",platform:\"other\")"
     ));

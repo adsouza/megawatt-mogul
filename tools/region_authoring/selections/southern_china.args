@@ -8,3 +8,5 @@ CHN:Guangdong,CHN:Guangxi,CHN:Guizhou,CHN:Hainan,MAC:Macau,HKG:Central and Weste
 --grid
 124,115
 --dissolve
+--out
+assets/regions/southern_china/natural_earth.ron

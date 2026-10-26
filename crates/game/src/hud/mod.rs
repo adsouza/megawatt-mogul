@@ -488,16 +488,22 @@ pub(crate) mod test_support {
         .unwrap_or_else(|error| panic!("the shipped region {region} must start: {error}"))
     }
 
-    /// A new game in the shipped western region after `edit` has rewritten its RON, seed 7, in
-    /// Planning. For a case the shipped data never reaches, such as a tiny load.
+    /// A new game in the shipped western region after `edit` has rewritten its main RON file,
+    /// seed 7, in Planning. For a case the shipped data never reaches, such as a tiny load.
     pub fn edited_western_game(edit: impl FnOnce(String) -> String) -> Game {
         let dir = tempfile::TempDir::new().expect("a temp dir");
-        let source = shipped_assets()
-            .join("regions")
-            .join("western_interconnection.ron");
-        let text = std::fs::read_to_string(&source).expect("the shipped region reads");
+        let regions = shipped_assets().join("regions");
+        let text = std::fs::read_to_string(regions.join("western_interconnection.ron"))
+            .expect("the shipped region reads");
         std::fs::write(dir.path().join("western_interconnection.ron"), edit(text))
             .expect("the edited region writes");
+        // Its sidecars (spec section 28.11.1) come along unedited.
+        let sidecars = dir.path().join("western_interconnection");
+        std::fs::create_dir(&sidecars).expect("the sidecar directory");
+        for entry in std::fs::read_dir(regions.join("western_interconnection")).unwrap() {
+            let path = entry.unwrap().path();
+            std::fs::copy(&path, sidecars.join(path.file_name().unwrap())).unwrap();
+        }
         // The game holds the loaded region in memory, so the directory can go once it started.
         shipped_game_in(dir.path(), "western_interconnection")
     }

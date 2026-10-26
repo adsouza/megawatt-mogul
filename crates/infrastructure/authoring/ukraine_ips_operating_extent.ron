@@ -17,7 +17,7 @@
 // Near-raw tolerance (0.02 deg), so that no land cell centre of either region can sit in raw
 // Crimea or Sevastopol outside this ring. Checked with research_svg_extent.py --check-extent.
 // Command: python3 -I tools/region_authoring/natural_earth.py --admin0 target/natural-earth/ne_50m_admin_0_countries.geojson --admin1 target/natural-earth/ne_10m_admin_1_states_provinces.geojson --exclude-admin1 UKR:Crimea,UKR:Sevastopol --bounds=32.0,37.2,44.1,46.5 --grid 13,8 --tolerance-deg 0.02 --max-loss-pct 1 --dissolve --extent
-(polygons: [
+(exclude: [
     [
         (33.647, 45.980), (33.620, 45.951), (33.777, 45.930), (33.694, 45.914), (33.692, 45.861),
         (33.620, 45.882), (33.530, 45.842), (33.482, 45.854), (33.265, 45.754), (33.169, 45.784),

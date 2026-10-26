@@ -1483,7 +1483,7 @@ fn overflowing_economic_work_rates_keep_the_typed_zone_diagnostic() {
 #[test]
 fn generated_zone_cells_load_through_the_catalog() {
     use infrastructure::region::{
-        RegionFileV4, ZonePolygons, economic_zone_cells, format_economic_zone_cells,
+        RegionFileV4, ZonePolygons, economic_zone_cells, economic_zone_cells_sidecar,
     };
     let source = include_str!("support/economic_region_v4.ron");
     let file: RegionFileV4 = ron::from_str(source).unwrap();
@@ -1493,13 +1493,18 @@ fn generated_zone_cells_load_through_the_catalog() {
         polygons: vec![vec![(west, -1.0), (east, -1.0), (east, 9.0), (west, 9.0)]],
     };
     let cells = economic_zone_cells(&file, &[square(1, -1.0, 4.0), square(2, 4.0, 13.0)]).unwrap();
-    let block = format_economic_zone_cells(&cells, file.grid.width);
+    let sidecar = economic_zone_cells_sidecar("minimal.ron", "z.ron", b"", &cells, file.grid.width);
     let start = source.find("        cells: [").unwrap();
     let end = start + source[start..].find("        ],\n").unwrap() + "        ],\n".len();
-    let generated = format!("{}{block}{}", &source[..start], &source[end..]);
-    assert_ne!(generated, source);
+    let main = format!(
+        "{}        cells_file: \"economic_zone_cells.ron\",\n{}",
+        &source[..start],
+        &source[end..]
+    );
 
-    let dir = dir_with(&[("minimal.ron", &generated)]);
+    let dir = dir_with(&[("minimal.ron", &main)]);
+    fs::create_dir(dir.path().join("minimal")).unwrap();
+    fs::write(dir.path().join("minimal/economic_zone_cells.ron"), sidecar).unwrap();
     let loaded = catalog(dir.path()).load(&RegionId::new("minimal")).unwrap();
     let zone = |x, y| {
         loaded

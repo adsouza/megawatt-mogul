@@ -1,7 +1,9 @@
 # Region authoring tools
 
 Offline helpers for writing `assets/regions/*.ron`. Nothing here runs in the game or in CI's
-Rust build. Their output is reviewed and pasted into region files by hand.
+Rust build. Generated data goes in sidecar files under `assets/regions/<id>/`, which the
+hand-authored main file references (spec §28.11.1). Never paste generated data into the main
+file.
 
 ## Inputs
 
@@ -34,13 +36,15 @@ python3 -I tools/region_authoring/natural_earth.py \
     --admin1 target/natural-earth/ne_10m_admin_1_states_provinces.geojson \
     --include ISO:ESP,ISO:MAR --include-admin1 "RUS:Moskva" --exclude-admin1 "UKR:Crimea" \
     --bounds=W,E,S,N --grid WIDTH,HEIGHT [--tolerance-deg T] [--dissolve] \
-    [--extent] [--comment TEXT ...]
+    [--extent] [--comment TEXT ...] [--out SIDECAR ...]
 ```
 
 Write `--bounds=` with `=`, because argparse reads a leading `-20,...` as an option.
 
-It prints a provenance comment and then the RON `land: [...]` and `exclude: [...]` lists, as
-`(lon, lat)` with 3 decimals.
+It writes a geography sidecar: a provenance comment and then the RON document
+`(land: [...], exclude: [...])`, as `(lon, lat)` with 3 decimals. It writes the sidecar to each
+`--out` path, or to stdout when there is none. A region lists its sidecars in `geography`, and
+loading puts their rings ahead of the main file's hand-authored rings.
 
 - `--grid` sets the cell size. The default Douglas–Peucker tolerance is half a cell. After
   clipping to the bounds, land rings under 2 cells' area are dropped. Exclude rings are never
@@ -52,8 +56,8 @@ It prints a provenance comment and then the RON `land: [...]` and `exclude: [...
 - `--max-loss-pct P` fails the run when more than P% of the unsimplified (clipped, dissolved)
   area lies outside the simplified output. Every header records the measured share, computed
   by scanline integration.
-- `--extent` prints only the exclusions, as a standalone `(polygons: [...])` file. `--comment`
-  adds header lines. The header always ends with the generating command, without the comments.
+- `--extent` writes only the exclusions, as `(exclude: [...])`. `--comment` adds header lines.
+  The header always ends with the generating command, without the comments or `--out` paths.
 - `ISO:<A3>` matches admin-0 `ISO_A3`, falling back to `ISO_A3_EH` (France and Norway carry
   `-99`). `ADM0:<A3>` matches `ADM0_A3`, for Kosovo and Northern Cyprus.
 - `<A3>:<name>` matches an admin-1 `name` or `name_en`. Its country is the feature's `adm0_a3` or
@@ -61,6 +65,21 @@ It prints a provenance comment and then the RON `land: [...]` and `exclude: [...
   under `RUS`. Every selector must match, and an admin-1 selector must match exactly one feature.
 - Holes in included countries become `exclude` rings, unless another included feature fills
   them (an enclave).
+
+## Selections
+
+Every committed run is a file in `selections/`, with one argument per line and its `--out`
+targets last. Rerun one from the repository root with:
+
+```sh
+tr '\n' '\0' < tools/region_authoring/selections/<name>.args \
+    | xargs -0 python3 -I tools/region_authoring/natural_earth.py
+```
+
+`test_region_authoring.py` checks two things. First, every selection writes a sidecar that its
+region references. Second, when the Natural Earth files are in `target/natural-earth/`, it reruns
+every selection and compares the output with the committed sidecars byte for byte. Without the
+data, the second test is skipped.
 
 ## The Ukraine–IPS operating extent
 
@@ -71,19 +90,10 @@ notes and takes no sovereignty position.
 
 The research map marks Crimea's connection with a violet point and draws no wider occupied
 extent, so mainland Ukraine, Donetsk and Luhansk included, stays in Continental Europe–Maghreb.
-The file is regenerated with:
-
-```sh
-python3 -I tools/region_authoring/natural_earth.py \
-    --admin0 target/natural-earth/ne_50m_admin_0_countries.geojson \
-    --admin1 target/natural-earth/ne_10m_admin_1_states_provinces.geojson \
-    --exclude-admin1 "UKR:Crimea,UKR:Sevastopol" \
-    --bounds=32.0,37.2,44.1,46.5 --grid 13,8 --tolerance-deg 0.02 --max-loss-pct 1 \
-    --dissolve --extent --comment "..." \
-    > crates/infrastructure/authoring/ukraine_ips_operating_extent.ron
-```
-
-The file's header gives the full `--comment` text. The extent uses a near-raw 0.02° tolerance
+Its selection, `selections/ukraine_ips_operating_extent.args`, writes the file and identical
+copies at `assets/regions/continental_europe_maghreb/ukraine_ips_operating_extent.ron` and
+`assets/regions/ips_ups/ukraine_ips_operating_extent.ron`. A shipped-regions test checks that
+the copies match. The selection holds the full `--comment` text. The extent uses a near-raw 0.02° tolerance
 rather than half a cell. At half a cell (0.15°), the outline missed about 10% of the raw area
 along the coast, and a land cell centre of either region could have sat in raw Crimea outside
 the exclusion. `--max-loss-pct 1` makes the run fail if more than 1% of the dissolved,
@@ -128,8 +138,11 @@ cargo run -p infrastructure --example author_economic_zone_cells -- \
     assets/regions/<region>.ron crates/infrastructure/authoring/<region>_economic_zones.ron
 ```
 
-This prints the `cells: [...]` member of the region's `economic_zones` block, with a comment for
-each row and 20 values per line. The tool samples cell centres in the terrain the loader builds,
+This prints the `(cells: [...])` sidecar that the region's `economic_zones.cells_file` names.
+Redirect it to `assets/regions/<region>/economic_zone_cells.ron`. The sidecar has a provenance
+header, a comment for each row and 20 values per line. The region's geography includes its
+geography sidecars. The tool ignores its current zone cells, so a stale cells sidecar never
+blocks regeneration. A shipped-regions test regenerates the sidecar byte for byte. The tool samples cell centres in the terrain the loader builds,
 using the loader's even-odd test. A cell that is not playable, or is in no zone, gets 0. A
 playable cell that two zones claim is an `InvalidShape { field: "economic_zones.cells" }` error.
 

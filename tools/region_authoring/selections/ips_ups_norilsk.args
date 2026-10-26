@@ -11,3 +11,5 @@ RUS:Krasnoyarsk
 0.02
 --dissolve
 --extent
+--out
+assets/regions/ips_ups/norilsk.ron

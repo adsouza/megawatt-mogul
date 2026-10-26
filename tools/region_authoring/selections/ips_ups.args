@@ -12,3 +12,5 @@ UKR:Crimea,UKR:Sevastopol,RUS:Kaliningrad,RUS:Sakha (Yakutia),RUS:Amur,TJK:Gorno
 --tolerance-deg
 0.02
 --dissolve
+--out
+assets/regions/ips_ups/natural_earth.ron

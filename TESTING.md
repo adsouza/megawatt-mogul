@@ -100,6 +100,15 @@ Optional economic zones have independent arithmetic and compatibility checks:
   continues identically even after the installed source changes. Forged effective specs and
   changed archived economics are rejected. `region_catalog.rs` checks strict DTOs and public
   list/load/outline consistency, including typed rate-LCM overflow.
+- `infrastructure/tests/region_sidecars.rs` covers the region bundle (spec §28.11.1).
+  - A split region maps to its inlined definition and outline.
+  - The framed bytes are exact and stable, and a one-file region is its own bundle.
+  - Missing, unreferenced and misnamed sidecars, and malformed framing, are typed errors.
+  - A save archives the bundle and refuses a tampered sidecar.
+  - Archived one-file saves restore byte-identically.
+  - Property tests check that encoding round-trips and has exactly one form. The shipped
+    sidecars' reproducibility lives in `shipped_regions.rs` (zone cells, Ukraine copies) and
+    `tools/region_authoring/test_region_authoring.py` (Natural Earth selections).
 - `infrastructure/tests/support/economic-baseline/` is the immutable rules-16 capture taken at
   `2009acc` before this implementation. Never regenerate it. Tests verify its original source,
   canonical state/projections, boundary hash and construction continuation. Literal dynamic hashes

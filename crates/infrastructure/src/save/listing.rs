@@ -363,7 +363,11 @@ fn decode_card(
             .into(),
         );
     }
-    let region = region_card(&card.region)?;
+    // A bundle's main file holds the id and name (spec §28.11.1); sidecars are not read.
+    let main = crate::region::decode_region_bundle(&card.region, &header.region)
+        .map_err(malformed)?
+        .main;
+    let region = region_card(main)?;
     if region.id != header.region.as_str() {
         return Err(RestoreError::RegionIdMismatch.into());
     }

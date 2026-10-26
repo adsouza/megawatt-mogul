@@ -20,7 +20,9 @@ use domain::region::{PlantKind, RegionDefinition};
 use domain::session::{GameSettings, MonthlyReport, SessionStatus};
 use domain::time::{SimMonth, TICKS_PER_DAY, TICKS_PER_HOUR};
 use domain::units::{Hertz, Ratio};
-use infrastructure::region::{RegionFileV4, RonRegionCatalog, map_region_v4};
+use infrastructure::region::{
+    ParsedRegionFile, RegionFileV4, RonRegionCatalog, map_region_v4, parse_region_bundle,
+};
 
 const REGIONS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/regions");
 const EAST: &str = "eastern_interconnection";
@@ -124,10 +126,17 @@ fn region(id: &str) -> RegionDefinition {
         .clone()
 }
 
-/// The raw file, for mapping (lon, lat) to cells exactly as loading does.
+/// The file with its sidecars inlined, for mapping (lon, lat) to cells exactly as loading does.
 fn region_file(id: &str) -> RegionFileV4 {
-    let text = std::fs::read_to_string(format!("{REGIONS_DIR}/{id}.ron")).expect("file exists");
-    ron::de::from_str(&text).expect("file parses")
+    let id = RegionId::new(id);
+    let bundle = catalog()
+        .load(&id)
+        .expect("shipped region loads")
+        .source_bytes;
+    match parse_region_bundle(&bundle, &id).expect("bundle parses") {
+        ParsedRegionFile::V4(file) => file,
+        ParsedRegionFile::Legacy(_) => panic!("{} is schema 4", id.as_str()),
+    }
 }
 
 fn total_base_load(region: &RegionDefinition) -> f64 {
@@ -225,12 +234,12 @@ impl LandMap {
 /// Crimea and Sevastopol: no region may offer a playable cell there.
 #[derive(serde::Deserialize)]
 struct ExcludedExtent {
-    polygons: Vec<Vec<(f64, f64)>>,
+    exclude: Vec<Vec<(f64, f64)>>,
 }
 
 impl ExcludedExtent {
     fn contains(&self, lon: f64, lat: f64) -> bool {
-        self.polygons
+        self.exclude
             .iter()
             .any(|ring| point_in_ring(lon, lat, ring))
     }
@@ -2212,7 +2221,7 @@ fn excluded_extent_is_unplayable_everywhere() {
 #[test]
 fn the_excluded_extent_covers_crimea_and_sevastopol_only() {
     let extent = excluded_extent();
-    assert!(!extent.polygons.is_empty());
+    assert!(!extent.exclude.is_empty());
     for (name, lon, lat) in [
         ("Simferopol", 34.10, 44.95),
         ("Sevastopol (Balaklava side)", 33.55, 44.52),
@@ -2649,8 +2658,8 @@ mod ips_ups {
     fn ips_exclude_contains_the_canonical_extent() {
         let file = region_file(ID);
         let extent = excluded_extent();
-        assert!(!extent.polygons.is_empty());
-        for (i, polygon) in extent.polygons.iter().enumerate() {
+        assert!(!extent.exclude.is_empty());
+        for (i, polygon) in extent.exclude.iter().enumerate() {
             assert!(
                 file.exclude.iter().any(|ring| ring == polygon),
                 "canonical polygon {i} is not in exclude unchanged"
@@ -2842,8 +2851,8 @@ mod continental_europe_maghreb {
     fn europe_maghreb_exclude_contains_the_canonical_extent() {
         let file = region_file(ID);
         let extent = excluded_extent();
-        assert!(!extent.polygons.is_empty());
-        for (i, polygon) in extent.polygons.iter().enumerate() {
+        assert!(!extent.exclude.is_empty());
+        for (i, polygon) in extent.exclude.iter().enumerate() {
             assert!(
                 file.exclude.iter().any(|ring| ring == polygon),
                 "canonical polygon {i} is not in exclude unchanged"
@@ -2957,8 +2966,8 @@ mod continental_europe_maghreb {
         }
     }
 
-    /// Task 2's offline rasteriser reproduces the file's `economic_zones.cells` from the
-    /// committed authoring polygons.
+    /// Task 2's offline rasteriser regenerates the shipped economic-zone cells sidecar, byte
+    /// for byte, from the committed authoring polygons (spec section 28.11.1).
     #[test]
     fn europe_maghreb_zone_cells_are_reproducible() {
         #[derive(serde::Deserialize)]
@@ -2969,23 +2978,43 @@ mod continental_europe_maghreb {
             env!("CARGO_MANIFEST_DIR"),
             "/authoring/continental_europe_maghreb_economic_zones.ron"
         );
-        let authoring: Authoring =
-            ron::de::from_str(&std::fs::read_to_string(path).expect("authoring file exists"))
-                .expect("authoring file parses");
+        let source = std::fs::read(path).expect("authoring file exists");
+        let authoring: Authoring = ron::de::from_bytes(&source).expect("authoring file parses");
         let file = region_file(ID);
         let cells = infrastructure::region::economic_zone_cells(&file, &authoring.zones)
             .expect("zone cells rasterise");
-        let region = region(ID);
-        let terrain = region.terrain();
-        let shipped: Vec<u16> = (0..terrain.height())
-            .flat_map(|y| (0..terrain.width()).map(move |x| CellCoord { x, y }))
-            .map(|cell| {
-                u16::try_from(region.economic_zone_at(cell).expect("in the grid").0)
-                    .expect("small zone id")
-            })
-            .collect();
-        assert_eq!(cells, shipped);
-        assert!(region.has_economic_zones());
+        let sidecar = infrastructure::region::economic_zone_cells_sidecar(
+            &format!("{ID}.ron"),
+            &format!("{ID}_economic_zones.ron"),
+            &source,
+            &cells,
+            file.grid.width,
+        );
+        let shipped =
+            std::fs::read_to_string(format!("{REGIONS_DIR}/{ID}/economic_zone_cells.ron"))
+                .expect("sidecar exists");
+        assert!(
+            sidecar == shipped,
+            "regenerate it with author_economic_zone_cells"
+        );
+        assert!(region(ID).has_economic_zones());
+    }
+
+    /// The regions' copies of the Crimea and Sevastopol extent are the canonical file (ruling 11).
+    #[test]
+    fn region_copies_of_the_ukraine_extent_are_the_canonical_file() {
+        let canonical = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/authoring/ukraine_ips_operating_extent.ron"
+        ))
+        .expect("canonical extent exists");
+        for region in [ID, "ips_ups"] {
+            let copy = std::fs::read(format!(
+                "{REGIONS_DIR}/{region}/ukraine_ips_operating_extent.ron"
+            ))
+            .expect("region copy exists");
+            assert!(copy == canonical, "{region}");
+        }
     }
 
     /// Spec section 28.7.1 and the contrast of record (the 2024-25 pairing, user decision

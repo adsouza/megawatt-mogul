@@ -11,3 +11,5 @@ DZA:Adrar,DZA:Tamanghasset,DZA:Tindouf,DZA:Béchar,DZA:Ouargla,DZA:Illizi,DZA:Gh
 0.02
 --dissolve
 --extent
+--out
+assets/regions/continental_europe_maghreb/algeria_south.ron

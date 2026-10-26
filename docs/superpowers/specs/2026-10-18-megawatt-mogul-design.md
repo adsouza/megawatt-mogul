@@ -665,7 +665,8 @@ run through the ordinary generating-plant step or acquire synthetic opening outp
   rules, RNG algorithms, numerical behaviour or region mapping alter outcomes.
   The home-city topology and region schema use rules version 6: node/line identities, distances,
   construction quotes and legacy line capital change, so older logs require their matching engine.
-- The fingerprint is SHA-256 of the **exact source bytes** of the self-contained region RON file.
+- The fingerprint is SHA-256 of the **exact source bytes** of the self-contained region RON file
+  (since §28.11.1, of the region bundle: the main file and its sidecars).
   This deliberately treats formatting changes as different content too. Infrastructure computes
   it; the domain gains no I/O, serde or hashing dependency. Region files may not depend on external
   includes or mutable side inputs. The same bytes must supply the parsed `RegionDefinition`, the
@@ -4073,7 +4074,10 @@ existing `RegionFingerprintMismatch` refuses.
 **Migration.** Every shipped region moves its generated blocks into sidecars: the irradiance cells
 of both North American files, Europe–Maghreb's zone cells, and the Natural Earth runs of all five
 Plan 7 regions. Hand-authored rings stay inline. A one-off check confirms that each migrated
-bundle maps to a `RegionDefinition` equal to its pre-migration file. Packaging installs `assets/`
+bundle maps to a `RegionDefinition` equal to its pre-migration file. The North American
+irradiance cells move verbatim and stay frozen data. The seam fix (`e460b5e`) changed both
+regions' playable cells after the cells were authored. `author_irradiance_grid` therefore refuses
+to regenerate them until they are re-authored. Packaging installs `assets/`
 recursively, so the sidecar directories ship without further changes.
 
 ### 28.12 Acceptance

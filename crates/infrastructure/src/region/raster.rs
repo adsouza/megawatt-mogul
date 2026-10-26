@@ -178,23 +178,55 @@ pub fn economic_zone_cells(
     Ok(cells)
 }
 
-/// The `cells: [...]` member of an `economic_zones` block: a comment before each grid row and
-/// at most 20 values per line.
-pub fn format_economic_zone_cells(cells: &[u16], width: u16) -> String {
-    let mut out = String::from("        cells: [\n");
+/// A `(cells: [...])` sidecar (spec §28.11.1): each `header` line as a comment, then the
+/// row-major values with a comment before each grid row and at most `per_line` values per line.
+/// Values print with `Debug`, which keeps every digit of an `f64`.
+pub fn format_cells_sidecar<T: std::fmt::Debug>(
+    header: &[String],
+    cells: &[T],
+    width: u16,
+    per_line: usize,
+) -> String {
+    let mut out = String::new();
+    for line in header {
+        let _ = writeln!(out, "// {line}");
+    }
+    out.push_str("(cells: [\n");
     for (y, row) in cells.chunks(usize::from(width.max(1))).enumerate() {
-        let _ = writeln!(out, "            // Row {y}");
-        for line in row.chunks(20) {
-            out.push_str("            ");
-            for id in line {
-                let _ = write!(out, "{id}, ");
+        let _ = writeln!(out, "    // Row {y}");
+        for line in row.chunks(per_line.max(1)) {
+            out.push_str("    ");
+            for value in line {
+                let _ = write!(out, "{value:?}, ");
             }
             out.pop();
             out.push('\n');
         }
     }
-    out.push_str("        ],\n");
+    out.push_str("])\n");
     out
+}
+
+/// The `economic_zones` cells sidecar, with the provenance header `author_economic_zone_cells`
+/// writes: the two input file names and the SHA-256 of the zone polygons' source.
+pub fn economic_zone_cells_sidecar(
+    region_file: &str,
+    zones_file: &str,
+    zones_source: &[u8],
+    cells: &[u16],
+    width: u16,
+) -> String {
+    use sha2::{Digest, Sha256};
+    let digest: String = Sha256::digest(zones_source)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let header = [
+        format!("Offline author_economic_zone_cells: {region_file} with {zones_file}"),
+        format!("Zones SHA256: {digest}"),
+        "Cell-centre sampling; non-playable cells and cells in no zone are 0.".to_owned(),
+    ];
+    format_cells_sidecar(&header, cells, width, 20)
 }
 
 /// Even-odd ray casting against an implicitly closed ring.
@@ -256,6 +288,8 @@ impl RegionFileV4 {
             irradiance: match &self.irradiance {
                 IrradianceV4::Gaussian(field) => Irradiance::Gaussian(field),
                 IrradianceV4::Cells(values) => Irradiance::Cells(values),
+                // Unresolved: mapping rejects the empty list as `irradiance.cells`.
+                IrradianceV4::CellsFile(_) => Irradiance::Cells(&[]),
             },
             cooling_water: &self.cooling_water,
             hydro_potential: &self.hydro_potential,
@@ -534,19 +568,42 @@ mod tests {
     }
 
     #[test]
-    fn zone_cell_blocks_have_a_row_comment_and_twenty_values_per_line() {
+    fn cell_sidecars_have_a_header_a_row_comment_and_wrapped_values() {
+        use crate::region::CellsSidecar;
         let cells: Vec<u16> = (0..50).map(|i| i % 3).collect();
-        let text = format_economic_zone_cells(&cells, 25);
+        let text = format_cells_sidecar(&["Offline test".to_owned()], &cells, 25, 20);
         let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines[0], "        cells: [");
-        assert_eq!(lines[1], "            // Row 0");
-        assert_eq!(lines[2].matches(',').count(), 20);
-        assert_eq!(lines[3].matches(',').count(), 5);
-        assert_eq!(lines[4], "            // Row 1");
-        assert_eq!(*lines.last().unwrap(), "        ],");
-        let body = text.split_once('[').unwrap().1.rsplit_once(']').unwrap().0;
-        let parsed: Vec<u16> = ron::de::from_str(&format!("[{body}]")).unwrap();
-        assert_eq!(parsed, cells);
+        assert_eq!(lines[0], "// Offline test");
+        assert_eq!(lines[1], "(cells: [");
+        assert_eq!(lines[2], "    // Row 0");
+        assert_eq!(lines[3].matches(',').count(), 20);
+        assert_eq!(lines[4].matches(',').count(), 5);
+        assert_eq!(lines[5], "    // Row 1");
+        assert!(text.ends_with("\n])\n"));
+        let parsed: CellsSidecar<u16> = ron::de::from_str(&text).unwrap();
+        assert_eq!(parsed.cells, cells);
+
+        let values = [0.1, 1.0 / 3.0, 0.7405953153490916];
+        let text = format_cells_sidecar(&[], &values, 3, 5);
+        assert!(text.contains("    0.1, 0.3333333333333333, 0.7405953153490916,\n"));
+        let parsed: CellsSidecar<f64> = ron::de::from_str(&text).unwrap();
+        assert_eq!(parsed.cells, values);
+    }
+
+    #[test]
+    fn zone_cell_sidecars_record_their_inputs() {
+        let text = economic_zone_cells_sidecar("r.ron", "z.ron", b"zones", &[0, 1, 2, 3], 2);
+        let lines: Vec<&str> = text.lines().take(4).collect();
+        assert_eq!(
+            lines,
+            [
+                "// Offline author_economic_zone_cells: r.ron with z.ron",
+                // `printf zones | shasum -a 256`
+                "// Zones SHA256: 8c279b58e430cfbe2c032ed02222c60e243a210109aca37212503abf05bfb192",
+                "// Cell-centre sampling; non-playable cells and cells in no zone are 0.",
+                "(cells: [",
+            ]
+        );
     }
 
     #[test]

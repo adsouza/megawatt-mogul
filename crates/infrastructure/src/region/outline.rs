@@ -2,7 +2,7 @@
 use application::RegionLoadError;
 use domain::{ids::RegionId, region::RegionError, units::Currency};
 
-use super::{AtlasDto, Bounds, ParsedRegionFile, catalog::parse_region_file, raster::contains};
+use super::{AtlasDto, Bounds, ParsedRegionFile, catalog::parse_region_bundle, raster::contains};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hemisphere {
@@ -41,7 +41,7 @@ impl RegionOutline {
 /// The overview is optional presentation data; a catalog using another file format can still
 /// offer its region as a labelled button without a geographic preview.
 pub fn region_outline(source: &[u8], id: &RegionId) -> Result<RegionOutline, RegionLoadError> {
-    let file = parse_region_file(source, id)?;
+    let file = parse_region_bundle(source, id)?;
     let invalid = |field| RegionLoadError::Invalid {
         region: id.clone(),
         error: RegionError::InvalidShape { field },
@@ -155,7 +155,7 @@ pub fn region_outline(source: &[u8], id: &RegionId) -> Result<RegionOutline, Reg
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::region::{RegionFileV4, map_region_v4};
+    use crate::region::map_region_v4;
     use domain::ids::CellCoord;
 
     #[test]
@@ -179,18 +179,18 @@ mod tests {
 
     #[test]
     fn preview_matches_every_playable_cell_in_the_shipped_regions() {
-        for (id, source) in [
-            (
-                "eastern_interconnection",
-                include_bytes!("../../../../assets/regions/eastern_interconnection.ron").as_slice(),
-            ),
-            (
-                "western_interconnection",
-                include_bytes!("../../../../assets/regions/western_interconnection.ron").as_slice(),
-            ),
-        ] {
-            let outline = region_outline(source, &RegionId::new(id)).unwrap();
-            let file: RegionFileV4 = ron::de::from_bytes(source).unwrap();
+        use application::RegionCatalog;
+        let catalog = super::super::RonRegionCatalog::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/regions"
+        ));
+        for name in ["eastern_interconnection", "western_interconnection"] {
+            let id = RegionId::new(name);
+            let source = catalog.load(&id).unwrap().source_bytes;
+            let outline = region_outline(&source, &id).unwrap();
+            let ParsedRegionFile::V4(file) = parse_region_bundle(&source, &id).unwrap() else {
+                panic!("{} is schema 4", id.as_str());
+            };
             let region = map_region_v4(file.clone()).unwrap();
             let grid = region.terrain();
             for y in 0..file.grid.height {
@@ -204,7 +204,7 @@ mod tests {
                     assert_eq!(
                         outline.contains(lon, lat),
                         grid.get(CellCoord { x, y }).unwrap().land,
-                        "{id} ({x}, {y})"
+                        "{name} ({x}, {y})"
                     );
                 }
             }

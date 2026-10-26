@@ -5,7 +5,9 @@
 //! power, shares, times) are formatted by [`format`] and arrive in the messages as text.
 
 use application::projections::{Lesson, MilestoneKind, MilestoneProgress, RampWarning};
-use application::{CommandError, CommandLogError, RegionLoadError};
+use application::{
+    CommandError, CommandLogError, RegionBundleProblem, RegionLoadError, SidecarProblem,
+};
 use domain::error::DomainError;
 use domain::events::DomainEvent;
 use domain::generation::PlantStatus;
@@ -254,7 +256,56 @@ impl Localize for RegionLoadError {
                     ("found", found.as_str().into()),
                 ],
             ),
+            Self::Sidecar {
+                region,
+                file,
+                problem,
+            } => l10n.args(
+                "error-region-sidecar",
+                &[
+                    ("region", region.as_str().into()),
+                    ("file", (&**file).into()),
+                    ("detail", problem.localize(l10n).into()),
+                ],
+            ),
+            Self::Bundle { region, problem } => l10n.args(
+                "error-region-bundle",
+                &[
+                    ("region", region.as_str().into()),
+                    ("detail", problem.localize(l10n).into()),
+                ],
+            ),
         }
+    }
+}
+
+impl Localize for SidecarProblem {
+    fn localize(&self, l10n: &Localizer) -> String {
+        match self {
+            Self::Missing => l10n.text("region-sidecar-missing"),
+            Self::Unreferenced => l10n.text("region-sidecar-unreferenced"),
+            Self::InvalidName => l10n.text("region-sidecar-invalid-name"),
+            Self::Io(message) => {
+                l10n.args("region-sidecar-io", &[("message", message.as_str().into())])
+            }
+            Self::Parse(message) => l10n.args(
+                "region-sidecar-parse",
+                &[("message", message.as_str().into())],
+            ),
+        }
+    }
+}
+
+impl Localize for RegionBundleProblem {
+    fn localize(&self, l10n: &Localizer) -> String {
+        l10n.text(match self {
+            Self::UnsupportedVersion => "region-bundle-unsupported-version",
+            Self::BadHeader => "region-bundle-bad-header",
+            Self::Truncated => "region-bundle-truncated",
+            Self::MainName => "region-bundle-main-name",
+            Self::Unsorted => "region-bundle-unsorted",
+            Self::NoSidecars => "region-bundle-no-sidecars",
+        })
     }
 }
 

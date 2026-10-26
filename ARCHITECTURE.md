@@ -50,6 +50,16 @@ upcast. Unexpected new fields on legacy sources and unsupported schemas fail wit
 Region schema versions are independent of portable state schema 3, written by current saves;
 readers retain schemas 1–3.
 
+**Sidecars and the region bundle.** Spec §28.11.1 describes the format. Tool-generated blocks
+live in sidecars under `assets/regions/<id>/`, and the hand-authored main file references them:
+`geography` lists Natural Earth ring files, and `irradiance.cells_file` and
+`economic_zones.cells_file` name cell files. `RonRegionCatalog::load` assembles the main file and
+its sidecars into one canonical bundle (`infrastructure::region::bundle`). A region without
+sidecars is its own bundle. With sidecars, the bundle is a framed `megawatt-region-bundle 1`
+container. The bundle is the region's source bytes: it is parsed, fingerprinted and archived as
+one unit. Sidecars are inlined before mapping, so the region schema stays 4. Missing,
+unreferenced or misnamed sidecars, and malformed framing, are typed `RegionLoadError`s.
+
 Seven regions ship in `assets/regions/`, each a single synchronous balancing area (a copper plate)
 priced in its own currency:
 
@@ -70,15 +80,17 @@ simulation rule changed. Multi-area regions, HVDC links and SGCC are Plan 8.
 it runs in the game or in the release build:
 
 - `tools/region_authoring/` holds Python helpers (see its `README.md`). `natural_earth.py` turns
-  Natural Earth v5.1.2 admin-0 and admin-1 features into the RON `land` and `exclude` polygons,
+  Natural Earth v5.1.2 admin-0 and admin-1 features into `(land, exclude)` geography sidecars,
   with a provenance header that records the file hashes, the command and the area lost to
-  simplification. `research_svg_extent.py` checks a committed exclusion against the research map.
-  Their output is reviewed and pasted into region files by hand; downloaded data is never committed.
+  simplification. Each run's arguments and output paths are committed in `selections/*.args`, and
+  a test regenerates every sidecar from them. `research_svg_extent.py` checks a committed
+  exclusion against the research map. Downloaded data is never committed.
 - `crates/infrastructure/authoring/` holds committed authoring inputs. The Ukraine–IPS operating
   extent (Crimea and Sevastopol) is the one canonical exclusion that Continental Europe–Maghreb and
-  IPS/UPS share. The Europe–Maghreb economic-zone polygons are rasterised into that region's
-  `economic_zones.cells` by `cargo run -p infrastructure --example author_economic_zone_cells`,
-  and a shipped-regions test checks that the committed cells are reproducible from the polygons.
+  IPS/UPS share; each region keeps a byte-identical sidecar copy. The Europe–Maghreb
+  economic-zone polygons are rasterised into that region's `economic_zone_cells.ron` sidecar by
+  `cargo run -p infrastructure --example author_economic_zone_cells`. A shipped-regions test
+  checks that the committed sidecar is reproducible from the polygons.
 
 **Research-row provenance.** Every real-world money or construction-time figure lives in one
 place: `docs/research/2026-10-25-plan-7-regional-economics.md`, as rows with IDs of the form
@@ -154,8 +166,9 @@ policies (event to reaction, such as strikes or bankruptcy) run inside the domai
 
 Persistence is command sourcing, not event sourcing: `CommandLogLayer` records commands through
 the `CommandLogSink` port, and the aggregates know nothing about persistence. The header preserves
-log/rules versions, settings, seed and a SHA-256 fingerprint of the exact region source bytes.
-Infrastructure archives those same bytes as `<log-name>.region.ron` before the session starts.
+log/rules versions, settings, seed and a SHA-256 fingerprint of the exact region source bytes
+(the region bundle). Infrastructure archives those same bytes as `<log-name>.region.ron` before
+the session starts.
 Replay verifies versions and fingerprints before executing commands and uses the archive when
 shipped data changes. The shipped game has no rules-6/7 importer or special upgrade UI. One-time
 recovery tools and their historical engines are frozen outside the workspace in

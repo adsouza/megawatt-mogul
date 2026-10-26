@@ -39,6 +39,15 @@ fn app_with_battery() -> (App, TempDir, PlantId) {
         source,
     )
     .unwrap();
+    // Its sidecars (spec section 28.11.1) come along unedited.
+    let sidecars = dir.path().join("regions/western_interconnection");
+    std::fs::create_dir(&sidecars).unwrap();
+    for entry in
+        std::fs::read_dir(shipped_assets().join("regions/western_interconnection")).unwrap()
+    {
+        let path = entry.unwrap().path();
+        std::fs::copy(&path, sidecars.join(path.file_name().unwrap())).unwrap();
+    }
     let mut app = headless_app(dir.path(), &dir.path().join("logs"));
     app.insert_resource(SaveDir(dir.path().join("saves")))
         .add_plugins((hud::HudPlugin, game::world::WorldViewPlugin));

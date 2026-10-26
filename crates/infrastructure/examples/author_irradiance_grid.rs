@@ -1,10 +1,17 @@
-//! Offline authoring only: emit a v4 irradiance block from immutable legacy potential.
+//! Offline authoring only: emit a v4 irradiance cells sidecar from immutable legacy potential.
 //! Usage: author_irradiance_grid <legacy.ron> <schema4.ron> <potential-scale>
-//! Inputs are read-only; stdout is reviewed before insertion into the authored RON.
-use std::{fmt::Write as _, io::Write as _};
+//! Inputs are read-only; stdout is the `(cells: [...])` sidecar the region's
+//! `irradiance.cells_file` names (spec §28.11.1), normally
+//! `assets/regions/<region>/irradiance_cells.ron`. The schema-4 geography includes its geography
+//! sidecars. The source and destination playable cells must match.
+use std::io::Write as _;
+use std::path::Path;
 
 use domain::ids::{CellCoord, RegionId};
-use infrastructure::region::{Field, IrradianceV4, RegionFileV4, load_region_bytes, map_region_v4};
+use infrastructure::region::{
+    Field, IrradianceV4, ParsedRegionFile, RegionFileV4, RonRegionCatalog, format_cells_sidecar,
+    load_region_bytes, map_region_v4,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
@@ -17,12 +24,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !scale.is_finite() || scale <= 0.0 {
         return Err("potential scale must be finite and positive".into());
     }
-    let mut file: RegionFileV4 = ron::from_str(&std::fs::read_to_string(&args[1])?)?;
+    let path = Path::new(&args[1]);
+    let mut file: RegionFileV4 = ron::from_str(&std::fs::read_to_string(path)?)?;
     let legacy = load_region_bytes(std::fs::read(&args[0])?, &RegionId::new(&file.id))?;
     file.irradiance = IrradianceV4::Gaussian(Field {
         base: 1.0,
         blobs: Vec::new(),
     });
+    let catalog = RonRegionCatalog::new(path.parent().unwrap_or(Path::new(".")));
+    let ParsedRegionFile::V4(mut file) =
+        catalog.resolve(&RegionId::new(&file.id), ParsedRegionFile::V4(file))?
+    else {
+        return Err("a schema-4 region resolved to another schema".into());
+    };
     let unit = map_region_v4(file.clone())?;
     let before = &legacy.definition;
     let (width, height) = (unit.terrain().width(), unit.terrain().height());
@@ -105,22 +119,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect();
-    let mut output = format!(
-        "    // Offline author_irradiance_grid: immutable {}-v3.ron\n    // Source SHA256: {fingerprint}\n    // Annual potential target = legacy irradiance * {scale}; inverse latitude factor\n    // is baked into site quality. No runtime calibration. Row-major, north first.\n    irradiance: (cells: [\n",
-        file.id
-    );
-    for (y, row) in values.chunks(usize::from(width)).enumerate() {
-        writeln!(output, "        // Row {y}")?;
-        for chunk in row.chunks(5) {
-            output.push_str("        ");
-            for v in chunk {
-                write!(output, "{v:?}, ")?;
-            }
-            output.pop();
-            output.push('\n');
-        }
-    }
-    output.push_str("    ]),\n");
+    let header = [
+        format!(
+            "Offline author_irradiance_grid: immutable {}-v3.ron",
+            file.id
+        ),
+        format!("Source SHA256: {fingerprint}"),
+        format!("Annual potential target = legacy irradiance * {scale}; inverse latitude factor"),
+        "is baked into site quality. No runtime calibration. Row-major, north first.".to_owned(),
+    ];
+    let output = format_cells_sidecar(&header, &values, width, 5);
     std::io::stdout().write_all(output.as_bytes())?;
     Ok(())
 }

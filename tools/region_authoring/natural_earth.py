@@ -1,14 +1,15 @@
 """Offline region geography from Natural Earth GeoJSON.
 
-Prints RON `land: [...]` and `exclude: [...]` polygon lists for a region file, as `(lon, lat)`
-pairs with 3 decimals, after a provenance comment. Run with `python3 -I` and pass every input as
-a path argument: the downloaded data is untrusted and is read with `json` only.
+Writes a region geography sidecar (spec section 28.11.1): a provenance comment, then the RON
+document `(land: [...], exclude: [...])`, as `(lon, lat)` pairs with 3 decimals. It goes to each
+`--out` path, or to stdout without one. Run with `python3 -I` and pass every input as a path
+argument: the downloaded data is untrusted and is read with `json` only.
 
     python3 -I tools/region_authoring/natural_earth.py \\
         --admin0 target/natural-earth/ne_50m_admin_0_countries.geojson \\
         --admin1 target/natural-earth/ne_10m_admin_1_states_provinces.geojson \\
         --include ISO:ESP,ISO:MAR --include-admin1 "RUS:Moskva" --exclude-admin1 "UKR:Crimea" \\
-        --bounds=W,E,S,N --grid WIDTH,HEIGHT [--tolerance-deg T]
+        --bounds=W,E,S,N --grid WIDTH,HEIGHT [--tolerance-deg T] [--out SIDECAR ...]
 
 Write `--bounds=...` with `=`: argparse would read a leading `-20,...` as an option.
 
@@ -23,8 +24,8 @@ Selectors:
 Each ring is clipped to the bounds, simplified with Douglas-Peucker at the tolerance (half a cell
 by default) and rounded. Land rings under two cells' area are dropped; exclusions never are.
 `--dissolve` first merges rings that share borders, so separately simplified neighbours cannot
-open a sliver between them. `--extent` prints only the exclusions, as a standalone
-`(polygons: [...])` file; `--comment` adds header lines. Outer rings of included
+open a sliver between them. `--extent` writes only the exclusions, as `(exclude: [...])`;
+`--comment` adds header lines. Outer rings of included
 features become `land`. Their holes become `exclude`, unless another included feature fills the
 hole (an enclave). Outer rings of `--exclude-admin1` features become `exclude`.
 """
@@ -397,9 +398,9 @@ def format_rings(name, rings, indent="    "):
     return "\n".join(lines)
 
 
-def format_polygons(rings):
-    """A top-level RON `(polygons: [...])` value."""
-    lines = ["(polygons: ["]
+def format_extent(rings):
+    """A top-level RON `(exclude: [...])` sidecar."""
+    lines = ["(exclude: ["]
     for ring in rings:
         lines.append("    [")
         for i in range(0, len(ring), POINTS_PER_LINE):
@@ -411,14 +412,15 @@ def format_polygons(rings):
 
 
 def command_line(argv):
-    """The invocation, for provenance, without its `--comment` values (printed separately)."""
+    """The invocation, for provenance, without its `--comment` values (printed separately) or
+    its `--out` targets (the selection file names them)."""
     shown, skip = [], False
     for arg in argv:
         if skip:
             skip = False
-        elif arg == "--comment":
+        elif arg in ("--comment", "--out"):
             skip = True
-        elif not arg.startswith("--comment="):
+        elif not arg.startswith(("--comment=", "--out=")):
             shown.append(arg)
     return "python3 -I tools/region_authoring/natural_earth.py " + shlex.join(shown)
 
@@ -461,7 +463,13 @@ def main(argv=None):
     parser.add_argument(
         "--extent",
         action="store_true",
-        help="print the exclusions as a standalone (polygons: [...]) file",
+        help="write only the exclusions, as an (exclude: [...]) sidecar",
+    )
+    parser.add_argument(
+        "--out",
+        action="append",
+        default=[],
+        help="sidecar path to write (repeatable); stdout when absent",
     )
     parser.add_argument("--comment", action="append", default=[], help="extra header line")
     parser.add_argument(
@@ -525,13 +533,17 @@ def main(argv=None):
         *args.comment,
         f"Command: {command_line(argv)}",
     ]
+    lines = ["// " + line for line in header]
     if args.extent:
-        print("\n".join("// " + line for line in header))
-        print(format_polygons(exclude))
+        lines.append(format_extent(exclude))
     else:
-        print("\n".join("    // " + line for line in header))
-        print(format_rings("land", land))
-        print(format_rings("exclude", exclude))
+        lines += ["(", format_rings("land", land), format_rings("exclude", exclude), ")"]
+    document = "\n".join(lines) + "\n"
+    for out in args.out:
+        with open(out, "w", encoding="utf-8", newline="\n") as f:
+            f.write(document)
+    if not args.out:
+        sys.stdout.write(document)
     print(
         f"{len(land)} land and {len(exclude)} exclude rings, "
         f"{sum(map(len, land)) + sum(map(len, exclude))} points",

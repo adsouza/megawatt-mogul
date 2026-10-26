@@ -12,3 +12,5 @@ DNK:Hovedstaden,DNK:Sjaælland,ESP:Baleares,ESP:Las Palmas,ESP:Santa Cruz de Ten
 --tolerance-deg
 0.02
 --dissolve
+--out
+assets/regions/continental_europe_maghreb/natural_earth.ron
