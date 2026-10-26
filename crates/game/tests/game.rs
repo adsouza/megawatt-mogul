@@ -15,6 +15,8 @@ mod cli;
 mod construction;
 #[path = "game/contrast.rs"]
 mod contrast;
+#[path = "game/crash.rs"]
+mod crash;
 #[path = "game/end_to_end.rs"]
 mod end_to_end;
 #[path = "game/hud.rs"]

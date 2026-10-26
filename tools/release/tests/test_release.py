@@ -82,6 +82,10 @@ class ReleaseTests(unittest.TestCase):
         self.assertFalse(any(arg.startswith("--filesystem=") for arg in manifest["finish-args"]))
         self.assertIn("--socket=wayland", manifest["finish-args"])
         self.assertIn("--socket=fallback-x11", manifest["finish-args"])
+        # Crash reports name functions only if the packaged game keeps its symbol table.
+        self.assertEqual(manifest["build-options"], {"strip": False, "no-debuginfo": True})
+        profile = release.read_toml(self.root / "Cargo.toml")["profile"]["release"]
+        self.assertIn(profile.get("strip", "debuginfo"), ("none", "debuginfo", False))
         # The desktop theme directory must describe the actual PNG dimensions; preserve alpha.
         png = (self.root / "packaging/linux/icon.png").read_bytes()
         self.assertEqual(png[:8], b"\x89PNG\r\n\x1a\n")
@@ -158,6 +162,19 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual((game.uid, game.gid, game.mode), (0, 0, 0o755))
             icon = files.extractfile(f"./usr/share/icons/hicolor/512x512/apps/{release.APP_ID}.png")
             self.assertEqual(icon.read(), (self.root / "packaging/linux/icon.png").read_bytes())
+        self.assertIn("data.tar.xz", ar_members(artifact))
+
+
+def ar_members(path):
+    """Member names of an ar archive, such as a .deb."""
+    data = path.read_bytes()
+    names, offset = [], 8
+    while offset + 60 <= len(data):
+        header = data[offset:offset + 60]
+        names.append(header[:16].decode().strip().rstrip("/"))
+        size = int(header[48:58])
+        offset += 60 + size + size % 2
+    return names
 
 
 if __name__ == "__main__":

@@ -55,6 +55,16 @@ fn an_unknown_argument_is_an_error() {
 }
 
 #[test]
+fn the_crash_flag_needs_no_value_and_is_off_by_default() {
+    let args = parse(&["--crash", "--log-dir", "/l"]).unwrap();
+
+    assert!(args.crash);
+    assert_eq!(args.log_dir, Some(PathBuf::from("/l")));
+    assert!(!CliArgs::default().crash);
+    assert!(!CliError::USAGE.contains("--crash"));
+}
+
+#[test]
 fn exit_after_frames_reads_a_positive_count() {
     let args = parse(&["--exit-after-frames", "120"]).unwrap();
 
