@@ -46,7 +46,7 @@ impl PluginGroup for GamePlugins {
             .add_group(CorePlugins)
             .add(EguiPlugin::default())
             .add(HudPlugin)
-            .add(audio::SunriseAudioPlugin)
+            .add(audio::DailyAudioPlugin)
             .add(world::WorldViewPlugin)
             .add(world::CameraPlugin)
             .add(preferences::PreferencesPlugin);
