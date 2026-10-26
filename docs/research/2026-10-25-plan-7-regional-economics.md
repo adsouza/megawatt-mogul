@@ -10,13 +10,15 @@ found, the gap is listed under [Gaps](#gaps) instead of being estimated.
 
 - **Row IDs** are `P7-<area>-<nnn>`. Areas: `US` (pacing reference only), `FX` (exchange rates),
   `SC`, `BR`, `IN` and `IPS` (region-wide baselines), ISO alpha-2 countries inside Europe–Maghreb
-  (`ES`, `MA`, `DE`), and `EM` (Europe–Maghreb regional default).
+  (`ES`, `MA`, `DE`, and `DZ` and `TN` from the 2026-10-26 follow-up), and `EM` (Europe–Maghreb
+  regional default).
 - **Columns** follow the Plan 7 Task 1 brief. *Normalised value* is in the region currency
   (CNY, BRL, INR, RUB or EUR) and always names an FX row; `FX: none` means the source is already in
   the region currency. US rows are not normalised: they are only the pacing reference, and no US
   figure is converted into another region's money.
 - **Sources** give publisher, title, URL, publication date (`pub.`), access date (`acc.`) and
-  locator (`loc.`). All rows were accessed on 2026-10-25. Rows from downloaded files also record the file's SHA-256.
+  locator (`loc.`). All rows were accessed on 2026-10-25, except the 2026-10-26 follow-up rows (`P7-DZ-*`, `P7-TN-*`
+  and P7-FX-024 to P7-FX-030), which give their own access date. Rows from downloaded files also record the file's SHA-256.
 - **Per-kW basis.** Capital and fixed O&M are per kW of net (AC) capacity. Battery capital is per
   kW of a 4-hour system, matching the shipped 200 MW / 800 MWh battery.
 - **`fuel_or_marginal`** means fuel plus variable non-fuel O&M per MWh generated. Each row says
@@ -332,6 +334,13 @@ year.
 | P7-FX-021 | India–Nepal–Bhutan | India | Fx | fx_rate | 87.15845 | INR per USD | 2025 | base rate for 2025 USD→INR; FX: self | World Bank — WDI PA.NUS.FCRF — https://api.worldbank.org/v2/country/IND/indicator/PA.NUS.FCRF?date=2025&format=json — pub. 2026-10-08 — acc. 2026-10-25 — loc. IND, 2025 | Annual average; IRENA rows only |
 | P7-FX-022 | Brazil | Brazil | Fx | fx_rate | 5.587286 | BRL per USD | 2025 | base rate for 2025 USD→BRL; FX: self | World Bank — WDI PA.NUS.FCRF — https://api.worldbank.org/v2/country/BRA/indicator/PA.NUS.FCRF?date=2025&format=json — pub. 2026-10-08 — acc. 2026-10-25 — loc. BRA, 2025 | Annual average; IRENA rows only |
 | P7-FX-023 | IPS/UPS | Russia | Fx | fx_rate | 83.6525 | RUB per USD | 2025 | base rate for 2025 USD→RUB; FX: self | World Bank — WDI PA.NUS.FCRF — https://api.worldbank.org/v2/country/RUS/indicator/PA.NUS.FCRF?date=2025&format=json — pub. 2026-10-08 — acc. 2026-10-25 — loc. RUS, 2025 | Annual average; IRENA rows only |
+| P7-FX-024 | Europe–Maghreb | Euro area (EMU) | Fx | fx_rate | 0.778338 | EUR per USD | 2012 | base rate for 2012; FX: self | World Bank — WDI PA.NUS.FCRF — https://api.worldbank.org/v2/country/EMU/indicator/PA.NUS.FCRF?date=2012&format=json — pub. 2026-10-08 — acc. 2026-10-26 — loc. EMU, 2012 | Annual average; follow-up 2026-10-26 (P7-TN-016) |
+| P7-FX-025 | Europe–Maghreb | Euro area (EMU) | Fx | fx_rate | 0.752728 | EUR per USD | 2014 | base rate for 2014; FX: self | World Bank — WDI PA.NUS.FCRF — https://api.worldbank.org/v2/country/EMU/indicator/PA.NUS.FCRF?date=2014&format=json — pub. 2026-10-08 — acc. 2026-10-26 — loc. EMU, 2014 | Annual average; follow-up 2026-10-26 |
+| P7-FX-026 | Europe–Maghreb | Japan | Fx | fx_rate | 105.9448 | JPY per USD | 2014 | derived 105.9448 ÷ 0.752728 = 140.7477 JPY per EUR; FX: P7-FX-025 | World Bank — WDI PA.NUS.FCRF — https://api.worldbank.org/v2/country/JPN/indicator/PA.NUS.FCRF?date=2014&format=json — pub. 2026-10-08 — acc. 2026-10-26 — loc. JPN, 2014 | Annual average; for the JICA Radès row (P7-TN-012) |
+| P7-FX-027 | Europe–Maghreb | Algeria | Fx | fx_rate | 80.57902 | DZD per USD | 2014 | derived 80.57902 ÷ 0.752728 = 107.0493 DZD per EUR; FX: P7-FX-025 | World Bank — WDI PA.NUS.FCRF — https://api.worldbank.org/v2/country/DZA/indicator/PA.NUS.FCRF?date=2014&format=json — pub. 2026-10-08 — acc. 2026-10-26 — loc. DZA, 2014 | Annual average; for Kabertène (P7-DZ-009) |
+| P7-FX-028 | Europe–Maghreb | Euro area (EMU) | Fx | fx_rate | 0.949624 | EUR per USD | 2022 | base rate for 2022; FX: self | World Bank — WDI PA.NUS.FCRF — https://api.worldbank.org/v2/country/EMU/indicator/PA.NUS.FCRF?date=2022&format=json — pub. 2026-10-08 — acc. 2026-10-26 — loc. EMU, 2022 | Annual average; for the IFC Kairouan row (P7-TN-009) |
+| P7-FX-029 | Europe–Maghreb | Euro area (EMU) | Fx | fx_rate | 0.924840 | EUR per USD | 2023 | base rate for 2023; FX: self | World Bank — WDI PA.NUS.FCRF — https://api.worldbank.org/v2/country/EMU/indicator/PA.NUS.FCRF?date=2023&format=json — pub. 2026-10-08 — acc. 2026-10-26 — loc. EMU, 2023 | Annual average; follow-up 2026-10-26 |
+| P7-FX-030 | Europe–Maghreb | Algeria | Fx | fx_rate | 135.8429 | DZD per USD | 2023 | derived 135.8429 ÷ 0.924840 = 146.8827 DZD per EUR; FX: P7-FX-029 | World Bank — WDI PA.NUS.FCRF — https://api.worldbank.org/v2/country/DZA/indicator/PA.NUS.FCRF?date=2023&format=json — pub. 2026-10-08 — acc. 2026-10-26 — loc. DZA, 2023 | Annual average; for the 2023 solar awards (P7-DZ-001, -002) and P7-DZ-014 |
 
 ### Brazil (`BR`, BRL)
 
@@ -468,6 +477,58 @@ schedule, which the rows use as `build_months_real`.
 | P7-MA-008 | Europe–Maghreb | Morocco | Wind | build_months_real | put into operation 25 months later than planned | months of delay | — | +25 months versus plan; FX: none | KfW Development Bank — *Ex post evaluation – Morocco: Wind Farm Tangier II* (evaluation report 2015) — https://www.kfw-entwicklungsbank.de/PDF/Evaluierung/Ergebnisse-und-Publikationen/PDF-Dokumente-L-P_EN/Marokko_Windpark_E_2016.pdf (downloaded; SHA-256 1da025e6b444762c8e5c3651ba2a52f415d8157a06c807bbfcf015e24be408d9) — pub. 2016-05 (PDF) — acc. 2026-10-25 — loc. p. 4, efficiency section | Independent evidence of long Moroccan wind schedules (land rights, turbine repositioning, cabling); a delay, not a full duration |
 | P7-MA-009 | Europe–Maghreb | Morocco | Wind | capital_per_kw | total cost 704 million for 150 + 100 + 200 MW | EUR | 2013 (appraisal) | derived 704e6 ÷ 450,000 kW = 1,564 EUR/kW; FX: none | EIB — ONEE - Projet Éolien, project 20120174 — https://www.eib.org/en/projects/all/20120174 — pub. 2013-11-06 (release date) — acc. 2026-10-25 — loc. Total cost; Description | Planned programme cost for Midelt, Tangier and Essaouira farms; capacities later changed; independent of EBRD |
 
+### Algeria (`DZ`, EUR via DZD) — follow-up 2026-10-26
+
+All `DZ` rows were accessed on 2026-10-26. Algerian figures come mostly from the Algerian trade press reporting
+Sonelgaz, ministry or APS statements. No development-bank appraisal of an Algerian generation or
+line project was found (see [Gaps](#gaps)). Solar lot capacities are stated as MW in the 2023
+award notice; that they are peak (DC) ratings is an inference, recorded in each row.
+
+| ID | Region | Market | Technology | Metric | Value as stated | Unit/currency | Price year | Normalised value (region currency) | Source | Scope notes |
+|---|---|---|---|---|---|---|---|---|---|---|
+| P7-DZ-001 | Europe–Maghreb | Algeria | Solar | capital_per_kw | provisional award 15.76 billion for 200 MW (Tendla lot) | DZD | 2023 | derived 15.76e9 ÷ 200,000 kW = 78,800 DZD/kW ÷ 146.8827 = 536.5 EUR/kW, treated as per kWp; FX: P7-FX-029, P7-FX-030 | Algérie Eco, reporting the provisional award notice of Sonelgaz Energies renouvelables — article on the provisional award of the 2,000 MW project — https://www.algerie-eco.com/2023/11/03/projet-2000-mw-attribution-provisoire-des-marches/ — pub. 2023-11-03 — acc. 2026-10-26 — loc. Tendla (El M'Ghaier) lot paragraph | CSCEC; EPC scope (studies, engineering, civil works, supply), so it excludes the owner's costs; tax basis not stated; 14-month delivery period. DC basis inferred: the plant has 364,000 panels (P7-DZ-004 source), 549 W per panel at 200 MW, and the 2025 re-awards of two lots from the same programme state MWc (P7-DZ-006, -008). The notice's lot capacities sum to 2,060 MW against a stated 2,000 MW programme, so no programme average is derived |
+| P7-DZ-002 | Europe–Maghreb | Algeria | Solar | capital_per_kw | provisional award 18.13 billion for 200 MW (Laghrous lot) | DZD | 2023 | derived 18.13e9 ÷ 200,000 kW = 90,650 DZD/kW ÷ 146.8827 = 617.2 EUR/kW, treated as per kWp; FX: P7-FX-029, P7-FX-030 | Algérie Eco — https://www.algerie-eco.com/2023/11/03/projet-2000-mw-attribution-provisoire-des-marches/ — 2,000 MW award article (as P7-DZ-001) — pub. 2023-11-03 — acc. 2026-10-26 — loc. Laghrous (Biskra) lot paragraph | El Ghrous plant; PowerChina NTL–Sinohydro; EPC scope as P7-DZ-001; 16-month delivery period. More than 390,000 panels (P7-DZ-005 source), at most 513 W per panel at 200 MW (DC basis inferred) |
+| P7-DZ-003 | Europe–Maghreb | Algeria | Solar | build_months_real | delivery periods 14 months (Tendla) and 16 months (Laghrous); programme range 7–16 months | months | — | *planned* 14 and 16 months; FX: none | Algérie Eco — https://www.algerie-eco.com/2023/11/03/projet-2000-mw-attribution-provisoire-des-marches/ — 2,000 MW award article (as P7-DZ-001) — pub. 2023-11-03 — acc. 2026-10-26 — loc. lot paragraphs; programme paragraph | Contracted delivery periods; the actual durations (P7-DZ-004, -005) ran 8–12 months longer |
+| P7-DZ-004 | Europe–Maghreb | Algeria | Solar | build_months_real | first stone laid 2024-03-25; plant commissioned by the minister 2026-05-18 | dates | — | derived 784 days ÷ 30.4375 = 25.8 months (upper bound: the date of grid energisation was not found); FX: none | Algérie Eco — article on the first stone of the 200 MW El M'Ghaier PV plant — https://www.algerie-eco.com/2024/03/25/el-meghaier-pose-de-la-1ere-pierre-dune-centrale-solaire-photovoltaique-de-200-mw/ — pub. 2024-03-25 — acc. 2026-10-26 — loc. paragraphs 1–2 (first stone; 14-month plan); and Horizons — article on the commissioning of the 200 MW El M'Ghaier PV plant — https://www.horizons.dz/2026/05/adjal-met-en-service-une-centrale-photovoltaique-de-200-mw-a-el-meghaier/ — pub. 2026-05-18 — acc. 2026-10-26 — loc. paragraphs 1–2 | Tendla, El M'Ghaier wilaya, in the footprint. The ceremony is dated by the article's day (Monday). Radio Algérie's report (https://news.radioalgerie.dz/fr/node/86449) rejected the request: not reached |
+| P7-DZ-005 | Europe–Maghreb | Algeria | Solar | build_months_real | 24 months of works; plant received in April 2026; inaugurated 2026-05-18 | months | — | 24 months; FX: none | Algérie Eco — article on the inauguration of the 200 MW El Ghrous PV plant — https://algerie-eco.com/2026/05/19/biskra-inauguration-de-la-centrale-solaire-photovoltaique-de-200-mw-del-ghrous/ — pub. 2026-05-19 — acc. 2026-10-26 — loc. paragraphs 1–3 | El Ghrous (Laghrous lot of P7-DZ-002), Biskra wilaya, in the footprint; works duration as stated by the article, against a 16-month delivery period |
+| P7-DZ-006 | Europe–Maghreb | Algeria | Solar | capital_per_kw | 87 million excluding VAT for 150 MWc (Touggourt lot) | EUR | 2025 | derived 87e6 ÷ 150,000 kWp = 580 EUR/kWp; FX: none (stated in EUR) | Team France Export (Business France), citing DZTenders — sector note on Sonelgaz EnR's award of the last three lots of its 2,000 MW solar programme — https://www.teamfrance-export.fr/infos-sectorielles/37223/37223-sonelgaz-energies-renouvelables-attribue-trois-dernier-lots-de-son-programme-de-2-000-mw-solaire-lance-en-2023 — pub. 2025-04-28 — acc. 2026-10-26 — loc. Touggourt paragraph | CSCEC; award decisions dated 2025-04-21, replacing the cancelled 2023 award (14.47 billion DZD in the P7-DZ-001 source); EPC price, not whole project; 33 million EUR of it repatriable |
+| P7-DZ-007 | Europe–Maghreb | Algeria | Solar | capital_per_kw | nearly 153 million excluding VAT for 250 MWc (Temacine lot) | EUR | 2025 | derived < 153e6 ÷ 250,000 kWp = 612 EUR/kWp (upper bound); FX: none | Team France Export — https://www.teamfrance-export.fr/infos-sectorielles/37223/37223-sonelgaz-energies-renouvelables-attribue-trois-dernier-lots-de-son-programme-de-2-000-mw-solaire-lance-en-2023 — Sonelgaz EnR awards (as P7-DZ-006) — pub. 2025-04-28 — acc. 2026-10-26 — loc. Temacine paragraph | Algerian contractor (SARL Hamdi de Transport); EPC price |
+| P7-DZ-008 | Europe–Maghreb | Algeria | Solar | capital_per_kw | nearly 84 million excluding VAT for 120 MWc (Kenadsa lot) | EUR | 2025 | derived < 84e6 ÷ 120,000 kWp = 700 EUR/kWp (upper bound); FX: none | Team France Export — https://www.teamfrance-export.fr/infos-sectorielles/37223/37223-sonelgaz-energies-renouvelables-attribue-trois-dernier-lots-de-son-programme-de-2-000-mw-solaire-lance-en-2023 — Sonelgaz EnR awards (as P7-DZ-006) — pub. 2025-04-28 — acc. 2026-10-26 — loc. Kenadsa paragraph | PowerChina International and Sinohydro; Béchar wilaya; EPC price; 41 million EUR repatriable |
+| P7-DZ-009 | Europe–Maghreb | Algeria | Wind | capital_per_kw | overall cost 2.8 billion for 12 × 0.85 MW | DZD | 2014 (commissioned) | derived 2.8e9 ÷ 10,200 kW = 274,510 DZD/kW ÷ 107.0493 = 2,564 EUR/kW; FX: P7-FX-025, P7-FX-027 | Maghreb Émergent — article on the inauguration of Algeria's first 10 MW wind farm, Adrar — https://maghrebemergent.news/fr/l-algerie-inaugure-sa-premiere-ferme-eolienne-de-10-megawatts-a-adrar/ — pub. 2014-07-03 — acc. 2026-10-26 — loc. paragraphs 1–2; Algérie360 — article on the commissioning of Algeria's first wind farm — https://www.algerie360.com/energies-renouvelables-mise-en-service-de-la-1ere-ferme-eolienne-en-algerie/ — pub. 2014-07-03 — acc. 2026-10-26 — loc. cost paragraph (same figure) | Kabertène pilot, 72 km north of Adrar: **outside the footprint** (isolated southern Algeria). Cegelec with Sonelgaz subsidiaries; 850 kW turbine class; price year spans 2011–2014 |
+| P7-DZ-010 | Europe–Maghreb | Algeria | Wind | build_months_real | works began October 2011; nearly 32 months of works; commissioned 2014-07-03 | months | — | 32 months as stated (33.1 months from 2011-10-01 to 2014-07-03); FX: none | Maghreb Émergent — https://maghrebemergent.news/fr/l-algerie-inaugure-sa-premiere-ferme-eolienne-de-10-megawatts-a-adrar/ — Kabertène inauguration (as P7-DZ-009) — pub. 2014-07-03 — acc. 2026-10-26 — loc. paragraph 2 | Outside the footprint; a 10 MW pilot, not a utility-scale schedule |
+| P7-DZ-011 | Europe–Maghreb | Algeria | Ccgt | capital_per_kw | 184.09 billion for 1,406.017 MW | DZD | 2026 (launch of works) | derived 184.09e9 ÷ 1,406,017 kW = 130,930 DZD/kW ÷ 148.7125 = 880.4 EUR/kW; FX: P7-FX-011, P7-FX-013 (2025, the latest WDI year) | TSA Algérie, citing APS and the Ministry of Energy and Renewable Energies — article on the launch of works on a 1.4 billion USD power plant — https://www.tsa-algerie.com/lalgerie-lance-le-chantier-dune-centrale-electrique-pour-14-milliard/ — pub. 2026-04-27 — acc. 2026-10-26 — loc. paragraphs 1–3; Algérie Eco, same day and figures — https://algerie-eco.com/?p=239422 — acc. 2026-10-26 | Tébessa (El Aouinet) combined cycle; Sonelgaz-Production de l'électricité with CNEEC. Estimate at the launch of works, not an outturn cost |
+| P7-DZ-012 | Europe–Maghreb | Algeria | Ccgt | build_months_real | 48-month execution period from the launch of works on 2026-04-27 | months | — | *planned* 48 months; FX: none | TSA Algérie — https://www.tsa-algerie.com/lalgerie-lance-le-chantier-dune-centrale-electrique-pour-14-milliard/ — Tébessa launch (as P7-DZ-011) — pub. 2026-04-27 — acc. 2026-10-26 — loc. paragraph 3 | Planned |
+| P7-DZ-013 | Europe–Maghreb | Algeria | Ccgt | build_months_real | contract signed in 2014; suspended June 2024; two units planned for 2026 and final reception for 2027 | dates | — | derived *planned* ≥ 12 years from contract to final reception; not a construction duration; FX: none | Algérie Eco — article on Sonelgaz's roadmap to complete the Aïn Oussara plant — https://algerie-eco.com/?p=230883 — pub. 2025-11-19 — acc. 2026-10-26 — loc. paragraphs 1–4 | Djelfa, 1,200 MW; original contractor Duro Felguera (about 544 million EUR, 2014), now in dispute; a 93 billion DZD envelope is stated without a price year, so no capital is derived. Evidence of long Algerian CCGT schedules, like P7-MA-008 |
+| P7-DZ-014 | Europe–Maghreb | Algeria | AcLine | line_cost_per_km | 1 billion USD (135.46 billion DZD) for a 700 km double 400 kV line with three 400/220 kV and four 220/60 kV substations | DZD | 2023 | derived 135.46e9 ÷ 700 km = 193.5 million DZD/km ÷ 146.8827 = 1.317 million EUR/km including substations; FX: P7-FX-029, P7-FX-030 | Algérie Eco, citing APS — article on the interconnection of the In Salah–Adrar–Timimoun pole — https://algerie-eco.com/?p=169990 — pub. 2023-05-02 — acc. 2026-10-26 — loc. paragraphs 1–3 | Hassi R'Mel–Timimoun; mostly south of the footprint; substations not separable. **Not usable** as an AC line cost |
+
+### Tunisia (`TN`, EUR) — follow-up 2026-10-26
+
+All `TN` rows were accessed on 2026-10-26. No Tunisian figure is in TND; the sources state EUR, USD or JPY.
+afdb.org returned HTTP 403 to every request (project pages and press releases), so AfDB material
+is cited from a syndicated copy or recorded as not reached.
+
+| ID | Region | Market | Technology | Metric | Value as stated | Unit/currency | Price year | Normalised value (region currency) | Source | Scope notes |
+|---|---|---|---|---|---|---|---|---|---|---|
+| P7-TN-001 | Europe–Maghreb | Tunisia | Solar | capital_per_kw | total project cost 92,700,000 for 100 MWac | EUR | 2025 (PSD) | derived 92.7e6 ÷ 100,000 kWac = 927 EUR/kWac; FX: none | EBRD — Sidi Bouzid R2, Project Summary Document 56184 — https://www.ebrd.com/work-with-us/projects/psd/56184.html — pub. 2025-08-06 (PSD disclosed; updated 2025-09-23) — acc. 2026-10-26 — loc. Total Project Cost; Project Description | Scatec (50%) and Aeolus (50%) project company; includes a 12 km 225 kV connection line; EBRD approval 2025-10-22. The same plant as P7-TN-002 (inferred from site, sponsors and lenders) |
+| P7-TN-002 | Europe–Maghreb | Tunisia | Solar | capital_per_kw | estimated capex 96 million for 120 MW | EUR | 2026 | derived 800 EUR per kW of the stated 120 MW, whose basis is not stated (960 EUR/kWac on P7-TN-001's 100 MWac); FX: none | Scatec — Scatec reaches financial close and starts construction of 120 MW solar power plant in Tunisia — https://www.scatec.com/en/scatec-reaches-financial-close-and-starts-construction-of-120-mw-solar-power-plant-in-tunisia/ — pub. 2026-06-17 — acc. 2026-10-26 — loc. paragraphs 1–2 | Sidi Bouzid II; EBRD and EIB senior lenders; corroborates P7-TN-001 |
+| P7-TN-003 | Europe–Maghreb | Tunisia | Solar | build_months_real | construction started at financial close (2026-06-17); commercial operation expected in the second half of 2027 | dates | — | derived *planned* 379–562 days = 12.5–18.5 months; FX: none | Scatec — https://www.scatec.com/en/scatec-reaches-financial-close-and-starts-construction-of-120-mw-solar-power-plant-in-tunisia/ — Sidi Bouzid II release (as P7-TN-002) — pub. 2026-06-17 — acc. 2026-10-26 — loc. paragraphs 1 and 3 | Planned |
+| P7-TN-004 | Europe–Maghreb | Tunisia | Solar | capital_per_kw | total project cost 47,678,366.94 for 50 MW | EUR | 2022 (PSD) | derived 953.6 EUR/kW; FX: none | EBRD — Scatec Tozeur PV Power, Project Summary Document 51763 — https://www.ebrd.com/work-with-us/projects/psd/51763.html — pub. 2022-03-24 — acc. 2026-10-26 — loc. Total Project Cost; Project Description | Round-1 concession; AC or DC basis not stated. PSD 51776 (Scatec Sidi Bouzid Mezzouna PV Power, https://www.ebrd.com/work-with-us/projects/psd/51776.html) states the identical cost and capacity. Superseded by the sponsor's 2024 estimate (P7-TN-005) |
+| P7-TN-005 | Europe–Maghreb | Tunisia | Solar | capital_per_kw | total project cost estimated at 79 million for Sidi Bouzid (60 MW) and Tozeur (60 MW) | EUR | 2024 | derived 79e6 ÷ 120,000 kW = 658 EUR/kW (790 EUR/kW on the 2 × 50 MW of P7-TN-004 and MIGA); FX: none | Scatec — Scatec and Aeolus, part of Toyota Tsusho Group, join forces for Tunisia solar projects — https://www.scatec.com/en/scatec-and-aeolus-part-of-toyota-tsusho-group-join-forces-for-tunisia-solar-projects/ — pub. 2024-08-05 — acc. 2026-10-26 — loc. financial-close paragraph | Two plants. The lenders' 50 MW against the sponsor's 60 MW suggests 50 MWac / 60 MWp, but no source says so |
+| P7-TN-006 | Europe–Maghreb | Tunisia | Solar | build_months_real | financial close announced 2024-08-05, with construction to start after it; commercial operation effective 2026-01-01 | dates | — | derived 514 days = 16.9 months (upper bound); FX: none | Scatec — https://www.scatec.com/en/scatec-and-aeolus-part-of-toyota-tsusho-group-join-forces-for-tunisia-solar-projects/ — 2024-08-05 release (as P7-TN-005); and Scatec — Scatec starts commercial operation of the 60 MW Sidi Bouzid solar power plant in Tunisia — https://www.scatec.com/en/scatec-starts-commercial-operation-of-the-60-mw-sidi-bouzid-solar-power-plant-in-tunisia/ — pub. 2026-03-10 — acc. 2026-10-26 — loc. paragraph 1 | Sidi Bouzid; operation date set retroactively |
+| P7-TN-007 | Europe–Maghreb | Tunisia | Solar | build_months_real | financial close announced 2024-08-05; commercial operation effective 2026-03-04 | dates | — | derived 576 days = 18.9 months (upper bound); FX: none | Scatec, as P7-TN-006 for the start; and Scatec — Scatec starts commercial operation of the 60 MW Tozeur solar power plant in Tunisia (press release on pv magazine) — https://www.pv-magazine.com/press-releases/scatec-starts-commercial-operation-of-the-60-mw-tozeur-solar-power-plant-in-tunisia/ — pub. 2026-04-16 — acc. 2026-10-26 — loc. paragraph 1 | Tozeur, built in parallel with Sidi Bouzid |
+| P7-TN-008 | Europe–Maghreb | Tunisia | Solar | build_months_real | PV construction expected to begin June 2024 and last up to 15 months | months | — | *planned* ≤ 15 months; FX: none | MIGA — Tozeur and Sidi Bouzid Solar Plants (project summary) — https://miga.org/project/tozeur-and-sidi-bouzid-solar-plants-0 — pub. 2024-06-03 (disclosed) — acc. 2026-10-26 — loc. project description | Planned; the actual durations (P7-TN-006, -007) were 17–19 months |
+| P7-TN-009 | Europe–Maghreb | Tunisia | Solar | capital_per_kw | project cost approximately 100 million for 100 MW | USD | 2022 | derived 1,000 USD/kW × 0.949624 = 950 EUR/kW; FX: P7-FX-028 | IFC — Kairouan Solar Plant, Summary of Investment Information 43011 — https://disclosures.ifc.org/project-detail/SII/43011/kairouan-solar-plant — pub. 2022-10-26 — acc. 2026-10-26 — loc. Project Description; project cost | AMEA Power; built as 120 MWp; the 100 MW basis is not stated |
+| P7-TN-010 | Europe–Maghreb | Tunisia | Solar | capital_per_kw | deal worth 86 million for 120 MWp | USD | 2024 | derived 716.7 USD/kWp × 0.923890 = 662 EUR/kWp; FX: P7-FX-005 | Invest Africa, republishing AMEA Power's release (dateline Dubai, 2024-05-08) — AMEA Power breaks ground on 120 MWp solar PV project in Tunisia — https://www.investafrica.com/insights-and-news/amea-power-breaks-ground-on-120-mwp-solar-pv-project-in-tunisia — pub. 2024-05-20 — acc. 2026-10-26 — loc. paragraphs 1–2 | Described as the value of the build-own-operate deal financed by IFC and AfDB; it may be the financing package rather than total cost. Conflicts with P7-TN-009 |
+| P7-TN-011 | Europe–Maghreb | Tunisia | Solar | build_months_real | groundbreaking announced 2024-05-08; commissioned 2025-12-16 | dates | — | derived 587 days = 19.3 months; FX: none | AMEA Power release (as P7-TN-010) — loc. paragraph 1; and African Development Bank press release, syndicated by allAfrica — AfDB welcomes the commissioning of the 120 MWp Kairouan Solar Photovoltaic Project — https://allafrica.com/stories/202512220042.html — pub. 2025-12-19 — acc. 2026-10-26 — loc. paragraph 1 | Kairouan (Metbassta). The afdb.org original (https://www.afdb.org/en/news-and-events/press-releases/tunisia-african-development-bank-welcomes-commissioning-120-mwp-kairouan-solar-photovoltaic-project-major-milestone-89873) returned HTTP 403: not reached |
+| P7-TN-012 | Europe–Maghreb | Tunisia | Ccgt | capital_per_kw | estimated project cost 45,828 million (loan 38,075 million) for a 430–500 MW plant | JPY | 2014 (appraisal) | derived 45,828e6 ÷ 140.7477 = 325.6 million EUR ÷ 450,000 kW = 723.6 EUR/kW (651–757 EUR/kW over 430–500 MW); FX: P7-FX-025, P7-FX-026 | JICA — Ex-Ante Evaluation (for Japanese ODA Loan): Rades Combined Cycle Power Plant Construction Project — https://www2.jica.go.jp/en/evaluation/pdf/2014_TS-P39_1_f.pdf (downloaded; SHA-256 1e28f28854c20f1741ef66697ee7f32f25c892919e3a02751eb2e811f21ebb1b) — pub. 2014 (loan agreement 2014-07-17; PDF modified 2014-12-17) — acc. 2026-10-26 — loc. §3(4) Estimated Project Cost, p. 3 | Radès C, STEG; 450 MW as contracted (P7-TN-013). An appraisal estimate; its components are not itemised |
+| P7-TN-013 | Europe–Maghreb | Tunisia | Ccgt | build_months_real | EPC contract announced 2017-06-21; combined-cycle full operation planned for April 2020 | dates | — | derived *planned* 1,015–1,044 days = 33.3–34.3 months; FX: none | Mitsubishi Hitachi Power Systems — news release of 2017-06-21 on the Rades C order — https://power.mhi.com/news/20170621.html — pub. 2017-06-21 — acc. 2026-10-26 — loc. paragraphs 1–2 | 450 MW; gas-turbine first operation planned for May 2019. JICA's appraisal schedule was 58 months from July 2014, including procurement (P7-TN-012 file, §3(5), p. 3) |
+| P7-TN-014 | Europe–Maghreb | Tunisia | Ccgt | build_months_real | contract 2017-06-21; start of operations announced 2022-09-06 | dates | — | derived 1,903 days = 62.5 months (contract to operation; upper bound); FX: none | Mitsubishi Power — news of 2022-09-06 on the start of operations at Rades C — https://power.mhi.com/regions/emea/news/20220906.html — pub. 2022-09-06 — acc. 2026-10-26 — loc. paragraph 1 | About 29 months later than the planned April 2020; the period includes COVID-19 |
+| P7-TN-015 | Europe–Maghreb | Tunisia | Ccgt | capital_per_kw | total cost approximately 388 million for around 400 MW | EUR | 2010 (appraisal) | derived 970 EUR/kW; FX: none | EIB — STEG - Sousse Power Plant, project 20090293 — https://www.eib.org/en/projects/all/20090293 — pub. 2010-04-29 (release date) — acc. 2026-10-26 — loc. Total cost; Description | Sousse C single-shaft CCGT; indicative appraisal figure |
+| P7-TN-016 | Europe–Maghreb | Tunisia | Ccgt | capital_per_kw | total project cost 456.71 million | USD | 2012 (approval) | derived 456.71e6 ÷ 424,000 kW = 1,077 USD/kW × 0.778338 = 838 EUR/kW; FX: P7-FX-024 | OPEC Fund — Sousse-D Combined Cycle Power Plant Project — https://opecfund.org/where-we-work/list/sousse-d-combined-cycle-power-plant-project — undated page (approval 2012-09-12) — acc. 2026-10-26 — loc. Total project cost; with the 424 MW capacity from Leonardo — Finmeccanica: Ansaldo Energia awarded EUR 390 million contracts in Tunisia and Russia — https://www.leonardo.com/en/press-release-detail/-/detail/finmeccanica-ansaldo-energia-awarded-eur-390-million-contracts-in-tunisia-and-russia — pub. 2013-02-26 — acc. 2026-10-26 — loc. paragraph 1 | Co-financed by IsDB, the Saudi Fund and STEG; status completed |
+| P7-TN-017 | Europe–Maghreb | Tunisia | Peaker | capital_per_kw | contracts worth 240 million (turnkey EPC plus long-term service agreement) for 625 MW | EUR | 2018 | derived ≤ 384 EUR/kW for EPC plus service; FX: none | Ansaldo Energia — press release, Genoa (hosted by CDP) — https://www.cdp.it/resources/cms/documents/PressRelease_AE_Mornaguia_Eng.pdf (downloaded; SHA-256 65bc57b132166e4cb2006a4b5716386c3cdbca343adab02edf7a0458ad2e03c5) — pub. 2018-04-27 — acc. 2026-10-26 — loc. headline and paragraph 1 | Mornaguia open cycle, 2 × AE94.3A, STEG. A contract value, **not whole-project**: it excludes the owner's costs and includes maintenance services |
+| P7-TN-018 | Europe–Maghreb | Tunisia | Peaker | build_months_real | 22 months from Notice to Proceed (planned); completed ahead of schedule, full 600 MW reported 2020-05-29 | months | — | *planned* 22 months; derived ≤ 763 days = 25.1 months from contract signature (2018-04-27) to the report; FX: none | Ansaldo Energia release (as P7-TN-017) — loc. paragraph 2; and Italian Ministry of Foreign Affairs, economic-diplomacy news — https://www.esteri.it/en/?p=49545 — pub. 2020-05-29 — acc. 2026-10-26 — loc. paragraph 1 | Paces to the inherited 2 game months either way |
+| P7-TN-019 | Europe–Maghreb | Tunisia | AcLine | line_cost_per_km | total project cost 43,000,000 for an 85 km 400 kV double-circuit line plus about 25 km of entry/exit lines | EUR | 2025 (PSD) | derived 43e6 ÷ 85 km = 505,882 EUR/km of main line (upper bound); 43e6 ÷ 110 km = 390,909 EUR/km of all line; FX: none | EBRD — ELMED Grid Reinforcement (Grombalia 2 – Kondar), Project Summary Document 56889 — https://www.ebrd.com/work-with-us/projects/psd/56889.html — pub. 2025-09-01 (updated 2026-01-13) — acc. 2026-10-26 — loc. Total Project Cost; Project Description | Planned; the total equals the EBRD loan, so other funding may exist. Double circuit, 2 × 570 mm² bundles; entry/exit links are one 400 kV (5 km) and two 225 kV (10 km each) |
+
 ### Germany (`DE`, EUR) — technology-level costs used for the regional-default proposal
 
 Source for all DE rows: Fraunhofer ISE, *Stromgestehungskosten Erneuerbare Energien* (Levelized Cost
@@ -514,7 +575,7 @@ technology-level market ranges, not single whole projects.
 
 ### Other Europe–Maghreb country markets (`FR`, `IT`, `PL`, `TR`, EUR)
 
-IRENA country weighted averages of commissioned projects (2025 USD). They are market averages, not whole projects, so they are recorded for authoring context and are not proposed as zones. No Algerian or Tunisian whole-project or country-level row was found.
+IRENA country weighted averages of commissioned projects (2025 USD). They are market averages, not whole projects, so they are recorded for authoring context and are not proposed as zones. IRENA gives no Algerian or Tunisian value; the 2026-10-26 follow-up recorded whole-project rows for both (P7-DZ-*, P7-TN-*).
 
 | ID | Region | Market | Technology | Metric | Value as stated | Unit/currency | Price year | Normalised value (region currency) | Source | Scope notes |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -627,6 +688,81 @@ Macedonia, Albania, Greece (including Crete), Bulgaria, Romania, Hungary, Slovak
 Poland, Lithuania, Latvia, Estonia, Denmark (DK1), Ukraine (connected part), Moldova, Türkiye,
 northern Algeria, Tunisia, and any micro-states and areas Task 9 rules into the footprint.
 
+Northern Algeria and Tunisia stay here unless the controller accepts the
+[Algeria and Tunisia zone proposal](#algeria-and-tunisia-zone-proposal-follow-up-2026-10-26).
+
+## Algeria and Tunisia zone proposal (follow-up 2026-10-26)
+
+This section was added after the user asked for targeted research on 2026-10-26. It follows the Spain and
+Morocco pattern:
+- a kind is overridden only with a sourced whole-project capital figure, a sourced duration, or both;
+- missing members inherit zone 0;
+- AC terms stay regional unless a line row qualifies.
+
+The paced values use the method of record. They are illustrative, and the region task recomputes them.
+Zone ids 3 and 4 follow on from Spain (1) and Morocco (2). The proposal overrides only kinds with project
+evidence, and that evidence makes each kind dearer or slower on its own merits, so it is not a
+blanket Maghreb discount.
+
+| Zone id | name_key | Covers | Plant overrides (rows) | AC overrides |
+|---|---|---|---|---|
+| 3 | `economic-zone-algeria` | Northern Algeria's playable territory | **Solar:** `capital_cost` from P7-DZ-002 (P7-DZ-001 and P7-DZ-006 to -008 corroborate), `build_months` from P7-DZ-005 (P7-DZ-004 corroborates). **Ccgt:** `capital_cost` from P7-DZ-011 and `build_months` from P7-DZ-012, both *planned* (P7-DZ-013 supports the long schedule) | none: P7-DZ-014 is not usable |
+| 4 | `economic-zone-tunisia` | Tunisia's playable territory | **Solar:** `capital_cost` from P7-TN-001 (P7-TN-002 corroborates), `build_months` from P7-TN-011 (P7-TN-006 and -007 corroborate). **Ccgt:** `capital_cost` from P7-TN-012 (P7-TN-015 and -016 bracket it), `build_months` from P7-TN-014 (P7-TN-013's planned window gives the same game value) | none: P7-TN-019 is offered but not proposed (below) |
+
+### Illustrative pacing
+
+| Zone | Kind | Real value | Paced | Zone 0 (shipped) |
+|---|---|---|---|---|
+| Algeria | Solar capital | 617.2 EUR/kWp (P7-DZ-002) | per kWp: 617.2 × 0.33289 = 205.4, so 205 EUR/kW × 300,000 kW = 61,500,000. With zone 0's DC-to-AC authoring judgment (× 500 ÷ 391, P7-ES-004): 789.2 EUR/kWac × 0.33289 = 262.7, so 263 × 300,000 = 78,900,000 | 341 EUR/kW (102,300,000) |
+| Algeria | Solar months | 24 months (P7-DZ-005) | 24 × 2 ÷ 12 = 4, clamped to the ceiling, so **3** (P7-DZ-004: 25.8 × 2 ÷ 12 = 4.29, also 3) | 2 |
+| Algeria | Ccgt capital | 880.4 EUR/kW *planned* (P7-DZ-011) | × (600 ÷ 921 = 0.65147) = 573.6, so 574 EUR/kW × 500,000 kW = 287,000,000 | 717 EUR/kW (358,500,000) |
+| Algeria | Ccgt months | 48 months *planned* (P7-DZ-012) | 48 × 4 ÷ 22 = 8.73, so 9, clamped to the ceiling: **6** | 4 |
+| Tunisia | Solar capital | 927 EUR/kWac (P7-TN-001) | × 0.33289 = 308.6, so 309 EUR/kW × 300,000 kW = 92,700,000 | 341 EUR/kW |
+| Tunisia | Solar months | 19.3 months (P7-TN-011) | 19.29 × 2 ÷ 12 = 3.21, so **3** (P7-TN-006: 2.81 → 3; P7-TN-007: 3.15 → 3) | 2 |
+| Tunisia | Ccgt capital | 723.6 EUR/kW (P7-TN-012, 2014) | × 0.65147 = 471.4, so 471 EUR/kW × 500,000 kW = 235,500,000 | 717 EUR/kW |
+| Tunisia | Ccgt months | 62.5 months (P7-TN-014) | 62.52 × 4 ÷ 22 = 11.37, so 11, clamped: **6** (planned P7-TN-013: 33.35 × 4 ÷ 22 = 6.06, so 6) | 4 |
+
+### Disclosures
+
+- **Algerian solar capital is an EPC award, not a whole-project outturn.** The figures are provisional
+  award prices: they exclude the owner's costs, and their tax basis is not stated. They are therefore
+  a lower bound on the whole project.
+  - Their capacities are treated as peak (DC) by inference (panel counts; MWc in the 2025 re-awards).
+  - Zone 0's solar row is also per kWp, converted to AC by an authoring judgment. Whether to apply
+    the same conversion here is the region task's call, and it should be labelled the same way.
+  - Tendla (P7-DZ-001) would pace to 179 per kWp, or 228 per kWac on the same conversion.
+- **The Algerian CCGT values are planned.** They are a launch-of-works estimate and a planned 48 months,
+  like Morocco's planned solar row (P7-MA-006). The paced months reach the CCGT ceiling of 6 under any
+  reading. P7-DZ-013 shows a 2014 contract that is still unfinished, so a long schedule is not an
+  artefact of planning optimism.
+- **The Tunisian CCGT capital is a 2014 appraisal estimate.** Zone 0's figure is 2024 (P7-DE-003), and
+  no inflation adjustment is applied (pacing method).
+  - The three Tunisian CCGT rows span 724–970 EUR/kW real (Radès 2014, Sousse D 2012, Sousse C 2010),
+    which pace to 471–632. All are below zone 0's 717, so the sign is robust; the size is not.
+  - Radès is proposed because it pairs with sourced durations for the same plant.
+- **The Tunisian CCGT duration includes about 29 months of delay over plan.** Contract to operation was
+  62.5 months, through COVID-19. The planned 33–34 months also reaches the ceiling (6.06 → 6), so the
+  game value does not depend on the delay.
+- **Not proposed: wind.**
+  - Algeria has only the Kabertène pilot (P7-DZ-009, -010). It is 10 MW, uses 850 kW turbines,
+    dates from 2011–2014 and lies outside the footprint. It would pace to 1,720 EUR/kW and 11 months.
+    That is the same reason P7-MA-007 was not used for Morocco. The controller may still choose it.
+  - Tunisia's only wind farms are STEG's Sidi Daoud and Bizerte (Metline, Kchabta; commissioned by
+    2012). Press figures for Bizerte conflict, mix phases and currencies, and come from no operator
+    or lender document reached here. Wind stays on zone 0 in both countries.
+- **Not proposed: Peaker.** Mornaguia (P7-TN-017) is a contract value that includes maintenance
+  services, so it is not whole-project. Its duration (P7-TN-018) paces to the inherited 2 months
+  anyway. Algeria has no peaker row.
+- **Not proposed: AC lines.**
+  - Tunisia's Grombalia 2–Kondar line (P7-TN-019) is a planned double-circuit line. Its cost may be
+    only the EBRD-financed share. Across all line km it gives 391 thousand EUR/km, within 2% of zone
+    0's 397 thousand (P7-EM-012), so an override would change nothing material.
+  - Algeria's PIAT figure (P7-DZ-014) includes substations and lies mostly outside the footprint.
+  - No line build durations were found for either country.
+- **Battery, coal, nuclear and hydro:** no Algerian or Tunisian rows. They inherit zone 0.
+- **Cells.** The region task assigns Algerian and Tunisian cells to zones 3 and 4 by the same rule as
+  Morocco.
+
 ## Gaps
 
 What was searched and not found or not usable, after round 2. "Not reached" means the source exists
@@ -678,10 +814,39 @@ but could not be read without a login, a bot check or a download beyond the roun
   - Nuclear fuel: ERAA's value is an EIA (US) figure, so it is excluded. Closed by ruling 19
     (derived, labelled in the region file).
   - Spanish and Moroccan line costs (zones inherit the regional line).
-  - Whole-project rows for France, Italy, Poland, Türkiye, Algeria and Tunisia. IRENA market
-    averages cover the first four (P7-FR-*, P7-IT-*, P7-PL-*, P7-TR-*); none cover Algeria or
-    Tunisia.
+  - Whole-project rows for France, Italy, Poland and Türkiye. IRENA market averages cover them
+    (P7-FR-*, P7-IT-*, P7-PL-*, P7-TR-*).
   - The actual commissioning date of Noor Ouarzazate IV.
+- **Algeria and Tunisia (follow-up 2026-10-26)**
+  - Not reached:
+    - afdb.org returned HTTP 403 to every request: project pages P-TN-FF0-004 (Kairouan) and
+      press releases. AfDB appraisal reports for Tunisian lines or plants were therefore not read.
+    - Radio Algérie (news.radioalgerie.dz) rejected the request.
+    - Africa Energy Portal returned HTTP 403.
+    - None was bypassed.
+  - Algeria:
+    - No recent development-bank appraisal of an Algerian generation or line project was found.
+      A combined AfDB, EIB, World Bank and JICA search found only deals from before 2000, such
+      as World Bank POWER III (1988) and an EIB loan of 1997.
+    - No Sonelgaz, SKTM, SPE or CREG document with a project cost was reached. The Algerian rows
+      rest on the trade press reporting Sonelgaz, ministry or APS statements.
+    - Missing for solar: an AC rating and an outturn cost.
+    - Missing for CCGT: an outturn cost, and a completed plant's start-to-commissioning duration.
+      Ras Djinet (Cap Djinet) has only a Daewoo EPC share (830 million USD, KED Global 2023-03-03)
+      without the separately supplied Siemens turbines, and a 2012 order with provisional acceptance
+      in March 2023, so no row was recorded.
+    - No wind project inside the footprint.
+    - No open-cycle plant, and no northern AC line with its own cost.
+    - Hassi R'Mel's hybrid plant and the 15 GW plan's later tenders were not found with project
+      costs.
+  - Tunisia:
+    - No wind project newer than Bizerte (2012), whose press figures conflict.
+    - No AC line with an outturn cost, and no line build duration.
+    - No Tunisian battery row.
+    - Kairouan's AC rating.
+    - Actual start dates for Sidi Bouzid and Tozeur: financial close is used, so their durations
+      are upper bounds.
+    - The STEG and energy ministry sites were not searched beyond press coverage.
 
 ## Verification
 
@@ -693,6 +858,8 @@ but could not be read without a login, a bot check or a download beyond the roun
 - Suggested reviewer re-fetch set (at least 10 rows, across regions, including every Spain–Morocco
   contrast row): P7-ES-001, P7-ES-003, P7-MA-001, P7-MA-002, P7-MA-004, P7-US-001, P7-US-033,
   P7-BR-001, P7-BR-029, P7-IN-006, P7-SC-003 and P7-FX-006. Round 2 adds P7-IPS-002, P7-IPS-006,
-  P7-IN-020, P7-MA-007 and P7-EM-012.
-- Downloaded files (round 2) are kept outside git in `target/research/`. Each row names its URL and
+  P7-IN-020, P7-MA-007 and P7-EM-012. The 2026-10-26 follow-up adds P7-DZ-002, P7-DZ-005,
+  P7-DZ-011, P7-TN-001, P7-TN-011, P7-TN-012 and P7-TN-014.
+- Downloaded files (round 2, and the follow-up's two PDFs in `target/research/dz-tn/`) are kept
+  outside git in `target/research/`. Each row names its URL and
   SHA-256, so a reviewer can re-download it and check the bytes.
