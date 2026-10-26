@@ -2813,6 +2813,7 @@ mod continental_europe_maghreb {
             ("Tiraspol (Transnistria)", 29.63, 46.84),
             ("Pristina (Kosovo)", 21.17, 42.66),
             ("Laayoune (ONEE grid)", -13.20, 27.15),
+            ("Smara (ONEE grid since 2000)", -11.67, 26.74),
             ("Ghardaia (Algeria's interconnected north)", 3.67, 32.49),
             ("Tallinn", 24.75, 59.44),
         ] {
@@ -2834,6 +2835,7 @@ mod continental_europe_maghreb {
             ("In Salah", 2.47, 27.19),
             ("Timimoun", 0.23, 29.26),
             ("Tifariti (east of the berm)", -10.6, 26.1),
+            ("Coast south of Dakhla (no grid source)", -15.9, 23.2),
             ("Minsk", 27.56, 53.90),
             ("Kaliningrad", 20.51, 54.71),
             ("Bornholm (DK2)", 14.92, 55.13),

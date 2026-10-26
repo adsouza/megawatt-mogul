@@ -46,21 +46,30 @@
 //     its ENTSO-E connection agreement took effect on 14 December 2020
 //     (KoSSev, "KOSTT starts operation as a regulatory zone within the
 //     Kosovo-Albania bloc", 2020-12-14).
-//   - Western Sahara is in only where ONEE's interconnected grid runs: the
-//     Moroccan-administered part west of the berm, which Natural Earth's
-//     admin-0 MAR outline already contains, north of the bounds' southern edge
-//     at 22.87 N. ONEE's grid reaches Laayoune over the 470 km Tiznit-Laayoune
-//     line (Le Matin, "Mise en service d'une nouvelle ligne electrique Tres
-//     Haute Tension reliant Tiznit a Laayoune", 2015-08-04), runs on to
-//     Boujdour and the Aftissat wind farm at 400 kV since February 2018
-//     (EcoActu, "Raccordement de Dakhla au reseau electrique: le DG de l'ONEE
-//     s'enquiert de l'etat d'avancement des travaux", 2021-02-26), and a
-//     400 kV double-circuit line now reaches Dakhla (Le360, "Info360.
-//     Lancement imminent d'une nouvelle liaison electrique entre Boujdour et
-//     Marrakech", 2025-11-03, paragraph beginning "A signaler que le reseau").
-//     The part east of the berm (Natural Earth's separate ADM0 SAH feature)
-//     and the coast south of Dakhla, where no source shows the grid, are out
-//     (SAH is not selected; the southern edge is a schematic cut).
+//   - Western Sahara is in from the Moroccan border south to Dakhla, west of
+//     the berm, which Natural Earth's admin-0 MAR outline already contains.
+//     Sourced ONEE grid operation:
+//     - Laayoune: the 470 km Tiznit-Laayoune line (Le Matin, "Mise en service
+//       d'une nouvelle ligne electrique Tres Haute Tension reliant Tiznit a
+//       Laayoune", 2015-08-04). Laayoune joined the 225 kV national grid in
+//       1998, which let Smara Province be connected in 2000 (FNH, "Entretien.
+//       Les regions du Sud du Maroc beneficient d'un gisement en energies
+//       renouvelables exceptionnel", interview with ONEE's Director General,
+//       2021-09-01, first answer, first paragraph).
+//     - Boujdour and the Aftissat wind farm at 400 kV since February 2018
+//       (EcoActu, "Raccordement de Dakhla au reseau electrique: le DG de
+//       l'ONEE s'enquiert de l'etat d'avancement des travaux", 2021-02-26).
+//     - Dakhla: a 400 kV double-circuit line now reaches the city (Le360,
+//       "Info360. Lancement imminent d'une nouvelle liaison electrique entre
+//       Boujdour et Marrakech", 2025-11-03, paragraph beginning "A signaler
+//       que le reseau").
+//     The rest of the interior west of the berm is in by authoring judgment:
+//     administrative extent west of the berm; only the coastal backbone
+//     (Tiznit-Laayoune-Boujdour-Dakhla) and Smara Province are sourced.
+//     Out: the part east of the berm (Natural Earth's separate ADM0 SAH
+//     feature, not selected) and everything south of 23.55 N, a schematic
+//     exclusion just south of Dakhla (23.70 N) listed after the generated
+//     rings, where no source shows the grid.
 //
 // Geography: tools/region_authoring/selections/continental_europe_maghreb.args
 // holds the extractor arguments: Natural Earth v5.1.2 1:50m admin-0 for 41
@@ -89,9 +98,10 @@
 // the generated rings; with them no centre is playable in both regions.
 // Nudge rings after the generated land put coastal cities and starter plants
 // whose cell centres fall offshore on land, and give Malta, Crete and Sicily
-// a land cell at Valletta, Heraklion and Palermo. A schematic exclusion opens
-// the Strait of Messina. The grid's rows are placed so a row of centres lies
-// in the Strait of Gibraltar, so the starter link crosses one water cell.
+// a land cell at Valletta, Heraklion and Palermo. Schematic exclusions open
+// the Strait of Messina and cut Western Sahara south of Dakhla. The grid's
+// rows are placed so a row of centres lies in the Strait of Gibraltar, so
+// the starter link crosses one water cell.
 // Points are (lon, lat) in degrees.
 //
 // Grid: 16.65 W to 44.95 E and 22.87 to 59.87 N on 154 x 123 cells (0.4 x
@@ -847,6 +857,14 @@
         // cable). It takes the cell that holds both Messina and Reggio Calabria.
         [
             (15.530, 38.050), (15.680, 38.050), (15.680, 38.300), (15.530, 38.300),
+        ],
+        // Western Sahara south of Dakhla: a schematic cut at 23.55 N. ONEE's 400 kV line ends
+        // at Dakhla (23.70 N), and no source shows its grid farther south. The cut keeps the
+        // grid row that holds Dakhla's latitude (23.47-23.77 N, centres at 23.62 N) and takes
+        // the two rows below it (centres at 23.32 and 23.02 N), 11 land cells. Dakhla's own
+        // cell (on its peninsula, off the 1:50m coast) is water with or without the cut.
+        [
+            (-17.000, 22.500), (-12.000, 22.500), (-12.000, 23.550), (-17.000, 23.550),
         ],
     ],
     // Relief: the Alps, the Pyrenees, the Atlas, the Carpathians, the Dinaric
@@ -2388,7 +2406,7 @@
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             // Row 121
-            0, 2, 2, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -2397,7 +2415,7 @@
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             // Row 122
-            0, 2, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
