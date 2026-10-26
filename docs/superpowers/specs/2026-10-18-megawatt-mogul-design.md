@@ -3393,8 +3393,9 @@ Europe–Maghreb, India–Nepal–Bhutan, southern China, IPS/UPS and Brazil in 
 unchanged. Seven regions now ship; Europe–Maghreb opts into the country construction profiles of
 §28.7.1 and its Gibraltar link is pre-built. Automated acceptance passes (the per-region year-one
 checks, the picker over all seven listings, the research-row provenance test and the 256 × 128
-frame budgets). The isolated native launch smoke and the IPS/UPS and Brazil native playtests
-(§28.12) are pending user approval and are not claimed. Its implementation record is
+frame budgets, which pass under the optimised dev profile (a `--release` proxy)). The isolated
+native 120-frame launch smoke passed on 2026-10-26. The IPS/UPS and Brazil native playtests
+(§28.12) are pending: the user plays them by hand, and they are not claimed. Its implementation record is
 [Plan 7](../plans/2026-10-25-plan-7-single-area-regions.md). **Plan 8**
 (multi-area regions with HVDC links and SGCC, §28.9) remains pending. Each plan bumps
 `SIM_RULES_VERSION` once, from whatever the previous implemented amendment left. The source for

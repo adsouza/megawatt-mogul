@@ -179,18 +179,18 @@ The game's tests sit in six layers, from the cheapest to the widest. None opens 
     the rest, whatever is selected and however the panels are sized;
   - `city_card.rs`: a clicked city's card in Planning's inspector and Operating's details block;
   - `construction.rs`: the Construction tab and the construction card of a plant being built;
-  - `map_legend.rs`: every city clickable at 1024×640, 1280×720 and 2560×1440 in both regions and
+  - `map_legend.rs`: every city clickable at 1024×640, 1280×720 and 2560×1440 in the Eastern and Western regions and
     phases, with the default legend (open in a corner that hides no city or plant, or collapsed)
     and opening at 1280×720; the legend toggled by the player, and inside the drawn map with every
     panel at its maximum.
 - **The 1024×640 fit tests** (`at_the_smallest_window_…`) lay out each screen at the minimum window
-  size, for both shipped regions, and check that panels don't overlap and that the controls a
+  size, for the Eastern and Western regions, and check that panels don't overlap and that the controls a
   player needs (*Apply*, *Continue*, the figures of the selected plant) are inside their panel.
 - **The panel resize tests** (`tests/game/panel_resize.rs`) drag each outer panel's inner edge
   through the real pass (`EguiPass::drag`) at 1024×640 and 2560×1440: it grows with the drag,
   stops at its opening size and at its maximum, the map's area keeps 320×200, and a selection,
   a tab or a whole day afterwards moves neither a panel nor the map.
-- **The end-to-end month** (`tests/game/end_to_end.rs`), for each shipped region on seed 7: a new
+- **The end-to-end month** (`tests/game/end_to_end.rs`), for the Eastern and Western regions on seed 7: a new
   game, which already runs the hands-off plan (spec §16.3), so no planning command is sent;
   *Start the day*, which begins the day directly with no shortfall; 8×, the fixed-step driver to
   the close, then *Continue*. It asserts the phases
@@ -314,7 +314,7 @@ The invariants the property tests must cover:
   Disabled labels are checked as the HUD's helpers really paint them, on every surface, and a
   disabled button or slider must paint unlike an enabled one, including inside a disabled `Ui`.
   Property tests exercise arbitrary foreground/background pairs. Inspect actual egui paint output
-  for both regions' screens and verify opaque backings behind map labels and bar hover text. Run
+  for the Eastern and Western regions' screens and verify opaque backings behind map labels and bar hover text. Run
   the windowed launch smoke after changing HUD theme systems.
 - **Determinism:** the same verified versions, settings, region content, seed and commands produce
   an identical state hash on the same build and platform (libm transcendentals may differ in the
@@ -597,7 +597,7 @@ checks the full-width report/retrospective at 1024 and 1920 pixels with 1× and 
 and opens Operating history without changing the simulation or displaying today's incidents
 beside an old curve.
 
-`tests/game/world.rs` covers terrain winding/coverage and both shipped regions, camera fit and
+`tests/game/world.rs` covers terrain winding/coverage and the Eastern and Western regions, camera fit and
 projection/ray round trips, bounded camera gestures, pointer-anchored zoom across camera angles,
 terrain/roof heights and distance limits, physical viewport rounding and zero-sized
 windows, accelerated ray equivalence to the rendered terrain, object bounds, opaque label fitting,
@@ -622,13 +622,13 @@ Headless `WorldViewPlugin` tests reconcile stable IDs without a renderer, check 
 counts through idle frames, rebuild on new games and free every owned asset on leave. A fixed command
 script compares checkpoints and monthly reports with a client lacking the world plugin. Construction
 state and identity stay visible. Mid-day save/resume tests include world reconciliation and paused
-entry in both regions. Real egui passes exercise projected selection, click/drag separation, dialogs,
+entry in the Eastern and Western regions. Real egui passes exercise projected selection, click/drag separation, dialogs,
 Review, legend/panel capture, Shift + left-drag and right/middle-drag panning without orbiting or
 selecting, all resource layers and text contrast at 1024×640 / 1280×800 and 1× / 1.25×
 zoom (the input rectangle is in logical points, as bevy_egui supplies it). The compact layer
 selector is clicked through its real popup to guard against map click-through. The opened legend
 scrolls inside narrow maps, and panel scroll inertia cannot zoom the camera. Real wheel events
-keep city and plant surfaces under the pointer in both regions and Planning/Operating phases,
+keep city and plant surfaces under the pointer in the Eastern and Western regions and Planning/Operating phases,
 without selecting or changing the simulation. A camera configuration
 regression checks the transparent full-window primary context and separate HDR camera. Actual compositing and shaders still require the native playtest.
 
@@ -639,7 +639,7 @@ cargo nextest run --workspace --features game/dev
 cargo clippy --workspace --all-targets --features game/dev -- -D warnings
 ```
 
-Native acceptance covers both regions/phases, camera gestures, picking/building, effects off,
+Native acceptance covers the Eastern and Western regions/phases, camera gestures, picking/building, effects off,
 resource/Control-room toggles, Review/menu/load transitions and F12's filtered inspector. Use isolated
 `--log-dir` and `--save-dir` paths and retain an existing unsaved player session.
 
@@ -803,7 +803,7 @@ its current satisfaction contribution.
 The frozen schema-1 battery save remains byte-equivalent after restore apart from the rules
 header: a preview uses new accreditation without changing saved profiles, which refresh in
 December. A saved December Review continues without repeating the annual review. The shipped
-acceptance compares ten extra batteries against a baseline for both regions, seeds 0–7, across
+acceptance compares ten extra batteries against a baseline for the Eastern and Western regions, seeds 0–7, across
 36 months: excess storage is held at its first review and final cash never beats the baseline.
 
 `grid::power_system::tests::battery_planning` compares cached forecasts and complete charge plans

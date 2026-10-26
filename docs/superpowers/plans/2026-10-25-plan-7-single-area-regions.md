@@ -1,8 +1,8 @@
 # Plan 7: Five Single-Area Regions Implementation Plan (Milestone 2)
 
 **Status:** Implemented 2026-10-26 under rules 18; region schema stays 4 and portable state schema
-stays 3. Seven regions ship. The isolated native launch smoke and IPS/UPS and Brazil playtests
-(Task 10, Steps 3 and 4) are pending user approval.
+stays 3. Seven regions ship. The isolated native launch smoke passed (controller run 2026-10-26,
+exit 0). The IPS/UPS and Brazil playtests (Task 10, Step 4) are pending: the user plays them by hand.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -167,7 +167,7 @@ This task produces documents only. It runs before any region data and gates Task
     if IPS/UPS opts in.
   - `EM` is Europe–Maghreb's regional default.
 
-- [ ] **Step 1: Gather the US pacing references**
+- [x] **Step 1: Gather the US pacing references**
 
   Use one dated, published US source family per metric, such as EIA *Capital Cost and Performance
   Characteristics* or NREL ATB. Cover:
@@ -177,7 +177,7 @@ This task produces documents only. It runs before any region data and gates Task
   - fuel/marginal cost;
   - average US retail tariff.
 
-- [ ] **Step 2: Compute the pacing table**
+- [x] **Step 2: Compute the pacing table**
 
   For each money metric and kind:
   - `ratio = shipped game value ÷ US real value`, averaging Eastern and Western where both ship the
@@ -196,7 +196,7 @@ This task produces documents only. It runs before any region data and gates Task
   Write this formula verbatim in the note. Starting cash, starter fleets and city loads are tuned
   freely, not derived.
 
-- [ ] **Step 3: Gather the local baselines**
+- [x] **Step 3: Gather the local baselines**
 
   For each of SC, BR, IN and IPS, cover every `PlantKind` the region's catalog will carry: capital
   per kW, real build duration, fixed O&M, fuel/marginal cost, AC line cost, and a representative
@@ -209,7 +209,7 @@ This task produces documents only. It runs before any region data and gates Task
 
   A US or global-average figure is never a local baseline.
 
-- [ ] **Step 4: Gather Europe–Maghreb**
+- [x] **Step 4: Gather Europe–Maghreb**
 
   Cover:
   - an EM regional-default baseline;
@@ -223,7 +223,7 @@ This task produces documents only. It runs before any region data and gates Task
   - Unsourced countries use the regional default (zone 0). List them under "Regional default by
     authoring choice".
 
-- [ ] **Step 5: Write the profile proposal and the decisions**
+- [x] **Step 5: Write the profile proposal and the decisions**
 
   1. **Profile proposal.** For each proposed Europe–Maghreb zone, give its id, name key
      (`economic-zone-<country>`), the countries it covers, and the plant kinds and AC terms it
@@ -235,13 +235,13 @@ This task produces documents only. It runs before any region data and gates Task
      technology.
   4. **Gaps.** List what was searched and not found.
 
-- [ ] **Step 6: Stop if the contrast can't be sourced**
+- [x] **Step 6: Stop if the contrast can't be sourced**
 
   If no technology supports the required Spain–Morocco contrast in both cost and duration, stop.
   Report the evidence to the user and ask for a decision. Don't weaken the spec's requirement by a
   ruling.
 
-- [ ] **Step 7: Verify**
+- [x] **Step 7: Verify**
 
   - Every row has a non-empty URL, publication date, access date and locator.
   - Row IDs are unique.
@@ -250,7 +250,7 @@ This task produces documents only. It runs before any region data and gates Task
   - A reviewer re-fetches at least 10 rows chosen across regions, including every Spain–Morocco
     contrast row, and confirms each stated value.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add docs/research/2026-10-25-plan-7-regional-economics.md docs/research/2026-10-18-world-power-grids-top-8.md
@@ -321,7 +321,7 @@ git commit -m "docs: sourced regional economics for Plan 7"
   reads `<region.ron> <zones.ron>` and prints the `cells: [...]` block, with 20 values per line and
   a row comment every row.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
   - **Python** (`test_region_authoring.py`):
     - `test_douglas_peucker_keeps_endpoints_and_drops_collinear`;
@@ -338,18 +338,18 @@ git commit -m "docs: sourced regional economics for Plan 7"
     for `crates/infrastructure/tests/support/economic_region_v4.ron`'s grid with two zone
     polygons, write them into a TempDir copy, and load through `RonRegionCatalog`.
 
-- [ ] **Step 2: Run them and confirm they fail**
+- [x] **Step 2: Run them and confirm they fail**
 
   Run: `python3 -I -m unittest tools/region_authoring/test_region_authoring.py` and
   `cargo nextest run -p infrastructure -E 'test(zone_cells) | test(claimed_by_two_zones) | test(generated_zone_cells)'`
 
   Expected: the modules and functions don't exist yet.
 
-- [ ] **Step 3: Implement the tools and the rasteriser**
+- [x] **Step 3: Implement the tools and the rasteriser**
 
   Python reads GeoJSON with `json` only.
 
-- [ ] **Step 4: Ask the user before downloading**
+- [x] **Step 4: Ask the user before downloading**
 
   The files are Natural Earth 1:50m `ne_50m_admin_0_countries.geojson` and
   `ne_50m_admin_1_states_provinces.geojson`, from the `nvkelso/natural-earth-vector` release tag
@@ -357,7 +357,7 @@ git commit -m "docs: sourced regional economics for Plan 7"
 
   Store the files under `target/natural-earth/`, which is git-ignored. Never commit them.
 
-- [ ] **Step 5: Generate the canonical exclusion**
+- [x] **Step 5: Generate the canonical exclusion**
 
   1. Generate `ukraine_ips_operating_extent.ron` from the Natural Earth admin-1 Crimea and
      Sevastopol polygons.
@@ -371,13 +371,13 @@ git commit -m "docs: sourced regional economics for Plan 7"
      - outside it: Henichesk (34.82, 46.17), Kherson (32.62, 46.64), Donetsk (37.80, 48.00),
        Kyiv (30.52, 50.45), Odesa (30.73, 46.48) and Kharkiv (36.23, 49.99).
 
-- [ ] **Step 6: Run the tests and confirm they pass**
+- [x] **Step 6: Run the tests and confirm they pass**
 
   Run: both commands from Step 2, then `cargo nextest run --workspace`.
 
   Expected: everything passes.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add tools/region_authoring crates/infrastructure/authoring crates/infrastructure/examples/author_economic_zone_cells.rs crates/infrastructure/src/region
@@ -436,7 +436,7 @@ git commit -m "feat: offline region geography and economic-zone authoring tools"
   North America-specific tests stay as they are: `east_is_three_to_five_times_west`, the West
   hydro tests, battery four-pm and solar migration.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
   - `ships_exactly_the_listed_regions` replaces `ships_exactly_two_regions`:
     `assert_eq!(ids, SHIPPED)`.
@@ -464,7 +464,7 @@ git commit -m "feat: offline region geography and economic-zone authoring tools"
     ₽5,000,000,000,000 to the current renderer's output, keeping the B suffix. Fit-test the widest
     top-bar cash at the minimum window in the game binary.
 
-- [ ] **Step 2: Run them and confirm they fail**
+- [x] **Step 2: Run them and confirm they fail**
 
   Run: `cargo nextest run --workspace -E 'test(ships_exactly_the_listed) | test(nearly_square) | test(scales_with_capacity) | test(cite_research) | test(do_not_overlap) | test(excluded_extent) | test(name_key_exists) | test(thousand_billion)'`
 
@@ -473,17 +473,17 @@ git commit -m "feat: offline region geography and economic-zone authoring tools"
   - With `NEW_REGIONS` empty, the per-region tests pass vacuously, and the `every_..._key_exists`
     test fails only for the renamed description keys.
 
-- [ ] **Step 3: Implement the tables, the macro, the key derivation and the moved strings**
+- [x] **Step 3: Implement the tables, the macro, the key derivation and the moved strings**
 
   Keep North American text byte-identical; only the keys move.
 
-- [ ] **Step 4: Run the tests and confirm they pass**
+- [x] **Step 4: Run the tests and confirm they pass**
 
   Run: `cargo nextest run --workspace`
 
   Expected: everything passes with `SHIPPED = [EAST, WEST]`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -am "test: shared shipped-region acceptance tables and provenance checks"
@@ -508,7 +508,7 @@ git commit -am "test: shared shipped-region acceptance tables and provenance che
   - the overlay refresh ≤ 4 ms;
   - one region-picker paint of all shipped outlines at the minimum window ≤ 4 ms.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
   - `terrain_mesh_is_built_once_per_region`: count `TerrainGeometry` builds across 30 updates with
     the camera moving. Expect 1.
@@ -517,25 +517,25 @@ git commit -am "test: shared shipped-region acceptance tables and provenance che
   - `#[ignore] max_grid_frame_budgets`: time each item above over 100 iterations and assert the
     medians against the budgets.
 
-- [ ] **Step 2: Run them and confirm they fail**
+- [x] **Step 2: Run them and confirm they fail**
 
   Run: `cargo nextest run -p game -E 'test(built_once_per_region) | test(max_grid_mesh)'`
 
   Expected: the fixture doesn't exist yet.
 
-- [ ] **Step 3: Implement the fixture**
+- [x] **Step 3: Implement the fixture**
 
   If a budget fails, fix the hot path without changing the picture. For example, reuse the mesh
   buffer or cache the overlay colour per cell. Don't relax a budget without recording a ruling.
 
-- [ ] **Step 4: Run the tests and confirm they pass**
+- [x] **Step 4: Run the tests and confirm they pass**
 
   Run: `cargo nextest run --workspace`, then
   `cargo nextest run -p game --release --run-ignored ignored-only -E 'test(max_grid_frame_budgets)'`.
 
   Expected: everything passes. Record the measured medians in this task's report.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -am "test: frame budgets for the 256 x 128 maximum grid"
@@ -611,7 +611,7 @@ Every region task follows these steps. Its own section lists its values and its 
   - **Calendar:** northern meteorological. **Currency:** CNY. 50 Hz.
   - **Lessons** (description): Guizhou and Guangxi hydro with coastal nuclear.
 
-- [ ] **Step 1: Write the failing region tests**
+- [x] **Step 1: Write the failing region tests**
 
   - `southern_china_landmarks`:
     - Guangzhou (113.26, 23.13), Hong Kong (114.17, 22.32), Macao (113.54, 22.20),
@@ -620,10 +620,10 @@ Every region task follows these steps. Its own section lists its values and its 
   - `hainan_line_crosses_water_as_a_submarine_cable`:
     - From a new game, `line_quote` from Zhanjiang's node to Haikou's is accepted.
     - Its straight path has a non-empty `water_cells_on_segment`.
-- [ ] **Step 2: Run them and confirm they fail** (`southern_china` isn't listed yet).
-- [ ] **Step 3: Author the region** following the region authoring procedure.
-- [ ] **Step 4: Run** `cargo nextest run --workspace`. Expected: everything passes.
-- [ ] **Step 5: Commit**: `feat: ship the Southern China region`
+- [x] **Step 2: Run them and confirm they fail** (`southern_china` isn't listed yet).
+- [x] **Step 3: Author the region** following the region authoring procedure.
+- [x] **Step 4: Run** `cargo nextest run --workspace`. Expected: everything passes.
+- [x] **Step 5: Commit**: `feat: ship the Southern China region`
 
 ---
 
@@ -648,7 +648,7 @@ Every region task follows these steps. Its own section lists its values and its 
   - **Itaipu:** its 60 Hz units are a `hydro_potential` blob at Foz do Iguaçu.
   - **Lessons:** a hydro system with wet and dry seasons, plus northeastern wind.
 
-- [ ] **Step 1: Write the failing region tests**
+- [x] **Step 1: Write the failing region tests**
 
   - `brazil_landmarks`:
     - São Paulo, Boa Vista (−60.67, 2.82), Manaus, Rio Branco and Fortaleza are land;
@@ -663,10 +663,10 @@ Every region task follows these steps. Its own section lists its values and its 
   - `brazil_card_reads_both_hemispheres` (an outline test): `Hemisphere::Both`.
   - `brazil_home_lighting_points_north_at_noon`: `sun_at_home` azimuth is within 20° of north at
     São Paulo's solar noon in January.
-- [ ] **Step 2: Run them and confirm they fail.**
-- [ ] **Step 3: Author the region** following the region authoring procedure.
-- [ ] **Step 4: Run** `cargo nextest run --workspace`. Expected: everything passes.
-- [ ] **Step 5: Commit**: `feat: ship the Brazil region`
+- [x] **Step 2: Run them and confirm they fail.**
+- [x] **Step 3: Author the region** following the region authoring procedure.
+- [x] **Step 4: Run** `cargo nextest run --workspace`. Expected: everything passes.
+- [x] **Step 5: Commit**: `feat: ship the Brazil region`
 
 ---
 
@@ -693,7 +693,7 @@ Every region task follows these steps. Its own section lists its values and its 
   - **Climates:** a demand peak before the monsoon (May), and an evening ramp as solar falls.
   - **Lessons:** the monsoon and the evening solar ramp.
 
-- [ ] **Step 1: Write the failing region tests**
+- [x] **Step 1: Write the failing region tests**
 
   - `india_landmarks`:
     - Delhi, Leh (77.58, 34.15), Kathmandu (85.32, 27.72), Thimphu (89.64, 27.47) and Chennai are
@@ -708,10 +708,10 @@ Every region task follows these steps. Its own section lists its values and its 
   - `nepal_and_bhutan_add_quarter_hour_samples`:
     - `hour_sample_minutes` over {Delhi, Kathmandu, Thimphu} equals `{0, 30, 45, 59}`;
     - over {Delhi} alone it equals `{0, 59}`.
-- [ ] **Step 2: Run them and confirm they fail.**
-- [ ] **Step 3: Author the region** following the region authoring procedure.
-- [ ] **Step 4: Run** `cargo nextest run --workspace`. Expected: everything passes.
-- [ ] **Step 5: Commit**: `feat: ship the India–Nepal–Bhutan region`
+- [x] **Step 2: Run them and confirm they fail.**
+- [x] **Step 3: Author the region** following the region authoring procedure.
+- [x] **Step 4: Run** `cargo nextest run --workspace`. Expected: everything passes.
+- [x] **Step 5: Commit**: `feat: ship the India–Nepal–Bhutan region`
 
 ---
 
@@ -748,7 +748,7 @@ Every region task follows these steps. Its own section lists its values and its 
     "economic_zones omitted by authoring choice" and gives the reason.
   - **Lessons:** six time zones, Siberian hydro and polar light.
 
-- [ ] **Step 1: Write the failing region tests**
+- [x] **Step 1: Write the failing region tests**
 
   - `ips_landmarks`:
     - Moscow, Minsk, Almaty, Tashkent, Tbilisi, Baku, Novosibirsk, Irkutsk, Chita and Murmansk
@@ -763,11 +763,11 @@ Every region task follows these steps. Its own section lists its values and its 
   - `novosibirsk_sunrise_precedes_moscow_on_msk`.
   - `siberian_cities_flatten_the_system_peak`: connect every city in a test session. The
     aggregate forecast's peak-to-mean ratio is below the Moscow city's own ratio.
-- [ ] **Step 2: Run them and confirm they fail.**
-- [ ] **Step 3: Author the region** following the region authoring procedure.
-- [ ] **Step 4: Run** `cargo nextest run --workspace`. Expected: everything passes, including
+- [x] **Step 2: Run them and confirm they fail.**
+- [x] **Step 3: Author the region** following the region authoring procedure.
+- [x] **Step 4: Run** `cargo nextest run --workspace`. Expected: everything passes, including
   `shipped_regions_do_not_overlap` and `excluded_extent_is_unplayable_everywhere`.
-- [ ] **Step 5: Commit**: `feat: ship the IPS/UPS region`
+- [x] **Step 5: Commit**: `feat: ship the IPS/UPS region`
 
 ---
 
@@ -817,7 +817,7 @@ Every region task follows these steps. Its own section lists its values and its 
     - Unsourced countries stay at 0, listed in the header.
   - **Lessons:** a three-hour time-zone spread and Maghreb solar.
 
-- [ ] **Step 1: Write the failing region tests**
+- [x] **Step 1: Write the failing region tests**
 
   - `europe_maghreb_landmarks`:
     - Seville, Tangier (−5.81, 35.76), Lisbon, Aarhus (10.20, 56.16), Palermo, Valletta
@@ -847,14 +847,14 @@ Every region task follows these steps. Its own section lists its values and its 
     terms.
   - `europe_maghreb_mid_day_save_resumes_identically`: provided by `SHIPPED_REGIONS` in
     `save_resume.rs`, with a cross-zone order in flight.
-- [ ] **Step 2: Run them and confirm they fail.**
-- [ ] **Step 3: Author the region** following the region authoring procedure, then generate the
+- [x] **Step 2: Run them and confirm they fail.**
+- [x] **Step 3: Author the region** following the region authoring procedure, then generate the
   zone cells.
-- [ ] **Step 4: Run** `cargo nextest run --workspace`. Expected: everything passes. Spain–Morocco
+- [x] **Step 4: Run** `cargo nextest run --workspace`. Expected: everything passes. Spain–Morocco
   differences come only from cited rows.
-- [ ] **Step 5: Tick Plan 6a's Task 6 boxes**, each with a link to the test or file that discharges
+- [x] **Step 5: Tick Plan 6a's Task 6 boxes**, each with a link to the test or file that discharges
   it.
-- [ ] **Step 6: Commit**: `feat: ship the Continental Europe–Maghreb region with country construction profiles`
+- [x] **Step 6: Commit**: `feat: ship the Continental Europe–Maghreb region with country construction profiles`
 
 ---
 
@@ -871,14 +871,14 @@ Every region task follows these steps. Its own section lists its values and its 
 - Test: the existing picker tests (`crates/game/tests/game/region_picker.rs`) and the l10n
   coverage.
 
-- [ ] **Step 1: Check the picker with all seven regions at the minimum window**
+- [x] **Step 1: Check the picker with all seven regions at the minimum window**
 
   *Amended 2026-10-25:* the picker is now the interactive globe (§28.10, commit b9ac0ce). Its
   existing startability, card-layout, picking and contrast tests in
   `crates/game/tests/game/region_picker.rs` must pass over all seven listings at the minimum
   window. Card start and card-select rotation must work for every region.
 
-- [ ] **Step 2: Bump the rules version and regenerate**
+- [x] **Step 2: Bump the rules version and regenerate**
 
   Bump `SIM_RULES_VERSION` to 18 and regenerate the rules guard and snapshots. Review every diff:
   the only expected change is the version line.
@@ -889,12 +889,16 @@ Every region task follows these steps. Its own section lists its values and its 
 
   Expected: everything is green.
 
-- [ ] **Step 3: Launch smoke (ask the user first)**
+- [x] **Step 3: Launch smoke (ask the user first)**
 
   Run: `cargo run -p game -- --exit-after-frames 120`, with isolated `--log-dir` and save
   directories.
 
   Expected: exit 0.
+
+  Controller run 2026-10-26: `cargo run -p game -- --exit-after-frames 120` with isolated scratch
+  log/save directories exited 0. No panic or system-parameter conflict; only the known winit
+  "Skipped event Destroyed" warning.
 
 - [ ] **Step 4: Isolated native playtests (ask the user first)**
 
@@ -907,7 +911,9 @@ Every region task follows these steps. Its own section lists its values and its 
 
   Never use the user's saves.
 
-- [ ] **Step 5: Update the status lines, then commit**
+  Pending: the user plays IPS/UPS and Brazil by hand.
+
+- [x] **Step 5: Update the status lines, then commit**
 
   Update the spec status (Plan 7 implemented under rules 18; Plan 8 pending), Plan 6a's status
   and the docs.
