@@ -386,6 +386,7 @@ layer shown, is a selected toggle, not a disabled button.
 | `LocalizationPlugin` | Loads the en-US Fluent files into the `Localizer` resource. |
 | `SimulationPlugin` | The bridge: the `Session(Game)` resource, the region `Catalog`, new games, the command funnel, the phase mirror and the fixed-step driver. |
 | `PreferencesPlugin` | Retained window geometry, zoom, running speed and panel/tool layout; separate from game checkpoints. |
+| `SunriseAudioPlugin` | Presentation-only rooster cue when the regional monthly sunrise is crossed at 1×; the recording finishes naturally if the player changes speed. |
 | `HudPlugin` | Every egui panel, toast, prompt and modal, plus its non-egui glue (listing regions, collecting toasts, resetting HUD state between games). |
 
 `CorePlugins` groups the first three. They need no window or renderer, so the tests run them on
@@ -400,6 +401,13 @@ and restored geometry may use the full monitor width and leave at least 40 logic
 and below, budgeting for title bars and system bars. Monitor exposes full display bounds, so this
 is a conservative allowance rather than an OS work-area query. Positions account for physical origins and scaling.
 The sizing system then never runs again, so the player's own resize wins.
+
+`GamePlugins` also installs `SunriseAudioPlugin`. Bevy's audio backend and Vorbis decoder play
+`audio/rooster.ogg`, read once at startup from `AssetRoot` alongside the region and locale data.
+The cue follows the simulation clock and the same monthly daylight table as the diorama sun.
+It observes every clock change, including silent fast-forward, so switching back to 1× cannot
+replay a missed sunrise. A session generation/month change establishes a fresh boundary without
+crowing on load. Audio state belongs only to the client and never changes checkpoints or RNG.
 
 - **Boot** waits for every `require_for_boot::<R>()` resource: `AssetRoot` and `LogDir` (from the
   command line), `Localizer` and `Catalog`. A `BootError` keeps the app in `Boot`, which shows it.

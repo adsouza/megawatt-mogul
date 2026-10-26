@@ -82,6 +82,7 @@ class ReleaseTests(unittest.TestCase):
         self.assertFalse(any(arg.startswith("--filesystem=") for arg in manifest["finish-args"]))
         self.assertIn("--socket=wayland", manifest["finish-args"])
         self.assertIn("--socket=fallback-x11", manifest["finish-args"])
+        self.assertIn("--socket=pulseaudio", manifest["finish-args"])
         # Crash reports name functions only if the packaged game keeps its symbol table.
         self.assertEqual(manifest["build-options"], {"strip": False, "no-debuginfo": True})
         profile = release.read_toml(self.root / "Cargo.toml")["profile"]["release"]
