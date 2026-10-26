@@ -94,12 +94,14 @@ fn read_stamp(payload: &str, options: &ron::Options) -> ron::error::SpannedResul
         .or_else(|_| options.from_str::<Stamp>(payload))
 }
 #[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(Debug))]
 pub(super) enum PhaseDto {
     Planning,
     Operating,
     Review,
 }
 #[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(Debug))]
 pub(super) enum StatusDto {
     Active,
     Bankrupt,
@@ -372,6 +374,7 @@ fn decode_payload<C: Into<super::journal::JournalRecord>>(
 }
 
 #[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(Debug))]
 #[serde(deny_unknown_fields)]
 pub(super) struct OriginDto {
     slot: String,

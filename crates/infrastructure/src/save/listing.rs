@@ -591,14 +591,11 @@ mod tests {
         format!(
             "{:?}",
             (
-                card.snapshot
-                    .as_ref()
-                    .map(|s| (s.schema, s.origin.is_some())),
+                card.snapshot.as_ref().map(|s| (s.schema, &s.origin)),
                 (&card.build, &card.platform, &card.slot, &card.run),
                 (card.automatic, &card.name, card.saved_at, &card.header),
                 (&card.region, card.count, card.year, card.month, card.tick),
-                std::mem::discriminant(&card.phase),
-                std::mem::discriminant(&card.status),
+                (&card.phase, &card.status),
             )
         )
     }
@@ -622,8 +619,11 @@ mod tests {
     }
     #[test]
     fn fast_card_matches_the_full_card_parse() {
+        let mut with_origin = 0;
         for (name, payload) in fixture_payloads() {
-            assert!(fast_card(&payload).is_some(), "{name} takes the fast path");
+            let card = fast_card(&payload);
+            assert!(card.is_some(), "{name} takes the fast path");
+            with_origin += usize::from(card.and_then(|c| c.snapshot?.origin).is_some());
             assert_eq!(
                 either_card(&payload),
                 full_card(&payload, &running()).map(|c| card_summary(&c)),
@@ -649,6 +649,8 @@ mod tests {
                 ("count", Some("\"x\"")),
                 ("name", Some("r\"raw\"")),
                 ("phase", Some("Bogus")),
+                ("phase", Some("Review")),
+                ("status", Some("Bankrupt")),
                 ("build", None),
                 ("header", Some("()")),
             ] {
@@ -664,6 +666,8 @@ mod tests {
                 );
             }
         }
+        // The summary compares origins by content, so at least one fixture must carry one.
+        assert!(with_origin > 0, "no fixture save has a snapshot origin");
     }
     proptest! {
         #[test]
