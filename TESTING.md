@@ -877,6 +877,16 @@ runback hysteresis, signed energy conservation, commissioning instalments and ra
 island frequency performance, utilisation hold/release/write-off and a mid-day portable continuation
 through month close. `region::areas` and the DC energy/quote tests include properties.
 
+The partial-override properties exercise all converter-cost/duration and route-cost/speed
+presence masks across two authored construction markets. They check independent regional
+fallbacks, canonical odd-cent converter splitting, zero-priced overrides, exact route work
+rounded once, and endpoint reversal. `infrastructure/tests/economic_construction.rs` loads
+zoned RON data for no, west-only, east-only and both-terminal overrides in both endpoint orders.
+It hand-checks quote totals and durations, each instalment and its remainder, cancellation
+after a payment, commissioning progress/date and original rate base. Repeated codec round trips
+preserve the whole checkpoint through construction and operation even after the installed region
+file is replaced, including the cancelled link's absence and the retained link's signed schedule.
+
 The shipped-region tables include SGCC. Year-one beginner acceptance and first expansion cover
 seeds 0–7. The shared overlap check includes all eight regions. Raw Natural Earth shared borders
 partition SGCC's land exactly; the operating exclusion sidecar accounts for differing peer cell

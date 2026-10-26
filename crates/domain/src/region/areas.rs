@@ -189,6 +189,86 @@ mod tests {
     }
     proptest::proptest! {
         #[test]
+        fn partial_hvdc_converter_overrides_inherit_each_field_independently(
+            half in 0i64..10_000,
+            west_cost in 0i64..20_000,
+            east_cost in 0i64..20_000,
+            west_months in 1u32..12,
+            east_months in 1u32..12,
+        ) {
+            let a = CellCoord { x: 3, y: 4 };
+            let b = CellCoord { x: 8, y: 4 };
+            let mut base = fixtures::two_area_parts();
+            base.hvdc.as_mut().unwrap().converter_cost = Money::from_cents(half * 2 + 1);
+            let unzoned = RegionDefinition::try_from(base.clone()).unwrap();
+            let default = unzoned.link_terms(a, b, 5.0).unwrap();
+            // Exercise every field-presence combination, including zero-priced overrides,
+            // either missing terminal and authored zones with no HVDC overrides at all.
+            for mask in 0u8..16 {
+                let mut parts = base.clone();
+                parts.economic_zones = fixtures::economic_region_parts().economic_zones;
+                let zones = &mut parts.economic_zones.as_mut().unwrap().zones;
+                zones[0].hvdc.converter_cost_per_end = (mask & 1 != 0).then_some(Money::from_cents(west_cost));
+                zones[1].hvdc.converter_cost_per_end = (mask & 2 != 0).then_some(Money::from_cents(east_cost));
+                zones[0].hvdc.converter_build_months = (mask & 4 != 0).then_some(west_months);
+                zones[1].hvdc.converter_build_months = (mask & 8 != 0).then_some(east_months);
+                let region = RegionDefinition::try_from(parts).unwrap();
+                let quote = region.link_terms(a, b, 5.0).unwrap();
+                let costs = [
+                    if mask & 1 != 0 { west_cost } else { half },
+                    if mask & 2 != 0 { east_cost } else { half + 1 },
+                ];
+                let months = 3.max(if mask & 4 != 0 { west_months } else { 2 })
+                    .max(if mask & 8 != 0 { east_months } else { 2 });
+                proptest::prop_assert_eq!(quote.converter_costs.map(Money::cents), costs);
+                proptest::prop_assert_eq!(quote.route.capital.cents(), 5 * 7);
+                proptest::prop_assert_eq!(quote.capital.cents(), costs[0] + costs[1] + 5 * 7);
+                proptest::prop_assert_eq!(quote.months, months);
+                proptest::prop_assert_eq!(&quote, &region.link_terms(b, a, 5.0).unwrap());
+                if mask == 0 {
+                    proptest::prop_assert_eq!(quote.capital, default.capital);
+                    proptest::prop_assert_eq!(quote.months, default.months);
+                    proptest::prop_assert_eq!(quote.converter_costs, default.converter_costs);
+                }
+            }
+        }
+
+        #[test]
+        fn partial_hvdc_route_overrides_inherit_regional_rates_and_round_work_once(
+            west_cost in 0i64..1_000,
+            east_cost in 0i64..1_000,
+            west_speed in 1u32..9,
+            east_speed in 1u32..9,
+        ) {
+            let a = CellCoord { x: 3, y: 4 };
+            let b = CellCoord { x: 8, y: 4 };
+            // Five canonical samples fall in cells 4,5 (west) and 6,7,8 (east).
+            for mask in 0u8..16 {
+                let mut parts = fixtures::two_area_parts();
+                parts.economic_zones = fixtures::economic_region_parts().economic_zones;
+                let zones = &mut parts.economic_zones.as_mut().unwrap().zones;
+                zones[0].hvdc.cost_per_cell = (mask & 1 != 0).then_some(Money::from_cents(west_cost));
+                zones[1].hvdc.cost_per_cell = (mask & 2 != 0).then_some(Money::from_cents(east_cost));
+                zones[0].hvdc.cells_per_month = (mask & 4 != 0).then_some(west_speed);
+                zones[1].hvdc.cells_per_month = (mask & 8 != 0).then_some(east_speed);
+                let region = RegionDefinition::try_from(parts).unwrap();
+                let quote = region.link_terms(a, b, 5.0).unwrap();
+                let west_cost = if mask & 1 != 0 { west_cost } else { 7 };
+                let east_cost = if mask & 2 != 0 { east_cost } else { 7 };
+                let west_speed = if mask & 4 != 0 { west_speed } else { 2 };
+                let east_speed = if mask & 8 != 0 { east_speed } else { 2 };
+                let route_months = (2 * east_speed + 3 * west_speed).div_ceil(west_speed * east_speed);
+                proptest::prop_assert_eq!(quote.route.cells, 5);
+                proptest::prop_assert_eq!(quote.route.zones.iter().map(|z| z.cells).collect::<Vec<_>>(), vec![2, 3]);
+                proptest::prop_assert_eq!(quote.route.capital.cents(), 2 * west_cost + 3 * east_cost);
+                proptest::prop_assert_eq!(quote.capital.cents(), 101 + 2 * west_cost + 3 * east_cost);
+                proptest::prop_assert_eq!(quote.route.months, route_months);
+                proptest::prop_assert_eq!(quote.months, route_months.max(2));
+                proptest::prop_assert_eq!(&quote, &region.link_terms(b, a, 5.0).unwrap());
+            }
+        }
+
+        #[test]
         fn hvdc_route_reversal_and_default_converter_split_are_exact(x in 1u16..12,y in 0u16..8) {
             let r=RegionDefinition::try_from(fixtures::two_area_parts()).unwrap();
             let a=CellCoord{x:6,y:4};let b=CellCoord{x,y};let n=crate::grid::distance_cells(a,b);

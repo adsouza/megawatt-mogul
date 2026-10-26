@@ -227,13 +227,14 @@ preview remain selectable through their cards; broken entries retain their disab
 - A 3D diorama map built from the region's terrain cell grid, with phase-specific overlays (§8.3).
 - Seven generating plant types plus battery storage (§3.2, §20, §25), plant construction, and
   transmission-line construction for connectivity. Batteries are implemented under Plan 4;
-  wind and the revised charging window are specified under Plan 5, not yet implemented.
+  wind and the revised charging window are implemented under Plan 5 (§25).
 - Demand centres with daily, seasonal and noise profiles, plus forecasts.
 - The full day cycle (one representative day per month), frequency model, protection, economics, regulator, scoring and failure.
 - An egui HUD for every phase, and dev tools behind a `dev` feature.
 - Command logging with versioned replay inputs and an archived region file (§7).
 - Player-facing manual saves, month-close autosaves and resume, implemented before Plan 3 (§17).
 - Localisation scaffolding with en-US only.
+- Presentation-only daily sound cues at 1× during Operating (§8.5).
 
 ### 3.2 Plant types (shipped-region tuning, stored as region data and not in code)
 
@@ -277,7 +278,7 @@ preview remain selectable through their cards; broken entries retain their disab
 - Competitors and markets.
 - Loans.
 - Cross-platform command replay. Portable state and supported save migrations are defined in §21.
-- Audio.
+- Audio beyond the implemented daily time cues (§8.5).
 - A tutorial campaign.
 - More regions (Milestone 2: Amendment A14, §28).
 - Separate minimum-on/minimum-off dwell timers. Existing commitment feasibility already requires
@@ -701,6 +702,7 @@ run through the ordinary generating-plant step or acquire synthetic opening outp
 | `CameraPlugin` | Orbit, pan and zoom, plus a tilt-shift depth-of-field effect. |
 | `HudPlugin` | The egui panels (§8.4). They read only query views and projections, and they write only by sending `PlayerCommand`s. |
 | `LocalizationPlugin` | Fluent bundles; translates typed events, errors and lessons into display text. |
+| `DailyAudioPlugin` | Daily time cues triggered at 1× during active Operating; presentation only (§8.5). |
 | `DevToolsPlugin` (`dev` feature) | A bevy-inspector-egui inspector filtered to render entities, plus reflected visual `TuningConfig` scales/colours. Simulation tuning remains region data for a new session. |
 
 ### 8.2 Art direction
@@ -872,6 +874,18 @@ Actual per-line loading still requires a power-flow `NetworkModel`.
   fully legible or are omitted for spacing; opacity fades never make visible labels unreadable.
   Palette/state checks, property tests over arbitrary colour pairs and tests of actual paint
   output guard the requirement. See [WCAG 2.2 contrast guidance](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum).
+
+### 8.5 Daily audio cues
+
+Daily sound cues are implemented: a rooster at the home city's sunrise, metro chimes at 08:30
+and 17:00, a gong followed by laughter at noon, and a doorbell at 17:30, on the system clock.
+Sunrise follows the region's solar model; there is no rooster cue on a day without sunrise.
+Cues trigger only while an active game is Operating at 1× and persistence has not frozen play.
+An already playing clip finishes naturally if speed changes. Paused/fast-forwarded cues are
+skipped, and returning to 1× or loading a save never catches up missed sounds. Replacing or
+leaving a session removes its playback. Audio is client state and changes neither simulation
+RNG nor saves. Asset sources, licenses and preparation are recorded in
+[`assets/audio/README.md`](../../../assets/audio/README.md).
 
 ## 9. Cross-cutting concerns
 

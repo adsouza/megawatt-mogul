@@ -505,8 +505,9 @@ The sizing system then never runs again, so the player's own resize wins.
 
 `GamePlugins` also installs `DailyAudioPlugin`. Bevy's audio backend and Vorbis decoder play
 the small clips in `audio/`, read once at startup from `AssetRoot` alongside region and locale data.
-The daily schedule follows the simulation clock, with sunrise taken from the same monthly
-daylight table as the diorama sun. Morning and evening metro cues reuse one asset; the noon
+The daily schedule follows the system clock, with sunrise taken from the region's legacy
+daylight table or computed home-city sun, matching the diorama lighting. Days without a sunrise
+have no rooster cue. Morning and evening metro cues reuse one asset; the noon
 clip combines the louder gong and laughter in sequence with no added gap. Time signals
 observe every clock change, including silent fast-forward, so switching back to 1× cannot replay
 missed cues. A session generation/month change establishes a fresh boundary without playing past

@@ -20,6 +20,11 @@ advance user permission. Do not use the user's save directories for launch check
 
 ## Implementation and evidence
 
+Remaining native acceptance (reconciled 2026-10-26):
+
+- [ ] Record a human SGCC/HVDC usability playtest. The scripted scheduled-link day and launch
+  smoke below are complete; they do not claim human interaction acceptance.
+
 Rules 19 keeps earlier single-area regions on the existing controller path. Explicit areas opt
 into separate AC components. Weather and demand noise still draw once region-wide each minute.
 Links retain the player's endpoint orientation while quotes use canonical terminal pricing.

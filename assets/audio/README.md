@@ -2,8 +2,9 @@
 
 The cues start only at 1× during Operating and play once per crossing. Each clip
 finishes naturally if the player changes speed. The two metro cues share one
-original three-note signal. Sunrise follows the region's monthly daylight table; the other times use the
-simulation's local clock.
+original three-note signal. Sunrise follows the region's solar model at the home city (the
+legacy monthly daylight table or computed sun); the other times use the system clock. Days
+without a sunrise have no rooster cue.
 
 | Time | Sound | File | Clip length |
 | --- | --- | --- | --- |
@@ -70,5 +71,5 @@ Wikimedia Commons by Fæ.
   audio-only stereo Ogg with ffmpeg's native Vorbis encoder; the original's extra
   Ogg Skeleton data stream is unsupported by Bevy's Vorbis decoder.
 
-The game plays it once when the regional monthly sunrise is crossed at 1×,
+The game plays it once when the home city's sunrise is crossed at 1×,
 at reduced volume. It is not stretched with simulation speed.

@@ -1,6 +1,16 @@
 # Megawatt Mogul Plan 1b: Spec Amendment A4 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+**Completion reconciliation (2026-10-26):** Implemented.
+
+- [x] Rotating outages, staged under-frequency shedding and capacity-shortfall forecasts are implemented.
+- [x] Outage accounting, incidents, lessons and overreach acceptance are implemented.
+- [x] The rules-3 regression and mutation results are recorded in [TESTING.md](../../../TESTING.md#mutation-testing-status).
+
+The original execution recipe is retained below as plain steps. This reconciliation records
+landed deliverables, without claiming a fresh run of each historical RED test, command or commit
+sequence. Native checks without a complete receipt remain unchecked.
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. The step sequence below is the historical execution recipe.
 
 **Goal:** Implement Amendment A4 on top of Plans 1 and 1a:
 - forecast-based rotating outages;
@@ -88,13 +98,13 @@ this plan reuses.
   - validation `InvalidBand { field: "frequency.shed_stage_spacing" }` unless the value is finite
     and > 0.
 
-- [ ] **Step 1: Write the failing tests.** Extend `out_of_range_numbers_are_rejected` with 0,
+- **Step 1: Write the failing tests.** Extend `out_of_range_numbers_are_rejected` with 0,
   a negative, NaN and ∞. Extend `range_boundaries_are_accepted` with a small positive value. Assert
   that the fixture and both shipped regions load with 0.2 Hz.
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain region && cargo nextest run -p infrastructure`. Expected: FAIL.
-- [ ] **Step 3: Implement.** Follow the Task 4 pattern from Plan 1a, and recompute `MINIMAL_SHA256`.
-- [ ] **Step 4: Run them to verify they pass.** Run the same command. Expected: PASS.
-- [ ] **Step 5: Commit**: `feat: region parameter for staged under-frequency shedding`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain region && cargo nextest run -p infrastructure`. Expected: FAIL.
+- **Step 3: Implement.** Follow the Task 4 pattern from Plan 1a, and recompute `MINIMAL_SHA256`.
+- **Step 4: Run them to verify they pass.** Run the same command. Expected: PASS.
+- **Step 5: Commit**: `feat: region parameter for staged under-frequency shedding`
 
 ---
 
@@ -123,7 +133,7 @@ this plan reuses.
     `1 − d`, demand 1, and supply following served load by at most `ramp` per tick without
     exceeding `1 − d`. It runs 240 ticks and returns `{ blackout, min_dev, max_dev, peak_shed }`.
 
-- [ ] **Step 1: Write the failing tests**
+- **Step 1: Write the failing tests**
 
 ```rust
 #[test] fn stages_crossed_in_one_tick_fire_together() { /* from 0 shed, dev −1.45 with spacing 0.2 → crossed 5 → shed 0.25 */ }
@@ -140,13 +150,13 @@ proptest! {
 }
 ```
 
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain protection power_system`. Expected: the new tests FAIL.
-- [ ] **Step 3: Implement** per Interfaces. Document the stage rule and its measured bounds (spec
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain protection power_system`. Expected: the new tests FAIL.
+- **Step 3: Implement** per Interfaces. Document the stage rule and its measured bounds (spec
   §15.4 builder's call) on `evaluate`.
-- [ ] **Step 4: Run them to verify they pass.** Run the same command, plus the fast workspace suite
+- **Step 4: Run them to verify they pass.** Run the same command, plus the fast workspace suite
   from Global Constraints. Expected: PASS. Existing protection tests that assumed one step per tick
   at depth must change only where a dip now crosses extra stages; list each one you change.
-- [ ] **Step 5: Commit**: `feat(domain): staged under-frequency load shedding`
+- **Step 5: Commit**: `feat(domain): staged under-frequency load shedding`
 
 ---
 
@@ -200,7 +210,7 @@ proptest! {
   - **Hydro lift.** `hydro_cap_lifted` is unchanged: it already keys on protection's `shed` and the
     band. Add a doc line saying a rotating outage alone doesn't lift the cap (§15.3).
 
-- [ ] **Step 1: Write the failing tests**
+- **Step 1: Write the failing tests**
 
 ```rust
 #[test] fn covered_days_have_no_outage() { /* tiny fixture, normal day: outage_target 0 every hour; summaries identical in outage == 0 */ }
@@ -214,12 +224,12 @@ proptest! {
 #[test] fn sizing_draws_no_rng() { /* RNG after begin_day + 120 ticks equals reference advanced by 1 + 120 draws, as in Plan 1a */ }
 ```
 
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain power_system protection`. Expected: the new tests FAIL.
-- [ ] **Step 3: Implement** per Interfaces. Document the tick-order changes in `PowerSystem::tick`'s
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain power_system protection`. Expected: the new tests FAIL.
+- **Step 3: Implement** per Interfaces. Document the tick-order changes in `PowerSystem::tick`'s
   doc comment.
-- [ ] **Step 4: Run them to verify they pass.** Run the same command, plus the fast workspace suite.
+- **Step 4: Run them to verify they pass.** Run the same command, plus the fast workspace suite.
   Expected: PASS.
-- [ ] **Step 5: Commit**: `feat(domain): forecast-based rotating outages`
+- **Step 5: Commit**: `feat(domain): forecast-based rotating outages`
 
 ---
 
@@ -241,16 +251,16 @@ proptest! {
     `GameSession::check_invariants`, or to the report's own consistency checks, whichever the
     codebase uses for `served + unserved = demand`.
 
-- [ ] **Step 1: Write the failing tests:**
+- **Step 1: Write the failing tests:**
   - `rotating_outage_is_part_of_unserved`;
   - `peak_outage_share_is_the_largest_ordered`;
   - `an_ordered_outage_is_an_incident`;
   - `blackout_dark_load_is_not_counted_as_planned`, which drives a blackout on a shortage day and
     checks that the blackout ticks add to `unserved` but not to `rotating_outage`.
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain report month_close`. Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run them to verify they pass.** Run the same command, plus the fast workspace suite. Expected: PASS.
-- [ ] **Step 5: Commit**: `feat(domain): rotating-outage accounting`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain report month_close`. Expected: FAIL.
+- **Step 3: Implement.**
+- **Step 4: Run them to verify they pass.** Run the same command, plus the fast workspace suite. Expected: PASS.
+- **Step 5: Commit**: `feat(domain): rotating-outage accounting`
 
 ---
 
@@ -283,7 +293,7 @@ proptest! {
       or `None`. It is pure.
   - **No change to `hydro_schedule()`.** The preview is `pub(crate)` (§15.5).
 
-- [ ] **Step 1: Write the failing tests:**
+- **Step 1: Write the failing tests:**
   - `capacity_shortfall_check_reports_the_worst_hour` (crafted fleet, hand-computed);
   - `capacity_shortfall_check_is_none_when_covered`;
   - `capacity_shortfall_check_counts_hydro_from_the_preview` (equals what `BeginOperating` then
@@ -291,10 +301,10 @@ proptest! {
   - `capacity_shortfall_check_is_pure` (`state_hash` unchanged);
   - `begin_day_budgets_are_unchanged_by_the_refactor` (an equality oracle against the old
     formula).
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain session power_system`. Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run them to verify they pass.** Run the same command, plus the fast workspace suite. Expected: PASS.
-- [ ] **Step 5: Commit**: `feat(domain): capacity-shortfall warning with a pure hydro preview`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain session power_system`. Expected: FAIL.
+- **Step 3: Implement.**
+- **Step 4: Run them to verify they pass.** Run the same command, plus the fast workspace suite. Expected: PASS.
+- **Step 5: Commit**: `feat(domain): capacity-shortfall warning with a pure hydro preview`
 
 ---
 
@@ -313,15 +323,15 @@ proptest! {
     that amount. `first_incident_tick` is the first incident that isn't a `RotatingOutage`, or 0.
   - The cap of three and the `[AllClear]` fallback are unchanged.
 
-- [ ] **Step 1: Write the failing tests:**
+- **Step 1: Write the failing tests:**
   - `rotating_outages_lesson_fires_on_planned_energy`;
   - `unserved_lesson_counts_only_unplanned_energy`;
   - `an_outage_only_month_has_no_unserved_lesson`;
   - `lesson_priority_places_outages_before_unserved`.
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p application lessons`. Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run them to verify they pass.** Run the same command, plus the fast workspace suite. Expected: PASS.
-- [ ] **Step 5: Commit**: `feat(application): rotating-outage lesson; unserved lesson counts unplanned energy`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p application lessons`. Expected: FAIL.
+- **Step 3: Implement.**
+- **Step 4: Run them to verify they pass.** Run the same command, plus the fast workspace suite. Expected: PASS.
+- **Step 5: Commit**: `feat(application): rotating-outage lesson; unserved lesson counts unplanned energy`
 
 ---
 
@@ -335,7 +345,7 @@ proptest! {
 - Consumes: everything above, the overreach scenario setup in `application/tests/support`, and the
   hands-off helper in `shipped_regions.rs`.
 
-- [ ] **Step 1: Write the failing tests:**
+- **Step 1: Write the failing tests:**
   - `overreach_rotates_outages_instead_of_collapsing` (application). In month 4 of the overreach
     script, check that:
     - there is no `Blackout` incident;
@@ -351,11 +361,11 @@ proptest! {
   - `shipped_regions_never_order_outages_hands_off` (infrastructure): over the hands-off year,
     both regions and seeds 0–7, `rotating_outage == 0` every month. The shipped fleets cover their
     forecasts; if this fails, report the hours and shortfall before touching data.
-- [ ] **Step 2: Run them.** Run: `cargo nextest run -p application -E 'binary(scenarios) and test(overreach)' && cargo nextest run -p infrastructure --test shipped_regions`. Expected: the overreach test PASSES once Tasks 2–6 are in, or fails with numbers. Record which. The snapshot assertion in the existing overreach test will mismatch; ignore it until Task 8.
-- [ ] **Step 3: If an acceptance check fails,** diagnose first (hours, shortfall, which plants).
+- **Step 2: Run them.** Run: `cargo nextest run -p application -E 'binary(scenarios) and test(overreach)' && cargo nextest run -p infrastructure --test shipped_regions`. Expected: the overreach test PASSES once Tasks 2–6 are in, or fails with numbers. Record which. The snapshot assertion in the existing overreach test will mismatch; ignore it until Task 8.
+- **Step 3: If an acceptance check fails,** diagnose first (hours, shortfall, which plants).
   Retune region data only, and list every change and its reason in the commit.
-- [ ] **Step 4: Run the tests to verify they pass.** Run the same commands. Expected: PASS, apart from snapshot mismatches. Report the runtime of `shipped_regions`; it must stay under about 60 s in debug.
-- [ ] **Step 5: Commit**: `test: overreach rotates outages; shipped regions need none hands-off`
+- **Step 4: Run the tests to verify they pass.** Run the same commands. Expected: PASS, apart from snapshot mismatches. Report the runtime of `shipped_regions`; it must stay under about 60 s in debug.
+- **Step 5: Commit**: `test: overreach rotates outages; shipped regions need none hands-off`
 
 ---
 
@@ -368,8 +378,8 @@ proptest! {
 
 **Interfaces:** none new.
 
-- [ ] **Step 1: Bump the version.** Set `SIM_RULES_VERSION = 3`.
-- [ ] **Step 2: Regenerate and review the snapshots.** Run `cargo insta test --workspace`, inspect
+- **Step 1: Bump the version.** Set `SIM_RULES_VERSION = 3`.
+- **Step 2: Regenerate and review the snapshots.** Run `cargo insta test --workspace`, inspect
   every pending diff, then `cargo insta accept`. Each diff must be explained by A4:
   - `overreach_city_without_capacity` changes from a month-long blackout to a rotating outage with
     reliability above 0;
@@ -378,18 +388,18 @@ proptest! {
   - the guard's first line reads `SIM_RULES_VERSION=3`.
 
   Accept only explained diffs, and list them in the commit message.
-- [ ] **Step 3: Update the docs.**
+- **Step 3: Update the docs.**
   - `ARCHITECTURE.md`: the tick order gains outage sizing after the hourly hydro re-plan, the
     `load = demand × (1 − outage)` substitution, and outage movement after protection. The
     protection step gains the stages.
   - `TESTING.md`: add the new properties, among them the step-deficit proptest and the overreach
     acceptance check.
   - Follow-ups doc: mark Q1 as **implemented (Plan 1b, A4)**.
-- [ ] **Step 4: Run targeted mutation testing.** Run
+- **Step 4: Run targeted mutation testing.** Run
   `cargo mutants -p domain -p application -F 'evaluate|size_outage|compute_hydro_plan|day_hydro_budget|capacity_shortfall_check|lessons_for|tick|begin_day|balance_boundary'`.
   Shard it so each run takes under 10 minutes, and run it in the background. Expected: 0 missed.
   Kill any survivors with tests.
-- [ ] **Step 5: Run the full verification.** Run
+- **Step 5: Run the full verification.** Run
   `cargo nextest run --workspace && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check`.
   Expected: all pass.
-- [ ] **Step 6: Commit**: `chore: SIM_RULES_VERSION 3 — regenerate snapshots for amendment A4`
+- **Step 6: Commit**: `chore: SIM_RULES_VERSION 3 — regenerate snapshots for amendment A4`

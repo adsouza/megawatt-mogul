@@ -1,6 +1,16 @@
 # Megawatt Mogul Plan 2: Bevy Game Shell Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+**Completion reconciliation (2026-10-26):** Implemented.
+
+- [x] The game shell, localization, simulation bridge and phase-specific HUD are implemented.
+- [x] Planning/build/commitment controls, Operating controls, Review and milestones are implemented.
+- [x] The real-egui and end-to-end tests are present; native checks remain in the [playtest checklist](2026-10-19-plan-2-playtest.md).
+
+The original execution recipe is retained below as plain steps. This reconciliation records
+landed deliverables, without claiming a fresh run of each historical RED test, command or commit
+sequence. Native checks without a complete receipt remain unchecked.
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. The step sequence below is the historical execution recipe.
 
 **Goal:** A playable Milestone 1 game. It runs from the main menu through region choice and a seeded
 new game into the full Planning → Operating → Review cycle. Every phase is driven by an egui HUD
@@ -148,21 +158,21 @@ items).
   `EguiPrimaryContextPass`. Check both against the pinned docs, and record any rename in
   `ARCHITECTURE.md` (Task 10).
 
-- [ ] **Step 1: Write the failing tests:**
+- **Step 1: Write the failing tests:**
   - `boot_moves_to_the_main_menu`: after a few `app.update()`s, `State<AppState>` is `MainMenu`.
   - `the_phase_substate_exists_only_in_game`: `PhaseState` is absent outside `InGame`, and is
     `Planning` on entering `InGame`.
   - `asset_root_prefers_the_explicit_argument`: a temp dir is passed.
   - `asset_root_falls_back_to_the_workspace_assets`: the fallback contains `regions/`.
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p game`. Expected: FAIL (compile).
-- [ ] **Step 3: Implement** per Interfaces. `cargo run -p game` opens a window showing the
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p game`. Expected: FAIL (compile).
+- **Step 3: Implement** per Interfaces. `cargo run -p game` opens a window showing the
   (still empty) main menu.
-- [ ] **Step 4: Verify.**
+- **Step 4: Verify.**
   - Run `cargo nextest run -p game`; expect PASS.
   - Run `cargo nextest run -p domain -p application` and check that Bevy is not compiled:
     `cargo tree -p application | grep -c bevy` must be 0.
   - Run `cargo tree -d -p game | grep egui` and check there is a single egui version.
-- [ ] **Step 5: Commit**: `feat(game): crate skeleton, app states and CI`
+- **Step 5: Commit**: `feat(game): crate skeleton, app states and CI`
 
 ---
 
@@ -211,7 +221,7 @@ These are the carry-overs the HUD needs (follow-ups "Carry into Plan 2"). No rul
 - **DTO finiteness.** The command-log DTO → `Command` mapping rejects a non-finite
   `SetDispatchTarget.mw` with a typed error instead of building a NaN `Megawatts`.
 
-- [ ] **Step 1: Write the failing tests:**
+- **Step 1: Write the failing tests:**
   - `a_broken_region_file_is_listed_as_unavailable` (temp dir with one good file and one garbage
     file → two listings, one `Err`);
   - `listing_does_not_rasterise` (a file that parses as a DTO but fails mapping is listed `Ok` and
@@ -227,11 +237,11 @@ These are the carry-overs the HUD needs (follow-ups "Carry into Plan 2"). No rul
   - `line_quote_matches_what_build_line_charges` (quote, then build, then compare capital and months
     with the ledger and the construction event);
   - `non_finite_dispatch_target_is_rejected_in_the_log`.
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain -p application -p infrastructure`. Expected: the new tests FAIL.
-- [ ] **Step 3: Implement** per Interfaces, updating every caller of the changed signatures.
-- [ ] **Step 4: Verify.** Run the full `cargo nextest run --workspace -E 'not package(game)'`. It
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p domain -p application -p infrastructure`. Expected: the new tests FAIL.
+- **Step 3: Implement** per Interfaces, updating every caller of the changed signatures.
+- **Step 4: Verify.** Run the full `cargo nextest run --workspace -E 'not package(game)'`. It
   must PASS **with no snapshot change**. Then run clippy and fmt.
-- [ ] **Step 5: Commit**: `feat: region listing, log health, marginal cost, plant revenue, line quote`
+- **Step 5: Commit**: `feat: region listing, log health, marginal cost, plant revenue, line quote`
 
 ---
 
@@ -287,7 +297,7 @@ These are the carry-overs the HUD needs (follow-ups "Carry into Plan 2"). No rul
     coverage test can check them.
 - `LocalizationPlugin` inserts `Localizer` and marks the boot item done.
 
-- [ ] **Step 1: Write the failing tests:**
+- **Step 1: Write the failing tests:**
   - `every_ui_key_exists_in_en_us` (iterates `ALL_UI_KEYS`);
   - `every_error_and_lesson_variant_translates_without_falling_back`. Build one value of each
     variant and assert the result isn't the bare key. Enumerating variants is a test-side table;
@@ -297,11 +307,11 @@ These are the carry-overs the HUD needs (follow-ups "Carry into Plan 2"). No rul
   - `missing_key_returns_the_key`;
   - `ftl_files_parse_without_errors`;
   - formatter tables (`money_formats_scale`, `clock_formats_ticks`, …).
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p game l10n`. Expected: FAIL.
-- [ ] **Step 3: Implement**, and write the en-US copy: plain, short, teaching-first. Use the spec's
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p game l10n`. Expected: FAIL.
+- **Step 3: Implement**, and write the en-US copy: plain, short, teaching-first. Use the spec's
   own phrasing where it exists, e.g. the ramp warning in §6.3.
-- [ ] **Step 4: Run them to verify they pass.** Run the same command. Expected: PASS.
-- [ ] **Step 5: Commit**: `feat(game): Fluent localisation with en-US coverage`
+- **Step 4: Run them to verify they pass.** Run the same command. Expected: PASS.
+- **Step 5: Commit**: `feat(game): Fluent localisation with en-US coverage`
 
 ---
 
@@ -356,7 +366,7 @@ These are the carry-overs the HUD needs (follow-ups "Carry into Plan 2"). No rul
   - **`pub fn default_seed() -> u64`:** derived from `SystemTime` nanos, shown and editable in the
     menu.
 
-- [ ] **Step 1: Write the failing tests** (headless app, temp assets dir copying `assets/regions` and `assets/locales`, temp log dir):
+- **Step 1: Write the failing tests** (headless app, temp assets dir copying `assets/regions` and `assets/locales`, temp log dir):
   - `a_new_game_request_enters_planning_and_writes_a_log` (the log and `.region.ron` archive exist
     in the temp dir);
   - `commands_apply_in_order_and_re_emit_events`;
@@ -375,10 +385,10 @@ These are the carry-overs the HUD needs (follow-ups "Carry into Plan 2"). No rul
     or inject a failing sink through a test-only constructor. Assert `log_failure().is_some()` and
     that ticks still advance.
   - `return_to_menu_drops_the_session`.
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p game simulation`. Expected: FAIL.
-- [ ] **Step 3: Implement** per Interfaces.
-- [ ] **Step 4: Run them to verify they pass.** Run the same command. Expected: PASS.
-- [ ] **Step 5: Commit**: `feat(game): simulation bridge with fixed-step batching and phase mirroring`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p game simulation`. Expected: FAIL.
+- **Step 3: Implement** per Interfaces.
+- **Step 4: Run them to verify they pass.** Run the same command. Expected: PASS.
+- **Step 5: Commit**: `feat(game): simulation bridge with fixed-step batching and phase mirroring`
 
 ---
 
@@ -419,7 +429,7 @@ These are the carry-overs the HUD needs (follow-ups "Carry into Plan 2"). No rul
   - **Boot error screen.** If Boot fails (an ftl parse error, or the asset root is missing), show
     a plain egui screen with the error text and *Quit*, instead of panicking.
 
-- [ ] **Step 1: Write the failing tests:**
+- **Step 1: Write the failing tests:**
   - **Presenter tests:**
     - `menu_auto_skips_with_one_available_region`;
     - `region_select_shows_broken_entries_disabled`;
@@ -431,10 +441,10 @@ These are the carry-overs the HUD needs (follow-ups "Carry into Plan 2"). No rul
     `egui::Context::run(RawInput::default(), …)`, with no renderer, against a real `Game`. Assert
     it returns without panicking and produces the expected actions when given a scripted click.
     Where scripting clicks is impractical, call the action-producing helper directly.
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p game hud`. Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run them to verify they pass.** Run the same command. Expected: PASS.
-- [ ] **Step 5: Commit**: `feat(game): menu, region select, top bar, toasts and game-over`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p game hud`. Expected: FAIL.
+- **Step 3: Implement.**
+- **Step 4: Run them to verify they pass.** Run the same command. Expected: PASS.
+- **Step 5: Commit**: `feat(game): menu, region select, top bar, toasts and game-over`
 
 ---
 
@@ -468,7 +478,7 @@ These are the carry-overs the HUD needs (follow-ups "Carry into Plan 2"). No rul
       *Build line* emits `BuildLine`.
     - Both are available in Planning only.
 
-- [ ] **Step 1: Write the failing tests:**
+- **Step 1: Write the failing tests:**
   - `hit_test_prefers_plants_over_cities_over_cells`;
   - `map_layout_keeps_aspect_and_fits`;
   - `suitability_row_reports_site_errors`;
@@ -477,10 +487,10 @@ These are the carry-overs the HUD needs (follow-ups "Carry into Plan 2"). No rul
   - `build_actions_carry_the_selected_cell_and_kind`.
 
   Add a `hud_smoke` case drawing the map for both shipped regions.
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p game hud`. Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run them to verify they pass.** Run the same command. Expected: PASS.
-- [ ] **Step 5: Commit**: `feat(game): planning map, cell inspector and build menu`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p game hud`. Expected: FAIL.
+- **Step 3: Implement.**
+- **Step 4: Run them to verify they pass.** Run the same command. Expected: PASS.
+- **Step 5: Commit**: `feat(game): planning map, cell inspector and build menu`
 
 ---
 
@@ -518,7 +528,7 @@ These are the carry-overs the HUD needs (follow-ups "Carry into Plan 2"). No rul
     - Each warning has a *show hour* action that highlights the column in the commitment grid.
   - **Begin Operating** button: emits `BeginOperating`.
 
-- [ ] **Step 1: Write the failing tests:**
+- **Step 1: Write the failing tests:**
   - `commitment_row_emits_commit_plant_on_apply`;
   - `infeasible_commit_reverts_the_pending_row` (the presenter consumes the `CommandFailed` for
     that plant);
@@ -528,10 +538,10 @@ These are the carry-overs the HUD needs (follow-ups "Carry into Plan 2"). No rul
   - `initial_target_outside_bounds_is_not_sent`.
 
   Add a `hud_smoke` case for Planning with both shipped regions.
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p game hud`. Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run them to verify they pass.** Run the same command. Expected: PASS.
-- [ ] **Step 5: Commit**: `feat(game): commitment grid, forecast, tariff and planning warnings`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p game hud`. Expected: FAIL.
+- **Step 3: Implement.**
+- **Step 4: Run them to verify they pass.** Run the same command. Expected: PASS.
+- **Step 5: Commit**: `feat(game): commitment grid, forecast, tariff and planning warnings`
 
 ---
 
@@ -567,7 +577,7 @@ These are the carry-overs the HUD needs (follow-ups "Carry into Plan 2"). No rul
   - **Incident ticker:** the latest localised incidents and outage orders, timestamped with
     `clock(tick)`.
 
-- [ ] **Step 1: Write the failing tests:**
+- **Step 1: Write the failing tests:**
   - `speed_buttons_emit_set_speed`;
   - `space_toggles_pause`;
   - `frequency_model_bands_and_outage_indicator`;
@@ -577,10 +587,10 @@ These are the carry-overs the HUD needs (follow-ups "Carry into Plan 2"). No rul
   - `incident_ticker_orders_newest_first`.
 
   Add a `hud_smoke` case that runs a session one hour into Operating, then draws every panel.
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p game hud`. Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run them to verify they pass.** Run the same command. Expected: PASS.
-- [ ] **Step 5: Commit**: `feat(game): operating HUD`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p game hud`. Expected: FAIL.
+- **Step 3: Implement.**
+- **Step 4: Run them to verify they pass.** Run the same command. Expected: PASS.
+- **Step 5: Commit**: `feat(game): operating HUD`
 
 ---
 
@@ -608,7 +618,7 @@ These are the carry-overs the HUD needs (follow-ups "Carry into Plan 2"). No rul
   - **Milestones panel** (reachable from the top bar in any phase): every `MilestoneKind`, with
     progress or the achieved date.
 
-- [ ] **Step 1: Write the failing tests:**
+- **Step 1: Write the failing tests:**
   - `review_model_lists_pl_lines_in_order`;
   - `review_model_splits_planned_and_unplanned_unserved`;
   - `review_model_shows_strike_reason_from_events` (the lesson's `notice` flag isn't the source,
@@ -617,10 +627,10 @@ These are the carry-overs the HUD needs (follow-ups "Carry into Plan 2"). No rul
   - `milestones_model_shows_progress`.
 
   Add a `hud_smoke` case that draws Review after a full day.
-- [ ] **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p game hud`. Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run them to verify they pass.** Run the same command. Expected: PASS.
-- [ ] **Step 5: Commit**: `feat(game): review modal and milestones`
+- **Step 2: Run them to verify they fail.** Run: `cargo nextest run -p game hud`. Expected: FAIL.
+- **Step 3: Implement.**
+- **Step 4: Run them to verify they pass.** Run the same command. Expected: PASS.
+- **Step 5: Commit**: `feat(game): review modal and milestones`
 
 ---
 
@@ -633,7 +643,7 @@ These are the carry-overs the HUD needs (follow-ups "Carry into Plan 2"). No rul
 **Interfaces:**
 - Consumes: everything above.
 
-- [ ] **Step 1: Write `end_to_end.rs`.**
+- **Step 1: Write `end_to_end.rs`.**
   - **Setup:** a headless app with `CorePlugins` and the presenters' action mapping, no egui. For
     each shipped region, at seed 7:
     1. Send `NewGameRequest`.
@@ -647,8 +657,8 @@ These are the carry-overs the HUD needs (follow-ups "Carry into Plan 2"). No rul
     - no `CommandFailed`;
     - the month's report exists.
   - **Runtime:** under 20 s in debug. Use `Time<Fixed>` manual stepping, not real time.
-- [ ] **Step 2: Run it.** Run: `cargo nextest run -p game end_to_end`. Expected: PASS.
-- [ ] **Step 3: Write the playtest checklist** (`…-plan-2-playtest.md`). Number each step and pair it
+- **Step 2: Run it.** Run: `cargo nextest run -p game end_to_end`. Expected: PASS.
+- **Step 3: Write the playtest checklist** (`…-plan-2-playtest.md`). Number each step and pair it
   with the expected result, so the user can run `cargo run -p game` and tick it off.
   - **Menus:** menu → region picker shows both regions.
   - **Planning:**
@@ -665,8 +675,8 @@ These are the carry-overs the HUD needs (follow-ups "Carry into Plan 2"). No rul
   - **Review:** contents.
   - **Banners:** make the log dir read-only to see the recording-stopped banner.
   - **Game over:** reach game over to see the modal.
-- [ ] **Step 4: Update the docs** per Files, matching each document's style.
-- [ ] **Step 5: Run the full verification.** Run
+- **Step 4: Update the docs** per Files, matching each document's style.
+- **Step 5: Run the full verification.** Run
   `cargo nextest run --workspace && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check`.
   Expected: all pass.
-- [ ] **Step 6: Commit**: `test(game): end-to-end month through the app; docs: game crate and playtest checklist`
+- **Step 6: Commit**: `test(game): end-to-end month through the app; docs: game crate and playtest checklist`

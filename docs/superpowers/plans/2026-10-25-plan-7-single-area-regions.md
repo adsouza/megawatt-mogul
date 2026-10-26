@@ -908,7 +908,7 @@ Every region task follows these steps. Its own section lists its values and its 
   log/save directories exited 0. No panic or system-parameter conflict; only the known winit
   "Skipped event Destroyed" warning.
 
-- [x] **Step 4: Isolated native playtests (ask the user first)**
+- [ ] **Step 4: Complete the isolated native playtest matrix (ask the user first)**
 
   Play IPS/UPS and Brazil (§28.12), one full representative day each, seed 7, with isolated saves
   and logs. Record:
@@ -925,6 +925,9 @@ Every region task follows these steps. Its own section lists its values and its 
   (abundant hydro; cities use very little power); Russia uses little power in summer and more in
   winter; the picker did not feel sluggish. Not played: seed 7, and the specific lighting
   checklist.
+
+  Reconciled 2026-10-26: implementation and the recorded user playtest are complete, but this
+  checkbox stays open until the seed-7 lighting/clock/money/review matrix above is recorded.
 
 - [x] **Step 5: Update the status lines, then commit**
 
