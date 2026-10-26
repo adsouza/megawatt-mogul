@@ -3897,7 +3897,8 @@ old reports stay as recorded.
 ### 28.10 The world picker
 
 - **Globe.** The new-game region picker uses an orthographic globe with its north pole tilted
-  22° toward the viewer and its south pole away. Automatic rotation follows the tilted polar
+  22° toward the viewer and its south pole away. It initially faces the International Date Line
+  (180° longitude). Automatic rotation follows the tilted polar
   axis, moving the visible surface from left to right, and completes one revolution every 24 real
   seconds (15°/second), independent of frame rate and simulation speed. Horizontal mouse dragging
   takes direct control in either direction,

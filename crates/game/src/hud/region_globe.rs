@@ -25,7 +25,7 @@ pub(super) struct GlobeSpin {
 impl Default for GlobeSpin {
     fn default() -> Self {
         Self {
-            longitude: -100.0,
+            longitude: -180.0,
             last_frame: None,
             paused_until: 0.0,
             was_held: false,
@@ -168,11 +168,15 @@ mod tests {
     #[test]
     fn one_rotation_takes_24_seconds_without_frame_rate_dependence() {
         let mut spin = GlobeSpin::default();
+        assert_eq!(
+            spin.longitude, -180.0,
+            "open on the International Date Line"
+        );
         spin.advance(0.0, false, 0.0, 400.0);
         spin.advance(6.0, false, 0.0, 400.0);
-        assert!((spin.longitude - 170.0).abs() < 1e-9);
+        assert!((spin.longitude - 90.0).abs() < 1e-9);
         spin.advance(24.0, false, 0.0, 400.0);
-        assert!((spin.longitude + 100.0).abs() < 1e-9);
+        assert!((spin.longitude + 180.0).abs() < 1e-9);
     }
 
     #[test]
@@ -212,15 +216,15 @@ mod tests {
         let mut spin = GlobeSpin::default();
         spin.advance(0.0, false, 0.0, 400.0);
         spin.advance(0.1, true, 100.0, 400.0);
-        assert!((spin.longitude - 170.0).abs() < 1e-9);
+        assert!((spin.longitude - 90.0).abs() < 1e-9);
         spin.advance(0.2, true, -200.0, 400.0);
-        assert!((spin.longitude + 10.0).abs() < 1e-9);
+        assert!((spin.longitude + 90.0).abs() < 1e-9);
         spin.advance(1.0, true, 0.0, 400.0);
         spin.advance(1.1, false, 0.0, 400.0);
         spin.advance(3.0, false, 0.0, 400.0);
-        assert!((spin.longitude + 10.0).abs() < 1e-9);
+        assert!((spin.longitude + 90.0).abs() < 1e-9);
         spin.advance(3.6, false, 0.0, 400.0);
-        assert!((spin.longitude + 17.5).abs() < 1e-9);
+        assert!((spin.longitude + 97.5).abs() < 1e-9);
     }
 
     #[test]
