@@ -519,6 +519,20 @@ zone-utc-plus-7 = UTC+7
 zone-utc-plus-8 = UTC+8
 zone-utc-plus-9 = UTC+9
 
+# Continental Europe–Maghreb: Western, Central and Eastern European time with summer time from
+# April to October, Central European time without DST (Morocco, Algeria, Tunisia) and Türkiye
+# time (UTC+3, no DST).
+zone-wet = WET
+zone-cet = CET
+zone-cet-fixed = CET
+zone-eet = EET
+zone-trt = TRT
+
+# Continental Europe–Maghreb construction markets and its named starter line.
+economic-zone-spain = Spain
+economic-zone-morocco = Morocco
+line-spain-morocco = Spain–Morocco interconnector
+
 # Optional construction economics. All prices use the region's currency.
 construction-economic-zone = Market
 construction-regional-default = Regional default

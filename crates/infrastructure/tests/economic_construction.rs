@@ -469,3 +469,146 @@ fn starter_assets_use_local_original_values_without_construction_delay() {
     assert_eq!(original.original.cents(), 70_000_000);
     assert!(original.legacy);
 }
+
+/// Plan 7 Task 9: every economic zone the shipped Continental Europe-Maghreb region authors,
+/// with each plant kind it overrides, built at the buildable cell in that zone nearest the
+/// zone's largest city. The quote, the instalments paid and the commissioning month all equal
+/// the zone's resolved terms, and the original rate base is the quoted capital.
+#[test]
+fn shipped_europe_maghreb_profiles_quote_pay_and_commission_by_their_terms() {
+    use domain::region::EconomicZoneId;
+    const ID: &str = "continental_europe_maghreb";
+    let catalog =
+        RonRegionCatalog::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/regions"));
+    let mut game = Game::start_new(
+        &catalog,
+        &RegionId::new(ID),
+        3,
+        GameSettings::default(),
+        Box::new(InMemoryCommandLog::default()),
+    )
+    .unwrap();
+    let region = std::sync::Arc::clone(game.session().region());
+    assert!(region.has_economic_zones());
+    let terrain = region.terrain();
+    let cells: Vec<CellCoord> = (0..terrain.height())
+        .flat_map(|y| (0..terrain.width()).map(move |x| CellCoord { x, y }))
+        .collect();
+    let mut occupied: Vec<CellCoord> = game
+        .session()
+        .plant_views()
+        .iter()
+        .map(|p| p.cell)
+        .chain(game.session().city_views().iter().map(|c| c.cell))
+        .collect();
+    // (plant, expected spec) for every authored zone and overridden kind.
+    let mut orders = Vec::new();
+    let mut id = 1;
+    while let Some(zone) = region.economic_zone(EconomicZoneId(id)) {
+        let largest = region
+            .cities()
+            .iter()
+            .filter(|c| region.economic_zone_at(c.cell).unwrap() == zone.id)
+            .max_by(|a, b| a.base_load.value().total_cmp(&b.base_load.value()))
+            .unwrap_or_else(|| panic!("{} holds a city", zone.name_key));
+        for over in &zone.plants {
+            let cell = *cells
+                .iter()
+                .filter(|c| {
+                    region.economic_zone_at(**c).unwrap() == zone.id
+                        && !occupied.contains(c)
+                        && region.site_check(over.kind, **c).is_ok()
+                })
+                .min_by_key(|c| {
+                    (
+                        u32::from(c.x.abs_diff(largest.cell.x)).pow(2)
+                            + u32::from(c.y.abs_diff(largest.cell.y)).pow(2),
+                        **c,
+                    )
+                })
+                .unwrap_or_else(|| panic!("{} has a {:?} site", zone.name_key, over.kind));
+            occupied.push(cell);
+            let spec = region.plant_spec_at(over.kind, cell).unwrap();
+            if let Some(cost) = over.capital_cost {
+                assert_eq!(spec.capital_cost, cost, "{} {:?}", zone.name_key, over.kind);
+            }
+            if let Some(months) = over.build_months {
+                assert_eq!(
+                    spec.build_months, months,
+                    "{} {:?}",
+                    zone.name_key, over.kind
+                );
+            }
+            let quote = game.session().plant_quote(over.kind, cell).unwrap();
+            assert_eq!(
+                (quote.capital, quote.months),
+                (spec.capital_cost, spec.build_months),
+                "{} {:?}",
+                zone.name_key,
+                over.kind
+            );
+            let events = game
+                .execute(Command::BuildPlant {
+                    kind: over.kind,
+                    cell,
+                })
+                .unwrap();
+            let plant = events
+                .iter()
+                .find_map(|e| match e {
+                    domain::events::DomainEvent::PlantConstructionStarted { plant, .. } => {
+                        Some(*plant)
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(game.session().plant_construction(plant).unwrap(), quote);
+            orders.push((zone.name_key.clone(), plant, quote));
+        }
+        id += 1;
+    }
+    assert!(id > 2, "the region authors at least two zones");
+    let longest = orders.iter().map(|(_, _, q)| q.months).max().unwrap();
+    for month in 1..=longest {
+        close(&mut game);
+        for (label, plant, quote) in &orders {
+            let view = game
+                .session()
+                .plant_views()
+                .into_iter()
+                .find(|v| v.id == *plant)
+                .unwrap();
+            assert_eq!(
+                matches!(view.status, PlantStatus::UnderConstruction { .. }),
+                month < quote.months,
+                "{label}: month {month} of {}",
+                quote.months
+            );
+            let paid: i64 = game
+                .session()
+                .company()
+                .ledger()
+                .iter()
+                .filter(|e| {
+                    e.subject == Some(AssetRef::Plant(*plant))
+                        && e.category == domain::company::LedgerCategory::Construction
+                })
+                .map(|e| -e.amount.cents())
+                .sum();
+            if month >= quote.months {
+                assert_eq!(paid, quote.capital.cents(), "{label}: instalments");
+                let asset = game
+                    .session()
+                    .company()
+                    .rate_base()
+                    .assets()
+                    .find(|a| a.asset == AssetRef::Plant(*plant))
+                    .unwrap();
+                assert_eq!(asset.original, quote.capital, "{label}: rate base");
+            } else {
+                assert!(paid < quote.capital.cents(), "{label}: paid early");
+            }
+        }
+        game.execute(Command::FinishReview).unwrap();
+    }
+}

@@ -474,4 +474,12 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "zone-utc-plus-7",
     "zone-utc-plus-8",
     "zone-utc-plus-9",
+    "zone-wet",
+    "zone-cet",
+    "zone-cet-fixed",
+    "zone-eet",
+    "zone-trt",
+    "economic-zone-spain",
+    "economic-zone-morocco",
+    "line-spain-morocco",
 ];

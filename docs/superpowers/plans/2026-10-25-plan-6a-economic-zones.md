@@ -181,24 +181,47 @@ types if needed, `assets/locales/en-US/*.ftl`, `l10n/keys.rs`, existing game int
 
 This is required scope of Plan 7, not new live country-price data fabricated by Plan 6a.
 
-- [ ] In the future detailed Plan 7, make its Europe–Maghreb task depend on Tasks 1–5. Author
+- [x] In the future detailed Plan 7, make its Europe–Maghreb task depend on Tasks 1–5. Author
   country assignments over playable cells; record any unsupported finer attribution as explicit
   regional-default cells. Respect the spec's grid-operation/disputed-territory rules.
-- [ ] Use locally sourced whole-project estimates for the relevant technologies, normalize into
+  Done by Plan 7 Task 9: the zone polygons in
+  [`continental_europe_maghreb_economic_zones.ron`](../../../crates/infrastructure/authoring/continental_europe_maghreb_economic_zones.ron)
+  rasterise into the `economic_zones.cells` of
+  [`continental_europe_maghreb.ron`](../../../assets/regions/continental_europe_maghreb.ron), whose
+  header lists the regional-default countries and the grid-operation rulings;
+  `europe_maghreb_zone_cells_are_reproducible` and `europe_maghreb_landmarks` in
+  [`shipped_regions.rs`](../../../crates/infrastructure/tests/shipped_regions.rs) check them.
+- [x] Use locally sourced whole-project estimates for the relevant technologies, normalize into
   EUR with source/date/currency assumptions, and document compressed build-duration judgments.
   Shared profiles are allowed where justified; the Europe/Maghreb comparison must demonstrate
   meaningful **cost and duration** differences for at least one same-kind plant. No blanket
   Maghreb wage discount or unsupported country-specific number is acceptable evidence.
-- [ ] Include the Seville/Málaga/Tangier starter territory and Gibraltar route valuation. Country
+  Done by Plan 7 Tasks 1 and 9: the rows are in the
+  [Plan 7 research note](../../research/2026-10-25-plan-7-regional-economics.md), the Spain and
+  Morocco profiles cite them in the region file's `economic_zones` block, and
+  `spain_and_morocco_differ_in_cost_and_duration` checks onshore wind (17.0% dearer, 3 against 7
+  game months).
+- [x] Include the Seville/Málaga/Tangier starter territory and Gibraltar route valuation. Country
   profiles do not change AC connectivity, shared EUR accounting, tariff/regulator or link limits.
-- [ ] IPS/UPS explicitly records whether country/subnational economics is used; if used, author
+  Done by Plan 7 Task 9: `gibraltar_starts_served_named_and_valued_by_route` in
+  [`shipped_regions.rs`](../../../crates/infrastructure/tests/shipped_regions.rs).
+- [x] IPS/UPS explicitly records whether country/subnational economics is used; if used, author
   it with the same provenance, independently of civil zones and electrical areas. Other regions
   can omit the block and use locally sourced baseline catalogs with exact uniform arithmetic.
-- [ ] New-region acceptance covers no-command/hands-off year one and early expansion, seeds
+  Done by Plan 7 Task 8: [`ips_ups.ron`](../../../assets/regions/ips_ups.ron) records
+  "economic_zones omitted by authoring choice", following the research note's
+  [IPS/UPS decision](../../research/2026-10-25-plan-7-regional-economics.md#ipsups-economic-zones-decision);
+  the other Plan 7 regions omit the block.
+- [x] New-region acceptance covers no-command/hands-off year one and early expansion, seeds
   0–7, from the shipped starter territory. Add compact construction scenarios covering each
   distinct authored profile with its actual terms; this does not require a remote country to
   be reachable from Seville within the first-expansion window. Retune data/cash/starter fleet if
   needed; never relax accounting, compatibility or quote invariants.
+  Done by Plan 7 Task 9: the `year_one_cases!` entries and
+  `shipped_first_expansion_acceptance_seeds_zero_through_seven` in
+  [`shipped_regions.rs`](../../../crates/infrastructure/tests/shipped_regions.rs), and
+  `shipped_europe_maghreb_profiles_quote_pay_and_commission_by_their_terms` in
+  [`economic_construction.rs`](../../../crates/infrastructure/tests/economic_construction.rs).
 
 ## Task 7: Mandatory Plan 8 HVDC integration handoff
 

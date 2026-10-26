@@ -2,6 +2,7 @@
 # holds display text.
 
 region-brazil-sin = Brazil
+region-continental-europe-maghreb = Continental Europe–Maghreb
 region-eastern-interconnection = Eastern Interconnection
 region-india-nepal-bhutan = India–Nepal–Bhutan
 region-ips-ups = IPS/UPS
@@ -10,6 +11,7 @@ region-southern-china = Southern China
 
 # What the region picker says beside each region: `<name key>-description`.
 region-brazil-sin-description = Hydro that fills from December to April and runs low through the dry winter, plus northeastern wind. Ride the wet season into the summer peak.
+region-continental-europe-maghreb-description = One grid from Lisbon to Ankara and Casablanca, across three hours of time zones: Türkiye's evening peak comes first and Portugal's last. Bring Maghreb solar north over the Gibraltar link.
 region-eastern-interconnection-description = Dense cities, big demand, and a legacy coal and nuclear fleet. Keep the industrial heartland humming.
 region-india-nepal-bhutan-description = The monsoon fills the rivers and drives the wind while clouds dim the sun, and demand peaks in May before the rains. Meet the evening ramp as solar falls.
 region-ips-ups-description = One grid across six hours of time zones: Siberia's evening peak passes before Moscow's begins. Ride Siberian hydro and plan for polar night and the midnight sun.
@@ -228,3 +230,47 @@ city-volgograd = Volgograd
 city-voronezh = Voronezh
 city-yaroslavl = Yaroslavl
 city-yekaterinburg = Yekaterinburg
+
+# Continental Europe–Maghreb. Each name is the title of its English Wikipedia article, without
+# the qualifier "Córdoba, Spain" carries (no other shipped region has a Córdoba); "Rhine-Ruhr"
+# is the agglomeration's article.
+city-algiers = Algiers
+city-amsterdam = Amsterdam
+city-ankara = Ankara
+city-athens = Athens
+city-barcelona = Barcelona
+city-belgrade = Belgrade
+city-berlin = Berlin
+city-brussels = Brussels
+city-bucharest = Bucharest
+city-budapest = Budapest
+city-casablanca = Casablanca
+city-chisinau = Chișinău
+city-cordoba = Córdoba
+city-frankfurt = Frankfurt
+city-hamburg = Hamburg
+city-istanbul = Istanbul
+city-izmir = İzmir
+city-kyiv = Kyiv
+city-lisbon = Lisbon
+city-lyon = Lyon
+city-madrid = Madrid
+city-malaga = Málaga
+city-marseille = Marseille
+city-milan = Milan
+city-munich = Munich
+city-naples = Naples
+city-paris = Paris
+city-porto = Porto
+city-prague = Prague
+city-rabat = Rabat
+city-rhine-ruhr = Rhine-Ruhr
+city-rome = Rome
+city-rotterdam = Rotterdam
+city-seville = Seville
+city-tangier = Tangier
+city-tunis = Tunis
+city-valencia = Valencia
+city-vienna = Vienna
+city-warsaw = Warsaw
+city-zurich = Zurich

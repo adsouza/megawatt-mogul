@@ -27,6 +27,7 @@ const EAST: &str = "eastern_interconnection";
 const WEST: &str = "western_interconnection";
 const SOUTHERN_CHINA: &str = "southern_china";
 const BRAZIL: &str = "brazil_sin";
+const EUROPE_MAGHREB: &str = "continental_europe_maghreb";
 const INDIA: &str = "india_nepal_bhutan";
 const IPS: &str = "ips_ups";
 
@@ -38,16 +39,25 @@ const RESEARCH_NOTE: &str = concat!(
 
 /// Every shipped region ID, sorted like `RonRegionCatalog::list`. Each Plan 7 region task
 /// inserts its ID here and in the tables below; every region-agnostic test iterates them.
-const SHIPPED: &[&str] = &[BRAZIL, EAST, INDIA, IPS, SOUTHERN_CHINA, WEST];
+const SHIPPED: &[&str] = &[
+    BRAZIL,
+    EUROPE_MAGHREB,
+    EAST,
+    INDIA,
+    IPS,
+    SOUTHERN_CHINA,
+    WEST,
+];
 
 /// The IDs Plan 7 adds, a subset of `SHIPPED`. The provenance, scale and squareness tests
 /// iterate it: the Eastern and Western files predate those rules.
-const NEW_REGIONS: &[&str] = &[BRAZIL, INDIA, IPS, SOUTHERN_CHINA];
+const NEW_REGIONS: &[&str] = &[BRAZIL, EUROPE_MAGHREB, INDIA, IPS, SOUTHERN_CHINA];
 
 /// Each region's real system capacity in GW, from the research note: the scale reference for
 /// `new_region_load_scales_with_capacity`.
 const RESEARCH_CAPACITY_GW: &[(&str, f64)] = &[
     (BRAZIL, 250.0),
+    (EUROPE_MAGHREB, 1350.0),
     (EAST, 980.0),
     (INDIA, 520.0),
     (IPS, 345.0),
@@ -58,6 +68,7 @@ const RESEARCH_CAPACITY_GW: &[(&str, f64)] = &[
 /// Each region's start city (`start.home_city`), by name key.
 const HOME_CITY: &[(&str, &str)] = &[
     (BRAZIL, "city-sao-paulo"),
+    (EUROPE_MAGHREB, "city-seville"),
     (EAST, "city-columbus"),
     (INDIA, "city-delhi"),
     (IPS, "city-moscow"),
@@ -68,6 +79,7 @@ const HOME_CITY: &[(&str, &str)] = &[
 /// The city each region's first-expansion acceptance test (spec §18.3) connects, by name key.
 const EXPANSION_CITY: &[(&str, &str)] = &[
     (BRAZIL, "city-sorocaba"),
+    (EUROPE_MAGHREB, "city-cordoba"),
     (EAST, "city-cleveland"),
     (INDIA, "city-faridabad"),
     (IPS, "city-kaluga"),
@@ -78,6 +90,7 @@ const EXPANSION_CITY: &[(&str, &str)] = &[
 /// Each region's nominal grid frequency in hertz.
 const NOMINAL_HZ: &[(&str, f64)] = &[
     (BRAZIL, 60.0),
+    (EUROPE_MAGHREB, 50.0),
     (EAST, 60.0),
     (INDIA, 50.0),
     (IPS, 50.0),
@@ -940,6 +953,11 @@ year_one_cases! {
         year_one_hands_off_brazil_sin,
         year_one_no_commands_brazil_sin,
         BRAZIL
+    ),
+    (
+        year_one_hands_off_continental_europe_maghreb,
+        year_one_no_commands_continental_europe_maghreb,
+        EUROPE_MAGHREB
     ),
     (
         year_one_hands_off_eastern_interconnection,
@@ -2750,5 +2768,350 @@ mod ips_ups {
                 "month {m}: the system peaks at {system:.4} of its mean, Moscow at {city:.4}"
             );
         }
+    }
+}
+
+// ---- Region checks: Continental Europe-Maghreb ------------------------------------------------
+
+mod continental_europe_maghreb {
+    use super::*;
+    use domain::ids::{CellCoord, NodeId};
+
+    const ID: &str = EUROPE_MAGHREB;
+
+    fn city_named(region: &RegionDefinition, key: &str) -> domain::region::CityDef {
+        region
+            .cities()
+            .iter()
+            .find(|city| city.name_key == key)
+            .unwrap_or_else(|| panic!("{key} is a city"))
+            .clone()
+    }
+
+    /// The footprint is the Continental Europe synchronous area with DK1, Turkiye, connected
+    /// Ukraine and Moldova, the Baltic states, Sicily, Malta and Crete, plus Morocco, northern
+    /// Algeria and Tunisia; the Nordic area, DK2, Great Britain, Ireland, Sardinia, Corsica, the
+    /// Balearics, isolated southern Algeria and Crimea are out (spec section 28.3).
+    #[test]
+    fn europe_maghreb_landmarks() {
+        let map = LandMap::load(ID);
+        for (name, lon, lat) in [
+            ("Seville", -5.99, 37.39),
+            ("Tangier", -5.81, 35.76),
+            ("Lisbon", -9.14, 38.72),
+            ("Aarhus", 10.20, 56.16),
+            ("Palermo", 13.36, 38.12),
+            ("Valletta", 14.51, 35.90),
+            ("Heraklion", 25.14, 35.34),
+            ("Istanbul", 28.98, 41.01),
+            ("Kyiv", 30.52, 50.45),
+            ("Donetsk", 37.80, 48.00),
+            ("Chisinau", 28.84, 47.02),
+            ("Tunis", 10.18, 36.81),
+            ("Algiers", 3.06, 36.75),
+            // Grid-operation rulings recorded in the region file.
+            ("Tiraspol (Transnistria)", 29.63, 46.84),
+            ("Pristina (Kosovo)", 21.17, 42.66),
+            ("Laayoune (ONEE grid)", -13.20, 27.15),
+            ("Ghardaia (Algeria's interconnected north)", 3.67, 32.49),
+            ("Tallinn", 24.75, 59.44),
+        ] {
+            assert!(map.land_at(lon, lat), "{name} is playable land");
+        }
+        for (name, lon, lat) in [
+            ("Copenhagen", 12.57, 55.68),
+            ("London", -0.13, 51.51),
+            ("Dublin", -6.26, 53.35),
+            ("Oslo", 10.75, 59.91),
+            ("Cagliari", 9.11, 39.22),
+            ("Palma", 2.65, 39.57),
+            ("Ajaccio", 8.74, 41.93),
+            ("Tamanrasset", 5.52, 22.79),
+            ("Sevastopol", 33.52, 44.60),
+            ("Simferopol", 34.10, 44.95),
+            // Inside the bounds, south of the schematic 30 N line or otherwise excluded.
+            ("Adrar", -0.29, 27.87),
+            ("In Salah", 2.47, 27.19),
+            ("Timimoun", 0.23, 29.26),
+            ("Tifariti (east of the berm)", -10.6, 26.1),
+            ("Minsk", 27.56, 53.90),
+            ("Kaliningrad", 20.51, 54.71),
+            ("Bornholm (DK2)", 14.92, 55.13),
+            ("Nicosia", 33.36, 35.17),
+        ] {
+            assert!(!map.land_at(lon, lat), "{name} is outside the footprint");
+        }
+    }
+
+    /// Rulings 10 and 11: the canonical Crimea and Sevastopol extent, shared with IPS/UPS,
+    /// appears verbatim among the file's exclusions.
+    #[test]
+    fn europe_maghreb_exclude_contains_the_canonical_extent() {
+        let file = region_file(ID);
+        let extent = excluded_extent();
+        assert!(!extent.polygons.is_empty());
+        for (i, polygon) in extent.polygons.iter().enumerate() {
+            assert!(
+                file.exclude.iter().any(|ring| ring == polygon),
+                "canonical polygon {i} is not in exclude unchanged"
+            );
+        }
+    }
+
+    /// The nearest buildable land cell to (lon, lat) among those whose centre `side` accepts,
+    /// by distance in degrees with longitude scaled by the latitude's cosine; ties go to the
+    /// lower cell.
+    fn nearest_site(
+        region: &RegionDefinition,
+        occupied: &[CellCoord],
+        lon: f64,
+        lat: f64,
+        side: impl Fn(f64) -> bool,
+    ) -> CellCoord {
+        let file = region_file(ID);
+        let (width, height) = (file.grid.width, file.grid.height);
+        let b = &file.bounds;
+        let centre = |cell: CellCoord| {
+            (
+                b.west + (f64::from(cell.x) + 0.5) / f64::from(width) * (b.east - b.west),
+                b.north - (f64::from(cell.y) + 0.5) / f64::from(height) * (b.north - b.south),
+            )
+        };
+        let cos = lat.to_radians().cos();
+        (0..height)
+            .flat_map(|y| (0..width).map(move |x| CellCoord { x, y }))
+            .filter(|cell| {
+                !occupied.contains(cell)
+                    && region.site_check(PlantKind::Peaker, *cell).is_ok()
+                    && side(centre(*cell).0)
+            })
+            .min_by(|a, b| {
+                let d = |cell: &CellCoord| {
+                    let (x, y) = centre(*cell);
+                    ((x - lon) * cos).powi(2) + (y - lat).powi(2)
+                };
+                d(a).total_cmp(&d(b)).then(a.cmp(b))
+            })
+            .expect("a buildable cell exists")
+    }
+
+    /// Builds a Peaker at `cell` and returns its node.
+    fn build_node(game: &mut Game, cell: CellCoord) -> NodeId {
+        let events = game
+            .execute(Command::BuildPlant {
+                kind: PlantKind::Peaker,
+                cell,
+            })
+            .expect("the plant is ordered");
+        let plant = events
+            .iter()
+            .find_map(|event| match event {
+                DomainEvent::PlantConstructionStarted { plant, .. } => Some(*plant),
+                _ => None,
+            })
+            .expect("a plant was started");
+        game.session()
+            .plant_views()
+            .into_iter()
+            .find(|view| view.id == plant)
+            .expect("the plant has a view")
+            .node
+    }
+
+    /// A landfall: (lon, lat) and which cell-centre longitudes count as its side of the water.
+    type Landfall = (f64, f64, fn(f64) -> bool);
+
+    /// Spec section 28.8: from a new game a player can quote a line across the Strait of
+    /// Messina (between the Calabrian side east of 15.6 E and the Sicilian side west of it), from
+    /// Syracuse to Malta and from the Peloponnese (Molaoi, the Crete link's landfall) to
+    /// Heraklion; each straight path crosses water, so each is a submarine cable.
+    #[test]
+    fn messina_malta_and_crete_are_reachable_by_line() {
+        let mut game = new_game(&catalog(), ID, 0);
+        let region = Arc::clone(game.session().region());
+        let mut occupied: Vec<CellCoord> = game
+            .session()
+            .plant_views()
+            .iter()
+            .map(|plant| plant.cell)
+            .chain(game.session().city_views().iter().map(|city| city.cell))
+            .collect();
+        let crossings: [(&str, Landfall, Landfall); 3] = [
+            (
+                "Messina",
+                (15.65, 38.11, |lon| lon > 15.6),
+                (15.55, 38.19, |lon| lon < 15.6),
+            ),
+            ("Malta", (15.29, 37.07, |_| true), (14.51, 35.90, |_| true)),
+            ("Crete", (22.85, 36.80, |_| true), (25.14, 35.34, |_| true)),
+        ];
+        for (name, (alon, alat, aside), (blon, blat, bside)) in crossings {
+            let a = nearest_site(&region, &occupied, alon, alat, aside);
+            occupied.push(a);
+            let b = nearest_site(&region, &occupied, blon, blat, bside);
+            occupied.push(b);
+            let (from, to) = (build_node(&mut game, a), build_node(&mut game, b));
+            let quote = game
+                .session()
+                .line_quote(from, to)
+                .unwrap_or_else(|error| panic!("{name}: the crossing is quoted: {error:?}"));
+            assert!(quote.cells > 0, "{name}: {quote:?}");
+            let water = region.terrain().water_cells_on_segment(a, b);
+            assert!(
+                !water.is_empty(),
+                "{name}: the path {a:?} to {b:?} crosses water"
+            );
+        }
+    }
+
+    /// Task 2's offline rasteriser reproduces the file's `economic_zones.cells` from the
+    /// committed authoring polygons.
+    #[test]
+    fn europe_maghreb_zone_cells_are_reproducible() {
+        #[derive(serde::Deserialize)]
+        struct Authoring {
+            zones: Vec<infrastructure::region::ZonePolygons>,
+        }
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/authoring/continental_europe_maghreb_economic_zones.ron"
+        );
+        let authoring: Authoring =
+            ron::de::from_str(&std::fs::read_to_string(path).expect("authoring file exists"))
+                .expect("authoring file parses");
+        let file = region_file(ID);
+        let cells = infrastructure::region::economic_zone_cells(&file, &authoring.zones)
+            .expect("zone cells rasterise");
+        let region = region(ID);
+        let terrain = region.terrain();
+        let shipped: Vec<u16> = (0..terrain.height())
+            .flat_map(|y| (0..terrain.width()).map(move |x| CellCoord { x, y }))
+            .map(|cell| {
+                u16::try_from(region.economic_zone_at(cell).expect("in the grid").0)
+                    .expect("small zone id")
+            })
+            .collect();
+        assert_eq!(cells, shipped);
+        assert!(region.has_economic_zones());
+    }
+
+    /// Spec section 28.7.1 and Plan 7 Task 1's contrast of record: onshore wind at Seville
+    /// (Spain) and Tangier (Morocco) differs by at least 10% in capital and at least one game
+    /// month in build time, and both stay within the pacing ceilings.
+    #[test]
+    fn spain_and_morocco_differ_in_cost_and_duration() {
+        let region = region(ID);
+        let seville = city_named(&region, "city-seville").cell;
+        let tangier = city_named(&region, "city-tangier").cell;
+        let (spain, morocco) = (
+            region.economic_zone_at(seville).unwrap(),
+            region.economic_zone_at(tangier).unwrap(),
+        );
+        assert_ne!(spain, morocco);
+        assert_eq!(
+            region.economic_zone(spain).unwrap().name_key,
+            "economic-zone-spain"
+        );
+        assert_eq!(
+            region.economic_zone(morocco).unwrap().name_key,
+            "economic-zone-morocco"
+        );
+        let es = region.plant_spec_at(PlantKind::Wind, seville).unwrap();
+        let ma = region.plant_spec_at(PlantKind::Wind, tangier).unwrap();
+        let (es_cost, ma_cost) = (es.capital_cost.cents(), ma.capital_cost.cents());
+        let gap = (ma_cost - es_cost).abs() as f64 / es_cost.min(ma_cost) as f64;
+        assert!(gap >= 0.10, "wind capital {es_cost} vs {ma_cost}: {gap:.3}");
+        assert!(
+            es.build_months.abs_diff(ma.build_months) >= 1,
+            "wind months {} vs {}",
+            es.build_months,
+            ma.build_months
+        );
+        for (label, cell) in [("Seville", seville), ("Tangier", tangier)] {
+            let overshoots = pacing_overshoots(label, |kind| {
+                region.plant_spec_at(kind, cell).unwrap().build_months
+            });
+            assert!(overshoots.is_empty(), "{overshoots:?}");
+        }
+    }
+
+    /// Spec section 28.8: a new game serves Seville, Malaga and Tangier; Tangier's starter line
+    /// from Seville is the named Spain-Morocco interconnector, crosses the strait, and is valued
+    /// in the rate base by the route's economic-zone terms.
+    #[test]
+    fn gibraltar_starts_served_named_and_valued_by_route() {
+        use domain::company::AssetRef;
+        let game = new_game(&catalog(), ID, 0);
+        let session = game.session();
+        let region = session.region();
+        let served: Vec<String> = session
+            .city_views()
+            .into_iter()
+            .filter(|city| city.connected)
+            .map(|city| city.name_key)
+            .collect();
+        assert_eq!(served, ["city-seville", "city-malaga", "city-tangier"]);
+        let seville = city_named(region, "city-seville");
+        let tangier = city_named(region, "city-tangier");
+        assert_eq!(
+            region.start_line_name(tangier.id),
+            Some("line-spain-morocco")
+        );
+        let tangier_node = session
+            .city_views()
+            .into_iter()
+            .find(|city| city.id == tangier.id)
+            .unwrap()
+            .node;
+        let line = session
+            .line_views()
+            .into_iter()
+            .find(|line| {
+                (line.from, line.to) == (session.anchor_node(), tangier_node)
+                    || (line.to, line.from) == (session.anchor_node(), tangier_node)
+            })
+            .expect("Tangier's starter line runs from Seville");
+        assert!(
+            !region
+                .terrain()
+                .water_cells_on_segment(seville.cell, tangier.cell)
+                .is_empty(),
+            "the interconnector crosses the strait"
+        );
+        let terms = region
+            .line_terms(
+                seville.cell,
+                tangier.cell,
+                domain::grid::distance_cells(seville.cell, tangier.cell),
+            )
+            .unwrap();
+        let original = session
+            .company()
+            .rate_base()
+            .assets()
+            .find(|asset| asset.asset == AssetRef::Line(line.id))
+            .expect("the starter line is in the rate base")
+            .original;
+        assert_eq!(original, terms.capital);
+        let spain = region.economic_zone(region.economic_zone_at(seville.cell).unwrap());
+        let morocco = region.economic_zone(region.economic_zone_at(tangier.cell).unwrap());
+        let ac = |zone: Option<&domain::region::EconomicZone>| {
+            zone.and_then(|z| z.ac_lines.cost_per_cell)
+                .unwrap_or(region.lines().cost_per_cell)
+        };
+        if ac(spain) != ac(morocco) {
+            assert_ne!(
+                original.cents(),
+                i64::from(terms.cells) * region.lines().cost_per_cell.cents()
+            );
+        }
+        // Every zone the route samples is Spain, Morocco or the regional default (water).
+        assert!(
+            terms
+                .zones
+                .iter()
+                .all(|work| work.zone.0 <= 2 && work.cells > 0),
+            "{terms:?}"
+        );
     }
 }

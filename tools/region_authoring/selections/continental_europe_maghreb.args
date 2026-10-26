@@ -1,0 +1,14 @@
+--admin0
+target/natural-earth/ne_50m_admin_0_countries.geojson
+--admin1
+target/natural-earth/ne_10m_admin_1_states_provinces.geojson
+--include
+ISO:PRT,ISO:ESP,ISO:AND,ISO:FRA,ISO:MCO,ISO:BEL,ISO:NLD,ISO:LUX,ISO:DEU,ISO:DNK,ISO:CHE,ISO:LIE,ISO:AUT,ISO:ITA,ISO:SMR,ISO:VAT,ISO:MLT,ISO:SVN,ISO:HRV,ISO:BIH,ISO:SRB,ADM0:KOS,ISO:MNE,ISO:MKD,ISO:ALB,ISO:GRC,ISO:BGR,ISO:ROU,ISO:HUN,ISO:SVK,ISO:CZE,ISO:POL,ISO:LTU,ISO:LVA,ISO:EST,ISO:UKR,ISO:MDA,ISO:TUR,ISO:MAR,ISO:DZA,ISO:TUN
+--exclude-admin1
+DNK:Hovedstaden,DNK:Sjaælland,ESP:Baleares,ESP:Las Palmas,ESP:Santa Cruz de Tenerife,FRA:Haute-Corse,FRA:Corse-du-Sud,ITA:Sassari,ITA:Olbia-Tempio,ITA:Nuoro,ITA:Oristrano,ITA:Ogliastra,ITA:Medio Campidano,ITA:Carbonia-Iglesias,ITA:Cagliari
+--bounds=-16.65,44.95,22.87,59.87
+--grid
+154,123
+--tolerance-deg
+0.02
+--dissolve

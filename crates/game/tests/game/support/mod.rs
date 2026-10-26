@@ -39,6 +39,7 @@ pub fn update_n(app: &mut App, n: usize) {
 /// task inserts its ID here; the shipped-region name-key test checks it against the folder.
 pub const SHIPPED_REGIONS: &[&str] = &[
     "brazil_sin",
+    "continental_europe_maghreb",
     "eastern_interconnection",
     "india_nepal_bhutan",
     "ips_ups",
