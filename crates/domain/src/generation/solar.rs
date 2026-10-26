@@ -64,6 +64,11 @@ pub(crate) fn astronomical_sun(lat: f64, lon: f64, utc_minutes: f64, month: SimM
 /// Annual mean daily minute integral, weighted by non-leap month lengths.
 /// Only region construction calls this, once per row and once at the equator.
 pub(crate) fn annual_sun_integral(lat: f64) -> f64 {
+    annual_sun_integral_with_clearness(lat, &[1.0; 12])
+}
+
+/// Insolation-weighted seasonal cloud integral, evaluated only while loading a region.
+pub(crate) fn annual_sun_integral_with_clearness(lat: f64, clearness: &[f64; 12]) -> f64 {
     const DAYS: [u32; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
     let (sin_lat, cos_lat) = lat.to_radians().sin_cos();
     DAYS.iter()
@@ -77,10 +82,30 @@ pub(crate) fn annual_sun_integral(lat: f64) -> f64 {
                     (sin_lat * sin_dec + cos_lat * cos_dec * h.cos()).clamp(0.0, 1.0)
                 })
                 .sum();
-            daily * f64::from(days)
+            daily * f64::from(days) * clearness[m]
         })
         .sum::<f64>()
         / 365.0
+}
+
+/// Mean of the bounded daily draw, integrated once when a region loads.
+/// Midpoint quadrature on ±8 standard deviations leaves less than 2e-15 tail mass.
+/// This cache consumes no simulation randomness and includes both clipping bounds.
+pub(crate) fn mean_clearness(mean: f64, sd: f64) -> f64 {
+    if sd == 0.0 {
+        return mean.clamp(MIN_CLEARNESS, MAX_CLEARNESS);
+    }
+    const STEPS: u32 = 4096;
+    let step = 16.0 / f64::from(STEPS);
+    let value = (0..STEPS)
+        .map(|i| {
+            let z = -8.0 + (f64::from(i) + 0.5) * step;
+            (mean + sd * z).clamp(MIN_CLEARNESS, MAX_CLEARNESS) * (-0.5 * z * z).exp()
+                / std::f64::consts::TAU.sqrt()
+                * step
+        })
+        .sum::<f64>();
+    value.clamp(MIN_CLEARNESS, MAX_CLEARNESS)
 }
 
 /// One day's clearness (cloud cover), clamped to `0.2..=1.0`. Draws exactly one
@@ -106,6 +131,159 @@ mod tests {
     use super::*;
     use crate::region::fixtures::tiny_region;
     use proptest::prelude::*;
+
+    #[test]
+    fn annual_site_clearness_counts_clouds_once_and_keeps_legacy_output() {
+        let mut parts = crate::region::fixtures::tiny_region_parts();
+        parts.solar.model = crate::region::SolarModel::Astronomical;
+        parts.solar.annual_site_clearness = true;
+        parts.solar.clearness_mean = [0.5; 12];
+        parts.solar.clearness_sd = 0.0;
+        let calibrated = crate::region::RegionDefinition::try_from(parts.clone()).unwrap();
+        let cell = crate::ids::CellCoord { x: 5, y: 5 };
+        let capacity = Megawatts::new(300.0);
+        let sun = calibrated.sun(cell, month(4), 720);
+        let site = calibrated.terrain().get(cell).unwrap().irradiance.value();
+        assert!(
+            (calibrated
+                .solar_available(capacity, cell, month(4), 720, 0.5)
+                .value()
+                - 300.0 * site * sun)
+                .abs()
+                < 1e-9
+        );
+        assert!(
+            calibrated.solar_available(capacity, cell, month(4), 720, 0.25)
+                < calibrated.solar_available(capacity, cell, month(4), 720, 0.5)
+        );
+        parts.solar.annual_site_clearness = false;
+        let legacy = crate::region::RegionDefinition::try_from(parts).unwrap();
+        assert_eq!(
+            legacy.solar_available(capacity, cell, month(4), 720, 0.5),
+            solar_available(capacity, Ratio::new(site).unwrap(), sun, 0.5)
+        );
+    }
+
+    #[test]
+    fn calibrated_annual_resource_and_forecast_include_bounded_weather() {
+        let mut parts = crate::region::fixtures::tiny_region_parts();
+        parts.solar.model = crate::region::SolarModel::Astronomical;
+        parts.solar.annual_site_clearness = true;
+        parts.solar.clearness_mean = [0.64; 12];
+        parts.solar.clearness_sd = 0.18;
+        let r = crate::region::RegionDefinition::try_from(parts).unwrap();
+        let cell = crate::ids::CellCoord { x: 5, y: 5 };
+        let sun = r.sun(cell, month(7), 720);
+        let mut rng = SimRng::from_seed(73);
+        let sampled = (0..100_000)
+            .map(|_| {
+                r.solar_available(
+                    Megawatts::new(1.0),
+                    cell,
+                    month(7),
+                    720,
+                    draw_clearness(r.solar(), month(7), &mut rng),
+                )
+                .value()
+                    / sun
+            })
+            .sum::<f64>()
+            / 100_000.0;
+        let site = r.terrain().get(cell).unwrap().irradiance.value();
+        assert!(
+            (sampled - site).abs() < 0.002,
+            "sample {sampled}, annual site {site}"
+        );
+        let forecast = r
+            .solar_available(
+                Megawatts::new(1.0),
+                cell,
+                month(7),
+                720,
+                r.expected_clearness(month(7)),
+            )
+            .value()
+            / sun;
+        assert!(
+            (forecast - sampled).abs() < 0.002,
+            "forecast {forecast}, sample {sampled}"
+        );
+    }
+
+    #[test]
+    fn calibrated_seasonal_weather_has_no_second_annual_cloud_penalty() {
+        let mut parts = crate::region::fixtures::tiny_region_parts();
+        parts.solar.model = crate::region::SolarModel::Astronomical;
+        parts.solar.annual_site_clearness = true;
+        parts.solar.clearness_mean = [0.5, 0.5, 0.5, 0.5, 0.6, 0.6, 0.6, 0.6, 0.5, 0.5, 0.5, 0.5];
+        let r = crate::region::RegionDefinition::try_from(parts).unwrap();
+        let cell = crate::ids::CellCoord { x: 5, y: 5 };
+        let (lat, _) = r.cell_lat_lon(cell);
+        let capacity = Megawatts::new(1.0);
+        let mut annual = 0.0;
+        for (m, days) in [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+            .into_iter()
+            .enumerate()
+        {
+            let cloud = r.expected_clearness(month(m as u8 + 1));
+            let daily: f64 = (0..1440)
+                .map(|tick| {
+                    r.solar_available(capacity, cell, month(m as u8 + 1), tick, cloud)
+                        .value()
+                })
+                .sum();
+            annual += daily * f64::from(days) / 365.0;
+        }
+        let expected = r.terrain().get(cell).unwrap().irradiance.value() * annual_sun_integral(lat);
+        assert!((annual - expected).abs() < 1e-3, "{annual} != {expected}");
+        let potential = annual / annual_sun_integral(0.0);
+        assert!((potential - r.solar_potential(cell).value()).abs() < 1e-5);
+    }
+
+    proptest! {
+        #[test]
+        fn calibrated_weather_response_preserves_the_annual_mean(
+            site in 0.0f64..=1.0, baseline in 0.2f64..=1.0,
+        ) {
+            for sd in [0.0, 0.18] {
+                let mut parts = crate::region::fixtures::tiny_region_parts();
+                parts.solar.model = crate::region::SolarModel::Astronomical;
+                parts.solar.annual_site_clearness = true;
+                parts.solar.clearness_mean = [baseline; 12];
+                parts.solar.clearness_sd = sd;
+                let mut cells: Vec<_> = (0..8).flat_map(|y| {
+                    let terrain = &parts.terrain;
+                    (0..12).map(move |x| terrain.get(crate::ids::CellCoord{x,y}).unwrap().clone())
+                }).collect();
+                let cell = crate::ids::CellCoord{x:5,y:5};
+                cells[5*12+5].irradiance = Ratio::new(site).unwrap();
+                parts.terrain = crate::region::TerrainGrid::new(12,8,cells).unwrap();
+                let r = crate::region::RegionDefinition::try_from(parts).unwrap();
+                let at = |cloud| r.solar_available(Megawatts::new(1.0),cell,month(7),720,cloud).value();
+                let weight = (r.expected_clearness(month(7))-0.2)/0.8;
+                let expected = at(0.2)*(1.0-weight)+at(1.0)*weight;
+                prop_assert!((expected-site*r.sun(cell,month(7),720)).abs()<1e-12);
+                prop_assert!(at(0.2)>=0.0 && at(1.0)<=1.0 && at(0.2)<=at(1.0));
+            }
+        }
+
+        #[test]
+        fn calibrated_output_is_bounded_and_weather_is_monotone(
+            cloud_a in 0.2f64..=1.0, cloud_b in 0.2f64..=1.0,
+            baseline in 0.2f64..=1.0, tick in 0u32..1440,
+        ) {
+            let mut parts = crate::region::fixtures::tiny_region_parts();
+            parts.solar.model = crate::region::SolarModel::Astronomical;
+            parts.solar.annual_site_clearness = true;
+            parts.solar.clearness_mean = [baseline; 12];
+            let r = crate::region::RegionDefinition::try_from(parts).unwrap();
+            let cell = crate::ids::CellCoord { x: 5, y: 5 };
+            let capacity = Megawatts::new(300.0);
+            let low = r.solar_available(capacity, cell, month(4), tick, cloud_a.min(cloud_b));
+            let high = r.solar_available(capacity, cell, month(4), tick, cloud_a.max(cloud_b));
+            prop_assert!(low >= Megawatts::ZERO && low <= high && high <= capacity);
+        }
+    }
 
     fn month(m: u8) -> SimMonth {
         SimMonth::new(2027, m).unwrap()

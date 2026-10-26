@@ -448,9 +448,29 @@ pub struct CityDtoV4 {
     pub base_load_mw: f64,
 }
 
+/// Units of the authored irradiance field. Both new modes map to clear-sky clearness.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub enum SolarCalibrationDto {
+    #[default]
+    Legacy,
+    /// FAO-56 Rs/Ra, whose default clear-sky reference is 0.75.
+    AngstromPrescott,
+    /// Annual all-sky / clear-sky solar energy; already in the common domain units.
+    ClearSkyFraction,
+}
+
+impl SolarCalibrationDto {
+    fn is_legacy(&self) -> bool {
+        *self == Self::Legacy
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SolarDtoV4 {
+    /// Omission preserves archived schema-4 multiplication exactly.
+    #[serde(default, skip_serializing_if = "SolarCalibrationDto::is_legacy")]
+    pub calibration: SolarCalibrationDto,
     pub clearness_mean: Vec<f64>,
     pub clearness_sd: f64,
 }

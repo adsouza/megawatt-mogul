@@ -16,6 +16,8 @@ pub use plant::{Plant, PlantStatus};
 pub use solar::{
     SunAngles, declination_deg, draw_clearness, solar_available, sun_angles, sun_factor,
 };
-pub(crate) use solar::{annual_sun_integral, astronomical_sun};
+pub(crate) use solar::{
+    annual_sun_integral, annual_sun_integral_with_clearness, astronomical_sun, mean_clearness,
+};
 
 pub use wind::{wind_available, wind_step};

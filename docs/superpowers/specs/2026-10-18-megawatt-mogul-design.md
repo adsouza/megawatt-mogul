@@ -21,7 +21,8 @@
   portable state schema 4, 2026-10-26). Rules 20 extend A5's all-day/AGC defaults to newly
   commissioned dispatchable plants, with a notification (§16.3, 2026-10-26).
   A15 extends battery discharge eligibility to 06:00–24:00 and charging to 00:00–22:00
-  (§29, 2026-10-26, rules 21).
+  (§29, 2026-10-26, rules 21). A16 standardizes solar calibration and counts annual clouds once
+  (§30, 2026-10-26, rules 22).
 - **Engine:** Rust 1.98, Bevy 0.20, bevy_egui 0.43, bevy-inspector-egui 0.38
 
 ## 1. Vision and goals
@@ -3629,7 +3630,8 @@ column lists what the notes exclude, not everything outside.
   Near the equator, day length barely changes. Above the Arctic Circle, a December day can have
   zero sun and a June day can have no sunset. No special cases are needed.
 - **Inputs.** Available solar is `capacity × irradiance × sun × clearness`, as in §3.2, with the
-  per-cell `sun`. Irradiance now rates site quality without latitude, because latitude is in
+  per-cell `sun` (A16, §30, normalizes clearness for newly calibrated regions). Irradiance now
+  rates site quality without latitude, because latitude is in
   `sun`. Re-author it for every schema-4 region. Clearness stays regional, as one draw per day.
 - **Determinism.** The formula is pure. Implementations may cache one 1,440-minute table per cell
   and month. The libm caveat in §5.7 applies.
@@ -4003,7 +4005,9 @@ old reports stay as recorded.
   These are authored site-quality values, not annual potential: the usual computed sun and
   annual latitude factor still apply unchanged. An offline data tool may invert that factor to
   preserve an existing field's relative solar-site ranking; no runtime compensation or
-  calibration is added. Schemas 3 and earlier keep only their existing Gaussian syntax and math.
+  calibration is added by A14. A16 (§30) adds explicit calibration for current regions;
+  archived data keeps this original interpretation. Schemas 3 and earlier keep only their
+  existing Gaussian syntax and math.
 - **Schemas 3 and earlier.** Version-aware mapping supplies frozen legacy behaviour: one zone at
   offset zero without DST, the authored `daylight` table (the domain keeps
   `SolarModel::DaylightTable` beside `SolarModel::Astronomical`), one climate with northern
@@ -4013,7 +4017,7 @@ old reports stay as recorded.
   (§28.4), the computed sun, re-authored irradiance and climates. Their balance changes. Fix any
   failing beginner check by retuning region data, never the rules. Their fingerprints change.
   Archived bytes do not, so existing saves keep their single clock and daylight table.
-  The migrated annual potential preserves every strict ordering between playable cells in the
+  Before A16 calibration, the migrated annual potential preserves every strict ordering between playable cells in the
   frozen legacy irradiance field; acceptance groups equal old values and requires each group's
   largest new value to be below the next group's smallest, including rejection of collapsed ties.
 - **Portable state.**
@@ -4221,3 +4225,49 @@ region-specific window choices made during Plan 7.
 - Simulation rules advance to **21**; region schema 4 and portable state schema 4 are unchanged.
   Archived saves retain their exact region bytes, plant specifications, windows and history.
   Frozen legacy extensions, migration tuning and released golden fixtures are not retuned.
+
+
+## 30. Amendment A16: Consistent solar calibration (2026-10-26)
+
+**Status:** Implemented under rules 22; region schema 4 and portable state schema 4 are unchanged.
+
+All eight shipped regions opt into an explicit `solar.calibration`. Their domain irradiance is
+now the annual fraction of clear-sky solar resource, on one global 0–1 scale, without latitude.
+The sunshine map, inspector and plant cards multiply this by the annual latitude factor in §28.5.
+This is a game resource rating, not a percentage of sunny days or a PV yield forecast.
+
+- **Authored units.** `AngstromPrescott` converts the five Plan 7 regions' existing FAO-56
+  coefficients `Rs/Ra` to clear-sky fractions by dividing by 0.75, capped at 1. The FAO defaults
+  are `Rs/Ra = 0.25 + 0.50 × n/N`; 0.75 is the default sea-level clear-sky reference
+  ([FAO-56, chapter 3](https://www.fao.org/4/X0490E/x0490e07.htm)).
+  `ClearSkyFraction` accepts annual all-sky / clear-sky energy directly. North America and
+  SGCC use NASA POWER SYN1DEG climatology anchors with archived API receipts in
+  `docs/research/2026-10-26-solar-calibration-anchors.json`, interpolated offline by
+  `tools/region_authoring/solar_clearness.py`. The response period is January 2001–December 2025.
+  Interpolation is an authoring judgment; these are not measured cell rasters. Independent anchor
+  regressions check the source annual energies, including Phoenix, Seattle, Miami and Chengdu.
+  A14's original North American cell files move byte-for-byte to the global-foundations test
+  fixtures, where their strict legacy-ranking acceptance remains covered. Archived saves contain
+  their own original bytes and retain their original calibration.
+- **Clouds once.** Let `s` be annual site clearness, `c` the day's bounded cloud draw, and `r`
+  the sunlight-weighted annual mean of that bounded distribution at the cell's latitude. For
+  `0 < s < 1`, the weather response is
+  `s + min(s / (r − 0.2), (1 − s) / (1 − r)) × (c − r)`; endpoints 0 and 1 remain fixed.
+  Infinite endpoint quotients use the finite bound. Output is `capacity × sun × response`.
+  This is the largest nonnegative linear response fitting inside [0,1]. It preserves each
+  site's annual mean and keeps daily and seasonal variation without a second annual attenuation
+  or an optimistic forecast caused by clipping. A final clamp protects floating-point endpoints.
+  Planning uses the mean of the bounded draw, not the unbounded normal's location parameter.
+  Bounded means are integrated once at load by deterministic midpoint quadrature over ±8 standard
+  deviations (4,096 steps); annual references use non-leap month lengths and representative sun.
+- **One calculation.** Live availability, curtailment, shortfall checks, planning previews and
+  battery charging plans use the same region-aware solar calculation. Weather still consumes
+  exactly one regional normal draw per day. Row references are derived caches, not saved state.
+- **Compatibility.** Omitted calibration defaults to `Legacy` and is omitted again on DTO
+  serialization. Archived schema-4 regions and older daylight-table regions preserve their exact
+  original multiplication, terrain values, source bytes and history. New games opt into rules 22;
+  archived saves retain the calibration in their embedded region data. No portable-state fields
+  or schema versions change.
+- **Regression coverage.** Check every cell of all eight regions against the common calibration,
+  Spain/Morocco against North America, seasonal annual normalization, bounded and monotone output,
+  agreement between dispatch/forecast/storage planning/curtailment, and archived-save continuation.

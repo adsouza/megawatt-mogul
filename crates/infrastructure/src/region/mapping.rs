@@ -323,6 +323,7 @@ fn map_solar(solar: &SolarDto) -> Result<SolarParams> {
         model: SolarModel::DaylightTable(daylight),
         clearness_mean: array(&solar.clearness_mean, "solar.clearness_mean")?,
         clearness_sd: finite(solar.clearness_sd, "solar.clearness_sd")?,
+        annual_site_clearness: false,
     })
 }
 
@@ -591,7 +592,35 @@ pub(super) fn check_v4_geography(file: &RegionFileV4) -> Result<()> {
     check_field(&file.wind_potential, "wind_potential")
 }
 
-/// Maps strictly authored schema 4. No legacy defaults enter this path.
+/// Converts authored solar units after sampling; legacy terrain bypasses conversion.
+fn calibrated_terrain(file: &RegionFileV4) -> Result<domain::region::TerrainGrid> {
+    let raw = rasterize_geometry(file.geography());
+    if file.solar.calibration == SolarCalibrationDto::Legacy {
+        return Ok(raw);
+    }
+    let mut cells = Vec::new();
+    for y in 0..raw.height() {
+        for x in 0..raw.width() {
+            let mut cell = raw
+                .get(CellCoord { x, y })
+                .expect("raster cell exists")
+                .clone();
+            let value = cell.irradiance.value();
+            cell.irradiance = ratio(
+                match file.solar.calibration {
+                    SolarCalibrationDto::AngstromPrescott => (value / 0.75).min(1.0),
+                    SolarCalibrationDto::ClearSkyFraction => value,
+                    SolarCalibrationDto::Legacy => value,
+                },
+                "irradiance",
+            )?;
+            cells.push(cell);
+        }
+    }
+    domain::region::TerrainGrid::new(raw.width(), raw.height(), cells)
+}
+
+/// Maps strictly authored schema 4; optional calibration preserves archived semantics.
 pub fn map_region_v4(file: RegionFileV4) -> Result<RegionDefinition> {
     check_v4_geography(&file)?;
     let mut line_names = std::collections::BTreeMap::new();
@@ -673,7 +702,7 @@ pub fn map_region_v4(file: RegionFileV4) -> Result<RegionDefinition> {
         areas: map_areas(&file)?,
         hvdc: file.hvdc.as_ref().map(map_hvdc).transpose()?,
         economic_zones: map_economic_zones(file.economic_zones.as_ref())?,
-        terrain: rasterize_geometry(file.geography()),
+        terrain: calibrated_terrain(&file)?,
         catalog: file
             .catalog
             .iter()
@@ -704,6 +733,7 @@ pub fn map_region_v4(file: RegionFileV4) -> Result<RegionDefinition> {
             model: SolarModel::Astronomical,
             clearness_mean: array(&file.solar.clearness_mean, "solar.clearness_mean")?,
             clearness_sd: finite(file.solar.clearness_sd, "solar.clearness_sd")?,
+            annual_site_clearness: file.solar.calibration != SolarCalibrationDto::Legacy,
         },
         wind: WindParams {
             monthly: array(&file.wind.monthly, "wind.monthly")?,

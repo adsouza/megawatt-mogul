@@ -25,12 +25,13 @@
     ],
     // Physical resource layers are schematic geographical contrasts, not measured cell values.
     height: (base:0.15,blobs:[(lon:87.0,lat:31.0,radius_deg:8.0,value:0.8),(lon:100.0,lat:35.0,radius_deg:5.0,value:0.5)]),
-    irradiance: (base:0.55,blobs:[(lon:90.0,lat:38.0,radius_deg:10.0,value:0.35),(lon:104.0,lat:30.0,radius_deg:3.0,value:-0.2)]),
+    irradiance: (cells_file: "solar_clearness_cells.ron"),
     cooling_water: (base:0.15,blobs:[(lon:117.0,lat:39.0,radius_deg:4.0,value:0.85),(lon:120.0,lat:31.0,radius_deg:6.0,value:0.85),(lon:112.0,lat:30.0,radius_deg:6.0,value:0.85),(lon:104.0,lat:30.0,radius_deg:5.0,value:0.8),(lon:126.0,lat:45.0,radius_deg:5.0,value:0.8)]),
     hydro_potential: (base:0.0,blobs:[(lon:103.0,lat:29.0,radius_deg:4.0,value:0.95),(lon:111.0,lat:30.0,radius_deg:2.0,value:0.85),(lon:94.0,lat:30.0,radius_deg:3.0,value:0.8)]),
     wind_potential: (base:0.25,blobs:[(lon:90.0,lat:42.0,radius_deg:8.0,value:0.65),(lon:111.0,lat:42.0,radius_deg:7.0,value:0.6),(lon:124.0,lat:44.0,radius_deg:4.0,value:0.5)]),
     wind: (monthly:[0.6,0.6,0.65,0.7,0.65,0.5,0.4,0.4,0.5,0.6,0.65,0.65],persistence:0.995,innovation_sd:0.015,initial_sd:0.06,band:0.12),
-    solar: (clearness_mean:[0.65,0.65,0.65,0.65,0.65,0.6,0.55,0.55,0.6,0.65,0.65,0.65],clearness_sd:0.1),
+    // A16: NASA POWER annual all-sky / clear-sky energy; receipts in docs/research/2026-10-26-solar-calibration-anchors.json.
+    solar: (calibration: ClearSkyFraction,clearness_mean:[0.65,0.65,0.65,0.65,0.65,0.6,0.55,0.55,0.6,0.65,0.65,0.65],clearness_sd:0.1),
     hydro: (monthly_flow:[0.6,0.55,0.6,0.75,1.0,1.4,1.7,1.7,1.4,1.1,0.8,0.65]),
     // National construction proxies [P7-SC-001..006] retain Plan 7 arithmetic.
     catalog: [

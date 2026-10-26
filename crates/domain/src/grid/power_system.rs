@@ -31,7 +31,6 @@ use crate::error::DomainError;
 use crate::events::DomainEvent;
 use crate::generation::{
     BoundaryStart, CommitmentAction, Plant, PlantStatus, commitment_actions, draw_clearness,
-    solar_available,
 };
 use crate::ids::{CellCoord, CityId, NodeId, PlantId};
 use crate::region::{Cell, FrequencyParams, PlantKind, RegionDefinition};
@@ -436,15 +435,13 @@ impl PowerSystem {
         tick: u32,
     ) -> Megawatts {
         match plant.kind() {
-            PlantKind::Solar => {
-                let irradiance = cell_ratio(region, plant.cell(), |c| c.irradiance);
-                solar_available(
-                    plant.spec().capacity,
-                    irradiance,
-                    region.sun(plant.cell(), month, tick),
-                    self.clearness,
-                )
-            }
+            PlantKind::Solar => region.solar_available(
+                plant.spec().capacity,
+                plant.cell(),
+                month,
+                tick,
+                self.clearness,
+            ),
             PlantKind::Wind => crate::generation::wind_available(
                 plant.spec().capacity,
                 cell_ratio(region, plant.cell(), |c| c.wind_potential),
@@ -1368,18 +1365,10 @@ impl PowerSystem {
         month: SimMonth,
         tick: u32,
     ) -> Megawatts {
-        let clearness = region.solar().clearness_mean[month.index0()];
+        let clearness = region.expected_clearness(month);
         self.connected_plants()
             .filter(|p| p.kind() == PlantKind::Solar)
-            .map(|p| {
-                let irradiance = cell_ratio(region, p.cell(), |c| c.irradiance);
-                solar_available(
-                    p.spec().capacity,
-                    irradiance,
-                    region.sun(p.cell(), month, tick),
-                    clearness,
-                )
-            })
+            .map(|p| region.solar_available(p.spec().capacity, p.cell(), month, tick, clearness))
             .sum()
     }
 

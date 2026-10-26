@@ -995,7 +995,8 @@
     // Drainage Paper 56, 1998, equation 35: a = 0.25, b = 0.50), normalised to
     // clear sky (0.75): (0.25 + 0.5 x share) / 0.75. The starter territory's
     // summer is the clearest (July and August 0.92).
-    solar: (
+    // A16: authored FAO Rs/Ra -> clear-sky fraction (/0.75); annual clouds counted once.
+    solar: (calibration: AngstromPrescott,
         clearness_mean: [0.78, 0.81, 0.79, 0.80, 0.83, 0.88, 0.92, 0.92, 0.84, 0.81, 0.79, 0.76],
         clearness_sd: 0.13,
     ),

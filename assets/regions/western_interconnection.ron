@@ -140,7 +140,7 @@
     // coast.
     // Generated site quality (spec section 28.11.1): irradiance_cells.ron, whose header
     // records its offline source.
-    irradiance: (cells_file: "irradiance_cells.ron"),
+    irradiance: (cells_file: "solar_clearness_cells.ron"),
     // Water for thermal plants: the Pacific coast and Puget Sound, the
     // Columbia and Snake, the Sacramento delta, the Colorado River, the Rio
     // Grande and Alberta's Lake Wabamun.
@@ -380,7 +380,8 @@
     )],
     demand_noise: (forecast_error: 0.03, error_persistence: 0.995),
     // Computed sun supplies latitude and longitude; clearer skies than the East.
-    solar: (
+    // A16: NASA POWER annual all-sky / clear-sky energy; receipts in docs/research/2026-10-26-solar-calibration-anchors.json.
+    solar: (calibration: ClearSkyFraction,
         clearness_mean: [0.58, 0.62, 0.68, 0.73, 0.77, 0.81, 0.80, 0.79, 0.78, 0.72, 0.62, 0.56],
         clearness_sd: 0.13,
     ),

@@ -90,7 +90,7 @@ pub(super) struct BatteryPlanningInputs<'a> {
     dispatchable: Vec<&'a Plant>,
     thermal: Vec<&'a Plant>,
     cities: Vec<&'a crate::demand::DemandCenter>,
-    solar: Vec<(Megawatts, Ratio, CellCoord)>,
+    solar: Vec<(Megawatts, CellCoord)>,
     wind_potential: Megawatts,
     minutes: Vec<OnceCell<PlanningMinute>>,
 }
@@ -132,13 +132,7 @@ impl<'a> BatteryPlanningInputs<'a> {
             solar: plants
                 .iter()
                 .filter(|p| p.kind() == PlantKind::Solar)
-                .map(|p| {
-                    (
-                        p.spec().capacity,
-                        super::cell_ratio(region, p.cell(), |c| c.irradiance),
-                        p.cell(),
-                    )
-                })
+                .map(|p| (p.spec().capacity, p.cell()))
                 .collect(),
             wind_potential: plants
                 .iter()
@@ -154,7 +148,7 @@ impl<'a> BatteryPlanningInputs<'a> {
 
     pub(super) fn minute(&self, tick: u32) -> &PlanningMinute {
         self.minutes[tick as usize].get_or_init(|| {
-            let clearness = self.region.solar().clearness_mean[self.month.index0()];
+            let clearness = self.region.expected_clearness(self.month);
             PlanningMinute {
                 injection: Megawatts::new(self.power.injections[(tick / TICKS_PER_HOUR) as usize]),
                 demand: crate::demand::forecast_demand(
@@ -166,13 +160,9 @@ impl<'a> BatteryPlanningInputs<'a> {
                 solar: self
                     .solar
                     .iter()
-                    .map(|&(capacity, irradiance, cell)| {
-                        crate::generation::solar_available(
-                            capacity,
-                            irradiance,
-                            self.region.sun(cell, self.month, tick),
-                            clearness,
-                        )
+                    .map(|&(capacity, cell)| {
+                        self.region
+                            .solar_available(capacity, cell, self.month, tick, clearness)
                     })
                     .sum(),
                 wind: self.wind_potential

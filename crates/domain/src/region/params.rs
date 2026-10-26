@@ -27,6 +27,8 @@ pub struct SolarParams {
     pub model: SolarModel,
     pub clearness_mean: [f64; 12],
     pub clearness_sd: f64,
+    /// Astronomical site irradiance includes annual clouds; daily clearness is a relative anomaly.
+    pub annual_site_clearness: bool,
 }
 
 /// Correlated regional wind resource. All parameters are authored region data.

@@ -566,3 +566,142 @@ fn archived_na_saves_resume_identically() {
         );
     }
 }
+
+#[test]
+fn calibrated_solar_regions_resume_identically_with_their_archived_calibration() {
+    use infrastructure::region::RonRegionCatalog;
+    let catalog =
+        RonRegionCatalog::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/regions"));
+    for listing in catalog.list().unwrap() {
+        let mut game = Game::start_new(
+            &catalog,
+            &listing.id,
+            7,
+            domain::session::GameSettings::default(),
+            Box::new(InMemoryCommandLog::default()),
+        )
+        .unwrap();
+        assert!(game.session().region().solar().annual_site_clearness);
+        use domain::{ids::CellCoord, region::PlantKind};
+        let home = game
+            .session()
+            .city_views()
+            .into_iter()
+            .find(|c| c.id == game.session().home_city())
+            .unwrap();
+        let r = game.session().region();
+        let mut cells: Vec<_> = (0..r.terrain().height())
+            .flat_map(|y| (0..r.terrain().width()).map(move |x| CellCoord { x, y }))
+            .collect();
+        cells.sort_by_key(|c| {
+            u32::from(c.x.abs_diff(home.cell.x)) + u32::from(c.y.abs_diff(home.cell.y))
+        });
+        let cell = cells
+            .into_iter()
+            .find(|c| game.session().plant_quote(PlantKind::Solar, *c).is_ok())
+            .unwrap();
+        let months = game
+            .session()
+            .plant_quote(PlantKind::Solar, cell)
+            .unwrap()
+            .months;
+        game.execute(Command::BuildPlant {
+            kind: PlantKind::Solar,
+            cell,
+        })
+        .unwrap();
+        let solar = game
+            .session()
+            .plant_views()
+            .into_iter()
+            .find(|p| p.cell == cell)
+            .unwrap();
+        let line_months = game
+            .session()
+            .line_quote(home.node, solar.node)
+            .unwrap()
+            .months;
+        game.execute(Command::BuildLine {
+            from: home.node,
+            to: solar.node,
+        })
+        .unwrap();
+        for _ in 0..months.max(line_months) {
+            game.execute(Command::BeginOperating).unwrap();
+            game.execute(Command::AdvanceTicks { n: 1440 }).unwrap();
+            game.execute(Command::FinishReview).unwrap();
+        }
+        let month = game.session().clock().month();
+        let peak = (0..1440)
+            .max_by(|a, b| {
+                game.session()
+                    .region()
+                    .sun(cell, month, *a)
+                    .total_cmp(&game.session().region().sun(cell, month, *b))
+            })
+            .unwrap();
+        let saved_tick = peak + 1;
+        game.execute(Command::BeginOperating).unwrap();
+        game.execute(Command::AdvanceTicks { n: saved_tick })
+            .unwrap();
+        let output = game
+            .session()
+            .plant_views()
+            .into_iter()
+            .find(|p| p.id == solar.id)
+            .unwrap()
+            .output;
+        assert!(
+            output.value() > 0.0,
+            "{} solar must be generating at capture",
+            listing.id.as_str()
+        );
+        let bundle = SaveBundle {
+            compatibility: replay_compatibility(),
+            metadata: SaveMetadata {
+                slot: SaveId::new("a".repeat(32)).unwrap(),
+                run: SaveId::new("b".repeat(32)).unwrap(),
+                kind: SaveKind::Manual,
+                name: "Solar calibration".into(),
+                saved_at: 42,
+            },
+            checkpoint: game.checkpoint(),
+        };
+        let encoded = encode_save(&bundle).unwrap();
+        let mut resumed = restored(&encoded);
+        assert_eq!(
+            resumed.checkpoint(),
+            game.checkpoint(),
+            "{}",
+            listing.id.as_str()
+        );
+        assert!(resumed.session().region().solar().annual_site_clearness);
+        let restored_output = resumed
+            .session()
+            .plant_views()
+            .into_iter()
+            .find(|p| p.id == solar.id)
+            .unwrap()
+            .output;
+        assert_eq!(restored_output, output);
+        // Cross the next weather draw as well as the persisted intra-day boundary.
+        for command in [
+            Command::AdvanceTicks {
+                n: 1440 - saved_tick,
+            },
+            Command::FinishReview,
+            Command::BeginOperating,
+            Command::AdvanceTicks { n: saved_tick },
+        ] {
+            let uninterrupted = game.execute(command.clone()).unwrap();
+            let continued = resumed.execute(command).unwrap();
+            assert_eq!(continued, uninterrupted, "{}", listing.id.as_str());
+        }
+        assert_eq!(
+            resumed.checkpoint(),
+            game.checkpoint(),
+            "{}",
+            listing.id.as_str()
+        );
+    }
+}

@@ -619,7 +619,8 @@
     // Irrigation and Drainage Paper 56, 1998, equation 35: a = 0.25, b =
     // 0.50), normalised to clear sky (0.75): (0.25 + 0.5 x share) / 0.75. The
     // wet summer is the cloudiest, the dry winter the clearest.
-    solar: (
+    // A16: authored FAO Rs/Ra -> clear-sky fraction (/0.75); annual clouds counted once.
+    solar: (calibration: AngstromPrescott,
         clearness_mean: [0.56, 0.62, 0.62, 0.66, 0.67, 0.67, 0.67, 0.67, 0.60, 0.60, 0.59, 0.57],
         clearness_sd: 0.13,
     ),

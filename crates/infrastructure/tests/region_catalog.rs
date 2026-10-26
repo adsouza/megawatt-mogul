@@ -1526,3 +1526,47 @@ fn generated_zone_cells_load_through_the_catalog() {
         }
     }
 }
+
+#[test]
+fn solar_calibration_is_explicit_roundtrips_and_defaults_to_archived_behaviour() {
+    use infrastructure::region::{RegionFileV4, SolarCalibrationDto, map_region_v4};
+    let old: RegionFileV4 = ron::from_str(V4).unwrap();
+    assert_eq!(old.solar.calibration, SolarCalibrationDto::Legacy);
+    assert!(!ron::to_string(&old).unwrap().contains("calibration"));
+    let legacy = map_region_v4(old.clone()).unwrap();
+    assert!(!legacy.solar().annual_site_clearness);
+    for calibration in [
+        SolarCalibrationDto::AngstromPrescott,
+        SolarCalibrationDto::ClearSkyFraction,
+    ] {
+        let mut file = old.clone();
+        file.solar.calibration = calibration;
+        let encoded = ron::to_string(&file).unwrap();
+        let decoded: RegionFileV4 = ron::from_str(&encoded).unwrap();
+        assert_eq!(decoded.solar.calibration, calibration);
+        let calibrated = map_region_v4(decoded).unwrap();
+        assert!(calibrated.solar().annual_site_clearness);
+        assert_eq!(calibrated, map_region_v4(file).unwrap());
+        if calibration == SolarCalibrationDto::ClearSkyFraction {
+            assert_eq!(calibrated.terrain(), legacy.terrain());
+        } else {
+            assert_ne!(calibrated.terrain(), legacy.terrain());
+        }
+    }
+}
+
+#[test]
+fn calibrated_solar_rejects_monthly_means_outside_the_weather_draw_bounds() {
+    use infrastructure::region::{RegionFileV4, SolarCalibrationDto, map_region_v4};
+    for mean in [0.0, 0.1, 1.01, f64::INFINITY, f64::NAN] {
+        let mut file: RegionFileV4 = ron::from_str(V4).unwrap();
+        file.solar.calibration = SolarCalibrationDto::AngstromPrescott;
+        file.solar.clearness_mean[0] = mean;
+        assert_eq!(
+            map_region_v4(file).unwrap_err(),
+            RegionError::InvalidShape {
+                field: "solar.clearness_mean"
+            }
+        );
+    }
+}

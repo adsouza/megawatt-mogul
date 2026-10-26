@@ -520,7 +520,8 @@
     // Drainage Paper 56, 1998, equation 35: a = 0.25, b = 0.50), normalised to
     // clear sky (0.75): (0.25 + 0.5 x share) / 0.75. The drizzly spring is the
     // cloudiest, October the clearest.
-    solar: (
+    // A16: authored FAO Rs/Ra -> clear-sky fraction (/0.75); annual clouds counted once.
+    solar: (calibration: AngstromPrescott,
         clearness_mean: [0.62, 0.55, 0.51, 0.53, 0.56, 0.57, 0.65, 0.64, 0.65, 0.70, 0.68, 0.65],
         clearness_sd: 0.13,
     ),

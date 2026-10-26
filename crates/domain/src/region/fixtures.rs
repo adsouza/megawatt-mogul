@@ -262,6 +262,7 @@ fn solar() -> SolarParams {
         ]),
         clearness_mean: [0.75; 12],
         clearness_sd: 0.15,
+        annual_site_clearness: false,
     }
 }
 

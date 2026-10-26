@@ -149,6 +149,9 @@ pub struct RegionDefinition {
     solar: SolarParams,
     /// Annual latitude factors only: one value per grid row for computed sun.
     solar_rows: Vec<f64>,
+    /// Annual regional cloud reference, weighted by the sunlight in each latitude row.
+    solar_weather_rows: Vec<f64>,
+    solar_monthly_means: [f64; 12],
     wind: WindParams,
     hydro: HydroParams,
     frequency: FrequencyParams,
@@ -223,6 +226,46 @@ impl RegionDefinition {
         let (lat, lon) = self.cell_lat_lon(home.cell);
         let utc = f64::from(tick) - f64::from(self.system_zone().offset_minutes(month));
         Some(crate::generation::sun_angles(lat, lon, utc, month))
+    }
+
+    /// One solar calculation shared by dispatch, previews and storage planning.
+    /// New regions store annual cloud attenuation at the site; weather varies around it.
+    /// Archived definitions keep the original multiplication and floating-point order.
+    pub fn solar_available(
+        &self,
+        capacity: crate::units::Megawatts,
+        cell: CellCoord,
+        month: crate::time::SimMonth,
+        tick: u32,
+        clearness: f64,
+    ) -> crate::units::Megawatts {
+        let irradiance = self
+            .terrain
+            .get(cell)
+            .expect("cell belongs to region")
+            .irradiance;
+        let sun = self.sun(cell, month, tick);
+        if self.solar.annual_site_clearness {
+            let reference = self.solar_weather_rows[usize::from(cell.y)];
+            let site = irradiance.value();
+            // The largest nonnegative linear weather response that fits inside [0, 1].
+            // Its annual mean is exactly `site`, including bounded-normal weather.
+            let slope = if site == 0.0 || site == 1.0 {
+                0.0
+            } else {
+                (site / (reference - 0.2)).min((1.0 - site) / (1.0 - reference))
+            };
+            let effective = (site + slope * (clearness - reference)).clamp(0.0, 1.0);
+            capacity * (effective * sun)
+        } else {
+            crate::generation::solar_available(capacity, irradiance, sun, clearness)
+        }
+    }
+
+    /// Planning uses the actual mean of the bounded daily draw for calibrated regions.
+    /// Archived definitions retain their authored mean exactly.
+    pub fn expected_clearness(&self, month: crate::time::SimMonth) -> f64 {
+        self.solar_monthly_means[month.index0()]
     }
 
     /// Site irradiance scaled by annual latitude potential for computed regions.
@@ -428,7 +471,15 @@ fn validate_shapes(parts: &RegionDefinitionParts) -> Result<(), RegionError> {
         SolarModel::Astronomical => true,
     };
     check_shape(daylight_ok, "solar.daylight")?;
+    check_shape(
+        !s.annual_site_clearness || matches!(s.model, SolarModel::Astronomical),
+        "solar.calibration",
+    )?;
     check_shape(all_positive(&s.clearness_mean), "solar.clearness_mean")?;
+    check_shape(
+        !s.annual_site_clearness || s.clearness_mean.iter().all(|m| (0.2..=1.0).contains(m)),
+        "solar.clearness_mean",
+    )?;
     check_shape(
         s.clearness_sd.is_finite() && s.clearness_sd >= 0.0,
         "solar.clearness_sd",
@@ -617,6 +668,30 @@ impl TryFrom<RegionDefinitionParts> for RegionDefinition {
         } else {
             Vec::new()
         };
+        let solar_monthly_means = if parts.solar.annual_site_clearness {
+            parts
+                .solar
+                .clearness_mean
+                .map(|mean| crate::generation::mean_clearness(mean, parts.solar.clearness_sd))
+        } else {
+            parts.solar.clearness_mean
+        };
+        let solar_weather_rows = if parts.solar.annual_site_clearness {
+            (0..parts.terrain.height())
+                .map(|y| {
+                    let lat = parts.geo.north
+                        - (f64::from(y) + 0.5) * (parts.geo.north - parts.geo.south)
+                            / f64::from(parts.terrain.height());
+                    (crate::generation::annual_sun_integral_with_clearness(
+                        lat,
+                        &solar_monthly_means,
+                    ) / crate::generation::annual_sun_integral(lat))
+                    .clamp(0.2, 1.0)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let region = Self {
             areas: parts.areas,
             hvdc: parts.hvdc,
@@ -637,6 +712,8 @@ impl TryFrom<RegionDefinitionParts> for RegionDefinition {
             calendar: parts.calendar,
             solar: parts.solar,
             solar_rows,
+            solar_weather_rows,
+            solar_monthly_means,
             wind: parts.wind,
             hydro: parts.hydro,
             frequency: parts.frequency,
