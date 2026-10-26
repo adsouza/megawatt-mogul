@@ -31,7 +31,15 @@ fn order(app: &mut App) -> LineId {
     let from = session.anchor_node();
     dispatch_in(
         app,
-        vec![UiAction::Command(Command::BuildLine { from, to })],
+        vec![
+            UiAction::Command(Command::BuildLine { from, to }),
+            // Proceed if needed before exercising the separate cancellation dialog.
+            UiAction::ConfirmConnection {
+                kind: domain::session::ConnectionKind::Ac,
+                from,
+                to,
+            },
+        ],
     );
     update_n(app, 1);
     app.world()

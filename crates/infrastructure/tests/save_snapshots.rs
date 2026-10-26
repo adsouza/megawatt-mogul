@@ -16,6 +16,16 @@ fn restored(bytes: &[u8]) -> Game {
         )
         .unwrap()
 }
+
+/// Keep historical hash receipts in their recorded schema while new captures evolve.
+fn hash_in_schema(game: &Game, schema: u32) -> u64 {
+    let mut snapshot = game.checkpoint().snapshot.unwrap();
+    snapshot.schema = schema;
+    snapshot.session = game.session().snapshot_state_schema(schema);
+    snapshot.projections = game.projections().state_bytes_schema(schema);
+    snapshot.state_hash()
+}
+
 #[test]
 fn released_portable_schema1_golden_saves_restore_and_continue_without_replaying_history() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/support/portable-saves");
@@ -42,7 +52,10 @@ fn released_portable_schema1_golden_saves_restore_and_continue_without_replaying
         );
         let source = &bundle.checkpoint;
         let snapshot = source.snapshot.as_ref().unwrap();
-        assert_eq!(before.snapshot.as_ref().unwrap().schema, 3);
+        assert_eq!(
+            before.snapshot.as_ref().unwrap().schema,
+            domain::state::CURRENT_STATE_SCHEMA
+        );
         assert!(
             game.session().snapshot_state_schema(1) == snapshot.session,
             "all schema-1 gameplay fields and RNG preserved"
@@ -492,7 +505,10 @@ fn archived_na_saves_resume_identically() {
             game.checkpoint().region_source,
             original.checkpoint.region_source
         );
-        assert_eq!(game.checkpoint().state_hash, original.checkpoint.state_hash);
+        assert_eq!(
+            hash_in_schema(&game, snapshot.schema),
+            original.checkpoint.state_hash
+        );
         assert_eq!(game.checkpoint().summary.tick, 900);
         assert!(game.session().plant_views().iter().any(|p| {
             p.battery
@@ -512,7 +528,11 @@ fn archived_na_saves_resume_identically() {
             "{id} after 60 ticks"
         );
         if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-            assert_eq!(game.checkpoint().state_hash, after60, "{id} after 60 ticks");
+            assert_eq!(
+                hash_in_schema(&game, snapshot.schema),
+                after60,
+                "{id} after 60 ticks"
+            );
         }
         bundle.checkpoint = resumed.checkpoint();
         let mut resumed = restored(&encode_save(&bundle).unwrap());
@@ -520,14 +540,21 @@ fn archived_na_saves_resume_identically() {
         resumed.execute(Command::AdvanceTicks { n: 480 }).unwrap();
         assert_eq!(resumed.checkpoint(), game.checkpoint(), "{id} at review");
         if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-            assert_eq!(game.checkpoint().state_hash, review, "{id} at review");
+            assert_eq!(
+                hash_in_schema(&game, snapshot.schema),
+                review,
+                "{id} at review"
+            );
         }
         bundle.compatibility = replay_compatibility();
         bundle.checkpoint = game.checkpoint();
         let rewritten = encode_save(&bundle).unwrap();
         let resumed = restored(&rewritten);
         assert_eq!(resumed.checkpoint(), game.checkpoint());
-        assert_eq!(resumed.checkpoint().snapshot.as_ref().unwrap().schema, 3);
+        assert_eq!(
+            resumed.checkpoint().snapshot.as_ref().unwrap().schema,
+            domain::state::CURRENT_STATE_SCHEMA
+        );
         assert_eq!(
             resumed.checkpoint().region_source,
             original.checkpoint.region_source

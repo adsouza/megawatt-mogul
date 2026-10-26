@@ -3,6 +3,7 @@ source: crates/application/tests/scenarios.rs
 expression: "support::rounded_debug(&report)"
 ---
 MonthlyReport {
+    islands: {},
     month: SimMonth {
         year: 2027,
         month: 7,

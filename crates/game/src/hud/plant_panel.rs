@@ -1187,6 +1187,10 @@ mod tests {
                     .status,
                 PlantStatus::Offline
             );
+            // Commissioning now enables all-day AGC. Explicitly leave the unit
+            // idle so this test can still distinguish connection from operation.
+            game.execute(Command::StopPlant { plant: plant.id })
+                .unwrap();
             let quote = game.session().line_quote(anchor, plant.node).unwrap();
             game.execute(Command::BuildLine {
                 from: anchor,
