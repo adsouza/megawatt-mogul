@@ -68,8 +68,8 @@ fn spec(
             energy_capacity: MegawattHours::new(800.0),
             charge_efficiency: r(0.9),
             discharge_efficiency: Ratio::ONE,
-            discharge_start_hour: 16,
-            charge_end_hour: 18,
+            discharge_start_hour: 6,
+            charge_end_hour: 22,
         }),
     }
 }

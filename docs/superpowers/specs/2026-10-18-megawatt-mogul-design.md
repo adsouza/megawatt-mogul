@@ -20,6 +20,8 @@
   2026-10-26; Plan 8 synchronous islands, HVDC and SGCC implemented under rules 19,
   portable state schema 4, 2026-10-26). Rules 20 extend A5's all-day/AGC defaults to newly
   commissioned dispatchable plants, with a notification (§16.3, 2026-10-26).
+  A15 extends battery discharge eligibility to 06:00–24:00 and charging to 00:00–22:00
+  (§29, 2026-10-26, rules 21).
 - **Engine:** Rust 1.98, Bevy 0.20, bevy_egui 0.43, bevy-inspector-egui 0.38
 
 ## 1. Vision and goals
@@ -80,9 +82,9 @@ stands for.
   implied by that month's pattern, including any start-up already in progress across midnight.
   Physical plant state never carries from March's representative day into April's. Persistent
   construction, company and regulator state still advances by calendar month.
-- **Batteries use a daily cycle (§20, amended by §25).** Every played day starts empty. They may
-  charge immediately from 00:00 until 18:00, independently of daylight, cover evening generation
-  gaps from 16:00 (§27), and report then clear
+- **Batteries use a daily cycle (§20, amended by §29).** Every played day starts empty. They may
+  charge immediately from 00:00 until 22:00, independently of daylight, cover generation
+  gaps from 06:00, and report then clear
   unused energy at midnight. Their energy flows and midnight remainder receive the daily accounting
   weight; instantaneous power, energy capacity and state of charge do not.
 - **Seasons change visibly every few played days.** Months drive the demand shape, solar
@@ -249,7 +251,7 @@ preview remain selectable through their cards; broken entries retain their disab
 | Hydro | 800 MW | 0% | 100 MW/min | 5 min | $1k | $0/MWh | $1.2B | 12 | Energy-limited dispatch |
 
 - **Battery storage** is a buildable asset kind alongside the seven generators: separate
-  charge/discharge MW and stored MWh, automatic 00:00–18:00 charging and evening gap support,
+  charge/discharge MW and stored MWh, automatic 00:00–22:00 charging and 06:00–24:00 gap support,
   and no energy carried past midnight. Its initial tuning is in §20; §25 amends its charging
   contract. It is not a primary energy source.
 - **Hydro** has a **daily water budget** (MWh per day, varying by month and site). Output stops when
@@ -2920,6 +2922,8 @@ windowed launch smoke and native idle-performance measurement.
 
 ## 25. Amendment A11: Wind farms and midnight-to-18:00 battery charging (2026-10-23)
 
+The battery windows below are the rules-14 history; §29 supersedes them for new games.
+
 **Status:** Implemented under `SIM_RULES_VERSION` **14**, portable state schema **2** and
 region schema **3**. Focused automated checks and isolated native playtests are recorded in
 [Plan 5: Wind farms and revised battery charging](../plans/2026-10-23-plan-5-wind-farms.md).
@@ -3395,6 +3399,8 @@ design goal of building only what the reserve margin justifies.
 
 
 ## 27. Amendment A13: Battery discharge from 16:00 (2026-10-24)
+
+The battery windows below are the rules-15 history; §29 supersedes them for new games.
 
 **Status:** Implemented under `SIM_RULES_VERSION` **15**. This supersedes the default
 17:00 discharge start in §§20, 23 and 25 for new games. Both shipped regions and the current
@@ -4188,3 +4194,30 @@ recursively, so the sidecar directories ship without further changes.
   - The terrain mesh, picking and the world picker meet frame budgets at 256 × 128 cells.
   - Native launch smoke passes, and an isolated full-day playtest runs in IPS/UPS, Brazil and
     SGCC (with one scheduled link).
+
+## 29. Amendment A15: Battery support from 06:00 and charging until 22:00 (2026-10-26)
+
+**Status:** Implemented under rules 21; region schema 4 and portable state schema 4 are unchanged.
+
+All eight shipped regions and current test fixtures author `discharge_start_hour: 6` and
+`charge_end_hour: 22` for new games. This supersedes the windows in §§20, 25 and 27 and the
+region-specific window choices made during Plan 7.
+
+- A charged, connected, enabled battery may cover a real primary-generation deficit from
+  **06:00 exactly** until midnight. It cannot discharge at 05:59. Available generation still
+  takes priority; eligibility alone does not spend reserves.
+- Charging remains eligible from midnight until **22:00 exactly**. The minute [21:59,22:00)
+  may charge; [22:00,22:01) cannot. Customer priority, available surplus, power and free space
+  still constrain actual charging, and thermal charging requests taper before the cutoff.
+- During the **06:00–22:00 overlap**, a real surplus permits charging and a real deficit permits
+  discharging. The existing single-direction/fleet coordination rules remain: no simultaneous
+  charging and discharging, cross-battery cycling or borrowing future charge. A battery can
+  discharge into a gap and recharge later before the cutoff.
+- Times use the region's system clock. Midnight reset/reporting, efficiencies, capacity,
+  accredited duration, protection and generator-priority rules are unchanged.
+- Live dispatch, forecasts, shortfall checks and HUD hints all read the authored boundaries.
+  Regressions cover both exact boundaries, morning gap support, late charging, the full overlap,
+  conservation and save/resume at the new policy boundaries.
+- Simulation rules advance to **21**; region schema 4 and portable state schema 4 are unchanged.
+  Archived saves retain their exact region bytes, plant specifications, windows and history.
+  Frozen legacy extensions, migration tuning and released golden fixtures are not retuned.

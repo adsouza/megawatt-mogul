@@ -20,7 +20,7 @@ const MINIMAL: &str = include_str!("support/minimal_region.ron");
 
 /// SHA-256 of `support/minimal_region.ron`, computed independently with
 /// `shasum -a 256`.
-const MINIMAL_SHA256: &str = "f22797b2b053776ece7f9503b54d8691c454f86f8aad00a78efd024ee0d7567e";
+const MINIMAL_SHA256: &str = "3f03f8b0da392b2056dca2913733fcf80b402f352f4bd88586453eb89b2b561b";
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
@@ -169,7 +169,7 @@ fn a_schema1_region_gets_the_frozen_a12_defaults() {
         .filter(|line| !line.contains("kind: Wind,"))
         .collect::<Vec<_>>()
         .join("\n");
-    text = text.replace(", charge_end_hour: 18", "");
+    text = text.replace(", charge_end_hour: 22", "");
     let dir = dir_with(&[("minimal.ron", &text)]);
     let loaded = catalog(dir.path()).load(&RegionId::new("minimal")).unwrap();
     let params = loaded.definition.regulator();
@@ -711,7 +711,7 @@ fn schema3_requires_explicit_wind_and_battery_cutoff_fields() {
             matches!(error, RegionLoadError::Invalid { error: RegionError::MissingField { field: missing }, .. } if missing == field)
         );
     }
-    let text = MINIMAL.replace(", charge_end_hour: 18", "");
+    let text = MINIMAL.replace(", charge_end_hour: 22", "");
     let error = load_region_bytes(text.into_bytes(), &RegionId::new("minimal")).unwrap_err();
     assert!(matches!(
         error,

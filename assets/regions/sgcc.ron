@@ -177,17 +177,15 @@
         // game solar 1,065.25 CNY/kW x NA battery / solar (500 / 500 = 1) =
         // 1,065.2, so 1,070 CNY/kW x 200,000 kW = 214,000,000. Fixed O&M
         // (ruling 4): 214,000,000 x (100,000 / 100,000,000) = 214,000. Build 2
-        // months (ruling 1). Windows on the CST system clock (spec section
-        // 28.4): the starter territory's net load (it has no solar) is
-        // highest from the summer afternoon plateau, 14:00 to 17:00, through
-        // the winter evening peak at 19:00 to 20:00, so discharge may start at
-        // 14:00; charging fills the night and morning valley before then.
+        // months (ruling 1). Storage windows (spec section 29):
+        // discharge may support real gaps from 06:00; charging remains eligible until
+        // 22:00 on the system clock. The actual balance chooses one direction.
         (kind: Battery, capacity_mw: 200.0, min_stable: 0.0, ramp_mw_per_min: 0.0,
          startup_hours: 0.0, startup_cost: 0, marginal_cost_per_mwh: 0.0,
          fixed_om_per_month: 214000, capital_cost: 214000000, build_months: 2,
          capacity_credit: 0.0, book_life_months: 180, siting: Anywhere,
          battery: Some((charge_mw: 200.0, energy_mwh: 800.0, charge_efficiency: 0.9,
-                        discharge_efficiency: 1.0, discharge_start_hour: 14, charge_end_hour: 14))),
+                        discharge_efficiency: 1.0, discharge_start_hour: 6, charge_end_hour: 22))),
     ],
     // Loads are pacing weights; total approximates 40,850 MW × 3,170/980. Starter metros are deliberately smaller.
     cities: [

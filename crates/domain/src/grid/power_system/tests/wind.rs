@@ -130,7 +130,7 @@ fn curtailment_is_proportional_across_solar_and_wind_and_never_counts_calm_wind(
 }
 
 #[test]
-fn overlap_can_discharge_then_recharge_but_never_after_eighteen() {
+fn overlap_can_discharge_then_recharge_but_never_after_twenty_two() {
     let (mut sys, region, id) = battery_fixture();
     sys.begin_day(&region, april(), &mut SimRng::from_seed(7));
     charge_inventory(&mut sys, id, 20);
@@ -140,13 +140,13 @@ fn overlap_can_discharge_then_recharge_but_never_after_eighteen() {
     assert_eq!(flow[&id].discharge, Megawatts::new(100.0));
     sys.settle_batteries(&flow);
     let surplus_demand = (p - Megawatts::new(50.0)).max(Megawatts::ZERO);
-    for tick in [0, 961, 1020, 1079] {
+    for tick in [0, 961, 1020, 1079, 1080, 1319] {
         let flow =
             sys.propose_battery_flows(&region, april(), tick, surplus_demand, surplus_demand);
         assert!(flow[&id].charge > Megawatts::ZERO);
         assert_eq!(flow[&id].discharge, Megawatts::ZERO);
     }
-    let flow = sys.propose_battery_flows(&region, april(), 1080, surplus_demand, surplus_demand);
+    let flow = sys.propose_battery_flows(&region, april(), 1320, surplus_demand, surplus_demand);
     assert_eq!(flow[&id].charge, Megawatts::ZERO);
 }
 

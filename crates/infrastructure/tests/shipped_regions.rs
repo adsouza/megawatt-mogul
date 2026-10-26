@@ -565,12 +565,12 @@ fn shipped_first_expansion_acceptance_seeds_zero_through_seven() {
 }
 
 #[test]
-fn both_regions_allow_battery_discharge_from_four_pm() {
-    for id in [EAST, WEST] {
+fn every_shipped_region_allows_battery_discharge_from_six_am_and_charge_until_ten_pm() {
+    for &id in SHIPPED {
         let region = region(id);
         let battery = region.spec(PlantKind::Battery).battery.unwrap();
-        assert_eq!(battery.discharge_start_hour, 16, "{id}");
-        assert_eq!(battery.charge_end_hour, 18, "{id}");
+        assert_eq!(battery.discharge_start_hour, 6, "{id}");
+        assert_eq!(battery.charge_end_hour, 22, "{id}");
     }
 }
 

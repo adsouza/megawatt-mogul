@@ -382,12 +382,13 @@ only eligible remaining book value earns return. Holding and write-off do not ch
    as fast as the other AGC plants' one-tick headroom (net of the shortfall) can follow, until it is
    at or below every ceiling it meets before the next re-plan.
 8. Stage storage flows from actual generation after full customer demand: charging is eligible
-   from 00:00 until the authored 18:00 cutoff; gap support remains eligible 17:00–24:00. During
+   from 00:00 until the authored cutoff (22:00 in new games); gap support is eligible from the
+   authored start (06:00 in new games) until midnight. During
    the overlap, primary surplus chooses charge and deficit chooses discharge, with one inventory
    and no simultaneous/cross-battery flows. Cancel charging before shedding or below the normal
    band. AGC targets full served customer load plus feasible charging, never subtracting battery
    output: storage bridges generator gaps. Requests take effect next tick, wait for generation
-   and taper before full inventory/18:00 to absorb thermal ramp-down tails.
+   and taper before full inventory/the charging cutoff to absorb thermal ramp-down tails.
    Imbalance is connected supply (including storage discharge) minus charging and served city load,
    `load × (1 − shed)`.
 9. Frequency update, with the load as the system size. It is held at nominal during a blackout and

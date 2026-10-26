@@ -456,7 +456,7 @@
          fixed_om_per_month: 100000, capital_cost: 100000000, build_months: 2,
          capacity_credit: 0.0, book_life_months: 180, siting: Anywhere,
          battery: Some((charge_mw: 200.0, energy_mwh: 800.0, charge_efficiency: 0.9,
-                        discharge_efficiency: 1.0, discharge_start_hour: 16, charge_end_hour: 18))),
+                        discharge_efficiency: 1.0, discharge_start_hour: 6, charge_end_hour: 22))),
     ],
     // Each city is a demand centre for its metro and the hinterland it
     // anchors; base loads are proportional to that demand at the game's

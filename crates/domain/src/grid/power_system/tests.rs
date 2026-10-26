@@ -5120,16 +5120,16 @@ fn battery_trip_headroom_requires_sustained_energy_not_a_single_tick_burst() {
 }
 
 #[test]
-fn plan5_charging_starts_at_midnight_and_stops_at_eighteen() {
+fn battery_charging_starts_at_midnight_and_stops_at_twenty_two() {
     let (sys, region, id) = battery_fixture();
     let spec = sys.plant(id).unwrap().spec().battery.unwrap();
-    for tick in [0, 1, 300, 1019, 1020, 1079] {
+    for tick in [0, 1, 300, 359, 360, 1079, 1080, 1319] {
         assert!(
             super::battery::charging_window(&region, april(), spec, tick),
             "minute {tick}"
         );
     }
-    for tick in [1080, 1081, 1439, 1440] {
+    for tick in [1320, 1321, 1439, 1440] {
         assert!(
             !super::battery::charging_window(&region, april(), spec, tick),
             "minute {tick}"

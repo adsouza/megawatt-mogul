@@ -30,7 +30,7 @@ proptest::proptest! {
     #![proptest_config(proptest::test_runner::Config::with_cases(24))]
     #[test]
     fn battery_preview_preserves_reserves_for_a_later_generation_shortfall(
-        peak in 16usize..22,
+        peak in 7usize..22,
         energy in 10.0f64..120.0,
     ) {
         let mut parts = fixtures::tiny_region_parts();
@@ -64,10 +64,12 @@ proptest::proptest! {
             proptest::prop_assert!((schedule.plants[&id].discharge[tick].value() - expected).abs() < 1e-6);
             stored += (point.battery_charge.value() * efficiency - expected) / 60.0;
             delivered += expected / 60.0;
-            if (18 * 60..(peak - 1) * 60).contains(&tick) {
+            // Extended charging can fill later; reserves still cannot replace
+            // generation before the rise toward the actual peak.
+            if tick < (peak - 1) * 60 {
                 proptest::prop_assert_eq!(point.battery_discharge, Megawatts::ZERO);
-                proptest::prop_assert!((stored - energy).abs() < 1e-6);
             }
+            proptest::prop_assert!(stored >= -1e-6 && stored <= energy + 1e-6);
             let shortfall = point.demand.value() - point.net_supply().value();
             if shortfall > worst.0 { worst = (shortfall, (tick / 60) as u8); }
         }
@@ -412,7 +414,7 @@ fn battery_reserve_preserves_peaker_dispatch_and_customer_revenue() {
     let with = play(true);
     assert!(
         with.energy_by_kind[&PlantKind::Peaker] >= without.energy_by_kind[&PlantKind::Peaker],
-        "storage may add charging load until 18:00 but must not replace available generation"
+        "storage may add charging load until 22:00 but must not replace available generation"
     );
     assert!((with.served.value() - without.served.value()).abs() < 1e-6);
     assert_eq!(with.revenue, without.revenue);

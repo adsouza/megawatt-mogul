@@ -419,7 +419,8 @@ fn unknown_rules_are_rejected_before_mapping_their_archived_region() {
 fn battery_codec_restores_mid_charge_with_exact_archived_tuning_and_continuation() {
     let dir = tempfile::TempDir::new().unwrap();
     let source = include_str!("support/minimal_region.ron")
-        .replace("discharge_start_hour: 16", "discharge_start_hour: 17")
+        .replace("discharge_start_hour: 6", "discharge_start_hour: 17")
+        .replace("charge_end_hour: 22", "charge_end_hour: 18")
         .replacen("fleet: [", "fleet: [(Battery, 5.5, 6.5),", 1);
     std::fs::write(dir.path().join("minimal.ron"), &source).unwrap();
     let catalog = RonRegionCatalog::new(dir.path());
@@ -448,7 +449,8 @@ fn battery_codec_restores_mid_charge_with_exact_archived_tuning_and_continuation
         dir.path().join("minimal.ron"),
         source
             .replace("energy_mwh: 800.0", "energy_mwh: 1.0")
-            .replace("discharge_start_hour: 17", "discharge_start_hour: 16"),
+            .replace("discharge_start_hour: 17", "discharge_start_hour: 6")
+            .replace("charge_end_hour: 18", "charge_end_hour: 22"),
     )
     .unwrap();
     let (decoded, loaded) = decode_save(&bytes, &identity()).unwrap();
@@ -479,6 +481,19 @@ fn battery_codec_restores_mid_charge_with_exact_archived_tuning_and_continuation
         "resume preserves the archived battery window instead of installed defaults"
     );
     assert_eq!(resumed.projections(), live.projections());
+    assert_eq!(
+        resumed
+            .session()
+            .power()
+            .plant(battery.id)
+            .unwrap()
+            .spec()
+            .battery
+            .unwrap()
+            .charge_end_hour,
+        18,
+        "resume also preserves the archived charging cutoff"
+    );
     for command in [
         Command::SetBatteryEnabled {
             plant: battery.id,

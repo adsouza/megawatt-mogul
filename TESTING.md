@@ -677,7 +677,7 @@ those units explicitly; generic fleet tests derive expected counts from the regi
 
 ## Battery storage (Plan 4)
 
-Domain tests exercise 00:00–18:00 grid charging, evening gap support, efficiency and capacity limits,
+Domain tests exercise 00:00–22:00 grid charging, 06:00–24:00 gap support, efficiency and capacity limits,
 blackout/islanding, shared-grid accounting, daily inventory close and monthly weighting. Property
 tests cover energy conservation, schedule bounds and arbitrary save boundaries. Application tests
 compare tick batches, preserved inventory, reports and completed curves after portable restore.
@@ -835,10 +835,22 @@ simulation ticks. Keep the full 16-case, three-review shipped acceptance when op
 `domain/grid/power_system/tests/wind.rs` independently checks 120 MW from a 300 MW farm at 80%
 site potential and 50% resource throughout a whole day, shared RNG across farm counts, correlated
 forecast bands, proportional Solar/Wind curtailment, a sudden lull with finite storage, and the
-17:00–18:00 overlap/18:00 cutoff. `generation/wind.rs` property-tests the bounded AR(1) formula.
+configured overlap and charging cutoff. `generation/wind.rs` property-tests the bounded AR(1) formula.
 `session/forecast_contract_tests.rs` includes wind in the independent mixed hydro/solar/storage
 oracle. `session/wind_tests.rs` refuses thermal controls atomically and compares continuation/RNG
 at midnight, hourly, overlap, cutoff and Review save boundaries, including next-month Planning.
+
+Rules 21 regressions pin 05:59/06:00 discharge and 21:59/22:00 charging, including an actual
+morning ramp gap and existing surplus just before the charging cutoff. A property samples the
+whole 06:00–22:00 overlap and requires the real primary balance to select exactly one flow
+direction. All eight shipped regions use these windows. Build/card hints show the loaded
+configuration, and archived save tests retain their older windows and historical hash receipts.
+The reviewed rules-21 guard changes only its version label and battery energy/fuel row;
+non-storage scenario outcomes are unchanged.
+The live late-charging regression also verifies grid charging after 21:30 tapers through 22:00
+without shedding, blackout or a generator trip. Validation on 2026-10-26 passed 61 focused domain,
+14 application, 78 infrastructure and 43 game tests, workspace Clippy with warnings denied,
+formatting and diff checks. Released golden saves and frozen legacy tuning remain untouched.
 
 Region adapters require schema-3 wind data and cutoff fields; frozen legacy extension RON payloads
 are pinned by independent SHA-256 values. The released schema-1 golden saves stay immutable and
