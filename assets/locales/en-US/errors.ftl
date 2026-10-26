@@ -40,6 +40,22 @@ error-region-io = Region { $region } could not be read: { $message }
 error-region-parse = Region { $region } is not valid region data: { $message }
 error-region-invalid = Region { $region } has a problem. { $detail }
 error-region-id-mismatch = The file for region { $requested } says it is region { $found }, so it was not loaded.
+error-region-sidecar = Region { $region } has a problem with its data file { $file }: { $detail }
+error-region-bundle = Region { $region } is stored in a damaged bundle: { $detail }
+
+## Why a region's data file or bundle could not be used
+
+region-sidecar-missing = the region refers to it, but it is missing.
+region-sidecar-unreferenced = it is in the region's folder, but the region does not refer to it.
+region-sidecar-invalid-name = its name is not a plain lowercase .ron file name.
+region-sidecar-io = it could not be read ({ $message }).
+region-sidecar-parse = it is not valid region data ({ $message }).
+region-bundle-unsupported-version = it uses a bundle format this version of the game cannot read.
+region-bundle-bad-header = an entry header is malformed.
+region-bundle-truncated = an entry is shorter than its header says.
+region-bundle-main-name = its first entry is not the region's main file.
+region-bundle-unsorted = its data files are not in order.
+region-bundle-no-sidecars = it has no data files.
 
 ## What is wrong inside a region file
 
@@ -65,3 +81,7 @@ error-command-log = The command log could not be written: { $message }
 error-plant-not-battery = { $plant } is not battery storage.
 
 error-line-not-needed = { $from } and { $to } are already joined by lines in service or under construction, so the regulator won't approve another line between them.
+
+error-construction-overflow = This project’s cost, duration or completion date exceeds the supported range.
+error-construction-cell = This location is outside the construction map.
+region-error-economic-zone = Invalid construction market { $zone }: check { $field }.

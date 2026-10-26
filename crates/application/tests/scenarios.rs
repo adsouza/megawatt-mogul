@@ -439,7 +439,7 @@ fn overreach_rotates_outages_instead_of_collapsing() {
 #[test]
 fn overreach_without_demand_noise_rotates_exactly_the_shortfall() {
     let mut parts = overreach();
-    parts.demand.forecast_error = Ratio::ZERO;
+    parts.demand_noise.forecast_error = Ratio::ZERO;
     let shed_step = parts.frequency.shed_step.value();
     let label = "noise-free";
     let month = overreach_month_four(parts, 13);

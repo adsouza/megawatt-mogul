@@ -54,6 +54,9 @@ all = { level = "warn", priority = -1 }
 [profile.dev]
 debug = true # full debug info for workspace crates (the default, stated so it isn't "fixed")
 split-debuginfo = "packed" # bundle macOS debug info into dSYMs instead of retaining loose objects
+# The incremental cache grew by gigabytes per worktree (stale copies of game and domain), while
+# rebuild time is dominated by linking the Bevy test binary. Not worth the disk.
+incremental = false
 
 # Every non-workspace crate: Bevy, wgpu, egui, but also rand_chacha, proptest and the rest.
 [profile.dev.package."*"]

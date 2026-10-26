@@ -144,4 +144,6 @@ The artwork does not show proposed supergrids, SINEA projects, pool membership a
 
 `World_Power_Grids_Top_8_Capacity.csv` records the eight current legend entries, their electrical interpretation, aggregation flags, dates, capacity sources and exclusions. The SGCC component contributions remain explicit in both this document and the CSV; they are not additional legend entries. The numeric `capacity_central_gw` field preserves working arithmetic for reproduction and must be read with the evidence and scope fields; it is not an assertion of measurement precision. The existing European capacity ledger, Chinese topology/capacity evidence, North American calculation notes and IPS review preserve the underlying source arithmetic. Earlier editions remain historical audit material and should not be mistaken for this edition’s selection or legend order.
 
+Plan 7's sourced construction, operating and tariff figures for regions B, D, E, F and H, with the pacing method and the Europe–Maghreb economic-zone profiles, are in [Plan 7 regional economics](2026-10-25-plan-7-regional-economics.md).
+
 The renderable map, capacity CSV and these notes use the same A–H identifiers. The map’s concise exception label should always remain visible when the image is reproduced without this document.

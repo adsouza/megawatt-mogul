@@ -8,9 +8,10 @@
 //!   and in Operating's selected-object block, where plant details and the city card show.
 //!
 //! Everything is read from the public views: the months left from each plant's and line's
-//! status, the total from the kind's `build_months` or the line's build time, and the in-service
+//! status, the total from the owned plant's stored spec or the line's resolved terms, and the in-service
 //! month from the current month by the month close's own rule ([`in_service_month`]).
 
+use crate::l10n::format::MoneyStyle;
 use application::Game;
 use bevy_egui::egui;
 use domain::generation::PlantStatus;
@@ -68,12 +69,17 @@ pub struct ConstructionModel {
 /// `months_left` closes from now, so `month + months_left`. In Review the close of `month` has
 /// already counted its month, so one more.
 pub fn in_service_month(phase: DayPhase, month: SimMonth, months_left: u32) -> SimMonth {
-    let closes = if phase == DayPhase::Review {
-        months_left + 1
-    } else {
-        months_left
-    };
-    (0..closes).fold(month, |month, _| month.next())
+    // A representable quote is checked before ordering. Review has already applied its close.
+    month
+        .checked_add_months(months_left)
+        .and_then(|month| {
+            if phase == DayPhase::Review {
+                month.checked_add_months(1)
+            } else {
+                Ok(month)
+            }
+        })
+        .expect("validated construction completion date")
 }
 
 /// How far along one project is, read from the views.
@@ -128,7 +134,10 @@ fn projects(game: &Game) -> Vec<Progress> {
         let PlantStatus::UnderConstruction { months_left } = plant.status else {
             return None;
         };
-        let total = session.region().spec(plant.kind).build_months;
+        let total = session
+            .plant_construction(plant.id)
+            .expect("known plant")
+            .months;
         Some(progress(Project::Plant(plant.id), months_left, total))
     });
     let lines = session.line_views().into_iter().filter_map(|line| {
@@ -219,12 +228,14 @@ pub fn construction_card_model(
     game: &Game,
     l10n: &Localizer,
     plant: PlantId,
+    style: &MoneyStyle,
 ) -> Option<ConstructionCardModel> {
     let session = game.session();
     let view = session.plant_views().into_iter().find(|p| p.id == plant)?;
     let progress = projects(game)
         .into_iter()
         .find(|p| p.project == Project::Plant(plant))?;
+    let quote = session.plant_construction(plant)?;
     let mut model = ConstructionCardModel {
         plant,
         name: Names::new(l10n, session).plant(plant),
@@ -237,20 +248,27 @@ pub fn construction_card_model(
             super::plant_panel::grid_connection_stat(l10n, view.connected),
             Stat {
                 label: l10n.text("build-capital"),
-                value: format::money(session.region().spec(view.kind).capital_cost),
+                value: format::money(quote.capital, style),
             },
             Stat {
                 label: l10n.text("build-monthly-payment"),
-                value: super::build::monthly_payment(
-                    session.region().spec(view.kind).capital_cost,
-                    session.region().spec(view.kind).build_months,
-                ),
+                value: super::build::monthly_payment(quote.capital, quote.months, style),
             },
         ],
         months: progress.months(l10n),
         progress: progress.share(),
         in_service: progress.in_service(l10n),
     };
+    if session.region().has_economic_zones() {
+        let market = super::economics::zone_stat(session.region(), quote.economic_zone, l10n);
+        model.stats.insert(
+            0,
+            Stat {
+                label: market.label,
+                value: market.value,
+            },
+        );
+    }
     if let Some(b) = session.region().spec(view.kind).battery {
         model.stats.extend([
             Stat {
@@ -333,6 +351,7 @@ pub fn draw_construction_card(ui: &mut egui::Ui, model: &ConstructionCardModel) 
     ui.heading(egui::RichText::new(&model.name).color(heading_color()));
     ui.colored_label(TextTone::Information.color(), &model.status);
     egui::Grid::new("construction_card_stats")
+        .max_col_width((ui.available_width() - ui.spacing().item_spacing.x) / 2.0)
         .num_columns(2)
         .spacing(egui::vec2(8.0, 1.0))
         .min_row_height(0.0)
@@ -350,6 +369,7 @@ pub fn draw_construction_card(ui: &mut egui::Ui, model: &ConstructionCardModel) 
 
 #[cfg(test)]
 mod tests {
+    use crate::hud::test_support::usd_style;
     use application::{Command, InMemoryCommandLog};
     use domain::events::DomainEvent;
     use domain::generation::PlantStatus;
@@ -629,7 +649,7 @@ mod tests {
         let total = spec.build_months;
         let due = in_service_month(DayPhase::Planning, session.clock().month(), total);
 
-        let card = construction_card_model(&game, &l10n, plant).expect("a card");
+        let card = construction_card_model(&game, &l10n, plant, &usd_style()).expect("a card");
 
         assert_eq!(card.plant, plant);
         assert_eq!(card.name, Names::new(&l10n, session).plant(plant));
@@ -648,13 +668,14 @@ mod tests {
                 },
                 Stat {
                     label: "Capital cost".to_owned(),
-                    value: format::money(spec.capital_cost),
+                    value: format::money(spec.capital_cost, &usd_style()),
                 },
                 Stat {
                     label: "Per month (approx.)".to_owned(),
                     value: super::super::build::monthly_payment(
                         spec.capital_cost,
-                        spec.build_months
+                        spec.build_months,
+                        &usd_style()
                     ),
                 }
             ]
@@ -673,8 +694,14 @@ mod tests {
             .find(|p| !matches!(p.status, PlantStatus::UnderConstruction { .. }))
             .unwrap()
             .id;
-        assert_eq!(construction_card_model(&game, &l10n, built), None);
-        assert_eq!(construction_card_model(&game, &l10n, PlantId(9_999)), None);
+        assert_eq!(
+            construction_card_model(&game, &l10n, built, &usd_style()),
+            None
+        );
+        assert_eq!(
+            construction_card_model(&game, &l10n, PlantId(9_999), &usd_style()),
+            None
+        );
         assert_eq!(l10n.problems(), vec![]);
     }
 

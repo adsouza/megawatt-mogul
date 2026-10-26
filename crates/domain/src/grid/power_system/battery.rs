@@ -3,12 +3,12 @@ use super::{PowerSystem, is_commissioned};
 use crate::events::DomainEvent;
 use crate::generation::{BatteryFlow, Plant, PlantStatus, fill_minutes};
 use crate::grid::GridMode;
-use crate::ids::PlantId;
+use crate::ids::{CellCoord, PlantId};
 use crate::region::{BatterySpec, PlantKind, RegionDefinition};
 use crate::time::{SimMonth, TICKS_PER_DAY, TICKS_PER_HOUR};
 use crate::units::{MegawattHours, Megawatts, Ratio};
 use std::cell::OnceCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlantBatteryScheduleView {
@@ -43,21 +43,24 @@ impl SupplyForecastPoint {
 /// Shared supply source for Planning charts and shortfall checks.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SupplyForecast {
-    /// Storage requires every minute to be assessed; other fleets use hour endpoints.
+    /// Whether the forecast models storage flows.
     pub has_storage: bool,
     pub assess_every_minute: bool,
+    /// Ordered hourly assessment minutes for fleets without storage or wind.
+    pub hour_sample_minutes: BTreeSet<u32>,
     pub minutes: Vec<SupplyForecastPoint>,
 }
 
 impl SupplyForecast {
-    /// Points assessed by the warning: all minutes with storage, hour endpoints otherwise.
+    /// Points assessed by the warning: all minutes with storage or wind,
+    /// otherwise the hour endpoints and connected cities' local-hour bends.
     pub fn assessed_minutes(&self) -> impl Iterator<Item = (u32, &SupplyForecastPoint)> {
         self.minutes
             .iter()
             .enumerate()
             .filter(|(tick, _)| {
                 let minute = tick % TICKS_PER_HOUR as usize;
-                self.assess_every_minute || minute == 0 || minute == TICKS_PER_HOUR as usize - 1
+                self.assess_every_minute || self.hour_sample_minutes.contains(&(minute as u32))
             })
             .map(|(tick, point)| (tick as u32, point))
     }
@@ -87,7 +90,7 @@ pub(super) struct BatteryPlanningInputs<'a> {
     dispatchable: Vec<&'a Plant>,
     thermal: Vec<&'a Plant>,
     cities: Vec<&'a crate::demand::DemandCenter>,
-    solar: Vec<(Megawatts, Ratio)>,
+    solar: Vec<(Megawatts, Ratio, CellCoord)>,
     wind_potential: Megawatts,
     minutes: Vec<OnceCell<PlanningMinute>>,
 }
@@ -132,6 +135,7 @@ impl<'a> BatteryPlanningInputs<'a> {
                     (
                         p.spec().capacity,
                         super::cell_ratio(region, p.cell(), |c| c.irradiance),
+                        p.cell(),
                     )
                 })
                 .collect(),
@@ -149,20 +153,24 @@ impl<'a> BatteryPlanningInputs<'a> {
 
     pub(super) fn minute(&self, tick: u32) -> &PlanningMinute {
         self.minutes[tick as usize].get_or_init(|| {
-            let sun = crate::generation::sun_factor(self.region.solar(), self.month, tick);
             let clearness = self.region.solar().clearness_mean[self.month.index0()];
             PlanningMinute {
                 demand: crate::demand::forecast_demand(
                     self.cities.iter().copied(),
-                    self.region.demand(),
+                    self.region,
                     self.month,
                     tick,
                 ),
                 solar: self
                     .solar
                     .iter()
-                    .map(|&(capacity, irradiance)| {
-                        crate::generation::solar_available(capacity, irradiance, sun, clearness)
+                    .map(|&(capacity, irradiance, cell)| {
+                        crate::generation::solar_available(
+                            capacity,
+                            irradiance,
+                            self.region.sun(cell, self.month, tick),
+                            clearness,
+                        )
                     })
                     .sum(),
                 wind: self.wind_potential

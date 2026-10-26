@@ -53,7 +53,13 @@ pub fn milestones_model(game: &Game, l10n: &Localizer) -> MilestonesModel {
         title: l10n.text("milestones-title"),
         rows: MILESTONES
             .iter()
-            .map(|kind| milestone_row(*kind, milestones.status(*kind, now), l10n))
+            .map(|kind| {
+                milestone_row(
+                    *kind,
+                    milestones.status(*kind, now, game.session().region().calendar()),
+                    l10n,
+                )
+            })
             .collect(),
         close: ButtonModel::new(l10n.text("ui-close"), UiAction::ToggleMilestones),
     }

@@ -1,4 +1,4 @@
-//! The speed controls (spec §8.4), Operating only: the time of day, pause and 1× to 32×, and Space
+//! The speed controls (spec §8.4), Operating only: pause and 1× to 32×, and Space
 //! to toggle pause.
 //!
 //! Space switches between `Paused` and the last speed the day ran at, [`LastSpeed`], which
@@ -13,7 +13,7 @@ use domain::session::SessionStatus;
 
 use super::action::{ActionSink, ButtonModel, ToggleModel, UiAction, dispatch, toggle_button};
 use super::layout::HudArea;
-use crate::l10n::{Localizer, format};
+use crate::l10n::Localizer;
 use crate::sim::{Session, SimSpeed};
 
 /// The speeds the controls offer, in order, with their labels.
@@ -46,15 +46,12 @@ pub(super) fn reset_last_speed(
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpeedModel {
-    /// The time of day: `06:00`.
-    pub clock: String,
     /// One per speed, in order; the current one is on.
     pub speeds: Vec<ToggleModel>,
 }
 
-pub fn speed_model(game: &Game, l10n: &Localizer, current: SimSpeed) -> SpeedModel {
+pub fn speed_model(_game: &Game, l10n: &Localizer, current: SimSpeed) -> SpeedModel {
     SpeedModel {
-        clock: format::clock(game.session().clock().tick()),
         speeds: SPEEDS
             .into_iter()
             .map(|(speed, key)| ToggleModel {
@@ -81,8 +78,6 @@ pub fn space_action(current: SimSpeed, last: LastSpeed, blocked: bool) -> Option
 pub fn draw_speed(ui: &mut egui::Ui, model: &SpeedModel) -> Vec<UiAction> {
     let mut actions = Vec::new();
     ui.horizontal(|ui| {
-        ui.strong(model.clock.as_str());
-        ui.separator();
         for speed in &model.speeds {
             toggle_button(ui, speed, &mut actions);
         }
@@ -142,7 +137,16 @@ mod tests {
 
         let model = speed_model(&game, &l10n, SimSpeed::X4);
 
-        assert_eq!(model.clock, "01:15");
+        assert_eq!(
+            super::super::top_bar_model(
+                &game,
+                &crate::sim::Persistence::default(),
+                &l10n,
+                &crate::hud::test_support::usd_style()
+            )
+            .time,
+            "01:15 ET"
+        );
         let buttons: Vec<(&str, &UiAction, bool)> = model
             .speeds
             .iter()

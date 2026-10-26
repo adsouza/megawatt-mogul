@@ -5,7 +5,9 @@
 //! power, shares, times) are formatted by [`format`] and arrive in the messages as text.
 
 use application::projections::{Lesson, MilestoneKind, MilestoneProgress, RampWarning};
-use application::{CommandError, CommandLogError, RegionLoadError};
+use application::{
+    CommandError, CommandLogError, RegionBundleProblem, RegionLoadError, SidecarProblem,
+};
 use domain::error::DomainError;
 use domain::events::DomainEvent;
 use domain::generation::PlantStatus;
@@ -30,11 +32,15 @@ pub trait LocalizeWith {
     fn localize_with(&self, l10n: &Localizer, names: &Names) -> String;
 }
 
+pub trait LessonMoneyText {
+    fn localize_money(&self, l10n: &Localizer, style: &format::MoneyStyle) -> String;
+}
+
 /// Text for a domain event that deserves a toast. Most events are bookkeeping (`TickCompleted`,
 /// ledger entries, ...) and return `None`; the `match` is still exhaustive, so a new event must
 /// be classified, but only a toast-worthy one needs words.
 pub trait Toast {
-    fn toast(&self, l10n: &Localizer, names: &Names) -> Option<String>;
+    fn toast(&self, l10n: &Localizer, names: &Names, style: &format::MoneyStyle) -> Option<String>;
 }
 
 /// A numeric id, shown as `#7` in the copy.
@@ -71,6 +77,8 @@ impl Localize for CommandLogError {
 impl LocalizeWith for DomainError {
     fn localize_with(&self, l10n: &Localizer, names: &Names) -> String {
         match self {
+            Self::ConstructionOverflow => l10n.text("error-construction-overflow"),
+            Self::InvalidConstructionCell { .. } => l10n.text("error-construction-cell"),
             Self::InvalidRatio { value: _ } => l10n.text("error-invalid-ratio"),
             Self::InvalidMonth { month } => l10n.args(
                 "error-invalid-month",
@@ -248,13 +256,73 @@ impl Localize for RegionLoadError {
                     ("found", found.as_str().into()),
                 ],
             ),
+            Self::Sidecar {
+                region,
+                file,
+                problem,
+            } => l10n.args(
+                "error-region-sidecar",
+                &[
+                    ("region", region.as_str().into()),
+                    ("file", (&**file).into()),
+                    ("detail", problem.localize(l10n).into()),
+                ],
+            ),
+            Self::Bundle { region, problem } => l10n.args(
+                "error-region-bundle",
+                &[
+                    ("region", region.as_str().into()),
+                    ("detail", problem.localize(l10n).into()),
+                ],
+            ),
         }
+    }
+}
+
+impl Localize for SidecarProblem {
+    fn localize(&self, l10n: &Localizer) -> String {
+        match self {
+            Self::Missing => l10n.text("region-sidecar-missing"),
+            Self::Unreferenced => l10n.text("region-sidecar-unreferenced"),
+            Self::InvalidName => l10n.text("region-sidecar-invalid-name"),
+            Self::Io(message) => {
+                l10n.args("region-sidecar-io", &[("message", message.as_str().into())])
+            }
+            Self::Parse(message) => l10n.args(
+                "region-sidecar-parse",
+                &[("message", message.as_str().into())],
+            ),
+        }
+    }
+}
+
+impl Localize for RegionBundleProblem {
+    fn localize(&self, l10n: &Localizer) -> String {
+        l10n.text(match self {
+            Self::UnsupportedVersion => "region-bundle-unsupported-version",
+            Self::BadHeader => "region-bundle-bad-header",
+            Self::Truncated => "region-bundle-truncated",
+            Self::MainName => "region-bundle-main-name",
+            Self::Unsorted => "region-bundle-unsorted",
+            Self::NoSidecars => "region-bundle-no-sidecars",
+        })
     }
 }
 
 impl Localize for RegionError {
     fn localize(&self, l10n: &Localizer) -> String {
         match self {
+            Self::InvalidEconomicZone { zone, field } => l10n.args(
+                "region-error-economic-zone",
+                &[
+                    (
+                        "zone",
+                        zone.map_or_else(|| "0".into(), |id| id.0.to_string())
+                            .into(),
+                    ),
+                    ("field", (*field).into()),
+                ],
+            ),
             Self::MissingField { field } => {
                 l10n.args("region-error-missing-field", &[("field", (*field).into())])
             }
@@ -382,6 +450,8 @@ impl Localize for Season {
             Self::Spring => "season-spring",
             Self::Summer => "season-summer",
             Self::Autumn => "season-autumn",
+            Self::Monsoon => "season-monsoon",
+            Self::PostMonsoon => "season-post-monsoon",
         })
     }
 }
@@ -469,8 +539,8 @@ impl LocalizeWith for IncidentKind {
     }
 }
 
-impl Localize for Lesson {
-    fn localize(&self, l10n: &Localizer) -> String {
+impl LessonMoneyText for Lesson {
+    fn localize_money(&self, l10n: &Localizer, style: &format::MoneyStyle) -> String {
         match self {
             Self::ExpensivePeaking {
                 energy,
@@ -480,8 +550,8 @@ impl Localize for Lesson {
                 "lesson-expensive-peaking",
                 &[
                     ("energy", format::megawatt_hours(*energy).into()),
-                    ("cost", format::money(*cost).into()),
-                    ("alternative", format::price(*alternative).into()),
+                    ("cost", format::money(*cost, style).into()),
+                    ("alternative", format::price(*alternative, style).into()),
                 ],
             ),
             Self::RotatingOutages { energy, peak_share } => l10n.args(
@@ -534,7 +604,7 @@ impl Localize for Lesson {
             Self::StartUpCosts { total, share } => l10n.args(
                 "lesson-start-up-costs",
                 &[
-                    ("total", format::money(*total).into()),
+                    ("total", format::money(*total, style).into()),
                     ("share", format::percent(*share).into()),
                 ],
             ),
@@ -544,7 +614,7 @@ impl Localize for Lesson {
             } => l10n.args(
                 "lesson-rate-review",
                 &[
-                    ("tariff", format::price(*tariff).into()),
+                    ("tariff", format::price(*tariff, style).into()),
                     ("allowed_return", format::percent(*allowed_return).into()),
                 ],
             ),
@@ -567,7 +637,7 @@ impl Localize for RampWarning {
 }
 
 impl Toast for DomainEvent {
-    fn toast(&self, l10n: &Localizer, names: &Names) -> Option<String> {
+    fn toast(&self, l10n: &Localizer, names: &Names, style: &format::MoneyStyle) -> Option<String> {
         let text = match self {
             Self::Blackout => l10n.text("event-blackout"),
             Self::BlackoutRestored => l10n.text("event-blackout-restored"),
@@ -638,7 +708,7 @@ impl Toast for DomainEvent {
             } => l10n.args(
                 "event-rate-review-completed",
                 &[
-                    ("tariff", format::price(*tariff).into()),
+                    ("tariff", format::price(*tariff, style).into()),
                     ("allowed_return", format::percent(*allowed_return).into()),
                 ],
             ),

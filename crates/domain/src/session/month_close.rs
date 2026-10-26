@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use super::report::{MeritOrderEntry, MonthlyReport};
-use super::{DayPhase, GameOverReason, GameSession, SessionStatus, line_cost, whole_cells};
+use super::{DayPhase, GameOverReason, GameSession, SessionStatus};
 use crate::company::{AssetProfile, AssetRef, LedgerCategory, LedgerEntry, ReserveReviewInputs};
 use crate::events::DomainEvent;
 use crate::generation::PlantStatus;
@@ -270,9 +270,13 @@ impl GameSession {
                 .network()
                 .line(line_id)
                 .expect("network reports its own lines");
+            let capital = self
+                .line_construction(line_id)
+                .expect("validated immutable line construction terms")
+                .capital;
             self.company.rate_base_mut().add(
                 AssetRef::Line(line_id),
-                line_cost(params, whole_cells(line.length_cells)),
+                capital,
                 params.book_life_months,
                 month,
                 AssetProfile::Line {

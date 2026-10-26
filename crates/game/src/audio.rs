@@ -4,8 +4,9 @@ use std::collections::BTreeMap;
 use bevy::{audio::Volume, prelude::*, transform::TransformSystems};
 use bevy_egui::EguiPostUpdateSet;
 use domain::{
+    region::{RegionDefinition, SolarModel},
     session::{DayPhase, SessionStatus},
-    time::{SimMonth, TICKS_PER_HOUR},
+    time::{SimMonth, TICKS_PER_DAY, TICKS_PER_HOUR},
 };
 
 use crate::{
@@ -34,6 +35,9 @@ impl Plugin for DailyAudioPlugin {
 struct DailyAudio {
     sources: BTreeMap<DailySound, Handle<AudioSource>>,
     cues: [TimeCue; 5],
+    /// The last `sunrise_hour`, by session generation and month: the computed sun is scanned
+    /// once a month rather than every frame.
+    sunrise: Option<(u64, SimMonth, Option<f64>)>,
 }
 
 #[derive(Component)]
@@ -86,8 +90,17 @@ fn update_daily_audio(
         return;
     };
     let clock = session.clock();
-    let daylight = session.region().solar().daylight[clock.month().index0()];
-    for (index, (sound, hour)) in daily_schedule(daylight).into_iter().enumerate() {
+    let sunrise = match audio.sunrise {
+        Some((owner, month, sunrise)) if owner == generation.0 && month == clock.month() => sunrise,
+        _ => {
+            let sunrise = sunrise_hour(session.region(), clock.month());
+            audio.sunrise = Some((generation.0, clock.month(), sunrise));
+            sunrise
+        }
+    };
+    // No sunrise in polar night or midnight sun: the rooster's hour is never reached.
+    let schedule = daily_schedule(sunrise.unwrap_or(f64::INFINITY));
+    for (index, (sound, hour)) in schedule.into_iter().enumerate() {
         if audio.cues[index].observe(generation.0, clock.month(), clock.tick(), hour, audible)
             && let Some(source) = audio.sources.get(&sound)
         {
@@ -130,7 +143,24 @@ impl DailySound {
     }
 }
 
-fn daily_schedule((sunrise, _): (f64, f64)) -> [(DailySound, f64); 5] {
+/// The home city's sunrise on the system clock, in hours, as the world lighting shows it: the
+/// legacy daylight table, or the first minute the computed home sun is above the horizon.
+/// `None` when the computed sun neither rises nor sets that day.
+fn sunrise_hour(region: &RegionDefinition, month: SimMonth) -> Option<f64> {
+    if let SolarModel::DaylightTable(daylight) = &region.solar().model {
+        return Some(daylight[month.index0()].0);
+    }
+    let up = |tick| {
+        region
+            .sun_at_home(month, tick)
+            .is_some_and(|sun| sun.elevation_deg > 0.0)
+    };
+    (1..TICKS_PER_DAY)
+        .find(|&tick| !up(tick - 1) && up(tick))
+        .map(|tick| f64::from(tick) / f64::from(TICKS_PER_HOUR))
+}
+
+fn daily_schedule(sunrise: f64) -> [(DailySound, f64); 5] {
     [
         (DailySound::Rooster, sunrise),
         (DailySound::MetroChime, 8.5),
@@ -203,10 +233,21 @@ mod tests {
         app.update();
     }
 
-    fn before_sunrise(app: &mut App) {
+    /// The first tick at or after `hour`, as `TimeCue` compares them.
+    fn first_tick_at(hour: f64) -> u32 {
+        (0..TICKS_PER_DAY)
+            .find(|&tick| f64::from(tick) / f64::from(TICKS_PER_HOUR) >= hour)
+            .unwrap()
+    }
+
+    fn sunrise_tick(app: &App) -> u32 {
         let session = app.world().resource::<Session>().0.session();
-        let rise = session.region().solar().daylight[session.clock().month().index0()].0;
-        advance(app, (rise * f64::from(TICKS_PER_HOUR)).ceil() as u32 - 1);
+        first_tick_at(sunrise_hour(session.region(), session.clock().month()).unwrap())
+    }
+
+    fn before_sunrise(app: &mut App) {
+        let tick = sunrise_tick(app);
+        advance(app, tick - 1);
     }
 
     fn cue_count(app: &mut App) -> usize {
@@ -285,8 +326,20 @@ mod tests {
     }
 
     #[test]
+    fn the_rooster_crows_when_the_home_sun_rises() {
+        let app = audio_app(shipped_assets());
+        let session = app.world().resource::<Session>().0.session();
+        let (region, month) = (session.region(), session.clock().month());
+        assert!(matches!(region.solar().model, SolarModel::Astronomical));
+        let tick = sunrise_tick(&app);
+        let elevation = |tick| region.sun_at_home(month, tick).unwrap().elevation_deg;
+        assert!(elevation(tick - 1) <= 0.0 && elevation(tick) > 0.0);
+        assert!((4 * 60..8 * 60).contains(&tick), "an April dawn: {tick}");
+    }
+
+    #[test]
     fn laughter_and_sunset_are_no_longer_separate_time_signals() {
-        let hours: Vec<_> = daily_schedule((6.3, 19.1))
+        let hours: Vec<_> = daily_schedule(6.3)
             .into_iter()
             .map(|(_, hour)| hour)
             .collect();
@@ -296,10 +349,8 @@ mod tests {
     #[test]
     fn daily_audio_plays_the_correct_sounds_at_each_scheduled_time() {
         let mut app = audio_app(shipped_assets());
-        let session = app.world().resource::<Session>().0.session();
-        let rise = session.region().solar().daylight[session.clock().month().index0()].0;
         let mut schedule = [
-            ((rise * 60.0).ceil() as u32, DailySound::Rooster),
+            (sunrise_tick(&app), DailySound::Rooster),
             (510, DailySound::MetroChime),
             (720, DailySound::Noon),
             (1020, DailySound::MetroChime),

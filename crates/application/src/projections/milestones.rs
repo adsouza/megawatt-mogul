@@ -1,6 +1,7 @@
 //! One-off achievements, for the player's sense of progress.
 
 use domain::events::DomainEvent;
+use domain::region::Calendar;
 use domain::session::GameSession;
 use domain::time::{Season, SimMonth};
 use domain::units::Megawatts;
@@ -12,7 +13,7 @@ use super::Projection;
 pub enum MilestoneKind {
     /// A month's peak demand reached this many gigawatts.
     ServePeak { gigawatts: u32 },
-    /// Three consecutive closed months of one season, none with a strike.
+    /// Every consecutive month of one regional season, none with a strike.
     FullSeasonWithoutStrike,
     /// This many cities are connected.
     ConnectCities { count: u32 },
@@ -48,9 +49,6 @@ pub enum MilestoneProgress {
     /// Cities connected now, against the cities to connect.
     Cities { connected: u32, needed: u32 },
 }
-
-/// Closed months in a row of one season needed for a strike-free season.
-const SEASON_MONTHS: u32 = 3;
 
 const MW_PER_GW: f64 = 1_000.0;
 
@@ -96,7 +94,12 @@ impl MilestoneProjection {
 
     /// When `kind` was reached, or how far the player is from it in `now`,
     /// the month being played (or reviewed).
-    pub fn status(&self, kind: MilestoneKind, now: SimMonth) -> MilestoneStatus {
+    pub fn status(
+        &self,
+        kind: MilestoneKind,
+        now: SimMonth,
+        calendar: &Calendar,
+    ) -> MilestoneStatus {
         if let Some((_, month)) = self.reached.iter().find(|(reached, _)| *reached == kind) {
             return MilestoneStatus::Reached { month: *month };
         }
@@ -108,10 +111,12 @@ impl MilestoneProjection {
             MilestoneKind::FullSeasonWithoutStrike => MilestoneProgress::StrikeFreeMonths {
                 months: match self.run {
                     // A run of last season's months is no progress in this one.
-                    Some(run) if !self.strike_pending && run.season == now.season() => run.months,
+                    Some(run) if !self.strike_pending && run.season == calendar.season(now) => {
+                        run.months
+                    }
                     _ => 0,
                 },
-                needed: SEASON_MONTHS,
+                needed: u32::from(calendar.run_length(now)),
             },
             MilestoneKind::ConnectCities { count } => MilestoneProgress::Cities {
                 connected: self.connected_cities,
@@ -134,16 +139,17 @@ impl MilestoneProjection {
         self.set_connected_cities(
             u32::try_from(connected).unwrap_or(u32::MAX),
             session.clock().month(),
+            session.region().calendar(),
         );
     }
 
-    fn set_connected_cities(&mut self, count: u32, month: SimMonth) {
+    fn set_connected_cities(&mut self, count: u32, month: SimMonth, calendar: &Calendar) {
         self.connected_cities = count;
-        self.check(month);
+        self.check(month, calendar);
     }
 
-    fn close_month(&mut self, month: SimMonth, peak: Megawatts) {
-        let season = month.season();
+    fn close_month(&mut self, month: SimMonth, peak: Megawatts, calendar: &Calendar) {
+        let season = calendar.season(month);
         self.peak_demand = self.peak_demand.max(peak);
         self.run = if std::mem::take(&mut self.strike_pending) {
             None
@@ -156,28 +162,31 @@ impl MilestoneProjection {
                 _ => StrikeFreeRun { season, months: 1 },
             })
         };
-        self.check(month);
+        self.check(month, calendar);
     }
 
     /// Records every milestone whose condition now holds and that is not yet
     /// reached, in [`MILESTONES`] order, as reached in `month`.
-    fn check(&mut self, month: SimMonth) {
+    fn check(&mut self, month: SimMonth, calendar: &Calendar) {
         for kind in MILESTONES {
-            if !self.reached.iter().any(|(reached, _)| *reached == kind) && self.is_met(kind) {
+            if !self.reached.iter().any(|(reached, _)| *reached == kind)
+                && self.is_met(kind, month, calendar)
+            {
                 self.reached.push((kind, month));
                 self.newly_reached.push(kind);
             }
         }
     }
 
-    fn is_met(&self, kind: MilestoneKind) -> bool {
+    fn is_met(&self, kind: MilestoneKind, month: SimMonth, calendar: &Calendar) -> bool {
         match kind {
             MilestoneKind::ServePeak { gigawatts } => {
                 self.peak_demand.value() >= f64::from(gigawatts) * MW_PER_GW
             }
-            MilestoneKind::FullSeasonWithoutStrike => {
-                self.run.is_some_and(|run| run.months >= SEASON_MONTHS)
-            }
+            MilestoneKind::FullSeasonWithoutStrike => self.run.is_some_and(|run| {
+                run.season == calendar.season(month)
+                    && run.months >= u32::from(calendar.run_length(month))
+            }),
             MilestoneKind::ConnectCities { count } => self.connected_cities >= count,
         }
     }
@@ -187,7 +196,11 @@ impl Projection for MilestoneProjection {
     fn apply(&mut self, event: &DomainEvent, session: &GameSession) {
         match event {
             DomainEvent::MonthClosed(report) => {
-                self.close_month(report.month, report.peak_demand);
+                self.close_month(
+                    report.month,
+                    report.peak_demand,
+                    session.region().calendar(),
+                );
             }
             DomainEvent::StrikeIssued { .. } => self.strike_pending = true,
             DomainEvent::CityConnected { .. } => self.observe_connected_cities(session),
@@ -303,6 +316,90 @@ mod tests {
     use crate::projections::test_support::{report, session};
     use domain::regulation::StrikeReason;
     use domain::time::SimMonth;
+
+    #[test]
+    fn india_calendar_needs_two_winter_months_and_four_monsoon_months() {
+        use Season::*;
+        use domain::region::Calendar;
+        let calendar = Calendar {
+            seasons: [
+                Winter,
+                Winter,
+                Summer,
+                Summer,
+                Summer,
+                Monsoon,
+                Monsoon,
+                Monsoon,
+                Monsoon,
+                PostMonsoon,
+                PostMonsoon,
+                PostMonsoon,
+            ],
+        };
+        let mut milestones = MilestoneProjection::new(&session());
+        let jan = SimMonth::new(2027, 1).unwrap();
+        let feb = SimMonth::new(2027, 2).unwrap();
+        let jul = SimMonth::new(2027, 7).unwrap();
+        assert_eq!(
+            milestones.status(MilestoneKind::FullSeasonWithoutStrike, jan, &calendar),
+            MilestoneStatus::InProgress(MilestoneProgress::StrikeFreeMonths {
+                months: 0,
+                needed: 2
+            })
+        );
+        assert_eq!(
+            milestones.status(MilestoneKind::FullSeasonWithoutStrike, jul, &calendar),
+            MilestoneStatus::InProgress(MilestoneProgress::StrikeFreeMonths {
+                months: 0,
+                needed: 4
+            })
+        );
+        milestones.close_month(jan, Megawatts::ZERO, &calendar);
+        assert_eq!(
+            milestones.status(MilestoneKind::FullSeasonWithoutStrike, feb, &calendar),
+            MilestoneStatus::InProgress(MilestoneProgress::StrikeFreeMonths {
+                months: 1,
+                needed: 2
+            })
+        );
+        milestones.close_month(feb, Megawatts::ZERO, &calendar);
+        assert_eq!(
+            milestones.status(MilestoneKind::FullSeasonWithoutStrike, feb, &calendar),
+            MilestoneStatus::Reached { month: feb }
+        );
+    }
+
+    #[test]
+    fn connecting_a_city_cannot_count_an_incomplete_previous_season() {
+        use Season::*;
+        let calendar = Calendar {
+            seasons: [
+                Winter,
+                Winter,
+                Summer,
+                Summer,
+                Summer,
+                Monsoon,
+                Monsoon,
+                Monsoon,
+                Monsoon,
+                PostMonsoon,
+                PostMonsoon,
+                PostMonsoon,
+            ],
+        };
+        let mut milestones = MilestoneProjection::new(&session());
+        for m in [7, 8, 9] {
+            milestones.close_month(SimMonth::new(2027, m).unwrap(), Megawatts::ZERO, &calendar);
+        }
+        milestones.set_connected_cities(3, SimMonth::new(2027, 10).unwrap(), &calendar);
+        assert!(
+            !milestones
+                .reached()
+                .contains(&MilestoneKind::FullSeasonWithoutStrike)
+        );
+    }
 
     fn close(projection: &mut MilestoneProjection, month: u8, peak_mw: f64) {
         let event = DomainEvent::MonthClosed(Box::new(report(2027, month, peak_mw)));
@@ -429,10 +526,10 @@ mod tests {
     fn connect_cities_reached_at_the_threshold() {
         let mut milestones = MilestoneProjection::new(&session());
         let month = SimMonth::new(2027, 3).unwrap();
-        milestones.set_connected_cities(9, month);
+        milestones.set_connected_cities(9, month, session().region().calendar());
         assert_eq!(milestones.reached(), []);
-        milestones.set_connected_cities(10, month);
-        milestones.set_connected_cities(11, month);
+        milestones.set_connected_cities(10, month, session().region().calendar());
+        milestones.set_connected_cities(11, month, session().region().calendar());
         assert_eq!(
             milestones.reached(),
             [MilestoneKind::ConnectCities { count: 10 }]
@@ -473,21 +570,21 @@ mod tests {
         let mut milestones = MilestoneProjection::new(&session());
         let cities = MilestoneKind::ConnectCities { count: 10 };
         assert_eq!(
-            milestones.status(PEAK_50, now),
+            milestones.status(PEAK_50, now, session().region().calendar()),
             MilestoneStatus::InProgress(MilestoneProgress::Peak {
                 best: Megawatts::new(0.0),
                 goal: Megawatts::new(50_000.0),
             })
         );
         assert_eq!(
-            milestones.status(FULL_SEASON, now),
+            milestones.status(FULL_SEASON, now, session().region().calendar()),
             MilestoneStatus::InProgress(MilestoneProgress::StrikeFreeMonths {
                 months: 0,
                 needed: 3,
             })
         );
         assert_eq!(
-            milestones.status(cities, now),
+            milestones.status(cities, now, session().region().calendar()),
             MilestoneStatus::InProgress(MilestoneProgress::Cities {
                 connected: 2,
                 needed: 10,
@@ -498,7 +595,7 @@ mod tests {
         close(&mut milestones, 3, 30_000.0);
         close(&mut milestones, 4, 20_000.0);
         assert_eq!(
-            milestones.status(PEAK_50, now),
+            milestones.status(PEAK_50, now, session().region().calendar()),
             MilestoneStatus::InProgress(MilestoneProgress::Peak {
                 best: Megawatts::new(30_000.0),
                 goal: Megawatts::new(50_000.0),
@@ -506,7 +603,7 @@ mod tests {
             "the best peak so far, not the last"
         );
         assert_eq!(
-            milestones.status(FULL_SEASON, now),
+            milestones.status(FULL_SEASON, now, session().region().calendar()),
             MilestoneStatus::InProgress(MilestoneProgress::StrikeFreeMonths {
                 months: 2,
                 needed: 3,
@@ -514,7 +611,7 @@ mod tests {
         );
         strike(&mut milestones);
         assert_eq!(
-            milestones.status(FULL_SEASON, now),
+            milestones.status(FULL_SEASON, now, session().region().calendar()),
             MilestoneStatus::InProgress(MilestoneProgress::StrikeFreeMonths {
                 months: 0,
                 needed: 3,
@@ -524,14 +621,14 @@ mod tests {
 
         close(&mut milestones, 6, 55_000.0);
         assert_eq!(
-            milestones.status(PEAK_50, now),
+            milestones.status(PEAK_50, now, session().region().calendar()),
             MilestoneStatus::Reached {
                 month: SimMonth::new(2027, 6).unwrap()
             }
         );
-        milestones.set_connected_cities(10, start);
+        milestones.set_connected_cities(10, start, session().region().calendar());
         assert_eq!(
-            milestones.status(cities, now),
+            milestones.status(cities, now, session().region().calendar()),
             MilestoneStatus::Reached { month: start }
         );
     }
@@ -550,16 +647,22 @@ mod tests {
         };
         let may = SimMonth::new(2027, 5).unwrap();
         assert_eq!(
-            milestones.status(FULL_SEASON, may),
+            milestones.status(FULL_SEASON, may, session().region().calendar()),
             progress(2),
             "May's review"
         );
 
         // June is Summer: no Summer month has closed yet.
         let june = SimMonth::new(2027, 6).unwrap();
-        assert_eq!(milestones.status(FULL_SEASON, june), progress(0));
+        assert_eq!(
+            milestones.status(FULL_SEASON, june, session().region().calendar()),
+            progress(0)
+        );
 
         close(&mut milestones, 6, 100.0);
-        assert_eq!(milestones.status(FULL_SEASON, june), progress(1));
+        assert_eq!(
+            milestones.status(FULL_SEASON, june, session().region().calendar()),
+            progress(1)
+        );
     }
 }

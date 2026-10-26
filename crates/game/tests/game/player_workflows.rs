@@ -1,4 +1,5 @@
 //! Player tasks through actual widgets, dispatch, simulation and retained history.
+use crate::support::usd_style;
 use application::Command;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
@@ -236,9 +237,14 @@ fn edit_a_valid_schedule_check_forecast_operate_review_and_revisit_history() {
         );
         click(&pass, &mut app, size, "Supply demand retrospective");
         assert!(app.world().resource::<UiState>().review_supply);
-        let history = hud::supply_history_model(&app.world().resource::<Session>().0, None, &l10n)
-            .chart
-            .unwrap();
+        let history = hud::supply_history_model(
+            &app.world().resource::<Session>().0,
+            None,
+            &l10n,
+            &usd_style(),
+        )
+        .chart
+        .unwrap();
         assert_eq!(history.demand.len(), 1440);
         assert_eq!(app.world().resource::<Session>().0.checkpoint(), checkpoint);
         click(&pass, &mut app, size, "Review summary");
@@ -251,9 +257,14 @@ fn edit_a_valid_schedule_check_forecast_operate_review_and_revisit_history() {
         click(&pass, &mut app, size, &l10n.text("supply-history-title"));
         assert_eq!(app.world().resource::<UiState>().tab, PlanningTab::History);
         assert_eq!(
-            hud::supply_history_model(&app.world().resource::<Session>().0, None, &l10n)
-                .chart
-                .unwrap(),
+            hud::supply_history_model(
+                &app.world().resource::<Session>().0,
+                None,
+                &l10n,
+                &usd_style()
+            )
+            .chart
+            .unwrap(),
             history
         );
         assert_eq!(

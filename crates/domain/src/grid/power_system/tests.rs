@@ -1,5 +1,5 @@
 use super::*;
-use crate::demand::shape_factor;
+
 use crate::generation::{CommitmentSchedule, PlantStatus, water_fill};
 use crate::grid::network::{LineStatus, Node, NodeKind};
 use crate::ids::{CellCoord, LineId};
@@ -534,7 +534,7 @@ const MIDDAY: std::ops::Range<u32> = 660..860;
 
 /// The most a tiny-region solar plant could produce at `tick` (clear sky).
 fn clear_sky_solar(region: &RegionDefinition, tick: u32) -> f64 {
-    300.0 * 0.8 * sun_factor(region.solar(), april(), tick)
+    300.0 * 0.8 * region.sun(cell(5, 5), april(), tick)
 }
 
 /// The start fleet at random fixed (not auto-follow) targets, as fractions of
@@ -933,7 +933,7 @@ fn tick_completed_carries_the_summary_last() {
 fn connected_demand_forecast_counts_connected_cities_only() {
     let region = tiny_region();
     let sys = system_with(&region, &[]);
-    let factor = shape_factor(region.demand(), april(), 600);
+    let factor = region.load_factor(region.cities()[0].id, april(), 600);
     let forecast = sys.connected_demand_forecast(&region, april(), 600);
     assert!((forecast.value() - 1000.0 * factor).abs() < 1e-9);
 }
@@ -950,7 +950,7 @@ fn expected_solar_uses_mean_clearness_for_connected_plants() {
         &region,
         &[connected(PlantKind::Solar, cell(5, 5)), isolated],
     );
-    let sun = sun_factor(region.solar(), april(), 762);
+    let sun = region.sun(cell(5, 5), april(), 762);
     let expected = 300.0 * 0.8 * sun * 0.75;
     let got = sys.expected_solar(&region, april(), 762);
     assert!((got.value() - expected).abs() < 1e-9);
@@ -1050,7 +1050,7 @@ fn projected_peak_uses_summed_hourly_means_and_current_connectivity() {
         let mut best = 0.0f64;
         for _ in 0..12 {
             for h in 0..24 {
-                best = best.max(shape_factor(region.demand(), month, h * 60 + 30));
+                best = best.max(region.load_factor(region.cities()[0].id, month, h * 60 + 30));
             }
             month = month.next();
         }
@@ -1309,7 +1309,7 @@ fn tick_demand_is_the_forecast_times_one_plus_the_drawn_error() {
     for t in 0..40 {
         let mut shadow_rng = rng.clone();
         let mut shadow_noise = sys.noise;
-        let error = shadow_noise.step(region.demand(), &mut shadow_rng);
+        let error = shadow_noise.step(region.demand_noise(), &mut shadow_rng);
         let forecast = sys.connected_demand_forecast(&region, april(), t);
         let (s, _) = sys.tick(&region, april(), t, &mut rng);
         assert!(close(s.demand, forecast * (1.0 + error)), "tick {t}");
@@ -2526,7 +2526,7 @@ fn the_last_hour_is_not_ramped_to_zero_before_midnight() {
     // otherwise AGC may legitimately reduce output as customer demand falls.
     let region = region_with(|parts| {
         noise_free(parts);
-        parts.demand.winter = [1.0; 24];
+        parts.climates[0].shapes[0] = [1.0; 24];
     });
     let mut sys = west_like_fleet(&region);
     let mut rng = SimRng::from_seed(21);
@@ -3652,7 +3652,7 @@ fn region_with(edit: impl FnOnce(&mut crate::region::RegionDefinitionParts)) -> 
 
 /// Turns demand noise off, so a tick's demand is exactly the forecast.
 fn noise_free(parts: &mut crate::region::RegionDefinitionParts) {
-    parts.demand.forecast_error = Ratio::ZERO;
+    parts.demand_noise.forecast_error = Ratio::ZERO;
 }
 
 /// Connects city 3 at the start too, with `base_load` MW of base load: the
@@ -3866,7 +3866,7 @@ fn the_boundary_is_dispatched_against_the_load_hour_zeros_outage_leaves() {
     // capacity; the second must bring it down to the reduced load.
     let region = region_with(|p| {
         connect_city_3(p, 2_000.0);
-        p.demand.shoulder[1] = 0.90;
+        p.climates[0].shapes[2][1] = 0.90;
     });
     let mut sys = auto_follow_fleet(&region);
     sys.begin_day(&region, april(), &mut SimRng::from_seed(3));
@@ -5146,4 +5146,69 @@ fn plan5_overlap_supports_a_deficit_despite_charging_eligibility() {
     let flows = sys.propose_battery_flows(&region, april(), 960, demand, demand);
     assert_eq!(flows[&id].charge, Megawatts::ZERO);
     assert_eq!(flows[&id].discharge, Megawatts::new(100.0));
+}
+
+#[test]
+fn astronomical_solar_actual_forecast_and_curtailment_use_each_plant_cell() {
+    let region = crate::region::fixtures::astronomical_region();
+    let west = cell(1, 3);
+    let east = cell(10, 3);
+    let mut sys = system_with(
+        &region,
+        &[
+            connected(PlantKind::Solar, west),
+            connected(PlantKind::Solar, east),
+            connected(PlantKind::Wind, cell(7, 3)),
+        ],
+    );
+    sys.begin_day(&region, april(), &mut SimRng::from_seed(1));
+    // At 05:00 MSK (02:00 UTC) the eastern site is lit while the western site is dark.
+    let tick = 300;
+    assert_eq!(region.sun(west, april(), tick), 0.0);
+    assert!(region.sun(east, april(), tick) > 0.0);
+    let east_clear = 300.0 * 0.8 * region.sun(east, april(), tick);
+    let expected = east_clear * 0.75;
+    assert!((sys.expected_solar(&region, april(), tick).value() - expected).abs() < 1e-9);
+    assert!(
+        (battery::BatteryPlanningInputs::new(&sys, &region, april())
+            .minute(tick)
+            .solar
+            .value()
+            - expected)
+            .abs()
+            < 1e-9
+    );
+    let (available, _, _) = sys.availability(&region, april(), tick);
+    assert_eq!(available[&PlantId(1)], Megawatts::ZERO);
+    let actual = east_clear * sys.clearness;
+    assert!((available[&PlantId(2)].value() - actual).abs() < 1e-9);
+    let wind = available[&PlantId(3)].value();
+    let withheld = Megawatts::new((actual + wind) * 0.25);
+    let split = sys.withheld_by_kind(&region, april(), tick, withheld);
+    assert!((split[&PlantKind::Solar].value() - actual * 0.25).abs() < 1e-9);
+    assert!((split[&PlantKind::Wind].value() - wind * 0.25).abs() < 1e-9);
+}
+
+#[test]
+fn outage_sizing_finds_a_peak_at_a_half_hour_bend() {
+    let region = region_with(|p| {
+        p.start.connected_cities = vec![crate::ids::CityId(1)];
+        p.cities[0].base_load = Megawatts::new(100.0);
+        p.clock.zones.push(crate::region::TimeZone {
+            id: crate::region::ZoneId(1),
+            name_key: None,
+            standard_offset_minutes: 330,
+            dst_months: [false; 12],
+        });
+        p.city_locales.get_mut(&crate::ids::CityId(1)).unwrap().zone = crate::region::ZoneId(1);
+        p.climates[0].shapes = vec![[1.0; 24]];
+        p.climates[0].shapes[0][6] = 2.0;
+        p.climates[0].month_shapes = [0; 12];
+        p.climates[0].monthly = [1.0; 12];
+    });
+    let mut sys = system_with(&region, &[connected(PlantKind::Peaker, cell(5, 1))]);
+    place(&mut sys, 1, 199.0, Some(199.0));
+    let before = sys.clone();
+    assert!((sys.size_outage(&region, april(), 0).value() - 0.005).abs() < 1e-12);
+    assert_eq!(sys, before);
 }

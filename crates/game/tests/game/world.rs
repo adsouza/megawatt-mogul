@@ -1,4 +1,5 @@
 //! Plan 3's CPU geometry contract: no window, renderer or simulation mutation.
+use crate::support::usd_style;
 use bevy::math::Vec3;
 use domain::{
     ids::CellCoord,
@@ -416,11 +417,7 @@ fn world_city_heights_are_proportional_to_demand_in_planning_and_operation() {
                 } else {
                     detail.demand_now.unwrap_or_else(|| {
                         detail.base_load
-                            * domain::demand::shape_factor(
-                                model.region.demand(),
-                                model.month,
-                                model.tick,
-                            )
+                            * model.region.load_factor(city.id, model.month, model.tick)
                     })
                 };
                 let demand = expected.value() as f32;
@@ -555,6 +552,7 @@ fn world_real_click_on_site_ground_opens_the_building_instead_of_plant_construct
                 &world.resource::<Session>().0,
                 world.resource::<Localizer>(),
                 expected,
+                &usd_style(),
             )
             .unwrap();
             assert!(matches!(model.plant, PlantSection::PickCell { .. }));
@@ -1796,26 +1794,23 @@ fn world_secondary_middle_and_shift_drags_pan_without_orbiting_or_selecting() {
     assert_ne!((after.yaw, after.elevation), (before.yaw, before.elevation));
 }
 
-fn western_solar() -> domain::region::SolarParams {
-    use application::RegionCatalog;
-    let catalog = infrastructure::region::RonRegionCatalog::new(
-        crate::support::shipped_assets().join("regions"),
-    );
-    catalog
-        .load(&domain::ids::RegionId::new("western_interconnection"))
-        .unwrap()
-        .definition
-        .solar()
-        .clone()
+fn legacy_western_solar() -> std::sync::Arc<domain::region::RegionDefinition> {
+    infrastructure::region::load_region_bytes(
+        include_bytes!("../../../infrastructure/tests/support/global-foundations/western_interconnection-v3.ron").to_vec(),
+        &domain::ids::RegionId::new("western_interconnection"),
+    ).unwrap().definition
 }
 
 #[test]
-fn world_sun_arc_runs_east_to_south_to_west_and_varies_with_the_month() {
+fn world_legacy_sun_arc_runs_east_to_south_to_west_and_varies_with_the_month() {
     use domain::time::SimMonth;
-    let solar = &western_solar();
+    let solar = &legacy_western_solar();
     for month in [1, 6, 12] {
         let month = SimMonth::new(2027, month).unwrap();
-        let (rise, set) = solar.daylight[month.index0()];
+        let domain::region::SolarModel::DaylightTable(table) = &solar.solar().model else {
+            unreachable!()
+        };
+        let (rise, set) = table[month.index0()];
         let at = |fraction: f64| {
             game::world::sun_position(
                 solar,
@@ -1834,7 +1829,10 @@ fn world_sun_arc_runs_east_to_south_to_west_and_varies_with_the_month() {
     }
     let noon = |m| {
         let month = SimMonth::new(2027, m).unwrap();
-        let (rise, set) = solar.daylight[month.index0()];
+        let domain::region::SolarModel::DaylightTable(table) = &solar.solar().model else {
+            unreachable!()
+        };
+        let (rise, set) = table[month.index0()];
         game::world::sun_position(solar, month, ((rise + set) * 30.0).round() as u32)
     };
     assert!(noon(6).toward_sun.y > noon(12).toward_sun.y);
@@ -1842,14 +1840,15 @@ fn world_sun_arc_runs_east_to_south_to_west_and_varies_with_the_month() {
 
 proptest! {
     #[test]
-    fn world_sun_arc_is_finite_unit_length_and_dark_outside_daylight(month in 1u8..13, tick in 0u32..=1440) {
-        let solar = western_solar();
+    fn world_legacy_sun_arc_is_finite_unit_length_and_dark_outside_daylight(month in 1u8..13, tick in 0u32..=1440) {
+        let solar = legacy_western_solar();
         let month = domain::time::SimMonth::new(2027, month).unwrap();
         let sun = game::world::sun_position(&solar, month, tick);
         prop_assert!(sun.toward_sun.is_finite());
         prop_assert!((sun.toward_sun.length() - 1.0).abs() < 1e-5);
         prop_assert!((0.0..=1.0).contains(&sun.strength));
-        let (rise, set) = solar.daylight[month.index0()];
+        let domain::region::SolarModel::DaylightTable(table) = &solar.solar().model else { unreachable!() };
+        let (rise, set) = table[month.index0()];
         let hour = f64::from(tick) / 60.0;
         if hour <= rise || hour >= set { prop_assert_eq!(sun.strength, 0.0); }
         else { prop_assert!(sun.strength > 0.0 && sun.toward_sun.y > 0.0); }
@@ -1929,7 +1928,14 @@ fn world_sunlight_changes_direction_with_the_operating_clock() {
         .query::<&DirectionalLight>()
         .single(app.world())
         .unwrap();
-    assert!(light.illuminance > 10000.0 && light.shadow_maps_enabled);
+    // Independent spherical calculation for the February 15 preview: Seattle's
+    // cell centre is (47.8 N, 122.170833333 W), PT=-480, solar noon rounds
+    // to 12:09. delta=-23.44*cos(2*pi*56/365); H=0.079166667 degrees.
+    // Direct east/up/south components give the following vector and sin(elevation).
+    assert!((light.illuminance - 6751.719).abs() < 0.1);
+    assert!(light.shadow_maps_enabled);
+    let toward_sun = -direction(&mut app);
+    assert!(toward_sun.abs_diff_eq(Vec3::new(-0.00134429, 0.48226565, 0.876024), 1e-5));
 }
 
 #[test]
@@ -2264,8 +2270,18 @@ fn world_flow_pulses_animate_freeze_hide_and_leave_simulation_and_assets_unchang
     app.update();
     let before = visible(&mut app);
     assert!(!before.is_empty(), "generating plants supply cities");
-    let pulse = before[0].0;
     let world = app.world();
+    // Submarine routes preserve their dark vertex colours instead of using the inland
+    // energized material. Compare the cyan dot against an inland line's deeper blue.
+    let model = world.resource::<WorldScene>().model.as_ref().unwrap();
+    let pulse = before
+        .iter()
+        .map(|(entity, _)| *entity)
+        .find(|entity| {
+            let key = world.get::<FlowPulse>(*entity).unwrap().path;
+            !model.lines[&model.flow_paths[&key].line].submarine
+        })
+        .expect("an energized inland route");
     let key = world.get::<FlowPulse>(pulse).unwrap().path;
     let line_id = world
         .resource::<WorldScene>()
@@ -2393,4 +2409,380 @@ fn world_flow_pulses_animate_freeze_hide_and_leave_simulation_and_assets_unchang
             .count(),
         0
     );
+}
+
+#[test]
+fn world_computed_sun_points_north_in_the_south_and_is_finite_overhead() {
+    use domain::region::{GeoBounds, RegionDefinition, SolarModel, fixtures};
+    let month = domain::time::SimMonth::new(2027, 1).unwrap();
+    let mut parts = fixtures::tiny_region_parts();
+    parts.solar.model = SolarModel::Astronomical;
+    parts.geo = GeoBounds {
+        west: -1.0,
+        east: 1.0,
+        south: -25.0,
+        north: -24.0,
+    };
+    parts.clock.zones[0].standard_offset_minutes = 0;
+    let region = RegionDefinition::try_from(parts).unwrap();
+    let sun = game::world::sun_position(&region, month, 720);
+    assert!(sun.toward_sun.z < 0.0);
+    assert!(sun.toward_sun.y > 0.9);
+    assert!(sun.toward_sun.is_finite());
+    assert!((sun.toward_sun.length() - 1.0).abs() < 1e-5);
+    assert!((sun.strength - sun.toward_sun.y).abs() < 1e-6);
+
+    let mut parts = fixtures::tiny_region_parts();
+    parts.solar.model = SolarModel::Astronomical;
+    let home = parts
+        .cities
+        .iter()
+        .find(|c| c.id == parts.start.home_city)
+        .unwrap()
+        .cell;
+    let dec = domain::generation::declination_deg(month);
+    parts.geo = GeoBounds {
+        west: -f64::from(home.x) - 0.5,
+        east: 12.0 - f64::from(home.x) - 0.5,
+        north: dec + f64::from(home.y) + 0.5,
+        south: dec + f64::from(home.y) + 0.5 - 8.0,
+    };
+    parts.clock.zones[0].standard_offset_minutes = 0;
+    let region = RegionDefinition::try_from(parts).unwrap();
+    let overhead = game::world::sun_position(&region, month, 720);
+    assert!(overhead.toward_sun.is_finite());
+    assert!(overhead.toward_sun.y > 0.9999);
+    assert!(overhead.strength > 0.9999);
+}
+
+// Plan 7 frame budgets at the largest grid a region may ship (256 x 128).
+mod max_grid {
+    use application::{
+        Game, InMemoryCommandLog, LoadedRegion, RegionCatalog, RegionFingerprint, RegionListing,
+        RegionLoadError,
+    };
+    use bevy::prelude::*;
+    use domain::{
+        ids::{CellCoord, RegionId},
+        region::fixtures,
+        session::GameSettings,
+    };
+    use game::{
+        hud::{MapLayer, Selection},
+        sim::Session,
+        world::{
+            MapSurface, OrbitCamera, TerrainGeometry, WorldModel, WorldScene, pick_world,
+            region_terrain, region_terrain_colors, surface_height,
+        },
+    };
+    use std::{sync::Arc, time::Instant};
+
+    struct MaxGridCatalog;
+    impl RegionCatalog for MaxGridCatalog {
+        fn list(&self) -> Result<Vec<RegionListing>, RegionLoadError> {
+            Ok(Vec::new())
+        }
+        fn load(&self, _: &RegionId) -> Result<LoadedRegion, RegionLoadError> {
+            Ok(LoadedRegion {
+                definition: Arc::new(fixtures::max_grid_region()),
+                source_bytes: Vec::new(),
+                fingerprint: RegionFingerprint::new([0; 32]),
+            })
+        }
+    }
+
+    fn max_grid_game() -> Game {
+        Game::start_new(
+            &MaxGridCatalog,
+            &RegionId::new("max-grid"),
+            7,
+            GameSettings::default(),
+            Box::new(InMemoryCommandLog::default()),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn the_max_grid_fixture_is_the_largest_shippable_region() {
+        let region = fixtures::max_grid_region();
+        let terrain = region.terrain();
+        assert_eq!((terrain.width(), terrain.height()), (256, 128));
+        assert_eq!(region.cities().len(), 40);
+        assert!(matches!(
+            region.solar().model,
+            domain::region::SolarModel::Astronomical
+        ));
+        // Varied relief: many distinct heights, so the owned-wall rule has real work to do.
+        let heights: std::collections::BTreeSet<u64> = (0..terrain.height())
+            .flat_map(|y| (0..terrain.width()).map(move |x| CellCoord { x, y }))
+            .filter_map(|at| terrain.get(at))
+            .map(|cell| cell.height.value().to_bits())
+            .collect();
+        assert!(heights.len() > 1_000, "{} distinct heights", heights.len());
+    }
+
+    #[test]
+    fn terrain_mesh_is_built_once_per_region() {
+        let logs = tempfile::TempDir::new().unwrap();
+        let mut app = super::diorama_app(logs.path());
+        app.world_mut().insert_resource(Session(max_grid_game()));
+        app.update();
+        let region = Arc::clone(app.world().resource::<Session>().0.session().region());
+        let builds = |app: &App| app.world().resource::<WorldScene>().terrain_builds;
+        assert_eq!(builds(&app), 1, "the region's mesh is built on load");
+        let size = app
+            .world()
+            .resource::<WorldScene>()
+            .model
+            .as_ref()
+            .unwrap()
+            .size();
+        let layers: Vec<MapLayer> = MapLayer::all().collect();
+        for frame in 0..30 {
+            let t = frame as f32 / 30.0;
+            let pose = OrbitCamera {
+                yaw: t * 2.0,
+                zoom: 1.0 - 0.5 * t,
+                target: Vec2::new(t * 40.0 - 20.0, 10.0 - t * 20.0),
+                ..default()
+            }
+            .pose(size, 1.6);
+            app.world_mut().resource_mut::<MapSurface>().pose = Some(pose);
+            // Changing the overlay recolours the mesh; it must never rebuild its geometry.
+            if frame % 5 == 0 {
+                *app.world_mut().resource_mut::<MapLayer>() = layers[(frame / 5) % layers.len()];
+            }
+            app.update();
+            if frame % 5 == 0 {
+                // The recoloured mesh is the picture a fresh build would draw for that layer.
+                let layer = *app.world().resource::<MapLayer>();
+                let expected = region_terrain(&region, layer).unwrap();
+                let world = app.world_mut();
+                let mesh = world
+                    .query::<&Mesh3d>()
+                    .iter(world)
+                    .filter_map(|handle| world.resource::<Assets<Mesh>>().get(&handle.0))
+                    .find(|mesh| mesh.count_vertices() == expected.positions.len())
+                    .expect("the terrain mesh is in the scene");
+                let Some(bevy::mesh::VertexAttributeValues::Float32x4(colors)) =
+                    mesh.attribute(Mesh::ATTRIBUTE_COLOR)
+                else {
+                    panic!("the terrain mesh has RGBA vertex colours");
+                };
+                assert_eq!(colors, &expected.colors, "{layer:?}");
+            }
+        }
+        assert_eq!(
+            builds(&app),
+            1,
+            "camera motion and overlay changes reuse the region's mesh"
+        );
+    }
+
+    #[test]
+    fn max_grid_mesh_stays_within_vertex_bound() {
+        let region = fixtures::max_grid_region();
+        let terrain = region.terrain();
+        let (width, height) = (i32::from(terrain.width()), i32::from(terrain.height()));
+        let cells = (width * height) as usize;
+        let top = |x: i32, y: i32| {
+            surface_height(
+                terrain,
+                CellCoord {
+                    x: x as u16,
+                    y: y as u16,
+                },
+            )
+        };
+        // The owned-wall rule: only the higher cell of a pair owns the face, and the grid's
+        // outer edge stands on the base, so every edge cell owns its outer face.
+        let mut walls = 0usize;
+        for y in 0..height {
+            for x in 0..width {
+                let h = top(x, y).unwrap();
+                for (nx, ny) in [(x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)] {
+                    let inside = nx >= 0 && ny >= 0 && nx < width && ny < height;
+                    let low = if inside { top(nx, ny).unwrap() } else { -0.25 };
+                    walls += usize::from(h > low);
+                }
+            }
+        }
+        assert!(walls > cells, "relief leaves only {walls} wall faces");
+        let palette = vec![[90, 120, 70]; cells];
+        let mesh = TerrainGeometry::build(terrain, &palette).unwrap();
+        // The bound is 4 x cells + 4 x wall faces; the closed base adds one more quad.
+        let bound = 4 * cells + 4 * walls;
+        assert!(mesh.positions.len() <= bound + 4);
+        assert_eq!(mesh.positions.len(), bound + 4);
+        assert_eq!(mesh.normals.len(), mesh.positions.len());
+        assert_eq!(mesh.colors.len(), mesh.positions.len());
+        assert_eq!(mesh.indices.len(), mesh.positions.len() / 4 * 6);
+        assert!(
+            mesh.indices
+                .iter()
+                .all(|&i| (i as usize) < mesh.positions.len())
+        );
+    }
+
+    #[test]
+    fn recolouring_replays_the_walls_a_build_gave_each_cell() {
+        let region = fixtures::max_grid_region();
+        let terrain = region.terrain();
+        let cells = usize::from(terrain.width()) * usize::from(terrain.height());
+        let palette = |salt: usize| -> Vec<[u8; 3]> {
+            (0..cells)
+                .map(|i| [(i * 7 + salt) as u8, (i * 13) as u8, (i / 3 + salt) as u8])
+                .collect()
+        };
+        let mesh = TerrainGeometry::build(terrain, &palette(0)).unwrap();
+        // The same palette recolours to exactly what a build gave it ...
+        assert_eq!(mesh.colors_of(&palette(0)).unwrap(), mesh.colors);
+        // ... and another palette to exactly what a fresh build would, geometry untouched.
+        let other = TerrainGeometry::build(terrain, &palette(5)).unwrap();
+        assert_eq!(mesh.colors_of(&palette(5)).unwrap(), other.colors);
+        assert_eq!(mesh.positions, other.positions);
+        assert!(matches!(
+            mesh.colors_of(&palette(0)[1..]),
+            Err(game::world::TerrainGeometryError::PaletteLength { .. })
+        ));
+    }
+
+    fn median(mut samples: Vec<f64>) -> f64 {
+        samples.sort_by(f64::total_cmp);
+        samples[samples.len() / 2]
+    }
+
+    fn millis(mut work: impl FnMut()) -> f64 {
+        let start = Instant::now();
+        work();
+        start.elapsed().as_secs_f64() * 1e3
+    }
+
+    /// Run on demand with the workspace crates optimised, `--release` or, to spare the disk,
+    /// `CARGO_PROFILE_DEV_OPT_LEVEL=3 CARGO_PROFILE_DEV_DEBUG=0 cargo nextest run -p game
+    /// --run-ignored ignored-only -E 'test(max_grid_frame_budgets)'`. The budgets are for an
+    /// optimised build on the development Mac; the default test profile compiles the workspace
+    /// crates unoptimised, several times slower, and misses the overlay and picker budgets.
+    #[test]
+    #[ignore = "timing budget; run with optimised workspace crates"]
+    fn max_grid_frame_budgets() {
+        const RUNS: usize = 100;
+        let region = fixtures::max_grid_region();
+        let terrain = region.terrain();
+        let cells = usize::from(terrain.width()) * usize::from(terrain.height());
+        let palette = vec![[90, 120, 70]; cells];
+
+        // Once per region load.
+        let build = median(
+            (0..RUNS)
+                .map(|_| {
+                    millis(|| {
+                        std::hint::black_box(TerrainGeometry::build(terrain, &palette).unwrap());
+                    })
+                })
+                .collect(),
+        );
+
+        // Per click or hover: rays from a spread of screen points, hits and misses alike.
+        let game = max_grid_game();
+        let model = WorldModel::of(&game);
+        let geometry = region_terrain(&model.region, MapLayer::Terrain).unwrap();
+        let pose = OrbitCamera::default().pose(model.size(), 1.6);
+        let rays: Vec<Ray3d> = (0..RUNS)
+            .map(|i| {
+                let (u, v) = ((i % 10) as f32 / 6.0 - 0.75, (i / 10) as f32 / 6.0 - 0.75);
+                pose.ray(Vec2::new(u, v)).unwrap()
+            })
+            .collect();
+        let mut picked = 0;
+        let pick = median(
+            rays.iter()
+                .map(|ray| {
+                    millis(|| {
+                        let hit = pick_world(*ray, &model, &geometry, 1.0);
+                        picked += usize::from(hit != Selection::None);
+                        std::hint::black_box(hit);
+                    })
+                })
+                .collect(),
+        );
+        assert!(
+            picked > RUNS / 2,
+            "only {picked} of {RUNS} rays land on the grid"
+        );
+
+        // Switching the map layer recolours the terrain mesh in place: the slowest layer's
+        // median counts.
+        let overlay = MapLayer::all()
+            .map(|layer| {
+                median(
+                    (0..RUNS)
+                        .map(|_| {
+                            millis(|| {
+                                std::hint::black_box(
+                                    region_terrain_colors(&geometry, &region, layer).unwrap(),
+                                );
+                            })
+                        })
+                        .collect(),
+                )
+            })
+            .fold(0.0, f64::max);
+
+        // One paint of the region picker (globe, every shipped outline, cards) at the smallest
+        // window: layout and tessellation, on a context that has already built its fonts.
+        let picker = picker_paint_median(RUNS);
+
+        eprintln!(
+            "max grid medians over {RUNS} runs: build {build:.3} ms (budget 250), pick {pick:.4} ms \
+             (1), overlay refresh {overlay:.3} ms (4), picker paint {picker:.3} ms (4)"
+        );
+        assert!(build <= 250.0, "TerrainGeometry::build median {build} ms");
+        assert!(pick <= 1.0, "pick_world median {pick} ms");
+        assert!(overlay <= 4.0, "overlay refresh median {overlay} ms");
+        assert!(picker <= 4.0, "region picker paint median {picker} ms");
+    }
+
+    fn picker_paint_median(runs: usize) -> f64 {
+        use crate::support::egui_harness::central;
+        use bevy_egui::egui;
+        use game::hud::{
+            MenuForm, RegionAtlas, RegionListings, draw_region_select, region_select_model,
+        };
+        let catalog = infrastructure::region::RonRegionCatalog::new(
+            crate::support::shipped_assets().join("regions"),
+        );
+        let listings = RegionListings(catalog.list());
+        let l10n = crate::support::shipped_l10n();
+        let model = region_select_model(&listings, Some(42), &l10n)
+            .with_atlas(&RegionAtlas::load(&catalog, &listings), &l10n);
+        assert_eq!(
+            model.regions.len(),
+            crate::support::SHIPPED_REGIONS.len(),
+            "every shipped region is drawn"
+        );
+        let minimum = game::window::MIN_WINDOW_SIZE;
+        let ctx = egui::Context::default();
+        let mut form = MenuForm::new(42);
+        let mut paint = || {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    minimum.to_array().into(),
+                )),
+                ..egui::RawInput::default()
+            };
+            let output = ctx.run_ui(input, |ui| {
+                central(ui, |ui| draw_region_select(ui, &model, &mut form));
+            });
+            let meshes = ctx.tessellate(output.shapes.clone(), output.pixels_per_point);
+            std::hint::black_box(meshes);
+            output.drop_without_applying_deltas();
+        };
+        // Fonts and the globe's cached artwork exist after the first frames.
+        for _ in 0..3 {
+            paint();
+        }
+        median((0..runs).map(|_| millis(&mut paint)).collect())
+    }
 }

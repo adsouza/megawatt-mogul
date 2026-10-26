@@ -3,6 +3,7 @@ use crate::region::load_region_bytes;
 use application::*;
 use domain::ids::RegionId;
 use domain::session::{DayPhase, GameOverReason, SessionStatus};
+use domain::state::SUPPORTED_STATE_SCHEMAS;
 use domain::time::SimMonth;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -42,25 +43,65 @@ pub(super) struct Payload<C> {
     pub(super) phase: PhaseDto,
     pub(super) status: StatusDto,
 }
-/// Only the stamp of a [`Payload`], read when the full payload doesn't parse, so a save another
-/// build wrote in DTO shapes this build doesn't know still names that build. It deliberately
-/// allows unknown fields: RON is self-describing, so serde skips every other field's value,
-/// whatever its shape, through `deserialize_ignored_any`. Only top-level keys match, so a `build`
-/// nested inside a command can't be mistaken for the stamp. Payloads are written without RON
-/// struct names; if that ever changes, this struct's name check would fail and such saves would
-/// read as `Malformed`.
+/// Generic identity-only reader for arbitrary future DTO shapes. Only top-level
+/// keys match; the complete RON value and trailing input must validate.
 #[derive(Deserialize)]
 struct Stamp {
     build: String,
     platform: String,
 }
+
+/// Avoid RON's expensive generic number inference for the known large byte
+/// sequence. A future region encoding falls back to the original generic reader.
+/// Preserve Stamp's struct-name semantics as well as its identity fields.
+#[derive(Deserialize)]
+#[serde(rename = "Stamp")]
+struct ByteRegionStamp {
+    build: String,
+    platform: String,
+    #[serde(rename = "region")]
+    _region: DiscardBytes,
+}
+
+struct DiscardBytes;
+impl<'de> Deserialize<'de> for DiscardBytes {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct BytesVisitor;
+        impl<'de> serde::de::Visitor<'de> for BytesVisitor {
+            type Value = DiscardBytes;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a sequence of bytes")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Self::Value, A::Error> {
+                while seq.next_element::<u8>()?.is_some() {}
+                Ok(DiscardBytes)
+            }
+        }
+        deserializer.deserialize_seq(BytesVisitor)
+    }
+}
+
+fn read_stamp(payload: &str, options: &ron::Options) -> ron::error::SpannedResult<Stamp> {
+    options
+        .from_str::<ByteRegionStamp>(payload)
+        .map(|s| Stamp {
+            build: s.build,
+            platform: s.platform,
+        })
+        .or_else(|_| options.from_str::<Stamp>(payload))
+}
 #[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(Debug))]
 pub(super) enum PhaseDto {
     Planning,
     Operating,
     Review,
 }
 #[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(Debug))]
 pub(super) enum StatusDto {
     Active,
     Bankrupt,
@@ -204,7 +245,7 @@ fn decode_typed_payload<C: for<'de> Deserialize<'de> + Into<super::journal::Jour
     let p: Payload<C> = match options.from_str(&e.payload) {
         Ok(p) => p,
         Err(error) => {
-            return Err(match options.from_str::<Stamp>(&e.payload) {
+            return Err(match read_stamp(&e.payload, &options) {
                 Ok(stamp) => {
                     let recorded = ReplayCompatibility {
                         build: stamp.build,
@@ -270,7 +311,7 @@ fn decode_payload<C: Into<super::journal::JournalRecord>>(
     // could suppress the still-usable legacy original without being restorable by this build.
     if p.snapshot
         .as_ref()
-        .is_some_and(|s| !(1..=2).contains(&s.schema))
+        .is_some_and(|s| !SUPPORTED_STATE_SCHEMAS.contains(&s.schema))
     {
         return Err(SaveError::Restore(RestoreError::InvalidSnapshot));
     }
@@ -333,6 +374,7 @@ fn decode_payload<C: Into<super::journal::JournalRecord>>(
 }
 
 #[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(Debug))]
 #[serde(deny_unknown_fields)]
 pub(super) struct OriginDto {
     slot: String,
@@ -388,7 +430,7 @@ impl SnapshotDto {
             }
             Ok(out)
         }
-        if !(1..=2).contains(&self.schema) {
+        if !SUPPORTED_STATE_SCHEMAS.contains(&self.schema) {
             return Err(SaveError::Restore(RestoreError::InvalidSnapshot));
         }
         Ok(PortableState {
@@ -421,5 +463,29 @@ impl OriginDto {
             state_hash: self.state_hash,
             command_count: self.command_count,
         })
+    }
+}
+
+#[cfg(test)]
+mod stamp_tests {
+    use super::DiscardBytes;
+
+    #[test]
+    fn byte_discard_uses_typed_u8_validation_and_consumes_the_sequence() {
+        for source in ["[]", "[0, 255, 42]"] {
+            assert!(ron::from_str::<DiscardBytes>(source).is_ok());
+        }
+        // IgnoredAny would accept these valid RON values; typed u8 decoding must
+        // decline them so read_stamp can use its fully generic future-shape path.
+        for source in [
+            "[256]",
+            "[-1]",
+            "[0.5]",
+            "[Some(1)]",
+            "[0,255",
+            "[0] trailing",
+        ] {
+            assert!(ron::from_str::<DiscardBytes>(source).is_err(), "{source}");
+        }
     }
 }

@@ -4,6 +4,7 @@
 //! regions and translations, a real `Game`), and a scripted click must produce the expected
 //! `UiAction`.
 
+use crate::support::usd_style;
 use std::cell::RefCell;
 use std::fs;
 use std::path::Path;
@@ -60,15 +61,22 @@ fn shipped_listings() -> RegionListings {
     listings_in(&shipped_assets().join("regions"))
 }
 
-/// A regions folder holding only the shipped eastern region, plus `extra` files.
+/// A regions folder holding only the shipped eastern region and its sidecars, plus `extra`
+/// files.
 fn regions_with_eastern(extra: &[(&str, &str)]) -> TempDir {
     let dir = TempDir::new().unwrap();
     let eastern = format!("{EASTERN}.ron");
-    fs::copy(
-        shipped_assets().join("regions").join(&eastern),
-        dir.path().join(&eastern),
-    )
-    .unwrap();
+    let shipped = shipped_assets().join("regions");
+    fs::copy(shipped.join(&eastern), dir.path().join(&eastern)).unwrap();
+    fs::create_dir(dir.path().join(EASTERN)).unwrap();
+    for entry in fs::read_dir(shipped.join(EASTERN)).unwrap() {
+        let path = entry.unwrap().path();
+        fs::copy(
+            &path,
+            dir.path().join(EASTERN).join(path.file_name().unwrap()),
+        )
+        .unwrap();
+    }
     for (name, contents) in extra {
         fs::write(dir.path().join(name), contents).unwrap();
     }
@@ -314,7 +322,7 @@ fn an_empty_or_missing_regions_folder_offers_back() {
 fn top_bar_colors_show_standing_and_keep_labels_readable() {
     let l10n = shipped_l10n();
     let game = eastern_game();
-    let mut model = top_bar_model(&game, &Persistence::default(), &l10n);
+    let mut model = top_bar_model(&game, &Persistence::default(), &l10n, &usd_style());
     let ctx = egui::Context::default();
     ctx.set_visuals(game::hud::theme::visuals());
     let mut rendered = Vec::new();
@@ -360,7 +368,7 @@ fn top_bar_colors_show_standing_and_keep_labels_readable() {
 fn the_top_bar_draws_a_real_game_and_its_menu_button_asks_first() {
     let l10n = shipped_l10n();
     let game = eastern_game();
-    let model = top_bar_model(&game, &Persistence::default(), &l10n);
+    let model = top_bar_model(&game, &Persistence::default(), &l10n, &usd_style());
     let harness = Harness::new();
     let draw = |ui: &mut egui::Ui| {
         egui::Panel::top("top_bar")
@@ -597,6 +605,7 @@ fn the_game_over_modal_returns_to_the_menu() {
         &game.session().company_view(),
         true,
         &l10n,
+        &usd_style(),
     );
     let harness = Harness::new();
     let draw = |ui: &mut egui::Ui| {
@@ -625,6 +634,7 @@ fn the_game_over_modal_returns_to_the_menu() {
         &game.session().company_view(),
         false,
         &l10n,
+        &usd_style(),
     );
     let draw = |ui: &mut egui::Ui| {
         egui::Modal::new(egui::Id::new("game_over"))
@@ -993,7 +1003,7 @@ fn selected_plant_cards_show_grid_connection_in_planning_and_operating() {
             let harness = Harness::with_screen(1024.0, 640.0);
             let selection = Selection::Plant(plant);
             let widgets = if operating {
-                let model = plant_panel_model(&game, &l10n, selection);
+                let model = plant_panel_model(&game, &l10n, selection, &usd_style());
                 let mut form = PlantPanelForm::default();
                 let mut draw =
                     |ui: &mut egui::Ui| central(ui, |ui| draw_plant_panel(ui, &model, &mut form));
@@ -1005,7 +1015,7 @@ fn selected_plant_cards_show_grid_connection_in_planning_and_operating() {
                 assert!(shows(&widgets, "Fixed O&M / month"));
                 widgets
             } else {
-                let model = inspector_model(&game, &l10n, selection).unwrap();
+                let model = inspector_model(&game, &l10n, selection, &usd_style()).unwrap();
                 harness.draw(|ui| central(ui, |ui| draw_inspector(ui, &model)))
             };
             assert!(
@@ -1035,7 +1045,7 @@ fn the_inspector_lists_what_can_be_built_on_the_selected_cell() {
         .flat_map(|y| (0..terrain.width()).map(move |x| domain::ids::CellCoord { x, y }))
         .find(|at| !terrain.get(*at).unwrap().land)
         .unwrap();
-    let model = inspector_model(&game, &l10n, Selection::Cell(water)).unwrap();
+    let model = inspector_model(&game, &l10n, Selection::Cell(water), &usd_style()).unwrap();
     let InspectorModel::Cell(cell) = &model else {
         panic!("{model:?}");
     };
@@ -1084,7 +1094,7 @@ fn the_build_menu_orders_the_selected_kind_on_the_selected_cell() {
                     .is_ok()
         })
         .unwrap();
-    let model = build_model(&game, &l10n, Selection::Cell(at)).unwrap();
+    let model = build_model(&game, &l10n, Selection::Cell(at), &usd_style()).unwrap();
     let harness = Harness::new();
     let draw = |ui: &mut egui::Ui| {
         egui::Panel::right("build")
@@ -1130,7 +1140,7 @@ fn the_build_menu_picks_a_line_start_then_prices_and_orders_the_line() {
     let harness = Harness::new();
 
     // First choose where the line starts.
-    let model = build_model(&game, &l10n, Selection::None).unwrap();
+    let model = build_model(&game, &l10n, Selection::None, &usd_style()).unwrap();
     let draw = |ui: &mut egui::Ui| {
         egui::Panel::right("build")
             .show(ui, |ui| draw_build(ui, &model))
@@ -1143,7 +1153,13 @@ fn the_build_menu_picks_a_line_start_then_prices_and_orders_the_line() {
     );
 
     // From the anchor, the nodes it already reaches are refused and can't be clicked...
-    let model = build_model(&game, &l10n, Selection::LineFrom(session.anchor_node())).unwrap();
+    let model = build_model(
+        &game,
+        &l10n,
+        Selection::LineFrom(session.anchor_node()),
+        &usd_style(),
+    )
+    .unwrap();
     let draw = |ui: &mut egui::Ui| {
         egui::Panel::right("build")
             .show(ui, |ui| draw_build(ui, &model))
@@ -1177,7 +1193,7 @@ fn the_build_menu_picks_a_line_start_then_prices_and_orders_the_line() {
         .into_iter()
         .find(|city| !city.connected)
         .expect("the start leaves cities unconnected");
-    let model = build_model(&game, &l10n, Selection::LineFrom(city.node)).unwrap();
+    let model = build_model(&game, &l10n, Selection::LineFrom(city.node), &usd_style()).unwrap();
     let draw = |ui: &mut egui::Ui| {
         egui::Panel::right("build")
             .show(ui, |ui| draw_build(ui, &model))
@@ -1211,7 +1227,7 @@ fn the_build_menu_picks_a_line_start_then_prices_and_orders_the_line() {
 fn a_plant_section_without_a_cell_asks_for_one() {
     let l10n = shipped_l10n();
     let game = eastern_game();
-    let model = build_model(&game, &l10n, Selection::None).unwrap();
+    let model = build_model(&game, &l10n, Selection::None, &usd_style()).unwrap();
     assert!(matches!(model.plant, PlantSection::PickCell { .. }));
     let harness = Harness::new();
 
@@ -1251,10 +1267,10 @@ fn planning_screen(
     planning: &mut PlanningState,
 ) -> Vec<UiAction> {
     let l10n = shipped_l10n();
-    let bar = top_bar_model(game, &Persistence::default(), &l10n);
-    let panel = planning_model(game, &l10n, &planning.ui, &planning.form).unwrap();
-    let inspector = inspector_model(game, &l10n, selection).unwrap();
-    let build = build_model(game, &l10n, selection).unwrap();
+    let bar = top_bar_model(game, &Persistence::default(), &l10n, &usd_style());
+    let panel = planning_model(game, &l10n, &planning.ui, &planning.form, &usd_style()).unwrap();
+    let inspector = inspector_model(game, &l10n, selection, &usd_style()).unwrap();
+    let build = build_model(game, &l10n, selection, &usd_style()).unwrap();
     let map = map_model(
         game,
         &l10n,
@@ -1415,7 +1431,7 @@ fn the_map_does_not_move_when_the_selection_changes_kind() {
 
 // ---- the planning panel ---------------------------------------------------------------------
 
-/// The first land cell, which both shipped regions have, to select on the map.
+/// The first land cell of the game's region, to select on the map.
 fn some_land(game: &Game) -> CellCoord {
     let terrain = game.session().region().terrain();
     (0..terrain.height())
@@ -2184,7 +2200,16 @@ fn speed_buttons_emit_set_speed() {
             .inner
     };
 
-    assert!(shows(&harness.draw(draw), "01:00"), "the time of day");
+    let top = top_bar_model(&game, &Persistence::default(), &l10n, &usd_style());
+    let clock_widgets = harness.draw(|ui| draw_top_bar(ui, &top));
+    assert!(
+        shows(&clock_widgets, "01:00"),
+        "the time of day is in the top bar"
+    );
+    assert!(
+        !shows(&harness.draw(draw), "01:00"),
+        "speed controls do not duplicate the clock"
+    );
     let widgets = harness.draw(draw);
     assert!(shows(&widgets, "16×"));
     assert!(shows(&widgets, "32×"));
@@ -2212,7 +2237,7 @@ fn target_slider_sends_once_on_release_within_bounds() {
     let gas = online_plant(&game, domain::region::PlantKind::Ccgt);
     assert!(!gas.auto_follow);
     let spec = game.session().region().spec(gas.kind).clone();
-    let model = plant_panel_model(&game, &l10n, Selection::Plant(gas.id));
+    let model = plant_panel_model(&game, &l10n, Selection::Plant(gas.id), &usd_style());
     let PlantPanelModel::Plant(plant) = &model else {
         panic!("{model:?}");
     };
@@ -2298,7 +2323,7 @@ fn operating_start_click_only_emits_a_command_that_can_finish_by_midnight() {
             n: TICKS_PER_DAY - startup + u32::from(late),
         })
         .unwrap();
-        let model = plant_panel_model(&game, &l10n, Selection::Plant(plant));
+        let model = plant_panel_model(&game, &l10n, Selection::Plant(plant), &usd_style());
         let form = RefCell::new(PlantPanelForm::default());
         let harness = Harness::new();
         let draw = |ui: &mut egui::Ui| {

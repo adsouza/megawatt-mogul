@@ -1,0 +1,1114 @@
+// Continental Europe-Maghreb: the Continental European synchronous area with the
+// Maghreb systems that run in step with it (spec section 28.3; research note
+// docs/research/2026-10-18-world-power-grids-top-8.md, section "B -
+// Continental Europe-Maghreb"): the continent from Portugal to Turkiye with
+// western Denmark (DK1), connected Ukraine and Moldova, the Baltic states,
+// Sicily, Malta and Crete, and Morocco, northern interconnected Algeria and
+// Tunisia through the Spain-Morocco AC link. The notes exclude the Nordic
+// area, eastern Denmark (DK2), Great Britain, Ireland, Sardinia, Corsica,
+// separately operated islands and isolated southern Algeria; ENTSO-E
+// membership alone is not the boundary.
+//
+// Grid-operation rulings:
+// - DK1 is in and DK2 is out: Natural Earth admin-0 DNK less the 1:10m
+//   admin-1 regions Hovedstaden (with Bornholm) and Sjaelland (Zealand,
+//   Lolland-Falster), so Nordjylland, Midtjylland and Syddanmark (Jutland and
+//   Funen) remain.
+// - Out as separately operated systems: Sardinia (the eight 1:10m admin-1
+//   provinces), Corsica (Haute-Corse and Corse-du-Sud), the Balearics
+//   (Baleares) and the Canaries (Las Palmas and Santa Cruz de Tenerife).
+//   Cyprus, Great Britain, Ireland, the Nordic countries, Russia and Belarus
+//   are not selected. The smaller non-interconnected Aegean islands (Lesbos,
+//   Rhodes, Chios and the like) fall under the extractor's 2-cell land floor.
+// - Crimea and Sevastopol are out (spec section 28.3, user decision
+//   2026-10-25). Natural Earth's 1:50m admin-0 UKR already leaves Crimea to
+//   RUS (checked: neither Simferopol nor Sevastopol lies in UKR's polygons),
+//   and the canonical extent (crates/infrastructure/authoring/
+//   ukraine_ips_operating_extent.ron) is pasted verbatim as an exclusion
+//   (ruling 11). Mainland Ukraine, Donetsk and Luhansk included, is in.
+// - Isolated southern Algeria is out, with a schematic boundary at 30 N: the
+//   In Salah-Adrar-Timimoun pole (PIAT) is a separate southern system that a
+//   planned double 400 kV Hassi R'mel-Timimoun line would join to the
+//   national interconnected network (RIN), and a Ghardaia-Tamanrasset line is
+//   only under consideration (Enerdata, "Sonelgaz launches a 700 km
+//   transmission project to link Algeria's power grids", 2023-05-04). The
+//   exclusion is 1:10m admin-1 Adrar, Tamanghasset, Tindouf, Bechar, Ouargla,
+//   Illizi and Ghardaia south of 30 N, plus 1:50m admin-0 DZA south of 30 N
+//   for the Morocco-border seam the admin-1 cut misses.
+// - Areas the notes don't address (spec section 28.3):
+//   - Transnistria is in. Its Moldavskaya GRES supplied about 70% of
+//     Moldova's electricity before Moldova's grid synchronised with
+//     Continental Europe on 16 March 2022 (Moldova Ministry of Energy, "How
+//     Has the Energy Sector Transformed with the Boost of Renewable Energy?",
+//     2025-09-19, section "Synchronization with the Continental Grid Was a
+//     Game-Changer", paragraphs 2-4). It lies inside admin-0 MDA.
+//   - Kosovo is in (ADM0 KOS). KOSTT began operating as a regulatory zone
+//     of the Continental European system, in the Kosovo-Albania block, when
+//     its ENTSO-E connection agreement took effect on 14 December 2020
+//     (KoSSev, "KOSTT starts operation as a regulatory zone within the
+//     Kosovo-Albania bloc", 2020-12-14).
+//   - Western Sahara is in from the Moroccan border south to Dakhla, west of
+//     the berm, which Natural Earth's admin-0 MAR outline already contains.
+//     Sourced ONEE grid operation:
+//     - Laayoune: the 470 km Tiznit-Laayoune line (Le Matin, "Mise en service
+//       d'une nouvelle ligne electrique Tres Haute Tension reliant Tiznit a
+//       Laayoune", 2015-08-04). Laayoune joined the 225 kV national grid in
+//       1998, which let Smara Province be connected in 2000 (FNH, "Entretien.
+//       Les regions du Sud du Maroc beneficient d'un gisement en energies
+//       renouvelables exceptionnel", interview with ONEE's Director General,
+//       2021-09-01, first answer, first paragraph).
+//     - Boujdour and the Aftissat wind farm at 400 kV since February 2018
+//       (EcoActu, "Raccordement de Dakhla au reseau electrique: le DG de
+//       l'ONEE s'enquiert de l'etat d'avancement des travaux", 2021-02-26).
+//     - Dakhla: a 400 kV double-circuit line now reaches the city (Le360,
+//       "Info360. Lancement imminent d'une nouvelle liaison electrique entre
+//       Boujdour et Marrakech", 2025-11-03, paragraph beginning "A signaler
+//       que le reseau").
+//     The rest of the interior west of the berm is in by authoring judgment:
+//     administrative extent west of the berm; only the coastal backbone
+//     (Tiznit-Laayoune-Boujdour-Dakhla) and Smara Province are sourced.
+//     Out: the part east of the berm (Natural Earth's separate ADM0 SAH
+//     feature, not selected) and everything south of 23.55 N, a schematic
+//     exclusion just south of Dakhla (23.70 N) listed after the generated
+//     rings, where no source shows the grid.
+//
+// Geography: tools/region_authoring/selections/continental_europe_maghreb.args
+// holds the extractor arguments: Natural Earth v5.1.2 1:50m admin-0 for 41
+// countries (Kosovo by ADM0 KOS), dissolved (ruling 8), with the 1:10m
+// admin-1 exclusions above. Regenerate with
+//   tr '\n' '\0' < tools/region_authoring/selections/continental_europe_maghreb.args \
+//       | xargs -0 python3 -I tools/region_authoring/natural_earth.py
+// which reports 12 land and 22 exclude rings. The land rings are the
+// mainland (Iberia to Ukraine and Thrace), Anatolia, the Maghreb, Sicily,
+// Crete, Euboea, Funen, Saaremaa, and Zealand, Mallorca, Corsica and Sardinia
+// (each under its exclusion). The selection's exclusions dissolve into 26
+// rings, 23 of which meet the bounds; 22 come out (ruling 9). The one that
+// collapses is a 4-point Haute-Corse islet (9.46-9.48 E, 42.62-42.65 N) that
+// lies in no included land ring, so no land is re-admitted. The southern
+// Algeria run (continental_europe_maghreb_algeria_south.args, extent mode)
+// reports 1 exclude ring from 1 dissolved ring meeting its bounds. Its 1:10m
+// admin-1 edge leaves a seam against the 1:50m Morocco-Algeria border, so a
+// second southern-Algeria ring follows it: the 1:50m admin-0 DZA ring of the
+// economic-zone authoring file (python3 -I tools/region_authoring/
+// natural_earth.py --admin0 target/natural-earth/ne_50m_admin_0_countries.geojson
+// --include ISO:DZA --bounds=-16.65,44.95,22.87,59.87 --grid 154,123
+// --tolerance-deg 0.02 --dissolve, which reports 1 land and 0 exclude rings)
+// clipped to 22.87-30.0 N, 40 points. The exclude list holds 38 rings: the
+// 22 and 1 generated, that derived ring, the canonical Crimea extent, the ten
+// IPS/UPS seam cells and three schematic exclusions.
+// Tolerance: 0.02 degrees in all three runs, the same as assets/regions/ips_ups.ron
+// and the canonical Crimea extent, so the shared IPS/UPS borders (Ukraine,
+// Moldova, the Baltic states, Poland and Turkiye against Russia, Belarus and
+// Georgia) are the same 1:50m admin-0 lines simplified alike.
+// IPS/UPS seam (ruling 10): the same borders are not enough, because a cell
+// is playable when its centre is, and an IPS/UPS land cell (1.0 x 0.5
+// degrees) reaches up to half a cell past the border. Ten IPS/UPS land cells
+// held 14 Europe-Maghreb land centres, and one IPS/UPS centre fell in a
+// Europe-Maghreb land cell, so those ten IPS/UPS cells are excluded here, after
+// the generated rings; with them no centre is playable in both regions.
+// Nudge rings after the generated land put coastal cities and starter plants
+// whose cell centres fall offshore on land, and give Malta, Crete and Sicily
+// a land cell at Valletta, Heraklion and Palermo. Schematic exclusions open
+// the Strait of Messina, cut Western Sahara south of Dakhla and take out the
+// one Libyan cell centre at the Ghadames tripoint that the simplified outline
+// admits. The grid's
+// rows are placed so a row of centres lies in the Strait of Gibraltar, so
+// the starter link crosses one water cell.
+// Points are (lon, lat) in degrees.
+//
+// Grid: 16.65 W to 44.95 E and 22.87 to 59.87 N on 154 x 123 cells (0.4 x
+// 0.3008 degrees). At the middle latitude, 41.37 N, a cell is 33.38 km
+// east-west by 33.45 km north-south (aspect 1.002, cell_km 33.414).
+//
+// Money is in EUR at local price levels from the Plan 7 research note
+// (docs/research/2026-10-25-plan-7-regional-economics.md), converted to game
+// values by its pacing method. Each entry's comment cites its rows and shows
+// the arithmetic; the ratios use full precision (ruling 25). The catalog is
+// economic zone 0, the regional default, from the note's "Europe-Maghreb
+// economic-zone proposal": German technology-level capital (P7-DE-001 to
+// P7-DE-007, midpoints) with pan-European ERAA O&M and fuel. Spain (zone 1)
+// and Morocco (zone 2) override wind and solar construction (Spain's wind
+// from a 2025 market average by user decision, the rest from whole projects),
+// and northern Algeria (zone 3) and Tunisia (zone 4) override solar and CCGT
+// construction from projects (the note's "Algeria and Tunisia zone proposal
+// (follow-up 2026-10-26)"); see the economic_zones block. Countries on zone 0
+// by authoring choice (the note's "Regional default by authoring choice"):
+// Portugal, France, Belgium, the Netherlands, Luxembourg, Germany,
+// Switzerland, Austria, Italy (with Sicily), Malta, Slovenia, Croatia, Bosnia
+// and Herzegovina, Serbia, Montenegro, North Macedonia, Albania, Greece (with
+// Crete), Bulgaria, Romania, Hungary, Slovakia, Czechia, Poland, Lithuania,
+// Latvia, Estonia, Denmark (DK1), Ukraine, Moldova (with Transnistria),
+// Turkiye, Kosovo, Andorra, Monaco, Liechtenstein, San Marino and Vatican
+// City.
+(
+    region_schema: 4,
+    id: "continental_europe_maghreb",
+    system_zone: 2,
+    // Civil clocks (spec section 28.4). The EU zones observe summer time from
+    // April to October (most days of each month). Central European Time is the
+    // dispatcher's clock; Morocco, Algeria and Tunisia keep UTC+1 all year
+    // (Morocco's Ramadan shift is not modelled), and Turkiye keeps UTC+3.
+    time_zones: [
+        (id: 1, name_key: "zone-wet", standard_offset_minutes: 0, dst_months: [false, false, false, true, true, true, true, true, true, true, false, false]),
+        (id: 2, name_key: "zone-cet", standard_offset_minutes: 60, dst_months: [false, false, false, true, true, true, true, true, true, true, false, false]),
+        (id: 3, name_key: "zone-cet-fixed", standard_offset_minutes: 60, dst_months: [false, false, false, false, false, false, false, false, false, false, false, false]),
+        (id: 4, name_key: "zone-eet", standard_offset_minutes: 120, dst_months: [false, false, false, true, true, true, true, true, true, true, false, false]),
+        (id: 5, name_key: "zone-trt", standard_offset_minutes: 180, dst_months: [false, false, false, false, false, false, false, false, false, false, false, false]),
+    ],
+    // Northern meteorological seasons.
+    calendar: (seasons: [Winter, Winter, Spring, Spring, Spring, Summer, Summer, Summer, Autumn, Autumn, Autumn, Winter]),
+    currency: EUR,
+    atlas: (colour: "#226EC7"),
+    name_key: "region-continental-europe-maghreb",
+    bounds: (west: -16.65, east: 44.95, south: 22.87, north: 59.87),
+    grid: (width: 154, height: 123),
+    // Generated rings (spec section 28.11.1), each sidecar written by its selection in
+    // tools/region_authoring/selections, whose header records the source data and command:
+    // natural_earth.ron (continental_europe_maghreb.args); algeria_south.ron
+    // (continental_europe_maghreb_algeria_south.args), isolated southern Algeria with a
+    // schematic boundary at 30 N, 1:10m admin-1 Adrar, Tamanghasset, Tindouf, Bechar, Ouargla,
+    // Illizi and Ghardaia dissolved and clipped to 9 W-12 E, 22.87-30 N; and the canonical
+    // Crimea and Sevastopol extent, ukraine_ips_operating_extent.ron
+    // (ukraine_ips_operating_extent.args, ruling 11).
+    geography: ["natural_earth.ron", "algeria_south.ron", "ukraine_ips_operating_extent.ron"],
+    land: [
+        // Nudge ring: Lisbon, whose cell centre falls in the Tagus estuary.
+        [
+            (-9.280, 38.633), (-9.120, 38.633), (-9.120, 38.755), (-9.280, 38.755),
+        ],
+        // Nudge ring: Barcelona, offshore centre.
+        [
+            (2.153, 41.340), (2.380, 41.340), (2.380, 41.413), (2.153, 41.413),
+        ],
+        // Nudge ring: Marseille, offshore centre.
+        [
+            (5.340, 43.145), (5.580, 43.145), (5.580, 43.326), (5.340, 43.326),
+        ],
+        // Nudge ring: Aarhus (DK1), centre in Aarhus Bay.
+        [
+            (10.170, 56.080), (10.380, 56.080), (10.380, 56.190), (10.170, 56.190),
+        ],
+        // Nudge ring: Naples, centre in the Bay of Naples.
+        [
+            (14.219, 40.738), (14.380, 40.738), (14.380, 40.866), (14.219, 40.866),
+        ],
+        // Nudge ring: Sicily: Palermo (belt and braces; its centre is already land in the generated outline).
+        [
+            (13.330, 38.031), (13.580, 38.031), (13.580, 38.150), (13.330, 38.150),
+        ],
+        // Nudge ring: Malta: Valletta (the Maltese islands fall under the 2-cell land floor).
+        [
+            (14.320, 35.870), (14.540, 35.870), (14.540, 35.985), (14.320, 35.985),
+        ],
+        // Nudge ring: Crete: Heraklion, centre in the Sea of Crete.
+        [
+            (25.110, 35.310), (25.180, 35.310), (25.180, 35.384), (25.110, 35.384),
+        ],
+        // Nudge ring: Rabat, offshore centre.
+        [
+            (-6.880, 33.991), (-6.811, 33.991), (-6.811, 34.180), (-6.880, 34.180),
+        ],
+        // Nudge ring: Algiers, centre in the Bay of Algiers.
+        [
+            (3.057, 36.703), (3.180, 36.703), (3.180, 36.888), (3.057, 36.888),
+        ],
+        // Nudge ring: Tunis, centre in the Gulf of Tunis.
+        [
+            (10.152, 36.776), (10.380, 36.776), (10.380, 36.888), (10.152, 36.888),
+        ],
+        // Nudge ring: the Palos combined-cycle plant (starter fleet), centre in the Gulf of Cadiz.
+        [
+            (-6.923, 37.129), (-6.820, 37.129), (-6.820, 37.214), (-6.923, 37.214),
+        ],
+        // Nudge ring: the Campo de Gibraltar combined-cycle plant (starter fleet), centre in the Mediterranean off San Roque.
+        [
+            (-5.423, 36.153), (-5.220, 36.153), (-5.220, 36.286), (-5.423, 36.286),
+        ],
+        // Nudge ring: the Tahaddart combined-cycle plant (starter fleet), centre in the Atlantic off Tahaddart.
+        [
+            (-6.080, 35.559), (-5.957, 35.559), (-5.957, 35.685), (-6.080, 35.685),
+        ],
+    ],
+    exclude: [
+        // 1:50m admin-0 DZA south of 30 N, the Morocco-border seam the admin-1 cut misses: the
+        // 1:10m admin-1 outline in algeria_south.ron runs up to about 0.25 degree south of the 1:50m
+        // Morocco-Algeria border, which left four playable Algerian cell centres at 29.6-29.9 N
+        // (5.2-6.5 W). This is the zone-3 DZA ring (crates/infrastructure/authoring/
+        // continental_europe_maghreb_economic_zones.ron, same extractor run) clipped to
+        // 22.87-30.0 N, so the cut and the zone come from one source scale.
+        [
+            (-5.394, 30.000), (-5.449, 29.957), (-6.004, 29.831), (-6.480, 29.820), (-6.521, 29.660),
+            (-6.635, 29.569), (-7.142, 29.620), (-7.486, 29.392), (-7.685, 29.350), (-8.265, 28.981),
+            (-8.678, 28.689), (-8.683, 27.286), (-4.823, 24.996), (-1.558, 22.870), (10.869, 22.870),
+            (11.968, 23.518), (11.508, 24.314), (10.686, 24.551), (10.396, 24.486), (10.256, 24.591),
+            (10.120, 24.790), (10.028, 25.051), (10.001, 25.332), (9.448, 26.067), (9.422, 26.147),
+            (9.438, 26.246), (9.491, 26.334), (9.859, 26.552), (9.883, 26.631), (9.894, 26.848),
+            (9.837, 26.916), (9.795, 27.045), (9.748, 27.331), (9.916, 27.786), (9.858, 28.043),
+            (9.816, 28.560), (9.843, 28.967), (9.805, 29.177), (9.640, 29.636), (9.389, 30.000),
+        ],
+        // The IPS/UPS seam (ruling 10): each rectangle is one IPS/UPS land cell (its 1.0 x 0.5
+        // degree grid, assets/regions/ips_ups.ron) whose area reaches across the shared
+        // Natural Earth border and holds a Europe-Maghreb cell centre or contains the cell
+        // around an IPS/UPS centre. Excluding them leaves no cell centre playable in both.
+        // 27-28 E, 58.5-59 N.
+        [
+            (27.000, 58.500), (28.000, 58.500), (28.000, 59.000), (27.000, 59.000),
+        ],
+        // 27-28 E, 58-58.5 N.
+        [
+            (27.000, 58.000), (28.000, 58.000), (28.000, 58.500), (27.000, 58.500),
+        ],
+        // 27-28 E, 55.5-56 N.
+        [
+            (27.000, 55.500), (28.000, 55.500), (28.000, 56.000), (27.000, 56.000),
+        ],
+        // 23-24 E, 52-52.5 N.
+        [
+            (23.000, 52.000), (24.000, 52.000), (24.000, 52.500), (23.000, 52.500),
+        ],
+        // 27-28 E, 51.5-52 N.
+        [
+            (27.000, 51.500), (28.000, 51.500), (28.000, 52.000), (27.000, 52.000),
+        ],
+        // 30-31 E, 51.5-52 N.
+        [
+            (30.000, 51.500), (31.000, 51.500), (31.000, 52.000), (30.000, 52.000),
+        ],
+        // 35-36 E, 50.5-51 N.
+        [
+            (35.000, 50.500), (36.000, 50.500), (36.000, 51.000), (35.000, 51.000),
+        ],
+        // 39-40 E, 49.5-50 N.
+        [
+            (39.000, 49.500), (40.000, 49.500), (40.000, 50.000), (39.000, 50.000),
+        ],
+        // 39-40 E, 47.5-48 N.
+        [
+            (39.000, 47.500), (40.000, 47.500), (40.000, 48.000), (39.000, 48.000),
+        ],
+        // 43-44 E, 41-41.5 N.
+        [
+            (43.000, 41.000), (44.000, 41.000), (44.000, 41.500), (43.000, 41.500),
+        ],
+        // The Strait of Messina: a schematic channel so the 3 km strait shows as one water
+        // cell between Calabria and Sicily (spec section 28.8: the crossing is a submarine
+        // cable). It takes the cell that holds both Messina and Reggio Calabria.
+        [
+            (15.530, 38.050), (15.680, 38.050), (15.680, 38.300), (15.530, 38.300),
+        ],
+        // Western Sahara south of Dakhla: a schematic cut at 23.55 N. ONEE's 400 kV line ends
+        // at Dakhla (23.70 N), and no source shows its grid farther south. The cut keeps the
+        // grid row that holds Dakhla's latitude (23.47-23.77 N, centres at 23.62 N) and takes
+        // the two rows below it (centres at 23.32 and 23.02 N), 11 land cells. Dakhla's own
+        // cell (on its peninsula, off the 1:50m coast) is water with or without the cut.
+        [
+            (-17.000, 22.500), (-12.000, 22.500), (-12.000, 23.550), (-17.000, 23.550),
+        ],
+        // Libya at the Ghadames tripoint: simplification admits one LBY centre. The cell at
+        // 9.35-9.75 E, 30.09-30.39 N has its centre (9.55 E, 30.24 N) in Libya in the
+        // unsimplified 1:50m data, but inside the simplified Maghreb outline. A schematic
+        // square inside that cell only takes it out.
+        [
+            (9.450, 30.150), (9.650, 30.150), (9.650, 30.330), (9.450, 30.330),
+        ],
+    ],
+    // Relief: the Alps, the Pyrenees, the Atlas, the Carpathians, the Dinaric
+    // and Balkan ranges, the Apennines, the Iberian Meseta and the Anatolian
+    // plateau; the North European Plain and the Pontic lowlands are low. Named
+    // ranges only; heights are an authoring judgment (no elevation dataset was
+    // used).
+    height: (
+        base: 0.15,
+        blobs: [
+            // The Alps.
+            (lon: 10.0, lat: 46.5, radius_deg: 1.8, value: 0.55),
+            // The Pyrenees, the Massif Central and the Betic ranges.
+            (lon: 0.5, lat: 42.6, radius_deg: 1.0, value: 0.4),
+            (lon: 2.8, lat: 45.2, radius_deg: 1.0, value: 0.2),
+            (lon: -3.3, lat: 37.1, radius_deg: 0.8, value: 0.3),
+            // The Iberian Meseta.
+            (lon: -4.0, lat: 40.0, radius_deg: 3.0, value: 0.15),
+            // The High and Middle Atlas, and the Tell Atlas and Aures.
+            (lon: -6.0, lat: 31.8, radius_deg: 1.5, value: 0.45),
+            (lon: 5.5, lat: 35.5, radius_deg: 2.0, value: 0.2),
+            // The Apennines, the Dinaric Alps and the Balkans, and the
+            // Carpathians.
+            (lon: 13.5, lat: 42.5, radius_deg: 1.5, value: 0.25),
+            (lon: 19.0, lat: 43.0, radius_deg: 2.0, value: 0.3),
+            (lon: 24.5, lat: 46.5, radius_deg: 2.5, value: 0.3),
+            // The Anatolian plateau and eastern Anatolia.
+            (lon: 34.0, lat: 39.0, radius_deg: 4.0, value: 0.3),
+            (lon: 41.0, lat: 39.5, radius_deg: 2.0, value: 0.45),
+            // The North European Plain and the Pontic lowlands.
+            (lon: 15.0, lat: 53.0, radius_deg: 5.0, value: -0.1),
+            (lon: 32.0, lat: 48.5, radius_deg: 4.0, value: -0.05),
+        ],
+    ),
+    // Sunshine as site quality without latitude (spec section 28.5), from the
+    // annual sunshine totals in English Wikipedia's "List of cities in Europe
+    // by sunshine duration" and "List of cities by sunshine duration" (Africa
+    // and Asia tables), read 2026-10-25. Each annual total is a share of the
+    // possible hours at its latitude (FAO-56 equations 24, 25 and 34 on the
+    // middle day of each month), turned into irradiance by the
+    // Angstrom-Prescott relation (FAO-56 equation 35, a = 0.25, b = 0.50).
+    // For example: Brussels 0.426, Paris 0.440, Berlin 0.436, Kyiv 0.473,
+    // Vienna 0.484, Bucharest 0.491, Istanbul 0.503, Ankara 0.530, Rome
+    // 0.532, Madrid 0.566, Athens 0.567, Algiers 0.575, Valletta 0.599,
+    // Seville 0.624 and Ouarzazate 0.640. The base is north-western Europe's
+    // level; the blobs are a least-squares fit of those 27 city values at
+    // fixed, authored centres (rms error 0.018; placement is an authoring
+    // judgment, and no irradiance atlas was read). Maghreb solar shows here:
+    // southern Morocco is the region's sunniest land.
+    irradiance: (
+        base: 0.44,
+        blobs: [
+            // The Guadalquivir valley and the Iberian interior.
+            (lon: -6.0, lat: 37.4, radius_deg: 1.5, value: 0.058),
+            (lon: -6.5, lat: 39.5, radius_deg: 3.0, value: 0.16),
+            // Southern Morocco (Ouarzazate and Marrakesh).
+            (lon: -7.0, lat: 31.0, radius_deg: 2.0, value: 0.199),
+            // Malta and Sicily, and the Algerian and Tunisian coast.
+            (lon: 14.5, lat: 36.0, radius_deg: 2.0, value: 0.156),
+            (lon: 5.0, lat: 36.5, radius_deg: 3.0, value: 0.162),
+            // Crete and the Aegean.
+            (lon: 25.0, lat: 36.5, radius_deg: 2.5, value: 0.136),
+            // Central Anatolia.
+            (lon: 32.0, lat: 39.0, radius_deg: 3.0, value: 0.062),
+            // Central Italy.
+            (lon: 12.5, lat: 42.0, radius_deg: 2.0, value: 0.086),
+            // The lower Danube and the Black Sea coast.
+            (lon: 28.0, lat: 45.5, radius_deg: 4.0, value: 0.062),
+        ],
+    ),
+    // Water for thermal plants: the Atlantic, North Sea, Mediterranean,
+    // Aegean, Marmara and Black Sea coasts, and the Rhine, Rhone, Loire, Seine,
+    // Elbe, Danube, Dnieper, Ebro, Tagus, Guadalquivir, Po and Vistula. Blobs
+    // sit on the Natural Earth coastline and the named rivers (authoring
+    // judgment; no water-availability dataset was used).
+    cooling_water: (
+        base: 0.08,
+        blobs: [
+            // Coasts, west to east.
+            (lon: -8.8, lat: 40.0, radius_deg: 0.6, value: 0.7),
+            (lon: -6.9, lat: 37.2, radius_deg: 0.5, value: 0.7),
+            (lon: -5.4, lat: 36.2, radius_deg: 0.5, value: 0.7),
+            (lon: -4.4, lat: 36.7, radius_deg: 0.5, value: 0.7),
+            (lon: -7.5, lat: 33.6, radius_deg: 0.6, value: 0.7),
+            (lon: -6.0, lat: 35.6, radius_deg: 0.5, value: 0.7),
+            (lon: -0.6, lat: 35.7, radius_deg: 0.5, value: 0.7),
+            (lon: 3.0, lat: 36.8, radius_deg: 0.5, value: 0.7),
+            (lon: 10.3, lat: 36.8, radius_deg: 0.5, value: 0.7),
+            (lon: 2.0, lat: 41.3, radius_deg: 0.5, value: 0.7),
+            (lon: 5.0, lat: 43.3, radius_deg: 0.5, value: 0.7),
+            (lon: 4.5, lat: 52.5, radius_deg: 0.6, value: 0.7),
+            (lon: 8.5, lat: 54.0, radius_deg: 0.6, value: 0.7),
+            (lon: 13.5, lat: 41.0, radius_deg: 0.6, value: 0.7),
+            (lon: 13.5, lat: 43.5, radius_deg: 0.6, value: 0.7),
+            (lon: 23.0, lat: 38.0, radius_deg: 0.6, value: 0.7),
+            (lon: 27.0, lat: 38.5, radius_deg: 0.5, value: 0.7),
+            (lon: 29.0, lat: 40.8, radius_deg: 0.5, value: 0.7),
+            (lon: 35.5, lat: 36.7, radius_deg: 0.5, value: 0.7),
+            (lon: 28.5, lat: 43.5, radius_deg: 0.6, value: 0.7),
+            (lon: 30.7, lat: 46.5, radius_deg: 0.5, value: 0.7),
+            // Rivers: the Rhine, Rhone, Loire, Seine and Elbe.
+            (lon: 6.8, lat: 51.0, radius_deg: 0.5, value: 0.6),
+            (lon: 7.6, lat: 50.0, radius_deg: 0.5, value: 0.6),
+            (lon: 8.4, lat: 49.0, radius_deg: 0.5, value: 0.6),
+            (lon: 4.8, lat: 44.5, radius_deg: 0.5, value: 0.6),
+            (lon: 0.5, lat: 47.4, radius_deg: 0.5, value: 0.6),
+            (lon: 1.5, lat: 49.2, radius_deg: 0.4, value: 0.6),
+            (lon: 11.5, lat: 52.5, radius_deg: 0.5, value: 0.6),
+            // The Danube, from Vienna to the delta, and the Dnieper.
+            (lon: 17.0, lat: 48.1, radius_deg: 0.5, value: 0.6),
+            (lon: 19.0, lat: 47.5, radius_deg: 0.5, value: 0.6),
+            (lon: 22.5, lat: 44.6, radius_deg: 0.5, value: 0.6),
+            (lon: 26.0, lat: 44.0, radius_deg: 0.5, value: 0.6),
+            (lon: 30.5, lat: 50.4, radius_deg: 0.5, value: 0.6),
+            (lon: 34.6, lat: 47.5, radius_deg: 0.5, value: 0.6),
+            // The Ebro, Tagus, Guadalquivir, Po and Vistula.
+            (lon: 0.5, lat: 41.0, radius_deg: 0.4, value: 0.6),
+            (lon: -7.0, lat: 39.5, radius_deg: 0.4, value: 0.6),
+            (lon: -5.9, lat: 37.4, radius_deg: 0.4, value: 0.6),
+            (lon: 10.5, lat: 45.0, radius_deg: 0.5, value: 0.6),
+            (lon: 19.5, lat: 52.5, radius_deg: 0.5, value: 0.6),
+        ],
+    ),
+    // Hydro sites at real dams and stations (each plant's English Wikipedia
+    // coordinate, read through the MediaWiki API on 2026-10-25, with its
+    // Wikidata item): Aldeadavila (Q2885019), Alcantara (Q94989675), Alqueva
+    // (Q2165228), Grande Dixence (Q675009), Contra (Q2802728), Roselend
+    // (Q467537), Serre-Poncon (Q1799634), Kolnbrein (Q378432), Goldisthal
+    // (Q895734), Iron Gate I (Q1289417), Vidraru (Q1545678), Mratinje
+    // (Q1546929), the Dnieper station (Q738619), Ataturk (Q753776), Keban
+    // (Q1737672), Birecik (Q1374176), Ilisu (Q1659316), Deriner (Q1200190) and
+    // Afourer in Morocco (Q3460110); and Tajo de la Encantada in Malaga
+    // province (Global Energy Monitor wiki, "Tajo De La Encantada
+    // hydroelectric plant", coordinates 36.9084, -4.763, read 2026-10-25).
+    // One value for every site (authoring judgment; no capacity ranking).
+    hydro_potential: (
+        base: 0.0,
+        blobs: [
+            (lon: -4.763, lat: 36.9084, radius_deg: 0.3, value: 0.8),
+            (lon: -6.68555556, lat: 41.21166667, radius_deg: 0.3, value: 0.8),
+            (lon: -6.88472222, lat: 39.73, radius_deg: 0.3, value: 0.8),
+            (lon: -7.49638889, lat: 38.1975, radius_deg: 0.3, value: 0.8),
+            (lon: 7.40388889, lat: 46.08055556, radius_deg: 0.3, value: 0.8),
+            (lon: 8.84777778, lat: 46.19666667, radius_deg: 0.3, value: 0.8),
+            (lon: 6.62166667, lat: 45.68416667, radius_deg: 0.3, value: 0.8),
+            (lon: 6.35, lat: 44.51666667, radius_deg: 0.3, value: 0.8),
+            (lon: 13.33916667, lat: 47.07916667, radius_deg: 0.3, value: 0.8),
+            (lon: 11.005, lat: 50.50722222, radius_deg: 0.3, value: 0.8),
+            (lon: 22.52916667, lat: 44.67083333, radius_deg: 0.3, value: 0.8),
+            (lon: 24.6298, lat: 45.36625, radius_deg: 0.3, value: 0.8),
+            (lon: 18.84166667, lat: 43.27222222, radius_deg: 0.3, value: 0.8),
+            (lon: 35.08694444, lat: 47.86916667, radius_deg: 0.3, value: 0.8),
+            (lon: 38.3175, lat: 37.48166667, radius_deg: 0.3, value: 0.8),
+            (lon: 38.75694444, lat: 38.80694444, radius_deg: 0.3, value: 0.8),
+            (lon: 37.89, lat: 37.05333333, radius_deg: 0.3, value: 0.8),
+            (lon: 41.85, lat: 37.53, radius_deg: 0.3, value: 0.8),
+            (lon: 41.87027778, lat: 41.16972222, radius_deg: 0.3, value: 0.8),
+            (lon: -6.53083333, lat: 32.20666667, radius_deg: 0.3, value: 0.8),
+        ],
+    ),
+    // Wind sites on the region's known wind belts: the North Sea coast of
+    // Jutland, Germany and the Netherlands, the north German plain, the Strait
+    // of Gibraltar, the Ebro valley, Galicia, the Rhone delta (the mistral),
+    // Puglia, Thrace and the Aegean coast, Dobrogea, and Morocco's Atlantic
+    // coast at Essaouira and from Tarfaya to Laayoune. Placement and values
+    // are an authoring judgment (no wind atlas was read).
+    wind_potential: (
+        base: 0.2,
+        blobs: [
+            (lon: 8.5, lat: 55.5, radius_deg: 1.5, value: 0.25),
+            (lon: 7.5, lat: 53.5, radius_deg: 1.2, value: 0.2),
+            (lon: 12.0, lat: 53.0, radius_deg: 2.0, value: 0.1),
+            (lon: -5.6, lat: 36.0, radius_deg: 0.6, value: 0.3),
+            (lon: -1.0, lat: 41.6, radius_deg: 1.0, value: 0.15),
+            (lon: -8.0, lat: 43.0, radius_deg: 0.8, value: 0.15),
+            (lon: 4.8, lat: 43.8, radius_deg: 0.6, value: 0.12),
+            (lon: 15.5, lat: 41.3, radius_deg: 0.8, value: 0.1),
+            (lon: 26.0, lat: 40.5, radius_deg: 1.5, value: 0.15),
+            (lon: 26.8, lat: 39.5, radius_deg: 1.0, value: 0.15),
+            (lon: 28.6, lat: 44.3, radius_deg: 0.8, value: 0.12),
+            (lon: -9.5, lat: 31.5, radius_deg: 0.8, value: 0.2),
+            (lon: -12.9, lat: 27.7, radius_deg: 1.2, value: 0.25),
+        ],
+    ),
+    // Winter-high wind: each month's factor is the mean, over Hamburg (the
+    // North Sea belt) and Seville, of the cube of the month's average wind
+    // speed over the year's mean cube (Weather Spark, "Average Weather in
+    // Hamburg, Germany Year Round" and "Average Weather in Sevilla, Spain Year
+    // Round", table "Average Wind Speed", read 2026-10-25: Hamburg 12.8, 12.3,
+    // 11.9, 10.3, 9.8, 9.8, 9.6, 9.6, 10.3, 10.9, 11.3 and 12.0 mph; Seville
+    // 8.2, 8.4, 8.3, 8.3, 7.8, 7.4, 7.3, 7.0, 6.9, 7.6, 8.2 and 8.4 mph), times
+    // the Eastern Interconnection's annual mean factor, 0.567 (authoring
+    // scale, as in the other Plan 7 files).
+    wind: (monthly: [0.77, 0.74, 0.69, 0.57, 0.48, 0.44, 0.42, 0.39, 0.43, 0.53, 0.63, 0.72], persistence: 0.995, innovation_sd: 0.015, initial_sd: 0.15, band: 0.25),
+    // Unit sizes and operating parameters follow the North American catalog
+    // (spec section 3.2): no row names a local unit size, so no start-up or
+    // ramp is rescaled per MW (ruling 24). Money and build months come from the
+    // Plan 7 research note by its pacing method (ratios from its pacing table,
+    // at full precision; game values rounded to 3 significant figures per kW,
+    // per kW-year or per MWh, then multiplied by capacity; monthly fixed O&M
+    // is the per-kW-year value x kW / 12, to the nearest euro). No zone-0
+    // build duration is sourced, so every kind keeps the North American game
+    // months (ruling 1, authoring judgment: no sourced local duration).
+    // Pacing judgments recorded for zone 0:
+    // - P7-EM-010's hydro capital is in EUR2015 while the German rows are
+    //   EUR2024; it is paced as stated, with no inflation adjustment (the
+    //   note's method applies none).
+    // - The Spain and Morocco wind zones (845 and 751 EUR/kW paced) both sit
+    //   below zone 0's wind (1,070), because zone 0 is a technology-level
+    //   midpoint for Germany (P7-DE-001) while the zones are a Spanish market
+    //   average and a Moroccan whole project; the contrast of record is the
+    //   2024-25 pair between them (user decision, 2026-10-26).
+    // - ERAA's gas and coal prices (P7-EM-013, P7-EM-014) are per net (lower)
+    //   calorific GJ and are applied to the S&L higher-heating-value heat rates
+    //   without conversion, which overstates fuel per MWh slightly.
+    // Fuel is converted at 1 MMBtu = 1.055056 GJ: gas 7.60 x 1.055056 =
+    // 8.018426 EUR/MMBtu [P7-EM-013] and hard coal 2.97 x 1.055056 = 3.133516
+    // EUR/MMBtu [P7-EM-014].
+    catalog: [
+        // Wind [P7-DE-001] [P7-US-001]: the German 2024 range 1,300-1,900,
+        // midpoint 1,600 EUR/kW x (1,000 / 1,489 = 0.67159) = 1,074.5, so
+        // 1,070 EUR/kW x 300,000 kW = 321,000,000. Fixed O&M [P7-DE-008]
+        // [P7-US-003]: 32 EUR/kW-yr x (20.0 / 33.06 = 0.60496) = 19.36, so 19.4
+        // x 300,000 / 12 = 485,000. Build 3 months (ruling 1, authoring
+        // judgment: no sourced local duration).
+        (kind: Wind, capacity_mw: 300.0, min_stable: 0.0, ramp_mw_per_min: 0.0, startup_hours: 0.0, startup_cost: 0, marginal_cost_per_mwh: 0.0, fixed_om_per_month: 485000, capital_cost: 321000000, build_months: 3, capacity_credit: 0.2, book_life_months: 300, siting: Anywhere),
+        // Nuclear. Capital [P7-DE-005] [P7-US-004]: the German range
+        // 6,000-16,000, midpoint 11,000 EUR/kW x (2,181.82 / 7,861 = 0.27755) =
+        // 3,053.0, so 3,050 EUR/kW x 1,100,000 kW = 3,355,000,000. Fixed O&M
+        // [P7-DE-012] [P7-US-006]: 100 EUR/kW-yr x (120.0 / 156.20 = 0.76825) =
+        // 76.82, so 76.8 x 1,100,000 / 12 = 7,040,000. Marginal (ruling 19,
+        // authoring judgment: no sourced local fuel row; ERAA's nuclear fuel is
+        // an EIA figure and P7-EM-004 is VOM only): 10 x the local reference
+        // tariff over NA's, 127.6549 / 100 = 12.77, so 12.8 [P7-EM-008]
+        // [P7-EM-009]. Start-up (ruling 2, authoring judgment: no sourced local
+        // start-up): 1,000,000 x 12.76549 / 10 = 1,276,549, so 1,280,000. Build
+        // 18 months (ruling 1, authoring judgment: no sourced local duration).
+        (
+            kind: Nuclear,
+            capacity_mw: 1100.0,
+            min_stable: 0.7,
+            ramp_mw_per_min: 5.0,
+            startup_hours: 48.0,
+            startup_cost: 1280000,
+            marginal_cost_per_mwh: 12.8,
+            fixed_om_per_month: 7040000,
+            capital_cost: 3355000000,
+            build_months: 18,
+            capacity_credit: 0.95,
+            book_life_months: 480,
+            siting: CoolingWater(0.5),
+        ),
+        // Coal (hard coal). Capital [P7-DE-002] [P7-US-007]: the German range
+        // 1,700-2,300, midpoint 2,000 EUR/kW x (1,166.67 / 4,103 = 0.28434) =
+        // 568.7, so 569 EUR/kW x 600,000 kW = 341,400,000. Fixed O&M [P7-EM-003]
+        // [P7-US-009]: ERAA's 26-39, midpoint 32.5 EUR/kW-yr x (40.0 / 61.60 =
+        // 0.64935) = 21.10, so 21.1 x 600,000 / 12 = 1,055,000. Marginal
+        // [P7-EM-014] [P7-EM-007] [P7-US-026] [P7-US-030]: 3.133516 EUR/MMBtu x
+        // 8.638 MMBtu/MWh = 27.067 fuel + VOM midpoint 3.45 = 30.517 EUR/MWh x
+        // (30 / 27.30 = 1.09890) = 33.54, so 33.5. Start-up (ruling 2,
+        // authoring judgment: no sourced local start-up): 150,000 x 33.53551 /
+        // 30 = 167,678, so 168,000. Build 8 months (ruling 1, authoring
+        // judgment: no sourced local duration).
+        (
+            kind: Coal,
+            capacity_mw: 600.0,
+            min_stable: 0.4,
+            ramp_mw_per_min: 6.0,
+            startup_hours: 8.0,
+            startup_cost: 168000,
+            marginal_cost_per_mwh: 33.5,
+            fixed_om_per_month: 1055000,
+            capital_cost: 341400000,
+            build_months: 8,
+            capacity_credit: 0.95,
+            book_life_months: 480,
+            siting: CoolingWater(0.5),
+        ),
+        // Combined cycle. Capital [P7-DE-003] [P7-US-010]: the German range
+        // 900-1,300, midpoint 1,100 EUR/kW x (600 / 921 = 0.65147) = 716.6, so
+        // 717 EUR/kW x 500,000 kW = 358,500,000. Fixed O&M [P7-EM-001]
+        // [P7-US-012]: 34 EUR/kW-yr x (14.4 / 15.51 = 0.92843) = 31.57, so 31.6
+        // x 500,000 / 12 = 1,316,667. Marginal [P7-EM-013] [P7-EM-005]
+        // [P7-US-027] [P7-US-031]: 8.018426 EUR/MMBtu x 6.226 MMBtu/MWh = 49.923
+        // fuel + VOM midpoint 2.5 = 52.423 EUR/MWh x (45 / 27.30 = 1.64835) =
+        // 86.41, so 86.4. Start-up (ruling 2, authoring judgment: no sourced
+        // local start-up): 40,000 x 86.41107 / 45 = 76,810, so 76,800. Build 4
+        // months (ruling 1, authoring judgment: no sourced local duration).
+        (
+            kind: Ccgt,
+            capacity_mw: 500.0,
+            min_stable: 0.3,
+            ramp_mw_per_min: 25.0,
+            startup_hours: 2.0,
+            startup_cost: 76800,
+            marginal_cost_per_mwh: 86.4,
+            fixed_om_per_month: 1316667,
+            capital_cost: 358500000,
+            build_months: 4,
+            capacity_credit: 0.95,
+            book_life_months: 360,
+            siting: Anywhere,
+        ),
+        // Peaker (open-cycle gas turbine). Capital [P7-DE-004] [P7-US-013]: the
+        // German range 450-700, midpoint 575 EUR/kW x (500 / 1,606 = 0.31133) =
+        // 179.0, so 179 EUR/kW x 200,000 kW = 35,800,000. Fixed O&M [P7-EM-002]
+        // [P7-US-015]: 21 EUR/kW-yr x (10.2 / 9.56 = 1.06695) = 22.41, so 22.4 x
+        // 200,000 / 12 = 373,333. Marginal [P7-EM-013] [P7-EM-006] [P7-US-028]
+        // [P7-US-031]: 8.018426 x 9.447 MMBtu/MWh = 75.750 fuel + VOM 2.4 =
+        // 78.150 EUR/MWh x (150 / 42.07 = 3.56549) = 278.6, so 279. Start-up
+        // (ruling 2, authoring judgment: no sourced local start-up; P7-US-032
+        // needs a local start-up row): 5,000 x 278.64298 / 150 = 9,288, so
+        // 9,290. Build 2 months (ruling 1, authoring judgment: no sourced local
+        // duration).
+        (
+            kind: Peaker,
+            capacity_mw: 200.0,
+            min_stable: 0.2,
+            ramp_mw_per_min: 40.0,
+            startup_hours: 0.16666666666666666,
+            startup_cost: 9290,
+            marginal_cost_per_mwh: 279.0,
+            fixed_om_per_month: 373333,
+            capital_cost: 35800000,
+            build_months: 2,
+            capacity_credit: 0.95,
+            book_life_months: 360,
+            siting: Anywhere,
+        ),
+        // Solar [P7-DE-006] [P7-US-016]: the German ground-mounted range
+        // 700-900, midpoint 800 EUR/kWp, per kW of AC capacity by the
+        // Nunez de Balboa ratio of 500 MWp to 391 MWac [P7-ES-004] (authoring
+        // judgment: DC to AC conversion) = 1,023.0 EUR/kWac x (500 / 1,502 =
+        // 0.33289) = 340.6, so 341 EUR/kW x 300,000 kW = 102,300,000. Fixed
+        // O&M [P7-DE-013] [P7-US-018]: 13.3 EUR/kWp-yr x 1.27877 = 17.008
+        // EUR/kWac-yr x (20.0 / 20.23 = 0.98863) = 16.81, so 16.8 x 300,000 /
+        // 12 = 420,000. Build 2 months (ruling 1, authoring judgment: no
+        // sourced local duration).
+        (
+            kind: Solar,
+            capacity_mw: 300.0,
+            min_stable: 0.0,
+            ramp_mw_per_min: 300.0,
+            startup_hours: 0.0,
+            startup_cost: 0,
+            marginal_cost_per_mwh: 0.0,
+            fixed_om_per_month: 420000,
+            capital_cost: 102300000,
+            build_months: 2,
+            capacity_credit: 0.3,
+            book_life_months: 300,
+            siting: Anywhere,
+        ),
+        // Hydro. Capital [P7-EM-010] [P7-US-019]: the EU Reference Scenario's
+        // reservoir hydro, 2,100 EUR2015/kW (pacing judgment: no inflation
+        // adjustment; P7-EM-015, IRENA's 2,057 EUR/kW for Europe, corroborates
+        // it) x (1,500 / 7,073 = 0.21207) = 445.4, so 445 EUR/kW x 800,000 kW =
+        // 356,000,000. Fixed O&M [P7-EM-011] [P7-US-021]: 25.5 EUR/kW-yr x
+        // (40.5 / 33.54 = 1.20751) = 30.79, so 30.8 x 800,000 / 12 =
+        // 2,053,333. Start-up (ruling 2 with the hydro judgment, authoring
+        // judgment: the CCGT marginal ratio): 1,000 x 86.41107 / 45 = 1,920.
+        // Build 12 months (ruling 1, authoring judgment: no sourced local
+        // duration).
+        (
+            kind: Hydro,
+            capacity_mw: 800.0,
+            min_stable: 0.0,
+            ramp_mw_per_min: 100.0,
+            startup_hours: 0.08333333333333333,
+            startup_cost: 1920,
+            marginal_cost_per_mwh: 0.0,
+            fixed_om_per_month: 2053333,
+            capital_cost: 356000000,
+            build_months: 12,
+            capacity_credit: 0.8,
+            book_life_months: 600,
+            siting: HydroSite(0.5),
+        ),
+        // Storage (lithium-ion, 4 hours). Capital [P7-DE-007] [P7-US-022]: the
+        // German PV-coupled battery range 400-600, midpoint 500 EUR/kWh x 4 h =
+        // 2,000 EUR/kW x (500 / 1,744 = 0.28670) = 573.4, so 573 EUR/kW x
+        // 200,000 kW = 114,600,000. Fixed O&M (ruling 4, authoring judgment:
+        // derived from [P7-DE-007] by NA kind relativity): 573.39 x the NA fixed
+        // O&M / capital (6.0 / 500 = 0.012) = 6.88 x 200,000 / 12 = 114,667.
+        // Build 2 months (ruling 1, authoring judgment: no sourced local
+        // duration). Windows on the CET system clock (spec section 28.4): the
+        // starter territory's net load is highest in the Spanish and Moroccan
+        // evening, from about 19:00 to 22:00, after Gemasolar's solar output
+        // fades, so discharge may start at 18:00; charging fills the night and
+        // the solar midday before then.
+        (kind: Battery, capacity_mw: 200.0, min_stable: 0.0, ramp_mw_per_min: 0.0,
+         startup_hours: 0.0, startup_cost: 0, marginal_cost_per_mwh: 0.0,
+         fixed_om_per_month: 114667, capital_cost: 114600000, build_months: 2,
+         capacity_credit: 0.0, book_life_months: 180, siting: Anywhere,
+         battery: Some((charge_mw: 200.0, energy_mwh: 800.0, charge_efficiency: 0.9,
+                        discharge_efficiency: 1.0, discharge_start_hour: 18, charge_end_hour: 18))),
+    ],
+    // Construction markets (spec section 28.7.1), from the research note's
+    // "Europe-Maghreb economic-zone proposal" and "Spain-Morocco contrast".
+    // Zone 0, the regional default, is the catalog above; ids follow the
+    // proposal's order. Each zone overrides only the kinds with sourced
+    // project figures (Spain's wind, a market average, is the user's
+    // exception), and none touches lines (no usable Spanish, Moroccan,
+    // Algerian or Tunisian line row), physics, fuel, tariffs or currency. The
+    // contrast of record is the 2024-25 onshore wind pair (user decision,
+    // 2026-10-26): Spain's 2025 market average against Morocco's 2024 Jbel
+    // Lahdid, so Morocco is 11.1% cheaper but slower, 7 against 3 game months.
+    // The 2021 project pair (P7-ES-001 against P7-MA-001, Morocco 17.0%
+    // dearer) is kept in the note as recorded alternative evidence. Algeria
+    // (zone 3) and Tunisia (zone 4) come from the note's "Algeria and Tunisia
+    // zone proposal (follow-up 2026-10-26)"; each overrides solar and CCGT
+    // construction only, cheaper but slower than zone 0, and wind, the other
+    // kinds and the AC lines inherit zone 0.
+    economic_zones: (
+        zones: [
+            // Spain. Wind [P7-ES-006] [P7-FX-011] [P7-US-001]: IRENA's 2025
+            // Spain market weighted average, 1,422 USD/kW x 0.884969 EUR per USD
+            // = 1,258.4 EUR/kW x (1,000 / 1,489 = 0.67159) = 845.1, so 845
+            // EUR/kW x 300,000 kW = 253,500,000. It is a country market weighted
+            // average, not a single whole project, used by user decision on
+            // 2026-10-26 (the 2024-25 pairing). Morocco's wind is now cheaper
+            // but slower: 751 against 845 EUR/kW, 7 against 3 months. Herrera
+            // II (P7-ES-001, 2021, 1,111.1 EUR/kW, paced 746) is the recorded
+            // alternative. Build [P7-ES-003] [P7-US-002]: Puylobo's 8 months x
+            // (3 / 9) = 2.67, so 3 months (ruling 1, sourced; wind has no
+            // ceiling). Solar [P7-ES-004] [P7-US-016]: Nunez de Balboa, at most
+            // 300e6 EUR / 391,000 kWac = 767.3 EUR/kW x (500 / 1,502 = 0.33289)
+            // = 255.4, so 255 EUR/kW x 300,000 kW = 76,500,000. Build
+            // [P7-ES-005] [P7-US-017]: 12 months x (2 / 12) = 2 months (ruling
+            // 1, sourced; ceiling 3).
+            (
+                id: 1,
+                name_key: "economic-zone-spain",
+                plants: [
+                    (kind: Wind, capital_cost: 253500000, build_months: 3),
+                    (kind: Solar, capital_cost: 76500000, build_months: 2),
+                ],
+            ),
+            // Morocco. Wind [P7-MA-004] [P7-FX-005] [P7-FX-006] [P7-US-001]:
+            // Jbel Lahdid (2024), an announced project total of about 3.25e9
+            // MAD / 270,000 kW = 12,037.0 MAD/kW / (9.942359 / 0.923890 =
+            // 10.76141 MAD per EUR) = 1,118.5 EUR/kW x 0.67159 = 751.2, so 751
+            // EUR/kW x 300,000 kW = 225,300,000 (ruling 25: full-precision
+            // intermediates). Morocco's wind is now cheaper but slower: 11.1%
+            // below Spain's 845 (|845 - 751| / 751 = 12.5%), 7 against 3
+            // months. Koudia Al Baida (P7-MA-001, 2021, 1,300 EUR/kW, paced 873)
+            // is the recorded alternative. Build [P7-MA-002] [P7-US-002]: works
+            // from 2022-07-18 to first injection by 2024-03-06, 597 days /
+            // 30.4375 = 19.61 months x (3 / 9) = 6.54, so 7 months (ruling 1,
+            // sourced; P7-MA-003's planned window paces to 7-8). Solar
+            // [P7-MA-005] [P7-FX-001] [P7-FX-002] [P7-US-016]: Masen's Noor
+            // Ouarzazate IV, more than 750e6 MAD / 72,000 kW = 10,416.7 MAD/kW /
+            // (9.692 / 0.885206 = 10.94886 MAD per EUR) = 951.4 EUR/kW x 0.33289
+            // = 316.7, so 317 EUR/kW x 300,000 kW = 95,100,000. Build
+            // [P7-MA-006] [P7-US-017]: the planned 9-12 months, midpoint 10.5 x
+            // (2 / 12) = 1.75, so 2 months (ruling 1, sourced as planned; either
+            // end also gives 2).
+            (
+                id: 2,
+                name_key: "economic-zone-morocco",
+                plants: [
+                    (kind: Wind, capital_cost: 225300000, build_months: 7),
+                    (kind: Solar, capital_cost: 95100000, build_months: 2),
+                ],
+            ),
+            // Algeria (northern, interconnected). Solar [P7-DZ-002] [P7-FX-029]
+            // [P7-FX-030] [P7-ES-004] [P7-US-016]: the Laghrous (El Ghrous) lot's
+            // provisional EPC award including the grid-connection works, 18.13e9
+            // DZD / 200,000 kWp = 90,650 DZD/kWp / (135.8429 / 0.924840 =
+            // 146.8826 DZD per EUR) = 617.2 EUR/kWp, per kW of AC capacity by the
+            // Nunez de Balboa ratio of 500 MWp to 391 MWac (authoring judgment:
+            // DC to AC conversion, as zone 0) = 789.2 EUR/kWac x 0.33289 = 262.7,
+            // so 263 EUR/kW x 300,000 kW = 78,900,000. An EPC award excludes the
+            // owner's costs, so this is a lower bound on the whole project
+            // (P7-DZ-001 and P7-DZ-006 to P7-DZ-008 corroborate). Build
+            // [P7-DZ-005] [P7-US-017]: El Ghrous's 24 months of works x (2 / 12)
+            // = 4, clamped to the ceiling, so 3 months (ruling 1, sourced;
+            // P7-DZ-004's 25.8 months also gives 3). Ccgt [P7-DZ-011] [P7-FX-011]
+            // [P7-FX-013] [P7-US-010]: Tebessa (El Aouinet), a planned
+            // launch-of-works budget envelope, 184.09e9 DZD / 1,406,017 kW =
+            // 130,930 DZD/kW / (131.6059 / 0.884969 = 148.7124 DZD per EUR) =
+            // 880.4 EUR/kW x (600 / 921 = 0.65147) = 573.6, so 574 EUR/kW x
+            // 500,000 kW = 287,000,000. Build [P7-DZ-012] [P7-US-011]: the
+            // planned 48-month execution period x (4 / 22) = 8.73, so 9, clamped
+            // to the ceiling: 6 months (ruling 1, sourced as planned; P7-DZ-013
+            // supports a long schedule). Both are cheaper but slower than zone 0
+            // (solar 341 EUR/kW and 2 months, CCGT 717 and 4).
+            (
+                id: 3,
+                name_key: "economic-zone-algeria",
+                plants: [
+                    (kind: Ccgt, capital_cost: 287000000, build_months: 6),
+                    (kind: Solar, capital_cost: 78900000, build_months: 3),
+                ],
+            ),
+            // Tunisia. Solar [P7-TN-001] [P7-US-016]: EBRD's total project cost
+            // for Sidi Bouzid II, including its 12 km 225 kV connection, 92.7e6
+            // EUR / 100,000 kWac = 927 EUR/kW of AC capacity x 0.33289 = 308.6,
+            // so 309 EUR/kW x 300,000 kW = 92,700,000 (P7-TN-002 corroborates).
+            // Build [P7-TN-011] [P7-US-017]: Kairouan, groundbreaking 2024-05-08
+            // to commissioning 2025-12-16, 587 days / 30.4375 = 19.29 months x
+            // (2 / 12) = 3.21, so 3 months (ruling 1, sourced; ceiling 3;
+            // P7-TN-006 and P7-TN-007 also give 3). Ccgt [P7-TN-012] [P7-FX-025]
+            // [P7-FX-026] [P7-US-010]: JICA's 2014 appraisal estimate for Rades
+            // C, 45,828e6 JPY / (105.9448 / 0.752728 = 140.7478 JPY per EUR) =
+            // 325.6e6 EUR / 450,000 kW (the contracted 450 MW basis) = 723.6
+            // EUR/kW x 0.65147 = 471.4, so 471 EUR/kW x 500,000 kW = 235,500,000
+            // (on 430 MW: 757.2 x 0.65147 = 493.3, so 493; a 2014 price, with no
+            // inflation adjustment; P7-TN-015 and P7-TN-016 bracket it). Build
+            // [P7-TN-014] [P7-US-011]: contract 2017-06-21 to operation
+            // 2022-09-06, 1,903 days / 30.4375 = 62.52 months, including about
+            // 29 months of delay over the planned April 2020, x (4 / 22) = 11.37,
+            // so 11, clamped to the ceiling: 6 months (ruling 1, sourced;
+            // P7-TN-013's planned 33.3-34.3 months also gives 6). Both are cheaper
+            // but slower than zone 0.
+            (
+                id: 4,
+                name_key: "economic-zone-tunisia",
+                plants: [
+                    (kind: Ccgt, capital_cost: 235500000, build_months: 6),
+                    (kind: Solar, capital_cost: 92700000, build_months: 3),
+                ],
+            ),
+        ],
+        // Generated (spec section 28.11.1): economic_zone_cells.ron, written by
+        // author_economic_zone_cells from
+        // crates/infrastructure/authoring/continental_europe_maghreb_economic_zones.ron.
+        cells_file: "economic_zone_cells.ron",
+    ),
+    // Each city is an urban agglomeration and the hinterland it anchors. Base
+    // loads are 380 MW per million residents, rounded to 10 MW; the comment
+    // after each city gives its residents.
+    // - Agglomerations: City Population (Thomas Brinkhoff), "Major
+    //   Agglomerations of the World", reference date 2026-01-01, read
+    //   2026-10-25 (agglomerations of 1 million or more). "Rhine-Ruhr" is its
+    //   Rhein-Ruhr agglomeration, placed at Essen; Rotterdam is its
+    //   Rotterdam(-The Hague) agglomeration; its Ukrainian figures do not
+    //   count the effects of the Russian invasion.
+    // - Cordoba: the municipality's register of 2025-01-01 (City Population,
+    //   "Andalusia (Spain): Municipalities", read 2026-10-25), as no
+    //   agglomeration figure is listed.
+    // - Chisinau: the municipality at Moldova's census of 2024-04-08 (City
+    //   Population, "Moldova: Cities and Urban Settlements", read 2026-10-25).
+    // Coordinates are each city's English Wikipedia coordinate (Essen's for
+    // Rhine-Ruhr), read through the MediaWiki API on 2026-10-25. Names follow
+    // the English Wikipedia titles (ruling 17): "Zurich" (the title Zurich
+    // redirects to), "Cordoba" without the title's ", Spain" (no other
+    // shipped region has a Cordoba; ruling 27). The total, 55,090 MW, is 0.979
+    // of the Eastern Interconnection's load per GW of capacity (spec section
+    // 28.3).
+    cities: [
+        (id: 1, name_key: "city-seville", lon: -5.995, lat: 37.38861111, base_load_mw: 500.0, zone: 2, climate: 1), // 1,310,000
+        (id: 2, name_key: "city-malaga", lon: -4.42, lat: 36.71944444, base_load_mw: 430.0, zone: 2, climate: 1), // 1,120,000
+        (id: 3, name_key: "city-tangier", lon: -5.80388889, lat: 35.77666667, base_load_mw: 550.0, zone: 3, climate: 1), // 1,460,000
+        (id: 4, name_key: "city-cordoba", lon: -4.78, lat: 37.89, base_load_mw: 120.0, zone: 2, climate: 1), // 324,159
+        (id: 5, name_key: "city-madrid", lon: -3.7033, lat: 40.4169, base_load_mw: 2660.0, zone: 2, climate: 1), // 7,000,000
+        (id: 6, name_key: "city-barcelona", lon: 2.18333333, lat: 41.38333333, base_load_mw: 1880.0, zone: 2, climate: 1), // 4,950,000
+        (id: 7, name_key: "city-valencia", lon: -0.37638889, lat: 39.47, base_load_mw: 760.0, zone: 2, climate: 1), // 1,990,000
+        (id: 8, name_key: "city-lisbon", lon: -9.15, lat: 38.72527778, base_load_mw: 1010.0, zone: 1, climate: 1), // 2,650,000
+        (id: 9, name_key: "city-porto", lon: -8.6108, lat: 41.15, base_load_mw: 630.0, zone: 1, climate: 1), // 1,660,000
+        (id: 10, name_key: "city-paris", lon: 2.3522, lat: 48.8567, base_load_mw: 4410.0, zone: 2, climate: 2), // 11,600,000
+        (id: 11, name_key: "city-lyon", lon: 4.835, lat: 45.7675, base_load_mw: 780.0, zone: 2, climate: 2), // 2,050,000
+        (id: 12, name_key: "city-marseille", lon: 5.37, lat: 43.2964, base_load_mw: 660.0, zone: 2, climate: 3), // 1,730,000
+        (id: 13, name_key: "city-brussels", lon: 4.3525, lat: 50.84666667, base_load_mw: 1070.0, zone: 2, climate: 2), // 2,825,000
+        (id: 14, name_key: "city-amsterdam", lon: 4.89361111, lat: 52.37277778, base_load_mw: 990.0, zone: 2, climate: 2), // 2,600,000
+        (id: 15, name_key: "city-rotterdam", lon: 4.48, lat: 51.92, base_load_mw: 1330.0, zone: 2, climate: 2), // 3,500,000
+        (id: 16, name_key: "city-rhine-ruhr", lon: 7.01305556, lat: 51.45083333, base_load_mw: 4100.0, zone: 2, climate: 2), // 10,800,000
+        (id: 17, name_key: "city-berlin", lon: 13.405, lat: 52.52, base_load_mw: 1790.0, zone: 2, climate: 2), // 4,700,000
+        (id: 18, name_key: "city-hamburg", lon: 10.0, lat: 53.55, base_load_mw: 1100.0, zone: 2, climate: 2), // 2,900,000
+        (id: 19, name_key: "city-frankfurt", lon: 8.68222222, lat: 50.11055556, base_load_mw: 1230.0, zone: 2, climate: 2), // 3,225,000
+        (id: 20, name_key: "city-munich", lon: 11.575, lat: 48.1375, base_load_mw: 860.0, zone: 2, climate: 2), // 2,275,000
+        (id: 21, name_key: "city-zurich", lon: 8.54111111, lat: 47.37444444, base_load_mw: 580.0, zone: 2, climate: 2), // 1,530,000
+        (id: 22, name_key: "city-vienna", lon: 16.3725, lat: 48.2083, base_load_mw: 910.0, zone: 2, climate: 2), // 2,400,000
+        (id: 23, name_key: "city-prague", lon: 14.42138889, lat: 50.0875, base_load_mw: 590.0, zone: 2, climate: 2), // 1,560,000
+        (id: 24, name_key: "city-warsaw", lon: 21.01111111, lat: 52.23, base_load_mw: 940.0, zone: 2, climate: 2), // 2,475,000
+        (id: 25, name_key: "city-budapest", lon: 19.05138889, lat: 47.4925, base_load_mw: 950.0, zone: 2, climate: 2), // 2,500,000
+        (id: 26, name_key: "city-milan", lon: 9.19, lat: 45.46694444, base_load_mw: 2490.0, zone: 2, climate: 2), // 6,550,000
+        (id: 27, name_key: "city-rome", lon: 12.48277778, lat: 41.89333333, base_load_mw: 1310.0, zone: 2, climate: 3), // 3,450,000
+        (id: 28, name_key: "city-naples", lon: 14.2486, lat: 40.8358, base_load_mw: 1550.0, zone: 2, climate: 3), // 4,075,000
+        (id: 29, name_key: "city-belgrade", lon: 20.45694444, lat: 44.81777778, base_load_mw: 540.0, zone: 2, climate: 3), // 1,430,000
+        (id: 30, name_key: "city-athens", lon: 23.72805556, lat: 37.98416667, base_load_mw: 1360.0, zone: 4, climate: 3), // 3,575,000
+        (id: 31, name_key: "city-bucharest", lon: 26.10388889, lat: 44.4325, base_load_mw: 860.0, zone: 4, climate: 3), // 2,250,000
+        (id: 32, name_key: "city-kyiv", lon: 30.52333333, lat: 50.45, base_load_mw: 1320.0, zone: 4, climate: 4), // 3,475,000
+        (id: 33, name_key: "city-chisinau", lon: 28.83527778, lat: 47.02277778, base_load_mw: 270.0, zone: 4, climate: 4), // 720,128
+        (id: 34, name_key: "city-istanbul", lon: 28.955, lat: 41.01361111, base_load_mw: 6160.0, zone: 5, climate: 3), // 16,200,000
+        (id: 35, name_key: "city-ankara", lon: 32.85472222, lat: 39.92888889, base_load_mw: 2000.0, zone: 5, climate: 3), // 5,250,000
+        (id: 36, name_key: "city-izmir", lon: 27.13222222, lat: 38.42444444, base_load_mw: 1150.0, zone: 5, climate: 3), // 3,025,000
+        (id: 37, name_key: "city-casablanca", lon: -7.58333333, lat: 33.53333333, base_load_mw: 1710.0, zone: 3, climate: 1), // 4,500,000
+        (id: 38, name_key: "city-rabat", lon: -6.84138889, lat: 34.02111111, base_load_mw: 820.0, zone: 3, climate: 1), // 2,150,000
+        (id: 39, name_key: "city-algiers", lon: 3.08722222, lat: 36.7325, base_load_mw: 1670.0, zone: 3, climate: 1), // 4,400,000
+        (id: 40, name_key: "city-tunis", lon: 10.18166667, lat: 36.80638889, base_load_mw: 1050.0, zone: 3, climate: 1), // 2,775,000
+    ],
+    // Climate 1, Iberia and the Maghreb: a late evening peak on the local
+    // clock (20:00 to 22:00) all year, a summer air-conditioning afternoon and
+    // mild winters. Climate 2, western and central Europe: winter heating with
+    // a morning ramp and a 17:00-19:00 evening peak, a flat summer. Climate 3,
+    // the northern Mediterranean, the Balkans and Turkiye: a winter evening
+    // peak and a hot-summer afternoon. Climate 4, Ukraine and Moldova: cold
+    // winters with a strong heating and lighting evening peak. The hourly
+    // shapes, the month-to-shape assignment and the monthly factors are
+    // authoring judgments on each city's local clock (no sourced hourly load
+    // profile was read).
+    climates: [
+        (id: 1,
+            shapes: [
+                ("winter", [
+                0.80, 0.76, 0.73, 0.72, 0.72, 0.75, 0.83, 0.93, 1.01, 1.05, 1.06, 1.06,
+                1.05, 1.03, 1.01, 0.99, 0.99, 1.03, 1.12, 1.18, 1.18, 1.12, 1.01, 0.89,
+            ]),
+                ("shoulder", [
+                0.80, 0.76, 0.74, 0.73, 0.73, 0.76, 0.84, 0.94, 1.02, 1.06, 1.07, 1.07,
+                1.06, 1.05, 1.03, 1.01, 1.00, 1.02, 1.08, 1.13, 1.13, 1.08, 0.98, 0.88,
+            ]),
+                ("summer", [
+                0.86, 0.81, 0.78, 0.76, 0.75, 0.76, 0.80, 0.88, 0.96, 1.03, 1.08, 1.11,
+                1.13, 1.14, 1.14, 1.12, 1.09, 1.06, 1.05, 1.06, 1.08, 1.07, 1.01, 0.93,
+            ]),
+            ],
+            month_shapes: ["winter", "winter", "shoulder", "shoulder", "shoulder", "summer", "summer", "summer", "summer", "shoulder", "shoulder", "winter"],
+            monthly: [1.06, 1.03, 0.97, 0.92, 0.93, 1.02, 1.10, 1.08, 1.00, 0.93, 0.97, 1.04],
+        ),
+        (id: 2,
+            shapes: [
+                ("winter", [
+                0.78, 0.75, 0.73, 0.73, 0.75, 0.82, 0.94, 1.04, 1.08, 1.08, 1.07, 1.06,
+                1.04, 1.03, 1.02, 1.03, 1.08, 1.17, 1.18, 1.13, 1.06, 0.98, 0.90, 0.83,
+            ]),
+                ("shoulder", [
+                0.79, 0.76, 0.74, 0.73, 0.75, 0.81, 0.92, 1.02, 1.07, 1.08, 1.08, 1.08,
+                1.06, 1.05, 1.04, 1.04, 1.06, 1.11, 1.12, 1.09, 1.04, 0.97, 0.90, 0.83,
+            ]),
+                ("summer", [
+                0.80, 0.77, 0.75, 0.74, 0.75, 0.80, 0.90, 0.99, 1.05, 1.07, 1.08, 1.09,
+                1.08, 1.07, 1.06, 1.05, 1.05, 1.05, 1.04, 1.03, 1.02, 0.98, 0.91, 0.84,
+            ]),
+            ],
+            month_shapes: ["winter", "winter", "shoulder", "shoulder", "summer", "summer", "summer", "summer", "shoulder", "shoulder", "winter", "winter"],
+            monthly: [1.12, 1.10, 1.03, 0.96, 0.92, 0.90, 0.90, 0.89, 0.93, 0.99, 1.07, 1.12],
+        ),
+        (id: 3,
+            shapes: [
+                ("winter", [
+                0.80, 0.76, 0.74, 0.73, 0.74, 0.79, 0.89, 0.99, 1.04, 1.05, 1.05, 1.04,
+                1.03, 1.02, 1.01, 1.02, 1.08, 1.18, 1.20, 1.16, 1.09, 1.00, 0.92, 0.85,
+            ]),
+                ("shoulder", [
+                0.80, 0.77, 0.75, 0.74, 0.75, 0.80, 0.89, 0.98, 1.04, 1.06, 1.06, 1.06,
+                1.05, 1.04, 1.03, 1.03, 1.06, 1.12, 1.15, 1.12, 1.06, 0.98, 0.91, 0.85,
+            ]),
+                ("summer", [
+                0.86, 0.82, 0.79, 0.77, 0.77, 0.79, 0.85, 0.93, 1.01, 1.07, 1.11, 1.13,
+                1.14, 1.15, 1.14, 1.12, 1.09, 1.07, 1.06, 1.07, 1.06, 1.02, 0.96, 0.90,
+            ]),
+            ],
+            month_shapes: ["winter", "winter", "shoulder", "shoulder", "shoulder", "summer", "summer", "summer", "summer", "shoulder", "shoulder", "winter"],
+            monthly: [1.06, 1.03, 0.97, 0.92, 0.93, 1.01, 1.09, 1.08, 0.99, 0.93, 0.97, 1.04],
+        ),
+        (id: 4,
+            shapes: [
+                ("winter", [
+                0.76, 0.73, 0.71, 0.71, 0.73, 0.80, 0.92, 1.03, 1.07, 1.07, 1.05, 1.04,
+                1.02, 1.01, 1.01, 1.04, 1.13, 1.24, 1.25, 1.20, 1.11, 1.00, 0.90, 0.82,
+            ]),
+                ("shoulder", [
+                0.78, 0.75, 0.73, 0.73, 0.74, 0.80, 0.91, 1.01, 1.06, 1.07, 1.06, 1.06,
+                1.04, 1.03, 1.03, 1.04, 1.08, 1.15, 1.17, 1.13, 1.07, 0.99, 0.90, 0.83,
+            ]),
+                ("summer", [
+                0.80, 0.77, 0.75, 0.74, 0.75, 0.80, 0.89, 0.98, 1.04, 1.07, 1.08, 1.09,
+                1.08, 1.07, 1.06, 1.05, 1.05, 1.05, 1.05, 1.05, 1.05, 1.00, 0.92, 0.85,
+            ]),
+            ],
+            month_shapes: ["winter", "winter", "shoulder", "shoulder", "summer", "summer", "summer", "summer", "shoulder", "shoulder", "winter", "winter"],
+            monthly: [1.16, 1.12, 1.04, 0.95, 0.90, 0.88, 0.89, 0.89, 0.92, 0.99, 1.08, 1.16],
+        ),
+    ],
+    demand_noise: (forecast_error: 0.03, error_persistence: 0.995),
+    // Regional cloud from Seville's sunshine (WMO normals 1991-2020, as
+    // tabulated by English Wikipedia, "List of cities in Europe by sunshine
+    // duration", Spain, Seville, read 2026-10-25: 202.0, 212.2, 246.3, 270.2,
+    // 324.9, 357.3, 388.1, 364.3, 278.4, 244.4, 205.3 and 185.9 hours), as a
+    // share of the possible hours on the middle day of each month at 37.39 N
+    // (FAO-56 equations 24, 25 and 34) and through the Angstrom-Prescott
+    // relation with the FAO-56 defaults (Allen et al., FAO Irrigation and
+    // Drainage Paper 56, 1998, equation 35: a = 0.25, b = 0.50), normalised to
+    // clear sky (0.75): (0.25 + 0.5 x share) / 0.75. The starter territory's
+    // summer is the clearest (July and August 0.92).
+    solar: (
+        clearness_mean: [0.78, 0.81, 0.79, 0.80, 0.83, 0.88, 0.92, 0.92, 0.84, 0.81, 0.79, 0.76],
+        clearness_sd: 0.13,
+    ),
+    // Usable river flow: the Alpine and Pyrenean snowmelt raises the rivers
+    // from April to June, the Iberian and Maghreb reservoirs fill with the
+    // winter rain, and flow is lowest from August to October. The monthly
+    // factors are an authoring judgment on that shape (no monthly European
+    // inflow or hydro generation series was read).
+    hydro: (monthly_flow: [1.0, 1.05, 1.15, 1.25, 1.3, 1.15, 0.9, 0.7, 0.65, 0.75, 0.95, 1.0]),
+    // North American protection and performance values at 50 Hz (Global
+    // Constraints).
+    frequency: (
+        nominal_hz: 50.0,
+        k_inertia: 5.0,
+        k_damping: 0.2,
+        normal_band_hz: 0.05,
+        shed_below_hz: -0.5,
+        blackout_below_hz: -1.5,
+        blackout_after_shed_ticks: 30,
+        curtail_above_hz: 0.5,
+        trip_above_hz: 1.5,
+        trip_after_ticks: 5,
+        shed_stage_spacing_hz: 0.2,
+        shed_step: 0.05,
+    ),
+    // Currency-neutral ratios as in North America; only the two tariffs are
+    // local.
+    regulator: (
+        storage_accreditation: [(2.0, 0.65), (4.0, 0.85), (6.0, 0.93), (8.0, 0.96)],
+        satisfaction_target: 90.0,
+        return_per_satisfaction_point: 0.0005,
+        // Tariffs [P7-EM-008] [P7-EM-009] [P7-US-034]: Eurostat's EU27 prices
+        // excluding taxes and levies for 2025-S1, households 207.5 and
+        // non-households 138.7 EUR/MWh, averaged (authoring judgment: the
+        // sources give no sector weights, and P7-US-034 is an all-sector
+        // average) to 173.1 EUR/MWh x (95 / 135.6 = 0.70059) = 121.27, so 121
+        // to start, and x (100 / 135.6 = 0.73746) = 127.65, so a reference of
+        // 128 (the same 0.95 relation as shipped). Basis: an unweighted mean
+        // of a household and a non-household row, both excluding taxes and
+        // levies, while P7-US-034 is an all-sector average that includes
+        // them (authoring judgment: basis differs from the US all-sector
+        // reference; not re-based). The nuclear fuel proxy (ruling 19) scales
+        // by this same reference, so it inherits that basis.
+        starting_tariff_per_mwh: 121.0,
+        reference_tariff_per_mwh: 128.0,
+        base_return: 0.09,
+        min_return: 0.07,
+        max_return: 0.11,
+        reliability_target: 0.999,
+        return_per_reliability: 2.0,
+        return_per_cost_improvement: 0.05,
+        reserve_margin: 0.2,
+        strike_threshold: 0.005,
+        strikes_to_revoke: 3,
+        clean_months_to_expire: 3,
+        frequency_band_hz: 0.2,
+        frequency_violation_share: 0.05,
+    ),
+    satisfaction: (
+        starting: 70.0,
+        reliability_floor: 0.95,
+        price_sensitivity: 2.0,
+        smoothing: 0.2,
+    ),
+    // Lines. Cost [P7-EM-012] [P7-US-033]: ACER's median unit cost for a
+    // 380-400 kV single-circuit overhead line, 397,000 EUR/km x (466,832 /
+    // 2,796,170 = 0.16695) = 66,280.8, so 66,300 EUR/km x cell_km 33.414 =
+    // 2,215,338 EUR per cell. Neither Spain nor Morocco has a sourced line
+    // row, so no zone overrides it. Build speed (rulings 5 and 21, authoring
+    // judgment: cell width is the note's cell_km): 201.07 km per month /
+    // 33.414 km = 6.02, so 6 cells per month.
+    lines: (cost_per_cell: 2215338, cells_per_month: 6, book_life_months: 600),
+    // Seville, Malaga and Tangier, joined across the Strait of Gibraltar by
+    // the pre-built Spain-Morocco interconnector (spec section 28.8).
+    start: (
+        // Tangier's starter line from Seville is the Spain-Morocco
+        // interconnector.
+        line_names: [(3, "line-spain-morocco")],
+        year: 2027,
+        month: 1,
+        // Cash (tuned freely; scale from [P7-DE-002]): the Eastern
+        // Interconnection's 5,000,000,000 x the local coal capital relativity
+        // (568.6896 / 1,166.67 = 0.48745) = 2,437,241,043, so 2,440,000,000
+        // EUR.
+        cash: 2440000000,
+        // Seville anchors the starting service territory.
+        home_city: 1,
+        connected_cities: [1, 2, 3],
+        // Real plants at their published coordinates (Global Energy Monitor
+        // wiki plant pages, "exact" coordinates, read 2026-10-25, unless
+        // noted), following the region's gas-led Andalusian and Moroccan mix
+        // with pumped hydro and solar. Each plant's cell is land (nudge rings
+        // put the three coastal plants' offshore cell centres on land).
+        fleet: [
+            // Combined cycle: Arcos de la Frontera (36.6721, -5.8164; three
+            // units, 1,585 MW), Campo de Gibraltar at San Roque (36.1834,
+            // -5.3933; 780 MW), Palos de la Frontera at Huelva ("Palos power
+            // station", 37.18448, -6.89279; three units) and Tahaddart near
+            // Tangier ("Tahaddart power plant", 35.589177, -5.986626; 400 MW).
+            (Ccgt, -5.8164, 36.6721),
+            (Ccgt, -5.3933, 36.1834),
+            (Ccgt, -6.89279, 37.18448),
+            (Ccgt, -5.986626, 35.589177),
+            // Hydro: the Tajo de la Encantada pumped-storage station in Malaga
+            // province ("Tajo De La Encantada hydroelectric plant", 36.9084,
+            // -4.763; 377 MW).
+            (Hydro, -4.763, 36.9084),
+            // Solar: Gemasolar at Fuentes de Andalucia (English Wikipedia,
+            // "Gemasolar Thermosolar Plant", 37.558086 N, 5.329056 W; a 20 MW
+            // solar tower).
+            (Solar, -5.329056, 37.558086),
+        ],
+    ),
+)

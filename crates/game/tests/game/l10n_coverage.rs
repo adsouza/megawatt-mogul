@@ -1,10 +1,14 @@
 //! Localisation coverage: every key the code can ask for exists in en-US, every typed value
 //! translates, and a broken `.ftl` fails Boot instead of panicking.
 
+use crate::support::usd_style;
 use std::collections::BTreeMap;
 
 use application::projections::{Lesson, MilestoneKind, MilestoneProgress, RampWarning};
-use application::{CommandError, CommandLogError, RegionCatalog, RegionLoadError};
+use application::{
+    CommandError, CommandLogError, RegionBundleProblem, RegionCatalog, RegionLoadError,
+    SidecarProblem,
+};
 use bevy::prelude::*;
 use domain::company::{AssetRef, LedgerCategory, LedgerEntry};
 use domain::error::DomainError;
@@ -20,12 +24,12 @@ use domain::session::{
 use domain::time::{Season, SimDuration, SimMonth};
 use domain::units::{Hertz, MegawattHours, Megawatts, Money, Price, Ratio};
 use game::l10n::keys::ALL_UI_KEYS;
-use game::l10n::{Localize, LocalizeWith, Localizer, Names, Toast};
+use game::l10n::{LessonMoneyText, Localize, LocalizeWith, Localizer, Names, Toast};
 use game::state::{AppState, BootError};
 use infrastructure::region::RonRegionCatalog;
 use tempfile::TempDir;
 
-use crate::support::{headless_app, shipped_assets, update_n};
+use crate::support::{SHIPPED_REGIONS, headless_app, shipped_assets, update_n};
 
 fn shipped() -> Localizer {
     Localizer::load(&shipped_assets().join("locales").join("en-US"))
@@ -108,6 +112,10 @@ fn site_errors() -> Vec<SiteError> {
 
 fn domain_errors() -> Vec<DomainError> {
     vec![
+        DomainError::ConstructionOverflow,
+        DomainError::InvalidConstructionCell {
+            cell: CellCoord { x: 99, y: 99 },
+        },
         DomainError::PlantNotBattery { plant: PLANT },
         DomainError::InvalidRatio { value: 1.5 },
         DomainError::InvalidMonth { month: 13 },
@@ -166,6 +174,10 @@ fn domain_errors() -> Vec<DomainError> {
 fn region_errors() -> Vec<RegionError> {
     let city = CityId(2);
     vec![
+        RegionError::InvalidEconomicZone {
+            zone: Some(domain::region::EconomicZoneId(1)),
+            field: "economic_zones.cells",
+        },
         RegionError::MissingField {
             field: "regulator.satisfaction_target",
         },
@@ -212,9 +224,49 @@ fn region_load_errors() -> Vec<RegionLoadError> {
             error: RegionError::InvalidHomeCity(CityId(99)),
         },
         RegionLoadError::IdMismatch {
-            requested: region,
+            requested: region.clone(),
             found: RegionId::new("lemuria"),
         },
+    ]
+    .into_iter()
+    .chain(
+        sidecar_problems()
+            .into_iter()
+            .map(|problem| RegionLoadError::Sidecar {
+                region: region.clone(),
+                file: "irradiance_cells.ron".into(),
+                problem: Box::new(problem),
+            }),
+    )
+    .chain(
+        bundle_problems()
+            .into_iter()
+            .map(|problem| RegionLoadError::Bundle {
+                region: region.clone(),
+                problem,
+            }),
+    )
+    .collect()
+}
+
+fn sidecar_problems() -> Vec<SidecarProblem> {
+    vec![
+        SidecarProblem::Missing,
+        SidecarProblem::Unreferenced,
+        SidecarProblem::InvalidName,
+        SidecarProblem::Io("permission denied".into()),
+        SidecarProblem::Parse("3:7: expected a comma".into()),
+    ]
+}
+
+fn bundle_problems() -> Vec<RegionBundleProblem> {
+    vec![
+        RegionBundleProblem::UnsupportedVersion,
+        RegionBundleProblem::BadHeader,
+        RegionBundleProblem::Truncated,
+        RegionBundleProblem::MainName,
+        RegionBundleProblem::Unsorted,
+        RegionBundleProblem::NoSidecars,
     ]
 }
 
@@ -536,7 +588,9 @@ fn events() -> Vec<(DomainEvent, bool)> {
 
 #[test]
 fn the_variant_tables_cover_every_variant() {
-    assert_covers_every_variant("DomainError", &domain_errors(), 25, |e| match e {
+    assert_covers_every_variant("DomainError", &domain_errors(), 27, |e| match e {
+        DomainError::ConstructionOverflow => 25,
+        DomainError::InvalidConstructionCell { .. } => 26,
         DomainError::InvalidRatio { .. } => 0,
         DomainError::InvalidMonth { .. } => 1,
         DomainError::PlantNotDispatchable { .. } => 2,
@@ -563,7 +617,8 @@ fn the_variant_tables_cover_every_variant() {
         DomainError::UnknownLine { .. } => 22,
         DomainError::LineNotUnderConstruction { .. } => 23,
     });
-    assert_covers_every_variant("RegionError", &region_errors(), 14, |e| match e {
+    assert_covers_every_variant("RegionError", &region_errors(), 15, |e| match e {
+        RegionError::InvalidEconomicZone { .. } => 14,
         RegionError::MissingField { .. } => 12,
         RegionError::UnsupportedRegionSchema(_) => 13,
         RegionError::CityCellOccupied { .. } => 11,
@@ -579,12 +634,29 @@ fn the_variant_tables_cover_every_variant() {
         RegionError::InvalidShape { .. } => 9,
         RegionError::InvalidBand { .. } => 10,
     });
-    assert_covers_every_variant("RegionLoadError", &region_load_errors(), 5, |e| match e {
+    assert_covers_every_variant("RegionLoadError", &region_load_errors(), 7, |e| match e {
         RegionLoadError::NotFound(_) => 0,
         RegionLoadError::Io { .. } => 1,
         RegionLoadError::Parse { .. } => 2,
         RegionLoadError::Invalid { .. } => 3,
         RegionLoadError::IdMismatch { .. } => 4,
+        RegionLoadError::Sidecar { .. } => 5,
+        RegionLoadError::Bundle { .. } => 6,
+    });
+    assert_covers_every_variant("SidecarProblem", &sidecar_problems(), 5, |p| match p {
+        SidecarProblem::Missing => 0,
+        SidecarProblem::Unreferenced => 1,
+        SidecarProblem::InvalidName => 2,
+        SidecarProblem::Io(_) => 3,
+        SidecarProblem::Parse(_) => 4,
+    });
+    assert_covers_every_variant("RegionBundleProblem", &bundle_problems(), 6, |p| match p {
+        RegionBundleProblem::UnsupportedVersion => 0,
+        RegionBundleProblem::BadHeader => 1,
+        RegionBundleProblem::Truncated => 2,
+        RegionBundleProblem::MainName => 3,
+        RegionBundleProblem::Unsorted => 4,
+        RegionBundleProblem::NoSidecars => 5,
     });
     assert_covers_every_variant("CommandError", &command_errors(), 3, |e| match e {
         CommandError::Domain(_) => 0,
@@ -701,7 +773,11 @@ fn every_error_and_lesson_variant_translates_without_falling_back() {
     assert_translates(&l10n, &region_load_errors());
     assert_translates_with(&l10n, &command_errors());
     assert_translates(&l10n, &site_errors());
-    assert_translates(&l10n, &lessons());
+    assert_texts(
+        lessons()
+            .iter()
+            .map(|lesson| lesson.localize_money(&l10n, &usd_style())),
+    );
     assert_translates(
         &l10n,
         &[CommandLogError {
@@ -755,6 +831,8 @@ fn every_typed_value_translates_without_falling_back() {
             Season::Spring,
             Season::Summer,
             Season::Autumn,
+            Season::Monsoon,
+            Season::PostMonsoon,
         ],
     );
     assert_translates(
@@ -780,7 +858,7 @@ fn toast_worthy_events_have_text_and_the_rest_have_none() {
     let names = Names::empty(&l10n);
 
     for (event, worthy) in events() {
-        match (event.toast(&l10n, &names), worthy) {
+        match (event.toast(&l10n, &names, &usd_style()), worthy) {
             (Some(text), true) => {
                 assert!(!looks_like_a_bare_key(&text), "{event:?} fell back: {text}");
                 assert!(!text.contains('{'), "{event:?}: {text}");
@@ -803,8 +881,12 @@ fn rotating_outage_orders_read_differently_when_lifted() {
     let names = Names::empty(&l10n);
     let order = |share| DomainEvent::RotatingOutageOrdered { hour: 18, share };
 
-    let ordered = order(ratio(0.08)).toast(&l10n, &names).unwrap();
-    let lifted = order(Ratio::ZERO).toast(&l10n, &names).unwrap();
+    let ordered = order(ratio(0.08))
+        .toast(&l10n, &names, &usd_style())
+        .unwrap();
+    let lifted = order(Ratio::ZERO)
+        .toast(&l10n, &names, &usd_style())
+        .unwrap();
 
     assert!(
         ordered.contains("18:00") && ordered.contains("8.0%"),
@@ -842,7 +924,7 @@ fn strike_expiry_pluralises() {
     let names = Names::empty(&l10n);
     let expired = |strikes| {
         DomainEvent::StrikeExpired { strikes }
-            .toast(&l10n, &names)
+            .toast(&l10n, &names, &usd_style())
             .unwrap()
     };
 
@@ -860,7 +942,7 @@ fn lessons_use_their_parameters() {
         cost: Money::from_dollars(1_850_000),
         alternative: Price::per_mwh(45.0),
     }
-    .localize(&l10n);
+    .localize_money(&l10n, &usd_style());
 
     assert!(peaking.contains("12.3 GWh"), "{peaking}");
     assert!(peaking.contains("$1.85M"), "{peaking}");
@@ -891,11 +973,46 @@ fn every_shipped_region_and_city_name_key_exists() {
     let catalog = RonRegionCatalog::new(shipped_assets().join("regions"));
 
     let listings = catalog.list().unwrap();
-    assert!(listings.len() >= 2, "expected both shipped regions");
+    let ids: Vec<_> = listings.iter().map(|listing| listing.id.as_str()).collect();
+    assert_eq!(
+        ids, SHIPPED_REGIONS,
+        "the support list names the shipped regions"
+    );
     for listing in listings {
         let region = catalog.load(&listing.id).unwrap().definition;
-        let mut keys = vec![region.name_key().to_owned()];
+        let mut keys = vec![
+            region.name_key().to_owned(),
+            // The region picker shows this beside the region's button (§28.3).
+            format!("{}-description", region.name_key()),
+        ];
         keys.extend(region.cities().iter().map(|city| city.name_key.clone()));
+        // Every civil zone a city or the system clock uses.
+        keys.extend(region.system_zone().name_key.clone());
+        keys.extend(
+            region
+                .cities()
+                .iter()
+                .filter_map(|city| region.city_zone(city.id).name_key.clone()),
+        );
+        // Every economic zone with a cell, and every starter line's authored name.
+        let terrain = region.terrain();
+        let zones: std::collections::BTreeSet<_> = (0..terrain.height())
+            .flat_map(|y| (0..terrain.width()).map(move |x| CellCoord { x, y }))
+            .map(|cell| region.economic_zone_at(cell).unwrap())
+            .collect();
+        keys.extend(
+            zones
+                .into_iter()
+                .filter_map(|zone| region.economic_zone(zone))
+                .map(|zone| zone.name_key.clone()),
+        );
+        keys.extend(
+            region
+                .cities()
+                .iter()
+                .filter_map(|city| region.start_line_name(city.id))
+                .map(str::to_owned),
+        );
         for key in keys {
             assert!(
                 l10n.has(&key),
@@ -939,7 +1056,7 @@ fn a_city_toast_uses_the_localised_city_name() {
     let city = session.city_views().remove(0);
 
     let toast = DomainEvent::CityConnected { city: city.id }
-        .toast(&l10n, &names)
+        .toast(&l10n, &names, &usd_style())
         .unwrap();
 
     let name = l10n.text(&city.name_key);
@@ -992,7 +1109,7 @@ fn a_plant_toast_uses_the_plant_kind() {
         let kind = plant.kind.localize(&l10n);
         let expected = format!("{kind} {}", plant.id.0);
         let toast = DomainEvent::PlantTripped { plant: plant.id }
-            .toast(&l10n, &names)
+            .toast(&l10n, &names, &usd_style())
             .unwrap();
         assert!(toast.starts_with(&expected), "{toast}");
         let error = DomainError::PlantNotOnline { plant: plant.id }.localize_with(&l10n, &names);
@@ -1012,7 +1129,7 @@ fn a_commissioned_plant_is_named_by_its_event_kind_even_when_unknown() {
         plant: PlantId(9),
         kind: PlantKind::Coal,
     }
-    .toast(&l10n, &names)
+    .toast(&l10n, &names, &usd_style())
     .unwrap();
 
     assert!(toast.starts_with("Coal plant 9"), "{toast}");
@@ -1030,13 +1147,13 @@ fn an_unknown_id_falls_back_to_its_number_without_panicking() {
     let toast = DomainEvent::PlantTripped {
         plant: PlantId(999_999),
     }
-    .toast(&l10n, &names)
+    .toast(&l10n, &names, &usd_style())
     .unwrap();
     assert!(toast.contains("#999999"), "{toast}");
     let empty = Names::empty(&l10n);
     assert!(
         DomainEvent::CityConnected { city: CityId(3) }
-            .toast(&l10n, &empty)
+            .toast(&l10n, &empty, &usd_style())
             .unwrap()
             .contains("#3")
     );

@@ -14,9 +14,33 @@
 // 49th parallel, the Montana-Dakota line (104.05 W) to the Nebraska-Colorado
 // line, the Colorado border, then south through eastern New Mexico along
 // 104.5 W to the Rio Grande.
+//
+// The two files trace this seam with the same vertices, so the polygons agree
+// exactly. The grids do not (this one is 0.51 x 0.525 degrees, the Western one
+// 0.39 x 0.40), and a cell is playable when its centre is, so three pairs of
+// cells straddled the seam: each Eastern centre fell in a Western land cell
+// and each Western centre in an Eastern one. Two pairs sit on the Colorado
+// border (Eastern cells (14, 36) and (15, 36), centred at 36.8375 N in the
+// Oklahoma Panhandle, against Western cells (58, 57) and (59, 57), whose
+// centres lie on the 37 N border itself). The Panhandle is Eastern (SPS), so
+// those two are cut from the Western file, not this one. The third pair is
+// Eastern cell (12, 39) against Western cell (55, 61) in eastern New Mexico,
+// where both centres are true to their side of the diagonal seam; the
+// coarser grid gives way, so the last `exclude` ring here removes cell
+// (12, 39). With the three cuts no centre is playable in both regions.
 (
-    region_schema: 3,
+    region_schema: 4,
     id: "eastern_interconnection",
+    system_zone: 1,
+    time_zones: [
+        (id: 1, name_key: "zone-et", standard_offset_minutes: -300, dst_months: [false, false, true, true, true, true, true, true, true, true, false, false]),
+        (id: 2, name_key: "zone-ct", standard_offset_minutes: -360, dst_months: [false, false, true, true, true, true, true, true, true, true, false, false]),
+        (id: 3, name_key: "zone-saskatchewan-cst", standard_offset_minutes: -360, dst_months: [false, false, false, false, false, false, false, false, false, false, false, false]),
+        (id: 4, name_key: "zone-at", standard_offset_minutes: -240, dst_months: [false, false, true, true, true, true, true, true, true, true, false, false]),
+    ],
+    calendar: (seasons: [Winter, Winter, Spring, Spring, Spring, Summer, Summer, Summer, Autumn, Autumn, Autumn, Winter]),
+    currency: USD,
+    atlas: (colour: "#E4832F"),
     name_key: "region-eastern-interconnection",
     bounds: (west: -110.0, east: -59.0, south: 24.5, north: 56.0),
     grid: (width: 100, height: 60),
@@ -154,6 +178,14 @@
             (-84.15, 46.2), (-84.4, 46.45), (-84.95, 46.75), (-86.0, 46.65),
             (-87.4, 46.55), (-87.85, 47.4), (-89.3, 46.85), (-90.85, 46.6),
         ],
+        // Seam cell, cut from the coarser grid (see the seam note in the
+        // header): the cell centred at (-103.625, 35.2625), east of the seam
+        // in eastern New Mexico. A Western cell (0.39 x 0.40 degrees)
+        // centred west of the seam at (-103.7625, 35.4) holds this centre, so
+        // the two grids would both offer the strip around it.
+        [
+            (-103.70, 35.20), (-103.55, 35.20), (-103.55, 35.33), (-103.70, 35.33),
+        ],
     ],
     // Relief: low coastal plains rising to the High Plains in the west, the
     // Appalachian chain from Alabama to Maine, the Ozarks and the Canadian
@@ -185,16 +217,9 @@
     ),
     // Sunshine: best in Florida and on the southern Plains, poorest under the
     // Great Lakes cloud.
-    irradiance: (
-        base: 0.45,
-        blobs: [
-            (lon: -81.5, lat: 27.5, radius_deg: 2.5, value: 0.25),
-            (lon: -101.5, lat: 35.0, radius_deg: 3.0, value: 0.25),
-            (lon: -89.0, lat: 31.0, radius_deg: 3.0, value: 0.12),
-            (lon: -105.0, lat: 50.0, radius_deg: 3.0, value: 0.08),
-            (lon: -80.0, lat: 44.0, radius_deg: 3.5, value: -0.08),
-        ],
-    ),
+    // Generated site quality (spec section 28.11.1): irradiance_cells.ron, whose header
+    // records its offline source.
+    irradiance: (cells_file: "irradiance_cells.ron"),
     // Water for thermal plants: the Great Lakes shores, the Mississippi, Ohio
     // and Tennessee rivers, and the coasts.
     cooling_water: (
@@ -335,17 +360,17 @@
     wind_potential: (base: 0.4, blobs: [(lon: -100.0, lat: 43.0, radius_deg: 4.0, value: 0.45), (lon: -91.0, lat: 45.0, radius_deg: 3.0, value: 0.3)]),
     wind: (monthly: [0.65, 0.65, 0.65, 0.6, 0.55, 0.5, 0.45, 0.45, 0.5, 0.55, 0.6, 0.65], persistence: 0.995, innovation_sd: 0.015, initial_sd: 0.15, band: 0.25),
     catalog: [
-        (kind: Wind, capacity_mw: 300.0, min_stable: 0.0, ramp_mw_per_min: 0.0, startup_hours: 0.0, startup_cost_usd: 0, marginal_cost_usd_per_mwh: 0.0, fixed_om_usd_per_month: 500000, capital_cost_usd: 300000000, build_months: 3, capacity_credit: 0.2, book_life_months: 300, siting: Anywhere),
+        (kind: Wind, capacity_mw: 300.0, min_stable: 0.0, ramp_mw_per_min: 0.0, startup_hours: 0.0, startup_cost: 0, marginal_cost_per_mwh: 0.0, fixed_om_per_month: 500000, capital_cost: 300000000, build_months: 3, capacity_credit: 0.2, book_life_months: 300, siting: Anywhere),
         (
             kind: Nuclear,
             capacity_mw: 1100.0,
             min_stable: 0.7,
             ramp_mw_per_min: 5.0,
             startup_hours: 48.0,
-            startup_cost_usd: 1000000,
-            marginal_cost_usd_per_mwh: 10.0,
-            fixed_om_usd_per_month: 11000000,
-            capital_cost_usd: 2400000000,
+            startup_cost: 1000000,
+            marginal_cost_per_mwh: 10.0,
+            fixed_om_per_month: 11000000,
+            capital_cost: 2400000000,
             build_months: 18,
             capacity_credit: 0.95,
             book_life_months: 480,
@@ -357,10 +382,10 @@
             min_stable: 0.4,
             ramp_mw_per_min: 6.0,
             startup_hours: 8.0,
-            startup_cost_usd: 150000,
-            marginal_cost_usd_per_mwh: 30.0,
-            fixed_om_usd_per_month: 2000000,
-            capital_cost_usd: 700000000,
+            startup_cost: 150000,
+            marginal_cost_per_mwh: 30.0,
+            fixed_om_per_month: 2000000,
+            capital_cost: 700000000,
             build_months: 8,
             capacity_credit: 0.95,
             book_life_months: 480,
@@ -372,10 +397,10 @@
             min_stable: 0.3,
             ramp_mw_per_min: 25.0,
             startup_hours: 2.0,
-            startup_cost_usd: 40000,
-            marginal_cost_usd_per_mwh: 45.0,
-            fixed_om_usd_per_month: 600000,
-            capital_cost_usd: 300000000,
+            startup_cost: 40000,
+            marginal_cost_per_mwh: 45.0,
+            fixed_om_per_month: 600000,
+            capital_cost: 300000000,
             build_months: 4,
             capacity_credit: 0.95,
             book_life_months: 360,
@@ -387,10 +412,10 @@
             min_stable: 0.2,
             ramp_mw_per_min: 40.0,
             startup_hours: 0.16666666666666666,
-            startup_cost_usd: 5000,
-            marginal_cost_usd_per_mwh: 150.0,
-            fixed_om_usd_per_month: 170000,
-            capital_cost_usd: 100000000,
+            startup_cost: 5000,
+            marginal_cost_per_mwh: 150.0,
+            fixed_om_per_month: 170000,
+            capital_cost: 100000000,
             build_months: 2,
             capacity_credit: 0.95,
             book_life_months: 360,
@@ -402,10 +427,10 @@
             min_stable: 0.0,
             ramp_mw_per_min: 300.0,
             startup_hours: 0.0,
-            startup_cost_usd: 0,
-            marginal_cost_usd_per_mwh: 0.0,
-            fixed_om_usd_per_month: 500000,
-            capital_cost_usd: 150000000,
+            startup_cost: 0,
+            marginal_cost_per_mwh: 0.0,
+            fixed_om_per_month: 500000,
+            capital_cost: 150000000,
             build_months: 2,
             capacity_credit: 0.3,
             book_life_months: 300,
@@ -417,18 +442,18 @@
             min_stable: 0.0,
             ramp_mw_per_min: 100.0,
             startup_hours: 0.08333333333333333,
-            startup_cost_usd: 1000,
-            marginal_cost_usd_per_mwh: 0.0,
-            fixed_om_usd_per_month: 2700000,
-            capital_cost_usd: 1200000000,
+            startup_cost: 1000,
+            marginal_cost_per_mwh: 0.0,
+            fixed_om_per_month: 2700000,
+            capital_cost: 1200000000,
             build_months: 12,
             capacity_credit: 0.8,
             book_life_months: 600,
             siting: HydroSite(0.5),
         ),
         (kind: Battery, capacity_mw: 200.0, min_stable: 0.0, ramp_mw_per_min: 0.0,
-         startup_hours: 0.0, startup_cost_usd: 0, marginal_cost_usd_per_mwh: 0.0,
-         fixed_om_usd_per_month: 100000, capital_cost_usd: 100000000, build_months: 2,
+         startup_hours: 0.0, startup_cost: 0, marginal_cost_per_mwh: 0.0,
+         fixed_om_per_month: 100000, capital_cost: 100000000, build_months: 2,
          capacity_credit: 0.0, book_life_months: 180, siting: Anywhere,
          battery: Some((charge_mw: 200.0, energy_mwh: 800.0, charge_efficiency: 0.9,
                         discharge_efficiency: 1.0, discharge_start_hour: 16, charge_end_hour: 18))),
@@ -439,57 +464,55 @@
     // West, so its anchors carry proportionally more.
     // Demand is scaled for expansion in a few plant-sized steps; locations and relative sizes stay intact.
     cities: [
-        (id: 1, name_key: "city-new-york", lon: -74.006, lat: 40.713, base_load_mw: 3350.0),
-        (id: 2, name_key: "city-chicago", lon: -87.630, lat: 41.878, base_load_mw: 3000.0),
-        (id: 3, name_key: "city-atlanta", lon: -84.388, lat: 33.749, base_load_mw: 2800.0),
-        (id: 4, name_key: "city-washington", lon: -77.037, lat: 38.907, base_load_mw: 2300.0),
-        (id: 5, name_key: "city-philadelphia", lon: -75.165, lat: 39.953, base_load_mw: 2150.0),
-        (id: 6, name_key: "city-toronto", lon: -79.383, lat: 43.653, base_load_mw: 2150.0),
-        (id: 7, name_key: "city-miami", lon: -80.192, lat: 25.762, base_load_mw: 2150.0),
-        (id: 8, name_key: "city-charlotte", lon: -80.843, lat: 35.227, base_load_mw: 2150.0),
-        (id: 9, name_key: "city-nashville", lon: -86.781, lat: 36.163, base_load_mw: 2050.0),
-        (id: 10, name_key: "city-tampa", lon: -82.458, lat: 27.951, base_load_mw: 1900.0),
-        (id: 11, name_key: "city-boston", lon: -71.059, lat: 42.360, base_load_mw: 1800.0),
-        (id: 12, name_key: "city-detroit", lon: -83.046, lat: 42.331, base_load_mw: 1800.0),
-        (id: 13, name_key: "city-new-orleans", lon: -90.072, lat: 29.951, base_load_mw: 1550.0),
-        (id: 14, name_key: "city-st-louis", lon: -90.199, lat: 38.627, base_load_mw: 1450.0),
-        (id: 15, name_key: "city-minneapolis", lon: -93.265, lat: 44.978, base_load_mw: 1450.0),
-        (id: 16, name_key: "city-kansas-city", lon: -94.578, lat: 39.100, base_load_mw: 1200.0),
-        (id: 17, name_key: "city-pittsburgh", lon: -79.996, lat: 40.441, base_load_mw: 1200.0),
-        (id: 18, name_key: "city-cincinnati", lon: -84.512, lat: 39.103, base_load_mw: 1100.0),
-        (id: 19, name_key: "city-columbus", lon: -82.999, lat: 39.961, base_load_mw: 1100.0),
-        (id: 20, name_key: "city-cleveland", lon: -81.694, lat: 41.499, base_load_mw: 950.0),
-        (id: 21, name_key: "city-oklahoma-city", lon: -97.516, lat: 35.468, base_load_mw: 950.0),
-        (id: 22, name_key: "city-halifax", lon: -63.575, lat: 44.649, base_load_mw: 600.0),
-        (id: 23, name_key: "city-winnipeg", lon: -97.138, lat: 49.895, base_load_mw: 600.0),
-        (id: 24, name_key: "city-regina", lon: -104.619, lat: 50.445, base_load_mw: 600.0),
-        (id: 25, name_key: "city-amarillo", lon: -101.831, lat: 35.222, base_load_mw: 500.0),
+        (id: 1, name_key: "city-new-york", lon: -74.006, lat: 40.713, base_load_mw: 3350.0, zone: 1, climate: 1),
+        (id: 2, name_key: "city-chicago", lon: -87.630, lat: 41.878, base_load_mw: 3000.0, zone: 2, climate: 1),
+        (id: 3, name_key: "city-atlanta", lon: -84.388, lat: 33.749, base_load_mw: 2800.0, zone: 1, climate: 1),
+        (id: 4, name_key: "city-washington", lon: -77.037, lat: 38.907, base_load_mw: 2300.0, zone: 1, climate: 1),
+        (id: 5, name_key: "city-philadelphia", lon: -75.165, lat: 39.953, base_load_mw: 2150.0, zone: 1, climate: 1),
+        (id: 6, name_key: "city-toronto", lon: -79.383, lat: 43.653, base_load_mw: 2150.0, zone: 1, climate: 1),
+        (id: 7, name_key: "city-miami", lon: -80.192, lat: 25.762, base_load_mw: 2150.0, zone: 1, climate: 1),
+        (id: 8, name_key: "city-charlotte", lon: -80.843, lat: 35.227, base_load_mw: 2150.0, zone: 1, climate: 1),
+        (id: 9, name_key: "city-nashville", lon: -86.781, lat: 36.163, base_load_mw: 2050.0, zone: 2, climate: 1),
+        (id: 10, name_key: "city-tampa", lon: -82.458, lat: 27.951, base_load_mw: 1900.0, zone: 1, climate: 1),
+        (id: 11, name_key: "city-boston", lon: -71.059, lat: 42.360, base_load_mw: 1800.0, zone: 1, climate: 1),
+        (id: 12, name_key: "city-detroit", lon: -83.046, lat: 42.331, base_load_mw: 1800.0, zone: 1, climate: 1),
+        (id: 13, name_key: "city-new-orleans", lon: -90.072, lat: 29.951, base_load_mw: 1550.0, zone: 2, climate: 1),
+        (id: 14, name_key: "city-st-louis", lon: -90.199, lat: 38.627, base_load_mw: 1450.0, zone: 2, climate: 1),
+        (id: 15, name_key: "city-minneapolis", lon: -93.265, lat: 44.978, base_load_mw: 1450.0, zone: 2, climate: 1),
+        (id: 16, name_key: "city-kansas-city", lon: -94.578, lat: 39.100, base_load_mw: 1200.0, zone: 2, climate: 1),
+        (id: 17, name_key: "city-pittsburgh", lon: -79.996, lat: 40.441, base_load_mw: 1200.0, zone: 1, climate: 1),
+        (id: 18, name_key: "city-cincinnati", lon: -84.512, lat: 39.103, base_load_mw: 1100.0, zone: 1, climate: 1),
+        (id: 19, name_key: "city-columbus", lon: -82.999, lat: 39.961, base_load_mw: 1100.0, zone: 1, climate: 1),
+        (id: 20, name_key: "city-cleveland", lon: -81.694, lat: 41.499, base_load_mw: 950.0, zone: 1, climate: 1),
+        (id: 21, name_key: "city-oklahoma-city", lon: -97.516, lat: 35.468, base_load_mw: 950.0, zone: 2, climate: 1),
+        (id: 22, name_key: "city-halifax", lon: -63.575, lat: 44.649, base_load_mw: 600.0, zone: 4, climate: 1),
+        (id: 23, name_key: "city-winnipeg", lon: -97.138, lat: 49.895, base_load_mw: 600.0, zone: 2, climate: 1),
+        (id: 24, name_key: "city-regina", lon: -104.619, lat: 50.445, base_load_mw: 600.0, zone: 3, climate: 1),
+        (id: 25, name_key: "city-amarillo", lon: -101.831, lat: 35.222, base_load_mw: 500.0, zone: 2, climate: 1),
     ],
     // Summer and winter peaks: an afternoon air-conditioning peak in July and
     // August, and a morning-and-evening heating peak in January.
-    demand: (
-        winter: [
+    climates: [(id: 1,
+        shapes: [
+            ("winter", [
             0.80, 0.76, 0.74, 0.73, 0.74, 0.79, 0.90, 1.01, 1.06, 1.05, 1.03, 1.01,
             0.99, 0.97, 0.96, 0.97, 1.02, 1.12, 1.15, 1.13, 1.09, 1.03, 0.95, 0.86,
-        ],
-        summer: [
+        ]),
+            ("summer", [
             0.78, 0.73, 0.70, 0.68, 0.68, 0.71, 0.77, 0.85, 0.93, 1.00, 1.06, 1.11,
             1.15, 1.18, 1.20, 1.22, 1.23, 1.22, 1.18, 1.12, 1.06, 1.00, 0.92, 0.84,
-        ],
-        shoulder: [
+        ]),
+            ("shoulder", [
             0.76, 0.72, 0.70, 0.69, 0.70, 0.75, 0.85, 0.95, 1.00, 1.02, 1.03, 1.03,
             1.02, 1.01, 1.00, 1.00, 1.02, 1.06, 1.08, 1.07, 1.03, 0.96, 0.88, 0.80,
+        ]),
         ],
+        month_shapes: ["winter", "winter", "shoulder", "shoulder", "shoulder", "summer", "summer", "summer", "shoulder", "shoulder", "shoulder", "winter"],
         monthly: [1.08, 1.04, 0.95, 0.88, 0.90, 1.02, 1.12, 1.10, 0.97, 0.88, 0.93, 1.04],
-        forecast_error: 0.03,
-        error_persistence: 0.995,
-    ),
-    // Daylight at about 39 N in local standard time; cloudier than the West.
+    )],
+    demand_noise: (forecast_error: 0.03, error_persistence: 0.995),
+    // Computed sun supplies latitude and longitude; regional cloud is unchanged.
     solar: (
-        daylight: [
-            (7.4, 17.1), (7.0, 17.6), (6.4, 18.1), (5.7, 18.6), (5.2, 19.0), (4.9, 19.4),
-            (5.1, 19.3), (5.5, 18.9), (6.0, 18.2), (6.4, 17.5), (6.9, 16.9), (7.3, 16.8),
-        ],
         clearness_mean: [0.50, 0.53, 0.56, 0.58, 0.60, 0.63, 0.64, 0.63, 0.62, 0.59, 0.51, 0.48],
         clearness_sd: 0.18,
     ),
@@ -513,8 +536,8 @@
         storage_accreditation: [(2.0, 0.65), (4.0, 0.85), (6.0, 0.93), (8.0, 0.96)],
         satisfaction_target: 90.0,
         return_per_satisfaction_point: 0.0005,
-        starting_tariff_usd_per_mwh: 95.0,
-        reference_tariff_usd_per_mwh: 100.0,
+        starting_tariff_per_mwh: 95.0,
+        reference_tariff_per_mwh: 100.0,
         base_return: 0.09,
         min_return: 0.07,
         max_return: 0.11,
@@ -534,13 +557,13 @@
         price_sensitivity: 2.0,
         smoothing: 0.2,
     ),
-    lines: (cost_per_cell_usd: 20000000, cells_per_month: 4, book_life_months: 600),
+    lines: (cost_per_cell: 20000000, cells_per_month: 4, book_life_months: 600),
     // The Ohio Valley: Columbus, Cincinnati and Pittsburgh, served by a legacy
     // fleet on the Ohio River and the Lake Erie shore.
     start: (
         year: 2027,
         month: 1,
-        cash_usd: 5000000000,
+        cash: 5000000000,
         // Columbus anchors the starting service territory.
         home_city: 19,
         connected_cities: [17, 18, 19],

@@ -14,21 +14,17 @@ pub struct CityDef {
     pub base_load: Megawatts,
 }
 
-/// Demand multipliers. Spring and autumn use `shoulder`.
+/// Legacy sunrise/sunset windows or the computed per-cell sun.
 #[derive(Debug, Clone, PartialEq)]
-pub struct DemandShape {
-    pub winter: [f64; 24],
-    pub summer: [f64; 24],
-    pub shoulder: [f64; 24],
-    pub monthly: [f64; 12],
-    pub forecast_error: Ratio,
-    pub error_persistence: f64,
+pub enum SolarModel {
+    DaylightTable([(f64, f64); 12]),
+    Astronomical,
 }
 
-/// Solar resource parameters. `daylight` holds (sunrise, sunset) hours per month.
+/// Solar resource parameters; clearness remains a single regional daily draw.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SolarParams {
-    pub daylight: [(f64, f64); 12],
+    pub model: SolarModel,
     pub clearness_mean: [f64; 12],
     pub clearness_sd: f64,
 }

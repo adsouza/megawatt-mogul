@@ -103,6 +103,7 @@ pub struct KindGroup {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CommitmentModel {
+    pub time_axis: String,
     pub hours: Vec<HourHeader>,
     /// Kinds in merit order, each with its plants by id.
     pub groups: Vec<KindGroup>,
@@ -317,6 +318,10 @@ pub fn commitment_model(
         })
         .collect();
     CommitmentModel {
+        time_axis: region.system_zone().name_key.as_ref().map_or_else(
+            || l10n.text("commitment-system-time"),
+            |key| l10n.args("commitment-system-zone", &[("zone", l10n.text(key).into())]),
+        ),
         hours,
         empty: groups.is_empty().then(|| l10n.text("commitment-empty")),
         groups,
@@ -380,7 +385,14 @@ pub fn draw_commitment_header(
 ) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 1.0;
-        ui.allocate_space(egui::vec2(NAME_WIDTH + 4.0, ROW_HEIGHT));
+        ui.add_sized(
+            egui::vec2(NAME_WIDTH + 4.0, ROW_HEIGHT),
+            egui::Label::new(
+                egui::RichText::new(&model.time_axis).color(TextTone::Neutral.color()),
+            )
+            .truncate(),
+        )
+        .on_hover_text(&model.time_axis);
         for header in &model.hours {
             let fill = if header.highlighted {
                 ui.visuals().widgets.active.weak_bg_fill
@@ -503,6 +515,19 @@ mod tests {
 
     use super::*;
     use crate::hud::test_support::{eastern_game, empty_start, shipped_game, shipped_l10n};
+
+    #[test]
+    fn commitment_axis_names_the_system_zone() {
+        let game = crate::hud::test_support::global_game();
+        let model = commitment_model(
+            &game,
+            &crate::hud::test_support::global_l10n(),
+            &UiState::default(),
+            &CommitmentForm::default(),
+        );
+        assert_eq!(model.time_axis, "System time (MSK)");
+        assert_eq!(model.hours[14].label, "14");
+    }
 
     fn model(game: &Game, ui: &UiState, form: &CommitmentForm) -> CommitmentModel {
         commitment_model(game, &shipped_l10n(), ui, form)

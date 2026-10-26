@@ -213,7 +213,11 @@ fn a_new_game_request_enters_planning_and_writes_a_log() {
     assert!(stamp.chars().all(|c| c.is_ascii_digit() || c == '-'));
 
     let archived = fs::read(logs.join(&names[1])).unwrap();
-    let shipped = fs::read(shipped_assets().join("regions/eastern_interconnection.ron")).unwrap();
+    // The archive is the region's bundle: its main file and sidecars (spec section 28.11.1).
+    let shipped = RonRegionCatalog::new(shipped_assets().join("regions"))
+        .load(&RegionId::new(EASTERN))
+        .unwrap()
+        .source_bytes;
     assert_eq!(archived, shipped);
     assert!(
         fs::read_to_string(logs.join(log))
@@ -399,13 +403,9 @@ fn game_over_stops_the_driver() {
     let assets = copy_assets(root.path());
     let region = assets.join("regions").join(format!("{EASTERN}.ron"));
     let source = fs::read_to_string(&region).unwrap();
-    let solvent = "cash_usd: 5000000000,";
+    let solvent = "cash: 5000000000,";
     assert!(source.contains(solvent), "the shipped start cash changed");
-    fs::write(
-        &region,
-        source.replace(solvent, "cash_usd: -1000000000000,"),
-    )
-    .unwrap();
+    fs::write(&region, source.replace(solvent, "cash: -1000000000000,")).unwrap();
     let logs = root.path().join("logs");
     let mut app = sim_app(&assets, &logs);
     start_game(&mut app, EASTERN, 7);

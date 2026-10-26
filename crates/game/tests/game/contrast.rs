@@ -1,4 +1,5 @@
 //! Contrast checks use an independent WCAG luminance calculation.
+use crate::support::usd_style;
 use bevy_egui::egui::{self, Color32};
 use tempfile::TempDir;
 
@@ -328,7 +329,7 @@ fn plant_card_colors_distinguish_fast_response_and_costly_generation() {
             .find(|plant| plant.kind == kind)
             .unwrap()
             .id;
-        let card = plant_card_model(game, &l10n, id).unwrap();
+        let card = plant_card_model(game, &l10n, id, &usd_style()).unwrap();
         let ctx = egui::Context::default();
         ctx.set_visuals(game::hud::theme::visuals());
         let output = ctx.run_ui(
@@ -443,7 +444,7 @@ fn planning_and_operating_panels_use_semantic_text_colors() {
     let healthy = color(&texts, warnings.none.as_ref().unwrap());
     assert!(healthy.g() > healthy.r(), "a sound plan is good news");
 
-    let tariff = tariff_model(game, &l10n);
+    let tariff = tariff_model(game, &l10n, &usd_style());
     let texts = render(|ui| {
         draw_tariff(ui, &tariff);
     });

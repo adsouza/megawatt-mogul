@@ -1,8 +1,22 @@
 # Region and city names. Region files refer to these by `name_key` (spec §9); the domain never
 # holds display text.
 
+region-brazil-sin = Brazil
+region-continental-europe-maghreb = Continental Europe–Maghreb
 region-eastern-interconnection = Eastern Interconnection
+region-india-nepal-bhutan = India–Nepal–Bhutan
+region-ips-ups = IPS/UPS
 region-western-interconnection = Western Interconnection
+region-southern-china = Southern China
+
+# What the region picker says beside each region: `<name key>-description`.
+region-brazil-sin-description = Hydro that fills from December to April and runs low through the dry winter, plus northeastern wind. Ride the wet season into the summer peak.
+region-continental-europe-maghreb-description = One grid from Lisbon to Ankara and Casablanca, across three hours of time zones: Türkiye's evening peak comes first and Portugal's last. Bring Maghreb solar north over the Gibraltar link.
+region-eastern-interconnection-description = Dense cities, big demand, and a legacy coal and nuclear fleet. Keep the industrial heartland humming.
+region-india-nepal-bhutan-description = The monsoon fills the rivers and drives the wind while clouds dim the sun, and demand peaks in May before the rains. Meet the evening ramp as solar falls.
+region-ips-ups-description = One grid across six hours of time zones: Siberia's evening peak passes before Moscow's begins. Ride Siberian hydro and plan for polar night and the midnight sun.
+region-southern-china-description = Guizhou and Guangxi hydro sent east, coastal nuclear, and the booming Pearl River Delta. Ride the flood season into the summer peak.
+region-western-interconnection-description = Mountain crossings, desert sunshine, and Pacific Northwest hydro. Master the evening demand surge.
 
 city-albuquerque = Albuquerque
 city-amarillo = Amarillo
@@ -52,3 +66,211 @@ city-tucson = Tucson
 city-vancouver = Vancouver
 city-washington = Washington, D.C.
 city-winnipeg = Winnipeg
+
+# Southern China. Each name is the title of its English Wikipedia article (Yulin without the
+# article's ", Guangxi" qualifier, which only the key keeps).
+city-anshun = Anshun
+city-baise = Baise
+city-beihai = Beihai
+city-bijie = Bijie
+city-chaozhou = Chaozhou
+city-dongguan = Dongguan
+city-foshan = Foshan
+city-guangzhou = Guangzhou
+city-guigang = Guigang
+city-guilin = Guilin
+city-guiyang = Guiyang
+city-haikou = Haikou
+city-hong-kong = Hong Kong
+city-huizhou = Huizhou
+city-jiangmen = Jiangmen
+city-jieyang = Jieyang
+city-liupanshui = Liupanshui
+city-liuzhou = Liuzhou
+city-macau = Macau
+city-maoming = Maoming
+city-meizhou = Meizhou
+city-nanning = Nanning
+city-qingyuan = Qingyuan
+city-qinzhou = Qinzhou
+city-sanya = Sanya
+city-shantou = Shantou
+city-shaoguan = Shaoguan
+city-shenzhen = Shenzhen
+city-wuzhou = Wuzhou
+city-yangjiang = Yangjiang
+city-yulin-guangxi = Yulin
+city-zhanjiang = Zhanjiang
+city-zhaoqing = Zhaoqing
+city-zhongshan = Zhongshan
+city-zhuhai = Zhuhai
+city-zunyi = Zunyi
+
+# Brazil. Each name is the title of its English Wikipedia article, without the state qualifier
+# some titles carry (such as "Santos, São Paulo"): no other shipped region has a city of the
+# same name.
+city-aracaju = Aracaju
+city-belem = Belém
+city-belo-horizonte = Belo Horizonte
+city-boa-vista = Boa Vista
+city-brasilia = Brasília
+city-campinas = Campinas
+city-campo-grande = Campo Grande
+city-caxias-do-sul = Caxias do Sul
+city-cuiaba = Cuiabá
+city-curitiba = Curitiba
+city-feira-de-santana = Feira de Santana
+city-florianopolis = Florianópolis
+city-fortaleza = Fortaleza
+city-goiania = Goiânia
+city-joao-pessoa = João Pessoa
+city-joinville = Joinville
+city-juiz-de-fora = Juiz de Fora
+city-londrina = Londrina
+city-macapa = Macapá
+city-maceio = Maceió
+city-manaus = Manaus
+city-natal = Natal
+city-palmas = Palmas
+city-porto-alegre = Porto Alegre
+city-porto-velho = Porto Velho
+city-recife = Recife
+city-ribeirao-preto = Ribeirão Preto
+city-rio-branco = Rio Branco
+city-rio-de-janeiro = Rio de Janeiro
+city-salvador = Salvador
+city-santos = Santos
+city-sao-jose-do-rio-preto = São José do Rio Preto
+city-sao-jose-dos-campos = São José dos Campos
+city-sao-luis = São Luís
+city-sao-paulo = São Paulo
+city-sorocaba = Sorocaba
+city-teresina = Teresina
+city-uberlandia = Uberlândia
+city-vitoria = Vitória
+
+# India, Nepal and Bhutan. Each name is the title of its English Wikipedia article, so
+# city-gurugram reads "Gurgaon", the article's title.
+city-agra = Agra
+city-ahmedabad = Ahmedabad
+city-bengaluru = Bengaluru
+city-bhopal = Bhopal
+city-bhubaneswar = Bhubaneswar
+city-chandigarh = Chandigarh
+city-chennai = Chennai
+city-coimbatore = Coimbatore
+city-delhi = Delhi
+city-faridabad = Faridabad
+city-gurugram = Gurgaon
+city-guwahati = Guwahati
+city-hyderabad = Hyderabad
+city-indore = Indore
+city-jaipur = Jaipur
+city-jodhpur = Jodhpur
+city-kanpur = Kanpur
+city-kathmandu = Kathmandu
+city-kochi = Kochi
+city-kolkata = Kolkata
+city-lucknow = Lucknow
+city-ludhiana = Ludhiana
+city-madurai = Madurai
+city-meerut = Meerut
+city-mumbai = Mumbai
+city-nagpur = Nagpur
+city-noida = Noida
+city-patna = Patna
+city-pune = Pune
+city-raipur = Raipur
+city-ranchi = Ranchi
+city-srinagar = Srinagar
+city-surat = Surat
+city-thimphu = Thimphu
+city-thiruvananthapuram = Thiruvananthapuram
+city-vadodara = Vadodara
+city-varanasi = Varanasi
+city-visakhapatnam = Visakhapatnam
+
+# IPS/UPS. Each name is the title of its English Wikipedia article, without the qualifier
+# three titles carry ("Tula, Russia", "Perm, Russia" and "Chita, Zabaykalsky Krai"): no other
+# shipped region has a city of the same name.
+city-almaty = Almaty
+city-astana = Astana
+city-baku = Baku
+city-barnaul = Barnaul
+city-bishkek = Bishkek
+city-chelyabinsk = Chelyabinsk
+city-chita = Chita
+city-dushanbe = Dushanbe
+city-irkutsk = Irkutsk
+city-kaluga = Kaluga
+city-kazan = Kazan
+city-krasnodar = Krasnodar
+city-krasnoyarsk = Krasnoyarsk
+city-minsk = Minsk
+city-moscow = Moscow
+city-murmansk = Murmansk
+city-nizhny-novgorod = Nizhny Novgorod
+city-novokuznetsk = Novokuznetsk
+city-novosibirsk = Novosibirsk
+city-omsk = Omsk
+city-perm = Perm
+city-rostov-on-don = Rostov-on-Don
+city-saint-petersburg = Saint Petersburg
+city-samara = Samara
+city-saratov = Saratov
+city-shymkent = Shymkent
+city-tashkent = Tashkent
+city-tbilisi = Tbilisi
+city-tomsk = Tomsk
+city-tula = Tula
+city-tver = Tver
+city-ufa = Ufa
+city-ulan-ude = Ulan-Ude
+city-volgograd = Volgograd
+city-voronezh = Voronezh
+city-yaroslavl = Yaroslavl
+city-yekaterinburg = Yekaterinburg
+
+# Continental Europe–Maghreb. Each name is the title of its English Wikipedia article, without
+# the qualifier "Córdoba, Spain" carries (no other shipped region has a Córdoba); "Rhine-Ruhr"
+# is the agglomeration's article.
+city-algiers = Algiers
+city-amsterdam = Amsterdam
+city-ankara = Ankara
+city-athens = Athens
+city-barcelona = Barcelona
+city-belgrade = Belgrade
+city-berlin = Berlin
+city-brussels = Brussels
+city-bucharest = Bucharest
+city-budapest = Budapest
+city-casablanca = Casablanca
+city-chisinau = Chișinău
+city-cordoba = Córdoba
+city-frankfurt = Frankfurt
+city-hamburg = Hamburg
+city-istanbul = Istanbul
+city-izmir = İzmir
+city-kyiv = Kyiv
+city-lisbon = Lisbon
+city-lyon = Lyon
+city-madrid = Madrid
+city-malaga = Málaga
+city-marseille = Marseille
+city-milan = Milan
+city-munich = Munich
+city-naples = Naples
+city-paris = Paris
+city-porto = Porto
+city-prague = Prague
+city-rabat = Rabat
+city-rhine-ruhr = Rhine-Ruhr
+city-rome = Rome
+city-rotterdam = Rotterdam
+city-seville = Seville
+city-tangier = Tangier
+city-tunis = Tunis
+city-valencia = Valencia
+city-vienna = Vienna
+city-warsaw = Warsaw
+city-zurich = Zurich

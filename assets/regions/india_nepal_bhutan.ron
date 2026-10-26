@@ -1,0 +1,734 @@
+// India-Nepal-Bhutan: one main AC synchronous area, mainland India with
+// synchronously connected Nepal and Bhutan (spec section 28.3; research note
+// docs/research/2026-10-18-world-power-grids-top-8.md, section "D - India,
+// Nepal and Bhutan"). The notes generalise the mainland footprint and
+// exclude isolated systems; Bangladesh's converter links, and trade with Sri
+// Lanka and Myanmar, do not add those systems.
+//
+// Grid-operation rulings:
+// - The Indian-operated north (spec section 28.3) is in: Jammu and Kashmir
+//   and Ladakh, on Natural Earth's admin-0 IND outline, with Natural Earth's
+//   separate "Siachen Glacier" feature (ADM0 KAS), which India holds and
+//   administers as part of Ladakh. Operator source for Ladakh: POWERGRID's
+//   220 kV Srinagar-Alusteng-Drass-Kargil-Leh line, whose Leh-Khalsti section
+//   was charged on 2017-10-31 "to facilitate transfer of power to Ladakh
+//   region, directly from Northern Grid" (Energetica India, 2017-11-03,
+//   "POWERGRID completes prestigious Govt. project extending grid
+//   connectivity to Leh-Ladakh region"), and which the Prime Minister
+//   dedicated to the nation as a 335 km system (Governance Now, 2019-02-08,
+//   "PM commissions Srinagar-Alusteng-Drass-Kargil-Leh transmission line").
+//   The Siachen feature has no grid; it is in on the spec's
+//   Indian-operated rule, not on a grid source.
+// - Bangladesh is out (an exclude polygon: Natural Earth 1:10m admin-1
+//   Dhaka, Chittagong, Sylhet, Rangpur, Rajshahi, Khulna and Barisal), as are
+//   Sri Lanka and Myanmar (not selected) and the isolated island systems:
+//   Andaman and Nicobar is an exclude polygon (1:10m admin-1), and
+//   Lakshadweep's atolls fall under the extractor's 2-cell land floor.
+//
+// Geography: tools/region_authoring/selections/india_nepal_bhutan.args holds
+// the extractor arguments: Natural Earth v5.1.2 1:50m admin-0 IND, NPL, BTN
+// and KAS, dissolved (ruling 8), with the 1:10m admin-1 exclusions above.
+// Regenerate with
+//   tr '\n' '\0' < tools/region_authoring/selections/india_nepal_bhutan.args \
+//       | xargs -0 python3 -I tools/region_authoring/natural_earth.py
+// which reports 2 land and 38 exclude rings. The land rings are the
+// mainland and the Andaman group (the exclusion covers the latter). The
+// selection's exclusions dissolve into 40 rings: Bangladesh's mainland and
+// 21 coastal islands, and 18 Andaman and Nicobar rings. Two of them, Great
+// and Little Nicobar, lie wholly south of the bounds and clip away, so all
+// 38 exclusions inside the bounds come out (ruling 9). The tolerance is
+// 0.012 degrees, not the default half cell (0.115): at the default,
+// simplification collapses 20 of Bangladesh's island rings, and even at
+// 0.02 three. No dropped ring would have re-admitted land, but the count
+// check needs them all.
+// Nudge rings after the generated rings put Chennai and Visakhapatnam,
+// whose cell centres fall offshore, on land. Points are (lon, lat) in degrees.
+//
+// Grid: 68 to 97.5 E and 7.5 to 37 N on 118 x 128 cells. At the middle
+// latitude, 22.25 N, a cell is 25.73 km east-west by 25.63 km north-south
+// (aspect 1.004, cell_km 25.678).
+//
+// Money is in INR (rupees) at local price levels from the Plan 7 research
+// note (docs/research/2026-10-25-plan-7-regional-economics.md), converted to
+// game values by its pacing method. Each entry's comment cites its rows and
+// shows the arithmetic; the ratios use full precision (ruling 25).
+(
+    region_schema: 4,
+    id: "india_nepal_bhutan",
+    system_zone: 1,
+    // Indian Standard Time (IST, UTC+5:30) is the dispatcher's clock for all
+    // of India; Nepal keeps Nepal Time (NPT, UTC+5:45) and Bhutan Bhutan Time
+    // (BTT, UTC+6). None observes daylight saving (spec section 28.4).
+    time_zones: [
+        (id: 1, name_key: "zone-ist", standard_offset_minutes: 330, dst_months: [false, false, false, false, false, false, false, false, false, false, false, false]),
+        (id: 2, name_key: "zone-npt", standard_offset_minutes: 345, dst_months: [false, false, false, false, false, false, false, false, false, false, false, false]),
+        (id: 3, name_key: "zone-btt", standard_offset_minutes: 360, dst_months: [false, false, false, false, false, false, false, false, false, false, false, false]),
+    ],
+    // The India Meteorological Department's four seasons (spec section 28.6):
+    // winter in January and February, summer from March to May, the
+    // southwest monsoon from June to September and the post-monsoon from
+    // October to December.
+    calendar: (seasons: [Winter, Winter, Summer, Summer, Summer, Monsoon, Monsoon, Monsoon, Monsoon, PostMonsoon, PostMonsoon, PostMonsoon]),
+    currency: INR,
+    atlas: (colour: "#B29400"),
+    name_key: "region-india-nepal-bhutan",
+    bounds: (west: 68.0, east: 97.5, south: 7.5, north: 37.0),
+    grid: (width: 118, height: 128),
+    // Generated rings (spec section 28.11.1): natural_earth.ron, written by
+    // tools/region_authoring/selections/india_nepal_bhutan.args, whose header records the
+    // source data and command.
+    geography: ["natural_earth.ron"],
+    land: [
+        // Nudge rings (hand-authored, not generated). At 26 km cells the
+        // coastline leaves these coastal cities' cell centres offshore; each
+        // box spans the city's coordinate and its cell centre, 0.05 degrees
+        // wider on every side.
+        // Chennai.
+        [
+            (80.225, 13.033), (80.425, 13.033), (80.425, 13.196), (80.225, 13.196),
+        ],
+        // Visakhapatnam.
+        [
+            (83.242, 17.644), (83.425, 17.644), (83.425, 17.806), (83.242, 17.806),
+        ],
+    ],
+    exclude: [],
+    // Relief: the Himalaya along the northern border (Ladakh and Kashmir, the
+    // Himachal and Garhwal ranges, Nepal and Bhutan), the northeastern hills,
+    // the Western Ghats, the Deccan plateau and the Aravalli range; the
+    // Indo-Gangetic plain is low. Named ranges only; heights are an authoring
+    // judgment (no elevation dataset was used).
+    height: (
+        base: 0.15,
+        blobs: [
+            // Ladakh and Kashmir.
+            (lon: 77.5, lat: 34.3, radius_deg: 2.0, value: 0.55),
+            // The Himachal and Garhwal Himalaya.
+            (lon: 79.0, lat: 31.0, radius_deg: 1.8, value: 0.5),
+            // Nepal's Himalaya and Bhutan.
+            (lon: 84.5, lat: 28.6, radius_deg: 1.8, value: 0.5),
+            (lon: 90.5, lat: 27.8, radius_deg: 1.0, value: 0.45),
+            // The northeastern hills.
+            (lon: 93.5, lat: 25.5, radius_deg: 1.5, value: 0.25),
+            // The Western Ghats.
+            (lon: 74.3, lat: 15.5, radius_deg: 1.5, value: 0.2),
+            (lon: 76.9, lat: 10.4, radius_deg: 1.0, value: 0.25),
+            // The Deccan plateau and the Aravalli range.
+            (lon: 77.5, lat: 18.5, radius_deg: 3.0, value: 0.12),
+            (lon: 74.5, lat: 25.3, radius_deg: 1.2, value: 0.1),
+            // The Indo-Gangetic plain.
+            (lon: 81.0, lat: 26.5, radius_deg: 4.0, value: -0.1),
+        ],
+    ),
+    // Sunshine as site quality without latitude (spec section 28.5), from the
+    // India Meteorological Department's sunshine normals as tabulated by
+    // English Wikipedia (each city's "Climate data" table, read 2026-10-25):
+    // New Delhi (Safdarjung) 2,773.5 hours a year, Jodhpur 2,773.3 (both IMD
+    // 1971-2000), Guwahati airport 2,276.9 (IMD 1991-2020) and
+    // Thiruvananthapuram City 2,321.7 (IMD 1971-2000). Each annual total is a
+    // share of the possible hours at its latitude (FAO-56 equations 24, 25
+    // and 34 on the 15th of each month), turned into irradiance by the
+    // Angstrom-Prescott relation (FAO-56 equation 35, a = 0.25, b = 0.50):
+    // Delhi and Jodhpur 0.5665, Guwahati 0.5099 (0.900 of Delhi) and
+    // Thiruvananthapuram 0.5150 (0.909). The base, 0.55, is the authoring
+    // scale for the north-western plains (as in the Southern China and Brazil
+    // files); the monsoon-clouded northeast and the Kerala coast scale by
+    // their ratios to 0.495 and 0.50 at the blob centres (authoring judgment
+    // on placement; no irradiance atlas was read).
+    irradiance: (
+        base: 0.55,
+        blobs: [
+            // The northeast (Assam and the hill states).
+            (lon: 92.5, lat: 26.0, radius_deg: 2.0, value: -0.055),
+            // The Kerala coast.
+            (lon: 76.5, lat: 9.8, radius_deg: 1.2, value: -0.05),
+        ],
+    ),
+    // Water for thermal plants: the coasts of Gujarat, the Konkan, Kerala,
+    // Tamil Nadu, Andhra Pradesh, Odisha and Bengal; the Ganga, Yamuna,
+    // Narmada, Godavari, Krishna, Mahanadi, Damodar, Son and Brahmaputra; and
+    // the canal systems that supply the Dadri and Jhajjar plants. Blobs sit on
+    // the Natural Earth coastline and the named rivers (authoring judgment; no
+    // water-availability dataset was used).
+    cooling_water: (
+        base: 0.08,
+        blobs: [
+            // The coasts, west then east.
+            (lon: 69.3, lat: 22.4, radius_deg: 0.6, value: 0.7),
+            (lon: 70.0, lat: 21.0, radius_deg: 0.6, value: 0.7),
+            (lon: 72.6, lat: 21.6, radius_deg: 0.6, value: 0.7),
+            (lon: 72.85, lat: 19.5, radius_deg: 0.6, value: 0.7),
+            (lon: 73.2, lat: 17.5, radius_deg: 0.6, value: 0.7),
+            (lon: 73.9, lat: 15.4, radius_deg: 0.6, value: 0.7),
+            (lon: 74.7, lat: 13.3, radius_deg: 0.6, value: 0.7),
+            (lon: 75.7, lat: 11.3, radius_deg: 0.6, value: 0.7),
+            (lon: 76.3, lat: 9.6, radius_deg: 0.6, value: 0.7),
+            (lon: 77.6, lat: 8.3, radius_deg: 0.6, value: 0.7),
+            (lon: 79.0, lat: 9.3, radius_deg: 0.6, value: 0.7),
+            (lon: 79.85, lat: 11.0, radius_deg: 0.6, value: 0.7),
+            (lon: 80.25, lat: 13.2, radius_deg: 0.6, value: 0.7),
+            (lon: 80.2, lat: 15.4, radius_deg: 0.6, value: 0.7),
+            (lon: 82.2, lat: 16.7, radius_deg: 0.6, value: 0.7),
+            (lon: 83.4, lat: 17.8, radius_deg: 0.6, value: 0.7),
+            (lon: 84.9, lat: 19.3, radius_deg: 0.6, value: 0.7),
+            (lon: 86.6, lat: 20.4, radius_deg: 0.6, value: 0.7),
+            (lon: 88.1, lat: 21.8, radius_deg: 0.6, value: 0.7),
+            // The Ganga at Haridwar, Narora, Kanpur, Varanasi, Patna and
+            // Farakka, and the Yamuna at Delhi and Agra.
+            (lon: 78.16, lat: 29.95, radius_deg: 0.5, value: 0.6),
+            (lon: 78.41, lat: 28.16, radius_deg: 0.5, value: 0.6),
+            (lon: 80.33, lat: 26.45, radius_deg: 0.5, value: 0.6),
+            (lon: 83.0, lat: 25.3, radius_deg: 0.5, value: 0.6),
+            (lon: 85.1, lat: 25.6, radius_deg: 0.5, value: 0.6),
+            (lon: 87.9, lat: 24.8, radius_deg: 0.5, value: 0.6),
+            (lon: 77.25, lat: 28.75, radius_deg: 0.4, value: 0.6),
+            (lon: 78.0, lat: 27.2, radius_deg: 0.4, value: 0.6),
+            // The Upper Ganga canal and the Hindon at Dadri, and the Western
+            // Yamuna canal system at Jhajjar.
+            (lon: 77.61, lat: 28.6, radius_deg: 0.4, value: 0.6),
+            (lon: 76.38, lat: 28.48, radius_deg: 0.4, value: 0.6),
+            // The Narmada, Godavari, Krishna, Mahanadi, Damodar, Son (at
+            // Singrauli) and Brahmaputra.
+            (lon: 73.7, lat: 21.8, radius_deg: 0.5, value: 0.6),
+            (lon: 77.7, lat: 22.75, radius_deg: 0.5, value: 0.6),
+            (lon: 81.8, lat: 17.0, radius_deg: 0.5, value: 0.6),
+            (lon: 80.6, lat: 16.5, radius_deg: 0.5, value: 0.6),
+            (lon: 85.9, lat: 20.5, radius_deg: 0.5, value: 0.6),
+            (lon: 86.9, lat: 23.6, radius_deg: 0.5, value: 0.6),
+            (lon: 82.7, lat: 24.1, radius_deg: 0.5, value: 0.6),
+            (lon: 91.7, lat: 26.2, radius_deg: 0.5, value: 0.6),
+        ],
+    ),
+    // Hydro sites at real dams and stations (each plant's English Wikipedia
+    // infobox coordinate, or its Wikidata P625 where the article has none,
+    // read 2026-10-25): Tehri (Q69091), Bhakra (Q83436), Pong (Q7227766),
+    // Nathpa Jhakri (Q11990941), Karcham Wangtoo (Q13447506, Wikidata),
+    // Salal (Q7403509), Baglihar (Q460350), Dul Hasti (Q5313397), Kishanganga
+    // (Q6416539, Wikidata), Sardar Sarovar (Q2120392), Indirasagar (Q1815211),
+    // Koyna (Q6435153), Srisailam (Q1552235), Nagarjuna Sagar (Q1112896),
+    // Idukki (Q1656950), Rihand (Q1735166), Hirakud (Q1940209), Subansiri
+    // Lower (Q1872594), Upper Tamakoshi in Nepal (Q25109907, Wikidata) and
+    // Tala in Bhutan (Q3429258). Values rank them by installed capacity
+    // (authoring judgment).
+    hydro_potential: (
+        base: 0.0,
+        blobs: [
+            (lon: 78.48055556, lat: 30.37777778, radius_deg: 0.3, value: 0.9),
+            (lon: 76.43333333, lat: 31.41083333, radius_deg: 0.3, value: 0.9),
+            (lon: 75.94666667, lat: 31.97138889, radius_deg: 0.25, value: 0.7),
+            (lon: 77.98027778, lat: 31.56388889, radius_deg: 0.25, value: 0.9),
+            (lon: 78.015222, lat: 31.543203, radius_deg: 0.2, value: 0.8),
+            (lon: 74.81027778, lat: 33.1425, radius_deg: 0.25, value: 0.75),
+            (lon: 75.32777778, lat: 33.16194444, radius_deg: 0.25, value: 0.8),
+            (lon: 75.7984, lat: 33.3692, radius_deg: 0.2, value: 0.7),
+            (lon: 74.64663889, lat: 34.46672222, radius_deg: 0.2, value: 0.65),
+            (lon: 73.74722222, lat: 21.83027778, radius_deg: 0.3, value: 0.9),
+            (lon: 76.47138889, lat: 22.28388889, radius_deg: 0.3, value: 0.85),
+            (lon: 73.75138889, lat: 17.40166667, radius_deg: 0.3, value: 0.85),
+            (lon: 78.89833333, lat: 16.08972222, radius_deg: 0.3, value: 0.85),
+            (lon: 79.31166667, lat: 16.57555556, radius_deg: 0.3, value: 0.8),
+            (lon: 76.97611111, lat: 9.84277778, radius_deg: 0.25, value: 0.75),
+            (lon: 83.00805556, lat: 24.2025, radius_deg: 0.25, value: 0.6),
+            (lon: 83.87, lat: 21.57, radius_deg: 0.25, value: 0.6),
+            (lon: 94.25861111, lat: 27.55361111, radius_deg: 0.3, value: 0.9),
+            (lon: 86.213, lat: 27.925, radius_deg: 0.25, value: 0.7),
+            (lon: 89.595325, lat: 27.03621667, radius_deg: 0.25, value: 0.85),
+        ],
+    ),
+    // Wind sites, ranked by each state's wind potential at 150 m above ground
+    // (MNRE, "Wind Overview", state-wise potential table, NIWE assessment,
+    // read 2026-10-25: Rajasthan 284.2 GW, Gujarat 180.8, Maharashtra 173.9,
+    // Karnataka 169.3, Andhra Pradesh 123.3, Tamil Nadu 95.1, Madhya Pradesh
+    // 55.4 and Telangana 54.7). Blob placement on each state's wind belt (the
+    // Thar, Kutch and Saurashtra, the Sahyadri plateau, northern Karnataka,
+    // Anantapur, the Palghat and Aralvaimozhi gaps, Malwa and the Telangana
+    // plateau) is an authoring judgment.
+    wind_potential: (
+        base: 0.2,
+        blobs: [
+            (lon: 71.5, lat: 26.5, radius_deg: 2.0, value: 0.45),
+            (lon: 70.5, lat: 22.6, radius_deg: 1.5, value: 0.42),
+            (lon: 74.8, lat: 18.5, radius_deg: 1.5, value: 0.38),
+            (lon: 75.8, lat: 15.2, radius_deg: 1.5, value: 0.38),
+            (lon: 77.6, lat: 14.7, radius_deg: 1.2, value: 0.33),
+            (lon: 77.0, lat: 9.5, radius_deg: 1.2, value: 0.3),
+            (lon: 75.8, lat: 23.3, radius_deg: 1.0, value: 0.2),
+            (lon: 78.6, lat: 17.8, radius_deg: 1.0, value: 0.2),
+        ],
+    ),
+    // The southwest monsoon wind: each month's factor is India's 2022-23
+    // wind generation per day (English Wikipedia, "Wind power in India",
+    // section "Electricity generation", table "Monthly electricity
+    // generation, April 2022 - March 2023", citing CEA's Monthly Renewable
+    // Energy Generation Report, read 2026-10-25: 4,126.22, 10,174.27,
+    // 9,708.52, 10,266.44, 8,694.96, 6,654.49, 3,421.80, 2,489.50, 3,996.15,
+    // 5,013.74, 3,126.99 and 4,141.07 GWh from April to March; 71,814.16 GWh
+    // in the year) over the year's mean per day, times the Eastern
+    // Interconnection's annual mean factor, 0.567 (authoring scale, as in the
+    // Southern China and Brazil files). It peaks from May to August.
+    wind: (monthly: [0.47, 0.32, 0.38, 0.4, 0.95, 0.93, 0.95, 0.81, 0.64, 0.32, 0.24, 0.37], persistence: 0.995, innovation_sd: 0.015, initial_sd: 0.15, band: 0.25),
+    // Unit sizes and operating parameters follow the North American catalog
+    // (spec section 3.2), except where the rows name an Indian unit: coal is
+    // an 800 MW ultra-supercritical unit, as at Lara Stage II [P7-IN-001];
+    // nuclear a 700 MW PHWR, as in the fleet-mode programme [P7-IN-005]; and
+    // hydro a 700 MW station, as Tato-II [P7-IN-006]. For those three kinds,
+    // start-up cost and ramp are scaled per MW (ruling 24). Money and build
+    // months come from the Plan 7 research note by its pacing method (ratios
+    // from its pacing table, at full precision; game values rounded to 3
+    // significant figures per kW, per kW-year or per MWh, then multiplied by
+    // capacity; monthly fixed O&M is the per-kW-year value x kW / 12, to the
+    // nearest rupee). Sourced local durations go through month_ratio,
+    // clamped to the pacing ceilings (ruling 1). The research note has no
+    // Indian fuel or energy-charge row, so every marginal cost follows ruling
+    // 19 (authoring judgment: no sourced local fuel row): the North American
+    // game marginal x the local reference tariff over the NA one, 5,184.366 /
+    // 100 = 51.84366, a price-level proxy from [P7-IN-011]. Start-ups follow
+    // ruling 2 (NA start-up x local marginal / NA marginal, at full
+    // precision).
+    catalog: [
+        // Wind [P7-IN-020] [P7-US-001]: CEA's planning cost, 60,000 INR/kW x
+        // (1,000 / 1,489 = 0.67159) = 40,295.5, so 40,300 INR/kW x 300,000 kW
+        // = 12,090,000,000 (P7-IN-025, IRENA's market average, is a
+        // cross-check only). Fixed O&M [P7-IN-021] [P7-US-003]: 1% of capex,
+        // 600 INR/kW-yr x (20.0 / 33.06 = 0.60496) = 363.0, so 363 x 300,000 /
+        // 12 = 9,075,000. Build [P7-IN-022] [P7-US-002]: 18 months x (3 / 9) =
+        // 6 months (ruling 1, sourced local duration; wind has no ceiling).
+        (kind: Wind, capacity_mw: 300.0, min_stable: 0.0, ramp_mw_per_min: 0.0, startup_hours: 0.0, startup_cost: 0, marginal_cost_per_mwh: 0.0, fixed_om_per_month: 9075000, capital_cost: 12090000000, build_months: 6, capacity_credit: 0.2, book_life_months: 300, siting: Anywhere),
+        // Nuclear (Narora, Rawatbhata and Kakrapar are the PHWR fleet).
+        // Capital [P7-IN-005] [P7-US-004]: 1.05e12 INR / 7,000,000 kW = 150,000
+        // INR/kW x (2,181.82 / 7,861 = 0.27755) = 41,632.5, so 41,600 INR/kW x
+        // 700,000 kW = 29,120,000,000. Fixed O&M (ruling 4, authoring
+        // judgment: derived from [P7-IN-005] by NA kind relativity): 41,632.45
+        // x the NA fixed O&M / capital (120.0 / 2,181.82 = 0.055) = 2,289.8,
+        // so 2,290 x 700,000 / 12 = 133,583,333. Marginal (ruling 19,
+        // authoring judgment: no sourced local fuel row): 10 x 51.84366 =
+        // 518.4, so 518 [P7-IN-011]. Start-up (ruling 2, authoring judgment:
+        // no sourced local start-up; per MW by ruling 24, 700 MW rather than
+        // 1,100): 1,000,000 x 518.437 / 10 x 700 / 1,100 = 32,991,419, so
+        // 33,000,000. Ramp (ruling 24): 5 x 700 / 1,100 = 3.18 MW/min. Build
+        // 18 months (ruling 1, authoring judgment: no sourced local duration).
+        (
+            kind: Nuclear,
+            capacity_mw: 700.0,
+            min_stable: 0.7,
+            ramp_mw_per_min: 3.18,
+            startup_hours: 48.0,
+            startup_cost: 33000000,
+            marginal_cost_per_mwh: 518.0,
+            fixed_om_per_month: 133583333,
+            capital_cost: 29120000000,
+            build_months: 18,
+            capacity_credit: 0.95,
+            book_life_months: 480,
+            siting: CoolingWater(0.5),
+        ),
+        // Coal (800 MW ultra-supercritical, as at Lara Stage II). Capital
+        // [P7-IN-001] [P7-US-007]: 1.553e11 INR / 1,600,000 kW = 97,062.5
+        // INR/kW x (1,166.67 / 4,103 = 0.28434) = 27,599.2, so 27,600 INR/kW x
+        // 800,000 kW = 22,080,000,000 (P7-IN-002, CEA's planning cost, is a
+        // cross-check). Fixed O&M [P7-IN-003] [P7-US-009]: CERC's norm for the
+        // 800 MW series, 2,320 INR/kW-yr x (40.0 / 61.60 = 0.64935) = 1,506.5,
+        // so 1,510 x 800,000 / 12 = 100,666,667 (P7-IN-012 is the planner's
+        // alternative). Marginal (ruling 19, authoring judgment: no sourced
+        // local fuel row): 30 x 51.84366 = 1,555.3, so 1,560 [P7-IN-011].
+        // Start-up (ruling 2, authoring judgment: no sourced local start-up;
+        // per MW by ruling 24, 800 MW rather than 600): 150,000 x 1,555.310 /
+        // 30 x 800 / 600 = 10,368,732, so 10,400,000. Ramp (ruling 24): 6 x
+        // 800 / 600 = 8.0 MW/min. Build [P7-IN-013] [P7-US-008]: 48 months x
+        // (8 / 36) = 10.7, so 11 months (ruling 1, sourced; ceiling 12).
+        (
+            kind: Coal,
+            capacity_mw: 800.0,
+            min_stable: 0.4,
+            ramp_mw_per_min: 8.0,
+            startup_hours: 8.0,
+            startup_cost: 10400000,
+            marginal_cost_per_mwh: 1560.0,
+            fixed_om_per_month: 100666667,
+            capital_cost: 22080000000,
+            build_months: 11,
+            capacity_credit: 0.95,
+            book_life_months: 480,
+            siting: CoolingWater(0.5),
+        ),
+        // Combined cycle. Capital (ruling 3, authoring judgment: derived from
+        // [P7-IN-001] by NA kind relativity): local game coal 27,599.22 INR/kW
+        // x NA CCGT / coal (600 / 1,166.67 = 0.51429) = 14,193.9, so 14,200
+        // INR/kW x 500,000 kW = 7,100,000,000. Fixed O&M [P7-IN-004]
+        // [P7-US-012]: CERC's gas-turbine and combined-cycle norm, 1,818
+        // INR/kW-yr x (14.4 / 15.51 = 0.92843) = 1,687.9, so 1,690 x 500,000 /
+        // 12 = 70,416,667. This is 0.99% of capital per month (North America
+        // 0.2%), because capital is derived (ruling 3) while O&M is sourced.
+        // Marginal (ruling 19, authoring judgment: no sourced
+        // local fuel row): 45 x 51.84366 = 2,333.0, so 2,330 [P7-IN-011].
+        // Start-up (ruling 2, authoring judgment: no sourced local start-up):
+        // 40,000 x 2,332.965 / 45 = 2,073,746, so 2,070,000. Build 4 months
+        // (ruling 1, authoring judgment: no sourced local duration).
+        (
+            kind: Ccgt,
+            capacity_mw: 500.0,
+            min_stable: 0.3,
+            ramp_mw_per_min: 25.0,
+            startup_hours: 2.0,
+            startup_cost: 2070000,
+            marginal_cost_per_mwh: 2330.0,
+            fixed_om_per_month: 70416667,
+            capital_cost: 7100000000,
+            build_months: 4,
+            capacity_credit: 0.95,
+            book_life_months: 360,
+            siting: Anywhere,
+        ),
+        // Peaker (open-cycle gas turbine). Capital (ruling 3, authoring
+        // judgment: derived from [P7-IN-001] by NA kind relativity, through
+        // the CCGT): 14,193.88 x NA peaker / CCGT (500 / 600 = 0.83333) =
+        // 11,828.2, so 11,800 INR/kW x 200,000 kW = 2,360,000,000. Fixed O&M
+        // [P7-IN-004] [P7-US-015]: CERC's norm covers gas-turbine stations as
+        // well as combined cycle, 1,818 INR/kW-yr x (10.2 / 9.56 = 1.06695) =
+        // 1,939.7, so 1,940 x 200,000 / 12 = 32,333,333. Marginal (ruling 19,
+        // authoring judgment: no sourced local fuel row): 150 x 51.84366 =
+        // 7,776.5, so 7,780 [P7-IN-011]. Start-up (ruling 2, authoring
+        // judgment: no sourced local start-up; P7-US-032 needs a local
+        // start-up row): 5,000 x 7,776.549 / 150 = 259,218, so 259,000. Build
+        // 2 months (ruling 1, authoring judgment: no sourced local duration).
+        (
+            kind: Peaker,
+            capacity_mw: 200.0,
+            min_stable: 0.2,
+            ramp_mw_per_min: 40.0,
+            startup_hours: 0.16666666666666666,
+            startup_cost: 259000,
+            marginal_cost_per_mwh: 7780.0,
+            fixed_om_per_month: 32333333,
+            capital_cost: 2360000000,
+            build_months: 2,
+            capacity_credit: 0.95,
+            book_life_months: 360,
+            siting: Anywhere,
+        ),
+        // Solar [P7-IN-008] [P7-US-016]: MNRE's normative cost, 40,000 INR/kW
+        // x (500 / 1,502 = 0.33289) = 13,315.6, so 13,300 INR/kW x 300,000 kW
+        // = 3,990,000,000 (P7-IN-017 and P7-IN-026 corroborate it). Fixed O&M
+        // [P7-IN-018] [P7-US-018]: CEA's 1% of capex on that cost, 400
+        // INR/kW-yr x (20.0 / 20.23 = 0.98863) = 395.5, so 395 x 300,000 / 12 =
+        // 9,875,000. Build [P7-IN-019] [P7-US-017]: 6 months x (2 / 12) = 1
+        // month (ruling 1, sourced; ceiling 3).
+        (
+            kind: Solar,
+            capacity_mw: 300.0,
+            min_stable: 0.0,
+            ramp_mw_per_min: 300.0,
+            startup_hours: 0.0,
+            startup_cost: 0,
+            marginal_cost_per_mwh: 0.0,
+            fixed_om_per_month: 9875000,
+            capital_cost: 3990000000,
+            build_months: 1,
+            capacity_credit: 0.3,
+            book_life_months: 300,
+            siting: Anywhere,
+        ),
+        // Hydro (a 700 MW station, as Tato-II). Capital [P7-IN-006]
+        // [P7-US-019]: 8.14621e10 INR / 700,000 kW = 116,374.4 INR/kW x (1,500
+        // / 7,073 = 0.21207) = 24,680.0, so 24,700 INR/kW x 700,000 kW =
+        // 17,290,000,000 (inside CEA's range, P7-IN-014; P7-IN-027 is a
+        // cross-check). Fixed O&M [P7-IN-015] [P7-US-021]: 2.5% of that
+        // capex, 2,909.4 INR/kW-yr x (40.5 / 33.54 = 1.20751) = 3,513.1, so
+        // 3,510 x 700,000 / 12 = 204,750,000. Start-up (ruling 2 with the
+        // hydro judgment, authoring judgment: the CCGT marginal ratio; per MW
+        // by ruling 24, 700 MW rather than 800): 1,000 x 2,332.965 / 45 x 700
+        // / 800 = 45,363, so 45,400. Ramp (ruling 24): 100 x 700 / 800 = 87.5
+        // MW/min. Build [P7-IN-007] [P7-US-020]: Tato-II's planned 72 months x
+        // (12 / 36) = 24, clamped to the hydro ceiling of 18 months (ruling 1,
+        // sourced; P7-IN-016's 60-96 months contains it).
+        (
+            kind: Hydro,
+            capacity_mw: 700.0,
+            min_stable: 0.0,
+            ramp_mw_per_min: 87.5,
+            startup_hours: 0.08333333333333333,
+            startup_cost: 45400,
+            marginal_cost_per_mwh: 0.0,
+            fixed_om_per_month: 204750000,
+            capital_cost: 17290000000,
+            build_months: 18,
+            capacity_credit: 0.8,
+            book_life_months: 600,
+            siting: HydroSite(0.5),
+        ),
+        // Storage (lithium-ion, 4 hours). Capital [P7-IN-009] [P7-US-022]: the
+        // VGF scheme's 9.4e10 INR for 4,000 MWh, 94,000 INR/kW of a 4-hour
+        // system x (500 / 1,744 = 0.28670) = 26,949.5, so 26,900 INR/kW x
+        // 200,000 kW = 5,380,000,000. Fixed O&M [P7-IN-023] [P7-US-024]: 1% of
+        // that capex, 940 INR/kW-yr x (6.0 / 40.0 = 0.15) = 141 x 200,000 / 12
+        // = 2,350,000. Build [P7-IN-024] [P7-US-023]: 6 months x (2 / 12) = 1
+        // month (ruling 1, sourced; storage has no ceiling). Windows on the
+        // IST system clock (spec section 28.4): the starter territory has no
+        // solar, and its net load is highest from the summer afternoon plateau
+        // (13:00 to 15:00) through the evening and the air-conditioned summer
+        // night (19:00 to 22:00), so discharge may start at 14:00; charging
+        // fills the early-morning valley before then, which a solar fleet
+        // moves to midday.
+        (kind: Battery, capacity_mw: 200.0, min_stable: 0.0, ramp_mw_per_min: 0.0,
+         startup_hours: 0.0, startup_cost: 0, marginal_cost_per_mwh: 0.0,
+         fixed_om_per_month: 2350000, capital_cost: 5380000000, build_months: 1,
+         capacity_credit: 0.0, book_life_months: 180, siting: Anywhere,
+         battery: Some((charge_mw: 200.0, energy_mwh: 800.0, charge_efficiency: 0.9,
+                        discharge_efficiency: 1.0, discharge_start_hour: 14, charge_end_hour: 14))),
+    ],
+    // Each Indian city is a Census of India 2011 urban agglomeration (or city)
+    // and the hinterland it anchors. Base loads are 150 MW per million
+    // residents, rounded to 10 MW; the comment after each city gives its
+    // residents.
+    // - Million-plus agglomerations: Census of India 2011, Class I UAs, as
+    //   tabulated by English Wikipedia, "List of million-plus urban
+    //   agglomerations in India", main table, column "Pop. 2011", read
+    //   2026-10-25.
+    // - Gurgaon, Noida, Chandigarh, Guwahati and Bhubaneswar: English
+    //   Wikipedia, "Urban agglomerations in India", table "Top 60 urban agglomerations",
+    //   column 2011 (citing citypopulation.de, "India: Major
+    //   Agglomerations"), read 2026-10-25.
+    // - Kathmandu: Nepal's census of 2021-11-25 for Kathmandu (862,400),
+    //   Lalitpur (294,098) and Bhaktapur (79,136), the valley's contiguous
+    //   core, summed (City Population, "Nepal: Provinces, Major Cities &
+    //   Municipalities", column "Population Census (Cf) 2021-11-25").
+    // - Thimphu: Bhutan's census of 2017-05-30 (City Population, "Bhutan:
+    //   Districts & Major Towns", Major Towns table).
+    // Coordinates are each city's English Wikipedia infobox coordinate
+    // (Nagpur's article has none, so its Wikidata P625, Q1513), read
+    // 2026-10-25. Ghaziabad (2,375,820) is left out: its cell is Noida's.
+    // Names follow the English Wikipedia titles (ruling 17): "Gurgaon" for
+    // the key city-gurugram. The total, 20,430 MW, is 0.943 of the Eastern
+    // Interconnection's load per GW of capacity (spec section 28.3).
+    cities: [
+        (id: 1, name_key: "city-delhi", lon: 77.23, lat: 28.61, base_load_mw: 2450.0, zone: 1, climate: 1), // 16,349,831
+        (id: 2, name_key: "city-gurugram", lon: 77.029, lat: 28.456, base_load_mw: 140.0, zone: 1, climate: 1), // 902,112
+        (id: 3, name_key: "city-noida", lon: 77.32, lat: 28.57, base_load_mw: 100.0, zone: 1, climate: 1), // 642,381
+        (id: 4, name_key: "city-faridabad", lon: 77.3078, lat: 28.4211, base_load_mw: 210.0, zone: 1, climate: 1), // 1,414,050
+        (id: 5, name_key: "city-meerut", lon: 77.71, lat: 28.98, base_load_mw: 210.0, zone: 1, climate: 1), // 1,420,902
+        (id: 6, name_key: "city-chandigarh", lon: 76.7797, lat: 30.7333, base_load_mw: 150.0, zone: 1, climate: 1), // 1,026,459
+        (id: 7, name_key: "city-ludhiana", lon: 75.8516, lat: 30.909, base_load_mw: 240.0, zone: 1, climate: 1), // 1,618,879
+        (id: 8, name_key: "city-srinagar", lon: 74.79, lat: 34.09, base_load_mw: 190.0, zone: 1, climate: 3), // 1,264,202
+        (id: 9, name_key: "city-jaipur", lon: 75.82, lat: 26.915, base_load_mw: 460.0, zone: 1, climate: 1), // 3,046,163
+        (id: 10, name_key: "city-jodhpur", lon: 73.02, lat: 26.28, base_load_mw: 170.0, zone: 1, climate: 1), // 1,138,300
+        (id: 11, name_key: "city-agra", lon: 78.02, lat: 27.18, base_load_mw: 260.0, zone: 1, climate: 1), // 1,760,285
+        (id: 12, name_key: "city-lucknow", lon: 80.95, lat: 26.85, base_load_mw: 440.0, zone: 1, climate: 1), // 2,902,920
+        (id: 13, name_key: "city-kanpur", lon: 80.331874, lat: 26.449923, base_load_mw: 440.0, zone: 1, climate: 1), // 2,920,496
+        (id: 14, name_key: "city-varanasi", lon: 83.01277778, lat: 25.31888889, base_load_mw: 210.0, zone: 1, climate: 1), // 1,432,280
+        (id: 15, name_key: "city-patna", lon: 85.1375, lat: 25.59388889, base_load_mw: 310.0, zone: 1, climate: 1), // 2,049,156
+        (id: 16, name_key: "city-kathmandu", lon: 85.32, lat: 27.71, base_load_mw: 190.0, zone: 2, climate: 3), // 1,235,634
+        (id: 17, name_key: "city-thimphu", lon: 89.63611111, lat: 27.47222222, base_load_mw: 20.0, zone: 3, climate: 3), // 114,551
+        (id: 18, name_key: "city-kolkata", lon: 88.37, lat: 22.5675, base_load_mw: 2110.0, zone: 1, climate: 1), // 14,057,991
+        (id: 19, name_key: "city-guwahati", lon: 91.74583333, lat: 26.17222222, base_load_mw: 150.0, zone: 1, climate: 1), // 968,549
+        (id: 20, name_key: "city-bhubaneswar", lon: 85.84, lat: 20.27, base_load_mw: 130.0, zone: 1, climate: 1), // 885,363
+        (id: 21, name_key: "city-ranchi", lon: 85.33, lat: 23.36, base_load_mw: 170.0, zone: 1, climate: 1), // 1,126,720
+        (id: 22, name_key: "city-raipur", lon: 81.63055556, lat: 21.24444444, base_load_mw: 170.0, zone: 1, climate: 1), // 1,123,558
+        (id: 23, name_key: "city-bhopal", lon: 77.4125, lat: 23.2589, base_load_mw: 280.0, zone: 1, climate: 1), // 1,886,100
+        (id: 24, name_key: "city-indore", lon: 75.855, lat: 22.71861111, base_load_mw: 330.0, zone: 1, climate: 1), // 2,170,295
+        (id: 25, name_key: "city-nagpur", lon: 79.08055556, lat: 21.14972222, base_load_mw: 370.0, zone: 1, climate: 1), // 2,497,870
+        (id: 26, name_key: "city-ahmedabad", lon: 72.57138889, lat: 23.0225, base_load_mw: 950.0, zone: 1, climate: 2), // 6,357,693
+        (id: 27, name_key: "city-vadodara", lon: 73.2, lat: 22.3, base_load_mw: 270.0, zone: 1, climate: 2), // 1,822,221
+        (id: 28, name_key: "city-surat", lon: 72.84, lat: 21.205, base_load_mw: 690.0, zone: 1, climate: 2), // 4,591,246
+        (id: 29, name_key: "city-mumbai", lon: 72.8775, lat: 19.07611111, base_load_mw: 2760.0, zone: 1, climate: 2), // 18,394,912
+        (id: 30, name_key: "city-pune", lon: 73.85527778, lat: 18.52111111, base_load_mw: 760.0, zone: 1, climate: 2), // 5,057,709
+        (id: 31, name_key: "city-hyderabad", lon: 78.47472222, lat: 17.36166667, base_load_mw: 1150.0, zone: 1, climate: 2), // 7,677,018
+        (id: 32, name_key: "city-visakhapatnam", lon: 83.29222222, lat: 17.69388889, base_load_mw: 260.0, zone: 1, climate: 2), // 1,728,128
+        (id: 33, name_key: "city-bengaluru", lon: 77.59166667, lat: 12.97888889, base_load_mw: 1280.0, zone: 1, climate: 2), // 8,520,435
+        (id: 34, name_key: "city-chennai", lon: 80.275, lat: 13.0825, base_load_mw: 1300.0, zone: 1, climate: 2), // 8,653,521
+        (id: 35, name_key: "city-coimbatore", lon: 76.96333333, lat: 11.00083333, base_load_mw: 320.0, zone: 1, climate: 2), // 2,136,916
+        (id: 36, name_key: "city-madurai", lon: 78.1198, lat: 9.9252, base_load_mw: 220.0, zone: 1, climate: 2), // 1,465,625
+        (id: 37, name_key: "city-kochi", lon: 76.26730556, lat: 9.93119444, base_load_mw: 320.0, zone: 1, climate: 2), // 2,119,724
+        (id: 38, name_key: "city-thiruvananthapuram", lon: 76.93661111, lat: 8.52411111, base_load_mw: 250.0, zone: 1, climate: 2), // 1,679,754
+    ],
+    // Climate 1, the northern and eastern plains and central India: the
+    // demand peak comes before the monsoon, in May, with an air-conditioned
+    // afternoon and a second peak late in the hot night; the humid monsoon
+    // keeps the night load high; winter has a morning peak and a lighting
+    // evening peak over low nights. Climate 2, the west coast, Gujarat and
+    // the peninsula: milder seasons, an April and May high, and an evening
+    // peak all year. Climate 3, the Himalaya (Srinagar, Kathmandu and
+    // Thimphu): a winter heating evening peak. The hourly shapes, the
+    // month-to-shape assignment and the monthly factors are authoring
+    // judgments on each city's local clock (no sourced hourly load profile
+    // was found). The May peak follows India's record demand of 250 GW met on
+    // 30 May 2024, with a non-solar-hours record of 234.3 GW on 29 May 2024
+    // that marks the evening ramp as solar falls (Ministry of Power statement,
+    // reprinted by pv magazine India, "India's Power Sector Achieves Record
+    // 250 GW Demand met on 30th May", read 2026-10-25).
+    climates: [
+        (id: 1,
+            shapes: [
+                ("winter", [
+                0.74, 0.71, 0.69, 0.68, 0.69, 0.73, 0.82, 0.95, 1.06, 1.10, 1.09, 1.06,
+                1.03, 1.01, 1.00, 1.00, 1.03, 1.12, 1.18, 1.17, 1.12, 1.03, 0.92, 0.82,
+            ]),
+                ("summer", [
+                0.98, 0.95, 0.92, 0.89, 0.86, 0.84, 0.84, 0.87, 0.92, 0.97, 1.02, 1.06,
+                1.08, 1.09, 1.10, 1.09, 1.06, 1.03, 1.02, 1.05, 1.08, 1.10, 1.09, 1.04,
+            ]),
+                ("monsoon", [
+                0.97, 0.94, 0.91, 0.88, 0.86, 0.84, 0.85, 0.88, 0.93, 0.98, 1.02, 1.05,
+                1.07, 1.08, 1.08, 1.07, 1.05, 1.03, 1.03, 1.06, 1.08, 1.09, 1.07, 1.02,
+            ]),
+                ("post-monsoon", [
+                0.82, 0.78, 0.76, 0.75, 0.75, 0.78, 0.85, 0.94, 1.03, 1.08, 1.09, 1.08,
+                1.06, 1.05, 1.04, 1.04, 1.05, 1.11, 1.14, 1.12, 1.07, 1.00, 0.92, 0.86,
+            ]),
+            ],
+            month_shapes: ["winter", "winter", "summer", "summer", "summer", "monsoon", "monsoon", "monsoon", "monsoon", "post-monsoon", "post-monsoon", "winter"],
+            monthly: [0.90, 0.86, 0.92, 1.04, 1.12, 1.11, 1.05, 1.03, 1.03, 0.96, 0.86, 0.90],
+        ),
+        (id: 2,
+            shapes: [
+                ("summer", [
+                0.86, 0.83, 0.81, 0.79, 0.78, 0.79, 0.83, 0.90, 0.98, 1.04, 1.08, 1.10,
+                1.10, 1.11, 1.11, 1.10, 1.07, 1.04, 1.06, 1.10, 1.10, 1.06, 1.00, 0.93,
+            ]),
+                ("monsoon", [
+                0.84, 0.81, 0.79, 0.78, 0.78, 0.80, 0.85, 0.92, 0.99, 1.04, 1.07, 1.08,
+                1.07, 1.07, 1.07, 1.06, 1.05, 1.05, 1.10, 1.13, 1.11, 1.05, 0.97, 0.90,
+            ]),
+                ("dry", [
+                0.80, 0.77, 0.75, 0.74, 0.75, 0.79, 0.87, 0.96, 1.03, 1.07, 1.09, 1.09,
+                1.07, 1.07, 1.06, 1.05, 1.05, 1.09, 1.15, 1.15, 1.10, 1.02, 0.93, 0.85,
+            ]),
+            ],
+            month_shapes: ["dry", "dry", "summer", "summer", "summer", "monsoon", "monsoon", "monsoon", "monsoon", "dry", "dry", "dry"],
+            monthly: [0.96, 0.98, 1.04, 1.08, 1.09, 1.01, 0.96, 0.95, 0.98, 1.00, 0.97, 0.96],
+        ),
+        (id: 3,
+            shapes: [
+                ("winter", [
+                0.72, 0.69, 0.67, 0.67, 0.69, 0.75, 0.88, 1.00, 1.06, 1.05, 1.02, 1.00,
+                0.98, 0.97, 0.97, 0.99, 1.06, 1.20, 1.30, 1.26, 1.16, 1.03, 0.89, 0.78,
+            ]),
+                ("summer", [
+                0.78, 0.75, 0.73, 0.72, 0.73, 0.78, 0.88, 0.98, 1.04, 1.06, 1.06, 1.05,
+                1.03, 1.02, 1.02, 1.03, 1.05, 1.12, 1.20, 1.19, 1.12, 1.02, 0.91, 0.83,
+            ]),
+            ],
+            month_shapes: ["winter", "winter", "summer", "summer", "summer", "summer", "summer", "summer", "summer", "summer", "winter", "winter"],
+            monthly: [1.10, 1.06, 1.00, 0.95, 0.96, 0.98, 0.98, 0.98, 0.96, 0.96, 1.00, 1.08],
+        ),
+    ],
+    demand_noise: (forecast_error: 0.03, error_persistence: 0.995),
+    // Regional cloud from New Delhi's sunshine (IMD normals at Safdarjung, as
+    // tabulated by English Wikipedia "Delhi", "Climate data for New Delhi
+    // (Safdarjung)", read 2026-10-25: 220.1, 223.2, 248.0, 276.0, 285.2,
+    // 219.0, 179.8, 176.7, 219.0, 260.4, 246.0 and 220.1 hours, sun
+    // 1971-2000), as a share of the possible hours on the 15th at 28.61 N
+    // (FAO-56 equations 24, 25 and 34) and through the Angstrom-Prescott
+    // relation with the FAO-56 defaults (Allen et al., FAO Irrigation and
+    // Drainage Paper 56, 1998, equation 35: a = 0.25, b = 0.50), normalised to
+    // clear sky (0.75): (0.25 + 0.5 x share) / 0.75. The monsoon months are
+    // the cloudiest (June to September mean 0.67 against 0.76 for the year).
+    solar: (
+        clearness_mean: [0.79, 0.82, 0.79, 0.82, 0.79, 0.69, 0.62, 0.63, 0.73, 0.83, 0.85, 0.80],
+        clearness_sd: 0.13,
+    ),
+    // Usable river flow (spec section 28.6: a monsoon high). The shape
+    // follows New Delhi's rain (the same IMD normals: 19.1, 21.3, 17.4, 16.3,
+    // 30.7, 74.1, 209.7, 233.1, 123.5, 15.1, 6.0 and 8.1 mm), which falls
+    // mostly from July to September, with Himalayan snowmelt raising the
+    // rivers from May and the reservoirs draining into October; flow is
+    // lowest from December to February. The monthly factors are an authoring
+    // judgment on that shape (no monthly long-term inflow or hydro generation
+    // table was reached: the CEA report links returned 404).
+    hydro: (monthly_flow: [0.5, 0.5, 0.55, 0.65, 0.85, 1.2, 1.65, 1.8, 1.55, 1.0, 0.65, 0.55]),
+    // North American protection and performance values at 50 Hz (Global
+    // Constraints).
+    frequency: (
+        nominal_hz: 50.0,
+        k_inertia: 5.0,
+        k_damping: 0.2,
+        normal_band_hz: 0.05,
+        shed_below_hz: -0.5,
+        blackout_below_hz: -1.5,
+        blackout_after_shed_ticks: 30,
+        curtail_above_hz: 0.5,
+        trip_above_hz: 1.5,
+        trip_after_ticks: 5,
+        shed_stage_spacing_hz: 0.2,
+        shed_step: 0.05,
+    ),
+    // Currency-neutral ratios as in North America; only the two tariffs are
+    // local.
+    regulator: (
+        storage_accreditation: [(2.0, 0.65), (4.0, 0.85), (6.0, 0.93), (8.0, 0.96)],
+        satisfaction_target: 90.0,
+        return_per_satisfaction_point: 0.0005,
+        // Tariffs [P7-IN-011] [P7-US-034]: the state distribution utilities'
+        // average revenue realised, 7,030 INR/MWh x (95 / 135.6 = 0.70059) =
+        // 4,925.1, so 4,930 to start, and x (100 / 135.6 = 0.73746) = 5,184.4,
+        // so a reference of 5,180 (the same 0.95 relation as shipped).
+        // Basis: P7-IN-011 is the average revenue realised across all
+        // consumers of state distribution utilities, while P7-US-034 is an
+        // all-sector retail average (authoring judgment: basis differs from
+        // the US all-sector reference; not re-based). The fuel proxy (ruling
+        // 19) scales by this same reference, so it inherits that basis.
+        starting_tariff_per_mwh: 4930.0,
+        reference_tariff_per_mwh: 5180.0,
+        base_return: 0.09,
+        min_return: 0.07,
+        max_return: 0.11,
+        reliability_target: 0.999,
+        return_per_reliability: 2.0,
+        return_per_cost_improvement: 0.05,
+        reserve_margin: 0.2,
+        strike_threshold: 0.005,
+        strikes_to_revoke: 3,
+        clean_months_to_expire: 3,
+        frequency_band_hz: 0.2,
+        frequency_violation_share: 0.05,
+    ),
+    satisfaction: (
+        starting: 70.0,
+        reliability_floor: 0.95,
+        price_sensitivity: 2.0,
+        smoothing: 0.2,
+    ),
+    // Lines. Cost (ruling 20, authoring judgment: derived from [P7-IN-001]
+    // by NA kind relativity; P7-IN-010 is per MW-km of transfer capacity, so
+    // it gives no per-km figure): local game coal 27,599.22 INR/kW x the NA
+    // line cost per km over NA coal per kW (466,832 / 1,166.67 = 400.14, the
+    // NA line figure from the [P7-US-033] pacing table) = 11,043,598, so
+    // 11,000,000 INR/km x cell_km 25.678 = 282,456,574 INR per cell. Build
+    // speed (rulings 5 and 21, authoring judgment: cell width is the note's
+    // cell_km): 201.07 km per month / 25.678 km = 7.83, so 8 cells per month.
+    lines: (cost_per_cell: 282456574, cells_per_month: 8, book_life_months: 600),
+    // The National Capital Region core: Delhi, Gurgaon and Noida.
+    start: (
+        year: 2027,
+        month: 1,
+        // Cash (tuned freely; scale from [P7-IN-001]): the Eastern
+        // Interconnection's 5,000,000,000 x the local coal capital relativity
+        // (27,599.22 / 1,166.67 = 23.65647) = 118,282,354,375, so
+        // 118,000,000,000 INR.
+        cash: 118000000000,
+        // Delhi anchors the starting service territory.
+        home_city: 1,
+        connected_cities: [1, 2, 3],
+        // Real plants at their published coordinates (each plant's English
+        // Wikipedia infobox, or its Wikidata P625 where the article has none,
+        // read 2026-10-25), following northern India's coal-led mix with
+        // Himalayan hydro, gas and nuclear. Each plant's cell is land.
+        fleet: [
+            // Nuclear: Narora Atomic Power Station on the Ganga (Q1312991; 2 x
+            // 220 MW PHWRs).
+            (Nuclear, 78.40944444, 28.15805556),
+            // Coal: NTPC Dadri, Gautam Buddh Nagar (Q6955488; 1,840 MW coal),
+            // and the Indira Gandhi Super Thermal Power Project at Jhajjar
+            // (Q16934765, Wikidata; 3 x 500 MW).
+            (Coal, 77.60944444, 28.59833333),
+            (Coal, 76.3753, 28.4786),
+            // Combined cycle: Pragati-III at Bawana, Delhi (English Wikipedia,
+            // "Pragati-III Combined Cycle Power Plant", 28.79472 N, 77.07 E;
+            // 2 x 750 MW).
+            (Ccgt, 77.07, 28.79472),
+            // Hydro: Tehri on the Bhagirathi (Q69091; 1,000 MW) and Bhakra on
+            // the Sutlej (Q83436; 1,325 MW), carried to the plains.
+            (Hydro, 78.48055556, 30.37777778),
+            (Hydro, 76.43333333, 31.41083333),
+        ],
+    ),
+)

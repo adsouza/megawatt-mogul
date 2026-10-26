@@ -240,7 +240,7 @@ mod tests {
     fn a_warning_near_midnight_looks_ahead_only_to_the_last_tick() {
         // Hour 0 demand far above hour 23, so the net load jumps as the day wraps.
         let mut parts = tiny_region_parts();
-        parts.demand.shoulder[0] = 3.0;
+        parts.climates[0].shapes[2][0] = 3.0;
         let region = RegionDefinition::try_from(parts).expect("wrapped-day region is valid");
         let session = GameSession::new(Arc::new(region), 1, GameSettings::default());
         let mut projection = RampWarningProjection::default();

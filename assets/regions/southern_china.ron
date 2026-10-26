@@ -1,0 +1,647 @@
+// Southern China: the main synchronous area of China Southern Power Grid
+// (CSG): Guangdong, Guangxi, Guizhou and Hainan, with Hong Kong and Macau
+// (spec section 28.3; research note
+// docs/research/2026-10-18-world-power-grids-top-8.md, section "E - Southern
+// China main area"). Yunnan, CSG's fifth province, is excluded: the notes
+// record that it has run asynchronously from the four-province area since
+// 2016, joined only by DC links.
+//
+// Grid-operation rulings, all from that section of the notes: Hong Kong and
+// Macau are AC-connected to Guangdong, so they belong here (their generation
+// counted once); Hainan joins Guangdong by existing AC submarine connections
+// across the Qiongzhou Strait, so it is in (the notes cite CSG's Hainan AC
+// procurement). The footprint contains no disputed area that the notes leave
+// open.
+//
+// Geography: tools/region_authoring/selections/southern_china.args holds the
+// extractor arguments. Natural Earth v5.1.2, 1:10m admin-1 Guangdong,
+// Guangxi, Guizhou, Hainan, the 18 Hong Kong districts and Macau, dissolved.
+// Ruling 22: the 1:10m admin-1 features replace admin-0 HKG and MAC, whose
+// 1:50m outlines share no vertices with the 1:10m Guangdong border, so
+// dissolving them left a sliver of water through Shenzhen. Features used:
+// admin-1 CHN Guangdong, Guangxi, Guizhou and Hainan; MAC Macau; HKG Central
+// and Western, Eastern, Islands, Kowloon City, Kwai Tsing, Kwun Tong, North,
+// Sai Kung, Sha Tin, Sham Shui Po, Southern, Tai Po, Tsuen Wan, Tuen Mun,
+// Wan Chai, Wong Tai Sin, Yau Tsim Mong and Yuen Long. Regenerate with
+//   tr '\n' '\0' < tools/region_authoring/selections/southern_china.args \
+//       | xargs -0 python3 -I tools/region_authoring/natural_earth.py
+// which reports 2 land and 0 exclude rings (the selection has no
+// exclusions). The extractor drops Macau's outline (under 2 cells), and the
+// half-cell simplification moves the Haikou, Shantou and Yangjiang shores off
+// their cell centres, so four short nudge rings after the generated rings
+// put those coastal cities on land. Points are (lon, lat) in degrees.
+//
+// Grid: 104 to 117.5 E and 18 to 29.5 N on 124 x 115 cells. The 104.0 E west
+// bound clips far-western Guizhou (about 103.6 to 104.0 E). At the middle
+// latitude, 23.75 N, a cell is 11.08 km east-west by 11.12 km north-south
+// (aspect 1.004, cell_km 11.100).
+//
+// Money is in CNY (yuan) at local price levels from the Plan 7 research note
+// (docs/research/2026-10-25-plan-7-regional-economics.md), converted to game
+// values by its pacing method. Each entry's comment cites its rows and shows
+// the arithmetic; the ratios use full precision.
+(
+    region_schema: 4,
+    id: "southern_china",
+    system_zone: 1,
+    // China Standard Time, UTC+8 with no daylight saving, for every city,
+    // Hong Kong and Macau included (spec section 28.4).
+    time_zones: [
+        (id: 1, name_key: "zone-cst", standard_offset_minutes: 480, dst_months: [false, false, false, false, false, false, false, false, false, false, false, false]),
+    ],
+    // Northern meteorological seasons.
+    calendar: (seasons: [Winter, Winter, Spring, Spring, Spring, Summer, Summer, Summer, Autumn, Autumn, Autumn, Winter]),
+    currency: CNY,
+    atlas: (colour: "#008F9D"),
+    name_key: "region-southern-china",
+    bounds: (west: 104.0, east: 117.5, south: 18.0, north: 29.5),
+    grid: (width: 124, height: 115),
+    // Generated rings (spec section 28.11.1): natural_earth.ron, written by
+    // tools/region_authoring/selections/southern_china.args, whose header records the source
+    // data and command.
+    geography: ["natural_earth.ron"],
+    land: [
+        // Nudge rings (hand-authored, not generated). Macau: the peninsula,
+        // Taipa, Coloane and the Hengqin shore, which the extractor drops
+        // as under 2 cells.
+        [
+            (113.500, 22.130), (113.520, 22.220), (113.560, 22.220), (113.600, 22.160),
+            (113.590, 22.110), (113.540, 22.100),
+        ],
+        // Haikou, on Hainan's north shore.
+        [
+            (110.200, 19.950), (110.200, 20.100), (110.550, 20.100), (110.550, 19.950),
+        ],
+        // Shantou, at the mouth of the Rong and Han rivers.
+        [
+            (116.600, 23.300), (116.600, 23.420), (116.780, 23.420), (116.780, 23.300),
+        ],
+        // Yangjiang, on the west Guangdong coast.
+        [
+            (111.920, 21.800), (111.920, 21.920), (112.080, 21.920), (112.080, 21.800),
+        ],
+    ],
+    exclude: [],
+    // Relief: the Yunnan-Guizhou Plateau rising west through Guizhou to the
+    // Wumeng Mountains, the Guangxi karst hills, the Nanling ranges along
+    // the northern edge of Guangdong and Guangxi, the Yunkai and Lianhua
+    // mountains, and Hainan's Wuzhi Mountains; the Pearl River Delta, the
+    // Chaoshan plain and the Leizhou Peninsula are low. Named ranges only;
+    // heights are an authoring judgment (no elevation dataset was used).
+    height: (
+        base: 0.2,
+        blobs: [
+            // The Yunnan-Guizhou Plateau and the Wumeng Mountains.
+            (lon: 106.6, lat: 26.8, radius_deg: 1.5, value: 0.35),
+            (lon: 105.0, lat: 26.7, radius_deg: 1.0, value: 0.45),
+            (lon: 105.3, lat: 25.3, radius_deg: 0.9, value: 0.35),
+            // The Guangxi karst hills and the Nanling ranges.
+            (lon: 108.6, lat: 24.8, radius_deg: 1.1, value: 0.25),
+            (lon: 110.8, lat: 25.6, radius_deg: 0.9, value: 0.3),
+            (lon: 113.0, lat: 24.9, radius_deg: 1.0, value: 0.3),
+            (lon: 114.8, lat: 24.6, radius_deg: 0.8, value: 0.2),
+            // The Yunkai and Lianhua mountains.
+            (lon: 111.4, lat: 22.6, radius_deg: 0.6, value: 0.2),
+            (lon: 115.5, lat: 23.6, radius_deg: 0.6, value: 0.2),
+            // Hainan's Wuzhi Mountains.
+            (lon: 109.6, lat: 18.9, radius_deg: 0.5, value: 0.35),
+            // Lowlands: the Pearl River Delta, the Chaoshan plain and the
+            // Leizhou Peninsula.
+            (lon: 113.4, lat: 22.8, radius_deg: 0.6, value: -0.15),
+            (lon: 116.5, lat: 23.4, radius_deg: 0.4, value: -0.1),
+            (lon: 110.1, lat: 20.9, radius_deg: 0.5, value: -0.1),
+        ],
+    ),
+    // Sunshine as site quality without latitude (spec section 28.5). The
+    // base, 0.55, is the authoring scale for the Pearl River Delta (near the
+    // North American files' medians); Hong Kong's King's Park records 13.23
+    // MJ/m2 a day of global radiation (Hong Kong Observatory, "Climatological
+    // Normals 1991-2020", Table 6, hko.gov.hk/en/cis/normal/1991_2020).
+    // Guizhou: Guiyang records 10.3 MJ/m2 a day (UNESCO-IHP Catalogue of
+    // Rivers for Southeast Asia and the Pacific, vol. 4, "Hongshuihe", China-11,
+    // section 3.3, p. 18, 1982-1985), 0.78 of King's Park, so 0.55 x 0.78 =
+    // 0.43 at the centre. Hainan: 5,145 to 6,113 MJ/m2 a year, 14.1 to 16.7 a
+    // day (Journal of Hainan University, Natural Science, 2007(3), doi
+    // 10.15886/j.cnki.hdxbzkb.2007.03.014, Haikou and Sanya 1992-2003), a
+    // midpoint 1.17 of King's Park, so 0.64. No other site difference was
+    // sourced.
+    irradiance: (
+        base: 0.55,
+        blobs: [
+            (lon: 106.5, lat: 26.8, radius_deg: 1.6, value: -0.12),
+            (lon: 109.6, lat: 18.9, radius_deg: 1.0, value: 0.09),
+        ],
+    ),
+    // Water for thermal plants: the whole coast from the Beibu Gulf to
+    // Chaoshan, the Pearl River estuary and Daya Bay (the coastal nuclear
+    // sites), Hainan's shores, and the big rivers inland: the Xi, Bei and
+    // Yong, the Hongshui and the Wujiang. Blobs sit on the Natural Earth
+    // coastline and the named rivers (authoring judgment; no water-
+    // availability dataset was used).
+    cooling_water: (
+        base: 0.08,
+        blobs: [
+            // The Beibu Gulf and the Leizhou Peninsula.
+            (lon: 108.3, lat: 21.6, radius_deg: 0.4, value: 0.7),
+            (lon: 108.7, lat: 21.75, radius_deg: 0.4, value: 0.7),
+            (lon: 109.2, lat: 21.5, radius_deg: 0.4, value: 0.7),
+            (lon: 109.8, lat: 21.5, radius_deg: 0.4, value: 0.7),
+            (lon: 110.0, lat: 20.9, radius_deg: 0.4, value: 0.7),
+            (lon: 110.4, lat: 21.2, radius_deg: 0.4, value: 0.7),
+            (lon: 110.4, lat: 20.5, radius_deg: 0.4, value: 0.7),
+            // West Guangdong: Maoming, Yangjiang and Taishan.
+            (lon: 111.0, lat: 21.5, radius_deg: 0.4, value: 0.7),
+            (lon: 111.6, lat: 21.65, radius_deg: 0.4, value: 0.7),
+            (lon: 112.1, lat: 21.8, radius_deg: 0.4, value: 0.7),
+            (lon: 112.7, lat: 21.9, radius_deg: 0.4, value: 0.7),
+            // The Pearl River estuary, Shenzhen and Daya Bay.
+            (lon: 113.2, lat: 22.2, radius_deg: 0.4, value: 0.7),
+            (lon: 113.6, lat: 22.45, radius_deg: 0.4, value: 0.7),
+            (lon: 113.65, lat: 22.8, radius_deg: 0.4, value: 0.7),
+            (lon: 114.0, lat: 22.45, radius_deg: 0.4, value: 0.7),
+            (lon: 114.5, lat: 22.6, radius_deg: 0.4, value: 0.7),
+            // East Guangdong: Shanwei, Shantou and Chaozhou.
+            (lon: 115.1, lat: 22.8, radius_deg: 0.4, value: 0.7),
+            (lon: 115.7, lat: 22.85, radius_deg: 0.4, value: 0.7),
+            (lon: 116.3, lat: 23.0, radius_deg: 0.4, value: 0.7),
+            (lon: 116.7, lat: 23.35, radius_deg: 0.4, value: 0.7),
+            (lon: 117.1, lat: 23.65, radius_deg: 0.4, value: 0.7),
+            // Hainan's coast.
+            (lon: 110.35, lat: 20.0, radius_deg: 0.4, value: 0.7),
+            (lon: 110.9, lat: 19.6, radius_deg: 0.4, value: 0.7),
+            (lon: 110.4, lat: 18.7, radius_deg: 0.4, value: 0.7),
+            (lon: 109.5, lat: 18.3, radius_deg: 0.4, value: 0.7),
+            (lon: 108.7, lat: 18.8, radius_deg: 0.4, value: 0.7),
+            (lon: 109.2, lat: 19.8, radius_deg: 0.4, value: 0.7),
+            // The Xi (Xijiang) and Bei rivers, with the delta channels at
+            // Foshan (Hengyi's site).
+            (lon: 112.5, lat: 23.05, radius_deg: 0.35, value: 0.6),
+            (lon: 112.85, lat: 23.0, radius_deg: 0.25, value: 0.6),
+            (lon: 111.3, lat: 23.45, radius_deg: 0.35, value: 0.6),
+            (lon: 110.3, lat: 23.4, radius_deg: 0.35, value: 0.6),
+            (lon: 109.6, lat: 23.1, radius_deg: 0.35, value: 0.6),
+            (lon: 113.2, lat: 23.8, radius_deg: 0.35, value: 0.6),
+            // The Yong at Nanning, the Liu at Liuzhou and the Hongshui.
+            (lon: 108.4, lat: 22.8, radius_deg: 0.35, value: 0.6),
+            (lon: 109.4, lat: 24.3, radius_deg: 0.35, value: 0.6),
+            (lon: 107.6, lat: 24.4, radius_deg: 0.35, value: 0.6),
+            // The Wujiang across Guizhou.
+            (lon: 105.9, lat: 26.8, radius_deg: 0.35, value: 0.6),
+            (lon: 106.7, lat: 27.3, radius_deg: 0.35, value: 0.6),
+            (lon: 107.6, lat: 27.4, radius_deg: 0.35, value: 0.6),
+        ],
+    ),
+    // Hydro sites at real dams (English Wikipedia infobox coordinates unless
+    // noted): Longtan (Hongshui), Tianshengqiao-I (Nanpan), Guangzhao
+    // (Beipan), Hongjiadu (Liuchong), Dongfeng, Wujiangdu and Goupitan (Wu),
+    // Baise (You); Datengxia (Qian; Global Energy Monitor wiki, "Datengxia
+    // hydroelectric plant"), Changzhou (Xi; English Wikipedia "List of major
+    // power stations in Guangxi") and Feilaixia (Bei; Global Energy Monitor
+    // wiki, "Feilaixia hydroelectric plant"). Values rank them by size.
+    hydro_potential: (
+        base: 0.0,
+        blobs: [
+            (lon: 107.0475, lat: 25.0272, radius_deg: 0.35, value: 0.95),
+            (lon: 105.1069, lat: 24.9414, radius_deg: 0.35, value: 0.9),
+            (lon: 105.2508, lat: 25.9594, radius_deg: 0.3, value: 0.8),
+            (lon: 105.8589, lat: 26.8697, radius_deg: 0.3, value: 0.8),
+            (lon: 106.155, lat: 26.8553, radius_deg: 0.3, value: 0.7),
+            (lon: 106.7608, lat: 27.3194, radius_deg: 0.3, value: 0.8),
+            (lon: 107.6331, lat: 27.3753, radius_deg: 0.35, value: 0.9),
+            (lon: 106.4558, lat: 23.9261, radius_deg: 0.3, value: 0.6),
+            (lon: 110.0308, lat: 23.4579, radius_deg: 0.3, value: 0.7),
+            (lon: 111.204, lat: 23.42, radius_deg: 0.3, value: 0.6),
+            (lon: 113.2588, lat: 23.7994, radius_deg: 0.25, value: 0.5),
+        ],
+    ),
+    // Wind sites: the exposed coast is far windier than the shelter of the
+    // delta (Waglan Island 22.9 km/h against the Observatory's 9.9, Hong
+    // Kong Observatory 1991-2020 normals, Table 7). The two coastal blobs mark
+    // Guangdong's offshore wind development areas: Chaozhou-Shantou
+    // (Guangdong East Sites 6 and 7, Enerdata daily news, 2022-10-25) and
+    // Yangjiang (CnEVPost, 2021-10-25). Inland wind sites were not sourced.
+    wind_potential: (
+        base: 0.3,
+        blobs: [
+            (lon: 116.5, lat: 23.2, radius_deg: 0.8, value: 0.35),
+            (lon: 111.9, lat: 21.75, radius_deg: 0.6, value: 0.3),
+        ],
+    ),
+    // The northeast monsoon blows hardest from October to January, and
+    // August is the calmest month: each month's factor is Waglan Island's
+    // mean wind speed over its annual mean (Hong Kong Observatory 1991-2020
+    // normals, Table 7: 25.1, 24.2, 23.0, 20.5, 19.8, 21.6, 21.3, 18.8, 21.4,
+    // 26.3, 26.6 and 26.4 km/h; year 22.9) times the Eastern
+    // Interconnection's annual mean factor, 0.567 (authoring scale).
+    wind: (monthly: [0.62, 0.6, 0.57, 0.51, 0.49, 0.53, 0.53, 0.47, 0.53, 0.65, 0.66, 0.65], persistence: 0.995, innovation_sd: 0.015, initial_sd: 0.15, band: 0.25),
+    // Unit sizes and operating parameters follow the North American
+    // catalog (spec section 3.2), except coal: Guangdong builds 1,000 MW
+    // ultra-supercritical units [P7-SC-003]. Money and build months come from
+    // the Plan 7 research note by its pacing method (ratios from its pacing
+    // table, at full precision; game values rounded to 3 significant figures
+    // per kW, then multiplied by capacity). Build months: no Southern China
+    // row gives an observed construction duration (the note's Gaps), so
+    // every kind inherits the North American game months (ruling 1,
+    // authoring judgment: no sourced local duration). [P7-SC-004] is a
+    // planned approval-to-target window of 27 months, which would pace coal
+    // at 27 x 0.2222 = 6 months; it is recorded, not used.
+    // Fuel (ruling 19, authoring judgment: no sourced local fuel row): each
+    // marginal cost is the North American game marginal x the local game
+    // reference tariff over the NA one, 501.378 / 100 = 5.01378, a price-level
+    // proxy from [P7-SC-005].
+    // Start-ups follow ruling 2 (NA start-up x local marginal / NA marginal);
+    // fixed O&M follows ruling 4 (local capital x the NA fixed O&M /
+    // capital ratio), both authoring judgments derived from these rows.
+    catalog: [
+        // Wind [P7-SC-001] [P7-US-001]: 4,100 CNY/kW x (1,000 / 1,489 =
+        // 0.67159) = 2,753.5, so 2,750 CNY/kW x 300,000 kW = 825,000,000.
+        // Fixed O&M (ruling 4): 825,000,000 x (500,000 / 300,000,000) =
+        // 1,375,000, so 1,380,000. Build 3 months (ruling 1).
+        (kind: Wind, capacity_mw: 300.0, min_stable: 0.0, ramp_mw_per_min: 0.0, startup_hours: 0.0, startup_cost: 0, marginal_cost_per_mwh: 0.0, fixed_om_per_month: 1380000, capital_cost: 825000000, build_months: 3, capacity_credit: 0.2, book_life_months: 300, siting: Anywhere),
+        // Nuclear (Daya Bay, Ling Ao and Taishan are the coastal fleet).
+        // Capital (ruling 3, authoring judgment: derived from [P7-SC-003] by
+        // NA kind relativity): local game coal 1,109.88 CNY/kW x NA nuclear
+        // / coal (2,181.82 / 1,166.67 = 1.87013) = 2,075.6, so 2,080 CNY/kW
+        // x 1,100,000 kW = 2,288,000,000. Fixed O&M (ruling 4):
+        // 2,288,000,000 x (11,000,000 / 2,400,000,000) = 10,486,667, so
+        // 10,500,000. Marginal (ruling 19): 10 x 5.01378 = 50.1
+        // [P7-SC-005]. Start-up (ruling 2): 1,000,000 x 50.1 / 10 =
+        // 5,010,000. Build 18 months (ruling 1).
+        (
+            kind: Nuclear,
+            capacity_mw: 1100.0,
+            min_stable: 0.7,
+            ramp_mw_per_min: 5.0,
+            startup_hours: 48.0,
+            startup_cost: 5010000,
+            marginal_cost_per_mwh: 50.1,
+            fixed_om_per_month: 10500000,
+            capital_cost: 2288000000,
+            build_months: 18,
+            capacity_credit: 0.95,
+            book_life_months: 480,
+            siting: CoolingWater(0.5),
+        ),
+        // Coal [P7-SC-003] [P7-US-007]: 7.80656e9 CNY / 2,000,000 kW =
+        // 3,903.28 CNY/kW x (1,166.67 / 4,103 = 0.28434) = 1,109.88, so
+        // 1,110 CNY/kW x 1,000,000 kW = 1,110,000,000. Fixed O&M (ruling 4):
+        // 1,110,000,000 x (2,000,000 / 700,000,000) = 3,171,429, so
+        // 3,170,000. Marginal (ruling 19): 30 x 5.01378 = 150.4, so 150
+        // [P7-SC-005]. Start-up (ruling 2, per MW because the unit is 1,000 MW rather
+        // than 600): 150,000 / 600 MW x 1,000 MW x 150 / 30 = 1,250,000.
+        // Build 8 months (ruling 1).
+        (
+            kind: Coal,
+            capacity_mw: 1000.0,
+            min_stable: 0.4,
+            ramp_mw_per_min: 10.0,
+            startup_hours: 8.0,
+            startup_cost: 1250000,
+            marginal_cost_per_mwh: 150.0,
+            fixed_om_per_month: 3170000,
+            capital_cost: 1110000000,
+            build_months: 8,
+            capacity_credit: 0.95,
+            book_life_months: 480,
+            siting: CoolingWater(0.5),
+        ),
+        // Combined cycle. Capital (ruling 3, authoring judgment: derived from
+        // [P7-SC-003] by NA kind relativity): 1,109.88 x NA CCGT / coal
+        // (600 / 1,166.67 = 0.51429) = 570.8, so 571 CNY/kW x 500,000 kW =
+        // 285,500,000. Fixed O&M (ruling 4): 285,500,000 x (600,000 /
+        // 300,000,000) = 571,000. Marginal (ruling 19): 45 x 5.01378 =
+        // 225.6, so 226 [P7-SC-005]. Start-up (ruling 2): 40,000 x 226 / 45 =
+        // 200,889, so 201,000. Build 4 months (ruling 1).
+        (
+            kind: Ccgt,
+            capacity_mw: 500.0,
+            min_stable: 0.3,
+            ramp_mw_per_min: 25.0,
+            startup_hours: 2.0,
+            startup_cost: 201000,
+            marginal_cost_per_mwh: 226.0,
+            fixed_om_per_month: 571000,
+            capital_cost: 285500000,
+            build_months: 4,
+            capacity_credit: 0.95,
+            book_life_months: 360,
+            siting: Anywhere,
+        ),
+        // Peaker. Capital (ruling 3, authoring judgment: derived from
+        // [P7-SC-003] by NA kind relativity, through the CCGT): 570.79 x NA
+        // peaker / CCGT (500 / 600 = 0.83333) = 475.7, so 476 CNY/kW x
+        // 200,000 kW = 95,200,000. Fixed O&M (ruling 4): 95,200,000 x
+        // (170,000 / 100,000,000) = 161,840, so 162,000. Marginal (ruling
+        // 19): 150 x 5.01378 = 752.1, so 752 [P7-SC-005]. Start-up (ruling 2):
+        // 5,000 x 752 / 150 = 25,067, so 25,100. Build 2 months (ruling 1).
+        (
+            kind: Peaker,
+            capacity_mw: 200.0,
+            min_stable: 0.2,
+            ramp_mw_per_min: 40.0,
+            startup_hours: 0.16666666666666666,
+            startup_cost: 25100,
+            marginal_cost_per_mwh: 752.0,
+            fixed_om_per_month: 162000,
+            capital_cost: 95200000,
+            build_months: 2,
+            capacity_credit: 0.95,
+            book_life_months: 360,
+            siting: Anywhere,
+        ),
+        // Solar [P7-SC-002] [P7-US-016]: 3,200 CNY/kW x (500 / 1,502 =
+        // 0.33289) = 1,065.2, so 1,070 CNY/kW x 300,000 kW = 321,000,000.
+        // Fixed O&M (ruling 4): 321,000,000 x (500,000 / 150,000,000) =
+        // 1,070,000. Build 2 months (ruling 1).
+        (
+            kind: Solar,
+            capacity_mw: 300.0,
+            min_stable: 0.0,
+            ramp_mw_per_min: 300.0,
+            startup_hours: 0.0,
+            startup_cost: 0,
+            marginal_cost_per_mwh: 0.0,
+            fixed_om_per_month: 1070000,
+            capital_cost: 321000000,
+            build_months: 2,
+            capacity_credit: 0.3,
+            book_life_months: 300,
+            siting: Anywhere,
+        ),
+        // Hydro [P7-SC-006] [P7-US-019] [P7-FX-020]: 2,302 USD/kW x 7.189847
+        // = 16,551 CNY/kW x (1,500 / 7,073 = 0.21207) = 3,510.0, so 3,510
+        // CNY/kW x 800,000 kW = 2,808,000,000. Fixed O&M (ruling 4):
+        // 2,808,000,000 x (2,700,000 / 1,200,000,000) = 6,318,000, so
+        // 6,320,000. Start-up (ruling 2 with the hydro judgment: the CCGT
+        // marginal ratio): 1,000 x 226 / 45 = 5,022, so 5,020. Build 12
+        // months (ruling 1).
+        (
+            kind: Hydro,
+            capacity_mw: 800.0,
+            min_stable: 0.0,
+            ramp_mw_per_min: 100.0,
+            startup_hours: 0.08333333333333333,
+            startup_cost: 5020,
+            marginal_cost_per_mwh: 0.0,
+            fixed_om_per_month: 6320000,
+            capital_cost: 2808000000,
+            build_months: 12,
+            capacity_credit: 0.8,
+            book_life_months: 600,
+            siting: HydroSite(0.5),
+        ),
+        // Storage, standing in for pumped hydro such as the Guangzhou and
+        // Huizhou pumped-storage stations. Capital (ruling 3, authoring
+        // judgment: derived from [P7-SC-002] by NA kind relativity): local
+        // game solar 1,065.25 CNY/kW x NA battery / solar (500 / 500 = 1) =
+        // 1,065.2, so 1,070 CNY/kW x 200,000 kW = 214,000,000. Fixed O&M
+        // (ruling 4): 214,000,000 x (100,000 / 100,000,000) = 214,000. Build 2
+        // months (ruling 1). Windows on the CST system clock (spec section
+        // 28.4): the starter territory's net load (it has no solar) is
+        // highest from the summer afternoon plateau, 14:00 to 17:00, through
+        // the winter evening peak at 19:00 to 20:00, so discharge may start at
+        // 14:00; charging fills the night and morning valley before then.
+        (kind: Battery, capacity_mw: 200.0, min_stable: 0.0, ramp_mw_per_min: 0.0,
+         startup_hours: 0.0, startup_cost: 0, marginal_cost_per_mwh: 0.0,
+         fixed_om_per_month: 214000, capital_cost: 214000000, build_months: 2,
+         capacity_credit: 0.0, book_life_months: 180, siting: Anywhere,
+         battery: Some((charge_mw: 200.0, energy_mwh: 800.0, charge_efficiency: 0.9,
+                        discharge_efficiency: 1.0, discharge_start_hour: 14, charge_end_hour: 14))),
+    ],
+    // Each city is a prefecture-level city (or Hong Kong and Macau) and the
+    // hinterland it anchors. Base loads are 100 MW per million residents,
+    // rounded to 10 MW; the comment after each city gives its residents.
+    // - Mainland residents: China's Seventh National Population Census,
+    //   2020-11-01, prefecture-level resident population, as tabulated by
+    //   City Population (citypopulation.de, "China: Guangdong", "Guangxi",
+    //   "Guizhou" and "Hainan", Administrative Division pages, column
+    //   "Population Census 2020-11-01").
+    // - Hong Kong: 7,413,070 residents at end-June 2021 (Census and
+    //   Statistics Department, 2021 Population Census summary results, Table
+    //   1, press release of 2022-02-28, info.gov.hk P2022022800462).
+    // - Macau: 682,100 in August 2021 (DSEC, "Preliminary results of 2021
+    //   Population Census", Government Information Bureau release of
+    //   2021-12-30, gcs.gov.mo).
+    // Coordinates are each city's English Wikipedia infobox (Kowloon for Hong
+    // Kong and the Macau Peninsula for Macau), read 2026-10-25.
+    // The total, 19,470 MW, is 0.93 of the Eastern
+    // Interconnection's load per GW of capacity (spec section 28.3).
+    cities: [
+        (id: 1, name_key: "city-guangzhou", lon: 113.26, lat: 23.13, base_load_mw: 1870.0, zone: 1, climate: 1), // 18,676,605
+        (id: 2, name_key: "city-foshan", lon: 113.1216, lat: 23.0214, base_load_mw: 950.0, zone: 1, climate: 1), // 9,498,863
+        (id: 3, name_key: "city-dongguan", lon: 113.752, lat: 23.021, base_load_mw: 1050.0, zone: 1, climate: 1), // 10,466,625
+        (id: 4, name_key: "city-shenzhen", lon: 114.0544, lat: 22.5467, base_load_mw: 1750.0, zone: 1, climate: 1), // 17,494,398
+        (id: 5, name_key: "city-hong-kong", lon: 114.183, lat: 22.317, base_load_mw: 740.0, zone: 1, climate: 1), // 7,413,070
+        (id: 6, name_key: "city-macau", lon: 113.5473, lat: 22.198, base_load_mw: 70.0, zone: 1, climate: 1), // 682,100
+        (id: 7, name_key: "city-huizhou", lon: 114.416, lat: 23.112, base_load_mw: 600.0, zone: 1, climate: 1), // 6,042,852
+        (id: 8, name_key: "city-zhongshan", lon: 113.3925, lat: 22.517, base_load_mw: 440.0, zone: 1, climate: 1), // 4,418,060
+        (id: 9, name_key: "city-jiangmen", lon: 113.0815, lat: 22.5789, base_load_mw: 480.0, zone: 1, climate: 1), // 4,798,090
+        (id: 10, name_key: "city-zhuhai", lon: 113.5719, lat: 22.2742, base_load_mw: 240.0, zone: 1, climate: 1), // 2,439,585
+        (id: 11, name_key: "city-zhaoqing", lon: 112.47, lat: 23.05, base_load_mw: 410.0, zone: 1, climate: 1), // 4,113,594
+        (id: 12, name_key: "city-qingyuan", lon: 113.056, lat: 23.682, base_load_mw: 400.0, zone: 1, climate: 1), // 3,969,473
+        (id: 13, name_key: "city-shaoguan", lon: 113.597, lat: 24.811, base_load_mw: 290.0, zone: 1, climate: 1), // 2,855,131
+        (id: 14, name_key: "city-shantou", lon: 116.682, lat: 23.354, base_load_mw: 550.0, zone: 1, climate: 1), // 5,502,031
+        (id: 15, name_key: "city-jieyang", lon: 116.3727, lat: 23.551, base_load_mw: 560.0, zone: 1, climate: 1), // 5,577,814
+        (id: 16, name_key: "city-chaozhou", lon: 116.622, lat: 23.658, base_load_mw: 260.0, zone: 1, climate: 1), // 2,568,387
+        (id: 17, name_key: "city-meizhou", lon: 116.122, lat: 24.289, base_load_mw: 390.0, zone: 1, climate: 1), // 3,873,239
+        (id: 18, name_key: "city-zhanjiang", lon: 110.3575, lat: 21.2701, base_load_mw: 700.0, zone: 1, climate: 1), // 6,981,236
+        (id: 19, name_key: "city-maoming", lon: 110.9255, lat: 21.6627, base_load_mw: 620.0, zone: 1, climate: 1), // 6,174,050
+        (id: 20, name_key: "city-yangjiang", lon: 111.983, lat: 21.857, base_load_mw: 260.0, zone: 1, climate: 1), // 2,602,959
+        (id: 21, name_key: "city-nanning", lon: 108.3275, lat: 22.8167, base_load_mw: 870.0, zone: 1, climate: 1), // 8,741,584
+        (id: 22, name_key: "city-liuzhou", lon: 109.4278, lat: 24.3278, base_load_mw: 420.0, zone: 1, climate: 1), // 4,157,934
+        (id: 23, name_key: "city-guilin", lon: 110.296, lat: 25.275, base_load_mw: 490.0, zone: 1, climate: 1), // 4,931,137
+        (id: 24, name_key: "city-yulin-guangxi", lon: 110.181, lat: 22.654, base_load_mw: 580.0, zone: 1, climate: 1), // 5,796,766
+        (id: 25, name_key: "city-wuzhou", lon: 111.279, lat: 23.4767, base_load_mw: 280.0, zone: 1, climate: 1), // 2,820,977
+        (id: 26, name_key: "city-guigang", lon: 109.599, lat: 23.112, base_load_mw: 430.0, zone: 1, climate: 1), // 4,316,262
+        (id: 27, name_key: "city-beihai", lon: 109.12, lat: 21.481, base_load_mw: 190.0, zone: 1, climate: 1), // 1,853,227
+        (id: 28, name_key: "city-qinzhou", lon: 108.654, lat: 21.981, base_load_mw: 330.0, zone: 1, climate: 1), // 3,302,238
+        (id: 29, name_key: "city-baise", lon: 106.619, lat: 23.903, base_load_mw: 360.0, zone: 1, climate: 1), // 3,571,505
+        (id: 30, name_key: "city-guiyang", lon: 106.63, lat: 26.647, base_load_mw: 600.0, zone: 1, climate: 2), // 5,987,018
+        (id: 31, name_key: "city-zunyi", lon: 107.031, lat: 27.722, base_load_mw: 660.0, zone: 1, climate: 2), // 6,606,675
+        (id: 32, name_key: "city-liupanshui", lon: 104.8304, lat: 26.5925, base_load_mw: 300.0, zone: 1, climate: 2), // 3,031,602
+        (id: 33, name_key: "city-bijie", lon: 105.292, lat: 27.284, base_load_mw: 690.0, zone: 1, climate: 2), // 6,899,636
+        (id: 34, name_key: "city-anshun", lon: 105.9476, lat: 26.2531, base_load_mw: 250.0, zone: 1, climate: 2), // 2,470,630
+        (id: 35, name_key: "city-haikou", lon: 110.3488, lat: 20.0186, base_load_mw: 290.0, zone: 1, climate: 1), // 2,873,358
+        (id: 36, name_key: "city-sanya", lon: 109.5036, lat: 18.2533, base_load_mw: 100.0, zone: 1, climate: 1), // 1,031,396
+    ],
+    // Climate 1, the subtropical south (Guangdong, Guangxi, Hainan, Hong Kong
+    // and Macau): an industrial load with a morning plateau, a lunchtime dip,
+    // an air-conditioning afternoon that peaks from 14:00 to 17:00 in summer
+    // and an evening peak at 19:00 to 20:00 in winter. The months run from
+    // the Spring Festival trough in February to the July and August peak.
+    // Climate 2, the Guizhou plateau: milder summers and a winter heating
+    // evening peak. The hourly shapes and the February trough are authoring
+    // judgments on the system clock (all cities keep CST): no sourced hourly
+    // load profile was found. The July and August monthly peak follows
+    // Guangdong's record peaks of 148 and 149 GW on 9 and 10 July 2024 (S&P
+    // Global Commodity Insights, 2024-07-12, "Heatwave, economic growth drive
+    // southern China's peak power load to record high").
+    climates: [
+        (id: 1,
+            shapes: [
+                ("winter", [
+                0.80, 0.76, 0.74, 0.73, 0.73, 0.75, 0.82, 0.92, 1.02, 1.08, 1.11, 1.08,
+                1.00, 1.05, 1.07, 1.07, 1.05, 1.04, 1.10, 1.13, 1.10, 1.02, 0.93, 0.85,
+            ]),
+                ("summer", [
+                0.80, 0.76, 0.73, 0.71, 0.70, 0.71, 0.76, 0.85, 0.97, 1.07, 1.13, 1.12,
+                1.06, 1.12, 1.16, 1.17, 1.15, 1.10, 1.08, 1.11, 1.10, 1.03, 0.94, 0.86,
+            ]),
+                ("shoulder", [
+                0.78, 0.74, 0.72, 0.70, 0.70, 0.72, 0.79, 0.90, 1.01, 1.08, 1.11, 1.09,
+                1.02, 1.08, 1.11, 1.11, 1.09, 1.05, 1.07, 1.10, 1.07, 1.00, 0.91, 0.84,
+            ]),
+            ],
+            month_shapes: ["winter", "winter", "shoulder", "shoulder", "summer", "summer", "summer", "summer", "summer", "shoulder", "shoulder", "winter"],
+            monthly: [0.88, 0.84, 0.92, 0.96, 1.03, 1.10, 1.15, 1.15, 1.10, 1.02, 0.96, 0.93],
+        ),
+        (id: 2,
+            shapes: [
+                ("winter", [
+                0.78, 0.74, 0.72, 0.71, 0.72, 0.76, 0.86, 0.96, 1.03, 1.05, 1.05, 1.03,
+                1.00, 0.99, 0.98, 0.99, 1.03, 1.12, 1.20, 1.20, 1.14, 1.05, 0.94, 0.85,
+            ]),
+                ("summer", [
+                0.80, 0.76, 0.73, 0.71, 0.71, 0.73, 0.80, 0.90, 0.99, 1.05, 1.08, 1.08,
+                1.04, 1.06, 1.08, 1.08, 1.07, 1.06, 1.08, 1.12, 1.10, 1.03, 0.94, 0.86,
+            ]),
+                ("shoulder", [
+                0.78, 0.74, 0.72, 0.70, 0.71, 0.74, 0.83, 0.94, 1.02, 1.06, 1.07, 1.05,
+                1.01, 1.02, 1.03, 1.03, 1.04, 1.07, 1.13, 1.15, 1.10, 1.01, 0.91, 0.83,
+            ]),
+            ],
+            month_shapes: ["winter", "winter", "shoulder", "shoulder", "shoulder", "summer", "summer", "summer", "shoulder", "shoulder", "shoulder", "winter"],
+            monthly: [1.06, 0.96, 0.98, 0.95, 0.96, 0.99, 1.04, 1.04, 0.98, 0.96, 1.00, 1.06],
+        ),
+    ],
+    demand_noise: (forecast_error: 0.03, error_persistence: 0.995),
+    // Regional cloud from the Hong Kong Observatory's 1991-2020 normals
+    // (Table 6, percentage of possible sunshine at King's Park: 43, 32, 27,
+    // 30, 34, 36, 48, 46, 47, 55, 52 and 48), through the Angstrom-Prescott
+    // relation with the FAO-56 defaults (Allen et al., FAO Irrigation and
+    // Drainage Paper 56, 1998, equation 35: a = 0.25, b = 0.50), normalised to
+    // clear sky (0.75): (0.25 + 0.5 x share) / 0.75. The drizzly spring is the
+    // cloudiest, October the clearest.
+    solar: (
+        clearness_mean: [0.62, 0.55, 0.51, 0.53, 0.56, 0.57, 0.65, 0.64, 0.65, 0.70, 0.68, 0.65],
+        clearness_sd: 0.13,
+    ),
+    // Usable river flow on the Hongshui, the Xi's upper stem (UNESCO-IHP
+    // Catalogue of Rivers, vol. 4, "Hongshuihe", China-11): 80% of the basin's
+    // rain falls from May to October (sections 1 and 5.1, pp. 15 and 23);
+    // Qianjiang's annual maximum falls in June to September and its minimum
+    // in February to May in every year of 1952-1984, mostly March or April
+    // (section 4.6, p. 22). The monthly factors are an authoring judgment on
+    // that shape (no monthly discharge table was found), damped because the
+    // cascade's regulating reservoirs (Tianshengqiao, Longtan) carry flood
+    // water into the dry season (section 5.1).
+    hydro: (monthly_flow: [0.6, 0.55, 0.52, 0.62, 0.95, 1.55, 1.7, 1.6, 1.25, 0.95, 0.78, 0.65]),
+    // North American protection and performance values at 50 Hz (Global
+    // Constraints).
+    frequency: (
+        nominal_hz: 50.0,
+        k_inertia: 5.0,
+        k_damping: 0.2,
+        normal_band_hz: 0.05,
+        shed_below_hz: -0.5,
+        blackout_below_hz: -1.5,
+        blackout_after_shed_ticks: 30,
+        curtail_above_hz: 0.5,
+        trip_above_hz: 1.5,
+        trip_after_ticks: 5,
+        shed_stage_spacing_hz: 0.2,
+        shed_step: 0.05,
+    ),
+    // Currency-neutral ratios as in North America; only the two tariffs are
+    // local.
+    regulator: (
+        storage_accreditation: [(2.0, 0.65), (4.0, 0.85), (6.0, 0.93), (8.0, 0.96)],
+        satisfaction_target: 90.0,
+        return_per_satisfaction_point: 0.0005,
+        // Tariffs [P7-SC-005] [P7-US-034]: 679.869 CNY/MWh x (95 / 135.6 =
+        // 0.70059) = 476.3, so 476 to start, and x (100 / 135.6 = 0.73746) =
+        // 501.4, so a reference of 501 (the same 0.95 relation as shipped).
+        // Basis: P7-SC-005 is the commercial and industrial single-part
+        // 1-10 kV energy price, tax included, while P7-US-034 is an
+        // all-sector average (authoring judgment: basis differs from the US
+        // all-sector reference; not re-based). The fuel proxy (ruling 19)
+        // scales by this same 501.378 reference, so it inherits that basis.
+        starting_tariff_per_mwh: 476.0,
+        reference_tariff_per_mwh: 501.0,
+        base_return: 0.09,
+        min_return: 0.07,
+        max_return: 0.11,
+        reliability_target: 0.999,
+        return_per_reliability: 2.0,
+        return_per_cost_improvement: 0.05,
+        reserve_margin: 0.2,
+        strike_threshold: 0.005,
+        strikes_to_revoke: 3,
+        clean_months_to_expire: 3,
+        frequency_band_hz: 0.2,
+        frequency_violation_share: 0.05,
+    ),
+    satisfaction: (
+        starting: 70.0,
+        reliability_floor: 0.95,
+        price_sensitivity: 2.0,
+        smoothing: 0.2,
+    ),
+    // Lines. Cost (ruling 20, authoring judgment: derived from [P7-SC-003]
+    // by NA kind relativity): local game coal 1,109.88 CNY/kW x the NA line
+    // cost per km over NA coal per kW (466,832 / 1,166.67 = 400.14, the NA
+    // line figure from the [P7-US-033] pacing table) = 444,108, so 444,000
+    // CNY/km x cell_km 11.100 = 4,928,432 CNY per cell. Build speed (rulings
+    // 5 and 21, authoring judgment: cell width is the note's cell_km): 201.07
+    // km per month / 11.100 km = 18.1, so 18 cells per month.
+    lines: (cost_per_cell: 4928432, cells_per_month: 18, book_life_months: 600),
+    // The Pearl River Delta core: Guangzhou, Foshan and Dongguan.
+    start: (
+        year: 2027,
+        month: 1,
+        // Cash (tuned freely; scale from [P7-SC-003]): the Eastern
+        // Interconnection's 5,000,000,000 x the local coal capital
+        // relativity (1,109.88 / 1,166.67 = 0.95132) = 4,756,617,109, so
+        // 4,760,000,000 CNY.
+        cash: 4760000000,
+        // Guangzhou anchors the starting service territory.
+        home_city: 1,
+        connected_cities: [1, 2, 3],
+        // Real plants at their published coordinates. Thermal sites: English
+        // Wikipedia, "List of major power stations in Guangdong" (coal, gas,
+        // nuclear and pumped-storage tables, read 2026-10-25). Dams: each
+        // dam's English Wikipedia infobox. Each plant's cell is land.
+        fleet: [
+            // Coastal nuclear: Daya Bay, Shenzhen (2 x 944 MW).
+            (Nuclear, 114.5444, 22.5972),
+            // Coal: Hengyi, Foshan (2 x 600 MW). Shajiao (Humen, 22.7472 N,
+            // 113.6775 E) falls in a Pearl River water cell at this grid.
+            (Coal, 112.8406, 23.0164),
+            // Combined cycle: Zengcheng (Guangzhou, 2 x 650 MW), Datang
+            // Foshan (2 x 400 MW), Gaobu (Dongguan, 2 x 470 MW) and Huizhou
+            // LNG (3 x 390 and 3 x 460 MW). Yuhua Huangpu (23.0789 N,
+            // 113.5006 E) falls in a river water cell.
+            (Ccgt, 113.6769, 23.1714),
+            (Ccgt, 112.8136, 22.9075),
+            (Ccgt, 113.7544, 23.1269),
+            (Ccgt, 114.6147, 22.7594),
+            // West-to-East power: hydro at Longtan (Hongshui, 6,426 MW),
+            // Tianshengqiao-I (Nanpan, 1,200 MW), Hongjiadu (Liuchong, 600 MW)
+            // and Goupitan (Wu, 3,000 MW), carried east to the delta.
+            (Hydro, 107.0475, 25.0272),
+            (Hydro, 105.1069, 24.9414),
+            (Hydro, 105.8589, 26.8697),
+            (Hydro, 107.6331, 27.3753),
+            // Peaking gas: each 200 MW peaker stands for a station's small
+            // 180-183 MW gas units: Dongguan Zhongdian, Datang Baocang
+            // (Shenzhen), Dongguan Zhangyang and Nanshan (Shenzhen).
+            (Peaker, 113.8289, 22.9764),
+            (Peaker, 114.0269, 22.7075),
+            (Peaker, 114.0942, 22.8875),
+            (Peaker, 113.8925, 22.5125),
+            // Pumped storage: the Guangdong (Guangzhou) Pumped Storage Power
+            // Station at Conghua (8 x 300 MW).
+            (Battery, 113.9542, 23.7653),
+        ],
+    ),
+)

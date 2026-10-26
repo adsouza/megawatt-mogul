@@ -1,0 +1,15 @@
+--admin0
+target/natural-earth/ne_50m_admin_0_countries.geojson
+--admin1
+target/natural-earth/ne_10m_admin_1_states_provinces.geojson
+--exclude-admin1
+DZA:Adrar,DZA:Tamanghasset,DZA:Tindouf,DZA:Béchar,DZA:Ouargla,DZA:Illizi,DZA:Ghardaïa
+--bounds=-9.0,12.0,22.87,30.0
+--grid
+52,23
+--tolerance-deg
+0.02
+--dissolve
+--extent
+--out
+assets/regions/continental_europe_maghreb/algeria_south.ron

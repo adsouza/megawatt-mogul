@@ -2,6 +2,20 @@
 //! parameters and the starting scenario. Constructing one validates it, so the
 //! rest of the domain can rely on its invariants.
 
+mod economics;
+#[cfg(test)]
+mod economics_tests;
+#[cfg(test)]
+pub(crate) use economics::whole_cells;
+pub use economics::{
+    EconomicZone, EconomicZoneId, EconomicZones, LineConstructionOverride, LineConstructionTerms,
+    PlantConstructionOverride, ZoneRouteWork,
+};
+mod climate;
+mod clock;
+pub use climate::{Calendar, Climate, DemandNoiseParams};
+#[cfg(test)]
+mod climate_tests;
 mod params;
 mod plant_spec;
 mod terrain;
@@ -9,20 +23,22 @@ mod terrain;
 #[cfg(any(test, feature = "test-fixtures"))]
 pub mod fixtures;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use thiserror::Error;
 
 use crate::ids::{CellCoord, CityId, RegionId};
 
+pub use clock::{CityLocale, ClimateId, GeoBounds, RegionClock, TimeZone, ZoneId};
+
 pub use params::{
-    CityDef, DemandShape, FrequencyParams, HydroParams, LineParams, RegulatorParams,
-    SatisfactionParams, SolarParams, StartDef, StartPlantDef, StorageAccreditation, WindParams,
+    CityDef, FrequencyParams, HydroParams, LineParams, RegulatorParams, SatisfactionParams,
+    SolarModel, SolarParams, StartDef, StartPlantDef, StorageAccreditation, WindParams,
 };
 pub use plant_spec::{BatterySpec, PlantKind, PlantSpec, SitingRule};
 pub use terrain::{Cell, TerrainGrid};
 
-use crate::units::Ratio;
+use crate::units::{Currency, Ratio};
 
 /// Why a cell cannot host a plant.
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
@@ -42,6 +58,11 @@ pub enum SiteError {
 /// Why a region definition was rejected.
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum RegionError {
+    #[error("invalid economic zone {zone:?} field {field}")]
+    InvalidEconomicZone {
+        zone: Option<EconomicZoneId>,
+        field: &'static str,
+    },
     #[error("missing region field {field}")]
     MissingField { field: &'static str },
     #[error("unsupported region schema {0}")]
@@ -81,10 +102,16 @@ pub enum RegionError {
 pub struct RegionDefinitionParts {
     pub id: RegionId,
     pub name_key: String,
+    pub currency: Currency,
+    pub geo: GeoBounds,
+    pub clock: RegionClock,
+    pub city_locales: BTreeMap<CityId, CityLocale>,
     pub terrain: TerrainGrid,
     pub catalog: Vec<PlantSpec>,
     pub cities: Vec<CityDef>,
-    pub demand: DemandShape,
+    pub climates: Vec<Climate>,
+    pub demand_noise: DemandNoiseParams,
+    pub calendar: Calendar,
     pub solar: SolarParams,
     pub wind: WindParams,
     pub hydro: HydroParams,
@@ -93,6 +120,8 @@ pub struct RegionDefinitionParts {
     pub satisfaction: SatisfactionParams,
     pub lines: LineParams,
     pub start: StartDef,
+    pub start_line_names: BTreeMap<CityId, String>,
+    pub economic_zones: Option<EconomicZones>,
 }
 
 /// A validated region. Only constructible through `TryFrom<RegionDefinitionParts>`.
@@ -100,12 +129,20 @@ pub struct RegionDefinitionParts {
 pub struct RegionDefinition {
     id: RegionId,
     name_key: String,
+    currency: Currency,
+    geo: GeoBounds,
+    clock: RegionClock,
+    city_locales: BTreeMap<CityId, CityLocale>,
     terrain: TerrainGrid,
     /// One spec per kind, in `PlantKind::ALL` order.
     catalog: Vec<PlantSpec>,
     cities: Vec<CityDef>,
-    demand: DemandShape,
+    climates: Vec<Climate>,
+    demand_noise: DemandNoiseParams,
+    calendar: Calendar,
     solar: SolarParams,
+    /// Annual latitude factors only: one value per grid row for computed sun.
+    solar_rows: Vec<f64>,
     wind: WindParams,
     hydro: HydroParams,
     frequency: FrequencyParams,
@@ -113,9 +150,16 @@ pub struct RegionDefinition {
     satisfaction: SatisfactionParams,
     lines: LineParams,
     start: StartDef,
+    start_line_names: BTreeMap<CityId, String>,
+    economic_zones: Option<EconomicZones>,
+    ac_work_denominator: u64,
 }
 
 impl RegionDefinition {
+    pub fn currency(&self) -> Currency {
+        self.currency
+    }
+
     pub fn id(&self) -> &RegionId {
         &self.id
     }
@@ -137,12 +181,55 @@ impl RegionDefinition {
         &self.cities
     }
 
-    pub fn demand(&self) -> &DemandShape {
-        &self.demand
-    }
-
     pub fn solar(&self) -> &SolarParams {
         &self.solar
+    }
+
+    /// Sun height at this cell and system-clock minute.
+    pub fn sun(&self, cell: CellCoord, month: crate::time::SimMonth, tick: u32) -> f64 {
+        match &self.solar.model {
+            SolarModel::DaylightTable(daylight) => {
+                crate::generation::sun_factor(daylight, month, tick)
+            }
+            SolarModel::Astronomical => {
+                let (lat, lon) = self.cell_lat_lon(cell);
+                let utc = f64::from(tick) - f64::from(self.system_zone().offset_minutes(month));
+                crate::generation::astronomical_sun(lat, lon, utc, month)
+            }
+        }
+    }
+
+    /// The computed home-city sun; legacy regions retain their illustrative arc.
+    pub fn sun_at_home(
+        &self,
+        month: crate::time::SimMonth,
+        tick: u32,
+    ) -> Option<crate::generation::SunAngles> {
+        if matches!(self.solar.model, SolarModel::DaylightTable(_)) {
+            return None;
+        }
+        let home = self
+            .city(self.start.home_city)
+            .expect("validated home city");
+        let (lat, lon) = self.cell_lat_lon(home.cell);
+        let utc = f64::from(tick) - f64::from(self.system_zone().offset_minutes(month));
+        Some(crate::generation::sun_angles(lat, lon, utc, month))
+    }
+
+    /// Site irradiance scaled by annual latitude potential for computed regions.
+    pub fn solar_potential(&self, cell: CellCoord) -> Ratio {
+        let irradiance = self
+            .terrain
+            .get(cell)
+            .expect("cell belongs to region")
+            .irradiance;
+        match self.solar.model {
+            SolarModel::DaylightTable(_) => irradiance,
+            SolarModel::Astronomical => Ratio::new(
+                (irradiance.value() * self.solar_rows[usize::from(cell.y)]).clamp(0.0, 1.0),
+            )
+            .expect("finite annual solar potential"),
+        }
     }
 
     pub fn wind(&self) -> &WindParams {
@@ -167,6 +254,11 @@ impl RegionDefinition {
 
     pub fn lines(&self) -> &LineParams {
         &self.lines
+    }
+
+    /// Optional authored name key for a starter city's line.
+    pub fn start_line_name(&self, city: CityId) -> Option<&str> {
+        self.start_line_names.get(&city).map(String::as_str)
     }
 
     pub fn start(&self) -> &StartDef {
@@ -305,11 +397,7 @@ fn check_shape(ok: bool, field: &'static str) -> Result<(), RegionError> {
 }
 
 fn validate_shapes(parts: &RegionDefinitionParts) -> Result<(), RegionError> {
-    let d = &parts.demand;
-    check_shape(all_positive(&d.winter), "demand.winter")?;
-    check_shape(all_positive(&d.summer), "demand.summer")?;
-    check_shape(all_positive(&d.shoulder), "demand.shoulder")?;
-    check_shape(all_positive(&d.monthly), "demand.monthly")?;
+    climate::validate(parts)?;
     let w = &parts.wind;
     check_shape(
         w.monthly
@@ -324,10 +412,12 @@ fn validate_shapes(parts: &RegionDefinitionParts) -> Result<(), RegionError> {
     )?;
     let s = &parts.solar;
     // NaN and infinities fail these comparisons, so no separate finiteness check is needed.
-    let daylight_ok = s
-        .daylight
-        .iter()
-        .all(|&(rise, set)| 0.0 <= rise && rise < set && set <= 24.0);
+    let daylight_ok = match &s.model {
+        SolarModel::DaylightTable(daylight) => daylight
+            .iter()
+            .all(|&(rise, set)| 0.0 <= rise && rise < set && set <= 24.0),
+        SolarModel::Astronomical => true,
+    };
     check_shape(daylight_ok, "solar.daylight")?;
     check_shape(all_positive(&s.clearness_mean), "solar.clearness_mean")?;
     check_shape(
@@ -338,11 +428,7 @@ fn validate_shapes(parts: &RegionDefinitionParts) -> Result<(), RegionError> {
         all_positive(&parts.hydro.monthly_flow),
         "hydro.monthly_flow",
     )?;
-    // |phi| >= 1 would make the AR(1) innovation scale sqrt(1 - phi^2) NaN or zero.
-    check_shape(
-        (0.0..1.0).contains(&d.error_persistence),
-        "demand.error_persistence",
-    )
+    Ok(())
 }
 
 fn check_band(ok: bool, field: &'static str) -> Result<(), RegionError> {
@@ -485,26 +571,59 @@ fn validate_lines(lines: &LineParams) -> Result<(), RegionError> {
 impl TryFrom<RegionDefinitionParts> for RegionDefinition {
     type Error = RegionError;
 
-    /// Validates in order: grid (checked when the terrain was built), catalog,
-    /// cities, start, shapes, regulator bands, catalog values, frequency,
-    /// lines. Reports the first error found.
+    /// Validates in order: catalog, geography and clocks, cities, start,
+    /// shapes, regulator bands, catalog values, frequency, lines. Grid length
+    /// was checked when the terrain was built. Reports the first error found.
     fn try_from(mut parts: RegionDefinitionParts) -> Result<Self, RegionError> {
         let catalog = order_catalog(std::mem::take(&mut parts.catalog))?;
+        clock::validate(&parts)?;
         validate_cities(&parts.terrain, &parts.cities)?;
         validate_start(&parts.terrain, &catalog, &parts.cities, &parts.start)?;
+        if parts.start_line_names.iter().any(|(city, name)| {
+            *city == parts.start.home_city
+                || !parts.start.connected_cities.contains(city)
+                || name.trim().is_empty()
+        }) {
+            return Err(RegionError::InvalidShape {
+                field: "start.line_names",
+            });
+        }
         validate_shapes(&parts)?;
         validate_bands(&parts.regulator)?;
         validate_catalog_values(&catalog)?;
         validate_frequency(&parts.frequency)?;
         validate_lines(&parts.lines)?;
-        Ok(Self {
+        let ac_work_denominator = economics::validate(&parts)?;
+        let solar_rows = if matches!(parts.solar.model, SolarModel::Astronomical) {
+            let equator = crate::generation::annual_sun_integral(0.0);
+            (0..parts.terrain.height())
+                .map(|y| {
+                    let lat = parts.geo.north
+                        - (f64::from(y) + 0.5) * (parts.geo.north - parts.geo.south)
+                            / f64::from(parts.terrain.height());
+                    crate::generation::annual_sun_integral(lat) / equator
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let region = Self {
+            economic_zones: parts.economic_zones,
+            ac_work_denominator,
             id: parts.id,
             name_key: parts.name_key,
+            currency: parts.currency,
+            geo: parts.geo,
+            clock: parts.clock,
+            city_locales: parts.city_locales,
             terrain: parts.terrain,
             catalog,
             cities: parts.cities,
-            demand: parts.demand,
+            climates: parts.climates,
+            demand_noise: parts.demand_noise,
+            calendar: parts.calendar,
             solar: parts.solar,
+            solar_rows,
             wind: parts.wind,
             hydro: parts.hydro,
             frequency: parts.frequency,
@@ -512,7 +631,10 @@ impl TryFrom<RegionDefinitionParts> for RegionDefinition {
             satisfaction: parts.satisfaction,
             lines: parts.lines,
             start: parts.start,
-        })
+            start_line_names: parts.start_line_names,
+        };
+        region.validate_start_construction()?;
+        Ok(region)
     }
 }
 
@@ -576,6 +698,7 @@ mod tests {
             parts.cities = cells[..city_count].iter().enumerate().map(|(i, &cell)| CityDef {
                 id: CityId(i as u32 + 1), cell, ..template.clone()
             }).collect();
+            parts.city_locales = parts.cities.iter().map(|city| (city.id, CityLocale { zone: ZoneId(0), climate: ClimateId(0) })).collect();
             parts.start.home_city = CityId(1);
             parts.start.connected_cities = vec![CityId(1)];
             parts.start.fleet = cells[city_count..].iter().map(|&cell| StartPlantDef {
@@ -620,9 +743,9 @@ mod tests {
                 RegionError::InvalidHomeCity(CityId(99)),
             ),
             (
-                |p| p.demand.monthly[3] = 0.0,
+                |p| p.climates[0].monthly[3] = -0.1,
                 RegionError::InvalidShape {
-                    field: "demand.monthly",
+                    field: "climates.monthly",
                 },
             ),
             (
@@ -798,17 +921,17 @@ mod tests {
     }
 
     #[test]
-    fn demand_shapes_must_be_positive_and_finite() {
+    fn demand_shapes_must_be_nonnegative_and_finite() {
         for (field, edit) in [
             (
-                "demand.winter",
-                (|d: &mut DemandShape| d.winter[5] = 0.0) as fn(&mut DemandShape),
+                "climates.shapes",
+                (|d: &mut Climate| d.shapes[0][5] = -0.1) as fn(&mut Climate),
             ),
-            ("demand.summer", |d| d.summer[23] = -0.1),
-            ("demand.shoulder", |d| d.shoulder[0] = f64::NAN),
-            ("demand.monthly", |d| d.monthly[11] = f64::INFINITY),
+            ("climates.shapes", |d| d.shapes[1][23] = -0.1),
+            ("climates.shapes", |d| d.shapes[2][0] = f64::NAN),
+            ("climates.monthly", |d| d.monthly[11] = f64::INFINITY),
         ] {
-            let r = RegionDefinition::try_from(parts_with(|p| edit(&mut p.demand)));
+            let r = RegionDefinition::try_from(parts_with(|p| edit(&mut p.climates[0])));
             assert_eq!(
                 r.unwrap_err(),
                 RegionError::InvalidShape { field },
@@ -829,7 +952,12 @@ mod tests {
             (f64::NEG_INFINITY, 12.0),
         ];
         for window in bad {
-            let r = RegionDefinition::try_from(parts_with(|p| p.solar.daylight[3] = window));
+            let r = RegionDefinition::try_from(parts_with(|p| {
+                let SolarModel::DaylightTable(table) = &mut p.solar.model else {
+                    unreachable!()
+                };
+                table[3] = window;
+            }));
             assert_eq!(
                 r.unwrap_err(),
                 RegionError::InvalidShape {
@@ -838,7 +966,12 @@ mod tests {
             );
         }
         for window in [(0.0, 24.0), (5.0, 5.5)] {
-            let r = RegionDefinition::try_from(parts_with(|p| p.solar.daylight[3] = window));
+            let r = RegionDefinition::try_from(parts_with(|p| {
+                let SolarModel::DaylightTable(table) = &mut p.solar.model else {
+                    unreachable!()
+                };
+                table[3] = window;
+            }));
             assert!(r.is_ok(), "{window:?}");
         }
     }
@@ -917,19 +1050,19 @@ mod tests {
         let cases: Vec<(Edit, RegionError)> = vec![
             // demand.error_persistence in [0, 1)
             (
-                |p| p.demand.error_persistence = 1.0,
+                |p| p.demand_noise.error_persistence = 1.0,
                 shape("demand.error_persistence"),
             ),
             (
-                |p| p.demand.error_persistence = 1.5,
+                |p| p.demand_noise.error_persistence = 1.5,
                 shape("demand.error_persistence"),
             ),
             (
-                |p| p.demand.error_persistence = -0.01,
+                |p| p.demand_noise.error_persistence = -0.01,
                 shape("demand.error_persistence"),
             ),
             (
-                |p| p.demand.error_persistence = f64::NAN,
+                |p| p.demand_noise.error_persistence = f64::NAN,
                 shape("demand.error_persistence"),
             ),
             // regulator counts
@@ -1167,8 +1300,8 @@ mod tests {
     #[test]
     fn range_boundaries_are_accepted() {
         let cases: Vec<Edit> = vec![
-            |p| p.demand.error_persistence = 0.0,
-            |p| p.demand.error_persistence = 0.999_999,
+            |p| p.demand_noise.error_persistence = 0.0,
+            |p| p.demand_noise.error_persistence = 0.999_999,
             |p| p.regulator.strikes_to_revoke = 1,
             |p| p.regulator.clean_months_to_expire = 1,
             |p| p.catalog[PEAKER].capacity = mw(0.001),
@@ -1209,7 +1342,7 @@ mod tests {
     fn with_two_faults_the_earlier_validation_stage_reports() {
         // catalog, then cities, then start, then shapes, then bands.
         let bad_band = |p: &mut RegionDefinitionParts| p.regulator.min_return = Ratio::ONE;
-        let bad_shape = |p: &mut RegionDefinitionParts| p.demand.winter[0] = 0.0;
+        let bad_shape = |p: &mut RegionDefinitionParts| p.climates[0].shapes[0][0] = -0.1;
         let bad_start = |p: &mut RegionDefinitionParts| p.start.home_city = CityId(99);
         let bad_city = |p: &mut RegionDefinitionParts| p.cities[0].cell = CellCoord { x: 50, y: 4 };
         let bad_catalog = |p: &mut RegionDefinitionParts| {
@@ -1227,7 +1360,7 @@ mod tests {
         assert_eq!(
             err(&bad_band, &bad_shape),
             RegionError::InvalidShape {
-                field: "demand.winter"
+                field: "climates.shapes"
             }
         );
         assert_eq!(
@@ -1296,7 +1429,10 @@ mod battery_validation_tests {
             assert!(RegionDefinition::try_from(p).is_err());
         }
         let mut p = fixtures::tiny_region_parts();
-        p.solar.daylight[0] = (18.0, 20.0);
+        let SolarModel::DaylightTable(table) = &mut p.solar.model else {
+            unreachable!()
+        };
+        table[0] = (18.0, 20.0);
         assert!(
             RegionDefinition::try_from(p).is_ok(),
             "storage eligibility is independent of daylight"

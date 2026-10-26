@@ -1,5 +1,6 @@
 //! The Planning inspector: selected cells, cities, plants and lines, with construction progress.
 
+use crate::l10n::format::MoneyStyle;
 use application::Game;
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
@@ -79,14 +80,22 @@ pub enum InspectorModel {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LineInspector {
+    pub construction: Vec<super::plant_panel::PlantStat>,
     pub title: String,
     pub status: String,
+    pub submarine: Option<String>,
+    pub transfer_limits: String,
     pub in_service: Option<String>,
     pub cancel: Option<ButtonModel>,
     pub close: ButtonModel,
 }
 
-fn line_inspector(game: &Game, l10n: &Localizer, id: LineId) -> Option<LineInspector> {
+fn line_inspector(
+    game: &Game,
+    l10n: &Localizer,
+    id: LineId,
+    style: &MoneyStyle,
+) -> Option<LineInspector> {
     let line = game
         .session()
         .line_views()
@@ -96,7 +105,52 @@ fn line_inspector(game: &Game, l10n: &Localizer, id: LineId) -> Option<LineInspe
         .rows
         .into_iter()
         .find(|row| row.project == Project::Line(id));
+    let cells: std::collections::BTreeMap<_, _> = game
+        .session()
+        .city_views()
+        .iter()
+        .map(|c| (c.node, c.cell))
+        .chain(
+            game.session()
+                .plant_views()
+                .iter()
+                .map(|p| (p.node, p.cell)),
+        )
+        .collect();
+    let water = cells
+        .get(&line.from)
+        .zip(cells.get(&line.to))
+        .map_or(0, |(a, b)| {
+            game.session()
+                .region()
+                .terrain()
+                .water_cells_on_segment(*a, *b)
+                .len()
+        });
+    let construction = if game.session().region().has_economic_zones() {
+        let quote = game.session().line_construction(id)?;
+        let mut stats = super::build::construction_stats(
+            game.session().region(),
+            l10n,
+            quote.capital,
+            quote.months,
+            style,
+        );
+        stats.extend(super::economics::route_stats(
+            game.session().region(),
+            &quote,
+            l10n,
+            style,
+        ));
+        stats
+    } else {
+        Vec::new()
+    };
     Some(LineInspector {
+        construction,
+        submarine: (water > 0)
+            .then(|| l10n.args("line-submarine", &[("cells", (water as u32).into())])),
+        transfer_limits: l10n.text("line-copper-plate"),
         title: Names::new(l10n, game.session()).line(id),
         status: progress
             .as_ref()
@@ -118,17 +172,18 @@ pub fn inspector_model(
     game: &Game,
     l10n: &Localizer,
     selection: Selection,
+    style: &MoneyStyle,
 ) -> Option<InspectorModel> {
     if game.session().phase() != DayPhase::Planning {
         return None;
     }
     let model = match selection {
-        Selection::Line(id) => line_inspector(game, l10n, id).map(InspectorModel::Line),
+        Selection::Line(id) => line_inspector(game, l10n, id, style).map(InspectorModel::Line),
         Selection::Cell(at) => cell_inspector(game, l10n, at).map(InspectorModel::Cell),
         Selection::City(city) => city_card_model(game, l10n, city).map(InspectorModel::City),
-        Selection::Plant(plant) => construction_card_model(game, l10n, plant)
+        Selection::Plant(plant) => construction_card_model(game, l10n, plant, style)
             .map(InspectorModel::Construction)
-            .or_else(|| plant_card_model(game, l10n, plant).map(InspectorModel::Plant)),
+            .or_else(|| plant_card_model(game, l10n, plant, style).map(InspectorModel::Plant)),
         _ => None,
     };
     Some(model.unwrap_or_else(|| InspectorModel::Empty {
@@ -143,6 +198,29 @@ fn cell_inspector(game: &Game, l10n: &Localizer, at: CellCoord) -> Option<CellIn
         label: l10n.text(key),
         value: format::percent(value),
     };
+    let market = region.has_economic_zones().then(|| {
+        super::economics::zone_stat(
+            region,
+            region.economic_zone_at(at).expect("known cell"),
+            l10n,
+        )
+    });
+    let mut readings = vec![
+        reading("inspector-height", cell.height),
+        reading("inspector-irradiance", region.solar_potential(at)),
+        reading("wind-potential", cell.wind_potential),
+        reading("inspector-cooling-water", cell.cooling_water),
+        reading("inspector-hydro-potential", cell.hydro_potential),
+    ];
+    if let Some(market) = market {
+        readings.insert(
+            0,
+            Stat {
+                label: market.label,
+                value: market.value,
+            },
+        );
+    }
     Some(CellInspector {
         title: l10n.args(
             "inspector-title",
@@ -156,13 +234,7 @@ fn cell_inspector(game: &Game, l10n: &Localizer, at: CellCoord) -> Option<CellIn
         } else {
             "inspector-water"
         }),
-        readings: vec![
-            reading("inspector-height", cell.height),
-            reading("inspector-irradiance", cell.irradiance),
-            reading("wind-potential", cell.wind_potential),
-            reading("inspector-cooling-water", cell.cooling_water),
-            reading("inspector-hydro-potential", cell.hydro_potential),
-        ],
+        readings,
         suitability_heading: l10n.text("inspector-can-build"),
         suitability: PlantKind::ALL
             .into_iter()
@@ -217,6 +289,14 @@ pub fn draw_inspector(ui: &mut egui::Ui, model: &InspectorModel) -> Vec<UiAction
                 if let Some(in_service) = &line.in_service {
                     ui.colored_label(TextTone::Caution.color(), in_service);
                 }
+                if let Some(submarine) = &line.submarine {
+                    ui.colored_label(TextTone::Information.color(), submarine);
+                }
+                for stat in &line.construction {
+                    ui.colored_label(TextTone::Neutral.color(), &stat.label);
+                    ui.colored_label(stat.color.color(), &stat.value);
+                }
+                ui.colored_label(TextTone::Neutral.color(), &line.transfer_limits);
                 if let Some(cancel) = &line.cancel {
                     button(ui, cancel, &mut actions);
                 }
@@ -236,13 +316,15 @@ pub fn draw_inspector(ui: &mut egui::Ui, model: &InspectorModel) -> Vec<UiAction
 fn draw_cell(ui: &mut egui::Ui, model: &CellInspector, actions: &mut Vec<UiAction>) {
     ui.heading(egui::RichText::new(&model.title).color(heading_color()));
     ui.colored_label(TextTone::Information.color(), &model.terrain);
-    egui::Grid::new("inspector_readings").show(ui, |ui| {
-        for stat in &model.readings {
-            ui.colored_label(TextTone::Neutral.color(), &stat.label);
-            ui.colored_label(TextTone::Information.color(), &stat.value);
-            ui.end_row();
-        }
-    });
+    egui::Grid::new("inspector_readings")
+        .max_col_width((ui.available_width() - ui.spacing().item_spacing.x) / 2.0)
+        .show(ui, |ui| {
+            for stat in &model.readings {
+                ui.colored_label(TextTone::Neutral.color(), &stat.label);
+                ui.colored_label(TextTone::Information.color(), &stat.value);
+                ui.end_row();
+            }
+        });
     ui.separator();
     ui.label(
         egui::RichText::new(&model.suitability_heading)
@@ -270,8 +352,9 @@ pub(super) fn inspector_panel(
     session: Res<Session>,
     l10n: Res<Localizer>,
     mut sink: ActionSink,
+    style: Res<MoneyStyle>,
 ) -> Result {
-    let Some(model) = inspector_model(&session.0, &l10n, sink.selection()) else {
+    let Some(model) = inspector_model(&session.0, &l10n, sink.selection(), &style) else {
         return Ok(());
     };
     let ctx = contexts.ctx_mut()?;
@@ -286,6 +369,7 @@ pub(super) fn inspector_panel(
 
 #[cfg(test)]
 mod tests {
+    use crate::hud::test_support::usd_style;
     use application::{Command, InMemoryCommandLog};
     use domain::region::{RegionDefinition, SiteError};
 
@@ -297,6 +381,52 @@ mod tests {
         let terrain = region.terrain();
         let (w, h) = (terrain.width(), terrain.height());
         (0..h).flat_map(move |y| (0..w).map(move |x| CellCoord { x, y }))
+    }
+
+    #[test]
+    fn the_gibraltar_style_starter_line_is_named_and_drawn_as_a_cable() {
+        let game = crate::hud::test_support::global_game();
+        let l10n = crate::hud::test_support::global_l10n();
+        let model = crate::world::WorldModel::of(&game);
+        let line = model
+            .lines
+            .values()
+            .find(|line| line.name_key.is_some())
+            .unwrap();
+        assert_eq!(
+            Names::new(&l10n, game.session()).line(line.id),
+            "Strait of Gibraltar"
+        );
+        let card = line_inspector(&game, &l10n, line.id, &usd_style()).unwrap();
+        assert_eq!(card.submarine.as_deref(), Some("Submarine cable · 3 cells"));
+        assert_eq!(
+            card.transfer_limits,
+            "Transfer limits are not simulated (copper plate)"
+        );
+        let water: Vec<_> = line.parts.iter().filter(|p| p.color[0] < 0.5).collect();
+        assert!(!water.is_empty());
+        assert!(water.iter().all(|p| p.size.z < 0.5), "water is dashed");
+        let cell = CellCoord { x: 7, y: 3 };
+        let potential = game.session().region().solar_potential(cell);
+        let reading = cell_model(&game, &l10n, cell);
+        assert_eq!(reading.readings[1].value, format::percent(potential));
+        assert_ne!(
+            potential,
+            game.session()
+                .region()
+                .terrain()
+                .get(cell)
+                .unwrap()
+                .irradiance
+        );
+        assert_eq!(
+            crate::hud::cell_color(
+                crate::hud::MapLayer::Irradiance,
+                game.session().region(),
+                cell
+            ),
+            crate::hud::map::solar_color(potential.value())
+        );
     }
 
     #[test]
@@ -394,8 +524,8 @@ mod tests {
             [
                 ("Height", format::percent(terrain_cell.height).as_str()),
                 (
-                    "Sunshine",
-                    format::percent(terrain_cell.irradiance).as_str()
+                    "Solar potential",
+                    format::percent(region.solar_potential(at)).as_str()
                 ),
                 (
                     "Wind potential",
@@ -429,7 +559,7 @@ mod tests {
     }
 
     fn cell_model(game: &Game, l10n: &Localizer, at: CellCoord) -> CellInspector {
-        match inspector_model(game, l10n, Selection::Cell(at)) {
+        match inspector_model(game, l10n, Selection::Cell(at), &usd_style()) {
             Some(InspectorModel::Cell(model)) => model,
             other => panic!("a cell is selected: {other:?}"),
         }
@@ -449,7 +579,7 @@ mod tests {
             Selection::Cell(outside),
         ] {
             assert_eq!(
-                inspector_model(&game, &l10n, selection),
+                inspector_model(&game, &l10n, selection, &usd_style()),
                 Some(InspectorModel::Empty {
                     hint: "Select a cell to see what can be built there".to_owned()
                 }),
@@ -468,13 +598,13 @@ mod tests {
         let plant = order_plant(&mut game, domain::region::PlantKind::Peaker, 0);
 
         assert_eq!(
-            inspector_model(&game, &l10n, Selection::Plant(plant)),
+            inspector_model(&game, &l10n, Selection::Plant(plant), &usd_style()),
             Some(InspectorModel::Construction(
-                construction_card_model(&game, &l10n, plant).expect("a card")
+                construction_card_model(&game, &l10n, plant, &usd_style()).expect("a card")
             ))
         );
         assert!(matches!(
-            inspector_model(&game, &l10n, Selection::Plant(built)),
+            inspector_model(&game, &l10n, Selection::Plant(built), &usd_style()),
             Some(InspectorModel::Plant(_))
         ));
         assert_eq!(l10n.problems(), vec![]);
@@ -487,7 +617,7 @@ mod tests {
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
         for city in game.session().city_views() {
             assert_eq!(
-                inspector_model(&game, &l10n, Selection::City(city.id)),
+                inspector_model(&game, &l10n, Selection::City(city.id), &usd_style()),
                 Some(InspectorModel::City(
                     city_card_model(&game, &l10n, city.id).expect("a known city")
                 )),
@@ -497,7 +627,12 @@ mod tests {
         }
         // A city the session doesn't know keeps the hint.
         assert!(matches!(
-            inspector_model(&game, &l10n, Selection::City(domain::ids::CityId(9_999))),
+            inspector_model(
+                &game,
+                &l10n,
+                Selection::City(domain::ids::CityId(9_999)),
+                &usd_style()
+            ),
             Some(InspectorModel::Empty { .. })
         ));
         assert_eq!(l10n.problems(), vec![]);
@@ -508,11 +643,17 @@ mod tests {
         let l10n = shipped_l10n();
         let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
         let at = CellCoord { x: 10, y: 10 };
-        assert!(inspector_model(&game, &l10n, Selection::Cell(at)).is_some());
+        assert!(inspector_model(&game, &l10n, Selection::Cell(at), &usd_style()).is_some());
 
         game.execute(Command::BeginOperating).unwrap();
 
-        assert_eq!(inspector_model(&game, &l10n, Selection::Cell(at)), None);
-        assert_eq!(inspector_model(&game, &l10n, Selection::None), None);
+        assert_eq!(
+            inspector_model(&game, &l10n, Selection::Cell(at), &usd_style()),
+            None
+        );
+        assert_eq!(
+            inspector_model(&game, &l10n, Selection::None, &usd_style()),
+            None
+        );
     }
 }

@@ -14,6 +14,8 @@ season-winter = Winter
 season-spring = Spring
 season-summer = Summer
 season-autumn = Autumn
+season-monsoon = Monsoon
+season-post-monsoon = Post-monsoon
 
 plant-kind-nuclear = Nuclear plant
 plant-kind-coal = Coal plant
@@ -99,7 +101,7 @@ map-solar-scale = Solar potential
 map-solar-low = 0%
 map-solar-mid = 50%
 map-solar-high = 100%
-map-solar-help = Site solar potential: purple/blue is lower, green/yellow is higher. The same 0–100% scale applies in every region. This is a game site rating, not today's weather or the percentage of sunny days; season, time of day and clouds also affect solar output.
+map-solar-help = Annual solar potential: purple/blue is lower, green/yellow is higher. The same 0–100% scale applies in every region. This is a game site rating, not today's weather or the percentage of sunny days; season, time of day and clouds also affect solar output.
 map-layer-cooling-water = Cooling water
 map-layer-hydro-potential = Hydro potential
 map-layer-suitability = Suitability: { $kind }
@@ -123,7 +125,7 @@ inspector-title = Cell ({ $x }, { $y })
 inspector-land = Land
 inspector-water = Water
 inspector-height = Height
-inspector-irradiance = Sunshine
+inspector-irradiance = Solar potential
 inspector-cooling-water = Cooling water
 inspector-hydro-potential = Hydro potential
 inspector-can-build = Can be built here
@@ -300,7 +302,7 @@ supply-chart-demand = Demand
 supply-chart-served = Served
 supply-chart-forecast = Forecast
 supply-chart-marginal-cost = System marginal cost
-supply-chart-axis-cost = Marginal cost ($/MWh)
+supply-chart-axis-cost = Marginal cost ({ $symbol }/MWh)
 ramp-warnings-title = Ramp warnings
 ramp-warnings-none = No ramp warnings.
 ramp-warning-row = { $time }: { $warning }
@@ -352,11 +354,17 @@ milestones-in-progress = In progress
 
 # Region overview: map and accessible region cards share the same start action.
 region-select-subtitle = Choose a grid. Build your power company. Keep the lights on.
-region-select-map-title = North America
-region-select-map-note = Hover to explore · Click a coloured region to begin
+# Accessible map name; not displayed as a heading over the map.
+region-select-map-label = World power grids
+region-select-map-note = Drag to spin · Click a coloured region to begin
+region-select-land-note = Grey land has power systems beyond the playable regions.
+region-select-metadata = { $frequency } Hz · { $currency } · { $zones } · { $hemisphere }
+region-select-zone = UTC{ $offset }
+region-select-zone-span = { $west }–{ $east }
+region-select-northern = Northern hemisphere
+region-select-southern = Southern hemisphere
+region-select-both-hemispheres = Both hemispheres
 region-select-home = Start in { $city } · { $cities } cities to serve
-region-select-east-description = Dense cities, big demand, and a legacy coal and nuclear fleet. Keep the industrial heartland humming.
-region-select-west-description = Mountain crossings, desert sunshine, and Pacific Northwest hydro. Master the evening demand surge.
 
 # Tabletop diorama
 world-reset = Reset view (R)
@@ -429,7 +437,7 @@ battery-fleet = All batteries
 
 supply-chart-combine = Combine graphs
 supply-chart-unit-power = MW
-supply-chart-unit-cost = $/MWh
+supply-chart-unit-cost = { $symbol }/MWh
 supply-chart-unit-energy = MWh
 
 tariff-satisfaction-adjustment = Satisfaction adjustment
@@ -451,3 +459,84 @@ wind-build-help = Generates at any hour when wind is available. Nearby farms sha
 plant-capacity-credit = Regulatory capacity credit
 
 review-curtailed-kind = Curtailed { $kind }
+
+# Currency symbol and placement are independently localizable.
+currency-usd = $
+currency-usd-prefix = { currency-usd }
+currency-usd-suffix = { "" }
+currency-eur = €
+currency-eur-prefix = { currency-eur }
+currency-eur-suffix = { "" }
+currency-cny = ¥
+currency-cny-prefix = { currency-cny }
+currency-cny-suffix = { "" }
+currency-inr = ₹
+currency-inr-prefix = { currency-inr }
+currency-inr-suffix = { "" }
+currency-rub = ₽
+currency-rub-prefix = { currency-rub }
+currency-rub-suffix = { "" }
+currency-brl = R$
+currency-brl-prefix = { currency-brl }
+currency-brl-suffix = { "" }
+
+# Civil clocks use the authored regional zone label.
+time-with-zone = { $time } { $zone }
+city-local-time = Local time: { $time }
+commitment-system-time = System time
+commitment-system-zone = System time ({ $zone })
+line-submarine = Submarine cable · { $cells } cells
+line-copper-plate = Transfer limits are not simulated (copper plate)
+
+# North American civil clocks (DST is authored per representative month).
+zone-et = ET
+zone-ct = CT
+zone-saskatchewan-cst = CST
+zone-at = AT
+zone-pt = PT
+zone-mt = MT
+zone-arizona-mst = MST
+
+# China Standard Time (UTC+8, no DST).
+zone-cst = CST
+
+# Brazil: Brasília, Amazon and Acre time (UTC-3, -4 and -5, no DST).
+zone-brt = BRT
+zone-amt = AMT
+zone-act = ACT
+
+# India, Nepal and Bhutan: IST, NPT and BTT (UTC+5:30, +5:45 and +6, no DST).
+zone-ist = IST
+zone-npt = NPT
+zone-btt = BTT
+
+# IPS/UPS: Moscow time and the zones east of it, named by UTC offset (no DST).
+zone-msk = MSK
+zone-utc-plus-4 = UTC+4
+zone-utc-plus-5 = UTC+5
+zone-utc-plus-6 = UTC+6
+zone-utc-plus-7 = UTC+7
+zone-utc-plus-8 = UTC+8
+zone-utc-plus-9 = UTC+9
+
+# Continental Europe–Maghreb: Western, Central and Eastern European time with summer time from
+# April to October, Central European time without DST (Morocco, Algeria, Tunisia) and Türkiye
+# time (UTC+3, no DST).
+zone-wet = WET
+zone-cet = CET
+zone-cet-fixed = CET
+zone-eet = EET
+zone-trt = TRT
+
+# Continental Europe–Maghreb construction markets and its named starter line.
+economic-zone-spain = Spain
+economic-zone-morocco = Morocco
+economic-zone-algeria = Algeria
+economic-zone-tunisia = Tunisia
+line-spain-morocco = Spain–Morocco interconnector
+
+# Optional construction economics. All prices use the region's currency.
+construction-economic-zone = Market
+construction-regional-default = Regional default
+build-plant-heading-market = Build at ({ $x }, { $y }) · { $market }
+construction-route-work = { $cells } cells · { $capital } · { $numerator }/{ $denominator } months of work

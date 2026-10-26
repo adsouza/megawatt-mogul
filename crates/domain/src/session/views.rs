@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use super::{DayPhase, GameSession, Incident, whole_cells};
+use super::{DayPhase, GameSession, Incident};
 use crate::company::CapitalChange;
 use crate::demand::{ForecastPoint, hourly_forecast};
 use crate::generation::{BatteryFlow, BatteryMode, BatteryTotals, Plant, PlantStatus};
@@ -75,10 +75,9 @@ pub struct CityView {
 }
 
 /// One city's demand, for the coming day in Planning or the day being played
-/// (spec §16.8). Every city shares one demand shape and one noise process,
-/// and a rotating outage or protection's shed falls on connected cities in
-/// proportion, so a connected city's figures are the system's scaled by its
-/// share of the connected base load.
+/// (spec §16.8). Cities use their local climate and share one noise process.
+/// Outages and shedding fall in proportion to their instantaneous forecast
+/// demand. `share` continues to describe their share of connected base load.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CityDetail {
     pub id: CityId,
@@ -170,15 +169,15 @@ pub struct RateReviewEstimate {
 
 /// The hour in which committed minimum generation exceeds the net load by
 /// the most (spec §14.3): the plan would have to dump or curtail the surplus.
-/// Its figures are those of the hour's worse end, minute 0 or minute 59.
+/// Its figures use the worst sampled minute: 0, 59, or an interior local-hour bend.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MinimumGenerationWarning {
     /// The hour of day, 0 to 23.
     pub hour: u8,
     /// What the plants committed in that hour must generate at least.
     pub committed_minimum: Megawatts,
-    /// The forecast net load at the hour's worse end: the lower of minute 0
-    /// and minute 59.
+    /// The lowest forecast net load among the hour's endpoints and interior
+    /// local-hour bends.
     pub net_load: Megawatts,
     /// `committed_minimum − net_load`, always positive.
     pub excess: Megawatts,
@@ -187,12 +186,12 @@ pub struct MinimumGenerationWarning {
 /// The hour in which the committed fleet's deliverable capacity falls short
 /// of the forecast demand by the most (spec §15.5): the plan would have to
 /// leave that load to a rotating outage. Its figures are those of the hour's
-/// worse end, minute 0 or minute 59.
+/// worst sampled minute: 0, 59, or an interior local-hour bend.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CapacityShortfallWarning {
     /// The hour of day, 0 to 23.
     pub hour: u8,
-    /// The connected forecast demand at the hour's worse end.
+    /// The connected forecast demand at that sampled minute.
     pub demand: Megawatts,
     /// What the plants committed in that hour could deliver then, with
     /// expected solar: an upper bound that ignores start-up and ramp limits.
@@ -262,8 +261,9 @@ impl GameSession {
 
     /// The coming day's expected supply, using the shortfall check's rules for
     /// connectivity, commissioning, commitments, manual targets, hydro and storage.
-    /// With storage, every minute is assessed; otherwise the warning assesses
-    /// minute 0 and 59 of each hour. Pure: no live water, energy or RNG changes.
+    /// With storage or wind, every minute is assessed; otherwise the warning
+    /// assesses hour endpoints and connected cities' local-hour bends.
+    /// Pure: no live water, energy or RNG changes.
     pub fn supply_forecast(&self) -> crate::grid::SupplyForecast {
         self.power.supply_forecast(&self.region, self.clock.month())
     }
@@ -361,15 +361,40 @@ impl GameSession {
         } else {
             Ratio::ZERO
         };
-        // The city's own forecast: the system's shape on its base load alone, so
-        // an unconnected city shows what it would add.
-        let forecast = hourly_forecast([city], self.region.demand(), self.clock.month());
+        // The city's own climate in its local time, including the load an
+        // unconnected city would add.
+        let forecast = hourly_forecast([city], &self.region, self.clock.month());
         let peak = forecast.iter().fold(forecast[0], |best, point| {
             if point.mean > best.mean { *point } else { best }
         });
         let live = (connected && self.phase == DayPhase::Operating)
             .then(|| self.day_ticks.last())
             .flatten();
+        let live_share = live.map(|tick| {
+            let month = self.clock.month();
+            let factor = self.region.load_factor(id, month, tick.tick);
+            let mut identical = true;
+            let total: Megawatts = self
+                .power
+                .cities()
+                .values()
+                .filter(|other| network.is_connected(other.node()))
+                .map(|other| {
+                    let other_factor = self.region.load_factor(other.id(), month, tick.tick);
+                    identical &= other_factor == factor;
+                    other.def().base_load * other_factor
+                })
+                .sum();
+            // Preserve the original base-share arithmetic for uniform climates,
+            // including every legacy region. Avoid cancellation roundoff.
+            if identical {
+                share
+            } else if total > Megawatts::ZERO {
+                Ratio::new(((base_load * factor) / total).clamp(0.0, 1.0)).unwrap_or(Ratio::ZERO)
+            } else {
+                Ratio::ZERO
+            }
+        });
         Some(CityDetail {
             id,
             name_key: city.def().name_key.clone(),
@@ -378,8 +403,12 @@ impl GameSession {
             share,
             peak: peak.mean,
             peak_hour: peak.hour,
-            demand_now: live.map(|tick| share.of(tick.demand)),
-            served_now: live.map(|tick| share.of(tick.served)),
+            demand_now: live
+                .zip(live_share)
+                .map(|(tick, weight)| weight.of(tick.demand)),
+            served_now: live
+                .zip(live_share)
+                .map(|(tick, weight)| weight.of(tick.served)),
         })
     }
 
@@ -409,8 +438,7 @@ impl GameSession {
     /// beside its months left (spec §16.9). It reads the line's stored length, as the month close
     /// does when it books the line. Pure. `None` for a line the network doesn't have.
     pub fn line_build_months(&self, line: LineId) -> Option<u32> {
-        let line = self.power.network().line(line)?;
-        Some(self.line_months(whole_cells(line.length_cells)))
+        Some(self.line_construction(line)?.months)
     }
 
     /// The noise-free demand forecast of connected cities for each hour of
@@ -422,7 +450,7 @@ impl GameSession {
             .cities()
             .values()
             .filter(|city| network.is_connected(city.node()));
-        hourly_forecast(connected, self.region.demand(), self.clock.month())
+        hourly_forecast(connected, &self.region, self.clock.month())
     }
 
     /// Today's hydro peak-shaving schedule (spec §12.6), valid per phase:
@@ -513,11 +541,11 @@ impl GameSession {
     /// exceeds its forecast net load by the most, earliest on ties; `None`
     /// when every hour's minimums fit under its net load.
     ///
-    /// Each hour is judged at both ends, minute 0 and minute 59, where its
-    /// interpolated load has its extremes, by the evaluator the capacity
-    /// check and operating-time sizing use ([`HourEnd`]); the hour's excess
-    /// is that of its worse end, the one with the lower net load, minute 0 on
-    /// a tie, and the warning's `net_load` is that end's. Reads the plants'
+    /// Each hour is judged at its endpoints and connected cities' local-hour
+    /// bends by the evaluator the capacity check and operating-time sizing use
+    /// ([`HourEnd`]); the hour's excess is that of the sample with the lower
+    /// net load, earliest on ties, and the warning's `net_load` is that sample's.
+    /// Reads the plants'
     /// commitment patterns (not the per-day suppression override), so it is
     /// meaningful while planning. Pure: no randomness, no state change.
     pub fn minimum_generation_check(&self) -> Option<MinimumGenerationWarning> {
@@ -547,10 +575,10 @@ impl GameSession {
     /// committed fleet could deliver by the most, earliest on ties; `None`
     /// when every hour is covered.
     ///
-    /// Each hour is judged at both ends, minute 0 and minute 59, where its
-    /// interpolated demand has its extremes, by the evaluator operating-time
-    /// sizing uses (spec §15.3); the hour's shortfall is that of its worse
-    /// end, minute 0 on a tie. An upper bound: it reads the plants'
+    /// Each hour is judged at its endpoints and connected cities' local-hour
+    /// bends, or every minute for fleets with storage or wind, matching
+    /// operating-time sizing (spec §15.3). The worst sample determines the
+    /// hour's shortfall, earliest on ties. An upper bound: it reads the plants'
     /// commitment patterns (not the per-day suppression override), ignores
     /// start-up and ramp limits, and counts scheduled hydro from a pure
     /// preview of the coming day's plan, since the live plan is empty during

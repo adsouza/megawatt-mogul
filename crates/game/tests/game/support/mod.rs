@@ -35,12 +35,28 @@ pub fn update_n(app: &mut App, n: usize) {
     }
 }
 
+/// Every region shipped in `assets/regions`, sorted like `RonRegionCatalog::list`. Each region
+/// task inserts its ID here; the shipped-region name-key test checks it against the folder.
+pub const SHIPPED_REGIONS: &[&str] = &[
+    "brazil_sin",
+    "continental_europe_maghreb",
+    "eastern_interconnection",
+    "india_nepal_bhutan",
+    "ips_ups",
+    "southern_china",
+    "western_interconnection",
+];
+
 /// The workspace's shipped `assets/` directory. Tests only read from it.
 pub fn shipped_assets() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")
 }
 
 /// The shipped en-US translations.
+pub fn usd_style() -> game::l10n::format::MoneyStyle {
+    game::l10n::format::MoneyStyle::resolve(domain::units::Currency::Usd, &shipped_l10n(), |_| true)
+}
+
 pub fn shipped_l10n() -> Localizer {
     Localizer::load(&shipped_assets().join("locales").join(LOCALE))
         .unwrap_or_else(|error| panic!("the shipped translations must load: {error}"))

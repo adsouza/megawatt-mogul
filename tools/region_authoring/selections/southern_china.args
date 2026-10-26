@@ -1,0 +1,12 @@
+--admin0
+target/natural-earth/ne_50m_admin_0_countries.geojson
+--admin1
+target/natural-earth/ne_10m_admin_1_states_provinces.geojson
+--include-admin1
+CHN:Guangdong,CHN:Guangxi,CHN:Guizhou,CHN:Hainan,MAC:Macau,HKG:Central and Western,HKG:Eastern,HKG:Islands,HKG:Kowloon City,HKG:Kwai Tsing,HKG:Kwun Tong,HKG:North,HKG:Sai Kung,HKG:Sha Tin,HKG:Sham Shui Po,HKG:Southern,HKG:Tai Po,HKG:Tsuen Wan,HKG:Tuen Mun,HKG:Wan Chai,HKG:Wong Tai Sin,HKG:Yau Tsim Mong,HKG:Yuen Long
+--bounds=104.0,117.5,18.0,29.5
+--grid
+124,115
+--dissolve
+--out
+assets/regions/southern_china/natural_earth.ron

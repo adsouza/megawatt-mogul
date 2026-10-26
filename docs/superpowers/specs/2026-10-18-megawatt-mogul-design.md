@@ -14,7 +14,10 @@
   (§25, 2026-10-23, implemented under rules 14); A12, closing the rate-base loophole and
   making satisfaction count (§26, 2026-10-23, implemented under rules 13; lands before A11);
   A13, battery discharge from 16:00 (§27, 2026-10-24, implemented under rules 15); A14, global
-  regions, the first Milestone 2 amendment (§28, 2026-10-24, specified)
+  regions, the first Milestone 2 amendment (§28, 2026-10-24; Plan 6 global foundations
+  implemented under rules 16; optional construction economic zones implemented in Plan 6a
+  under rules 17, 2026-10-25; Plan 7's five single-area regions implemented under rules 18,
+  2026-10-26; Plan 8 pending)
 - **Engine:** Rust 1.98, Bevy 0.20, bevy_egui 0.43, bevy-inspector-egui 0.38
 
 ## 1. Vision and goals
@@ -662,7 +665,8 @@ run through the ordinary generating-plant step or acquire synthetic opening outp
   rules, RNG algorithms, numerical behaviour or region mapping alter outcomes.
   The home-city topology and region schema use rules version 6: node/line identities, distances,
   construction quotes and legacy line capital change, so older logs require their matching engine.
-- The fingerprint is SHA-256 of the **exact source bytes** of the self-contained region RON file.
+- The fingerprint is SHA-256 of the **exact source bytes** of the self-contained region RON file
+  (since §28.11.1, of the region bundle: the main file and its sidecars).
   This deliberately treats formatting changes as different content too. Infrastructure computes
   it; the domain gains no I/O, serde or hashing dependency. Region files may not depend on external
   includes or mutable side inputs. The same bytes must supply the parsed `RegionDefinition`, the
@@ -1867,6 +1871,8 @@ be in service. The commissioning toasts arrive with no warning.
     `LineStatus::UnderConstruction { months_left }`.
   - The total is the kind's `build_months`, or, for a line, `GameSession::line_build_months`: the
     months its quote said, from its stored length by the rule the order and the month close use.
+    For regions opting into economic zones, §28.7.1 supersedes the base-catalog/length-only
+    calculation: display the asset's resolved construction terms, including its local cost.
   - The in-service month is derived from the current month and the months left, by the same rule
     the month close applies. Read the domain to get the off-by-one right, and pin it with a test
     that plays to commissioning.
@@ -3373,12 +3379,33 @@ fixtures author `discharge_start_hour: 16`.
 American interconnections, each one 60 Hz copper plate priced in US$. Every earlier amendment
 (A1–A13) belongs to Milestone 1.
 
-**Status:** Specified, not implemented. It lands as three plans, in order: **Plan 6**, global
-foundations (§28.4–§28.8, §28.10–§28.11, and the North American migration); **Plan 7**, five
-single-area regions (B, D, E, F, H in §28.3); **Plan 8**, multi-area regions with HVDC links and
-the SGCC region (§28.9). Each plan bumps `SIM_RULES_VERSION` once, from whatever the previous
-implemented amendment left. The source for boundaries, inclusions and exclusions is the research
-edition of 18 October 2026, copied to
+**Status:** **Plan 6 global foundations is implemented under rules 16** (§28.4–§28.8,
+§28.10–§28.11, and the North American schema-4 migration; excluding the later §28.7.1 extension).
+Automated acceptance, the native
+120-frame launch smoke, and the isolated full representative-day native playtests in both North
+American regions pass. [Plan 6 Task 10](../plans/2026-10-24-plan-6-global-foundations.md#task-10-migrate-both-north-american-regions-to-schema-4-rules-16) records the observed review results and native acceptance
+checks. Local scratch logs and saves were temporary receipts. **Plan 6a**, optional construction
+economic zones (§28.7.1), is **implemented under rules 17** on 2026-10-25, with region schema 4
+and portable state schema 3 unchanged. Its isolated two-market native workflow and automated
+accounting/save compatibility checks pass. Its implementation record is
+[Plan 6a](../plans/2026-10-25-plan-6a-economic-zones.md). **Plan 7** (five single-area regions:
+Europe–Maghreb, India–Nepal–Bhutan, southern China, IPS/UPS and Brazil in §28.3) is
+**implemented under rules 18** on 2026-10-26, with region schema 4 and portable state schema 3
+unchanged. Seven regions now ship; Europe–Maghreb opts into the country construction profiles of
+§28.7.1 and its Gibraltar link is pre-built. Automated acceptance passes (the per-region year-one
+checks, the picker over all seven listings, the research-row provenance test and the 256 × 128
+frame budgets, which pass under the optimised dev profile (a `--release` proxy)). The isolated
+native 120-frame launch smoke passed on 2026-10-26. The user's native playtest on 2026-10-26
+(isolated `/tmp/mm-playtest` saves and logs) covered a full year in Brazil and a few months in
+IPS/UPS and exited cleanly with no panics. The user reported that the game works nicely, that
+Brazil feels easy (abundant hydro; cities use very little power; a balance observation), that Russia
+uses little power in summer and more in winter, and that the picker did not feel sluggish. Seed 7
+and the specific lighting checklist were not played, so the §28.12 representative-day playtest is
+not claimed in full. Its implementation record is
+[Plan 7](../plans/2026-10-25-plan-7-single-area-regions.md). **Plan 8**
+(multi-area regions with HVDC links and SGCC, §28.9) remains pending. Each plan bumps
+`SIM_RULES_VERSION` once, from whatever the previous implemented amendment left. The source for
+boundaries, inclusions and exclusions is the research edition of 18 October 2026, copied to
 [docs/research/2026-10-18-world-power-grids-top-8.md](../../research/2026-10-18-world-power-grids-top-8.md).
 Its capacity figures set relative region scale only; no capacity label migrates into game data.
 
@@ -3409,13 +3436,15 @@ assumption is wrong for at least one new region.
 ### 28.2 Goals, non-goals, anti-goals
 
 - **Goals:**
-  - Ship eight map entries (A–H) as playable regions, including the two existing ones.
+  - Ship eight named map entries as playable regions, including the two existing ones.
   - One model of local time, sun and seasons serves every region, including North America for new
     games.
   - Copper plate still decides balancing. Local time enters only through the two physical drivers
     that depend on place: when people use power, and where the sun is.
   - A multi-area region balances each synchronous island separately and moves power between them
     only through player-scheduled HVDC links.
+  - Optional economic zones distinguish construction prices and durations within a grid, especially
+    continental Europe–Maghreb, without changing its electrical boundaries or operating rules.
   - Every existing save keeps its archived behaviour exactly.
 - **Non-goals:**
   - power flow, congestion or AC transfer limits, including on the Gibraltar cable (§3.3, §11);
@@ -3433,31 +3462,35 @@ assumption is wrong for at least one new region.
 
 ### 28.3 The regions
 
-The map letter is a stable identifier, not a rank. Footprints follow the research notes; the
-"excludes" column lists what the notes exclude, not everything outside.
+Region IDs identify the playable grids. Footprints follow the research notes; the "excludes"
+column lists what the notes exclude, not everything outside.
 
-| Map | Region id | Footprint | Excludes | Hz | Currency | System clock |
-|---|---|---|---|---|---|---|
-| A | `sgcc` | Five areas: North–Central (Beijing, Tianjin, Hebei, Shanxi, Shandong, western Inner Mongolia, Henan, Hubei, Hunan, Jiangxi), East (Shanghai, Jiangsu, Zhejiang, Anhui, Fujian), Northwest (Shaanxi, Gansu, Ningxia, Qinghai, Xinjiang), Northeast (Liaoning, Jilin, Heilongjiang; Hulunbuir, Xing'an, Tongliao, Chifeng), Southwest (Sichuan, Chongqing, Tibet) | Yunnan, region E, Mongolia | 50 | CNY | CST (UTC+8) |
-| B | `continental_europe_maghreb` | Continental Europe synchronous area, including DK1, Türkiye, Ukraine and Moldova, the Baltic states, Sicily, Malta and Crete; Morocco, northern Algeria, Tunisia | Nordic area, DK2, Great Britain, Ireland, Sardinia, Corsica, the Balearics, isolated southern Algeria | 50 | EUR | CET/CEST |
-| C | `eastern_interconnection` | As §2.6 | As §2.6 | 60 | USD | ET |
-| D | `india_nepal_bhutan` | Mainland India, Nepal, Bhutan | Bangladesh, Sri Lanka, Myanmar, isolated systems | 50 | INR | IST (UTC+5:30) |
-| E | `southern_china` | Guangdong, Guangxi, Guizhou, Hainan, Hong Kong, Macao | Yunnan | 50 | CNY | CST (UTC+8) |
-| F | `ips_ups` | Russia's first synchronous zone, Belarus, Kazakhstan, Uzbekistan, mainland Azerbaijan, Kyrgyzstan, main Tajikistan, Georgia | Russian Far East, Kaliningrad, Armenia, Iran, Turkmenistan, Nakhchivan, Pamir systems, Afghanistan, Mongolia | 50 | RUB | MSK (UTC+3) |
-| G | `western_interconnection` | As §2.6 | As §2.6 | 60 | USD | PT |
-| H | `brazil_sin` | Brazil's main 60 Hz component, including Roraima, Itaipu's 60 Hz units and Santo Antônio's AC-connected units | Paraguay, Argentina, Uruguay, Venezuela, Jirau and other asynchronous generator groups, isolated Amazon systems | 60 | BRL | BRT (UTC−3) |
+| Region id | Footprint | Excludes | Hz | Currency | System clock |
+|---|---|---|---|---|---|
+| `sgcc` | Five areas: North–Central (Beijing, Tianjin, Hebei, Shanxi, Shandong, western Inner Mongolia, Henan, Hubei, Hunan, Jiangxi), East (Shanghai, Jiangsu, Zhejiang, Anhui, Fujian), Northwest (Shaanxi, Gansu, Ningxia, Qinghai, Xinjiang), Northeast (Liaoning, Jilin, Heilongjiang; Hulunbuir, Xing'an, Tongliao, Chifeng), Southwest (Sichuan, Chongqing, Tibet) | Yunnan, Southern China, Mongolia | 50 | CNY | CST (UTC+8) |
+| `continental_europe_maghreb` | Continental Europe synchronous area, including DK1, Türkiye, Ukraine and Moldova, the Baltic states, Sicily, Malta and Crete; Morocco, northern Algeria, Tunisia | Nordic area, DK2, Great Britain, Ireland, Sardinia, Corsica, the Balearics, isolated southern Algeria | 50 | EUR | CET/CEST |
+| `eastern_interconnection` | As §2.6 | As §2.6 | 60 | USD | ET |
+| `india_nepal_bhutan` | Mainland India, Nepal, Bhutan | Bangladesh, Sri Lanka, Myanmar, isolated systems | 50 | INR | IST (UTC+5:30) |
+| `southern_china` | Guangdong, Guangxi, Guizhou, Hainan, Hong Kong, Macao | Yunnan | 50 | CNY | CST (UTC+8) |
+| `ips_ups` | Russia's first synchronous zone, Belarus, Kazakhstan, Uzbekistan, mainland Azerbaijan, Kyrgyzstan, main Tajikistan, Georgia | Russian Far East, Kaliningrad, Armenia, Iran, Turkmenistan, Nakhchivan, Pamir systems, Afghanistan, Mongolia | 50 | RUB | MSK (UTC+3) |
+| `western_interconnection` | As §2.6 | As §2.6 | 60 | USD | PT |
+| `brazil_sin` | Brazil's main 60 Hz component, including Roraima, Itaipu's 60 Hz units and Santo Antônio's AC-connected units | Paraguay, Argentina, Uruguay, Venezuela, Jirau and other asynchronous generator groups, isolated Amazon systems | 60 | BRL | BRT (UTC−3) |
 
 - **Disputed territory.** The grid-operation rule decides: an area belongs to the region whose
   grid operates it, as the research notes record, whatever its sovereignty status. The notes'
-  generalised mainland footprints settle most cases. For example, D includes the Indian-operated
-  north.
+  generalised mainland footprints settle most cases. For example, India–Nepal–Bhutan includes
+  the Indian-operated north.
 - **Areas the notes don't address.** These include Western Sahara, Abkhazia, South Ossetia,
   Transnistria and Kosovo. The region-data task settles each one by the same rule, records the
   operator source in the region file's comments, and never infers membership from a border.
-- **The one exception.** Crimea and the occupied parts of Ukraine are left out of both B and F,
-  with no cities and no buildable cells. Their boundary is the notes' schematic Ukraine–IPS
-  operating extent, which does not follow complete oblasts. Region B's and F's data tasks each
-  author that same exclusion polygon once, and the two regions must not overlap.
+- **The one exception.** Crimea, including Sevastopol, is left out of both Europe–Maghreb and
+  IPS/UPS, with no cities and no buildable cells.
+  - The research map marks Crimea's electrical connection to IPS/UPS with a point and draws no
+    wider occupied-area extent. It paints mainland Ukraine, Donetsk and Luhansk included, in the
+    Continental Europe colour, so mainland Ukraine belongs to Europe–Maghreb.
+  - The exclusion is the Natural Earth 1:10m admin-1 Crimea and Sevastopol polygons (decided
+    2026-10-25; this supersedes the earlier "occupied parts" wording).
+  - Both regions exclude that one canonical polygon set, and the two regions must not overlap.
 - **Borders.** The base map's borders express no sovereignty position (research notes,
   cartographic method).
 - **Starting territories** (*builder's calls*; each is a few cities with a compact starter fleet,
@@ -3465,26 +3498,27 @@ The map letter is a stable identifier, not a rank. Footprints follow the researc
 
   | Region | Home city | Other starter cities |
   |---|---|---|
-  | A | Beijing | Tianjin, Langfang |
-  | B | Seville | Málaga, Tangier (joined by the pre-built Gibraltar link, §28.8) |
-  | D | Delhi | Gurugram, Noida |
-  | E | Guangzhou | Foshan, Dongguan |
-  | F | Moscow | Tula, Tver |
-  | H | São Paulo | Campinas, Santos |
+  | SGCC | Beijing | Tianjin, Langfang |
+  | Europe–Maghreb | Seville | Málaga, Tangier (joined by the pre-built Gibraltar link, §28.8) |
+  | India–Nepal–Bhutan | Delhi | Gurugram, Noida |
+  | Southern China | Guangzhou | Foshan, Dongguan |
+  | IPS/UPS | Moscow | Tula, Tver |
+  | Brazil | São Paulo | Campinas, Santos |
 
 - **Scale.** City base loads keep their real relative sizes inside a region. A region's total base
   load scales with its capacity relative to the Eastern Interconnection, compressed so that no
   region needs more than about 40 cities. *(Builder's call.)* Plant catalogs use local unit sizes
-  and costs, and starter fleets follow each region's real mix.
+  and costs, and starter fleets follow each region's real mix. Optional economic zones override
+  construction terms within that catalog (§28.7.1); they do not create another plant technology.
 - **Grids.** Cells stay equirectangular in longitude and latitude. Choose each region's bounds
   and grid so that cells are within 25% of square in kilometres at its middle latitude. Grids can
   be up to 256 × 128 cells. IPS/UPS uses about 1.0° × 0.5° cells. Line costs remain per cell and
   are authored per region.
 - **Region lessons.** Each region's description card names its distinctive lessons: HVDC
-  scheduling and Northwest curtailment (A), a three-hour time-zone spread and Maghreb solar (B),
-  the monsoon and the evening solar ramp (D), Guizhou and Guangxi hydro with coastal nuclear (E),
-  six time zones, Siberian hydro and polar light (F), and a hydro system with wet and dry seasons
-  plus northeastern wind (H).
+  scheduling and Northwest curtailment (SGCC), a three-hour time-zone spread and Maghreb solar
+  (Europe–Maghreb), the monsoon and the evening solar ramp (India–Nepal–Bhutan), Guizhou and
+  Guangxi hydro with coastal nuclear (Southern China), six time zones, Siberian hydro and polar
+  light (IPS/UPS), and a hydro system with wet and dry seasons plus northeastern wind (Brazil).
 
 ### 28.4 Local time: one system clock, a clock per city
 
@@ -3507,18 +3541,18 @@ The map letter is a stable identifier, not a rank. Footprints follow the researc
   UTC+8 across five solar hours, and Arizona keeps MST all year. Authored zones carry these
   differences, while the sun (§28.5) follows longitude.
 - **Shipped zones:**
-  - C: ET, CT (with Regina on CST all year) and AT (Nova Scotia, New Brunswick, Prince Edward
+  - Eastern Interconnection: ET, CT (with Regina on CST all year) and AT (Nova Scotia, New Brunswick, Prince Edward
     Island);
-  - G: PT (including Baja California), MT and Arizona MST without DST;
-  - B: WET (Portugal), CET (most of Europe; Morocco, Algeria and Tunisia on UTC+1 without DST),
+  - Western Interconnection: PT (including Baja California), MT and Arizona MST without DST;
+  - Europe–Maghreb: WET (Portugal), CET (most of Europe; Morocco, Algeria and Tunisia on UTC+1 without DST),
     EET (Greece, Bulgaria, Romania, Ukraine, Moldova, the Baltic states) and TRT (UTC+3 without
     DST);
-  - F: MSK (+3, including Belarus), +4 (Samara, Azerbaijan, Georgia), +5 (Yekaterinburg,
+  - IPS/UPS: MSK (+3, including Belarus), +4 (Samara, Azerbaijan, Georgia), +5 (Yekaterinburg,
     Kazakhstan, Uzbekistan, Tajikistan), +6 (Omsk, Kyrgyzstan), +7 (Novosibirsk, Krasnoyarsk),
     +8 (Irkutsk, Buryatia) and +9 (Zabaykalsky);
-  - D: IST, NPT (+5:45) and BTT (+6);
-  - H: BRT (−3), AMT (−4) and ACT (−5), without DST;
-  - A and E: CST (+8).
+  - India–Nepal–Bhutan: IST, NPT (+5:45) and BTT (+6);
+  - Brazil: BRT (−3), AMT (−4) and ACT (−5), without DST;
+  - SGCC and Southern China: CST (+8).
 - **Display.** The top bar shows system time with its zone name ("14:20 MSK"). City cards show the
   city's local time and zone, and the commitment grid's hour axis names the system zone.
 - **Planning samples.** Shapes are linear between whole local hours, so aggregate demand bends
@@ -3581,13 +3615,14 @@ The map letter is a stable identifier, not a rank. Footprints follow the researc
 - **Field names.** Schema-4 money fields lose their `_usd` suffix, for example `capital_cost`,
   `cash`, `cost_per_cell` and `reference_tariff_per_mwh`. Values are in major units of the
   region's currency.
-- **Price levels.** Money values (capital, O&M, fuel, start-up, tariffs, cash) come from local
-  sources at local price levels, not from converted US figures. Pacing does not: build months,
-  line `cells_per_month` and starting-cash headroom follow A7's compressed tycoon pacing (§18),
-  so every region plays at North America's tempo. Every value is game tuning, pinned in that
-  region's data task. The beginner checks (§26.7) and the early-expansion acceptance (§18.3) are
-  the acceptance tests. *(Builder's call: "local" applies to prices, not to real construction
-  schedules.)*
+- **Price levels and pacing.** Money values (capital, O&M, fuel, start-up, tariffs, cash) come
+  from local sources at local price levels, not from converted US figures. Region catalogs supply
+  the baseline; §28.7.1 optionally adds country or subnational construction prices **and build
+  times**. Local duration differences are authored on A7's compressed tycoon scale (§18), not as
+  literal real-world schedules. Cost and duration are independent: lower wages do not imply that
+  imported equipment is cheaper or that a project finishes sooner. Final values and starting-cash
+  headroom are game tuning in region data, checked by §26.7 and §18.3. This revises the original
+  A14 builder's call that local variation applied only to prices.
 - **Display.** `format::money` takes the currency. The symbol and its placement come from Fluent
   (`currency-eur`, …). Compact suffixes stay k, M and B in en-US. Tariffs read "₹/MWh" and so on.
   A glyph test paints each symbol (€ ¥ ₹ ₽ R$) with the shipped fonts. If a glyph is missing, the
@@ -3595,16 +3630,148 @@ The map letter is a stable identifier, not a rank. Footprints follow the researc
 - **Ratios are unchanged.** Satisfaction's price factor, the PBR terms and cost performance
   compare like with like, so they are currency-neutral.
 
+#### 28.7.1 Optional construction economic zones (specified 2026-10-25; Plan 6a)
+
+**Status:** Implemented under rules 17 on 2026-10-25. The historical heading is retained for links.
+Europe–Maghreb is the first shipped region to opt in (Plan 7, rules 18); HVDC integration remains
+the Plan 8 handoff recorded in Plan 6a.
+
+**Scope and optionality.** This is an opt-in region-data feature, not another new-game toggle.
+Without `economic_zones`, all current construction prices, months, accounting and source behavior
+remain identical. A zone may represent a country, several countries sharing a cost profile, or a
+subnational construction market. It is independent of time zones, demand climates, electrical
+areas/islands and grid membership. A border neither blocks a line nor changes power balancing.
+The scope is construction capital and completion time for plants and transmission. Currency,
+fuel, O&M, start-up costs, tariffs, tax/financing rules and the regulator remain region-wide.
+National licensing bans, dynamic wages, exchange-rate simulation and new operating markets are
+not introduced.
+
+**Authored data.** Schema 4 may add an optional `economic_zones` block with:
+
+- `zones`: unique nonzero `EconomicZoneId` values, a `name_key`, optional plant overrides keyed
+  by `PlantKind`, and optional `ac_lines` overrides. This ID type is distinct from civil zone and
+  electrical area IDs. Each plant override supplies either or both of `capital_cost` and
+  `build_months`; AC overrides supply either or both of `cost_per_cell` and `cells_per_month`.
+  An omitted member inherits the region catalog/line value. No capacity, efficiency, siting,
+  depreciation life or dispatch characteristic can be overridden here.
+- `cells`: exactly `grid.width × grid.height` zone IDs, row-major from the northwest cell.
+  Each is either a declared ID or reserved ID **0**, the regional default. Non-playable land and
+  water cells use 0; their route work uses regional terms. This is a cost map, not a claim to
+  territorial ownership. City zones are read from their cell, never inferred from their clock.
+
+An omitted block is exactly the all-0 map. An explicit all-0 map is equivalent, including pricing
+and duration arithmetic. No arbitrary multiplier or wage-to-total-capital formula is built into
+the engine: authors supply complete local project cost and compressed duration overrides, separately
+for each affected technology. All amounts use the **region's existing currency** and minor-unit
+rules. Where a source quote uses a different national currency, the data author records its date,
+scope and the dated conversion used to express it in the common regional currency; this is offline
+normalization of local prices, not a converted US catalog or a live FX model. Sources and pacing
+judgments belong in the region comments/research notes; numerical tuning belongs only in RON.
+
+Validation rejects duplicate/reserved IDs, empty name keys, unknown cell references, wrong map
+length, nonzero IDs on non-playable cells, duplicate/unknown plant kinds, unknown fields, negative
+or unrepresentable costs, and zero/out-of-range build months or line speeds, with typed field/ID
+errors. An invalid present block never falls back silently to regional defaults.
+
+RON uses plain optional values, for example
+`(id: 1, name_key: "market-example", plants: [(kind: Wind, capital_cost: 1000000, build_months: 2)], ac_lines: (cells_per_month: 3))`.
+Omit a member to inherit it; do not write `Some(...)` or `None`. Money inputs are whole major
+units of the region currency, converted by the existing checked minor-unit mapping. A complete
+fictional example is `crates/infrastructure/tests/support/economic_region_v4.ron`. Plant duration
+overrides are limited to 1,000,000 months by the existing portable collection-reader bound on
+instalment vectors; this is a representation guard, not gameplay tuning.
+
+**Plants.** Resolve the zone at the plant's cell, copy its base `PlantSpec`, and replace only
+the overridden capital cost and build months. One pure construction resolver supplies the build
+preview/quote, order, equal monthly instalments, construction progress, commissioning and rate
+base. The quote is in final cents and whole game months; instalments use the existing integer
+split and sum exactly to that quoted capital. The order's effective spec, including its local
+construction terms, is stored using the existing plant-spec state fields. Installed-plant cards
+and completion estimates read that effective spec rather than looking up the base kind again.
+Starter plants use the same resolver for their original rate-base value, but start in service.
+Snapshot validation compares each stored spec against the resolver at **that plant's cell**, not
+against the unmodified regional catalog. Invalid inputs, quote overflow or an unrepresentable
+completion month return typed errors before allocating IDs or mutating any session state.
+
+**AC routes across zones.** Country differences apply along the route, not just at whichever
+endpoint was clicked first. Retain the existing billable length `N = whole_cells(length_cells)`
+(including its existing integer-nearness rule). Canonically order endpoint cells by `(x, y)`.
+For `k = 0..N−1`, assign one billable work unit to the cell containing the point at fraction
+`(2k+1)/(2N)` along the segment between endpoint cell centres. Compute these cell indices with
+checked integer rational arithmetic; a sample exactly on a boundary belongs to the larger grid
+index. Both endpoint orders therefore produce the same assignment. This sampling is for billing;
+the cable renderer's water supercover remains its separate visual classification.
+
+- Capital is the checked sum of those N units' local `cost_per_cell`, already in cents. There is
+  no per-country extra fixed charge, per-segment ceiling, exchange fee or submarine surcharge.
+- Work is `sum_z(n_z / v_z)` game months, where `n_z` is the number of sampled units in zone z
+  and `v_z` its resolved `cells_per_month`. Total months is `max(1, ceil(work))`, rounded **once**.
+  Use exact rational work: the least common multiple of the region/default and authored AC speeds
+  must fit `u64`, checked at region validation; accumulate scaled work in checked `u128`.
+  Reject an unrepresentable rate set with a typed field error, not a floating-point approximation.
+- Uniform resolved terms reduce exactly to the existing `N × cost_per_cell` and
+  `max(1, ceil(N / cells_per_month))`, even if the cells carry different zone IDs. Capital-sum or
+  quote-range overflow is a typed `DomainError`, never a player-input panic.
+
+The immutable archived region, fixed node positions and recorded line geometry determine these
+terms for the life of an order. The preview, charged instalments, total/months-left display,
+cancellation and commissioning original rate-base value must agree. In particular, month close
+must not recompute a local order with the old single regional `line_cost` helper. Starter lines
+use the same route valuation; no construction delay is applied to already in-service assets.
+
+**HVDC handoff (Plan 8).** Plan 6a adds no HVDC implementation or accepted HVDC zone fields. Plan 8
+extends the strict zone DTO with optional `hvdc` overrides: `converter_cost_per_end`,
+`converter_build_months`, `cost_per_cell` and `cells_per_month`. The route follows the same work-unit
+rule, with base HVDC `cost_per_cell` and base AC `cells_per_month` as the regional route defaults
+(the existing §28.9 line-months rule). Each terminal uses its own cell's converter terms;
+an absent converter cost inherits its share of the base **combined** converter cost, split in
+cents between canonically ordered endpoints by the existing even-split rule. Thus two absent
+overrides sum to exactly the old combined cost, including an odd cent. Time is the maximum of
+the two terminal durations and route duration. Converter duration defaults to the base converter
+duration at both ends. `link_quote`, instalments, cancellation, construction display and rate base
+use the resulting total; losses, ratings, schedules and island physics are unaffected. Omitted
+HVDC zone terms must preserve Plan 8's uniform formula exactly. Validate HVDC work-rate LCMs
+separately, by the same bound as AC rates. Pricing canonicalization must not swap the link's
+stored from/to endpoints or change the sign of its scheduled power flow.
+
+**Presentation and authoring.** In an opt-in region, selecting a cell or construction site shows
+the localized economic-zone name (or Regional default), quoted capital, game build months and
+monthly payment. Regions omitting the feature keep their existing presentation.
+Cross-zone line quotes show the total and a zone breakdown whose units/cents/work sum to the
+quote; round individual work only for display, never for the total. No new map overlay is required.
+Build previews, installed construction cards and rate-base displays use the resolved values.
+Do not describe real years as game months or present illustrative tuning as sourced national data.
+
+Plan 7's Europe–Maghreb data task **opts in**: author country assignments for its playable
+territory, with documented regional-default cells only where finer attribution is unsupported.
+Profiles may share values, but at least one comparable plant type must have meaningfully different
+cost **and** duration on the European and Maghreb sides, supported by recorded sources and pacing
+judgments. Do not make the whole Maghreb one automatic low-wage discount. IPS/UPS may opt in for
+country/subnational differences with the same provenance; omission remains valid and must be
+recorded as an authoring choice. India and other regions may use their own local baseline catalog
+or opt in; no region is required to reproduce US money magnitudes or identical project durations.
+
+**Compatibility and delivery.** Plan 6a bumps rules 16 to 17. Region schema stays 4
+with this optional extension, and portable state stays 3: effective plant specs and line geometry,
+construction status and instalments already have persisted fields. Do not add a stored zone ID or
+rewrite an old source/capture. Old regions, including schema-4 files without economic zones, use
+the identity resolver and preserve original canonical bytes, construction, rate base and replay.
+Changing the current installed region file never reprices a saved or in-flight project. Extend
+snapshot checks and old-reader tests before admitting local specs; keep command-only logs fenced
+by rules version. Plan 8 retains its own planned state-schema bump for HVDC.
+
 ### 28.8 The Gibraltar link and water crossings
 
-- **Pre-built.** Region B's start network includes the Spain–Morocco interconnector. Tangier is a
+- **Pre-built.** Europe–Maghreb's start network includes the Spain–Morocco interconnector. Tangier is a
   starter city, and its starter line from Seville is the link. It is ordinary: in service from the
   start, in the legacy rate base at its distance (§5.4), and with unlimited capacity under copper
   plate.
 - **Naming.** `start.line_names` may give a starter city's line a name key. The Gibraltar link is
   `line-spain-morocco`, so its card and map label read "Spain–Morocco interconnector".
-- **Line rules are unchanged.** A player-ordered line may still cross water at the land price.
-  That covers Messina, Malta and Crete in B and the Qiongzhou Strait to Hainan in E.
+- **Line rules.** A player-ordered line may still cross water, with no separate submarine premium.
+  Uniform regions keep the land-price rule; economic-zone regions use §28.7.1's route pricing,
+  with water at regional-default terms. This covers Messina, Malta and Crete in Europe–Maghreb and the
+  Qiongzhou Strait to Hainan in Southern China. Connectivity and copper-plate rules are unchanged.
 - **Presentation.** Any line whose straight path crosses water cells is drawn as a submarine
   cable over those cells. The cable is a darker, dashed segment that keeps the line's energised
   pulses. A line card shows "Submarine cable" with its water length. A line card states that
@@ -3641,7 +3808,9 @@ fields are `rating_mw`, `converter_cost` (for both ends), `cost_per_cell`, `conv
 
 - **Build.** `BuildLink { from, to }` works in Planning between two existing nodes. It costs
   `converter_cost + cost_per_cell × cells` in equal instalments over
-  `max(converter_build_months, line months)`, and `link_quote` reports exactly that.
+  `max(converter_build_months, line months)` when economic overrides are absent. With overrides,
+  §28.7.1 supplies the terminal and route terms. `link_quote` reports exactly the capital and
+  duration the order, construction display and commissioning rate base use.
 - **Need test.** A link's ends must lie in different areas; otherwise `BuildLink` returns
   `LinkWithinArea`. AC lines never cross areas, so a link's terminals can never end up in one
   island, and the case of a link inside one island cannot arise. *(Builder's call: this makes HVDC
@@ -3719,17 +3888,40 @@ old reports stay as recorded.
 
 ### 28.10 The world picker
 
-- **Map.** The region picker becomes a world map in the Equal Earth projection, cropped to
-  60°S–75°N. Each shipped region is filled from its own outline with the research legend's colour
-  and letter: A `#CF414C`, B `#226EC7`, C `#E4832F`, D `#B29400`, E `#008F9D`, F `#7652B2`,
-  G `#936A45`, H `#1E8F59`.
-- **Atlas metadata.** The letter and colour are optional `atlas` metadata in region RON. Only the
-  infrastructure outline reader uses them; the domain never sees them. A custom region without
-  them takes the next colour from the fallback palette.
+- **Globe.** The new-game region picker uses an orthographic globe with its north pole tilted
+  22° toward the viewer and its south pole away. Automatic rotation follows the tilted polar
+  axis, moving the visible surface from left to right, and completes one revolution every 24 real
+  seconds (15°/second), independent of frame rate and simulation speed. Horizontal mouse dragging
+  takes direct control in either direction,
+  much faster than automatic rotation, while preserving the tilt. Holding a drag pauses automatic
+  rotation; it resumes at the normal speed two seconds after release. A drag never starts a game.
+  Land, region fills and home markers on the far hemisphere are hidden. Picking inverts the
+  current view onto the front hemisphere, rejects points outside the disc, and respects region
+  exclusions. Each shipped region is filled from its own outline. Colours are SGCC `#CF414C`,
+  Europe–Maghreb `#226EC7`, Eastern Interconnection `#E4832F`, India–Nepal–Bhutan `#B29400`,
+  Southern China `#008F9D`, IPS/UPS `#7652B2`, Western Interconnection `#936A45` and Brazil
+  `#1E8F59`. Home cities use point markers; region names appear on hover and on the cards.
+  No illustration letters or heading are painted over the globe. Keep its localized accessible name.
+- **Atlas metadata.** Optional `atlas: (colour: "#RRGGBB")` metadata in region RON supplies the
+  colour. Only the infrastructure outline reader uses it; the domain never sees it. A custom
+  region without it takes the next colour from the fallback palette. Historical `letter` input is
+  accepted and discarded only for compatibility; it is never exposed or written by the current
+  DTO. Preserve archived source bytes and existing saves.
 - **Areas.** SGCC is one entry. Its area boundaries are drawn, and hovering shows the area names.
-- **Text.** Letters and labels sit on opaque backings at the 4.5:1 contrast floor (§8.4).
+- **Text.** Hover labels and the map note sit on opaque backings at the 4.5:1 contrast floor (§8.4).
+  Paint geographic fills first, then home markers, and the active hover title last so neighbouring
+  regions cannot cover it.
 - **Region cards.** Each card adds frequency, currency, time-zone span and hemisphere to the
-  existing description and home city.
+  existing description and home city. The panel to the globe's right uses two columns when both
+  cards remain comfortably readable, and one column at narrower widths. When the cards don't fit the panel's
+  height, the card panel alone scrolls vertically (the globe stays put); keyboard focus scrolls
+  the focused card into view (decided 2026-10-25 for seven and eight regions). Catalog order and keyboard
+  focus proceed across each row before moving to the next. Clicking an enabled card's body
+  selects and highlights its region without starting a game, including a region on the far side.
+  Smoothly rotate through the shortest longitude arc in 0.6 seconds to put the midpoint of its
+  geographic bounds on the front meridian, preserving the 22° tilt. Hold for two seconds after
+  arrival, then resume gradual rotation. Another card retargets from the current pose; dragging
+  cancels the animation and takes immediate control. The card's title button still starts the game.
 - **Unchanged behaviour.** Hover, click, keyboard start buttons, the seed rules and disabled entries
   stay as in §2.6. Grey land is unselectable, and the picker does not imply that grey land lacks
   electricity.
@@ -3741,8 +3933,18 @@ old reports stay as recorded.
 - **Schema 4.** New authored fields: `system_zone`, `time_zones`, a zone per city, `climates`,
   `demand_noise`, `calendar`, the computed-sun `solar` block (no `daylight`), `currency` with
   unsuffixed money fields, optional `areas`, optional `hvdc`, optional `start.line_names` and
-  optional `atlas`. A schema-4 file missing a required field fails to load with a typed error that
-  names the field.
+  optional `atlas`. Plan 6a adds optional `economic_zones` (§28.7.1); Plan 8 adds its optional HVDC
+  economic terms. The economic-zone plant/AC extension is implemented; HVDC fields remain
+  reserved for Plan 8 and are rejected by the current loader. A schema-4 file missing a required
+  field fails to load with a typed error naming it.
+- **Schema-4 irradiance authoring.** `irradiance` is either the existing Gaussian field
+  `(base: value, blobs: [...])` or an exact cell field `(cells: [...])`. The forms are mutually
+  exclusive; partial Gaussian fields and mixed forms are rejected. The cell list has exactly
+  `grid.width × grid.height` finite values in `[0, 1]`, row-major from the northwest cell.
+  These are authored site-quality values, not annual potential: the usual computed sun and
+  annual latitude factor still apply unchanged. An offline data tool may invert that factor to
+  preserve an existing field's relative solar-site ranking; no runtime compensation or
+  calibration is added. Schemas 3 and earlier keep only their existing Gaussian syntax and math.
 - **Schemas 3 and earlier.** Version-aware mapping supplies frozen legacy behaviour: one zone at
   offset zero without DST, the authored `daylight` table (the domain keeps
   `SolarModel::DaylightTable` beside `SolarModel::Astronomical`), one climate with northern
@@ -3752,15 +3954,131 @@ old reports stay as recorded.
   (§28.4), the computed sun, re-authored irradiance and climates. Their balance changes. Fix any
   failing beginner check by retuning region data, never the rules. Their fingerprints change.
   Archived bytes do not, so existing saves keep their single clock and daylight table.
+  The migrated annual potential preserves every strict ordering between playable cells in the
+  frozen legacy irradiance field; acceptance groups equal old values and requires each group's
+  largest new value to be below the next group's smallest, including rejection of collapsed ties.
 - **Portable state.**
   - **Plan 6:** the new `Season` tags enter persisted milestone state, so it bumps the state schema
     once.
+  - **Plan 6a:** construction economics reuses the existing state-3 fields; effective-spec
+    validation becomes cell-aware, while older canonical source/schema checks remain unchanged.
   - **Plan 8:** bumps it again (§28.9).
-  - **Both:** keep every older reader. Verify old bytes with old semantics before any upcast, and
+  - **All plans:** keep every older reader. Verify old bytes with old semantics before any upcast, and
     never rewrite history (§21, §25.6).
 - **Rules versions.** Each plan bumps `SIM_RULES_VERSION` once and regenerates the rules guard and
   the scenario snapshots, reviewing every diff. Command-only logs stay fenced by
-  `RulesVersionMismatch`.
+  `RulesVersionMismatch`. The delivery order is Plan 6 (implemented, rules 16), Plan 6a (economic
+  zones, implemented under rules 17), Plan 7 (five single-area regions, implemented under rules 18),
+  then Plan 8 (multi-area/HVDC).
+  Plan 6a reuses state schema 3; it adds no persisted fields. Later plans bump from the preceding implemented rules.
+
+#### 28.11.1 Region sidecars and the canonical bundle (approved 2026-10-26)
+
+**Why.** Offline tools generate the bulk of the schema-4 files, and that bulk is pasted into the
+hand-authored RON. Examples are the North American irradiance `cells`, Europe–Maghreb's
+`economic_zones.cells`, and the Natural Earth `land` and `exclude` rings. Generated blocks make up
+45–80% of the five largest files, so the files are hard to read and their diffs hard to review. This
+change is about authoring only. Loading, listing and simulation behave exactly as before.
+
+**Rule.** A block that an offline tool generates lives in a sidecar. Anything written by hand,
+such as nudge rings, relief or comments, stays in the main file.
+
+**On disk.** A region is still `assets/regions/<id>.ron`. Its sidecars live in the directory
+`assets/regions/<id>/` beside it. Each sidecar is a RON document with its own provenance header
+comment. The main file names each sidecar by a plain file name matching `[a-z0-9_]+\.ron`, with no
+path separators. Three schema-4 reference points exist:
+
+- `irradiance: (cells_file: "irradiance_cells.ron")` is a third irradiance form, exclusive with the
+  Gaussian and inline-cell forms. The sidecar is the inline form, `(cells: [...])`.
+- In `economic_zones`, `cells_file: "economic_zone_cells.ron"` replaces `cells`. The two are
+  exclusive, and the sidecar is `(cells: [...])`.
+- `geography: ["natural_earth.ron", ...]` is optional and defaults to empty. Each sidecar is
+  `(land: [...], exclude: [...])`, and each member defaults to empty. The effective `land` is every
+  sidecar's land, in reference order, followed by the inline `land`. `exclude` works the same way.
+  Ring order has no meaning, because a cell centre is land when it lies in *any* land ring and in
+  no exclude ring. This order is only a convention.
+
+The catalog lists `.ron` files only, so a sidecar directory never appears as a region. Listing
+reads only the main file. Loading reads the referenced sidecars and rejects any `.ron` file in
+`<id>/` that the main file does not reference. Validation is unchanged: a resolved region passes
+or fails exactly as its inlined one-file equivalent would.
+
+**At runtime: one canonical bundle.** `LoadedRegion::source_bytes` is the region's *bundle*. That
+one byte string is what the definition is parsed from, what is fingerprinted (SHA-256, §7.1), and
+what is archived in logs and saves. It is defined as follows.
+
+- **A main file with no sidecar references** is its own bundle: exactly the file's bytes, with no
+  framing. Every one-file region keeps its current bytes and fingerprint.
+- **A main file with references** is framed. The first line is `megawatt-region-bundle 1\n`. Each
+  entry follows as a header line `<name> <length>\n` and then exactly `<length>` raw bytes.
+  `<length>` is in decimal without leading zeros. The main file comes first as `<id>.ron`, then
+  each referenced sidecar once as `<id>/<file>`, in ascending byte order of name. Nothing follows
+  the last entry.
+- **Decoding is strict, so every region has exactly one bundle.** Bytes that start with the magic
+  must be a well-formed v1 bundle and must contain at least one sidecar. Their sidecar set must
+  equal the set the main file references. Anything else is a typed error, never a fallback.
+  Bytes without the magic are a one-file region and take today's path unchanged, so a one-file
+  main that references sidecars fails as missing them.
+- **Resolution.** References are inlined into the schema-4 DTO before mapping, so mapping,
+  rasterisation, the outline and the zone tool see what they always saw. A sidecar in a bundle
+  whose main file is schema 3 or earlier is an error, because only schema 4 has reference fields.
+- **Archive file.** The archive keeps its name, `<log-name>.region.ron`, and holds the bundle
+  bytes, which may be framed. The §7.1 sentence "region files may not depend on external includes"
+  now applies to the bundle: the bundle is self-contained, even though a main file is not.
+
+**Typed errors.** `RegionLoadError` gains two variants.
+
+- `Sidecar { region, file, problem }` names the file. `problem` is one of `Missing`,
+  `Unreferenced`, `InvalidName`, `Io` or `Parse`.
+- `Bundle { region, problem }` covers framing: bad magic or version, truncation, unsorted or
+  duplicate entries, no sidecars, and trailing bytes.
+
+A sidecar whose content is valid RON but has the wrong cell count is still the existing
+`Invalid` error. A sidecar changed after a save was made gives a different bundle, which the
+existing `RegionFingerprintMismatch` refuses.
+
+**Compatibility.**
+
+- Archived one-file saves and logs restore byte-identically through today's path. Their bytes
+  are verified against the recorded fingerprint before any parsing.
+- Old bytes are never upcast into a bundle. An old archive is never rewritten.
+- New games on a migrated shipped region record the bundle's new fingerprint. The resolved
+  definition is identical to the one-file original, so no simulation outcome changes.
+- A build from before this change reads a framed bundle as a RON parse error. Older builds never
+  promised to load newer saves.
+
+**Versioning: region schema 4 with an optional extension, not schema 5.**
+
+- The region schema number keys *meaning*: it selects the mapping and the frozen legacy defaults.
+  Sidecars change only *packaging*. Resolution is a syntactic inlining step before mapping, and a
+  bundle maps to the same `RegionDefinition` as its inlined one-file form.
+- The container is versioned separately by the bundle magic (`1`), and readers dispatch on it.
+- Schema 5 would duplicate or alias the schema-4 DTO and mapping and change
+  `CURRENT_REGION_SCHEMA` without changing any behaviour. It would also wrongly suggest that the
+  data's meaning had changed.
+- For the same reason, `SIM_RULES_VERSION` does not change and the scenario snapshots stay as
+  they are. Only the migrated regions' fingerprints change.
+
+**Tools.**
+
+- `natural_earth.py` gains `--out <sidecar>`, which writes `(land: [...], exclude: [...])`.
+  `--extent` writes `(exclude: [...])`, and the canonical Ukraine extent's `polygons` member is
+  renamed to `exclude` to match.
+- `author_economic_zone_cells` and `author_irradiance_grid` write `(cells: [...])` sidecars.
+- Each `tools/region_authoring/selections/*.args` names its target sidecar. Reproducibility
+  tests compare a fresh run with the committed sidecar byte for byte. The Natural Earth test is
+  skipped with a message when `target/natural-earth/` is absent.
+- The two region copies of the Ukraine extent are tested to be byte-identical to
+  `crates/infrastructure/authoring/ukraine_ips_operating_extent.ron`.
+
+**Migration.** Every shipped region moves its generated blocks into sidecars: the irradiance cells
+of both North American files, Europe–Maghreb's zone cells, and the Natural Earth runs of all five
+Plan 7 regions. Hand-authored rings stay inline. A one-off check confirms that each migrated
+bundle maps to a `RegionDefinition` equal to its pre-migration file. The North American
+irradiance cells move verbatim and stay frozen data. The seam fix (`e460b5e`) changed both
+regions' playable cells after the cells were authored. `author_irradiance_grid` therefore refuses
+to regenerate them until they are re-authored. Packaging installs `assets/`
+recursively, so the sidecar directories ship without further changes.
 
 ### 28.12 Acceptance
 
@@ -3781,7 +4099,14 @@ old reports stay as recorded.
 - **Currency.** Every shipped currency formats with its glyph or the ISO fallback, and cash change
   still equals the ledger sum exactly. A schema-4 file with a `_usd` field or an unknown currency
   fails with a typed error.
-- **Gibraltar.** Region B starts with Seville, Málaga and Tangier served, and the named cable is
+- **Construction economics (Plan 6a).** Omitted/all-default zones reproduce old quotes and saves
+  exactly. Same-kind plants on two authored country profiles can have independent capital and
+  build months. Preview, instalments, progress, commission date, cancellation and original rate
+  base agree before and after save/resume. Cross-zone AC quotes are endpoint-order invariant;
+  uniform profiles reproduce the old formula and work is rounded only once. Invalid maps/rates
+  and overflow give typed errors without mutation. Europe–Maghreb authors meaningful differences
+  in both cost and duration; every affected starter territory still passes seeds 0–7 acceptance.
+- **Gibraltar.** Europe–Maghreb starts with Seville, Málaga and Tangier served, and the named cable is
   drawn as a submarine segment.
 - **Islands.**
   - Every existing property and scenario holds unchanged in one-island regions; the rules guard

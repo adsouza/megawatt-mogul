@@ -261,7 +261,19 @@ fn save_store_a_second_resume_needs_neither_parent_save_nor_logs_nor_installed_r
     std::fs::create_dir(&assets).unwrap();
     let shipped = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../assets/regions/western_interconnection.ron");
-    std::fs::copy(shipped, assets.join("western_interconnection.ron")).unwrap();
+    std::fs::copy(&shipped, assets.join("western_interconnection.ron")).unwrap();
+    // Its sidecars (spec section 28.11.1) come along.
+    std::fs::create_dir(assets.join("western_interconnection")).unwrap();
+    for entry in std::fs::read_dir(shipped.with_extension("")).unwrap() {
+        let path = entry.unwrap().path();
+        std::fs::copy(
+            &path,
+            assets
+                .join("western_interconnection")
+                .join(path.file_name().unwrap()),
+        )
+        .unwrap();
+    }
     let catalog = RonRegionCatalog::new(assets.clone());
     let log = root.path().join("initial.log");
     let mut live = Game::start_new(

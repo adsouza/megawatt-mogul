@@ -1,4 +1,5 @@
 use crate::hud_smoke::dispatch_in;
+use crate::support::usd_style;
 use crate::support::{hud_app, request, update_n};
 use application::Command;
 use bevy::prelude::*;
@@ -38,13 +39,14 @@ pub(crate) fn open_browser(app: &mut App) {
 }
 #[test]
 fn save_resume_mid_day_restores_a_paused_runnable_game_with_all_projections() {
-    for region in ["eastern_interconnection", "western_interconnection"] {
+    for &region in crate::support::SHIPPED_REGIONS {
         let logs = TempDir::new().unwrap();
         let saves = TempDir::new().unwrap();
         let mut app = hud_app(logs.path());
         app.add_plugins(game::world::WorldViewPlugin);
         app.insert_resource(SaveDir(saves.path().into()));
         request(&mut app, region);
+        order_across_economic_zones(&mut app.world_mut().resource_mut::<Session>().0);
         dispatch_in(&mut app, vec![UiAction::Command(Command::BeginOperating)]);
         update_n(&mut app, 3);
         app.world_mut()
@@ -161,6 +163,66 @@ fn save_resume_mid_day_restores_a_paused_runnable_game_with_all_projections() {
             uninterrupted.projections()
         );
     }
+}
+
+/// In a region with economic zones (Europe-Maghreb), orders a Wind plant in the nonzero zone
+/// nearest home other than home's own, and a line from home to it, so the save carries a
+/// cross-zone plant and route in flight. Other regions are left unchanged.
+fn order_across_economic_zones(game: &mut application::Game) {
+    use domain::{events::DomainEvent, ids::CellCoord, region::PlantKind};
+    let region = std::sync::Arc::clone(game.session().region());
+    if !region.has_economic_zones() {
+        return;
+    }
+    let home = region.city(region.start().home_city).unwrap().cell;
+    let home_zone = region.economic_zone_at(home).unwrap();
+    let occupied: Vec<CellCoord> = game
+        .session()
+        .plant_views()
+        .iter()
+        .map(|p| p.cell)
+        .chain(game.session().city_views().iter().map(|c| c.cell))
+        .collect();
+    let terrain = region.terrain();
+    let cell = (0..terrain.height())
+        .flat_map(|y| (0..terrain.width()).map(move |x| CellCoord { x, y }))
+        .filter(|c| {
+            let zone = region.economic_zone_at(*c).unwrap();
+            zone.0 != 0
+                && zone != home_zone
+                && !occupied.contains(c)
+                && region.site_check(PlantKind::Wind, *c).is_ok()
+        })
+        .min_by_key(|c| {
+            (
+                u32::from(c.x.abs_diff(home.x)).pow(2) + u32::from(c.y.abs_diff(home.y)).pow(2),
+                *c,
+            )
+        })
+        .expect("another zone has a wind site");
+    let plant = game
+        .execute(Command::BuildPlant {
+            kind: PlantKind::Wind,
+            cell,
+        })
+        .unwrap()
+        .iter()
+        .find_map(|e| match e {
+            DomainEvent::PlantConstructionStarted { plant, .. } => Some(*plant),
+            _ => None,
+        })
+        .unwrap();
+    let node = game
+        .session()
+        .plant_views()
+        .into_iter()
+        .find(|p| p.id == plant)
+        .unwrap()
+        .node;
+    let from = game.session().anchor_node();
+    let quote = game.session().line_quote(from, node).unwrap();
+    assert!(quote.zones.len() > 1, "the route crosses zones: {quote:?}");
+    game.execute(Command::BuildLine { from, to: node }).unwrap();
 }
 
 fn action(app: &mut App, action: PersistAction) {
@@ -744,6 +806,7 @@ fn top_bar(app: &App) -> game::hud::TopBarModel {
         &app.world().resource::<Session>().0,
         app.world().resource::<Persistence>(),
         &crate::support::shipped_l10n(),
+        &usd_style(),
     )
 }
 

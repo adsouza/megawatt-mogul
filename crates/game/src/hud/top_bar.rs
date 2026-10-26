@@ -2,6 +2,7 @@
 //! scores, the recording-stopped and failed-autosave warnings, the Milestones panel's switch,
 //! Save, and the way back to the menu, which asks first.
 
+use crate::l10n::format::MoneyStyle;
 use application::Game;
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
@@ -34,6 +35,7 @@ pub struct WarningsBanner {
 pub struct TopBarModel {
     /// `March 2027`.
     pub date: String,
+    pub time: String,
     pub season: String,
     pub phase: String,
     pub cash: Stat,
@@ -60,7 +62,12 @@ pub struct TopBarModel {
     pub last_saved: Option<String>,
 }
 
-pub fn top_bar_model(game: &Game, persistence: &Persistence, l10n: &Localizer) -> TopBarModel {
+pub fn top_bar_model(
+    game: &Game,
+    persistence: &Persistence,
+    l10n: &Localizer,
+    style: &MoneyStyle,
+) -> TopBarModel {
     let session = game.session();
     let grid = session.grid_snapshot();
     let company = session.company_view();
@@ -95,9 +102,10 @@ pub fn top_bar_model(game: &Game, persistence: &Persistence, l10n: &Localizer) -
     );
     TopBarModel {
         date: format::month_year(grid.month),
-        season: grid.month.season().localize(l10n),
+        time: format::zoned_clock(session.clock().tick(), session.region().system_zone(), l10n),
+        season: session.region().season(grid.month).localize(l10n),
         phase: grid.phase.localize(l10n),
-        cash: stat("topbar-cash", format::money(company.cash)),
+        cash: stat("topbar-cash", format::money(company.cash, style)),
         reliability: stat("topbar-reliability", format::percent(company.reliability)),
         satisfaction: stat("topbar-satisfaction", format::score(company.satisfaction)),
         strikes: stat(
@@ -223,38 +231,105 @@ fn warnings_banner(
     }
 }
 
+/// Measure the localized content before assigning the warning its remaining space. Long
+/// seasons, currency fallbacks and UI zoom can need a second row even at the minimum window.
+fn top_bar_width(ui: &egui::Ui, model: &TopBarModel) -> f32 {
+    let stats = [
+        &model.cash,
+        &model.reliability,
+        &model.satisfaction,
+        &model.strikes,
+    ];
+    let mut texts = vec![
+        model.date.as_str(),
+        &model.time,
+        &model.season,
+        &model.phase,
+        &model.menu.label,
+        &model.save.label,
+        &model.milestones.label,
+    ];
+    for stat in stats {
+        texts.extend([stat.label.as_str(), stat.value.as_str()]);
+    }
+    if let Some(warning) = &model.warnings
+        && model.autosave_failed.is_some()
+    {
+        texts.push(&warning.text);
+    }
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let width: f32 = texts
+        .iter()
+        .map(|text| {
+            ui.fonts_mut(|fonts| {
+                fonts
+                    .layout_no_wrap((*text).to_owned(), font.clone(), egui::Color32::WHITE)
+                    .size()
+                    .x
+            })
+        })
+        .sum();
+    // A recording error can contain arbitrarily long diagnostics. Its tooltip retains the
+    // full reason; reserve a compact indicator rather than wrapping for diagnostic text.
+    let recording = if model.warnings.is_some() && model.autosave_failed.is_none() {
+        64.0
+    } else {
+        0.0
+    };
+    width + texts.len() as f32 * 4.0 + 6.0 * ui.spacing().button_padding.x + 40.0 + recording
+}
+
+fn draw_scores(ui: &mut egui::Ui, model: &TopBarModel) {
+    for (stat, tone) in [
+        &model.cash,
+        &model.reliability,
+        &model.satisfaction,
+        &model.strikes,
+    ]
+    .into_iter()
+    .zip(model.score_tones)
+    {
+        ui.separator();
+        ui.colored_label(TextTone::Neutral.color(), &stat.label);
+        ui.label(
+            egui::RichText::new(&stat.value)
+                .strong()
+                .color(tone.color()),
+        );
+    }
+}
+
+fn draw_warning(ui: &mut egui::Ui, model: &TopBarModel) {
+    if let Some(warnings) = &model.warnings {
+        ui.add(
+            egui::Label::new(egui::RichText::new(&warnings.text).color(TextTone::Caution.color()))
+                .truncate()
+                .show_tooltip_when_elided(false),
+        )
+        .on_hover_text(&warnings.tooltip);
+        ui.separator();
+    }
+}
+
 pub fn draw_top_bar(ui: &mut egui::Ui, model: &TopBarModel) -> Vec<UiAction> {
     let mut actions = Vec::new();
+    let two_rows = top_bar_width(ui, model) > ui.available_width();
     ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
         ui.label(
             egui::RichText::new(&model.date)
                 .strong()
                 .color(TextTone::Caution.color()),
         );
+        ui.colored_label(TextTone::Information.color(), &model.time);
         ui.colored_label(TextTone::Neutral.color(), &model.season);
         ui.separator();
         ui.colored_label(heading_color(), &model.phase);
-        for (stat, tone) in [
-            &model.cash,
-            &model.reliability,
-            &model.satisfaction,
-            &model.strikes,
-        ]
-        .into_iter()
-        .zip(model.score_tones)
-        {
-            ui.separator();
-            ui.colored_label(TextTone::Neutral.color(), &stat.label);
-            ui.label(
-                egui::RichText::new(&stat.value)
-                    .strong()
-                    .color(tone.color()),
-            );
+        if !two_rows {
+            draw_scores(ui, model);
         }
-        // Right to left: Menu and Milestones are laid out first, so they always keep their
-        // place, and the warning takes only the space between them and the scores. It is cut
-        // short to fit, so the bar stays one row and the map doesn't move; the whole of it is in
-        // its tooltip.
+        // Actions keep the right edge. When space is tight the scores and warning share a
+        // separate row, preserving the complete failed month rather than hiding it in a tooltip.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             button(ui, &model.menu, &mut actions);
             let save = button(ui, &model.save, &mut actions);
@@ -262,19 +337,20 @@ pub fn draw_top_bar(ui: &mut egui::Ui, model: &TopBarModel) -> Vec<UiAction> {
                 save.on_hover_text(status);
             }
             button(ui, &model.milestones, &mut actions);
-            if let Some(warnings) = &model.warnings {
-                let text =
-                    egui::RichText::new(warnings.text.as_str()).color(TextTone::Caution.color());
-                ui.add(
-                    egui::Label::new(text)
-                        .truncate()
-                        .show_tooltip_when_elided(false),
-                )
-                .on_hover_text(warnings.tooltip.as_str());
-                ui.separator();
+            if !two_rows {
+                draw_warning(ui, model);
             }
         });
     });
+    if two_rows {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            draw_scores(ui, model);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                draw_warning(ui, model)
+            });
+        });
+    }
     actions
 }
 
@@ -284,8 +360,9 @@ pub(super) fn top_bar_panel(
     session: Res<Session>,
     l10n: Res<Localizer>,
     mut sink: ActionSink,
+    style: Res<MoneyStyle>,
 ) -> Result {
-    let model = top_bar_model(&session.0, sink.persistence(), &l10n);
+    let model = top_bar_model(&session.0, sink.persistence(), &l10n, &style);
     let mut ui = area.root_ui(contexts.ctx_mut()?, "top_bar");
     let actions = egui::Panel::top("top_bar")
         .show(&mut ui, |ui| draw_top_bar(ui, &model))
@@ -297,10 +374,109 @@ pub(super) fn top_bar_panel(
 
 #[cfg(test)]
 mod tests {
+    use crate::hud::test_support::usd_style;
     use application::{CheckpointSummary, Command, InMemoryCommandLog};
 
     use super::*;
     use crate::hud::test_support::{FullDisk, eastern_game, shipped_l10n};
+
+    #[test]
+    fn top_bar_shows_system_time_with_zone() {
+        let l10n = crate::hud::test_support::global_l10n();
+        let mut game = crate::hud::test_support::global_game();
+        game.execute(Command::BeginOperating).unwrap();
+        game.execute(Command::AdvanceTicks { n: 860 }).unwrap();
+        assert_eq!(
+            top_bar_model(&game, &Persistence::default(), &l10n, &usd_style()).time,
+            "14:20 MSK"
+        );
+        let legacy = crate::hud::test_support::legacy_eastern_game();
+        assert_eq!(
+            top_bar_model(&legacy, &Persistence::default(), &l10n, &usd_style()).time,
+            "00:00"
+        );
+    }
+    #[test]
+    fn long_regional_labels_keep_the_failed_autosave_month_and_actions_visible() {
+        let l10n = crate::hud::test_support::global_l10n();
+        let mut game = crate::hud::test_support::edited_global_game(|source| {
+            source
+                .replace("currency: EUR", "currency: INR")
+                .replace("month: 4", "month: 9")
+                .replace("Spring", "PostMonsoon")
+        });
+        game.execute(Command::BeginOperating).unwrap();
+        game.execute(Command::AdvanceTicks { n: 860 }).unwrap();
+        let style = MoneyStyle::resolve(game.session().region().currency(), &l10n, |_| false);
+        let persistence = Persistence::with_failed_autosave(CheckpointSummary::of(game.session()));
+        let model = top_bar_model(&game, &persistence, &l10n, &style);
+        assert_eq!(model.season, "Post-monsoon");
+        assert!(model.cash.value.starts_with("INR "));
+        for zoom in [1.0, 1.25] {
+            let ctx = egui::Context::default();
+            ctx.set_zoom_factor(zoom);
+            let screen = egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1024.0 / zoom, 640.0 / zoom),
+            );
+            for frame in 0..4 {
+                let output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(screen),
+                        ..default()
+                    },
+                    |ui| {
+                        egui::Panel::top("top_bar").show(ui, |ui| draw_top_bar(ui, &model));
+                    },
+                );
+                let shapes = output.shapes.clone();
+                output.drop_without_applying_deltas();
+                if frame < 2 {
+                    continue;
+                }
+                for label in [
+                    model.warnings.as_ref().unwrap().text.as_str(),
+                    model.menu.label.as_str(),
+                    model.save.label.as_str(),
+                    model.milestones.label.as_str(),
+                ] {
+                    let text = shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            egui::Shape::Text(text) if text.galley.text() == label => Some(text),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| panic!("missing {label} at zoom {zoom}"));
+                    let glyphs: String = text
+                        .galley
+                        .rows
+                        .iter()
+                        .flat_map(|row| row.glyphs.iter().map(|g| g.chr))
+                        .collect();
+                    assert_eq!(glyphs, label, "complete persistence text at zoom {zoom}");
+                    assert!(
+                        screen.contains_rect(text.visual_bounding_rect()),
+                        "{label} fits at zoom {zoom}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn season_label_follows_the_region_calendar() {
+        let game = crate::hud::test_support::global_game();
+        assert_eq!(
+            top_bar_model(
+                &game,
+                &Persistence::default(),
+                &shipped_l10n(),
+                &usd_style()
+            )
+            .season,
+            "Autumn"
+        );
+    }
 
     #[test]
     fn top_bar_model_formats_company_view() {
@@ -310,13 +486,13 @@ mod tests {
         let company = session.company_view();
         let month = session.grid_snapshot().month;
 
-        let model = top_bar_model(&game, &Persistence::default(), &l10n);
+        let model = top_bar_model(&game, &Persistence::default(), &l10n, &usd_style());
 
         assert_eq!(model.date, format::month_year(month));
         assert_eq!(model.season, month.season().localize(&l10n));
         assert_eq!(model.phase, l10n.text("phase-planning"));
         assert_eq!(model.cash.label, l10n.text("topbar-cash"));
-        assert_eq!(model.cash.value, format::money(company.cash));
+        assert_eq!(model.cash.value, format::money(company.cash, &usd_style()));
         assert!(model.cash.value.starts_with('$'), "{}", model.cash.value);
         assert_eq!(
             model.reliability.value,
@@ -418,14 +594,14 @@ mod tests {
         let l10n = shipped_l10n();
         let mut game = eastern_game(Box::new(FullDisk));
         assert_eq!(
-            top_bar_model(&game, &Persistence::default(), &l10n).recording_stopped,
+            top_bar_model(&game, &Persistence::default(), &l10n, &usd_style()).recording_stopped,
             None
         );
 
         // The game carries on after the log fails to record this command.
         game.execute(Command::BeginOperating).unwrap();
 
-        let model = top_bar_model(&game, &Persistence::default(), &l10n);
+        let model = top_bar_model(&game, &Persistence::default(), &l10n, &usd_style());
         let warning = model.recording_stopped.expect("the warning is shown");
         assert!(warning.starts_with("Recording stopped"), "{warning}");
         assert!(warning.contains("disk full"), "{warning}");
@@ -442,7 +618,7 @@ mod tests {
         // A save was confirmed earlier: without the failure the button would say "(saved)".
         persistence.last_summary = Some(failed.clone());
 
-        let model = top_bar_model(&game, &persistence, &l10n);
+        let model = top_bar_model(&game, &persistence, &l10n, &usd_style());
 
         // The warning and the label never contradict each other (Review Focus 2).
         assert_ne!(model.save.label, l10n.text("save-confirmed"));
@@ -466,7 +642,7 @@ mod tests {
         let mut game = eastern_game(Box::new(FullDisk));
         let failed = CheckpointSummary::of(game.session());
         assert_eq!(
-            top_bar_model(&game, &Persistence::default(), &l10n).warnings,
+            top_bar_model(&game, &Persistence::default(), &l10n, &usd_style()).warnings,
             None
         );
 
@@ -475,6 +651,7 @@ mod tests {
             &game,
             &Persistence::with_failed_autosave(failed.clone()),
             &l10n,
+            &usd_style(),
         );
         let message = l10n.args(
             "save-autosave-failed-detail",
@@ -488,7 +665,7 @@ mod tests {
             })
         );
         game.execute(Command::BeginOperating).unwrap();
-        let recording = top_bar_model(&game, &Persistence::default(), &l10n);
+        let recording = top_bar_model(&game, &Persistence::default(), &l10n, &usd_style());
         let reason = recording.recording_stopped.clone().unwrap();
         assert_eq!(
             recording.warnings,
@@ -503,6 +680,7 @@ mod tests {
             &game,
             &Persistence::with_failed_autosave(failed.clone()),
             &l10n,
+            &usd_style(),
         );
         let banner = both.warnings.expect("an indicator");
         assert_eq!(banner.text, "⚠ 2 warnings");
@@ -517,12 +695,14 @@ mod tests {
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
         let mut persistence = Persistence::default();
         assert_eq!(
-            top_bar_model(&game, &persistence, &l10n).save.label,
+            top_bar_model(&game, &persistence, &l10n, &usd_style())
+                .save
+                .label,
             l10n.text("save-title")
         );
         persistence.last_summary = Some(CheckpointSummary::of(game.session()));
 
-        let model = top_bar_model(&game, &persistence, &l10n);
+        let model = top_bar_model(&game, &persistence, &l10n, &usd_style());
 
         assert_eq!(model.autosave_failed, None);
         assert_eq!(model.save.label, l10n.text("save-confirmed"));
@@ -535,7 +715,7 @@ mod tests {
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
         let limit = game.session().region().regulator().strikes_to_revoke;
 
-        let model = top_bar_model(&game, &Persistence::default(), &l10n);
+        let model = top_bar_model(&game, &Persistence::default(), &l10n, &usd_style());
 
         assert_eq!(model.strikes.label, l10n.text("topbar-strikes"));
         assert_eq!(model.strikes.value, format!("0/{limit}"));
@@ -548,7 +728,7 @@ mod tests {
         let l10n = shipped_l10n();
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
 
-        let model = top_bar_model(&game, &Persistence::default(), &l10n);
+        let model = top_bar_model(&game, &Persistence::default(), &l10n, &usd_style());
 
         assert_eq!(model.menu.action, UiAction::Prompt(Some(Prompt::LeaveGame)));
     }
@@ -558,7 +738,7 @@ mod tests {
         let l10n = shipped_l10n();
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
 
-        let model = top_bar_model(&game, &Persistence::default(), &l10n);
+        let model = top_bar_model(&game, &Persistence::default(), &l10n, &usd_style());
 
         assert_eq!(model.milestones.label, "Milestones");
         assert_eq!(model.milestones.action, UiAction::ToggleMilestones);

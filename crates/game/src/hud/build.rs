@@ -2,6 +2,7 @@
 //! between two network nodes. It asks for nothing by itself: a button sends the build command, and
 //! the domain checks it again.
 
+use crate::l10n::format::MoneyStyle;
 use application::{Command, Game};
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
@@ -129,7 +130,12 @@ fn node_choices(game: &Game, l10n: &Localizer) -> Vec<NodeChoice> {
 }
 
 /// The build menu for `selection`; `None` outside Planning, when nothing can be ordered.
-pub fn build_model(game: &Game, l10n: &Localizer, selection: Selection) -> Option<BuildModel> {
+pub fn build_model(
+    game: &Game,
+    l10n: &Localizer,
+    selection: Selection,
+    style: &MoneyStyle,
+) -> Option<BuildModel> {
     let session = game.session();
     if session.phase() != DayPhase::Planning {
         return None;
@@ -137,8 +143,8 @@ pub fn build_model(game: &Game, l10n: &Localizer, selection: Selection) -> Optio
     let nodes = node_choices(game, l10n);
     Some(BuildModel {
         title: l10n.text("build-title"),
-        plant: plant_section(game, l10n, selection),
-        line: line_section(game, l10n, selection, &nodes),
+        plant: plant_section(game, l10n, selection, style),
+        line: line_section(game, l10n, selection, &nodes, style),
     })
 }
 
@@ -148,8 +154,11 @@ fn months_value(l10n: &Localizer, months: u32) -> String {
 
 /// Construction is paid at month close. Quotes are approximate because the final payment
 /// includes any remaining cents; the ledger uses `Money::split_even`.
-pub(super) fn monthly_payment(capital: Money, months: u32) -> String {
-    format::money(Money::from_cents(capital.cents() / i64::from(months)))
+pub(super) fn monthly_payment(capital: Money, months: u32, style: &MoneyStyle) -> String {
+    format::money(
+        Money::from_cents(capital.cents() / i64::from(months)),
+        style,
+    )
 }
 
 fn construction_values(capital: Money, months: u32) -> [f64; 3] {
@@ -163,11 +172,12 @@ fn construction_values(capital: Money, months: u32) -> [f64; 3] {
 /// Each metric has its own regional reference, so monthly affordability reflects the payment
 /// schedule. Line quotes use the same references as plants; changing the selected site or line
 /// origin doesn't change what a colour means.
-fn construction_stats(
+pub(super) fn construction_stats(
     region: &RegionDefinition,
     l10n: &Localizer,
     capital: Money,
     months: u32,
+    style: &MoneyStyle,
 ) -> Vec<PlantStat> {
     let (minimum, maximum) = region.catalog().iter().fold(
         ([f64::INFINITY; 3], [0.0_f64; 3]),
@@ -181,8 +191,11 @@ fn construction_stats(
     );
     let values = construction_values(capital, months);
     [
-        ("build-capital", format::money(capital)),
-        ("build-monthly-payment", monthly_payment(capital, months)),
+        ("build-capital", format::money(capital, style)),
+        (
+            "build-monthly-payment",
+            monthly_payment(capital, months, style),
+        ),
         ("build-months", months_value(l10n, months)),
     ]
     .into_iter()
@@ -200,7 +213,12 @@ fn construction_stats(
     .collect()
 }
 
-fn plant_section(game: &Game, l10n: &Localizer, selection: Selection) -> PlantSection {
+fn plant_section(
+    game: &Game,
+    l10n: &Localizer,
+    selection: Selection,
+    style: &MoneyStyle,
+) -> PlantSection {
     let region = game.session().region();
     let cell = match selection {
         Selection::Cell(cell) if region.terrain().get(cell).is_some() => cell,
@@ -214,14 +232,18 @@ fn plant_section(game: &Game, l10n: &Localizer, selection: Selection) -> PlantSe
     let rows = PlantKind::ALL
         .into_iter()
         .map(|kind| {
-            let spec = region.spec(kind);
+            let spec = region
+                .plant_spec_at(kind, cell)
+                .expect("selected cell exists");
             let site = game.session().plant_site_check(kind, cell);
+            let quote = game.session().plant_quote(kind, cell);
             let mut stats = vec![stat("build-capacity", format::megawatts(spec.capacity))];
             stats.extend(construction_stats(
                 region,
                 l10n,
                 spec.capital_cost,
                 spec.build_months,
+                style,
             ));
             if let Some(b) = spec.battery {
                 stats.extend([
@@ -233,9 +255,14 @@ fn plant_section(game: &Game, l10n: &Localizer, selection: Selection) -> PlantSe
                 ]);
             } else {
                 stats.push(
-                    stat("build-marginal-cost", format::price(spec.marginal_cost)).with_color(
-                        ValueColor::Scale(marginal_cost_fraction(region, spec.marginal_cost)),
-                    ),
+                    stat(
+                        "build-marginal-cost",
+                        format::price(spec.marginal_cost, style),
+                    )
+                    .with_color(ValueColor::Scale(marginal_cost_fraction(
+                        region,
+                        spec.marginal_cost,
+                    ))),
                 );
             }
             if kind == PlantKind::Wind {
@@ -268,23 +295,50 @@ fn plant_section(game: &Game, l10n: &Localizer, selection: Selection) -> PlantSe
                         .map(|b| super::plant_panel::battery_hint(l10n, "battery-cycle-hint", b))
                 },
                 stats,
-                blocked: site.as_ref().err().map(|error| error.localize(l10n)),
+                blocked: site
+                    .as_ref()
+                    .err()
+                    .map(|error| error.localize(l10n))
+                    .or_else(|| {
+                        quote.as_ref().err().map(|error| {
+                            error.localize_with(l10n, &Names::new(l10n, game.session()))
+                        })
+                    }),
                 build: ButtonModel::new(
                     l10n.text("build-plant"),
                     UiAction::Command(Command::BuildPlant { kind, cell }),
                 )
-                .enabled_if(site.is_ok()),
+                .enabled_if(quote.is_ok()),
             }
         })
         .collect();
     PlantSection::Kinds {
-        heading: l10n.args(
-            "build-plant-heading",
-            &[
-                ("x", cell.x.to_string().into()),
-                ("y", cell.y.to_string().into()),
-            ],
-        ),
+        heading: if region.has_economic_zones() {
+            l10n.args(
+                "build-plant-heading-market",
+                &[
+                    ("x", cell.x.to_string().into()),
+                    ("y", cell.y.to_string().into()),
+                    (
+                        "market",
+                        super::economics::zone_name(
+                            region,
+                            region.economic_zone_at(cell).expect("selected cell"),
+                            l10n,
+                        )
+                        .into(),
+                    ),
+                ],
+            )
+        } else {
+            l10n.args(
+                "build-plant-heading",
+                &[
+                    ("x", cell.x.to_string().into()),
+                    ("y", cell.y.to_string().into()),
+                ],
+            )
+        },
         cell,
         rows,
     }
@@ -295,6 +349,7 @@ fn line_section(
     l10n: &Localizer,
     selection: Selection,
     nodes: &[NodeChoice],
+    style: &MoneyStyle,
 ) -> LineSection {
     let heading = l10n.text("build-line-heading");
     let from = match selection {
@@ -302,7 +357,7 @@ fn line_section(
         _ => None,
     };
     match from {
-        Some(from) => line_end_section(game, l10n, heading, from, nodes),
+        Some(from) => line_end_section(game, l10n, heading, from, nodes, style),
         None => line_start_section(game, l10n, selection, heading, nodes),
     }
 }
@@ -355,6 +410,7 @@ fn line_end_section(
     heading: String,
     from: &NodeChoice,
     nodes: &[NodeChoice],
+    style: &MoneyStyle,
 ) -> LineSection {
     let session = game.session();
     let names = Names::new(l10n, session);
@@ -388,6 +444,13 @@ fn line_end_section(
                         l10n,
                         quote.capital,
                         quote.months,
+                        style,
+                    ));
+                    stats.extend(super::economics::route_stats(
+                        session.region(),
+                        &quote,
+                        l10n,
+                        style,
                     ));
                     LinePreview::Quote(stats)
                 }
@@ -511,8 +574,9 @@ pub(super) fn build_panel(
     session: Res<Session>,
     l10n: Res<Localizer>,
     mut sink: ActionSink,
+    style: Res<MoneyStyle>,
 ) -> Result {
-    let Some(model) = build_model(&session.0, &l10n, sink.selection()) else {
+    let Some(model) = build_model(&session.0, &l10n, sink.selection(), &style) else {
         return Ok(());
     };
     let actions = area.show_panel(contexts.ctx_mut()?, BUILD_PANEL, 0.0, |ui| {
@@ -524,6 +588,7 @@ pub(super) fn build_panel(
 
 #[cfg(test)]
 mod tests {
+    use crate::hud::test_support::usd_style;
     use application::InMemoryCommandLog;
     use domain::grid::distance_cells;
     use domain::region::{RegionDefinition, SiteError};
@@ -542,7 +607,7 @@ mod tests {
             session.line_quote(from, to),
             Err(domain::error::DomainError::LineNotNeeded { .. })
         ));
-        let model = build_model(&game, &l10n, Selection::LineFrom(from)).unwrap();
+        let model = build_model(&game, &l10n, Selection::LineFrom(from), &usd_style()).unwrap();
         let target = targets(&model)
             .iter()
             .find(|target| target.node == to)
@@ -570,7 +635,7 @@ mod tests {
                 Box::new(InMemoryCommandLog::default()),
             );
             let session = game.session();
-            let model = build_model(&game, &l10n, Selection::None).unwrap();
+            let model = build_model(&game, &l10n, Selection::None, &usd_style()).unwrap();
             let LineSection::Start { from, .. } = model.line else {
                 panic!("line origins")
             };
@@ -586,8 +651,13 @@ mod tests {
                     .count(),
                 1
             );
-            let model =
-                build_model(&game, &l10n, Selection::LineFrom(session.anchor_node())).unwrap();
+            let model = build_model(
+                &game,
+                &l10n,
+                Selection::LineFrom(session.anchor_node()),
+                &usd_style(),
+            )
+            .unwrap();
             assert!(
                 targets(&model)
                     .iter()
@@ -628,8 +698,13 @@ mod tests {
                 Box::new(InMemoryCommandLog::default()),
             );
             let region = game.session().region();
-            let model =
-                build_model(&game, &l10n, Selection::Cell(CellCoord { x: 0, y: 0 })).unwrap();
+            let model = build_model(
+                &game,
+                &l10n,
+                Selection::Cell(CellCoord { x: 0, y: 0 }),
+                &usd_style(),
+            )
+            .unwrap();
             let values: Vec<_> = PlantKind::ALL
                 .into_iter()
                 .map(|kind| {
@@ -699,7 +774,7 @@ mod tests {
         let water = cells(region)
             .find(|at| !region.terrain().get(*at).unwrap().land)
             .unwrap();
-        let model = build_model(&game, &l10n, Selection::Cell(water)).unwrap();
+        let model = build_model(&game, &l10n, Selection::Cell(water), &usd_style()).unwrap();
         assert_eq!(rows(&model).len(), PlantKind::ALL.len());
         for row in rows(&model) {
             assert!(!row.build.enabled, "{:?} on water", row.kind);
@@ -710,7 +785,7 @@ mod tests {
         let no_river = cells(region)
             .find(|at| region.site_check(PlantKind::Hydro, *at) == Err(SiteError::NoHydroSite))
             .unwrap();
-        let model = build_model(&game, &l10n, Selection::Cell(no_river)).unwrap();
+        let model = build_model(&game, &l10n, Selection::Cell(no_river), &usd_style()).unwrap();
         let by_kind = |kind| rows(&model).iter().find(|row| row.kind == kind).unwrap();
         assert!(!by_kind(PlantKind::Hydro).build.enabled);
         assert_eq!(
@@ -734,7 +809,7 @@ mod tests {
             .map(|c| c.cell)
             .chain(game.session().plant_views().iter().map(|p| p.cell))
         {
-            let model = build_model(&game, &l10n, Selection::Cell(at)).unwrap();
+            let model = build_model(&game, &l10n, Selection::Cell(at), &usd_style()).unwrap();
             for row in rows(&model) {
                 assert!(
                     !row.build.enabled,
@@ -762,7 +837,7 @@ mod tests {
             })
             .unwrap();
 
-        let model = build_model(&game, &l10n, Selection::Cell(at)).unwrap();
+        let model = build_model(&game, &l10n, Selection::Cell(at), &usd_style()).unwrap();
 
         let kinds: Vec<PlantKind> = rows(&model).iter().map(|row| row.kind).collect();
         assert_eq!(kinds, PlantKind::ALL);
@@ -799,13 +874,19 @@ mod tests {
             stats,
             [
                 ("Capacity", format::megawatts(spec.capacity)),
-                ("Capital cost", format::money(spec.capital_cost)),
+                (
+                    "Capital cost",
+                    format::money(spec.capital_cost, &usd_style())
+                ),
                 (
                     "Per month (approx.)",
-                    format::money(spec.capital_cost.split_even(spec.build_months)[0])
+                    format::money(
+                        spec.capital_cost.split_even(spec.build_months)[0],
+                        &usd_style()
+                    )
                 ),
                 ("Build time", format!("{} months", spec.build_months)),
-                ("Fuel cost", format::price(spec.marginal_cost)),
+                ("Fuel cost", format::price(spec.marginal_cost, &usd_style())),
             ]
         );
         assert_eq!(coal.name, PlantKind::Coal.localize(&l10n));
@@ -827,7 +908,7 @@ mod tests {
         let from = session.anchor_node();
         let names = Names::new(&l10n, session);
 
-        let model = build_model(&game, &l10n, Selection::LineFrom(from)).unwrap();
+        let model = build_model(&game, &l10n, Selection::LineFrom(from), &usd_style()).unwrap();
 
         let targets = targets(&model);
         let nodes = session.plant_views().len() + session.city_views().len();
@@ -865,10 +946,17 @@ mod tests {
                         stats,
                         [
                             ("Length", format!("{} cells", quote.cells).as_str()),
-                            ("Capital cost", format::money(quote.capital).as_str()),
+                            (
+                                "Capital cost",
+                                format::money(quote.capital, &usd_style()).as_str()
+                            ),
                             (
                                 "Per month (approx.)",
-                                format::money(quote.capital.split_even(quote.months)[0]).as_str()
+                                format::money(
+                                    quote.capital.split_even(quote.months)[0],
+                                    &usd_style()
+                                )
+                                .as_str()
                             ),
                             (
                                 "Build time",
@@ -905,7 +993,7 @@ mod tests {
         let session = game.session();
         let from = session.anchor_node();
 
-        let model = build_model(&game, &l10n, Selection::LineFrom(from)).unwrap();
+        let model = build_model(&game, &l10n, Selection::LineFrom(from), &usd_style()).unwrap();
 
         let cell_of = |node: NodeId| {
             session
@@ -978,7 +1066,7 @@ mod tests {
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
         let session = game.session();
 
-        let model = build_model(&game, &l10n, Selection::None).unwrap();
+        let model = build_model(&game, &l10n, Selection::None, &usd_style()).unwrap();
 
         assert_eq!(model.title, l10n.text("build-title"));
         assert_eq!(
@@ -1017,7 +1105,7 @@ mod tests {
             (Selection::City(city.id), city.node),
             (Selection::Plant(plant.id), plant.node),
         ] {
-            let model = build_model(&game, &l10n, selection).unwrap();
+            let model = build_model(&game, &l10n, selection, &usd_style()).unwrap();
             let LineSection::Start { from, .. } = &model.line else {
                 panic!("{model:?}");
             };
@@ -1030,7 +1118,13 @@ mod tests {
         let l10n = shipped_l10n();
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
 
-        let model = build_model(&game, &l10n, Selection::LineFrom(NodeId(99_999))).unwrap();
+        let model = build_model(
+            &game,
+            &l10n,
+            Selection::LineFrom(NodeId(99_999)),
+            &usd_style(),
+        )
+        .unwrap();
 
         assert!(matches!(model.line, LineSection::Start { .. }), "{model:?}");
     }
@@ -1040,12 +1134,18 @@ mod tests {
         let l10n = shipped_l10n();
         let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
         let at = CellCoord { x: 10, y: 10 };
-        assert!(build_model(&game, &l10n, Selection::Cell(at)).is_some());
+        assert!(build_model(&game, &l10n, Selection::Cell(at), &usd_style()).is_some());
 
         game.execute(Command::BeginOperating).unwrap();
 
         assert_eq!(game.session().phase(), DayPhase::Operating);
-        assert_eq!(build_model(&game, &l10n, Selection::Cell(at)), None);
-        assert_eq!(build_model(&game, &l10n, Selection::None), None);
+        assert_eq!(
+            build_model(&game, &l10n, Selection::Cell(at), &usd_style()),
+            None
+        );
+        assert_eq!(
+            build_model(&game, &l10n, Selection::None, &usd_style()),
+            None
+        );
     }
 }

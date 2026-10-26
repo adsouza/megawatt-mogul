@@ -1,0 +1,569 @@
+// The Eastern Interconnection: the United States east of the Rockies and the
+// Canadian provinces synchronised with it (Saskatchewan, Manitoba, Ontario,
+// New Brunswick, Nova Scotia and Prince Edward Island). Quebec and ERCOT run
+// their own interconnections and are cut out. The Texas Panhandle stays in:
+// it is synchronised with the Eastern grid through SPS.
+//
+// Geography is at diorama fidelity: polygons follow the real coastlines and
+// interconnection seams closely enough to read on a 100 x 60 grid (about
+// 0.5 degrees per cell), and a few shores are nudged so that lakeside metros
+// sit on land. Points are (lon, lat) in degrees.
+//
+// Seam with the Western Interconnection (shared with
+// western_interconnection.ron): the Alberta-Saskatchewan line (110 W) to the
+// 49th parallel, the Montana-Dakota line (104.05 W) to the Nebraska-Colorado
+// line, the Colorado border, then south through eastern New Mexico along
+// 104.5 W to the Rio Grande.
+(
+    region_schema: 3,
+    id: "eastern_interconnection",
+    name_key: "region-eastern-interconnection",
+    bounds: (west: -110.0, east: -59.0, south: 24.5, north: 56.0),
+    grid: (width: 100, height: 60),
+    land: [
+        // Canada east of Alberta and New England: the Prairie and Ontario
+        // shores of Hudson and James Bay, the Quebec-Labrador landmass (cut
+        // out again by the Quebec polygon in `exclude`, so its coast is
+        // coarse), the Gaspe, New Brunswick, Nova Scotia with Cape Breton and
+        // the New England coast to Rhode Island. Its southern edge runs
+        // inland through New York, the Great Lakes and the Dakotas, inside
+        // the contiguous-US polygon below, so the two overlap there.
+        [
+            (-110.0, 56.5), (-88.5, 56.5), (-87.0, 56.15), (-85.5, 55.75),
+            (-84.0, 55.3), (-82.3, 55.15), (-82.25, 54.2), (-82.35, 53.2),
+            (-82.0, 52.6), (-81.3, 52.1), (-80.6, 51.35), (-79.7, 51.25),
+            (-78.9, 51.5), (-78.8, 52.8), (-79.0, 54.4), (-77.4, 55.4),
+            (-76.7, 56.5), (-61.8, 56.5), (-60.3, 55.4), (-57.2, 53.7),
+            (-55.7, 52.2), (-57.1, 51.4), (-59.5, 50.4), (-61.8, 50.15),
+            (-64.5, 50.25), (-66.4, 50.15), (-68.1, 49.2), (-67.4, 48.85),
+            (-66.0, 49.1), (-64.4, 48.95), (-64.2, 48.5), (-65.3, 48.05),
+            (-66.4, 48.05), (-65.7, 47.65), (-64.5, 47.85), (-65.0, 47.1),
+            (-64.8, 46.6), (-64.1, 46.1), (-63.3, 45.8), (-62.6, 45.65),
+            (-61.9, 45.7), (-61.4, 46.2), (-61.0, 46.7), (-60.4, 47.05),
+            (-59.8, 46.15), (-60.7, 45.6), (-61.1, 45.25), (-62.5, 44.85),
+            (-63.55, 44.55), (-64.6, 44.05), (-65.65, 43.45), (-66.15, 43.85),
+            (-65.75, 44.65), (-64.4, 45.3), (-64.4, 45.75), (-65.0, 45.55),
+            (-66.05, 45.25), (-67.0, 45.05), (-67.7, 44.5), (-68.8, 44.3),
+            (-69.8, 43.8), (-70.25, 43.65), (-70.75, 43.05), (-70.6, 42.65),
+            (-71.0, 42.3), (-70.65, 41.95), (-70.0, 42.05), (-69.95, 41.65),
+            (-70.65, 41.55), (-71.4, 41.45), (-71.85, 41.3), (-73.5, 42.3),
+            (-79.5, 42.3), (-88.0, 43.0), (-104.05, 45.5), (-104.05, 49.0),
+            (-110.0, 49.0),
+        ],
+        // The contiguous United States east of the seam: Long Island (drawn
+        // as a peninsula), the Atlantic coast with the Delaware and
+        // Chesapeake bays, Florida, the Gulf coast and the Mississippi
+        // delta. Texas is traced coarsely because the ERCOT polygon in
+        // `exclude` removes all of it south of the Panhandle. The northern
+        // edge runs inside the Canada and New England polygon above.
+        [
+            (-71.85, 41.3), (-72.9, 41.25), (-73.75, 40.9), (-73.1, 40.95),
+            (-72.3, 41.15), (-71.86, 41.07), (-72.8, 40.75), (-73.95, 40.57),
+            (-74.0, 40.45), (-74.05, 40.05), (-74.4, 39.35), (-74.95, 38.93),
+            (-75.25, 39.25), (-75.55, 39.6), (-75.4, 39.0), (-75.1, 38.8),
+            (-75.05, 38.3), (-75.4, 37.9), (-75.95, 37.12), (-76.0, 38.0),
+            (-76.35, 38.7), (-76.0, 39.5), (-76.45, 39.25), (-76.45, 38.3),
+            (-76.3, 36.95), (-75.97, 36.85), (-75.65, 35.9), (-75.53, 35.25),
+            (-76.5, 34.6), (-77.95, 33.85), (-78.9, 33.7), (-79.9, 32.75),
+            (-81.0, 32.0), (-81.4, 30.3), (-81.0, 29.2), (-80.55, 28.45),
+            (-80.05, 26.7), (-80.1, 25.75), (-80.4, 25.2), (-81.1, 25.15),
+            (-81.8, 26.1), (-82.2, 26.9), (-82.8, 27.8), (-82.7, 28.7),
+            (-83.1, 29.1), (-84.0, 30.05), (-85.0, 29.65), (-85.7, 30.1),
+            (-87.2, 30.35), (-88.05, 30.25), (-88.9, 30.4), (-89.6, 30.2),
+            (-89.45, 29.85), (-89.15, 29.1), (-90.0, 29.25), (-90.6, 29.1),
+            (-91.3, 29.3), (-92.3, 29.55), (-93.3, 29.75), (-93.85, 29.7),
+            (-94.8, 29.3), (-97.2, 27.6), (-97.15, 25.95), (-99.5, 27.5),
+            (-100.9, 29.35), (-103.2, 28.95), (-104.5, 29.6), (-104.5, 32.0),
+            (-104.5, 34.0), (-104.0, 35.0), (-103.04, 36.0), (-103.0, 37.0),
+            (-102.05, 37.0), (-102.05, 41.0), (-104.05, 41.0), (-104.05, 47.0),
+            (-88.0, 46.0), (-79.5, 45.0), (-74.5, 44.8), (-71.5, 44.5),
+        ],
+        // Prince Edward Island. Too small for more detail at this grid size:
+        // it covers only a handful of cells.
+        [
+            (-64.0, 47.06), (-63.6, 46.75), (-63.0, 46.5), (-62.5, 46.45),
+            (-61.97, 46.45), (-62.45, 46.0), (-63.1, 46.2), (-63.8, 46.35),
+            (-64.1, 46.4), (-64.4, 46.62),
+        ],
+    ],
+    exclude: [
+        // ERCOT: Texas south of the Panhandle (about 34.5 N) and east of the
+        // El Paso area (104.5 W). Detailed along the Red River and the
+        // Sabine, where it meets Oklahoma and Louisiana; its Gulf and Mexican
+        // sides run offshore and south of the Rio Grande, where there is no
+        // land to cut.
+        [
+            (-103.04, 34.5), (-100.0, 34.56), (-99.7, 34.38), (-99.2, 34.2),
+            (-98.6, 34.15), (-98.1, 34.12), (-97.6, 33.9), (-97.15, 33.72),
+            (-96.6, 33.85), (-96.0, 33.82), (-95.3, 33.88), (-94.7, 33.68),
+            (-94.04, 33.55), (-94.04, 33.0), (-94.04, 32.0), (-93.82, 31.6),
+            (-93.55, 31.15), (-93.6, 30.6), (-93.75, 30.1), (-93.85, 29.75),
+            (-93.8, 29.3), (-94.7, 28.9), (-95.8, 28.3), (-96.8, 27.5),
+            (-97.0, 26.6), (-97.0, 25.6), (-97.8, 25.5), (-98.5, 25.6),
+            (-99.0, 26.2), (-99.6, 27.0), (-100.2, 27.8), (-100.8, 28.8),
+            (-101.5, 28.75), (-102.3, 28.7), (-103.2, 28.6), (-103.9, 28.9),
+            (-104.5, 29.2), (-104.5, 30.5), (-104.5, 32.0), (-103.06, 32.0),
+            (-103.05, 33.3),
+        ],
+        // Quebec, with Labrador, which is synchronised with Hydro-Quebec
+        // through Churchill Falls. Detailed along its borders with Ontario
+        // (due south from James Bay, then Lake Timiskaming and the Ottawa
+        // River), New York, Vermont, New Hampshire, Maine and New
+        // Brunswick; its other sides run through James Bay, the Gulf of St
+        // Lawrence (north of Prince Edward Island and Cape Breton) and the
+        // Atlantic.
+        [
+            (-80.0, 57.0), (-79.6, 54.0), (-79.52, 51.46), (-79.52, 50.0),
+            (-79.52, 48.5), (-79.52, 47.4), (-79.43, 47.0), (-79.2, 46.7),
+            (-78.7, 46.3), (-78.1, 46.15), (-77.5, 46.1), (-77.1, 45.85),
+            (-76.7, 45.6), (-76.25, 45.5), (-75.7, 45.43), (-75.2, 45.55),
+            (-74.65, 45.62), (-74.37, 45.55), (-74.47, 45.3), (-74.65, 45.0),
+            (-73.35, 45.01), (-72.5, 45.01), (-71.5, 45.01), (-71.08, 45.3),
+            (-70.8, 45.4), (-70.4, 45.75), (-70.05, 46.4), (-69.99, 46.7),
+            (-69.25, 47.45), (-68.8, 47.45), (-68.35, 47.8), (-67.6, 47.97),
+            (-66.9, 48.02), (-66.3, 48.08), (-65.4, 47.92), (-64.5, 48.12),
+            (-63.0, 48.3), (-61.0, 48.0), (-58.5, 48.0), (-54.0, 51.0),
+            (-54.0, 57.0),
+        ],
+        // The Great Lakes, traced as one ring: Superior's north shore, the
+        // St Marys River and North Channel, Georgian Bay and the Bruce
+        // Peninsula, Huron's east shore, the St Clair and Detroit rivers,
+        // Erie's north shore, the Niagara River, around Lake Ontario, back
+        // along Erie's south shore, up Huron's west shore, around Lake
+        // Michigan, and back along Superior's south shore. The connecting
+        // rivers are narrow channels well under a cell wide. Manitoulin
+        // Island is too small to keep.
+        [
+            (-92.1, 46.75), (-89.6, 48.0), (-89.2, 48.4), (-88.2, 48.9),
+            (-86.5, 48.75), (-85.0, 47.95), (-84.55, 46.6), (-84.1, 46.3),
+            (-83.0, 46.25), (-81.2, 46.0), (-80.5, 45.9), (-80.05, 45.35),
+            (-79.9, 44.75), (-80.9, 44.6), (-81.1, 44.95), (-81.65, 45.25),
+            (-81.37, 44.5), (-81.72, 43.75), (-82.4, 43.05), (-82.42, 42.6),
+            (-82.7, 42.33), (-83.08, 42.05), (-82.5, 41.95), (-81.2, 42.65),
+            (-80.2, 42.58), (-79.25, 42.87), (-78.95, 42.95), (-79.07, 43.25),
+            (-79.8, 43.28), (-79.45, 43.5), (-78.1, 43.92), (-77.1, 43.9),
+            (-76.45, 44.2), (-76.2, 43.85), (-76.5, 43.45), (-77.6, 43.27),
+            (-79.03, 43.26), (-78.9, 42.93), (-80.1, 42.15), (-81.7, 41.68),
+            (-82.7, 41.45), (-83.45, 41.7), (-83.15, 42.06), (-82.95, 42.4),
+            (-82.55, 42.65), (-82.48, 43.0), (-83.0, 44.05), (-83.9, 43.6),
+            (-83.45, 44.25), (-83.35, 45.05), (-84.45, 45.65), (-84.75, 45.78),
+            (-85.65, 45.15), (-86.1, 44.85), (-86.45, 44.0), (-86.3, 43.2),
+            (-86.5, 42.1), (-86.9, 41.72), (-87.35, 41.6), (-87.6, 41.85),
+            (-87.75, 43.0), (-87.65, 43.75), (-87.55, 44.5), (-86.95, 45.3),
+            (-87.05, 45.75), (-85.45, 46.08), (-84.72, 45.87), (-83.9, 46.0),
+            (-84.15, 46.2), (-84.4, 46.45), (-84.95, 46.75), (-86.0, 46.65),
+            (-87.4, 46.55), (-87.85, 47.4), (-89.3, 46.85), (-90.85, 46.6),
+        ],
+    ],
+    // Relief: low coastal plains rising to the High Plains in the west, the
+    // Appalachian chain from Alabama to Maine, the Ozarks and the Canadian
+    // Shield.
+    height: (
+        base: 0.15,
+        blobs: [
+            // The High Plains, rising towards the Rockies.
+            (lon: -103.5, lat: 38.0, radius_deg: 3.0, value: 0.35),
+            (lon: -104.0, lat: 44.0, radius_deg: 3.0, value: 0.35),
+            (lon: -103.6, lat: 44.0, radius_deg: 0.5, value: 0.2),
+            (lon: -108.0, lat: 51.0, radius_deg: 3.0, value: 0.15),
+            // The Appalachians, south to north.
+            (lon: -84.0, lat: 35.3, radius_deg: 1.0, value: 0.45),
+            (lon: -81.5, lat: 37.0, radius_deg: 1.0, value: 0.35),
+            (lon: -79.5, lat: 38.8, radius_deg: 1.0, value: 0.35),
+            (lon: -77.5, lat: 40.8, radius_deg: 1.0, value: 0.3),
+            (lon: -74.5, lat: 42.2, radius_deg: 0.8, value: 0.3),
+            (lon: -74.0, lat: 44.1, radius_deg: 0.8, value: 0.35),
+            (lon: -72.8, lat: 44.0, radius_deg: 0.6, value: 0.3),
+            (lon: -71.3, lat: 44.3, radius_deg: 0.6, value: 0.35),
+            (lon: -69.5, lat: 45.5, radius_deg: 1.0, value: 0.2),
+            // The Ozarks and Ouachitas.
+            (lon: -92.5, lat: 36.3, radius_deg: 1.2, value: 0.2),
+            (lon: -94.0, lat: 34.6, radius_deg: 0.8, value: 0.15),
+            // The Canadian Shield.
+            (lon: -85.0, lat: 50.0, radius_deg: 4.0, value: 0.12),
+        ],
+    ),
+    // Sunshine: best in Florida and on the southern Plains, poorest under the
+    // Great Lakes cloud.
+    irradiance: (
+        base: 0.45,
+        blobs: [
+            (lon: -81.5, lat: 27.5, radius_deg: 2.5, value: 0.25),
+            (lon: -101.5, lat: 35.0, radius_deg: 3.0, value: 0.25),
+            (lon: -89.0, lat: 31.0, radius_deg: 3.0, value: 0.12),
+            (lon: -105.0, lat: 50.0, radius_deg: 3.0, value: 0.08),
+            (lon: -80.0, lat: 44.0, radius_deg: 3.5, value: -0.08),
+        ],
+    ),
+    // Water for thermal plants: the Great Lakes shores, the Mississippi, Ohio
+    // and Tennessee rivers, and the coasts.
+    cooling_water: (
+        base: 0.1,
+        blobs: [
+            // Lake Superior.
+            (lon: -92.0, lat: 46.8, radius_deg: 0.6, value: 0.8),
+            (lon: -89.5, lat: 48.2, radius_deg: 0.6, value: 0.8),
+            (lon: -87.0, lat: 48.6, radius_deg: 0.6, value: 0.8),
+            (lon: -85.0, lat: 47.2, radius_deg: 0.6, value: 0.8),
+            (lon: -87.5, lat: 46.6, radius_deg: 0.6, value: 0.8),
+            (lon: -90.5, lat: 46.7, radius_deg: 0.6, value: 0.8),
+            // Lake Michigan.
+            (lon: -87.8, lat: 42.3, radius_deg: 0.6, value: 0.8),
+            (lon: -87.8, lat: 44.0, radius_deg: 0.6, value: 0.8),
+            (lon: -86.4, lat: 43.0, radius_deg: 0.6, value: 0.8),
+            (lon: -86.0, lat: 45.0, radius_deg: 0.6, value: 0.8),
+            (lon: -87.5, lat: 45.6, radius_deg: 0.6, value: 0.8),
+            // Lake Huron and Georgian Bay.
+            (lon: -82.4, lat: 43.2, radius_deg: 0.6, value: 0.8),
+            (lon: -83.7, lat: 44.5, radius_deg: 0.6, value: 0.8),
+            (lon: -81.6, lat: 44.5, radius_deg: 0.6, value: 0.8),
+            (lon: -80.5, lat: 45.0, radius_deg: 0.6, value: 0.8),
+            (lon: -84.0, lat: 45.8, radius_deg: 0.6, value: 0.8),
+            // Lake Erie.
+            (lon: -83.2, lat: 41.8, radius_deg: 0.6, value: 0.8),
+            (lon: -81.7, lat: 41.6, radius_deg: 0.6, value: 0.8),
+            (lon: -80.1, lat: 42.1, radius_deg: 0.6, value: 0.8),
+            (lon: -79.0, lat: 42.85, radius_deg: 0.6, value: 0.8),
+            (lon: -81.0, lat: 42.6, radius_deg: 0.6, value: 0.8),
+            // Lake Ontario.
+            (lon: -79.4, lat: 43.6, radius_deg: 0.6, value: 0.8),
+            (lon: -78.0, lat: 43.5, radius_deg: 0.6, value: 0.8),
+            (lon: -76.5, lat: 43.6, radius_deg: 0.6, value: 0.8),
+            // The Ohio River, from Pittsburgh to Cairo.
+            (lon: -80.0, lat: 40.45, radius_deg: 0.45, value: 0.75),
+            (lon: -80.6, lat: 40.5, radius_deg: 0.45, value: 0.75),
+            (lon: -80.75, lat: 39.9, radius_deg: 0.45, value: 0.75),
+            (lon: -81.3, lat: 39.4, radius_deg: 0.45, value: 0.75),
+            (lon: -82.0, lat: 38.9, radius_deg: 0.45, value: 0.75),
+            (lon: -82.6, lat: 38.5, radius_deg: 0.45, value: 0.75),
+            (lon: -83.3, lat: 38.65, radius_deg: 0.45, value: 0.75),
+            (lon: -84.0, lat: 38.8, radius_deg: 0.45, value: 0.75),
+            (lon: -84.6, lat: 39.05, radius_deg: 0.45, value: 0.75),
+            (lon: -85.4, lat: 38.7, radius_deg: 0.45, value: 0.75),
+            (lon: -85.76, lat: 38.25, radius_deg: 0.45, value: 0.75),
+            (lon: -86.8, lat: 37.9, radius_deg: 0.45, value: 0.75),
+            (lon: -87.6, lat: 37.95, radius_deg: 0.45, value: 0.75),
+            (lon: -88.3, lat: 37.3, radius_deg: 0.45, value: 0.75),
+            (lon: -89.15, lat: 37.0, radius_deg: 0.45, value: 0.75),
+            // The Mississippi, from Minneapolis to New Orleans.
+            (lon: -93.3, lat: 44.95, radius_deg: 0.45, value: 0.75),
+            (lon: -92.0, lat: 44.3, radius_deg: 0.45, value: 0.75),
+            (lon: -91.2, lat: 43.4, radius_deg: 0.45, value: 0.75),
+            (lon: -91.1, lat: 42.3, radius_deg: 0.45, value: 0.75),
+            (lon: -90.6, lat: 41.5, radius_deg: 0.45, value: 0.75),
+            (lon: -91.2, lat: 40.5, radius_deg: 0.45, value: 0.75),
+            (lon: -90.9, lat: 39.5, radius_deg: 0.45, value: 0.75),
+            (lon: -90.2, lat: 38.7, radius_deg: 0.45, value: 0.75),
+            (lon: -89.6, lat: 37.6, radius_deg: 0.45, value: 0.75),
+            (lon: -89.6, lat: 36.3, radius_deg: 0.45, value: 0.75),
+            (lon: -90.05, lat: 35.15, radius_deg: 0.45, value: 0.75),
+            (lon: -90.9, lat: 33.9, radius_deg: 0.45, value: 0.75),
+            (lon: -91.1, lat: 32.3, radius_deg: 0.45, value: 0.75),
+            (lon: -91.4, lat: 31.3, radius_deg: 0.45, value: 0.75),
+            (lon: -91.2, lat: 30.5, radius_deg: 0.45, value: 0.75),
+            (lon: -90.1, lat: 30.0, radius_deg: 0.45, value: 0.75),
+            // The Tennessee River, from Knoxville to Kentucky Lake.
+            (lon: -83.9, lat: 35.95, radius_deg: 0.45, value: 0.7),
+            (lon: -84.7, lat: 35.5, radius_deg: 0.45, value: 0.7),
+            (lon: -85.3, lat: 35.05, radius_deg: 0.45, value: 0.7),
+            (lon: -86.3, lat: 34.6, radius_deg: 0.45, value: 0.7),
+            (lon: -87.6, lat: 34.8, radius_deg: 0.45, value: 0.7),
+            (lon: -88.1, lat: 35.6, radius_deg: 0.45, value: 0.7),
+            (lon: -88.2, lat: 36.6, radius_deg: 0.45, value: 0.7),
+            // The Atlantic coast, south to north.
+            (lon: -80.1, lat: 26.5, radius_deg: 0.5, value: 0.7),
+            (lon: -80.6, lat: 28.4, radius_deg: 0.5, value: 0.7),
+            (lon: -81.4, lat: 30.4, radius_deg: 0.5, value: 0.7),
+            (lon: -80.8, lat: 32.1, radius_deg: 0.5, value: 0.7),
+            (lon: -79.2, lat: 33.4, radius_deg: 0.5, value: 0.7),
+            (lon: -77.2, lat: 34.4, radius_deg: 0.5, value: 0.7),
+            (lon: -76.3, lat: 37.0, radius_deg: 0.5, value: 0.7),
+            (lon: -76.4, lat: 38.5, radius_deg: 0.5, value: 0.7),
+            (lon: -75.5, lat: 38.5, radius_deg: 0.5, value: 0.7),
+            (lon: -75.4, lat: 39.4, radius_deg: 0.5, value: 0.7),
+            (lon: -74.2, lat: 39.5, radius_deg: 0.5, value: 0.7),
+            (lon: -73.0, lat: 41.1, radius_deg: 0.5, value: 0.7),
+            (lon: -71.0, lat: 41.8, radius_deg: 0.5, value: 0.7),
+            (lon: -70.5, lat: 42.8, radius_deg: 0.5, value: 0.7),
+            (lon: -69.5, lat: 43.9, radius_deg: 0.5, value: 0.7),
+            (lon: -67.0, lat: 44.8, radius_deg: 0.5, value: 0.7),
+            // The Gulf coast, Florida to Louisiana.
+            (lon: -81.6, lat: 26.0, radius_deg: 0.5, value: 0.7),
+            (lon: -82.6, lat: 27.8, radius_deg: 0.5, value: 0.7),
+            (lon: -83.5, lat: 29.6, radius_deg: 0.5, value: 0.7),
+            (lon: -85.3, lat: 29.8, radius_deg: 0.5, value: 0.7),
+            (lon: -87.5, lat: 30.4, radius_deg: 0.5, value: 0.7),
+            (lon: -89.0, lat: 30.4, radius_deg: 0.5, value: 0.7),
+            (lon: -91.5, lat: 29.6, radius_deg: 0.5, value: 0.7),
+            (lon: -93.5, lat: 29.8, radius_deg: 0.5, value: 0.7),
+            // The Maritimes and the Bay of Fundy.
+            (lon: -65.8, lat: 45.1, radius_deg: 0.5, value: 0.7),
+            (lon: -63.5, lat: 44.6, radius_deg: 0.5, value: 0.7),
+            (lon: -61.5, lat: 45.6, radius_deg: 0.5, value: 0.7),
+            (lon: -63.5, lat: 46.2, radius_deg: 0.5, value: 0.7),
+            (lon: -65.5, lat: 47.0, radius_deg: 0.5, value: 0.7),
+            // James Bay.
+            (lon: -81.0, lat: 52.0, radius_deg: 0.6, value: 0.6),
+        ],
+    ),
+    // Hydro sites: Niagara, the Tennessee Valley dams and Manitoba's Nelson,
+    // Saskatchewan and Winnipeg rivers.
+    hydro_potential: (
+        base: 0.0,
+        blobs: [
+            // Niagara Falls.
+            (lon: -79.05, lat: 43.1, radius_deg: 0.35, value: 0.9),
+            // The Tennessee Valley: Norris and Fort Loudoun, Chickamauga,
+            // Wilson and Kentucky dams.
+            (lon: -83.9, lat: 36.0, radius_deg: 0.5, value: 0.6),
+            (lon: -85.3, lat: 35.05, radius_deg: 0.5, value: 0.6),
+            (lon: -87.6, lat: 34.8, radius_deg: 0.4, value: 0.7),
+            (lon: -88.2, lat: 36.9, radius_deg: 0.4, value: 0.6),
+            // Manitoba: the Nelson River, Jenpeg, Grand Rapids and the
+            // Winnipeg River.
+            (lon: -96.5, lat: 55.8, radius_deg: 0.6, value: 0.9),
+            (lon: -98.0, lat: 54.5, radius_deg: 0.5, value: 0.6),
+            (lon: -99.3, lat: 53.15, radius_deg: 0.4, value: 0.7),
+            (lon: -95.6, lat: 50.3, radius_deg: 0.4, value: 0.6),
+        ],
+    ),
+    // Spec section 3.2 values, except the combined cycle's minimum stable
+    // level: 30%, the emissions-compliant turndown of a modern F- or H-class
+    // plant (a 2x1 block can run on one gas turbine), rather than 40%. Fixed
+    // O&M is per month; book life in months.
+    // Capital costs and lead times are tuned for tycoon pacing, not literal project forecasts.
+    wind_potential: (base: 0.4, blobs: [(lon: -100.0, lat: 43.0, radius_deg: 4.0, value: 0.45), (lon: -91.0, lat: 45.0, radius_deg: 3.0, value: 0.3)]),
+    wind: (monthly: [0.65, 0.65, 0.65, 0.6, 0.55, 0.5, 0.45, 0.45, 0.5, 0.55, 0.6, 0.65], persistence: 0.995, innovation_sd: 0.015, initial_sd: 0.15, band: 0.25),
+    catalog: [
+        (kind: Wind, capacity_mw: 300.0, min_stable: 0.0, ramp_mw_per_min: 0.0, startup_hours: 0.0, startup_cost_usd: 0, marginal_cost_usd_per_mwh: 0.0, fixed_om_usd_per_month: 500000, capital_cost_usd: 300000000, build_months: 3, capacity_credit: 0.2, book_life_months: 300, siting: Anywhere),
+        (
+            kind: Nuclear,
+            capacity_mw: 1100.0,
+            min_stable: 0.7,
+            ramp_mw_per_min: 5.0,
+            startup_hours: 48.0,
+            startup_cost_usd: 1000000,
+            marginal_cost_usd_per_mwh: 10.0,
+            fixed_om_usd_per_month: 11000000,
+            capital_cost_usd: 2400000000,
+            build_months: 18,
+            capacity_credit: 0.95,
+            book_life_months: 480,
+            siting: CoolingWater(0.5),
+        ),
+        (
+            kind: Coal,
+            capacity_mw: 600.0,
+            min_stable: 0.4,
+            ramp_mw_per_min: 6.0,
+            startup_hours: 8.0,
+            startup_cost_usd: 150000,
+            marginal_cost_usd_per_mwh: 30.0,
+            fixed_om_usd_per_month: 2000000,
+            capital_cost_usd: 700000000,
+            build_months: 8,
+            capacity_credit: 0.95,
+            book_life_months: 480,
+            siting: CoolingWater(0.5),
+        ),
+        (
+            kind: Ccgt,
+            capacity_mw: 500.0,
+            min_stable: 0.3,
+            ramp_mw_per_min: 25.0,
+            startup_hours: 2.0,
+            startup_cost_usd: 40000,
+            marginal_cost_usd_per_mwh: 45.0,
+            fixed_om_usd_per_month: 600000,
+            capital_cost_usd: 300000000,
+            build_months: 4,
+            capacity_credit: 0.95,
+            book_life_months: 360,
+            siting: Anywhere,
+        ),
+        (
+            kind: Peaker,
+            capacity_mw: 200.0,
+            min_stable: 0.2,
+            ramp_mw_per_min: 40.0,
+            startup_hours: 0.16666666666666666,
+            startup_cost_usd: 5000,
+            marginal_cost_usd_per_mwh: 150.0,
+            fixed_om_usd_per_month: 170000,
+            capital_cost_usd: 100000000,
+            build_months: 2,
+            capacity_credit: 0.95,
+            book_life_months: 360,
+            siting: Anywhere,
+        ),
+        (
+            kind: Solar,
+            capacity_mw: 300.0,
+            min_stable: 0.0,
+            ramp_mw_per_min: 300.0,
+            startup_hours: 0.0,
+            startup_cost_usd: 0,
+            marginal_cost_usd_per_mwh: 0.0,
+            fixed_om_usd_per_month: 500000,
+            capital_cost_usd: 150000000,
+            build_months: 2,
+            capacity_credit: 0.3,
+            book_life_months: 300,
+            siting: Anywhere,
+        ),
+        (
+            kind: Hydro,
+            capacity_mw: 800.0,
+            min_stable: 0.0,
+            ramp_mw_per_min: 100.0,
+            startup_hours: 0.08333333333333333,
+            startup_cost_usd: 1000,
+            marginal_cost_usd_per_mwh: 0.0,
+            fixed_om_usd_per_month: 2700000,
+            capital_cost_usd: 1200000000,
+            build_months: 12,
+            capacity_credit: 0.8,
+            book_life_months: 600,
+            siting: HydroSite(0.5),
+        ),
+        (kind: Battery, capacity_mw: 200.0, min_stable: 0.0, ramp_mw_per_min: 0.0,
+         startup_hours: 0.0, startup_cost_usd: 0, marginal_cost_usd_per_mwh: 0.0,
+         fixed_om_usd_per_month: 100000, capital_cost_usd: 100000000, build_months: 2,
+         capacity_credit: 0.0, book_life_months: 180, siting: Anywhere,
+         battery: Some((charge_mw: 200.0, energy_mwh: 800.0, charge_efficiency: 0.9,
+                        discharge_efficiency: 1.0, discharge_start_hour: 16, charge_end_hour: 18))),
+    ],
+    // Each city is a demand centre for its metro and the hinterland it
+    // anchors; base loads are proportional to that demand at the game's
+    // scale. The East has far more load outside its largest metros than the
+    // West, so its anchors carry proportionally more.
+    // Demand is scaled for expansion in a few plant-sized steps; locations and relative sizes stay intact.
+    cities: [
+        (id: 1, name_key: "city-new-york", lon: -74.006, lat: 40.713, base_load_mw: 3350.0),
+        (id: 2, name_key: "city-chicago", lon: -87.630, lat: 41.878, base_load_mw: 3000.0),
+        (id: 3, name_key: "city-atlanta", lon: -84.388, lat: 33.749, base_load_mw: 2800.0),
+        (id: 4, name_key: "city-washington", lon: -77.037, lat: 38.907, base_load_mw: 2300.0),
+        (id: 5, name_key: "city-philadelphia", lon: -75.165, lat: 39.953, base_load_mw: 2150.0),
+        (id: 6, name_key: "city-toronto", lon: -79.383, lat: 43.653, base_load_mw: 2150.0),
+        (id: 7, name_key: "city-miami", lon: -80.192, lat: 25.762, base_load_mw: 2150.0),
+        (id: 8, name_key: "city-charlotte", lon: -80.843, lat: 35.227, base_load_mw: 2150.0),
+        (id: 9, name_key: "city-nashville", lon: -86.781, lat: 36.163, base_load_mw: 2050.0),
+        (id: 10, name_key: "city-tampa", lon: -82.458, lat: 27.951, base_load_mw: 1900.0),
+        (id: 11, name_key: "city-boston", lon: -71.059, lat: 42.360, base_load_mw: 1800.0),
+        (id: 12, name_key: "city-detroit", lon: -83.046, lat: 42.331, base_load_mw: 1800.0),
+        (id: 13, name_key: "city-new-orleans", lon: -90.072, lat: 29.951, base_load_mw: 1550.0),
+        (id: 14, name_key: "city-st-louis", lon: -90.199, lat: 38.627, base_load_mw: 1450.0),
+        (id: 15, name_key: "city-minneapolis", lon: -93.265, lat: 44.978, base_load_mw: 1450.0),
+        (id: 16, name_key: "city-kansas-city", lon: -94.578, lat: 39.100, base_load_mw: 1200.0),
+        (id: 17, name_key: "city-pittsburgh", lon: -79.996, lat: 40.441, base_load_mw: 1200.0),
+        (id: 18, name_key: "city-cincinnati", lon: -84.512, lat: 39.103, base_load_mw: 1100.0),
+        (id: 19, name_key: "city-columbus", lon: -82.999, lat: 39.961, base_load_mw: 1100.0),
+        (id: 20, name_key: "city-cleveland", lon: -81.694, lat: 41.499, base_load_mw: 950.0),
+        (id: 21, name_key: "city-oklahoma-city", lon: -97.516, lat: 35.468, base_load_mw: 950.0),
+        (id: 22, name_key: "city-halifax", lon: -63.575, lat: 44.649, base_load_mw: 600.0),
+        (id: 23, name_key: "city-winnipeg", lon: -97.138, lat: 49.895, base_load_mw: 600.0),
+        (id: 24, name_key: "city-regina", lon: -104.619, lat: 50.445, base_load_mw: 600.0),
+        (id: 25, name_key: "city-amarillo", lon: -101.831, lat: 35.222, base_load_mw: 500.0),
+    ],
+    // Summer and winter peaks: an afternoon air-conditioning peak in July and
+    // August, and a morning-and-evening heating peak in January.
+    demand: (
+        winter: [
+            0.80, 0.76, 0.74, 0.73, 0.74, 0.79, 0.90, 1.01, 1.06, 1.05, 1.03, 1.01,
+            0.99, 0.97, 0.96, 0.97, 1.02, 1.12, 1.15, 1.13, 1.09, 1.03, 0.95, 0.86,
+        ],
+        summer: [
+            0.78, 0.73, 0.70, 0.68, 0.68, 0.71, 0.77, 0.85, 0.93, 1.00, 1.06, 1.11,
+            1.15, 1.18, 1.20, 1.22, 1.23, 1.22, 1.18, 1.12, 1.06, 1.00, 0.92, 0.84,
+        ],
+        shoulder: [
+            0.76, 0.72, 0.70, 0.69, 0.70, 0.75, 0.85, 0.95, 1.00, 1.02, 1.03, 1.03,
+            1.02, 1.01, 1.00, 1.00, 1.02, 1.06, 1.08, 1.07, 1.03, 0.96, 0.88, 0.80,
+        ],
+        monthly: [1.08, 1.04, 0.95, 0.88, 0.90, 1.02, 1.12, 1.10, 0.97, 0.88, 0.93, 1.04],
+        forecast_error: 0.03,
+        error_persistence: 0.995,
+    ),
+    // Daylight at about 39 N in local standard time; cloudier than the West.
+    solar: (
+        daylight: [
+            (7.4, 17.1), (7.0, 17.6), (6.4, 18.1), (5.7, 18.6), (5.2, 19.0), (4.9, 19.4),
+            (5.1, 19.3), (5.5, 18.9), (6.0, 18.2), (6.4, 17.5), (6.9, 16.9), (7.3, 16.8),
+        ],
+        clearness_mean: [0.50, 0.53, 0.56, 0.58, 0.60, 0.63, 0.64, 0.63, 0.62, 0.59, 0.51, 0.48],
+        clearness_sd: 0.18,
+    ),
+    // River flow: a modest spring high from snowmelt and rain, a late-summer low.
+    hydro: (monthly_flow: [0.9, 0.95, 1.15, 1.25, 1.15, 1.0, 0.9, 0.8, 0.7, 0.7, 0.8, 0.85]),
+    frequency: (
+        nominal_hz: 60.0,
+        k_inertia: 5.0,
+        k_damping: 0.2,
+        normal_band_hz: 0.05,
+        shed_below_hz: -0.5,
+        blackout_below_hz: -1.5,
+        blackout_after_shed_ticks: 30,
+        curtail_above_hz: 0.5,
+        trip_above_hz: 1.5,
+        trip_after_ticks: 5,
+        shed_stage_spacing_hz: 0.2,
+        shed_step: 0.05,
+    ),
+    regulator: (
+        storage_accreditation: [(2.0, 0.65), (4.0, 0.85), (6.0, 0.93), (8.0, 0.96)],
+        satisfaction_target: 90.0,
+        return_per_satisfaction_point: 0.0005,
+        starting_tariff_usd_per_mwh: 95.0,
+        reference_tariff_usd_per_mwh: 100.0,
+        base_return: 0.09,
+        min_return: 0.07,
+        max_return: 0.11,
+        reliability_target: 0.999,
+        return_per_reliability: 2.0,
+        return_per_cost_improvement: 0.05,
+        reserve_margin: 0.2,
+        strike_threshold: 0.005,
+        strikes_to_revoke: 3,
+        clean_months_to_expire: 3,
+        frequency_band_hz: 0.2,
+        frequency_violation_share: 0.05,
+    ),
+    satisfaction: (
+        starting: 70.0,
+        reliability_floor: 0.95,
+        price_sensitivity: 2.0,
+        smoothing: 0.2,
+    ),
+    lines: (cost_per_cell_usd: 20000000, cells_per_month: 4, book_life_months: 600),
+    // The Ohio Valley: Columbus, Cincinnati and Pittsburgh, served by a legacy
+    // fleet on the Ohio River and the Lake Erie shore.
+    start: (
+        year: 2027,
+        month: 1,
+        cash_usd: 5000000000,
+        // Columbus anchors the starting service territory.
+        home_city: 19,
+        connected_cities: [17, 18, 19],
+        fleet: [
+            // A compact Ohio Valley legacy fleet, balanced for the game's city loads.
+            // Nuclear: Beaver Valley; coal: Mitchell.
+            (Nuclear, -80.43, 40.62),
+            (Coal, -80.82, 39.83),
+            // Combined cycle: Lordstown, Carroll County, Washington,
+            // Hanging Rock and Middletown.
+            (Ccgt, -80.86, 41.15),
+            (Ccgt, -81.03, 40.55),
+            (Ccgt, -81.68, 39.53),
+            (Ccgt, -82.66, 38.57),
+            (Ccgt, -84.40, 39.50),
+            // Flexible peakers around the starting cities keep overnight minimums low.
+            (Peaker, -82.80, 40.20),
+            (Peaker, -83.30, 39.70),
+            (Peaker, -84.75, 39.45),
+            (Peaker, -83.90, 39.10),
+            (Peaker, -79.60, 40.20),
+            (Peaker, -80.20, 40.15),
+            (Peaker, -79.60, 40.90),
+        ],
+    ),
+)

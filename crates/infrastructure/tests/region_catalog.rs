@@ -13,6 +13,9 @@ use infrastructure::region::{RonRegionCatalog, load_region_bytes};
 use proptest::prelude::*;
 use tempfile::TempDir;
 
+#[path = "support/legacy_raster.rs"]
+mod legacy_raster;
+
 const MINIMAL: &str = include_str!("support/minimal_region.ron");
 
 /// SHA-256 of `support/minimal_region.ron`, computed independently with
@@ -74,6 +77,58 @@ fn schema_fields_round_trip_with_the_region_dto() {
         file.regulator.storage_accreditation
     );
     assert_eq!(decoded.regulator.satisfaction_target, Some(90.0));
+}
+
+#[test]
+fn schema_probe_preserves_explicit_region_names_without_relaxing_dto_gates() {
+    use infrastructure::region::{RegionFile, RegionFileV4};
+    let id = RegionId::new("minimal");
+    let file: RegionFile = ron::from_str(MINIMAL).unwrap();
+    let anonymous = ron::to_string(&file).unwrap();
+    let named = format!("RegionFile{anonymous}");
+    // The pre-Plan-6 loader directly decoded this unchanged legacy DTO.
+    let _: RegionFile = ron::from_str(&named).unwrap();
+    let before = load_region_bytes(anonymous.into_bytes(), &id).unwrap();
+    let after = load_region_bytes(named.into_bytes(), &id).unwrap();
+    assert_eq!(before.definition, after.definition);
+    let file: RegionFileV4 = ron::from_str(V4).unwrap();
+    let anonymous = ron::to_string(&file).unwrap();
+    let named = format!("RegionFileV4{anonymous}");
+    let before = load_region_bytes(anonymous.clone().into_bytes(), &id).unwrap();
+    let after = load_region_bytes(named.clone().into_bytes(), &id).unwrap();
+    assert_eq!(before.definition, after.definition);
+    for wrong in [
+        format!("RegionFile{anonymous}"),
+        format!("Wrong{anonymous}"),
+    ] {
+        assert!(matches!(
+            load_region_bytes(wrong.into_bytes(), &id),
+            Err(RegionLoadError::Parse { .. })
+        ));
+    }
+    let unknown = named.replacen("region_schema:4", "region_schema:99", 1);
+    assert!(matches!(
+        load_region_bytes(unknown.into_bytes(), &id),
+        Err(RegionLoadError::Invalid {
+            error: RegionError::UnsupportedRegionSchema(99),
+            ..
+        })
+    ));
+    let duplicate = named.replacen("region_schema:4", "region_schema:4,region_schema:3", 1);
+    assert!(matches!(
+        load_region_bytes(duplicate.into_bytes(), &id),
+        Err(RegionLoadError::Parse { .. })
+    ));
+    let unknown_field = named.replacen("region_schema:4", "region_schema:4,unknown:0", 1);
+    assert!(matches!(
+        load_region_bytes(unknown_field.into_bytes(), &id),
+        Err(RegionLoadError::Parse { .. })
+    ));
+    let missing = named.replacen("system_zone:7,", "", 1);
+    assert_ne!(missing, named);
+    assert!(
+        matches!(load_region_bytes(missing.into_bytes(), &id), Err(RegionLoadError::Invalid { error: RegionError::MissingField {field}, .. }) if field == "system_zone")
+    );
 }
 
 #[test]
@@ -245,7 +300,16 @@ fn maps_the_same_values_as_the_domain_fixture() {
     let tiny = tiny_region();
     assert_eq!(def.catalog(), tiny.catalog());
     assert_eq!(def.cities(), tiny.cities());
-    assert_eq!(def.demand(), tiny.demand());
+    assert_eq!(def.demand_noise(), tiny.demand_noise());
+    for m in 1..=12 {
+        for t in 0..1440 {
+            let month = domain::time::SimMonth::new(2027, m).unwrap();
+            assert_eq!(
+                def.load_factor(def.cities()[0].id, month, t).to_bits(),
+                tiny.load_factor(tiny.cities()[0].id, month, t).to_bits()
+            );
+        }
+    }
     assert_eq!(def.solar(), tiny.solar());
     assert_eq!(def.hydro(), tiny.hydro());
     assert_eq!(def.frequency(), tiny.frequency());
@@ -504,6 +568,22 @@ fn a_file_declaring_another_id_is_an_id_mismatch() {
     );
 }
 
+/// The schema-4 fast path in `parse_region_file` checks the id too.
+#[test]
+fn a_v4_file_declaring_another_id_is_an_id_mismatch() {
+    let dir = dir_with(&[("other.ron", V4)]);
+    let err = catalog(dir.path())
+        .load(&RegionId::new("other"))
+        .unwrap_err();
+    assert_eq!(
+        err,
+        RegionLoadError::IdMismatch {
+            requested: RegionId::new("other"),
+            found: RegionId::new("minimal"),
+        }
+    );
+}
+
 #[test]
 fn out_of_range_numbers_are_invalid_not_panics() {
     let cases = [
@@ -680,4 +760,766 @@ fn legacy_wind_extension_payloads_are_frozen() {
         ))),
         "27a82606b9e94372fce6c3b7a1f27d0b5b2bb1c5daa16c95f580e579ed7ec0a2"
     );
+}
+
+const V4: &str = include_str!("support/minimal_region_v4.ron");
+
+#[test]
+fn a_v4_file_lists_loads_and_has_an_outline() {
+    let dir = dir_with(&[("minimal.ron", V4)]);
+    let catalog = catalog(dir.path());
+    assert_eq!(
+        catalog.list().unwrap()[0].entry.as_ref().unwrap().name_key,
+        "region-minimal"
+    );
+    let loaded = catalog.load(&RegionId::new("minimal")).unwrap();
+    assert_eq!(loaded.source_bytes, V4.as_bytes());
+    let r = &loaded.definition;
+    assert_eq!(r.currency(), domain::units::Currency::Eur);
+    assert_eq!(r.system_zone().standard_offset_minutes, -180);
+    assert_eq!(
+        r.local_minute(CityId(2), domain::time::SimMonth::new(2027, 7).unwrap(), 0),
+        585
+    );
+    assert_eq!(
+        r.load_factor(CityId(1), domain::time::SimMonth::new(2027, 1).unwrap(), 0),
+        3.0
+    );
+    assert_eq!(
+        r.load_factor(CityId(2), domain::time::SimMonth::new(2027, 1).unwrap(), 0),
+        0.5
+    );
+    assert_eq!(
+        r.season(domain::time::SimMonth::new(2027, 1).unwrap()),
+        domain::time::Season::Summer
+    );
+    assert!(matches!(
+        r.solar().model,
+        domain::region::SolarModel::Astronomical
+    ));
+    let outline = infrastructure::region::region_outline(&loaded.source_bytes, r.id()).unwrap();
+    assert_eq!(outline.cities, 3);
+    assert_eq!(outline.home, Some(("city-tiny-1".into(), 6.5, 3.5)));
+}
+
+#[test]
+fn a_v4_file_rejects_a_missing_calendar() {
+    let source = without_field(V4, "calendar");
+    assert!(matches!(
+        load_region_bytes(source.into_bytes(), &RegionId::new("minimal")),
+        Err(RegionLoadError::Invalid {
+            error: RegionError::MissingField { field: "calendar" },
+            ..
+        })
+    ));
+}
+
+#[test]
+fn a_v4_file_rejects_a_257_wide_grid() {
+    let source = V4.replace("width: 12", "width: 257");
+    assert!(matches!(
+        load_region_bytes(source.into_bytes(), &RegionId::new("minimal")),
+        Err(RegionLoadError::Invalid {
+            error: RegionError::InvalidShape { field: "grid" },
+            ..
+        })
+    ));
+}
+
+#[test]
+fn a_legacy_file_preserves_non_earth_bounds() {
+    let mut file: infrastructure::region::RegionFile = ron::from_str(MINIMAL).unwrap();
+    file.bounds.west += 360.0;
+    file.bounds.east += 360.0;
+    for ring in file.land.iter_mut().chain(file.exclude.iter_mut()) {
+        for (lon, _) in ring {
+            *lon += 360.0;
+        }
+    }
+    for field in [
+        &mut file.height,
+        &mut file.irradiance,
+        &mut file.cooling_water,
+        &mut file.hydro_potential,
+    ] {
+        for blob in &mut field.blobs {
+            blob.lon += 360.0;
+        }
+    }
+    for city in &mut file.cities {
+        city.lon += 360.0;
+    }
+    for (_, lon, _) in &mut file.start.fleet {
+        *lon += 360.0;
+    }
+    let bytes = ron::ser::to_string(&file).unwrap().into_bytes();
+    let loaded = load_region_bytes(bytes.clone(), &RegionId::new("minimal")).unwrap();
+    assert_eq!(loaded.source_bytes, bytes);
+    assert_eq!(loaded.definition.geo().west, 360.0);
+    let original =
+        load_region_bytes(MINIMAL.as_bytes().to_vec(), &RegionId::new("minimal")).unwrap();
+    assert_eq!(loaded.definition.terrain(), original.definition.terrain());
+    assert_eq!(
+        loaded
+            .definition
+            .sun(
+                CellCoord { x: 6, y: 4 },
+                domain::time::SimMonth::new(2027, 1).unwrap(),
+                720
+            )
+            .to_bits(),
+        original
+            .definition
+            .sun(
+                CellCoord { x: 6, y: 4 },
+                domain::time::SimMonth::new(2027, 1).unwrap(),
+                720
+            )
+            .to_bits()
+    );
+}
+
+#[test]
+fn a_v4_file_maps_every_money_field_and_currency() {
+    use domain::units::Currency;
+    for (code, expected) in [
+        ("USD", Currency::Usd),
+        ("EUR", Currency::Eur),
+        ("CNY", Currency::Cny),
+        ("INR", Currency::Inr),
+        ("RUB", Currency::Rub),
+        ("BRL", Currency::Brl),
+    ] {
+        let loaded = load_region_bytes(
+            V4.replace("currency: EUR", &format!("currency: {code}"))
+                .into_bytes(),
+            &RegionId::new("minimal"),
+        )
+        .unwrap();
+        let r = loaded.definition;
+        assert_eq!(r.currency(), expected);
+        let p = r.spec(PlantKind::Coal);
+        assert_eq!(p.startup_cost.cents(), 15_000_000);
+        assert_eq!(p.marginal_cost.value(), 30.0);
+        assert_eq!(p.fixed_om_per_month.cents(), 200_000_000);
+        assert_eq!(p.capital_cost.cents(), 200_000_000_000);
+        assert_eq!(r.regulator().starting_tariff.value(), 95.0);
+        assert_eq!(r.regulator().reference_tariff.value(), 100.0);
+        assert_eq!(r.lines().cost_per_cell.cents(), 4_000_000_000);
+        assert_eq!(r.start().cash.cents(), 200_000_000_000);
+        assert_eq!(r.start_line_name(CityId(2)), Some("line-starter"));
+        assert_eq!(r.start_line_name(CityId(1)), None);
+        assert_eq!(r.demand_noise().forecast_error.value(), 0.07);
+        assert_eq!(r.demand_noise().error_persistence, 0.8);
+    }
+}
+
+#[test]
+fn a_v4_file_rejects_usd_suffixed_fields_at_every_level() {
+    for (field, old) in [
+        ("startup_cost", "startup_cost_usd"),
+        ("marginal_cost_per_mwh", "marginal_cost_usd_per_mwh"),
+        ("fixed_om_per_month", "fixed_om_usd_per_month"),
+        ("capital_cost", "capital_cost_usd"),
+        ("starting_tariff_per_mwh", "starting_tariff_usd_per_mwh"),
+        ("reference_tariff_per_mwh", "reference_tariff_usd_per_mwh"),
+        ("cost_per_cell", "cost_per_cell_usd"),
+        ("cash", "cash_usd"),
+    ] {
+        let text = V4.replacen(&format!("{field}:"), &format!("{old}:"), 1);
+        let error = load_region_bytes(text.into_bytes(), &RegionId::new("minimal")).unwrap_err();
+        assert!(
+            matches!(error, RegionLoadError::Parse {ref message, ..} if message.contains(old)),
+            "{field}: {error:?}"
+        );
+    }
+    for (needle, injected) in [
+        ("solar: (", "daylight: [],"),
+        ("battery: Some((", "cash_usd: 2,"),
+        ("calendar: (", "cash_usd: 2,"),
+        ("demand_noise: (", "cash_usd: 2,"),
+        ("atlas: (", "cash_usd: 2,"),
+        ("(id: 7,", "cash_usd: 2,"),
+        ("(id: 10,", "cash_usd: 2,"),
+    ] {
+        let text = V4.replacen(needle, &format!("{needle}{injected}"), 1);
+        assert!(matches!(
+            load_region_bytes(text.into_bytes(), &RegionId::new("minimal")),
+            Err(RegionLoadError::Parse { .. })
+        ));
+    }
+}
+
+#[test]
+fn a_v4_file_requires_authored_fields_with_typed_errors() {
+    // Remove fields from a serialized DTO with balanced containers, so each case
+    // reaches the real decoder rather than failing on malformed test syntax.
+    fn remove(source: &str, field: &str) -> String {
+        let start = source
+            .match_indices(&format!("{field}:"))
+            .find(|(i, _)| {
+                *i == 0
+                    || !source.as_bytes()[i - 1].is_ascii_alphanumeric()
+                        && source.as_bytes()[i - 1] != b'_'
+            })
+            .unwrap()
+            .0;
+        let value = start + field.len() + 1;
+        let mut depth = 0;
+        let mut quoted = false;
+        let mut end = source.len();
+        for (offset, ch) in source[value..].char_indices() {
+            match ch {
+                '"' => quoted = !quoted,
+                '(' | '[' | '{' if !quoted => depth += 1,
+                ')' | ']' | '}' if !quoted && depth == 0 => {
+                    end = value + offset;
+                    break;
+                }
+                ')' | ']' | '}' if !quoted => depth -= 1,
+                ',' if !quoted && depth == 0 => {
+                    end = value + offset + 1;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        format!("{}{}", &source[..start], &source[end..])
+    }
+    for field in [
+        "system_zone",
+        "time_zones",
+        "climates",
+        "demand_noise",
+        "calendar",
+        "currency",
+        "wind",
+        "wind_potential",
+        "zone",
+        "climate",
+        "shapes",
+        "month_shapes",
+        "monthly",
+        "dst_months",
+        "seasons",
+        "startup_cost",
+        "marginal_cost_per_mwh",
+        "fixed_om_per_month",
+        "capital_cost",
+        "starting_tariff_per_mwh",
+        "reference_tariff_per_mwh",
+        "cost_per_cell",
+        "cash",
+        "storage_accreditation",
+        "satisfaction_target",
+        "return_per_satisfaction_point",
+        "clearness_mean",
+        "clearness_sd",
+    ] {
+        let error = load_region_bytes(remove(V4, field).into_bytes(), &RegionId::new("minimal"))
+            .unwrap_err();
+        assert!(
+            matches!(error, RegionLoadError::Invalid {error: RegionError::MissingField {field: missing}, ..} if missing == field),
+            "{field}: {error:?}"
+        );
+    }
+}
+
+#[test]
+fn a_v4_file_rejects_invalid_authored_values() {
+    for (needle, value, field) in [
+        ("currency: EUR", "currency: JPY", "currency"),
+        (
+            "standard_offset_minutes: -180",
+            "standard_offset_minutes: 1",
+            "time_zones.offset",
+        ),
+        ("system_zone: 7", "system_zone: 99", "system_zone"),
+        ("zone: 8", "zone: 99", "cities.zone"),
+        ("climate: 20", "climate: 99", "cities.climate"),
+        ("width: 12", "width: 0", "grid"),
+        ("height: 8", "height: 129", "grid"),
+        ("west: 0.0", "west: -181.0", "bounds"),
+        (
+            r#"month_shapes: ["hot""#,
+            r#"month_shapes: ["missing""#,
+            "climates.month_shapes",
+        ),
+        (
+            r#"line_names: [(2, "line-starter")]"#,
+            r#"line_names: [(3, "line-starter")]"#,
+            "start.line_names",
+        ),
+        (
+            r#"line_names: [(2, "line-starter")]"#,
+            r#"line_names: [(1, "line-starter")]"#,
+            "start.line_names",
+        ),
+        (
+            r#"line_names: [(2, "line-starter")]"#,
+            r#"line_names: [(2, "")]"#,
+            "start.line_names",
+        ),
+        (
+            r#"line_names: [(2, "line-starter")]"#,
+            r#"line_names: [(2, "a"), (2, "b")]"#,
+            "start.line_names",
+        ),
+    ] {
+        assert!(V4.contains(needle), "{needle}");
+        let error = load_region_bytes(
+            V4.replacen(needle, value, 1).into_bytes(),
+            &RegionId::new("minimal"),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, RegionLoadError::Invalid {error: RegionError::InvalidShape {field: f}, ..} if f == field),
+            "{field}: {error:?}"
+        );
+    }
+}
+
+#[test]
+fn atlas_colour_does_not_require_an_illustration_letter() {
+    let id = RegionId::new("minimal");
+    let expected = load_region_bytes(V4.as_bytes().to_vec(), &id).unwrap();
+    let outline = infrastructure::region::region_outline(&expected.source_bytes, &id).unwrap();
+    assert_eq!(outline.atlas.as_ref().unwrap().colour, "#123456");
+    for source in [
+        V4.to_owned(),
+        V4.replace("atlas: (", "atlas: AtlasDto("),
+        V4.replace("atlas: (", r#"atlas: (letter: "B", "#),
+        V4.replace("atlas: (", r#"atlas: AtlasDto(letter: "B", "#),
+    ] {
+        let loaded = load_region_bytes(source.as_bytes().to_vec(), &id).unwrap();
+        assert_eq!(loaded.source_bytes.as_slice(), source.as_bytes());
+        assert_eq!(loaded.definition, expected.definition);
+        assert_eq!(
+            infrastructure::region::region_outline(&loaded.source_bytes, &id).unwrap(),
+            outline
+        );
+    }
+    let serialized = ron::to_string(outline.atlas.as_ref().unwrap()).unwrap();
+    assert!(!serialized.contains("letter"));
+}
+
+#[test]
+fn atlas_metadata_reaches_the_outline_only() {
+    use infrastructure::region::region_outline;
+    let id = RegionId::new("minimal");
+    let a = load_region_bytes(V4.as_bytes().to_vec(), &id).unwrap();
+    let edited = V4.replace(r##"colour: "#123456""##, r##"colour: "#abcdef""##);
+    let b = load_region_bytes(edited.as_bytes().to_vec(), &id).unwrap();
+    assert_eq!(a.definition, b.definition);
+    assert_ne!(a.fingerprint, b.fingerprint);
+    let atlas = region_outline(&b.source_bytes, &id).unwrap().atlas.unwrap();
+    assert_eq!(atlas.colour, "#abcdef");
+    let omitted = load_region_bytes(
+        without_field(&without_field(V4, "atlas"), "line_names").into_bytes(),
+        &id,
+    )
+    .unwrap();
+    assert!(
+        region_outline(&omitted.source_bytes, &id)
+            .unwrap()
+            .atlas
+            .is_none()
+    );
+    assert!(omitted.definition.start_line_name(CityId(2)).is_none());
+}
+
+#[test]
+fn archived_v3_bytes_preserve_terrain_factors_sun_and_locale() {
+    use domain::time::{Season, SimMonth};
+    use sha2::{Digest, Sha256};
+    for id in ["eastern_interconnection", "western_interconnection"] {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/support/global-foundations");
+        let bytes = fs::read(root.join(format!("{id}-v3.ron"))).unwrap();
+        let file: infrastructure::region::RegionFile = ron::de::from_bytes(&bytes).unwrap();
+        let loaded = load_region_bytes(bytes, &RegionId::new(id)).unwrap();
+        let r = loaded.definition;
+        assert_eq!(r.currency(), domain::units::Currency::Usd);
+        assert_eq!(r.system_zone().standard_offset_minutes, 0);
+        assert_eq!(r.system_zone().dst_months, [false; 12]);
+        assert_eq!(r.system_zone().name_key, None);
+        assert!(matches!(
+            r.solar().model,
+            domain::region::SolarModel::DaylightTable(_)
+        ));
+        let t = r.terrain();
+        assert_eq!(
+            *t,
+            legacy_raster::rasterize(&file),
+            "{id} old raster formula"
+        );
+        let mut h = Sha256::new();
+        h.update(t.width().to_le_bytes());
+        h.update(t.height().to_le_bytes());
+        for y in 0..t.height() {
+            for x in 0..t.width() {
+                let c = t.get(CellCoord { x, y }).unwrap();
+                h.update([u8::from(c.land)]);
+                for f in [
+                    c.height,
+                    c.irradiance,
+                    c.wind_potential,
+                    c.cooling_water,
+                    c.hydro_potential,
+                ] {
+                    h.update(f.value().to_bits().to_le_bytes());
+                }
+            }
+        }
+        // Only the capture platform promises exact dynamic libm bits (§5.7).
+        if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+            assert_eq!(
+                hex(&h.finalize()),
+                fs::read_to_string(root.join(format!("{id}-terrain-sha256.txt")))
+                    .unwrap()
+                    .trim()
+            );
+        }
+        for m in 1..=12 {
+            let month = SimMonth::new(2027, m).unwrap();
+            assert_eq!(r.season(month), month.season());
+            let shape = match month.season() {
+                Season::Winter => &file.demand.winter,
+                Season::Summer => &file.demand.summer,
+                _ => &file.demand.shoulder,
+            };
+            let (rise, set) = file.solar.daylight[usize::from(m - 1)];
+            for tick in 0..1440 {
+                let hour = (tick / 60) as usize;
+                let next = (hour + 1) % 24;
+                let fraction = f64::from(tick % 60) / 60.0;
+                // Frozen pre-foundation interpolation and daylight formula.
+                let demand = (shape[hour] + (shape[next] - shape[hour]) * fraction)
+                    * file.demand.monthly[usize::from(m - 1)];
+                let time = f64::from(tick) / 60.0;
+                let sun = if time <= rise || time >= set {
+                    0.0
+                } else {
+                    (std::f64::consts::PI * (time - rise) / (set - rise)).sin()
+                };
+                for c in r.cities() {
+                    assert_eq!(r.city_zone(c.id), r.system_zone());
+                    assert_eq!(r.load_factor(c.id, month, tick).to_bits(), demand.to_bits());
+                    assert_eq!(
+                        r.sun(c.cell, month, tick).to_bits(),
+                        sun.to_bits(),
+                        "{id} {m} {tick}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+proptest! {
+    #[test]
+    fn v4_starter_line_names_reference_connected_non_home_cities(city in 0u32..8, blank in any::<bool>()) {
+        let mut file: infrastructure::region::RegionFileV4 = ron::from_str(V4).unwrap();
+        file.start.line_names = vec![(city, if blank {" ".into()} else {"line-test".into()})];
+        let result = infrastructure::region::map_region_v4(file);
+        prop_assert_eq!(result.is_ok(), city == 2 && !blank);
+        if let Err(error) = result {prop_assert_eq!(error, RegionError::InvalidShape {field: "start.line_names"});}
+    }
+}
+
+fn v4_irradiance(source: &str) -> String {
+    V4.replace(
+        "irradiance: (base: 0.8, blobs: [])",
+        &format!("irradiance: {source}"),
+    )
+}
+
+#[test]
+fn v4_irradiance_retains_explicit_field_names_and_named_roundtrips() {
+    use infrastructure::region::IrradianceV4;
+    let anonymous = load_region_bytes(V4.as_bytes().to_vec(), &RegionId::new("minimal")).unwrap();
+    let named = load_region_bytes(
+        v4_irradiance("Field(base: 0.8, blobs: [])").into_bytes(),
+        &RegionId::new("minimal"),
+    )
+    .unwrap();
+    assert_eq!(named.definition, anonymous.definition);
+    for source in ["(base: 0.8, blobs: [])", "(cells: [0.0, 0.5, 1.0])"] {
+        let field: IrradianceV4 = ron::from_str(source).unwrap();
+        let named = ron::ser::to_string_pretty(
+            &field,
+            ron::ser::PrettyConfig::default().struct_names(true),
+        )
+        .unwrap();
+        assert!(named.starts_with("Field("));
+        let roundtrip: IrradianceV4 = ron::from_str(&named).unwrap();
+        assert_eq!(
+            ron::to_string(&roundtrip).unwrap(),
+            ron::to_string(&field).unwrap()
+        );
+    }
+}
+
+#[test]
+fn v4_irradiance_grid_maps_exact_row_major_values_and_roundtrips() {
+    let values: Vec<_> = (0..96).map(|i| f64::from(i) / 95.0).collect();
+    let text = v4_irradiance(&format!("(cells: {values:?})"));
+    let loaded = load_region_bytes(text.into_bytes(), &RegionId::new("minimal")).unwrap();
+    for y in 0..8 {
+        for x in 0..12 {
+            assert_eq!(
+                loaded
+                    .definition
+                    .terrain()
+                    .get(CellCoord { x, y })
+                    .unwrap()
+                    .irradiance
+                    .value(),
+                values[usize::from(y) * 12 + usize::from(x)]
+            );
+        }
+    }
+    let dto: infrastructure::region::RegionFileV4 =
+        ron::de::from_bytes(&loaded.source_bytes).unwrap();
+    let encoded = ron::to_string(&dto).unwrap();
+    let roundtrip = load_region_bytes(encoded.into_bytes(), &RegionId::new("minimal")).unwrap();
+    assert_eq!(roundtrip.definition, loaded.definition);
+}
+
+#[test]
+fn v4_irradiance_grid_rejects_nonfinite_and_out_of_range_values() {
+    for value in ["NaN", "inf", "-inf", "-0.01", "1.01"] {
+        let values = std::iter::once(value)
+            .chain(std::iter::repeat_n("0.5", 95))
+            .collect::<Vec<_>>()
+            .join(",");
+        let error = load_region_bytes(
+            v4_irradiance(&format!("(cells: [{values}])")).into_bytes(),
+            &RegionId::new("minimal"),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                RegionLoadError::Invalid {
+                    error: RegionError::InvalidShape {
+                        field: "irradiance.cells"
+                    },
+                    ..
+                }
+            ),
+            "{value}: {error:?}"
+        );
+    }
+}
+
+#[test]
+fn v4_irradiance_requires_exactly_one_complete_encoding() {
+    for source in [
+        "(base: 0.8, blobs: [], cells: [])",
+        "(base: 0.8, cells: [])",
+        "(blobs: [], cells: [])",
+        "(cells: [], typo: 1)",
+    ] {
+        assert!(
+            matches!(
+                load_region_bytes(
+                    v4_irradiance(source).into_bytes(),
+                    &RegionId::new("minimal")
+                ),
+                Err(RegionLoadError::Parse { .. })
+            ),
+            "{source}"
+        );
+    }
+    for (source, field) in [
+        ("(base: 0.8)", "blobs"),
+        ("(blobs: [])", "base"),
+        ("()", "base"),
+    ] {
+        let error = load_region_bytes(
+            v4_irradiance(source).into_bytes(),
+            &RegionId::new("minimal"),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, RegionLoadError::Invalid {error: RegionError::MissingField {field: got}, ..} if got == field),
+            "{source}: {error:?}"
+        );
+    }
+    let source = without_field(V4, "irradiance");
+    assert!(matches!(
+        load_region_bytes(source.into_bytes(), &RegionId::new("minimal")),
+        Err(RegionLoadError::Invalid {
+            error: RegionError::MissingField {
+                field: "irradiance"
+            },
+            ..
+        })
+    ));
+    let legacy = MINIMAL.replace(
+        "irradiance: (base: 0.8, blobs: [])",
+        "irradiance: (cells: [])",
+    );
+    assert!(matches!(
+        load_region_bytes(legacy.into_bytes(), &RegionId::new("minimal")),
+        Err(RegionLoadError::Parse { .. })
+    ));
+}
+
+proptest! {
+    #[test]
+    fn v4_irradiance_grid_length_is_exact_and_values_reach_their_cell(length in 0usize..193, at in 0usize..96, value in 0.0f64..=1.0) {
+        let mut values = vec![0.5;length];
+        if at < length {values[at]=value;}
+        let result=load_region_bytes(v4_irradiance(&format!("(cells: {values:?})")).into_bytes(), &RegionId::new("minimal"));
+        if length == 96 {
+            let r=result.unwrap().definition;
+            prop_assert_eq!(r.terrain().get(CellCoord{x:(at%12) as u16,y:(at/12) as u16}).unwrap().irradiance.value(),value);
+        } else {
+            prop_assert!(matches!(result, Err(RegionLoadError::Invalid {error: RegionError::InvalidShape {field: "irradiance.cells"}, ..})), "length {length}");
+        }
+    }
+}
+
+#[test]
+fn economic_zones_load_strictly_and_reach_quotes_and_outline() {
+    let source = include_bytes!("support/economic_region_v4.ron");
+    let loaded = load_region_bytes(source.to_vec(), &RegionId::new("minimal")).unwrap();
+    let spec = loaded
+        .definition
+        .plant_spec_at(domain::region::PlantKind::Wind, CellCoord { x: 8, y: 4 })
+        .unwrap();
+    assert_eq!(spec.capital_cost.cents(), 200_000_000);
+    assert_eq!(spec.build_months, 3);
+    infrastructure::region::region_outline(source, &RegionId::new("minimal")).unwrap();
+}
+
+#[test]
+fn economics_rejects_malformed_present_data_and_legacy_extensions() {
+    let source = include_str!("support/economic_region_v4.ron");
+    for (old, new) in [
+        ("id: 1, name_key:", "id: 0, name_key:"),
+        ("id: 2, name_key:", "id: 1, name_key:"),
+        ("economic-zone-west", " "),
+        ("build_months: 2)", "build_months: 0)"),
+        ("build_months: 2)", "build_months: 1000001)"),
+        ("capital_cost: 1000000", "capital_cost: -1"),
+        ("capital_cost: 1000000", "capital_cost: 9223372036854775807"),
+        ("cost_per_cell: 300000", "cost_per_cell: -1"),
+        ("cells_per_month: 2)", "cells_per_month: 0)"),
+        (
+            "kind: Wind, capital_cost: 1000000",
+            "kind: Unknown, capital_cost: 1000000",
+        ),
+        ("id: 1, name_key:", "id: 1, hvdc: (), name_key:"),
+        (
+            "kind: Wind, capital_cost: 1000000",
+            "kind: Wind, capacity_mw: 400.0, capital_cost: 1000000",
+        ),
+        ("0,1,1,1,1,1,2,2,2,2,2,2", "1,1,1,1,1,1,2,2,2,2,2,2"),
+        ("0,1,1,1,1,1,2,2,2,2,2,2", "0,99,1,1,1,1,2,2,2,2,2,2"),
+        ("0,1,1,1,1,1,2,2,2,2,2,2", "0,1,1,1,1,1,2,2,2,2,2"),
+        ("economic_zones: (", "economic_zones: None"),
+    ] {
+        assert!(source.contains(old), "{old}");
+        let invalid = source.replacen(old, new, 1);
+        assert!(
+            load_region_bytes(invalid.as_bytes().to_vec(), &RegionId::new("minimal")).is_err(),
+            "{new}"
+        );
+        assert!(
+            infrastructure::region::region_outline(invalid.as_bytes(), &RegionId::new("minimal"))
+                .is_err(),
+            "outline: {new}"
+        );
+    }
+    let legacy = MINIMAL.replace(
+        "id: \"minimal\",",
+        "id: \"minimal\", economic_zones: (zones: [], cells: []),",
+    );
+    assert!(load_region_bytes(legacy.into_bytes(), &RegionId::new("minimal")).is_err());
+    let dto: infrastructure::region::RegionFileV4 = ron::from_str(source).unwrap();
+    let named =
+        ron::ser::to_string_pretty(&dto, ron::ser::PrettyConfig::default().struct_names(true))
+            .unwrap();
+    let a = load_region_bytes(source.as_bytes().to_vec(), &RegionId::new("minimal")).unwrap();
+    let b = load_region_bytes(named.into_bytes(), &RegionId::new("minimal")).unwrap();
+    assert_eq!(a.definition, b.definition);
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(dir.path().join("minimal.ron"), source).unwrap();
+    let catalog = RonRegionCatalog::new(dir.path());
+    assert!(catalog.list().unwrap()[0].entry.is_ok());
+    assert!(
+        catalog
+            .load(&RegionId::new("minimal"))
+            .unwrap()
+            .definition
+            .has_economic_zones()
+    );
+}
+
+#[test]
+fn overflowing_economic_work_rates_keep_the_typed_zone_diagnostic() {
+    let source = include_str!("support/economic_region_v4.ron")
+        .replace("cells_per_month: 2)", "cells_per_month: 4294967291)")
+        .replace("cells_per_month: 3)", "cells_per_month: 4294967279)");
+    // The regional speed is 2. These two coprime overrides cannot share a u64 denominator.
+    let error = load_region_bytes(source.into_bytes(), &RegionId::new("minimal")).unwrap_err();
+    assert!(
+        matches!(
+            error,
+            RegionLoadError::Invalid {
+                error: RegionError::InvalidEconomicZone {
+                    zone: Some(domain::region::EconomicZoneId(2)),
+                    field: "economic_zones.ac_lines.cells_per_month"
+                },
+                ..
+            }
+        ),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn generated_zone_cells_load_through_the_catalog() {
+    use infrastructure::region::{
+        RegionFileV4, ZonePolygons, economic_zone_cells, economic_zone_cells_sidecar,
+    };
+    let source = include_str!("support/economic_region_v4.ron");
+    let file: RegionFileV4 = ron::from_str(source).unwrap();
+    // Unlike the fixture's split at lon 6, these polygons split the map at lon 4.
+    let square = |id, west: f64, east: f64| ZonePolygons {
+        id,
+        polygons: vec![vec![(west, -1.0), (east, -1.0), (east, 9.0), (west, 9.0)]],
+    };
+    let cells = economic_zone_cells(&file, &[square(1, -1.0, 4.0), square(2, 4.0, 13.0)]).unwrap();
+    let sidecar = economic_zone_cells_sidecar("minimal.ron", "z.ron", b"", &cells, file.grid.width);
+    let start = source.find("        cells: [").unwrap();
+    let end = start + source[start..].find("        ],\n").unwrap() + "        ],\n".len();
+    let main = format!(
+        "{}        cells_file: \"economic_zone_cells.ron\",\n{}",
+        &source[..start],
+        &source[end..]
+    );
+
+    let dir = dir_with(&[("minimal.ron", &main)]);
+    fs::create_dir(dir.path().join("minimal")).unwrap();
+    fs::write(dir.path().join("minimal/economic_zone_cells.ron"), sidecar).unwrap();
+    let loaded = catalog(dir.path()).load(&RegionId::new("minimal")).unwrap();
+    let zone = |x, y| {
+        loaded
+            .definition
+            .economic_zone_at(CellCoord { x, y })
+            .unwrap()
+            .0
+    };
+    for y in 0..8 {
+        assert_eq!(zone(0, y), 0, "water column, row {y}");
+        for x in 1..4 {
+            assert_eq!(zone(x, y), 1, "cell ({x}, {y})");
+        }
+        for x in 4..12 {
+            assert_eq!(zone(x, y), 2, "cell ({x}, {y})");
+        }
+    }
 }

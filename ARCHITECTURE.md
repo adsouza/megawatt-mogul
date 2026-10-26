@@ -43,13 +43,83 @@ never compile Bevy, so feedback takes seconds.
 | Rendering, input, UI and localised text | `game` (see [The game crate](#the-game-crate)) |
 
 Region data (plant tuning numbers, cities, regulator parameters) lives in `assets/regions/*.ron`,
-never as code constants. Shipped files declare `region_schema: 3`, requiring explicit wind
-resource fields/parameters/catalog entries and the battery charge-end hour, in addition to the
-schema-2 storage-accreditation ladder and satisfaction-return parameters. Pre-wind archives
-(schema 1 without a marker, or schema 2) receive only the frozen version-1 wind extension from
-`infrastructure::region::legacy`; schema 1 also receives the frozen A12 regulator defaults.
-Unexpected new fields on legacy sources and unsupported schemas fail with typed errors.
-Region schema versions are independent of portable state schema 2, whose reader retains schema 1.
+never as code constants. Shipped files declare `region_schema: 4`, including explicit clock,
+climate, calendar, currency, and astronomical-sun data. Legacy region schemas retain frozen
+defaults in `infrastructure::region::legacy`; old-source integrity is checked before any
+upcast. Unexpected new fields on legacy sources and unsupported schemas fail with typed errors.
+Region schema versions are independent of portable state schema 3, written by current saves;
+readers retain schemas 1–3.
+
+**Sidecars and the region bundle.** Spec §28.11.1 describes the format. Tool-generated blocks
+live in sidecars under `assets/regions/<id>/`, and the hand-authored main file references them:
+`geography` lists Natural Earth ring files, and `irradiance.cells_file` and
+`economic_zones.cells_file` name cell files. `RonRegionCatalog::load` assembles the main file and
+its sidecars into one canonical bundle (`infrastructure::region::bundle`). A region without
+sidecars is its own bundle. With sidecars, the bundle is a framed `megawatt-region-bundle 1`
+container. The bundle is the region's source bytes: it is parsed, fingerprinted and archived as
+one unit. Sidecars are inlined before mapping, so the region schema stays 4. Missing,
+unreferenced or misnamed sidecars, and malformed framing, are typed `RegionLoadError`s.
+
+Seven regions ship in `assets/regions/`, each a single synchronous balancing area (a copper plate)
+priced in its own currency:
+
+| Region ID | Name | Grid | Currency |
+|---|---|---|---|
+| `eastern_interconnection` | Eastern Interconnection | 60 Hz | USD |
+| `western_interconnection` | Western Interconnection | 60 Hz | USD |
+| `southern_china` | Southern China | 50 Hz | CNY |
+| `brazil_sin` | Brazil | 60 Hz | BRL |
+| `india_nepal_bhutan` | India–Nepal–Bhutan | 50 Hz | INR |
+| `ips_ups` | IPS/UPS | 50 Hz | RUB |
+| `continental_europe_maghreb` | Continental Europe–Maghreb | 50 Hz | EUR |
+
+Plan 7 (rules 18) added the five non-North-American regions as region data and tools only; no
+simulation rule changed. Multi-area regions, HVDC links and SGCC are Plan 8.
+
+**Offline region authoring.** Two directories hold what is used to write a region file, and none of
+it runs in the game or in the release build:
+
+- `tools/region_authoring/` holds Python helpers (see its `README.md`). `natural_earth.py` turns
+  Natural Earth v5.1.2 admin-0 and admin-1 features into `(land, exclude)` geography sidecars,
+  with a provenance header that records the file hashes, the command and the area lost to
+  simplification. Each run's arguments and output paths are committed in `selections/*.args`, and
+  a test regenerates every sidecar from them. `research_svg_extent.py` checks a committed
+  exclusion against the research map. Downloaded data is never committed.
+- `crates/infrastructure/authoring/` holds committed authoring inputs. The Ukraine–IPS operating
+  extent (Crimea and Sevastopol) is the one canonical exclusion that Continental Europe–Maghreb and
+  IPS/UPS share; each region keeps a byte-identical sidecar copy. The Europe–Maghreb
+  economic-zone polygons are rasterised into that region's `economic_zone_cells.ron` sidecar by
+  `cargo run -p infrastructure --example author_economic_zone_cells`. A shipped-regions test
+  checks that the committed sidecar is reproducible from the polygons.
+
+**Research-row provenance.** Every real-world money or construction-time figure lives in one
+place: `docs/research/2026-10-25-plan-7-regional-economics.md`, as rows with IDs of the form
+`P7-<area>-<nnn>`. A new region's plant catalog entries, `lines:`, `starting_tariff_per_mwh:`,
+`cash:` and economic-zone profiles must each have a `// ... [P7-…]` comment block directly above
+that cites a row. `new_region_entries_cite_research_rows` in
+`infrastructure/tests/shipped_regions.rs` enforces both directions: an entry without a citation
+fails, and so does a citation that names no row of the note. Capacity labels from the older
+research map set relative scale only; no figure migrates into game data without a row.
+
+Rules 17 add optional construction economic zones to region schema 4; Europe–Maghreb is the first
+shipped region to opt in. The domain's
+`region::economics` validates the dense cell map and partial profiles, resolves plant specs at a
+cell, and prices AC routes by canonical rational midpoint samples. Exact route work uses a checked
+u64 common denominator and u128 sum, rounded once. `plant_quote`/`line_quote` check representable
+completion dates before an order mutates state. Orders, starters and commissioning share these
+terms; owned plants retain their effective spec, while owned lines resolve fixed geometry against
+the immutable archived region. Snapshot validation compares plant specs against their cell's
+effective spec. No state fields or schema change: portable state stays 3. Absent economics retains
+legacy pricing. These zones do not affect electrical areas, physics, currency or operating costs.
+The HUD formats domain quotes and stored construction history; it does not calculate local prices.
+
+The new-game globe is also presentation-only. `hud::region_atlas` caches geographic union meshes
+on the unit sphere; `region_globe` supplies front-hemisphere projection, limb clipping and the
+24-second rotation clock. Mouse dragging changes longitude while retaining the 22° pole tilt;
+automatic rotation resumes two seconds after release. Card bodies select a transient region and
+animate its geographic midpoint to the front along the shortest longitude arc, then hold for two
+seconds before resuming. Title buttons start games as before. Its transient egui state never enters
+simulation time, randomness, commands or saves. The existing region cards remain keyboard-accessible.
 
 Rules 13 accredit commissioned storage by deliverable duration (including disabled batteries),
 refresh rate-base firm MW only at annual review, and adjust allowed return by post-close customer
@@ -96,8 +166,9 @@ policies (event to reaction, such as strikes or bankruptcy) run inside the domai
 
 Persistence is command sourcing, not event sourcing: `CommandLogLayer` records commands through
 the `CommandLogSink` port, and the aggregates know nothing about persistence. The header preserves
-log/rules versions, settings, seed and a SHA-256 fingerprint of the exact region source bytes.
-Infrastructure archives those same bytes as `<log-name>.region.ron` before the session starts.
+log/rules versions, settings, seed and a SHA-256 fingerprint of the exact region source bytes
+(the region bundle). Infrastructure archives those same bytes as `<log-name>.region.ron` before
+the session starts.
 Replay verifies versions and fingerprints before executing commands and uses the archive when
 shipped data changes. The shipped game has no rules-6/7 importer or special upgrade UI. One-time
 recovery tools and their historical engines are frozen outside the workspace in

@@ -12,6 +12,7 @@
 //! The speed controls are a bar of their own under the top bar (`speed.rs`). The map takes what is
 //! left.
 
+use crate::l10n::format::MoneyStyle;
 use application::Game;
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
@@ -94,8 +95,16 @@ pub fn operating_panel_model(
     game: &Game,
     l10n: &Localizer,
     tab: OperatingTab,
+    style: &MoneyStyle,
 ) -> Option<OperatingPanelModel> {
-    operating_model_with_history(game, l10n, tab, None, super::SupplyChartLayout::default())
+    operating_model_with_history(
+        game,
+        l10n,
+        tab,
+        None,
+        super::SupplyChartLayout::default(),
+        style,
+    )
 }
 
 fn operating_model_with_history(
@@ -104,6 +113,7 @@ fn operating_model_with_history(
     tab: OperatingTab,
     month: Option<domain::time::SimMonth>,
     layout: super::SupplyChartLayout,
+    style: &MoneyStyle,
 ) -> Option<OperatingPanelModel> {
     if game.session().phase() != DayPhase::Operating {
         return None;
@@ -119,12 +129,12 @@ fn operating_model_with_history(
             toggle(OperatingTab::History, "supply-history-title"),
         ],
         content: match tab {
-            OperatingTab::Supply => {
-                OperatingContent::Supply(Box::new(supply_model(game, l10n).with_layout(layout)))
-            }
+            OperatingTab::Supply => OperatingContent::Supply(Box::new(
+                supply_model(game, l10n, style).with_layout(layout),
+            )),
             OperatingTab::Hydro => OperatingContent::Hydro(hydro_model(game, l10n)),
             OperatingTab::History => OperatingContent::History(
-                super::supply_history_model(game, month, l10n).with_layout(layout),
+                super::supply_history_model(game, month, l10n, style).with_layout(layout),
             ),
         },
         ramp: ramp_warnings_model(game, l10n),
@@ -211,6 +221,7 @@ pub fn operating_side_model(
     game: &Game,
     l10n: &Localizer,
     selection: Selection,
+    style: &MoneyStyle,
 ) -> Option<OperatingSideModel> {
     if game.session().phase() != DayPhase::Operating {
         return None;
@@ -222,11 +233,11 @@ pub fn operating_side_model(
             Selection::City(city) => city_card_model(game, l10n, city).map(SelectedObject::City),
             // `None` for a built plant, which shows its details.
             Selection::Plant(plant) => {
-                construction_card_model(game, l10n, plant).map(SelectedObject::Construction)
+                construction_card_model(game, l10n, plant, style).map(SelectedObject::Construction)
             }
             _ => None,
         }
-        .unwrap_or_else(|| SelectedObject::Plant(plant_panel_model(game, l10n, selection))),
+        .unwrap_or_else(|| SelectedObject::Plant(plant_panel_model(game, l10n, selection, style))),
     })
 }
 
@@ -325,6 +336,7 @@ pub(super) fn operating_panel(
     session: Res<Session>,
     l10n: Res<Localizer>,
     mut sink: ActionSink,
+    style: Res<MoneyStyle>,
 ) -> Result {
     let Some(model) = operating_model_with_history(
         &session.0,
@@ -332,6 +344,7 @@ pub(super) fn operating_panel(
         sink.operating_tab(),
         sink.ui_state().supply_month,
         sink.ui_state().supply_chart_layout,
+        &style,
     ) else {
         return Ok(());
     };
@@ -353,8 +366,9 @@ pub(super) fn operating_side(
     l10n: Res<Localizer>,
     mut form: ResMut<PlantPanelForm>,
     mut sink: ActionSink,
+    style: Res<MoneyStyle>,
 ) -> Result {
-    let Some(model) = operating_side_model(&session.0, &l10n, sink.selection()) else {
+    let Some(model) = operating_side_model(&session.0, &l10n, sink.selection(), &style) else {
         return Ok(());
     };
     let actions = area.show_panel(contexts.ctx_mut()?, OPERATING_SIDE_PANEL, 0.0, |ui| {
@@ -366,6 +380,7 @@ pub(super) fn operating_side(
 
 #[cfg(test)]
 mod tests {
+    use crate::hud::test_support::usd_style;
     use application::{Command, InMemoryCommandLog};
 
     use super::*;
@@ -376,15 +391,18 @@ mod tests {
         let l10n = shipped_l10n();
         let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
         assert_eq!(
-            operating_panel_model(&game, &l10n, OperatingTab::Supply),
+            operating_panel_model(&game, &l10n, OperatingTab::Supply, &usd_style()),
             None
         );
-        assert_eq!(operating_side_model(&game, &l10n, Selection::None), None);
+        assert_eq!(
+            operating_side_model(&game, &l10n, Selection::None, &usd_style()),
+            None
+        );
 
         game.execute(Command::BeginOperating).unwrap();
 
-        assert!(operating_panel_model(&game, &l10n, OperatingTab::Supply).is_some());
-        assert!(operating_side_model(&game, &l10n, Selection::None).is_some());
+        assert!(operating_panel_model(&game, &l10n, OperatingTab::Supply, &usd_style()).is_some());
+        assert!(operating_side_model(&game, &l10n, Selection::None, &usd_style()).is_some());
     }
 
     /// The block shows the selected city's card, and a plant's details (or the placeholder)
@@ -399,7 +417,7 @@ mod tests {
         let city = session.city_views()[0].id;
         let plant = session.plant_views()[0].id;
 
-        let side = |selection| operating_side_model(&game, &l10n, selection).unwrap();
+        let side = |selection| operating_side_model(&game, &l10n, selection, &usd_style()).unwrap();
         let card = city_card_model(&game, &l10n, city).unwrap();
         assert_eq!(side(Selection::City(city)).selected.name(), card.name);
         assert_eq!(
@@ -409,7 +427,7 @@ mod tests {
         for selection in [Selection::Plant(plant), Selection::None] {
             assert_eq!(
                 side(selection).selected,
-                SelectedObject::Plant(plant_panel_model(&game, &l10n, selection)),
+                SelectedObject::Plant(plant_panel_model(&game, &l10n, selection, &usd_style())),
                 "{selection:?}"
             );
         }
@@ -426,8 +444,8 @@ mod tests {
         let plant = order_plant(&mut game, domain::region::PlantKind::Peaker, 0);
         game.execute(Command::BeginOperating).unwrap();
 
-        let side = |selection| operating_side_model(&game, &l10n, selection).unwrap();
-        let card = construction_card_model(&game, &l10n, plant).expect("a card");
+        let side = |selection| operating_side_model(&game, &l10n, selection, &usd_style()).unwrap();
+        let card = construction_card_model(&game, &l10n, plant, &usd_style()).expect("a card");
         assert_eq!(side(Selection::Plant(plant)).selected.name(), card.name);
         assert_eq!(
             side(Selection::Plant(plant)).selected,
@@ -435,7 +453,12 @@ mod tests {
         );
         assert_eq!(
             side(Selection::Plant(built)).selected,
-            SelectedObject::Plant(plant_panel_model(&game, &l10n, Selection::Plant(built)))
+            SelectedObject::Plant(plant_panel_model(
+                &game,
+                &l10n,
+                Selection::Plant(built),
+                &usd_style()
+            ))
         );
         assert_eq!(l10n.problems(), vec![]);
     }
@@ -446,7 +469,8 @@ mod tests {
         let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
         game.execute(Command::BeginOperating).unwrap();
 
-        let supply = operating_panel_model(&game, &l10n, OperatingTab::Supply).unwrap();
+        let supply =
+            operating_panel_model(&game, &l10n, OperatingTab::Supply, &usd_style()).unwrap();
         let tabs: Vec<(&str, &UiAction, bool)> = supply
             .tabs
             .iter()
@@ -474,7 +498,7 @@ mod tests {
         );
         assert!(matches!(supply.content, OperatingContent::Supply(_)));
 
-        let hydro = operating_panel_model(&game, &l10n, OperatingTab::Hydro).unwrap();
+        let hydro = operating_panel_model(&game, &l10n, OperatingTab::Hydro, &usd_style()).unwrap();
         assert!(matches!(hydro.content, OperatingContent::Hydro(_)));
         assert!(hydro.tabs[1].on && !hydro.tabs[0].on);
         assert_eq!(l10n.problems(), vec![]);

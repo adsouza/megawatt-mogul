@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// A whole region file. Self-contained: no includes, no external inputs.
+/// A whole legacy region file. Self-contained: no includes, no external inputs.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RegionFile {
@@ -296,4 +296,396 @@ mod present_option {
             None => s.serialize_none(),
         }
     }
+}
+
+/// Schema-4 site irradiance: geographic Gaussian field or exact row-major cells, inline or in
+/// a sidecar (spec §28.11.1). The wire forms are mutually exclusive and keep existing Gaussian
+/// RON valid. Loading resolves `CellsFile` to `Cells` before mapping.
+#[derive(Debug, Clone)]
+pub enum IrradianceV4 {
+    Gaussian(Field),
+    Cells(Vec<f64>),
+    CellsFile(String),
+}
+
+impl<'de> Deserialize<'de> for IrradianceV4 {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(rename = "Field", deny_unknown_fields)]
+        struct Source {
+            #[serde(default, deserialize_with = "present_option::deserialize")]
+            base: Option<f64>,
+            #[serde(default, deserialize_with = "present_option::deserialize")]
+            blobs: Option<Vec<Blob>>,
+            #[serde(default, deserialize_with = "present_option::deserialize")]
+            cells: Option<Vec<f64>>,
+            #[serde(default, deserialize_with = "present_option::deserialize")]
+            cells_file: Option<String>,
+        }
+        use serde::de::Error;
+        let source = Source::deserialize(deserializer)?;
+        match (source.base, source.blobs, source.cells, source.cells_file) {
+            (Some(base), Some(blobs), None, None) => Ok(Self::Gaussian(Field { base, blobs })),
+            (None, None, Some(cells), None) => Ok(Self::Cells(cells)),
+            (None, None, None, Some(file)) => Ok(Self::CellsFile(file)),
+            (_, _, Some(_), _) | (_, _, _, Some(_)) => Err(D::Error::custom(
+                "irradiance requires exactly one of base and blobs, cells or cells_file",
+            )),
+            (None, _, None, None) => Err(D::Error::missing_field("base")),
+            (_, None, None, None) => Err(D::Error::missing_field("blobs")),
+        }
+    }
+}
+
+impl Serialize for IrradianceV4 {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        match self {
+            Self::Gaussian(field) => field.serialize(serializer),
+            Self::Cells(cells) => {
+                let mut source = serializer.serialize_struct("Field", 1)?;
+                source.serialize_field("cells", cells)?;
+                source.end()
+            }
+            Self::CellsFile(file) => {
+                let mut source = serializer.serialize_struct("Field", 1)?;
+                source.serialize_field("cells_file", file)?;
+                source.end()
+            }
+        }
+    }
+}
+
+/// Strict schema-4 source; no legacy locale or tuning defaults.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegionFileV4 {
+    pub region_schema: u32,
+    pub id: String,
+    pub name_key: String,
+    pub bounds: Bounds,
+    pub grid: GridSize,
+    /// Land polygons as (lon, lat) rings.
+    pub land: Vec<Vec<(f64, f64)>>,
+    /// Polygons cut out of the land (lakes, bays).
+    pub exclude: Vec<Vec<(f64, f64)>>,
+    /// Sidecars holding generated `land` and `exclude` rings, which loading puts ahead of the
+    /// inline rings (spec §28.11.1).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub geography: Vec<String>,
+    pub height: Field,
+    pub irradiance: IrradianceV4,
+    pub cooling_water: Field,
+    pub hydro_potential: Field,
+    pub wind_potential: Field,
+    pub wind: WindDto,
+    pub catalog: Vec<PlantSpecDtoV4>,
+    pub cities: Vec<CityDtoV4>,
+    pub system_zone: u16,
+    pub time_zones: Vec<TimeZoneDto>,
+    pub climates: Vec<ClimateDto>,
+    pub demand_noise: DemandNoiseDto,
+    pub calendar: CalendarDto,
+    pub currency: CurrencyDto,
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub atlas: Option<AtlasDto>,
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub economic_zones: Option<EconomicZonesDto>,
+    pub solar: SolarDtoV4,
+    pub hydro: HydroDto,
+    pub frequency: FrequencyDto,
+    pub regulator: RegulatorDtoV4,
+    pub satisfaction: SatisfactionDto,
+    pub lines: LinesDtoV4,
+    pub start: StartDtoV4,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlantSpecDtoV4 {
+    pub kind: PlantKindDto,
+    pub capacity_mw: f64,
+    pub min_stable: f64,
+    pub ramp_mw_per_min: f64,
+    pub startup_hours: f64,
+    pub startup_cost: i64,
+    pub marginal_cost_per_mwh: f64,
+    pub fixed_om_per_month: i64,
+    pub capital_cost: i64,
+    pub build_months: u32,
+    pub capacity_credit: f64,
+    pub book_life_months: u32,
+    pub siting: SitingDto,
+    #[serde(default)]
+    pub battery: Option<BatteryDto>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CityDtoV4 {
+    pub id: u32,
+    pub zone: u16,
+    pub climate: u16,
+    pub name_key: String,
+    pub lon: f64,
+    pub lat: f64,
+    pub base_load_mw: f64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SolarDtoV4 {
+    pub clearness_mean: Vec<f64>,
+    pub clearness_sd: f64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegulatorDtoV4 {
+    pub storage_accreditation: Vec<(f64, f64)>,
+    pub satisfaction_target: f64,
+    pub return_per_satisfaction_point: f64,
+    pub starting_tariff_per_mwh: f64,
+    pub reference_tariff_per_mwh: f64,
+    pub base_return: f64,
+    pub min_return: f64,
+    pub max_return: f64,
+    pub reliability_target: f64,
+    pub return_per_reliability: f64,
+    pub return_per_cost_improvement: f64,
+    pub reserve_margin: f64,
+    pub strike_threshold: f64,
+    pub strikes_to_revoke: u8,
+    pub clean_months_to_expire: u8,
+    pub frequency_band_hz: f64,
+    pub frequency_violation_share: f64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LinesDtoV4 {
+    pub cost_per_cell: i64,
+    pub cells_per_month: u32,
+    pub book_life_months: u32,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct StartDtoV4 {
+    #[serde(default)]
+    pub line_names: Vec<(u32, String)>,
+    pub year: i32,
+    pub month: u8,
+    pub cash: i64,
+    pub home_city: u32,
+    pub connected_cities: Vec<u32>,
+    pub fleet: Vec<(PlantKindDto, f64, f64)>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TimeZoneDto {
+    pub id: u16,
+    pub name_key: String,
+    pub standard_offset_minutes: i32,
+    pub dst_months: Vec<bool>,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClimateDto {
+    pub id: u16,
+    pub shapes: Vec<(String, Vec<f64>)>,
+    pub month_shapes: Vec<String>,
+    pub monthly: Vec<f64>,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DemandNoiseDto {
+    pub forecast_error: f64,
+    pub error_persistence: f64,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CalendarDto {
+    pub seasons: Vec<SeasonDto>,
+}
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+pub enum SeasonDto {
+    Winter,
+    Spring,
+    Summer,
+    Autumn,
+    Monsoon,
+    PostMonsoon,
+}
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum CurrencyDto {
+    Usd,
+    Eur,
+    Cny,
+    Inr,
+    Rub,
+    Brl,
+    #[serde(other)]
+    Unknown,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AtlasDto {
+    pub colour: String,
+}
+
+impl<'de> Deserialize<'de> for AtlasDto {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(rename = "AtlasDto", deny_unknown_fields)]
+        struct Wire {
+            pub colour: String,
+            // Archived schema-4 sources used illustration letters. Accept and discard them
+            // without changing archived bytes or exposing them to presentation consumers.
+            #[serde(default, rename = "letter")]
+            _legacy_letter: String,
+        }
+        let wire = Wire::deserialize(deserializer)?;
+        Ok(Self {
+            colour: wire.colour,
+        })
+    }
+}
+#[derive(Debug, Clone)]
+pub enum ParsedRegionFile {
+    Legacy(RegionFile),
+    V4(RegionFileV4),
+}
+impl ParsedRegionFile {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Legacy(f) => &f.id,
+            Self::V4(f) => &f.id,
+        }
+    }
+    pub fn name_key(&self) -> &str {
+        match self {
+            Self::Legacy(f) => &f.name_key,
+            Self::V4(f) => &f.name_key,
+        }
+    }
+}
+pub(super) struct SchemaProbe {
+    pub region_schema: Option<u32>,
+}
+
+impl<'de> Deserialize<'de> for SchemaProbe {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Fields {
+            #[serde(default, with = "present_option")]
+            region_schema: Option<u32>,
+        }
+        struct ProbeVisitor;
+        impl<'de> serde::de::Visitor<'de> for ProbeVisitor {
+            type Value = SchemaProbe;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a region struct")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                map: A,
+            ) -> Result<Self::Value, A::Error> {
+                let fields =
+                    Fields::deserialize(serde::de::value::MapAccessDeserializer::new(map))?;
+                Ok(SchemaProbe {
+                    region_schema: fields.region_schema,
+                })
+            }
+        }
+        // Probe only the schema without imposing a helper's struct name. The full
+        // versioned DTO then validates its own name, fields, and complete syntax.
+        deserializer.deserialize_any(ProbeVisitor)
+    }
+}
+
+/// Optional schema-4 construction markets. Optional scalars use plain RON values,
+/// e.g. `(kind: Wind, build_months: 2)`; omit a member to inherit the catalog.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EconomicZonesDto {
+    pub zones: Vec<EconomicZoneDto>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cells: Vec<u32>,
+    /// A sidecar holding `cells`, exclusive with inline cells (spec §28.11.1).
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cells_file: Option<String>,
+}
+
+/// A sidecar of row-major cell values: `(cells: [...])` (spec §28.11.1).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CellsSidecar<T> {
+    pub cells: Vec<T>,
+}
+
+/// A sidecar of generated rings: `(land: [...], exclude: [...])`, either member optional.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GeographySidecar {
+    #[serde(default)]
+    pub land: Vec<Vec<(f64, f64)>>,
+    #[serde(default)]
+    pub exclude: Vec<Vec<(f64, f64)>>,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EconomicZoneDto {
+    pub id: u32,
+    pub name_key: String,
+    #[serde(default)]
+    pub plants: Vec<PlantConstructionDto>,
+    #[serde(default)]
+    pub ac_lines: LineConstructionDto,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlantConstructionDto {
+    pub kind: PlantKindDto,
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub capital_cost: Option<i64>,
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub build_months: Option<u32>,
+}
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LineConstructionDto {
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cost_per_cell: Option<i64>,
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cells_per_month: Option<u32>,
 }

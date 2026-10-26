@@ -1,0 +1,12 @@
+--admin0
+target/natural-earth/ne_50m_admin_0_countries.geojson
+--admin1
+target/natural-earth/ne_10m_admin_1_states_provinces.geojson
+--include
+ISO:BRA
+--bounds=-74.0,-34.0,-34.0,5.5
+--grid
+126,128
+--dissolve
+--out
+assets/regions/brazil_sin/natural_earth.ron

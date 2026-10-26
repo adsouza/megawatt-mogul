@@ -3,6 +3,31 @@
 //! Every quantity is a newtype with a private field; the raw `f64` or `i64`
 //! only escapes through an explicit accessor.
 
+/// Region accounting denomination. Every supported currency has two minor-unit digits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Currency {
+    Usd,
+    Eur,
+    Cny,
+    Inr,
+    Rub,
+    Brl,
+}
+
+impl Currency {
+    /// Stable ISO 4217 identity, not localized display text.
+    pub const fn iso_code(self) -> &'static str {
+        match self {
+            Self::Usd => "USD",
+            Self::Eur => "EUR",
+            Self::Cny => "CNY",
+            Self::Inr => "INR",
+            Self::Rub => "RUB",
+            Self::Brl => "BRL",
+        }
+    }
+}
+
 use std::iter::Sum;
 use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign};
 

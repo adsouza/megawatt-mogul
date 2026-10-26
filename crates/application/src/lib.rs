@@ -25,6 +25,6 @@ pub use pipeline::{
 };
 pub use ports::{
     CommandLogError, CommandLogSink, InMemoryCommandLog, LOG_FORMAT_VERSION, LoadedRegion,
-    LogHeader, LogRecord, RegionCatalog, RegionFingerprint, RegionListing, RegionLoadError,
-    RegionSummary,
+    LogHeader, LogRecord, RegionBundleProblem, RegionCatalog, RegionFingerprint, RegionListing,
+    RegionLoadError, RegionSummary, SidecarProblem,
 };

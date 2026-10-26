@@ -32,13 +32,15 @@ impl SimDuration {
     }
 }
 
-/// Meteorological season (northern hemisphere).
+/// Seasonal label. Calendar months retain the default northern meteorological seasons.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Season {
     Winter,
     Spring,
     Summer,
     Autumn,
+    Monsoon,
+    PostMonsoon,
 }
 
 /// A calendar month, always valid (`month` is `1..=12`).
@@ -64,6 +66,14 @@ impl SimMonth {
     /// Month number, `1..=12`.
     pub fn month(self) -> u8 {
         self.month
+    }
+
+    /// Constant-time checked calendar arithmetic for construction quotes and displays.
+    pub fn checked_add_months(self, months: u32) -> Result<Self, DomainError> {
+        let absolute = i64::from(self.year) * 12 + i64::from(self.month - 1) + i64::from(months);
+        let year = i32::try_from(absolute.div_euclid(12))
+            .map_err(|_| DomainError::ConstructionOverflow)?;
+        Self::new(year, (absolute.rem_euclid(12) + 1) as u8)
     }
 
     pub fn next(self) -> Self {
@@ -197,6 +207,12 @@ impl crate::state::State for Season {
             Self::Autumn => {
                 crate::state::State::write(&3u8, out);
             }
+            Self::Monsoon => {
+                crate::state::State::write(&4u8, out);
+            }
+            Self::PostMonsoon => {
+                crate::state::State::write(&5u8, out);
+            }
         }
     }
     fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
@@ -205,6 +221,8 @@ impl crate::state::State for Season {
             1 => Self::Spring,
             2 => Self::Summer,
             3 => Self::Autumn,
+            4 if input.schema >= 3 => Self::Monsoon,
+            5 if input.schema >= 3 => Self::PostMonsoon,
             _ => return Err(crate::state::StateError::Invalid),
         })
     }
@@ -216,6 +234,40 @@ mod tests {
     use super::*;
     use crate::error::DomainError;
     use proptest::prelude::*;
+
+    #[test]
+    fn season_tags_four_and_five_are_schema_three_only() {
+        use crate::state::{State, StateError};
+        for (season, tag) in [(Season::Monsoon, 4u8), (Season::PostMonsoon, 5u8)] {
+            let bytes = season.state_bytes_schema(3);
+            assert_eq!(bytes, vec![tag]);
+            assert_eq!(Season::from_state_bytes_schema(&bytes, 3), Ok(season));
+            assert_eq!(Season::from_state_bytes(&season.state_bytes()), Ok(season));
+            for schema in [1, 2] {
+                assert_eq!(
+                    Season::from_state_bytes_schema(&bytes, schema),
+                    Err(StateError::Invalid)
+                );
+            }
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn season_tag_gate_preserves_legacy_tags(schema in 1u32..=3, tag in any::<u8>()) {
+            use crate::state::{State, StateError};
+            let expected = match tag {
+                0 => Ok(Season::Winter),
+                1 => Ok(Season::Spring),
+                2 => Ok(Season::Summer),
+                3 => Ok(Season::Autumn),
+                4 if schema == 3 => Ok(Season::Monsoon),
+                5 if schema == 3 => Ok(Season::PostMonsoon),
+                _ => Err(StateError::Invalid),
+            };
+            prop_assert_eq!(Season::from_state_bytes_schema(&[tag], schema), expected);
+        }
+    }
 
     #[test]
     fn leap_years_follow_gregorian_rules() {

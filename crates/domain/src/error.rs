@@ -15,6 +15,10 @@ use crate::units::Megawatts;
 /// leaves the session unchanged.
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum DomainError {
+    #[error("invalid construction cell {cell:?}")]
+    InvalidConstructionCell { cell: CellCoord },
+    #[error("construction terms exceed representable money, duration or completion date")]
+    ConstructionOverflow,
     /// A ratio was NaN or outside `0.0..=1.0`.
     #[error("invalid ratio: {value}")]
     InvalidRatio { value: f64 },

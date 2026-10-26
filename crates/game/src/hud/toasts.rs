@@ -4,6 +4,7 @@
 //! the one clock the HUD may read: [`collect_toasts`] reads `Time<Real>` and passes `now` (seconds)
 //! on, so the queue and the presenter stay pure and testable.
 
+use crate::l10n::format::MoneyStyle;
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 
@@ -114,6 +115,7 @@ pub(super) fn collect_toasts(
     l10n: Res<Localizer>,
     time: Res<Time<Real>>,
     mut queue: ResMut<ToastQueue>,
+    style: Res<MoneyStyle>,
 ) {
     let now = time.elapsed_secs_f64();
     queue.expire(now);
@@ -128,7 +130,7 @@ pub(super) fn collect_toasts(
         queue.push(error.localize_with(&l10n, &names), now);
     }
     for DomainEventMessage(event) in events.read() {
-        if let Some(text) = event.toast(&l10n, &names) {
+        if let Some(text) = event.toast(&l10n, &names, &style) {
             queue.push(text, now);
         }
     }

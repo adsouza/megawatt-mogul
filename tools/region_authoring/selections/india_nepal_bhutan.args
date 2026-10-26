@@ -1,0 +1,16 @@
+--admin0
+target/natural-earth/ne_50m_admin_0_countries.geojson
+--admin1
+target/natural-earth/ne_10m_admin_1_states_provinces.geojson
+--include
+ISO:IND,ISO:NPL,ISO:BTN,ADM0:KAS
+--exclude-admin1
+BGD:Dhaka,BGD:Chittagong,BGD:Sylhet,BGD:Rangpur,BGD:Rajshahi,BGD:Khulna,BGD:Barisal,IND:Andaman and Nicobar
+--bounds=68.0,97.5,7.5,37.0
+--grid
+118,128
+--tolerance-deg
+0.012
+--dissolve
+--out
+assets/regions/india_nepal_bhutan/natural_earth.ron

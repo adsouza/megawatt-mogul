@@ -27,6 +27,7 @@ pub struct CityCardModel {
     pub name: String,
     /// `Connected` or `Not connected`.
     pub connection: String,
+    pub local_time: String,
     pub connected: bool,
     pub cutting_load: bool,
     /// Base load and the peak; in Operating, for a connected city, the demand and the load served
@@ -83,6 +84,22 @@ pub fn city_card_model(game: &Game, l10n: &Localizer, city: CityId) -> Option<Ci
         } else {
             "city-not-connected"
         }),
+        local_time: l10n.args(
+            "city-local-time",
+            &[(
+                "time",
+                format::zoned_clock(
+                    session.region().local_minute(
+                        city,
+                        session.clock().month(),
+                        session.clock().tick(),
+                    ),
+                    session.region().city_zone(city),
+                    l10n,
+                )
+                .into(),
+            )],
+        ),
         connected: detail.connected,
         cutting_load: detail
             .demand_now
@@ -123,7 +140,10 @@ pub fn draw_city_card(ui: &mut egui::Ui, model: &CityCardModel) {
     } else {
         TextTone::Neutral
     };
-    ui.colored_label(connection.color(), &model.connection);
+    ui.horizontal_wrapped(|ui| {
+        ui.colored_label(connection.color(), &model.connection);
+        ui.colored_label(TextTone::Information.color(), &model.local_time);
+    });
     egui::Grid::new("city_card_stats")
         .num_columns(2)
         .spacing(egui::vec2(8.0, 1.0))
@@ -193,6 +213,19 @@ mod tests {
             format::megawatts(detail.peak),
             format::clock(u32::from(detail.peak_hour) * TICKS_PER_HOUR)
         )
+    }
+
+    #[test]
+    fn city_card_shows_local_time() {
+        let game = crate::hud::test_support::global_game();
+        let model =
+            city_card_model(&game, &crate::hud::test_support::global_l10n(), CityId(2)).unwrap();
+        assert_eq!(model.local_time, "Local time: 02:30 IST");
+        let legacy = crate::hud::test_support::legacy_eastern_game();
+        assert_eq!(
+            card(&legacy, city(&legacy, true)).local_time,
+            "Local time: 00:00"
+        );
     }
 
     #[test]

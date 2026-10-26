@@ -1,6 +1,7 @@
 //! The game-over modal: why the game ended, the final scores, the way to the final month's review
 //! (*See the month*), and the way back to the menu.
 
+use crate::l10n::format::MoneyStyle;
 use application::Game;
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
@@ -54,7 +55,7 @@ pub struct GameOverModel {
 }
 
 /// The modal, while the game is over; `None` while it is still running.
-pub fn game_over_model(game: &Game, l10n: &Localizer) -> Option<GameOverModel> {
+pub fn game_over_model(game: &Game, l10n: &Localizer, style: &MoneyStyle) -> Option<GameOverModel> {
     let session = game.session();
     match session.status() {
         SessionStatus::Active => None,
@@ -67,6 +68,7 @@ pub fn game_over_model(game: &Game, l10n: &Localizer) -> Option<GameOverModel> {
                 &session.company_view(),
                 has_report,
                 l10n,
+                style,
             ))
         }
     }
@@ -80,6 +82,7 @@ pub fn game_over_model_for(
     company: &CompanyView,
     has_report: bool,
     l10n: &Localizer,
+    style: &MoneyStyle,
 ) -> GameOverModel {
     let stat = |key: &str, value: String| Stat {
         label: l10n.text(key),
@@ -88,7 +91,7 @@ pub fn game_over_model_for(
     GameOverModel {
         title: l10n.text("game-over-title"),
         reason: reason.localize(l10n),
-        cash: stat("game-over-final-cash", format::money(company.cash)),
+        cash: stat("game-over-final-cash", format::money(company.cash, style)),
         reliability: stat(
             "game-over-reliability",
             format::percent(company.reliability),
@@ -145,12 +148,13 @@ pub(super) fn game_over_modal(
     l10n: Res<Localizer>,
     shown: Res<GameOverViewShown>,
     mut sink: ActionSink,
+    style: Res<MoneyStyle>,
 ) -> Result {
     // The final month's review stands in for the modal until *Back*.
     if shown.0 == GameOverView::FinalMonth {
         return Ok(());
     }
-    let Some(model) = game_over_model(&session.0, &l10n) else {
+    let Some(model) = game_over_model(&session.0, &l10n, &style) else {
         return Ok(());
     };
     let actions = egui::Modal::new(egui::Id::new("game_over"))
@@ -162,6 +166,7 @@ pub(super) fn game_over_modal(
 
 #[cfg(test)]
 mod tests {
+    use crate::hud::test_support::usd_style;
     use application::InMemoryCommandLog;
 
     use super::*;
@@ -177,12 +182,12 @@ mod tests {
             (GameOverReason::Bankrupt, "game-over-bankrupt"),
             (GameOverReason::LicenseRevoked, "game-over-license-revoked"),
         ] {
-            let model = game_over_model_for(reason, &company, true, &l10n);
+            let model = game_over_model_for(reason, &company, true, &l10n, &usd_style());
 
             assert_eq!(model.title, l10n.text("game-over-title"));
             assert_eq!(model.reason, l10n.text(key));
             assert_eq!(model.cash.label, l10n.text("game-over-final-cash"));
-            assert_eq!(model.cash.value, format::money(company.cash));
+            assert_eq!(model.cash.value, format::money(company.cash, &usd_style()));
             assert_eq!(
                 model.reliability.value,
                 format::percent(company.reliability)
@@ -205,8 +210,20 @@ mod tests {
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
         let company = game.session().company_view();
 
-        let with = game_over_model_for(GameOverReason::Bankrupt, &company, true, &l10n);
-        let without = game_over_model_for(GameOverReason::Bankrupt, &company, false, &l10n);
+        let with = game_over_model_for(
+            GameOverReason::Bankrupt,
+            &company,
+            true,
+            &l10n,
+            &usd_style(),
+        );
+        let without = game_over_model_for(
+            GameOverReason::Bankrupt,
+            &company,
+            false,
+            &l10n,
+            &usd_style(),
+        );
 
         let button = with.see_month.expect("a report exists");
         assert_eq!(button.label, "See the month");
@@ -226,6 +243,6 @@ mod tests {
         let l10n = shipped_l10n();
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
 
-        assert_eq!(game_over_model(&game, &l10n), None);
+        assert_eq!(game_over_model(&game, &l10n, &usd_style()), None);
     }
 }

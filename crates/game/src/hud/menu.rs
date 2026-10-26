@@ -327,6 +327,7 @@ pub struct RegionChoice {
     pub button: ButtonModel,
     pub description: Option<String>,
     pub detail: Option<String>,
+    pub metadata: Option<String>,
     pub(super) artwork: Option<std::sync::Arc<region_atlas::Artwork>>,
     /// Why the region can't be played, when it can't: a status word and the localised error.
     pub problem: Option<RegionProblem>,
@@ -342,8 +343,10 @@ pub struct RegionProblem {
 pub struct RegionSelectModel {
     pub title: String,
     pub subtitle: String,
-    pub map_title: String,
+    /// Accessible name of the map; not painted over its geography.
+    pub map_label: String,
     pub map_note: String,
+    pub land_note: String,
     pub seed_label: String,
     pub seed_invalid: String,
     pub regions: Vec<RegionChoice>,
@@ -376,8 +379,9 @@ pub fn region_select_model(
     RegionSelectModel {
         title: l10n.text("region-select-title"),
         subtitle: l10n.text("region-select-subtitle"),
-        map_title: l10n.text("region-select-map-title"),
+        map_label: l10n.text("region-select-map-label"),
         map_note: l10n.text("region-select-map-note"),
+        land_note: l10n.text("region-select-land-note"),
         seed_label: l10n.text("menu-seed"),
         seed_invalid: l10n.text("menu-seed-invalid"),
         regions,
@@ -393,12 +397,14 @@ pub fn region_select_model(
 fn region_choice(listing: &RegionListing, seed: Option<u64>, l10n: &Localizer) -> RegionChoice {
     match &listing.entry {
         Ok(summary) => RegionChoice {
-            description: match summary.id.as_str() {
-                "eastern_interconnection" => Some(l10n.text("region-select-east-description")),
-                "western_interconnection" => Some(l10n.text("region-select-west-description")),
-                _ => None,
+            description: {
+                // Each region's copy sits in `regions.ftl` beside its name; a region without
+                // any shows none.
+                let key = format!("{}-description", summary.name_key);
+                l10n.has(&key).then(|| l10n.text(&key))
             },
             detail: None,
+            metadata: None,
             artwork: None,
             button: ButtonModel::new(
                 l10n.text(&summary.name_key),
@@ -413,6 +419,7 @@ fn region_choice(listing: &RegionListing, seed: Option<u64>, l10n: &Localizer) -
         Err(error) => RegionChoice {
             description: None,
             detail: None,
+            metadata: None,
             artwork: None,
             // A broken file has no name to translate: its id (the file name) is all there is.
             button: ButtonModel::new(
@@ -464,87 +471,175 @@ pub fn draw_region_select(
     ui.add_space(12.0);
     let content_height = (ui.available_height() - 50.0).max(80.0);
     egui::ScrollArea::vertical()
+        .animated(false)
         .max_height(content_height)
         .show(ui, |ui| {
             let has_map = model.regions.iter().any(|choice| choice.artwork.is_some());
             let wide = has_map && ui.available_width() >= 800.0;
-            let cards = |ui: &mut egui::Ui, actions: &mut Vec<UiAction>| {
+            let cards = |ui: &mut egui::Ui, actions: &mut Vec<UiAction>, allow_columns: bool| {
+                let gap = 14.0;
+                let columns = if allow_columns && ui.available_width() >= 2.0 * 340.0 + gap {
+                    2
+                } else {
+                    1
+                };
+                let card_width =
+                    (ui.available_width() - gap * (columns - 1) as f32) / columns as f32;
                 let mut hovered = None;
                 let mut rects = Vec::new();
-                for (index, choice) in model.regions.iter().enumerate() {
-                    let frame = egui::Frame::new()
-                        .fill(egui::Color32::from_gray(32))
-                        .corner_radius(10.0)
-                        .inner_margin(14.0)
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                let (rect, _) = ui.allocate_exact_size(
-                                    egui::vec2(6.0, 28.0),
-                                    egui::Sense::hover(),
-                                );
-                                ui.painter()
-                                    .rect_filled(rect, 3.0, region_atlas::colour(index));
-                                let response = add_enabled(
-                                    ui,
-                                    choice.button.enabled,
-                                    egui::Button::new(
-                                        egui::RichText::new(&choice.button.label)
-                                            .size(18.0)
-                                            .strong(),
-                                    )
-                                    .min_size(egui::vec2(ui.available_width(), 48.0))
-                                    .wrap(),
-                                );
-                                if response.hovered() || response.has_focus() {
-                                    hovered = Some(index);
+                egui::Grid::new("region_cards")
+                    .num_columns(columns)
+                    .spacing(egui::vec2(gap, gap))
+                    .min_col_width(card_width)
+                    .max_col_width(card_width)
+                    .show(ui, |ui| {
+                        for (index, choice) in model.regions.iter().enumerate() {
+                            let mut title_rect = egui::Rect::NOTHING;
+                            let frame = ui
+                                .vertical(|ui| {
+                                    ui.set_width(card_width);
+                                    egui::Frame::new()
+                                        .fill(egui::Color32::from_gray(32))
+                                        .corner_radius(10.0)
+                                        .inner_margin(14.0)
+                                        .show(ui, |ui| {
+                                            ui.horizontal(|ui| {
+                                                let (rect, _) = ui.allocate_exact_size(
+                                                    egui::vec2(6.0, 28.0),
+                                                    egui::Sense::hover(),
+                                                );
+                                                ui.painter().rect_filled(
+                                                    rect,
+                                                    3.0,
+                                                    region_atlas::colour(choice, index),
+                                                );
+                                                let response = add_enabled(
+                                                    ui,
+                                                    choice.button.enabled,
+                                                    egui::Button::new(
+                                                        egui::RichText::new(&choice.button.label)
+                                                            .size(18.0)
+                                                            .strong(),
+                                                    )
+                                                    .min_size(egui::vec2(
+                                                        ui.available_width(),
+                                                        48.0,
+                                                    ))
+                                                    .wrap(),
+                                                );
+                                                title_rect = response.rect;
+                                                if response.has_focus() {
+                                                    response
+                                                        .scroll_to_me(Some(egui::Align::Center));
+                                                }
+                                                if response.hovered() || response.has_focus() {
+                                                    hovered = Some(index);
+                                                }
+                                                if response.clicked() {
+                                                    actions.push(choice.button.action.clone());
+                                                }
+                                            });
+                                            if let Some(description) = &choice.description {
+                                                ui.add_space(10.0);
+                                                ui.label(description);
+                                            }
+                                            if let Some(detail) = &choice.detail {
+                                                ui.add_space(10.0);
+                                                ui.weak(detail);
+                                            }
+                                            if let Some(metadata) = &choice.metadata {
+                                                ui.add_space(6.0);
+                                                ui.label(metadata);
+                                            }
+                                            if let Some(problem) = &choice.problem {
+                                                ui.colored_label(
+                                                    ui.visuals().warn_fg_color,
+                                                    problem.status.as_str(),
+                                                );
+                                                ui.weak(problem.detail.as_str());
+                                            }
+                                        })
+                                })
+                                .inner;
+                            if frame.response.hovered() && choice.button.enabled {
+                                hovered = Some(index);
+                            }
+                            if choice.button.enabled && choice.artwork.is_some() {
+                                // Exclude the start button from the body's click targets. These
+                                // pointer-only targets add no extra keyboard focus stops.
+                                let r = frame.response.rect;
+                                let bodies = [
+                                    egui::Rect::from_min_max(
+                                        r.min,
+                                        egui::pos2(r.right(), title_rect.top()),
+                                    ),
+                                    egui::Rect::from_min_max(
+                                        egui::pos2(r.left(), title_rect.bottom()),
+                                        r.max,
+                                    ),
+                                    egui::Rect::from_min_max(
+                                        egui::pos2(r.left(), title_rect.top()),
+                                        title_rect.left_bottom(),
+                                    ),
+                                    egui::Rect::from_min_max(
+                                        title_rect.right_top(),
+                                        egui::pos2(r.right(), title_rect.bottom()),
+                                    ),
+                                ];
+                                for (part, body) in bodies.into_iter().enumerate() {
+                                    let response = ui
+                                        .interact(
+                                            body,
+                                            ui.id().with(("region_body", index, part)),
+                                            egui::Sense::CLICK,
+                                        )
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                    if response.hovered() {
+                                        hovered = Some(index);
+                                    }
+                                    if response.clicked() {
+                                        region_atlas::focus_region(ui.ctx(), choice);
+                                    }
                                 }
-                                if response.clicked() {
-                                    actions.push(choice.button.action.clone());
-                                }
-                            });
-                            if let Some(description) = &choice.description {
-                                ui.add_space(10.0);
-                                ui.label(description);
                             }
-                            if let Some(detail) = &choice.detail {
-                                ui.add_space(10.0);
-                                ui.weak(detail);
+                            rects.push(frame.response.rect);
+                            if (index + 1) % columns == 0 {
+                                ui.end_row();
                             }
-                            if let Some(problem) = &choice.problem {
-                                ui.colored_label(
-                                    ui.visuals().warn_fg_color,
-                                    problem.status.as_str(),
-                                );
-                                ui.weak(problem.detail.as_str());
-                            }
-                        });
-                    if frame.response.hovered() && choice.button.enabled {
-                        hovered = Some(index);
-                    }
-                    rects.push(frame.response.rect);
-                    ui.add_space(14.0);
-                }
+                        }
+                    });
                 (hovered, rects)
             };
             if wide {
                 let width = ui.available_width();
-                let map_width = (width * 0.66).min(content_height * 1.6);
+                let map_width = (width * 0.60).min((content_height - 28.0).max(80.0));
                 ui.horizontal_top(|ui| {
                     let map_rect = egui::Rect::from_min_size(
                         ui.cursor().min,
-                        egui::vec2(map_width, map_width / 1.6),
+                        egui::vec2(map_width, map_width / region_atlas::aspect()),
                     );
                     // Draw the cards first so either a card or its map area can highlight both.
                     let right = egui::Rect::from_min_max(
                         map_rect.right_top() + egui::vec2(20.0, 0.0),
                         egui::pos2(ui.max_rect().right(), ui.max_rect().bottom()),
                     );
-                    let (hovered, rects) = ui
+                    // The card panel scrolls on its own when the cards are taller than the
+                    // picker, so the globe stays in view; it never scrolls sideways.
+                    let (hovered, rects, viewport) = ui
                         .scope_builder(
                             egui::UiBuilder::new()
                                 .max_rect(right)
                                 .layout(egui::Layout::top_down(egui::Align::Min)),
-                            |ui| cards(ui, &mut actions),
+                            |ui| {
+                                let panel = egui::ScrollArea::vertical()
+                                    .id_salt("region_cards_panel")
+                                    .animated(false)
+                                    .auto_shrink([false, true])
+                                    .max_height(content_height)
+                                    .show(ui, |ui| cards(ui, &mut actions, true));
+                                let (hovered, rects) = panel.inner;
+                                (hovered, rects, panel.inner_rect)
+                            },
                         )
                         .inner;
                     let active = ui
@@ -552,24 +647,28 @@ pub fn draw_region_select(
                             egui::UiBuilder::new()
                                 .max_rect(map_rect)
                                 .layout(egui::Layout::top_down(egui::Align::Min)),
-                            |ui| region_atlas::draw_map(ui, &model, hovered, &mut actions),
+                            |ui| region_atlas::draw_globe(ui, &model, hovered, &mut actions),
                         )
                         .inner;
                     if let Some(index) = active {
-                        ui.painter().rect_stroke(
+                        // A card scrolled out of the panel keeps its outline out of view too.
+                        ui.painter().with_clip_rect(viewport).rect_stroke(
                             rects[index],
                             10.0,
-                            egui::Stroke::new(2.0, region_atlas::colour(index)),
+                            egui::Stroke::new(
+                                2.0,
+                                region_atlas::colour(&model.regions[index], index),
+                            ),
                             egui::StrokeKind::Inside,
                         );
                     }
                 });
             } else {
                 if has_map {
-                    region_atlas::draw_map(ui, &model, None, &mut actions);
+                    region_atlas::draw_globe(ui, &model, None, &mut actions);
                     ui.add_space(14.0);
                 }
-                cards(ui, &mut actions);
+                cards(ui, &mut actions, false);
             }
             if let Some(empty) = &model.empty {
                 ui.label(empty.as_str());
@@ -662,6 +761,51 @@ mod tests {
             seed: " 12 ".to_owned(),
         };
         assert_eq!(padded.parsed_seed(), Some(12));
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    #[test]
+    fn a_regions_description_is_looked_up_from_its_name_key() {
+        let l10n = shipped_l10n();
+        // Neither ID is one the menu knows by name: the key alone finds the copy.
+        let listings = RegionListings(Ok(vec![
+            available("somewhere", EAST.1),
+            available("elsewhere", WEST.1),
+            // A real message with no description beside it.
+            available("nowhere", "city-columbus"),
+        ]));
+
+        let model = region_select_model(&listings, Some(1), &l10n);
+
+        let descriptions: Vec<_> = model
+            .regions
+            .iter()
+            .map(|r| r.description.clone())
+            .collect();
+        assert_eq!(
+            descriptions,
+            [
+                Some(
+                    "Dense cities, big demand, and a legacy coal and nuclear fleet. \
+                     Keep the industrial heartland humming."
+                        .to_owned()
+                ),
+                Some(
+                    "Mountain crossings, desert sunshine, and Pacific Northwest hydro. \
+                     Master the evening demand surge."
+                        .to_owned()
+                ),
+                None,
+            ]
+        );
+        assert_eq!(
+            descriptions[0],
+            Some(l10n.text("region-eastern-interconnection-description"))
+        );
+        assert_eq!(
+            descriptions[1],
+            Some(l10n.text("region-western-interconnection-description"))
+        );
         assert_eq!(l10n.problems(), vec![]);
     }
 

@@ -1,0 +1,9 @@
+region-minimal = Construction markets test region
+city-tiny-1 = Test city one
+city-tiny-2 = Test city two
+city-tiny-3 = Test city three
+zone-seven = Test western time
+zone-eight = Test eastern time
+line-starter = Test starter line
+economic-zone-west = Western construction market
+economic-zone-east = Eastern construction market

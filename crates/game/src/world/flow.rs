@@ -336,6 +336,8 @@ mod tests {
         (
             id,
             super::super::WorldLine {
+                name_key: None,
+                submarine: false,
                 id,
                 from,
                 to,

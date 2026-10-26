@@ -14,9 +14,30 @@
 // 49th parallel, the Montana-Dakota line (104.05 W) to the Nebraska-Colorado
 // line, the Colorado border, then south through eastern New Mexico along
 // 104.5 W to the Rio Grande.
+//
+// The two files trace this seam with the same vertices, so the polygons agree
+// exactly. The grids do not (this one is 0.39 x 0.40 degrees, the Eastern one
+// 0.51 x 0.525), and a cell is playable when its centre is, so three pairs of
+// cells straddled the seam. Two pairs sit on the Colorado border: Western
+// cells (58, 57) and (59, 57) have their centres on the 37 N border itself,
+// which a centre-in-polygon test counts as Colorado, while the Eastern cells
+// (14, 36) and (15, 36) centred at 36.8375 N lie in the Oklahoma Panhandle,
+// which is Eastern (SPS). The two Western cells are cut by the `exclude`
+// rings below. The third pair, in eastern New Mexico, is cut from the Eastern
+// file (the coarser grid gives way). With the three cuts no centre is
+// playable in both regions.
 (
-    region_schema: 3,
+    region_schema: 4,
     id: "western_interconnection",
+    system_zone: 1,
+    time_zones: [
+        (id: 1, name_key: "zone-pt", standard_offset_minutes: -480, dst_months: [false, false, true, true, true, true, true, true, true, true, false, false]),
+        (id: 2, name_key: "zone-mt", standard_offset_minutes: -420, dst_months: [false, false, true, true, true, true, true, true, true, true, false, false]),
+        (id: 3, name_key: "zone-arizona-mst", standard_offset_minutes: -420, dst_months: [false, false, false, false, false, false, false, false, false, false, false, false]),
+    ],
+    calendar: (seasons: [Winter, Winter, Spring, Spring, Spring, Summer, Summer, Summer, Autumn, Autumn, Autumn, Winter]),
+    currency: USD,
+    atlas: (colour: "#936A45"),
     name_key: "region-western-interconnection",
     bounds: (west: -125.5, east: -102.0, south: 28.0, north: 60.0),
     grid: (width: 60, height: 80),
@@ -58,7 +79,18 @@
             (-123.95, 49.17), (-123.7, 48.85), (-123.5, 48.65),
         ],
     ],
-    exclude: [],
+    exclude: [
+        // Seam cells (see the seam note in the header): Western cells (58, 57)
+        // and (59, 57), centred at (-102.5875, 37.0) and (-102.1958, 37.0) on
+        // the Colorado-Oklahoma border. The Eastern cells centred at
+        // 36.8375 N hold these centres and are Panhandle land.
+        [
+            (-102.65, 36.95), (-102.525, 36.95), (-102.525, 37.05), (-102.65, 37.05),
+        ],
+        [
+            (-102.26, 36.95), (-102.13, 36.95), (-102.13, 37.05), (-102.26, 37.05),
+        ],
+    ],
     // Relief: the Rockies from New Mexico to northern BC, the Wasatch, the
     // Sierra Nevada, the Cascades and the Coast Mountains, the Colorado
     // Plateau and Great Basin, with the Central Valley and Columbia Basin
@@ -106,18 +138,9 @@
     // Sunshine: highest in the desert Southwest (Mojave, Sonoran and Baja
     // deserts, New Mexico), lowest on the cloudy Pacific Northwest and BC
     // coast.
-    irradiance: (
-        base: 0.5,
-        blobs: [
-            (lon: -114.5, lat: 34.5, radius_deg: 2.5, value: 0.45),
-            (lon: -111.5, lat: 33.0, radius_deg: 2.0, value: 0.4),
-            (lon: -116.0, lat: 31.0, radius_deg: 2.0, value: 0.35),
-            (lon: -106.5, lat: 33.5, radius_deg: 2.0, value: 0.3),
-            (lon: -119.5, lat: 36.0, radius_deg: 1.5, value: 0.15),
-            (lon: -123.5, lat: 47.5, radius_deg: 2.5, value: -0.2),
-            (lon: -123.0, lat: 53.0, radius_deg: 3.0, value: -0.2),
-        ],
-    ),
+    // Generated site quality (spec section 28.11.1): irradiance_cells.ron, whose header
+    // records its offline source.
+    irradiance: (cells_file: "irradiance_cells.ron"),
     // Water for thermal plants: the Pacific coast and Puget Sound, the
     // Columbia and Snake, the Sacramento delta, the Colorado River, the Rio
     // Grande and Alberta's Lake Wabamun.
@@ -205,17 +228,17 @@
     wind_potential: (base: 0.4, blobs: [(lon: -119.5, lat: 46.0, radius_deg: 2.0, value: 0.45), (lon: -107.0, lat: 44.0, radius_deg: 3.0, value: 0.4)]),
     wind: (monthly: [0.6, 0.6, 0.65, 0.65, 0.6, 0.55, 0.5, 0.5, 0.55, 0.6, 0.6, 0.6], persistence: 0.995, innovation_sd: 0.015, initial_sd: 0.15, band: 0.25),
     catalog: [
-        (kind: Wind, capacity_mw: 300.0, min_stable: 0.0, ramp_mw_per_min: 0.0, startup_hours: 0.0, startup_cost_usd: 0, marginal_cost_usd_per_mwh: 0.0, fixed_om_usd_per_month: 500000, capital_cost_usd: 300000000, build_months: 3, capacity_credit: 0.2, book_life_months: 300, siting: Anywhere),
+        (kind: Wind, capacity_mw: 300.0, min_stable: 0.0, ramp_mw_per_min: 0.0, startup_hours: 0.0, startup_cost: 0, marginal_cost_per_mwh: 0.0, fixed_om_per_month: 500000, capital_cost: 300000000, build_months: 3, capacity_credit: 0.2, book_life_months: 300, siting: Anywhere),
         (
             kind: Nuclear,
             capacity_mw: 1100.0,
             min_stable: 0.7,
             ramp_mw_per_min: 5.0,
             startup_hours: 48.0,
-            startup_cost_usd: 1000000,
-            marginal_cost_usd_per_mwh: 10.0,
-            fixed_om_usd_per_month: 11000000,
-            capital_cost_usd: 2400000000,
+            startup_cost: 1000000,
+            marginal_cost_per_mwh: 10.0,
+            fixed_om_per_month: 11000000,
+            capital_cost: 2400000000,
             build_months: 18,
             capacity_credit: 0.95,
             book_life_months: 480,
@@ -227,10 +250,10 @@
             min_stable: 0.4,
             ramp_mw_per_min: 6.0,
             startup_hours: 8.0,
-            startup_cost_usd: 150000,
-            marginal_cost_usd_per_mwh: 30.0,
-            fixed_om_usd_per_month: 2000000,
-            capital_cost_usd: 700000000,
+            startup_cost: 150000,
+            marginal_cost_per_mwh: 30.0,
+            fixed_om_per_month: 2000000,
+            capital_cost: 700000000,
             build_months: 8,
             capacity_credit: 0.95,
             book_life_months: 480,
@@ -242,10 +265,10 @@
             min_stable: 0.3,
             ramp_mw_per_min: 25.0,
             startup_hours: 2.0,
-            startup_cost_usd: 40000,
-            marginal_cost_usd_per_mwh: 45.0,
-            fixed_om_usd_per_month: 600000,
-            capital_cost_usd: 300000000,
+            startup_cost: 40000,
+            marginal_cost_per_mwh: 45.0,
+            fixed_om_per_month: 600000,
+            capital_cost: 300000000,
             build_months: 4,
             capacity_credit: 0.95,
             book_life_months: 360,
@@ -257,10 +280,10 @@
             min_stable: 0.2,
             ramp_mw_per_min: 40.0,
             startup_hours: 0.16666666666666666,
-            startup_cost_usd: 5000,
-            marginal_cost_usd_per_mwh: 150.0,
-            fixed_om_usd_per_month: 170000,
-            capital_cost_usd: 100000000,
+            startup_cost: 5000,
+            marginal_cost_per_mwh: 150.0,
+            fixed_om_per_month: 170000,
+            capital_cost: 100000000,
             build_months: 2,
             capacity_credit: 0.95,
             book_life_months: 360,
@@ -272,10 +295,10 @@
             min_stable: 0.0,
             ramp_mw_per_min: 300.0,
             startup_hours: 0.0,
-            startup_cost_usd: 0,
-            marginal_cost_usd_per_mwh: 0.0,
-            fixed_om_usd_per_month: 500000,
-            capital_cost_usd: 150000000,
+            startup_cost: 0,
+            marginal_cost_per_mwh: 0.0,
+            fixed_om_per_month: 500000,
+            capital_cost: 150000000,
             build_months: 2,
             capacity_credit: 0.3,
             book_life_months: 300,
@@ -287,18 +310,18 @@
             min_stable: 0.0,
             ramp_mw_per_min: 100.0,
             startup_hours: 0.08333333333333333,
-            startup_cost_usd: 1000,
-            marginal_cost_usd_per_mwh: 0.0,
-            fixed_om_usd_per_month: 2700000,
-            capital_cost_usd: 1200000000,
+            startup_cost: 1000,
+            marginal_cost_per_mwh: 0.0,
+            fixed_om_per_month: 2700000,
+            capital_cost: 1200000000,
             build_months: 12,
             capacity_credit: 0.8,
             book_life_months: 600,
             siting: HydroSite(0.5),
         ),
         (kind: Battery, capacity_mw: 200.0, min_stable: 0.0, ramp_mw_per_min: 0.0,
-         startup_hours: 0.0, startup_cost_usd: 0, marginal_cost_usd_per_mwh: 0.0,
-         fixed_om_usd_per_month: 100000, capital_cost_usd: 100000000, build_months: 2,
+         startup_hours: 0.0, startup_cost: 0, marginal_cost_per_mwh: 0.0,
+         fixed_om_per_month: 100000, capital_cost: 100000000, build_months: 2,
          capacity_credit: 0.0, book_life_months: 180, siting: Anywhere,
          battery: Some((charge_mw: 200.0, energy_mwh: 800.0, charge_efficiency: 0.9,
                         discharge_efficiency: 1.0, discharge_start_hour: 16, charge_end_hour: 18))),
@@ -309,58 +332,55 @@
     // larger load outside the big metros).
     // Demand is scaled for expansion in a few plant-sized steps; locations and relative sizes stay intact.
     cities: [
-        (id: 1, name_key: "city-los-angeles", lon: -118.244, lat: 34.052, base_load_mw: 1450.0),
-        (id: 2, name_key: "city-riverside", lon: -117.396, lat: 33.953, base_load_mw: 650.0),
+        (id: 1, name_key: "city-los-angeles", lon: -118.244, lat: 34.052, base_load_mw: 1450.0, zone: 1, climate: 1),
+        (id: 2, name_key: "city-riverside", lon: -117.396, lat: 33.953, base_load_mw: 650.0, zone: 1, climate: 1),
         // North of downtown, so that it does not share Tijuana's cell.
-        (id: 3, name_key: "city-san-diego", lon: -117.150, lat: 32.830, base_load_mw: 400.0),
-        (id: 4, name_key: "city-san-francisco", lon: -122.419, lat: 37.775, base_load_mw: 650.0),
-        (id: 5, name_key: "city-san-jose", lon: -121.886, lat: 37.338, base_load_mw: 350.0),
-        (id: 6, name_key: "city-sacramento", lon: -121.494, lat: 38.582, base_load_mw: 350.0),
-        (id: 7, name_key: "city-fresno", lon: -119.787, lat: 36.738, base_load_mw: 400.0),
-        (id: 8, name_key: "city-phoenix", lon: -112.074, lat: 33.448, base_load_mw: 800.0),
-        (id: 9, name_key: "city-tucson", lon: -110.975, lat: 32.222, base_load_mw: 200.0),
-        (id: 10, name_key: "city-las-vegas", lon: -115.140, lat: 36.170, base_load_mw: 500.0),
-        (id: 11, name_key: "city-salt-lake-city", lon: -111.891, lat: 40.761, base_load_mw: 500.0),
-        (id: 12, name_key: "city-denver", lon: -104.990, lat: 39.739, base_load_mw: 700.0),
-        (id: 13, name_key: "city-albuquerque", lon: -106.650, lat: 35.084, base_load_mw: 200.0),
-        (id: 14, name_key: "city-el-paso", lon: -106.442, lat: 31.759, base_load_mw: 150.0),
-        (id: 15, name_key: "city-seattle", lon: -122.332, lat: 47.606, base_load_mw: 700.0),
-        (id: 16, name_key: "city-portland", lon: -122.676, lat: 45.515, base_load_mw: 500.0),
-        (id: 17, name_key: "city-spokane", lon: -117.426, lat: 47.659, base_load_mw: 200.0),
-        (id: 18, name_key: "city-boise", lon: -116.202, lat: 43.615, base_load_mw: 250.0),
-        (id: 19, name_key: "city-vancouver", lon: -123.121, lat: 49.283, base_load_mw: 800.0),
-        (id: 20, name_key: "city-calgary", lon: -114.071, lat: 51.045, base_load_mw: 700.0),
-        (id: 21, name_key: "city-edmonton", lon: -113.494, lat: 53.546, base_load_mw: 800.0),
-        (id: 22, name_key: "city-tijuana", lon: -117.038, lat: 32.514, base_load_mw: 150.0),
-        (id: 23, name_key: "city-mexicali", lon: -115.453, lat: 32.624, base_load_mw: 150.0),
+        (id: 3, name_key: "city-san-diego", lon: -117.150, lat: 32.830, base_load_mw: 400.0, zone: 1, climate: 1),
+        (id: 4, name_key: "city-san-francisco", lon: -122.419, lat: 37.775, base_load_mw: 650.0, zone: 1, climate: 1),
+        (id: 5, name_key: "city-san-jose", lon: -121.886, lat: 37.338, base_load_mw: 350.0, zone: 1, climate: 1),
+        (id: 6, name_key: "city-sacramento", lon: -121.494, lat: 38.582, base_load_mw: 350.0, zone: 1, climate: 1),
+        (id: 7, name_key: "city-fresno", lon: -119.787, lat: 36.738, base_load_mw: 400.0, zone: 1, climate: 1),
+        (id: 8, name_key: "city-phoenix", lon: -112.074, lat: 33.448, base_load_mw: 800.0, zone: 3, climate: 1),
+        (id: 9, name_key: "city-tucson", lon: -110.975, lat: 32.222, base_load_mw: 200.0, zone: 3, climate: 1),
+        (id: 10, name_key: "city-las-vegas", lon: -115.140, lat: 36.170, base_load_mw: 500.0, zone: 1, climate: 1),
+        (id: 11, name_key: "city-salt-lake-city", lon: -111.891, lat: 40.761, base_load_mw: 500.0, zone: 2, climate: 1),
+        (id: 12, name_key: "city-denver", lon: -104.990, lat: 39.739, base_load_mw: 700.0, zone: 2, climate: 1),
+        (id: 13, name_key: "city-albuquerque", lon: -106.650, lat: 35.084, base_load_mw: 200.0, zone: 2, climate: 1),
+        (id: 14, name_key: "city-el-paso", lon: -106.442, lat: 31.759, base_load_mw: 150.0, zone: 2, climate: 1),
+        (id: 15, name_key: "city-seattle", lon: -122.332, lat: 47.606, base_load_mw: 700.0, zone: 1, climate: 1),
+        (id: 16, name_key: "city-portland", lon: -122.676, lat: 45.515, base_load_mw: 500.0, zone: 1, climate: 1),
+        (id: 17, name_key: "city-spokane", lon: -117.426, lat: 47.659, base_load_mw: 200.0, zone: 1, climate: 1),
+        (id: 18, name_key: "city-boise", lon: -116.202, lat: 43.615, base_load_mw: 250.0, zone: 2, climate: 1),
+        (id: 19, name_key: "city-vancouver", lon: -123.121, lat: 49.283, base_load_mw: 800.0, zone: 1, climate: 1),
+        (id: 20, name_key: "city-calgary", lon: -114.071, lat: 51.045, base_load_mw: 700.0, zone: 2, climate: 1),
+        (id: 21, name_key: "city-edmonton", lon: -113.494, lat: 53.546, base_load_mw: 800.0, zone: 2, climate: 1),
+        (id: 22, name_key: "city-tijuana", lon: -117.038, lat: 32.514, base_load_mw: 150.0, zone: 1, climate: 1),
+        (id: 23, name_key: "city-mexicali", lon: -115.453, lat: 32.624, base_load_mw: 150.0, zone: 1, climate: 1),
     ],
     // A summer peak late in the afternoon, and a steep evening ramp in every
     // season: as solar fades from about 15:00 to 19:00, net load climbs
     // sharply (the duck curve).
-    demand: (
-        winter: [
+    climates: [(id: 1,
+        shapes: [
+            ("winter", [
             0.82, 0.78, 0.76, 0.75, 0.76, 0.80, 0.89, 0.98, 1.01, 1.00, 0.98, 0.96,
             0.94, 0.93, 0.93, 0.95, 1.01, 1.10, 1.14, 1.12, 1.08, 1.02, 0.94, 0.87,
-        ],
-        summer: [
+        ]),
+            ("summer", [
             0.80, 0.75, 0.72, 0.70, 0.70, 0.72, 0.77, 0.83, 0.89, 0.95, 1.00, 1.05,
             1.09, 1.13, 1.17, 1.20, 1.23, 1.25, 1.25, 1.20, 1.12, 1.03, 0.93, 0.85,
-        ],
-        shoulder: [
+        ]),
+            ("shoulder", [
             0.78, 0.74, 0.72, 0.71, 0.72, 0.76, 0.85, 0.93, 0.96, 0.96, 0.95, 0.94,
             0.93, 0.92, 0.92, 0.94, 0.98, 1.05, 1.12, 1.13, 1.08, 1.00, 0.91, 0.83,
+        ]),
         ],
+        month_shapes: ["winter", "winter", "shoulder", "shoulder", "shoulder", "summer", "summer", "summer", "shoulder", "shoulder", "shoulder", "winter"],
         monthly: [1.02, 0.97, 0.92, 0.88, 0.92, 1.02, 1.14, 1.14, 1.03, 0.92, 0.95, 1.03],
-        forecast_error: 0.03,
-        error_persistence: 0.995,
-    ),
-    // Daylight at about 40 N in local standard time; much clearer skies than
-    // the East, especially from spring to autumn.
+    )],
+    demand_noise: (forecast_error: 0.03, error_persistence: 0.995),
+    // Computed sun supplies latitude and longitude; clearer skies than the East.
     solar: (
-        daylight: [
-            (7.3, 17.0), (6.9, 17.6), (6.3, 18.1), (5.6, 18.6), (5.0, 19.1), (4.7, 19.4),
-            (4.9, 19.3), (5.3, 18.9), (5.8, 18.2), (6.3, 17.5), (6.8, 16.9), (7.2, 16.7),
-        ],
         clearness_mean: [0.58, 0.62, 0.68, 0.73, 0.77, 0.81, 0.80, 0.79, 0.78, 0.72, 0.62, 0.56],
         clearness_sd: 0.13,
     ),
@@ -390,8 +410,8 @@
         storage_accreditation: [(2.0, 0.65), (4.0, 0.85), (6.0, 0.93), (8.0, 0.96)],
         satisfaction_target: 90.0,
         return_per_satisfaction_point: 0.0005,
-        starting_tariff_usd_per_mwh: 95.0,
-        reference_tariff_usd_per_mwh: 100.0,
+        starting_tariff_per_mwh: 95.0,
+        reference_tariff_per_mwh: 100.0,
         base_return: 0.09,
         min_return: 0.07,
         max_return: 0.11,
@@ -411,13 +431,13 @@
         price_sensitivity: 2.0,
         smoothing: 0.2,
     ),
-    lines: (cost_per_cell_usd: 20000000, cells_per_month: 4, book_life_months: 600),
+    lines: (cost_per_cell: 20000000, cells_per_month: 4, book_life_months: 600),
     // The Pacific Northwest: Seattle, Portland and Spokane, served by
     // Columbia River hydro, combined cycle and peakers.
     start: (
         year: 2027,
         month: 1,
-        cash_usd: 3000000000,
+        cash: 3000000000,
         // Seattle anchors the starting service territory.
         home_city: 15,
         connected_cities: [15, 16, 17],

@@ -384,6 +384,9 @@ pub fn finish_surface(
         labels.push((at, title));
     }
     for l in model.lines.values() {
+        if let Some(key) = &l.name_key {
+            labels.push((l.midpoint, l10n.text(key)));
+        }
         if let Some(months) = l.building {
             labels.push((
                 l.midpoint,

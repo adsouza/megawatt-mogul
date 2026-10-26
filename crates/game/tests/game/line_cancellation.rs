@@ -1,4 +1,5 @@
 //! Selecting a built order and cancelling it through the real HUD and command pipeline.
+use crate::support::usd_style;
 use application::Command;
 use bevy::prelude::*;
 use bevy_egui::egui;
@@ -70,9 +71,12 @@ fn selecting_an_unfinished_line_can_cancel_the_actual_order() {
             .find(|line| line.status == LineStatus::InService)
             .unwrap()
             .id;
-        let Some(InspectorModel::Line(card)) =
-            inspector_model(game, &shipped_l10n(), Selection::Line(completed))
-        else {
+        let Some(InspectorModel::Line(card)) = inspector_model(
+            game,
+            &shipped_l10n(),
+            Selection::Line(completed),
+            &usd_style(),
+        ) else {
             panic!("a completed line has a card");
         };
         assert!(

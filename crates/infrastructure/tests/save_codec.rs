@@ -1,6 +1,6 @@
 use application::{
-    Command, Game, GameCheckpoint, InMemoryCommandLog, ReplayCompatibility, SaveBundle, SaveError,
-    SaveId, SaveKind, SaveMetadata,
+    Command, Game, GameCheckpoint, InMemoryCommandLog, RegionCatalog, ReplayCompatibility,
+    SaveBundle, SaveError, SaveId, SaveKind, SaveMetadata,
 };
 use domain::ids::RegionId;
 use domain::session::GameSettings;
@@ -696,4 +696,216 @@ fn format1_ticks_reencode_to_rle_and_replay_with_identical_projections_and_conti
         assert_eq!(before.checkpoint(), after.checkpoint());
         assert_eq!(before.projections(), after.projections());
     }
+}
+
+#[test]
+fn new_schema_three_save_round_trips_on_disk_and_restores() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let saved = bundle();
+    assert_eq!(saved.checkpoint.snapshot.as_ref().unwrap().schema, 3);
+    let path = dir.path().join("schema3.mgsave");
+    std::fs::write(&path, encode_save(&saved).unwrap()).unwrap();
+    let (decoded, region) = decode_save(&std::fs::read(path).unwrap(), &identity()).unwrap();
+    assert_eq!(decoded, saved);
+    let restored = Game::restore(
+        region,
+        decoded.checkpoint,
+        Box::new(InMemoryCommandLog::default()),
+        &|| false,
+    )
+    .unwrap();
+    assert_eq!(restored.checkpoint(), saved.checkpoint);
+}
+
+#[test]
+fn every_save_gate_accepts_schemas_one_through_three_and_rejects_four() {
+    use application::{RestoreError, SaveStore};
+    use domain::state::State;
+    use infrastructure::save::FileSaveStore;
+    for schema in [0, 1, 2, 3, 4] {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut saved = bundle();
+        let (_, region) = decode_save(&encode_save(&saved).unwrap(), &identity()).unwrap();
+        let game = Game::restore(
+            region.clone(),
+            saved.checkpoint.clone(),
+            Box::new(InMemoryCommandLog::default()),
+            &|| false,
+        )
+        .unwrap();
+        let snapshot = saved.checkpoint.snapshot.as_mut().unwrap();
+        snapshot.schema = schema;
+        snapshot.session = game.session().snapshot_state_schema(schema);
+        snapshot.projections = game.projections().state_bytes_schema(schema);
+        saved.checkpoint.state_hash = snapshot.state_hash();
+        let bytes = encode_save(&saved).unwrap();
+        let path = dir
+            .path()
+            .join(format!("{}.mgsave", saved.metadata.slot.as_str()));
+        std::fs::write(&path, &bytes).unwrap();
+        let store = FileSaveStore::new(dir.path().into());
+        let rows = store.list().unwrap();
+        assert_eq!(rows.len(), 1);
+        let decoded = decode_save(&bytes, &identity());
+        let restored = Game::restore(
+            region,
+            saved.checkpoint.clone(),
+            Box::new(InMemoryCommandLog::default()),
+            &|| false,
+        );
+        if matches!(schema, 1..=3) {
+            assert!(rows[0].entry.is_ok(), "listing schema {schema}");
+            let (read, region) = decoded.unwrap();
+            assert_eq!(read, saved);
+            Game::restore(
+                region,
+                read.checkpoint,
+                Box::new(InMemoryCommandLog::default()),
+                &|| false,
+            )
+            .unwrap();
+            assert!(restored.is_ok(), "restore schema {schema}");
+        } else {
+            assert!(
+                matches!(
+                    rows[0].entry,
+                    Err(SaveError::Restore(RestoreError::InvalidSnapshot))
+                ),
+                "listing schema {schema}"
+            );
+            assert!(
+                matches!(
+                    decoded,
+                    Err(SaveError::Restore(RestoreError::InvalidSnapshot))
+                ),
+                "codec schema {schema}"
+            );
+            assert!(
+                matches!(restored, Err(RestoreError::InvalidSnapshot)),
+                "restore schema {schema}"
+            );
+        }
+    }
+}
+
+/// Validates diagnostics independently of this build's payload DTO shape. The
+/// envelope still has a real checksum; malformed payload syntax must not be
+/// mistaken for a readable foreign stamp or a nested identity decoy.
+fn sealed_payload(payload: String) -> Vec<u8> {
+    use sha2::{Digest, Sha256};
+    ron::to_string(&Envelope {
+        version: 3,
+        length: payload.len(),
+        checksum: Sha256::digest(payload.as_bytes()).into(),
+        payload,
+    })
+    .unwrap()
+    .into_bytes()
+}
+
+#[test]
+fn foreign_stamp_diagnosis_reads_large_region_and_unknown_nested_dtos_completely() {
+    let region =
+        RonRegionCatalog::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/regions"))
+            .load(&RegionId::new("eastern_interconnection"))
+            .unwrap()
+            .source_bytes;
+    let bytes = sealed_payload(format!(
+        "(region:{region:?},future:FutureCommand(details:(build:\"nested-decoy\",platform:\"fake\",extra:Some([Variant((x:1)),Variant((x:2))]))),build:\"older\",platform:\"other\")"
+    ));
+    match decode_save(&bytes, &identity()) {
+        Err(SaveError::OtherVersionUnreadable { recorded, cause }) => {
+            assert_eq!(
+                recorded,
+                ReplayCompatibility {
+                    build: "older".into(),
+                    platform: "other".into()
+                }
+            );
+            assert!(!cause.is_empty());
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn foreign_stamp_diagnosis_keeps_generic_shapes_identity_and_integrity_guards() {
+    // Both old byte vectors and completely reshaped future region values retain
+    // the top-level identity. Unknown duplicate fields keep prior semantics.
+    for region in [
+        "[0,255,42]",
+        "FutureRegion(data:Some([(build:\"decoy\",platform:\"fake\")]))",
+        "\"opaque\"",
+        "[1,Some((different: true))]",
+    ] {
+        for (build, platform, foreign) in [("older", "other", true), ("test", "test", false)] {
+            let payload = format!(
+                "(region:{region},unknown:(build:\"decoy\"),unknown:None,build:{build:?},platform:{platform:?})"
+            );
+            let result = decode_save(&sealed_payload(payload), &identity());
+            if foreign {
+                assert!(
+                    matches!(result,Err(SaveError::OtherVersionUnreadable {recorded,..}) if recorded.build == build && recorded.platform == platform)
+                );
+            } else {
+                assert!(matches!(result, Err(SaveError::Malformed(_))));
+            }
+        }
+    }
+    // The optimization must not make an absent/duplicated future region field
+    // or the generic reader's existing optional struct name into a new gate.
+    for payload in [
+        "(build:\"older\",platform:\"other\")",
+        "(region:[0],region:FutureRegion(x:1),build:\"older\",platform:\"other\")",
+        "Stamp(region:[0,255],build:\"older\",platform:\"other\")",
+    ] {
+        assert!(matches!(
+            decode_save(&sealed_payload(payload.into()), &identity()),
+            Err(SaveError::OtherVersionUnreadable { recorded, .. })
+                if recorded.build == "older" && recorded.platform == "other"
+        ));
+    }
+    for payload in [
+        "(region:[0,255],build:\"older\",build:\"again\",platform:\"other\")",
+        "(region:[0,255],build:\"older\",platform:\"other\",platform:\"again\")",
+        "(region:[0,255],build:5,platform:\"other\")",
+        "(region:[0,255],build:\"older\",nested:(platform:\"decoy\"))",
+        "(region:[0,255],build:\"older\",platform:\"other\",bad:[1,)",
+        "(region:[0,255],build:\"older\",platform:\"other\") trailing",
+        "(region:[0,255],build:\"older\",platform:\"other\"",
+        "NotStamp(region:[0,255],build:\"older\",platform:\"other\")",
+    ] {
+        assert!(
+            matches!(
+                decode_save(&sealed_payload(payload.into()), &identity()),
+                Err(SaveError::Malformed(_))
+            ),
+            "{payload}"
+        );
+    }
+    let deep = format!(
+        "(region:[0,255],build:\"older\",platform:\"other\",deep:{}0{})",
+        "Some(".repeat(70),
+        ")".repeat(70)
+    );
+    assert!(matches!(
+        decode_save(&sealed_payload(deep), &identity()),
+        Err(SaveError::Malformed(_))
+    ));
+    let valid = sealed_payload("(region:[0,255],build:\"older\",platform:\"other\")".into());
+    let bad_checksum = rewrite(&valid, |e| e.checksum[0] ^= 1, false);
+    assert!(matches!(
+        decode_save(&bad_checksum, &identity()),
+        Err(SaveError::ChecksumMismatch)
+    ));
+    let bad_length = rewrite(&valid, |e| e.length += 1, false);
+    assert!(matches!(
+        decode_save(&bad_length, &identity()),
+        Err(SaveError::ChecksumMismatch)
+    ));
+    let bad_version = rewrite(&valid, |e| e.version = 99, false);
+    assert!(matches!(
+        decode_save(&bad_version, &identity()),
+        Err(SaveError::SaveFormatVersionMismatch { .. })
+    ));
 }

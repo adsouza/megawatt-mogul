@@ -29,7 +29,7 @@ use crate::error::DomainError;
 use crate::events::DomainEvent;
 use crate::generation::{
     BoundaryStart, CommitmentAction, Plant, PlantStatus, commitment_actions, draw_clearness,
-    solar_available, sun_factor,
+    solar_available,
 };
 use crate::ids::{CellCoord, CityId, NodeId, PlantId};
 use crate::region::{Cell, FrequencyParams, PlantKind, RegionDefinition};
@@ -393,11 +393,22 @@ impl PowerSystem {
     }
 
     /// The most `plant` can produce this tick given its resource.
-    fn available(&self, region: &RegionDefinition, plant: &Plant, sun: f64) -> Megawatts {
+    fn available(
+        &self,
+        region: &RegionDefinition,
+        plant: &Plant,
+        month: SimMonth,
+        tick: u32,
+    ) -> Megawatts {
         match plant.kind() {
             PlantKind::Solar => {
                 let irradiance = cell_ratio(region, plant.cell(), |c| c.irradiance);
-                solar_available(plant.spec().capacity, irradiance, sun, self.clearness)
+                solar_available(
+                    plant.spec().capacity,
+                    irradiance,
+                    region.sun(plant.cell(), month, tick),
+                    self.clearness,
+                )
             }
             PlantKind::Wind => crate::generation::wind_available(
                 plant.spec().capacity,
@@ -503,7 +514,7 @@ impl PowerSystem {
         let params = region.frequency();
         let mut events = Vec::new();
         let hour = u8::try_from(tick / TICKS_PER_HOUR).unwrap_or(u8::MAX);
-        let error = self.noise.step(region.demand(), rng);
+        let error = self.noise.step(region.demand_noise(), rng);
         if tick > 0 {
             let w = region.wind();
             self.wind_factor = crate::generation::wind_step(
@@ -768,11 +779,10 @@ impl PowerSystem {
         month: SimMonth,
         tick: u32,
     ) -> (BTreeMap<PlantId, Megawatts>, Megawatts, Megawatts) {
-        let sun = sun_factor(region.solar(), month, tick);
         let mut available: BTreeMap<PlantId, Megawatts> = self
             .plants
             .values()
-            .map(|p| (p.id(), self.available(region, p, sun)))
+            .map(|p| (p.id(), self.available(region, p, month, tick)))
             .collect();
         let solar: Vec<PlantId> = self
             .connected_plants()
@@ -1280,7 +1290,7 @@ impl PowerSystem {
         month: SimMonth,
         tick: u32,
     ) -> Megawatts {
-        forecast_demand(self.connected_cities(), region.demand(), month, tick)
+        forecast_demand(self.connected_cities(), region, month, tick)
     }
 
     /// Expected output of connected commissioned solar at `tick`, using the
@@ -1291,13 +1301,17 @@ impl PowerSystem {
         month: SimMonth,
         tick: u32,
     ) -> Megawatts {
-        let sun = sun_factor(region.solar(), month, tick);
         let clearness = region.solar().clearness_mean[month.index0()];
         self.connected_plants()
             .filter(|p| p.kind() == PlantKind::Solar)
             .map(|p| {
                 let irradiance = cell_ratio(region, p.cell(), |c| c.irradiance);
-                solar_available(p.spec().capacity, irradiance, sun, clearness)
+                solar_available(
+                    p.spec().capacity,
+                    irradiance,
+                    region.sun(p.cell(), month, tick),
+                    clearness,
+                )
             })
             .sum()
     }
@@ -1347,7 +1361,7 @@ impl PowerSystem {
         let mut month = first_month;
         let mut peak = Megawatts::ZERO;
         for _ in 0..MONTHS_PER_YEAR {
-            for point in hourly_forecast(cities.iter().copied(), region.demand(), month) {
+            for point in hourly_forecast(cities.iter().copied(), region, month) {
                 peak = peak.max(point.mean);
             }
             month = month.next();

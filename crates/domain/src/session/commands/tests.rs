@@ -429,6 +429,7 @@ fn line_quote_matches_what_build_line_charges() {
             cells: 3,
             capital: Money::from_dollars(120_000_000),
             months: 2,
+            zones: quote.zones.clone(),
         }
     );
 
@@ -522,12 +523,14 @@ fn line_quote_floors_a_short_line_at_one_month() {
     let (plant, _) = s.build_plant(PlantKind::Peaker, cell(5, 4)).unwrap();
     let node = s.power().plant(plant).unwrap().node();
     // One cell: one month at 40 M.
+    let quote = s.line_quote(s.anchor, node).unwrap();
     assert_eq!(
-        s.line_quote(s.anchor, node).unwrap(),
+        quote,
         LineQuote {
             cells: 1,
             capital: Money::from_dollars(40_000_000),
             months: 1,
+            zones: quote.zones.clone(),
         }
     );
 }
@@ -801,11 +804,11 @@ fn stopped_hydro_with_agc_enabled_does_not_starve_the_running_unit() {
     // A flat, noise-free load that either fixture hydro plant can serve alone.
     let demand = parts.cities[0].base_load;
     parts.start.connected_cities = vec![parts.cities[0].id];
-    parts.demand.winter = [1.0; 24];
-    parts.demand.summer = [1.0; 24];
-    parts.demand.shoulder = [1.0; 24];
-    parts.demand.monthly = [1.0; 12];
-    parts.demand.forecast_error = Ratio::ZERO;
+    parts.climates[0].shapes[0] = [1.0; 24];
+    parts.climates[0].shapes[1] = [1.0; 24];
+    parts.climates[0].shapes[2] = [1.0; 24];
+    parts.climates[0].monthly = [1.0; 12];
+    parts.demand_noise.forecast_error = Ratio::ZERO;
     // Give the second unit its own equivalent hydro site. Both lines still price five cells.
     let terrain = &parts.terrain;
     let hydro_site = terrain.get(cell(10, 1)).unwrap();
@@ -1039,5 +1042,25 @@ fn non_finite_targets_are_rejected_in_planning_and_operating() {
         rejected(&mut s, non_finite.clone(), |s| {
             s.set_dispatch_target(coal, Megawatts::unchecked(mw))
         });
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn local_order_instalments_conserve_quoted_capital_and_restore(cents in 0i64..1_000_000_000_000, months in 1u32..120) {
+        let mut parts=crate::region::fixtures::economic_region_parts();
+        let profile=&mut parts.economic_zones.as_mut().unwrap().zones[0].plants[0];
+        profile.capital_cost=Some(Money::from_cents(cents)); profile.build_months=Some(months);
+        let region=Arc::new(crate::region::RegionDefinition::try_from(parts).unwrap());
+        let mut s=GameSession::new(region.clone(),7,GameSettings::default());
+        let site=CellCoord{x:4,y:4};
+        let quote=s.plant_quote(PlantKind::Wind,site).unwrap();
+        let (id,_)=s.build_plant(PlantKind::Wind,site).unwrap();
+        let payments=&s.instalments[&AssetRef::Plant(id)];
+        proptest::prop_assert_eq!(payments.len(),months as usize);
+        proptest::prop_assert_eq!(payments.iter().map(|m|m.cents()).sum::<i64>(),quote.capital.cents());
+        let bytes=s.snapshot_state();
+        let restored=GameSession::from_snapshot_state(&bytes,region).unwrap();
+        proptest::prop_assert_eq!(restored.snapshot_state(),bytes);
     }
 }

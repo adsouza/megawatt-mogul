@@ -3,11 +3,11 @@ use super::*;
 
 fn flat_system(demand: f64) -> (PowerSystem, RegionDefinition, SimRng) {
     let mut parts = crate::region::fixtures::tiny_region_parts();
-    parts.demand.forecast_error = Ratio::ZERO;
-    parts.demand.winter = [1.0; 24];
-    parts.demand.summer = [1.0; 24];
-    parts.demand.shoulder = [1.0; 24];
-    parts.demand.monthly = [1.0; 12];
+    parts.demand_noise.forecast_error = Ratio::ZERO;
+    parts.climates[0].shapes[0] = [1.0; 24];
+    parts.climates[0].shapes[1] = [1.0; 24];
+    parts.climates[0].shapes[2] = [1.0; 24];
+    parts.climates[0].monthly = [1.0; 12];
     let count = parts.start.connected_cities.len() as f64;
     for city in &mut parts.cities {
         city.base_load = Megawatts::new(demand / count);

@@ -16,6 +16,7 @@ mod chart_style;
 mod city_card;
 mod commitment;
 mod construction;
+mod economics;
 mod forecast_chart;
 mod frequency;
 mod game_over;
@@ -35,8 +36,10 @@ mod plant_panel;
 mod prompt;
 mod ramp_warnings;
 mod region_atlas;
+mod region_globe;
 mod review;
 mod title_scene;
+mod world_coastline;
 pub use region_atlas::RegionAtlas;
 mod saves;
 mod selection;
@@ -291,6 +294,11 @@ impl Plugin for HudPlugin {
             .add_systems(
                 Update,
                 (
+                    crate::l10n::currency::refresh_before_events
+                        .after(SimSet::Apply)
+                        .after(crate::l10n::load_localizer)
+                        .before(toasts::collect_toasts)
+                        .run_if(has_l10n),
                     toasts::collect_toasts.after(SimSet::Apply).run_if(has_l10n),
                     prompt::close_stale_prompt
                         .after(SimSet::Apply)
@@ -311,6 +319,10 @@ impl Plugin for HudPlugin {
                 EguiPrimaryContextPass,
                 (
                     theme::apply_theme.in_set(HudSet::Theme),
+                    crate::l10n::currency::refresh_before_paint
+                        .in_set(HudSet::Theme)
+                        .after(theme::apply_theme)
+                        .run_if(has_l10n),
                     layout::reset_hud_area.in_set(HudSet::Begin),
                     planning_cache::refresh.in_set(HudSet::Begin),
                     game_over::snapshot_game_over_view.in_set(HudSet::Begin),
@@ -438,6 +450,14 @@ pub(crate) mod test_support {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")
     }
 
+    pub fn usd_style() -> crate::l10n::format::MoneyStyle {
+        crate::l10n::format::MoneyStyle::resolve(
+            domain::units::Currency::Usd,
+            &shipped_l10n(),
+            |_| true,
+        )
+    }
+
     pub fn shipped_l10n() -> Localizer {
         Localizer::load(&shipped_assets().join("locales").join(LOCALE))
             .unwrap_or_else(|error| panic!("the shipped translations must load: {error}"))
@@ -468,16 +488,22 @@ pub(crate) mod test_support {
         .unwrap_or_else(|error| panic!("the shipped region {region} must start: {error}"))
     }
 
-    /// A new game in the shipped western region after `edit` has rewritten its RON, seed 7, in
-    /// Planning. For a case the shipped data never reaches, such as a tiny load.
+    /// A new game in the shipped western region after `edit` has rewritten its main RON file,
+    /// seed 7, in Planning. For a case the shipped data never reaches, such as a tiny load.
     pub fn edited_western_game(edit: impl FnOnce(String) -> String) -> Game {
         let dir = tempfile::TempDir::new().expect("a temp dir");
-        let source = shipped_assets()
-            .join("regions")
-            .join("western_interconnection.ron");
-        let text = std::fs::read_to_string(&source).expect("the shipped region reads");
+        let regions = shipped_assets().join("regions");
+        let text = std::fs::read_to_string(regions.join("western_interconnection.ron"))
+            .expect("the shipped region reads");
         std::fs::write(dir.path().join("western_interconnection.ron"), edit(text))
             .expect("the edited region writes");
+        // Its sidecars (spec section 28.11.1) come along unedited.
+        let sidecars = dir.path().join("western_interconnection");
+        std::fs::create_dir(&sidecars).expect("the sidecar directory");
+        for entry in std::fs::read_dir(regions.join("western_interconnection")).unwrap() {
+            let path = entry.unwrap().path();
+            std::fs::copy(&path, sidecars.join(path.file_name().unwrap())).unwrap();
+        }
         // The game holds the loaded region in memory, so the directory can go once it started.
         shipped_game_in(dir.path(), "western_interconnection")
     }
@@ -495,6 +521,46 @@ pub(crate) mod test_support {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    pub fn global_l10n() -> Localizer {
+        let mut paths: Vec<_> = std::fs::read_dir(shipped_assets().join("locales").join(LOCALE))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|e| e == "ftl"))
+            .collect();
+        paths.sort();
+        let mut sources: Vec<_> = paths
+            .into_iter()
+            .map(|path| {
+                (
+                    path.display().to_string(),
+                    std::fs::read_to_string(path).unwrap(),
+                )
+            })
+            .collect();
+        sources.push(("strait.ftl".into(), "line-strait = Strait of Gibraltar\ncity-tiny-1 = West shore\ncity-tiny-2 = East shore\ncity-tiny-3 = Inland\n".into()));
+        Localizer::from_sources(sources).unwrap()
+    }
+
+    pub fn global_game() -> Game {
+        edited_global_game(str::to_owned)
+    }
+
+    pub fn edited_global_game(edit: impl FnOnce(&str) -> String) -> Game {
+        let dir = tempfile::TempDir::new().unwrap();
+        let source = edit(include_str!("../../tests/fixtures/strait-v4.ron"));
+        std::fs::write(dir.path().join("minimal.ron"), source).unwrap();
+        shipped_game_in(dir.path(), "minimal")
+    }
+
+    /// Frozen legacy data exercises the no-zone display contract after migration.
+    pub fn legacy_eastern_game() -> Game {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("eastern_interconnection.ron"), include_bytes!(
+            "../../../infrastructure/tests/support/global-foundations/eastern_interconnection-v3.ron"
+        )).unwrap();
+        shipped_game_in(dir.path(), "eastern_interconnection")
     }
 
     /// A new eastern game, seed 7, in Planning, recording to `sink`.

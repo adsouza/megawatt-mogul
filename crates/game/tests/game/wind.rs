@@ -2,6 +2,7 @@
 use crate::hud_smoke::dispatch_in;
 use crate::support::egui_harness::{Harness, buttons};
 use crate::support::egui_pass::EguiPass;
+use crate::support::usd_style;
 use crate::support::{headless_app, request, shipped_assets, shipped_l10n, update_n};
 use application::Command;
 use domain::{ids::CellCoord, region::PlantKind};
@@ -38,6 +39,7 @@ fn wind_build_connect_commission_and_real_card_have_resource_forecast_without_th
         &app.world().resource::<Session>().0,
         &l10n,
         Selection::Cell(cell),
+        &usd_style(),
     )
     .unwrap();
     if let hud::PlantSection::Kinds { rows, .. } = &mut model.plant {

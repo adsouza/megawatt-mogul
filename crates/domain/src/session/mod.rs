@@ -24,7 +24,7 @@ mod wind_tests;
 #[cfg(test)]
 mod tests;
 
-pub use commands::LineQuote;
+pub use commands::{LineQuote, PlantQuote};
 pub use invariants::InvariantViolation;
 pub use report::{Incident, IncidentKind, MeritOrderEntry, MonthAccumulator, MonthlyReport};
 pub use settings::{GameSettings, SimulationFidelity};
@@ -43,7 +43,9 @@ use crate::events::DomainEvent;
 use crate::generation::{CommitmentSchedule, Plant};
 use crate::grid::{LineStatus, Network, Node, NodeKind, PowerSystem, TickSummary};
 use crate::ids::{CellCoord, CityId, IdAllocator, NodeId, PlantId};
-use crate::region::{LineParams, RegionDefinition};
+#[cfg(test)]
+use crate::region::LineParams;
+use crate::region::RegionDefinition;
 use crate::regulation::Regulator;
 use crate::rng::SimRng;
 use crate::time::SimClock;
@@ -52,9 +54,6 @@ use crate::units::{Money, Ratio};
 /// FNV-1a 64-bit offset basis and prime.
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
-
-/// Below this a float is treated as sitting on a whole number of cells.
-const CELL_EPSILON: f64 = 1e-9;
 
 /// Where the session is within the played month.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -160,7 +159,9 @@ impl GameSession {
             let node: NodeId = ids.next();
             add_start_node(&mut network, node, NodeKind::Plant(id), def.cell);
             add_start_line(&mut network, &mut ids, anchor, node);
-            let spec = region.spec(def.kind).clone();
+            let spec = region
+                .plant_spec_at(def.kind, def.cell)
+                .expect("validated starter construction terms");
             let mut plant = Plant::new_commissioned(id, node, def.cell, spec, month);
             plant.set_previous_month_offline(false);
             if def.kind.is_dispatchable() {
@@ -192,7 +193,14 @@ impl GameSession {
         for line in power.network().lines() {
             rate_base.add_legacy(
                 AssetRef::Line(line.id),
-                line_cost(lines, whole_cells(line.length_cells)),
+                region
+                    .line_terms(
+                        power.network().node(line.from).expect("line endpoint").cell,
+                        power.network().node(line.to).expect("line endpoint").cell,
+                        line.length_cells,
+                    )
+                    .expect("validated starter line terms")
+                    .capital,
                 lines.book_life_months,
                 month,
                 AssetProfile::Line {
@@ -443,25 +451,20 @@ fn add_start_line(network: &mut Network, ids: &mut IdAllocator, anchor: NodeId, 
 
 /// Whole cells a line of `length` spans: `ceil(length)`, with a length within
 /// 1e-9 of a whole number counted as that number.
+#[cfg(test)]
 fn whole_cells(length: f64) -> u32 {
-    let nearest = length.round();
-    let cells = if (length - nearest).abs() <= CELL_EPSILON {
-        nearest
-    } else {
-        length.ceil()
-    };
-    // Float-to-int `as` saturates, which is the intent for absurd lengths.
-    cells as u32
+    crate::region::whole_cells(length)
 }
 
 /// Capital cost of a line spanning `cells` whole cells.
+#[cfg(test)]
 fn line_cost(params: &LineParams, cells: u32) -> Money {
     params.cost_per_cell * i64::from(cells)
 }
 
 impl GameSession {
     pub fn snapshot_state(&self) -> Vec<u8> {
-        self.snapshot_state_schema(2)
+        self.snapshot_state_schema(crate::state::CURRENT_STATE_SCHEMA)
     }
 
     pub fn snapshot_state_schema(&self, schema: u32) -> Vec<u8> {
@@ -500,7 +503,7 @@ impl GameSession {
         let mut input = StateReader::new(bytes);
         let schema = u32::read(&mut input)?;
         input.schema = schema;
-        if !(1..=2).contains(&schema) {
+        if !crate::state::SUPPORTED_STATE_SCHEMAS.contains(&schema) {
             return Err(StateError::Version);
         }
         let session = Self {
@@ -661,13 +664,20 @@ impl GameSession {
             }
         }
         for line in self.power.network().lines() {
+            if self.line_construction(line.id).is_none() {
+                return Err(StateError::Invalid);
+            }
             max_id = max_id.max(line.id.0);
         }
         for (id, plant) in self.power.plants() {
             max_id = max_id.max(id.0);
             if *id != plant.id()
                 || plant.spec().state_bytes_schema(schema)
-                    != self.region.spec(plant.kind()).state_bytes_schema(schema)
+                    != self
+                        .region
+                        .plant_spec_at(plant.kind(), plant.cell())
+                        .map_err(|_| StateError::Invalid)?
+                        .state_bytes_schema(schema)
             {
                 return Err(StateError::Invalid);
             }

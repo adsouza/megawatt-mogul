@@ -10,7 +10,7 @@ commit leaves `cargo nextest run --workspace`, clippy and `cargo fmt --check` gr
 | Unit | Inline `#[cfg(test)]` in `domain` and `application` | std |
 | Property-based | `domain`, `application` | `proptest`, `proptest-state-machine` |
 | Integration and scenario | `application/tests/`: command scripts against small fixture regions built in code | std, `insta` |
-| Adapter | `infrastructure/tests/` (parses both shipped region files) | std |
+| Adapter | `infrastructure/tests/` (parses every shipped region file) | std |
 | Game | Inline presenter tests in `game/src/hud/`; `game/tests/game.rs`, one binary of headless `App` tests (see [The game crate](#the-game-crate)) | std, Bevy `MinimalPlugins`, egui |
 | Mutation | `domain`, `application` | `cargo-mutants` |
 | Runner | Everything | `cargo-nextest` |
@@ -29,11 +29,20 @@ cargo nextest run -p domain                    # domain only (never compiles Bev
 cargo nextest run -p application               # unit, property and scenario tests
 cargo nextest run -p infrastructure            # adapter tests
 cargo nextest run -p game                      # presenter, glue, egui-pass and end-to-end tests
-cargo nextest run -p game end_to_end           # one month through the app, per shipped region
+cargo nextest run -p game end_to_end           # one month through the app, Eastern and Western regions only
 cargo nextest run --workspace --profile ci     # what CI runs (no retries)
 cargo insta review                             # review snapshot changes
 cargo mutants -p domain -p application         # mutation testing
+CARGO_PROFILE_DEV_OPT_LEVEL=3 CARGO_PROFILE_DEV_DEBUG=0 \
+  cargo nextest run -p game --run-ignored ignored-only -E 'test(max_grid_frame_budgets)'
+                                                 # 256 × 128 frame budgets (timing, ignored by default)
 ```
+
+`max_grid_frame_budgets` (`tests/game/world.rs`) times terrain build, picking, the resource overlay
+and the region picker's paint on the 256 × 128 maximum grid. It is `#[ignore]`, so ordinary runs skip
+it. The command above runs it with the workspace crates optimised, and is a proxy for `--release`
+that spares the disk. A plain-profile run compiles the workspace crates unoptimised, and is
+expected to miss the overlay and picker budgets.
 
 Property tests use `proptest`; set `PROPTEST_CASES` to run more cases locally. Note that nextest does
 not run doctests; run `cargo test --doc --workspace` for those.
@@ -80,18 +89,61 @@ When adding a regression, ensure it fails for the faulty behavior independently 
 For example, removing a midnight dispatch error must not hide unsafe surplus protection. Prefer
 small physical oracles and explicit transition coverage over blessing changed snapshot numbers.
 
-The three year-one checks in `infrastructure::shipped_regions`—
-`hands_off_plan_survives_year_one`, `no_commands_survive_year_one` and
-`shipped_regions_never_order_outages_hands_off`—cover two regions × eight seeds × twelve months.
-A12's three-review battery comparison has sixteen independent region/seed tests, each playing two
-companies for 36 months. They use `GameSession` through the real core command handler and invariant
-checks, without application projections or recording, and disable added batteries immediately after
-commissioning to isolate idle-capital abuse. They retain the assets' firm capacity and capital and
-assert that storage flows stay zero. Two additional seed-7 cases, one per region, run the full
-application pipeline with enabled batteries and require actual storage operation. A state-byte
-comparison through construction, commissioning and the first battery operating month checks the
-streamlined driver against the application. Nextest can schedule the cases in parallel; use a
-focused filter when changing an unrelated rule.
+Optional economic zones have independent arithmetic and compatibility checks:
+
+- `domain/region/economics_tests.rs` covers inheritance, all-default identity, exact boundary
+  sampling, repeated crossings on a descending diagonal, water, endpoint reversal, rate-LCM and
+  quote overflow, and typed map validation. Session properties check cent-exact instalments and
+  unchanged state/IDs on rejection.
+- `infrastructure/tests/economic_construction.rs` follows two local plants and a cross-zone line
+  through payments, cancellation, commissioning and original rate-base valuation; save/resume
+  continues identically even after the installed source changes. Forged effective specs and
+  changed archived economics are rejected. `region_catalog.rs` checks strict DTOs and public
+  list/load/outline consistency, including typed rate-LCM overflow.
+- `infrastructure/tests/region_sidecars.rs` covers the region bundle (spec §28.11.1).
+  - A split region maps to its inlined definition and outline.
+  - The framed bytes are exact and stable, and a one-file region is its own bundle.
+  - Missing, unreferenced and misnamed sidecars, and malformed framing, are typed errors.
+  - A save archives the bundle and refuses a tampered sidecar.
+  - Archived one-file saves restore byte-identically.
+  - Property tests check that encoding round-trips and has exactly one form. The shipped
+    sidecars' reproducibility lives in `shipped_regions.rs` (zone cells, Ukraine copies) and
+    `tools/region_authoring/test_region_authoring.py` (Natural Earth selections).
+- `infrastructure/tests/support/economic-baseline/` is the immutable rules-16 capture taken at
+  `2009acc` before this implementation. Never regenerate it. Tests verify its original source,
+  canonical state/projections, boundary hash and construction continuation. Literal dynamic hashes
+  retain the macOS/aarch64 origin-platform caveat.
+- `game/tests/game/economics.rs` uses real widgets and the real egui pass for local previews,
+  orders, construction/installed details, exact route breakdown, minimum-window enlarged-zoom fit
+  and text contrast. Its fictional profiles and names are fixtures, not national price estimates.
+  [Plan 6a](docs/superpowers/plans/2026-10-25-plan-6a-economic-zones.md#implementation-and-validation-record)
+  records the isolated native save/resume-through-commissioning acceptance.
+
+The new-game globe's pure tests in `hud/region_globe.rs` pin its 22° tilt, 24-second rotation,
+bidirectional drag and two-second idle hold, with projection round-trip properties. Real widget
+tests in `game/tests/game/region_picker.rs` verify that dragging never selects a region, rotation
+and picking agree, and the existing seed validation, exclusions, keyboard cards, small-window fit
+and text contrast remain intact. They also cover responsive one/two-column cards, row-major
+keyboard access, reversed automatic rotation, and hover titles painted after every region fill.
+Card-body tests cover selection from the hidden hemisphere, midpoint alignment and a two-second
+hold before automatic rotation resumes; pure motion properties pin shortest arcs, frame partition
+independence and manual interruption. Rendering clips the far hemisphere before triangulation.
+
+The year-one checks in `infrastructure::shipped_regions` run one test per region and mode, so
+nextest schedules them in parallel and names a failure: `year_one_hands_off_<id>` and
+`year_one_no_commands_<id>` for each of the seven shipped regions, each playing eight seeds ×
+twelve months. `year_one_cases_cover_every_shipped_region` fails if a shipped region lacks its
+pair. `shipped_regions_never_order_outages_hands_off` covers every shipped region and seed too.
+A12's three-review battery comparison covers the Eastern and Western regions only, with sixteen
+independent region/seed tests (seeds 0-7 each), each playing two companies for 36 months. They use
+`GameSession` through the real core command handler and invariant checks, without application
+projections or recording, and disable added batteries immediately after commissioning to isolate
+idle-capital abuse. They retain the assets' firm capacity and capital and assert that storage flows
+stay zero. Two additional seed-7 cases, one each for Eastern and Western, run the full application
+pipeline with enabled batteries and require actual storage operation. A state-byte comparison
+through construction, commissioning and the first battery operating month checks the streamlined
+driver against the application. Nextest can schedule the cases in parallel; use a focused filter
+when changing an unrelated rule.
 
 These scenarios check every added battery and its dedicated line at the first review, including
 the line's matching held fraction. Focused domain tests use a fully excess fixture to check exact
@@ -137,18 +189,18 @@ The game's tests sit in six layers, from the cheapest to the widest. None opens 
     the rest, whatever is selected and however the panels are sized;
   - `city_card.rs`: a clicked city's card in Planning's inspector and Operating's details block;
   - `construction.rs`: the Construction tab and the construction card of a plant being built;
-  - `map_legend.rs`: every city clickable at 1024×640, 1280×720 and 2560×1440 in both regions and
+  - `map_legend.rs`: every city clickable at 1024×640, 1280×720 and 2560×1440 in the Eastern and Western regions and
     phases, with the default legend (open in a corner that hides no city or plant, or collapsed)
     and opening at 1280×720; the legend toggled by the player, and inside the drawn map with every
     panel at its maximum.
 - **The 1024×640 fit tests** (`at_the_smallest_window_…`) lay out each screen at the minimum window
-  size, for both shipped regions, and check that panels don't overlap and that the controls a
+  size, for the Eastern and Western regions, and check that panels don't overlap and that the controls a
   player needs (*Apply*, *Continue*, the figures of the selected plant) are inside their panel.
 - **The panel resize tests** (`tests/game/panel_resize.rs`) drag each outer panel's inner edge
   through the real pass (`EguiPass::drag`) at 1024×640 and 2560×1440: it grows with the drag,
   stops at its opening size and at its maximum, the map's area keeps 320×200, and a selection,
   a tab or a whole day afterwards moves neither a panel nor the map.
-- **The end-to-end month** (`tests/game/end_to_end.rs`), for each shipped region on seed 7: a new
+- **The end-to-end month** (`tests/game/end_to_end.rs`), for the Eastern and Western regions on seed 7: a new
   game, which already runs the hands-off plan (spec §16.3), so no planning command is sent;
   *Start the day*, which begins the day directly with no shortfall; 8×, the fixed-step driver to
   the close, then *Continue*. It asserts the phases
@@ -272,7 +324,7 @@ The invariants the property tests must cover:
   Disabled labels are checked as the HUD's helpers really paint them, on every surface, and a
   disabled button or slider must paint unlike an enabled one, including inside a disabled `Ui`.
   Property tests exercise arbitrary foreground/background pairs. Inspect actual egui paint output
-  for both regions' screens and verify opaque backings behind map labels and bar hover text. Run
+  for the Eastern and Western regions' screens and verify opaque backings behind map labels and bar hover text. Run
   the windowed launch smoke after changing HUD theme systems.
 - **Determinism:** the same verified versions, settings, region content, seed and commands produce
   an identical state hash on the same build and platform (libm transcendentals may differ in the
@@ -345,8 +397,21 @@ The invariants the property tests must cover:
   capacity-shortfall warning on month 1 with no commands.
 - **Hydro smoke runs:** a Western January keeps every hydro unit producing through the evening peak
   on seeds 0–7, and a Western October start stays reliable with no evening cliff.
-- **No outages hands-off:** the same hands-off plan orders no rotating outage in any of the 192
-  region-seed-months (spec §15.8).
+- **No outages hands-off:** the same hands-off plan orders no rotating outage in any of the 672
+  region-seed-months (seven regions × eight seeds × twelve months; spec §15.8).
+
+The shipped-region catalog is also checked for provenance and geography (Plan 7):
+
+- **Research-row provenance:** `new_region_entries_cite_research_rows` requires every plant entry,
+  `lines:`, `starting_tariff_per_mwh:`, `cash:` and economic-zone profile of the five Plan 7
+  regions to have a `[P7-…]` citation in the comment block directly above it, and every cited ID
+  to be a row of `docs/research/2026-10-25-plan-7-regional-economics.md`. Its parser tests pin what
+  counts as a row and as a citation. Tuning numbers stay in region RON; the note holds sources.
+- **Authoring reproducibility:** `europe_maghreb_zone_cells_are_reproducible` regenerates the
+  Europe–Maghreb `economic_zones.cells` from `crates/infrastructure/authoring/` and compares them
+  with the shipped file. The Python tools under `tools/region_authoring/` (Natural Earth polygon
+  extraction, the research-map extent check) have their own offline tests:
+  `python3 -I tools/region_authoring/test_region_authoring.py`. See that directory's `README.md`.
 
 `application/tests/scenarios.rs` checks the overreach acceptance pair (spec §15.8) on its July
 2027 month, a city connected without the capacity to serve it:
@@ -542,7 +607,7 @@ checks the full-width report/retrospective at 1024 and 1920 pixels with 1× and 
 and opens Operating history without changing the simulation or displaying today's incidents
 beside an old curve.
 
-`tests/game/world.rs` covers terrain winding/coverage and both shipped regions, camera fit and
+`tests/game/world.rs` covers terrain winding/coverage and the Eastern and Western regions, camera fit and
 projection/ray round trips, bounded camera gestures, pointer-anchored zoom across camera angles,
 terrain/roof heights and distance limits, physical viewport rounding and zero-sized
 windows, accelerated ray equivalence to the rendered terrain, object bounds, opaque label fitting,
@@ -567,13 +632,13 @@ Headless `WorldViewPlugin` tests reconcile stable IDs without a renderer, check 
 counts through idle frames, rebuild on new games and free every owned asset on leave. A fixed command
 script compares checkpoints and monthly reports with a client lacking the world plugin. Construction
 state and identity stay visible. Mid-day save/resume tests include world reconciliation and paused
-entry in both regions. Real egui passes exercise projected selection, click/drag separation, dialogs,
+entry in every shipped region. Real egui passes exercise projected selection, click/drag separation, dialogs,
 Review, legend/panel capture, Shift + left-drag and right/middle-drag panning without orbiting or
 selecting, all resource layers and text contrast at 1024×640 / 1280×800 and 1× / 1.25×
 zoom (the input rectangle is in logical points, as bevy_egui supplies it). The compact layer
 selector is clicked through its real popup to guard against map click-through. The opened legend
 scrolls inside narrow maps, and panel scroll inertia cannot zoom the camera. Real wheel events
-keep city and plant surfaces under the pointer in both regions and Planning/Operating phases,
+keep city and plant surfaces under the pointer in the Eastern and Western regions and Planning/Operating phases,
 without selecting or changing the simulation. A camera configuration
 regression checks the transparent full-window primary context and separate HDR camera. Actual compositing and shaders still require the native playtest.
 
@@ -584,7 +649,7 @@ cargo nextest run --workspace --features game/dev
 cargo clippy --workspace --all-targets --features game/dev -- -D warnings
 ```
 
-Native acceptance covers both regions/phases, camera gestures, picking/building, effects off,
+Native acceptance covers the Eastern and Western regions/phases, camera gestures, picking/building, effects off,
 resource/Control-room toggles, Review/menu/load transitions and F12's filtered inspector. Use isolated
 `--log-dir` and `--save-dir` paths and retain an existing unsaved player session.
 
@@ -748,7 +813,7 @@ its current satisfaction contribution.
 The frozen schema-1 battery save remains byte-equivalent after restore apart from the rules
 header: a preview uses new accreditation without changing saved profiles, which refresh in
 December. A saved December Review continues without repeating the annual review. The shipped
-acceptance compares ten extra batteries against a baseline for both regions, seeds 0–7, across
+acceptance compares ten extra batteries against a baseline for the Eastern and Western regions, seeds 0–7, across
 36 months: excess storage is held at its first review and final cash never beats the baseline.
 
 `grid::power_system::tests::battery_planning` compares cached forecasts and complete charge plans
@@ -791,7 +856,7 @@ the whole served load. Noisy emergency cases separately pin one shedding episode
 no shedding after restoration and reviewed rules-14 energy limits. The over-frequency settling
 oracle integrates the three known surplus windows instead of assuming a 3 Hz peak.
 
-Game `save_snapshots` tests compare restored schema-2 captures to the immutable schema-1 fixtures
+Game `save_snapshots` tests compare restored schema-3 captures to the immutable schema-1 fixtures
 using source-schema canonical gameplay/projection bytes. They also check upgraded battery cutoff,
 header rules, journal, command count, summary, archived region, provenance and unchanged disk bytes.
 A new capture's schema/hash may change; elapsed history and original save files may not.

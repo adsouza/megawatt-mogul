@@ -216,7 +216,7 @@ fn cities() -> Vec<CityDef> {
     ]
 }
 
-fn demand() -> DemandShape {
+fn climate() -> Climate {
     let shoulder = [
         0.70, 0.66, 0.64, 0.63, 0.64, 0.68, 0.76, 0.85, 0.90, 0.92, 0.93, 0.94, 0.94, 0.94, 0.95,
         0.96, 0.98, 1.00, 0.99, 0.96, 0.91, 0.85, 0.78, 0.73,
@@ -230,21 +230,23 @@ fn demand() -> DemandShape {
         }
         shape
     };
-    DemandShape {
-        winter: scaled(|h| matches!(h, 6..=9 | 17..=21), 1.1),
-        summer: scaled(|h| matches!(h, 10..=19), 1.15),
-        shoulder,
+    Climate {
+        id: ClimateId(0),
+        shapes: vec![
+            scaled(|h| matches!(h, 6..=9 | 17..=21), 1.1),
+            scaled(|h| matches!(h, 10..=19), 1.15),
+            shoulder,
+        ],
+        month_shapes: [0, 0, 2, 2, 2, 1, 1, 1, 2, 2, 2, 0],
         monthly: [
             1.10, 1.05, 0.95, 0.90, 0.95, 1.05, 1.15, 1.15, 1.00, 0.92, 0.98, 1.08,
         ],
-        forecast_error: r(0.03),
-        error_persistence: 0.995,
     }
 }
 
 fn solar() -> SolarParams {
     SolarParams {
-        daylight: [
+        model: SolarModel::DaylightTable([
             (7.5, 17.0),
             (7.1, 17.7),
             (6.7, 18.4),
@@ -257,7 +259,7 @@ fn solar() -> SolarParams {
             (6.7, 18.4),
             (7.1, 17.7),
             (7.5, 17.0),
-        ],
+        ]),
         clearness_mean: [0.75; 12],
         clearness_sd: 0.15,
     }
@@ -328,12 +330,47 @@ fn start() -> StartDef {
 
 pub fn tiny_region_parts() -> RegionDefinitionParts {
     RegionDefinitionParts {
+        start_line_names: Default::default(),
+        economic_zones: None,
         id: RegionId::new("tiny"),
         name_key: "region-tiny".to_owned(),
+        currency: crate::units::Currency::Usd,
+        geo: GeoBounds {
+            west: -6.0,
+            east: 6.0,
+            south: 0.0,
+            north: 8.0,
+        },
+        clock: RegionClock {
+            system_zone: ZoneId(0),
+            zones: vec![TimeZone {
+                id: ZoneId(0),
+                name_key: None,
+                standard_offset_minutes: 0,
+                dst_months: [false; 12],
+            }],
+        },
+        city_locales: cities()
+            .iter()
+            .map(|city| {
+                (
+                    city.id,
+                    CityLocale {
+                        zone: ZoneId(0),
+                        climate: ClimateId(0),
+                    },
+                )
+            })
+            .collect(),
         terrain: terrain(),
         catalog: catalog(),
         cities: cities(),
-        demand: demand(),
+        climates: vec![climate()],
+        demand_noise: DemandNoiseParams {
+            forecast_error: r(0.03),
+            error_persistence: 0.995,
+        },
+        calendar: Calendar::northern_meteorological(),
         solar: solar(),
         wind: WindParams {
             monthly: [0.6; 12],
@@ -364,6 +401,89 @@ pub fn tiny_region_parts() -> RegionDefinitionParts {
 
 pub fn tiny_region() -> RegionDefinition {
     RegionDefinition::try_from(tiny_region_parts()).expect("tiny region fixture is valid")
+}
+
+/// A wide, northern region on the Moscow system clock, sharing tiny-region tuning.
+pub fn astronomical_region() -> RegionDefinition {
+    RegionDefinition::try_from(astronomical_region_parts()).expect("astronomical fixture is valid")
+}
+
+/// The largest grid a region may ship (256 x 128) with varied relief, a lake, 40 cities and the
+/// astronomical sun: the size Plan 7's frame-budget tests draw. Relief is a smooth deterministic
+/// function of the cell so neighbours differ (many owned walls) without any randomness.
+pub fn max_grid_region() -> RegionDefinition {
+    const WIDTH: u16 = 256;
+    const HEIGHT: u16 = 128;
+    const LAKE: (f64, f64, f64) = (150.0, 70.0, 18.0);
+    let mut parts = astronomical_region_parts();
+    let city = |id: u32| {
+        // Distinct columns 8, 14, .. 242 and rows spread over the grid, all clear of the lake.
+        let x = 8 + (id as u16 - 1) * 6;
+        let y = 6 + ((id as u16 - 1) * 29) % 116;
+        CityDef {
+            id: CityId(id),
+            name_key: format!("city-max-{id}"),
+            cell: CellCoord { x, y },
+            base_load: Megawatts::new(150.0 + f64::from(id % 7) * 60.0),
+        }
+    };
+    parts.cities = (1..=40).map(city).collect();
+    parts.city_locales = parts
+        .cities
+        .iter()
+        .map(|c| {
+            (
+                c.id,
+                CityLocale {
+                    zone: ZoneId(0),
+                    climate: ClimateId(0),
+                },
+            )
+        })
+        .collect();
+    let occupied: Vec<CellCoord> = parts
+        .cities
+        .iter()
+        .map(|c| c.cell)
+        .chain(parts.start.fleet.iter().map(|p| p.cell))
+        .collect();
+    let mut cells: Vec<Cell> = (0..HEIGHT)
+        .flat_map(|y| {
+            (0..WIDTH).map(move |x| {
+                let (fx, fy) = (f64::from(x), f64::from(y));
+                let relief = 0.5
+                    + 0.3 * (fx * 0.21).sin() * (fy * 0.17).cos()
+                    + 0.2 * (fx * 0.05 + fy * 0.09).sin();
+                Cell {
+                    land: x != 0 && (fx - LAKE.0).hypot(fy - LAKE.1) >= LAKE.2,
+                    height: r(relief.clamp(0.0, 1.0)),
+                    hydro_potential: Ratio::ZERO,
+                    ..cell(x, y)
+                }
+            })
+        })
+        .collect();
+    // Cities and the starting fleet stand on land with cooling water, wherever the relief puts them.
+    for at in occupied {
+        let c = &mut cells[usize::from(at.y) * usize::from(WIDTH) + usize::from(at.x)];
+        c.land = true;
+        c.cooling_water = Ratio::ONE;
+    }
+    parts.terrain = TerrainGrid::new(WIDTH, HEIGHT, cells).expect("fixture grid is rectangular");
+    RegionDefinition::try_from(parts).expect("max-grid fixture is valid")
+}
+
+fn astronomical_region_parts() -> RegionDefinitionParts {
+    let mut parts = tiny_region_parts();
+    parts.solar.model = SolarModel::Astronomical;
+    parts.geo = GeoBounds {
+        west: 30.0,
+        east: 90.0,
+        south: 45.0,
+        north: 65.0,
+    };
+    parts.clock.zones[0].standard_offset_minutes = 180;
+    parts
 }
 
 /// Reduced May 2033 incident: five 800 MW hydro units, three all-day 500 MW CCGTs,
@@ -402,8 +522,48 @@ pub fn may_2033_parts() -> RegionDefinitionParts {
         .min_stable = r(0.3);
     parts.cities[0].base_load = Megawatts::new(2_131.272);
     parts.cities[1].base_load = Megawatts::new(1_420.848);
-    parts.demand.shoulder = [1.0; 24];
-    parts.demand.monthly = [1.0; 12];
-    parts.demand.forecast_error = Ratio::ZERO;
+    parts.climates[0].shapes[2] = [1.0; 24];
+    parts.climates[0].monthly = [1.0; 12];
+    parts.demand_noise.forecast_error = Ratio::ZERO;
+    parts
+}
+
+/// Two fictional construction markets; cents and durations are test inputs only.
+pub fn economic_region_parts() -> RegionDefinitionParts {
+    let mut parts = tiny_region_parts();
+    parts.economic_zones = Some(EconomicZones {
+        zones: [
+            (1, "economic-zone-west", 101, 2, 3, 2),
+            (2, "economic-zone-east", 202, 3, 7, 3),
+        ]
+        .into_iter()
+        .map(|(id, name, cost, months, line, speed)| EconomicZone {
+            id: EconomicZoneId(id),
+            name_key: name.into(),
+            plants: vec![PlantConstructionOverride {
+                kind: PlantKind::Wind,
+                capital_cost: Some(Money::from_cents(cost)),
+                build_months: Some(months),
+            }],
+            ac_lines: LineConstructionOverride {
+                cost_per_cell: Some(Money::from_cents(line)),
+                cells_per_month: Some(speed),
+            },
+        })
+        .collect(),
+        cells: (0..parts.terrain.height())
+            .flat_map(|_| {
+                (0..parts.terrain.width()).map(|x| {
+                    EconomicZoneId(if x == 0 {
+                        0
+                    } else if x < 6 {
+                        1
+                    } else {
+                        2
+                    })
+                })
+            })
+            .collect(),
+    });
     parts
 }

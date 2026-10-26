@@ -4,6 +4,7 @@
 //! on a secondary axis.
 
 use super::SupplyChartLayout;
+use crate::l10n::format::MoneyStyle;
 use application::Game;
 use application::projections::{CompletedDay, TimelinePoint};
 use bevy_egui::egui;
@@ -39,6 +40,7 @@ pub struct SupplyStack {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SupplyModel {
+    pub money_style: MoneyStyle,
     pub layout: SupplyChartLayout,
     pub layout_label: String,
     pub hour_axis: String,
@@ -102,7 +104,7 @@ pub fn todays_points<'a>(
     today
 }
 
-pub fn supply_model(game: &Game, l10n: &Localizer) -> SupplyModel {
+pub fn supply_model(game: &Game, l10n: &Localizer, style: &MoneyStyle) -> SupplyModel {
     let session = game.session();
     let now = session.clock().tick();
     let points = todays_points(game.projections().timeline.points(), now);
@@ -112,16 +114,23 @@ pub fn supply_model(game: &Game, l10n: &Localizer) -> SupplyModel {
         now,
         session.region(),
         l10n,
+        style,
     )
 }
 
-pub fn completed_supply_model(game: &Game, day: &CompletedDay, l10n: &Localizer) -> SupplyModel {
+pub fn completed_supply_model(
+    game: &Game,
+    day: &CompletedDay,
+    l10n: &Localizer,
+    style: &MoneyStyle,
+) -> SupplyModel {
     supply_model_for(
         day.points.iter().collect(),
         &day.forecast,
         TICKS_PER_DAY,
         game.session().region(),
         l10n,
+        style,
     )
 }
 
@@ -131,6 +140,7 @@ fn supply_model_for(
     now: u32,
     region: &RegionDefinition,
     l10n: &Localizer,
+    style: &MoneyStyle,
 ) -> SupplyModel {
     let hours = |tick: u32| f64::from(tick) / f64::from(TICKS_PER_HOUR);
     let output = |point: &TimelinePoint, kind: PlantKind| {
@@ -155,13 +165,20 @@ fn supply_model_for(
         })
         .collect();
     SupplyModel {
+        money_style: style.clone(),
         layout: SupplyChartLayout::default(),
         layout_label: l10n.text("supply-chart-combine"),
         hour_axis: l10n.text("forecast-axis-hour"),
         power_axis: l10n.text("forecast-axis-power"),
-        cost_axis: l10n.text("supply-chart-axis-cost"),
+        cost_axis: l10n.args(
+            "supply-chart-axis-cost",
+            &[("symbol", style.symbol().into())],
+        ),
         power_unit: l10n.text("supply-chart-unit-power"),
-        cost_unit: l10n.text("supply-chart-unit-cost"),
+        cost_unit: l10n.args(
+            "supply-chart-unit-cost",
+            &[("symbol", style.symbol().into())],
+        ),
         energy_unit: l10n.text("supply-chart-unit-energy"),
         demand_label: l10n.text("supply-chart-demand"),
         served_label: l10n.text("supply-chart-served"),
@@ -360,7 +377,7 @@ pub fn draw_supply_chart(ui: &mut egui::Ui, model: &SupplyModel) -> Vec<UiAction
                 let value = if *plot_name == model.storage_energy_legend {
                     format::megawatt_hours(MegawattHours::new(position.y / energy_scale))
                 } else if *plot_name == model.cost_label {
-                    format::price(Price::per_mwh(position.y / scale))
+                    format::price(Price::per_mwh(position.y / scale), &model.money_style)
                 } else {
                     format::megawatts(Megawatts::new(position.y))
                 };
@@ -497,6 +514,7 @@ pub fn draw_supply_chart(ui: &mut egui::Ui, model: &SupplyModel) -> Vec<UiAction
 
 #[cfg(test)]
 mod tests {
+    use crate::hud::test_support::usd_style;
     use std::collections::BTreeMap;
 
     use application::{Command, InMemoryCommandLog};
@@ -551,7 +569,7 @@ mod tests {
         let points: Vec<&TimelinePoint> = game.projections().timeline.points().collect();
         assert_eq!(points.len(), 60, "an hour of ticks");
 
-        let model = supply_model(&game, &l10n);
+        let model = supply_model(&game, &l10n, &usd_style());
 
         // One sample per tick, in hours.
         assert_eq!(model.x.len(), 60);
@@ -643,7 +661,7 @@ mod tests {
         let mut game = eastern_game(Box::new(InMemoryCommandLog::default()));
         game.execute(Command::BeginOperating).unwrap();
 
-        let model = supply_model(&game, &l10n);
+        let model = supply_model(&game, &l10n, &usd_style());
 
         assert!(model.x.is_empty() && model.stacks.is_empty() && model.demand.is_empty());
         assert_eq!(model.forecast.len(), 24);

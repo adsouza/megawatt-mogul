@@ -1,0 +1,16 @@
+--admin0
+target/natural-earth/ne_50m_admin_0_countries.geojson
+--admin1
+target/natural-earth/ne_10m_admin_1_states_provinces.geojson
+--include
+ISO:RUS,ISO:BLR,ISO:KAZ,ISO:UZB,ISO:AZE,ISO:KGZ,ISO:TJK,ISO:GEO
+--exclude-admin1
+UKR:Crimea,UKR:Sevastopol,RUS:Kaliningrad,RUS:Sakha (Yakutia),RUS:Amur,TJK:Gorno-Badakhshan,AZE:Babək,AZE:Culfa,AZE:Kangarli,AZE:Naxçıvan,AZE:Ordubad,AZE:Sədərək,AZE:Şahbuz,AZE:Şərur
+--bounds=23.0,122.0,37.0,72.0
+--grid
+99,70
+--tolerance-deg
+0.02
+--dissolve
+--out
+assets/regions/ips_ups/natural_earth.ron

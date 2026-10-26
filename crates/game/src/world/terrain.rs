@@ -66,27 +66,119 @@ pub struct TerrainGeometry {
     pub normals: Vec<[f32; 3]>,
     pub colors: Vec<[f32; 4]>,
     pub indices: Vec<u32>,
+    /// Per cell in row-major order, which of its walls (west, east, north, south as bits 0 to 3)
+    /// the mesh has. Recolouring replays this instead of re-measuring the relief.
+    walls: Vec<u8>,
 }
-impl TerrainGeometry {
-    pub fn build(terrain: &TerrainGrid, palette: &[[u8; 3]]) -> Result<Self, TerrainGeometryError> {
-        let width = terrain.width();
-        let height = terrain.height();
-        let cells = usize::from(width) * usize::from(height);
-        if cells > MAX_CELLS {
-            return Err(TerrainGeometryError::TooLarge);
+const SIDE_SHADE: f32 = 0.62;
+const BOTTOM_COLOR: [f32; 4] = [0.08, 0.06, 0.04, 1.0];
+
+/// Linear-light value of every sRGB byte, so a palette never calls `powf` per cell.
+fn linear_table() -> [f32; 256] {
+    std::array::from_fn(|v| {
+        let value = v as f32 / 255.0;
+        if value <= 0.04045 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
         }
-        if palette.len() != cells {
+    })
+}
+/// The opaque top colour of a cell and the darker colour of its walls.
+fn cell_colors(linear: &[f32; 256], rgb: [u8; 3]) -> ([f32; 4], [f32; 4]) {
+    let color = [
+        linear[usize::from(rgb[0])],
+        linear[usize::from(rgb[1])],
+        linear[usize::from(rgb[2])],
+        1.0,
+    ];
+    let side = [
+        color[0] * SIDE_SHADE,
+        color[1] * SIDE_SHADE,
+        color[2] * SIDE_SHADE,
+        1.0,
+    ];
+    (color, side)
+}
+/// Where each wall of the cell at (`x`, `y`) stands, in west, east, north, south order: the
+/// neighbour's surface, or the base off the grid. Only the higher cell owns a shared wall, so a
+/// wall exists where the cell's own surface `h` is above this floor.
+fn wall_floors(terrain: &TerrainGrid, x: u16, y: u16) -> [f32; 4] {
+    let floor = |nx: i32, ny: i32| {
+        if nx < 0 || ny < 0 || nx >= i32::from(terrain.width()) || ny >= i32::from(terrain.height())
+        {
+            BASE
+        } else {
+            surface_height(
+                terrain,
+                CellCoord {
+                    x: nx as u16,
+                    y: ny as u16,
+                },
+            )
+            .expect("neighbor checked against grid bounds")
+        }
+    };
+    let (x, y) = (i32::from(x), i32::from(y));
+    [
+        floor(x - 1, y),
+        floor(x + 1, y),
+        floor(x, y - 1),
+        floor(x, y + 1),
+    ]
+}
+fn check_palette(terrain: &TerrainGrid, palette: &[[u8; 3]]) -> Result<(), TerrainGeometryError> {
+    let cells = usize::from(terrain.width()) * usize::from(terrain.height());
+    if cells > MAX_CELLS {
+        return Err(TerrainGeometryError::TooLarge);
+    }
+    if palette.len() != cells {
+        return Err(TerrainGeometryError::PaletteLength {
+            expected: cells,
+            actual: palette.len(),
+        });
+    }
+    Ok(())
+}
+
+impl TerrainGeometry {
+    /// The vertex colours `build` would give `palette` for the same terrain, in the same order,
+    /// without rebuilding the geometry. A map-layer change replaces only the colour attribute
+    /// with this.
+    pub fn colors_of(&self, palette: &[[u8; 3]]) -> Result<Vec<[f32; 4]>, TerrainGeometryError> {
+        if palette.len() != self.walls.len() {
             return Err(TerrainGeometryError::PaletteLength {
-                expected: cells,
+                expected: self.walls.len(),
                 actual: palette.len(),
             });
         }
+        let mut colors = Vec::with_capacity(self.colors.len());
+        if palette.is_empty() {
+            return Ok(colors);
+        }
+        let linear = linear_table();
+        for (&rgb, &walls) in palette.iter().zip(&self.walls) {
+            let (color, side) = cell_colors(&linear, rgb);
+            colors.extend_from_slice(&[color; 4]);
+            for _ in 0..walls.count_ones() {
+                colors.extend_from_slice(&[side; 4]);
+            }
+        }
+        colors.extend_from_slice(&[BOTTOM_COLOR; 4]);
+        Ok(colors)
+    }
+    pub fn build(terrain: &TerrainGrid, palette: &[[u8; 3]]) -> Result<Self, TerrainGeometryError> {
+        check_palette(terrain, palette)?;
+        let width = terrain.width();
+        let height = terrain.height();
+        let cells = usize::from(width) * usize::from(height);
         let mut mesh = Self::default();
         if cells == 0 {
             return Ok(mesh);
         }
         let half_x = f32::from(width) / 2.0;
         let half_z = f32::from(height) / 2.0;
+        let linear = linear_table();
         for y in 0..height {
             for x in 0..width {
                 let at = CellCoord { x, y };
@@ -95,65 +187,47 @@ impl TerrainGeometry {
                 let x1 = x0 + 1.0;
                 let z0 = f32::from(y) - half_z;
                 let z1 = z0 + 1.0;
-                let rgb = palette[usize::from(y) * usize::from(width) + usize::from(x)];
-                let linear = |v: u8| {
-                    let value = f32::from(v) / 255.0;
-                    if value <= 0.04045 {
-                        value / 12.92
-                    } else {
-                        ((value + 0.055) / 1.055).powf(2.4)
-                    }
-                };
-                let color = [linear(rgb[0]), linear(rgb[1]), linear(rgb[2]), 1.0];
-                let side = [color[0] * 0.62, color[1] * 0.62, color[2] * 0.62, 1.0];
+                let (color, side) = cell_colors(
+                    &linear,
+                    palette[usize::from(y) * usize::from(width) + usize::from(x)],
+                );
                 mesh.quad(
                     [[x0, h, z0], [x0, h, z1], [x1, h, z1], [x1, h, z0]],
                     [0.0, 1.0, 0.0],
                     color,
                 );
-                let neighbor = |nx: i32, ny: i32| {
-                    if nx < 0 || ny < 0 || nx >= i32::from(width) || ny >= i32::from(height) {
-                        BASE
-                    } else {
-                        surface_height(
-                            terrain,
-                            CellCoord {
-                                x: nx as u16,
-                                y: ny as u16,
-                            },
-                        )
-                        .expect("neighbor checked against grid bounds")
-                    }
-                };
+                let [west, east, north, south] = wall_floors(terrain, x, y);
+                mesh.walls.push(
+                    [west, east, north, south]
+                        .into_iter()
+                        .enumerate()
+                        .fold(0, |bits, (bit, low)| bits | (u8::from(h > low) << bit)),
+                );
                 // Only the higher cell owns a shared wall; equal-height cells leave no duplicate faces.
-                let low = neighbor(i32::from(x) - 1, i32::from(y));
-                if h > low {
+                if h > west {
                     mesh.quad(
-                        [[x0, low, z0], [x0, low, z1], [x0, h, z1], [x0, h, z0]],
+                        [[x0, west, z0], [x0, west, z1], [x0, h, z1], [x0, h, z0]],
                         [-1.0, 0.0, 0.0],
                         side,
                     );
                 }
-                let low = neighbor(i32::from(x) + 1, i32::from(y));
-                if h > low {
+                if h > east {
                     mesh.quad(
-                        [[x1, low, z1], [x1, low, z0], [x1, h, z0], [x1, h, z1]],
+                        [[x1, east, z1], [x1, east, z0], [x1, h, z0], [x1, h, z1]],
                         [1.0, 0.0, 0.0],
                         side,
                     );
                 }
-                let low = neighbor(i32::from(x), i32::from(y) - 1);
-                if h > low {
+                if h > north {
                     mesh.quad(
-                        [[x1, low, z0], [x0, low, z0], [x0, h, z0], [x1, h, z0]],
+                        [[x1, north, z0], [x0, north, z0], [x0, h, z0], [x1, h, z0]],
                         [0.0, 0.0, -1.0],
                         side,
                     );
                 }
-                let low = neighbor(i32::from(x), i32::from(y) + 1);
-                if h > low {
+                if h > south {
                     mesh.quad(
-                        [[x0, low, z1], [x1, low, z1], [x1, h, z1], [x0, h, z1]],
+                        [[x0, south, z1], [x1, south, z1], [x1, h, z1], [x0, h, z1]],
                         [0.0, 0.0, 1.0],
                         side,
                     );
@@ -168,7 +242,7 @@ impl TerrainGeometry {
                 [-half_x, BASE, half_z],
             ],
             [0.0, -1.0, 0.0],
-            [0.08, 0.06, 0.04, 1.0],
+            BOTTOM_COLOR,
         );
         Ok(mesh)
     }

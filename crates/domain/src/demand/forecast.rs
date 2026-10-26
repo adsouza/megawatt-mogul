@@ -1,7 +1,7 @@
 //! The player-facing 24-hour demand forecast with an uncertainty band.
 
 use super::{DemandCenter, forecast_demand};
-use crate::region::DemandShape;
+use crate::region::RegionDefinition;
 use crate::time::{SimMonth, TICKS_PER_HOUR};
 use crate::units::Megawatts;
 
@@ -19,15 +19,15 @@ pub struct ForecastPoint {
 /// the hour. Sums only the cities it is given.
 pub fn hourly_forecast<'a>(
     cities: impl IntoIterator<Item = &'a DemandCenter>,
-    shape: &DemandShape,
+    region: &RegionDefinition,
     month: SimMonth,
 ) -> [ForecastPoint; 24] {
     let cities: Vec<&DemandCenter> = cities.into_iter().collect();
-    let band = 2.0 * shape.forecast_error.value();
+    let band = 2.0 * region.demand_noise().forecast_error.value();
     std::array::from_fn(|h| {
         let hour = h as u8;
         let tick = u32::from(hour) * TICKS_PER_HOUR + TICKS_PER_HOUR / 2;
-        let mean = forecast_demand(cities.iter().copied(), shape, month, tick);
+        let mean = forecast_demand(cities.iter().copied(), region, month, tick);
         ForecastPoint {
             hour,
             mean,
@@ -48,7 +48,6 @@ crate::state_record!(ForecastPoint {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::demand::shape_factor;
     use crate::ids::NodeId;
     use crate::region::fixtures::tiny_region;
 
@@ -64,7 +63,7 @@ mod tests {
     fn forecast_band_brackets_mean() {
         let r = tiny_region();
         let month = SimMonth::new(2027, 4).unwrap();
-        let points = hourly_forecast(&centers(), r.demand(), month);
+        let points = hourly_forecast(&centers(), &r, month);
         for p in points {
             assert!(p.low < p.mean && p.mean < p.high);
         }
@@ -74,10 +73,10 @@ mod tests {
     fn forecast_covers_each_hour_at_minute_30_with_two_sigma_band() {
         let r = tiny_region();
         let month = SimMonth::new(2027, 4).unwrap();
-        let points = hourly_forecast(&centers(), r.demand(), month);
+        let points = hourly_forecast(&centers(), &r, month);
         for (h, p) in points.iter().enumerate() {
             assert_eq!(usize::from(p.hour), h);
-            let mean = 1300.0 * shape_factor(r.demand(), month, h as u32 * 60 + 30);
+            let mean = 1300.0 * r.load_factor(r.cities()[0].id, month, h as u32 * 60 + 30);
             assert!((p.mean.value() - mean).abs() < 1e-9);
             assert!((p.low.value() - mean * 0.94).abs() < 1e-9);
             assert!((p.high.value() - mean * 1.06).abs() < 1e-9);
