@@ -3971,6 +3971,111 @@ old reports stay as recorded.
   then Plan 8 (multi-area/HVDC).
   Plan 6a reuses state schema 3; it adds no persisted fields. Later plans bump from the preceding implemented rules.
 
+#### 28.11.1 Region sidecars and the canonical bundle (approved 2026-10-26)
+
+**Why.** Offline tools generate the bulk of the schema-4 files, and that bulk is pasted into the
+hand-authored RON. Examples are the North American irradiance `cells`, Europe–Maghreb's
+`economic_zones.cells`, and the Natural Earth `land` and `exclude` rings. Generated blocks make up
+45–80% of the five largest files, so the files are hard to read and their diffs hard to review. This
+change is about authoring only. Loading, listing and simulation behave exactly as before.
+
+**Rule.** A block that an offline tool generates lives in a sidecar. Anything written by hand,
+such as nudge rings, relief or comments, stays in the main file.
+
+**On disk.** A region is still `assets/regions/<id>.ron`. Its sidecars live in the directory
+`assets/regions/<id>/` beside it. Each sidecar is a RON document with its own provenance header
+comment. The main file names each sidecar by a plain file name matching `[a-z0-9_]+\.ron`, with no
+path separators. Three schema-4 reference points exist:
+
+- `irradiance: (cells_file: "irradiance_cells.ron")` is a third irradiance form, exclusive with the
+  Gaussian and inline-cell forms. The sidecar is the inline form, `(cells: [...])`.
+- In `economic_zones`, `cells_file: "economic_zone_cells.ron"` replaces `cells`. The two are
+  exclusive, and the sidecar is `(cells: [...])`.
+- `geography: ["natural_earth.ron", ...]` is optional and defaults to empty. Each sidecar is
+  `(land: [...], exclude: [...])`, and each member defaults to empty. The effective `land` is every
+  sidecar's land, in reference order, followed by the inline `land`. `exclude` works the same way.
+  Ring order has no meaning, because a cell centre is land when it lies in *any* land ring and in
+  no exclude ring. This order is only a convention.
+
+The catalog lists `.ron` files only, so a sidecar directory never appears as a region. Listing
+reads only the main file. Loading reads the referenced sidecars and rejects any `.ron` file in
+`<id>/` that the main file does not reference. Validation is unchanged: a resolved region passes
+or fails exactly as its inlined one-file equivalent would.
+
+**At runtime: one canonical bundle.** `LoadedRegion::source_bytes` is the region's *bundle*. That
+one byte string is what the definition is parsed from, what is fingerprinted (SHA-256, §7.1), and
+what is archived in logs and saves. It is defined as follows.
+
+- **A main file with no sidecar references** is its own bundle: exactly the file's bytes, with no
+  framing. Every one-file region keeps its current bytes and fingerprint.
+- **A main file with references** is framed. The first line is `megawatt-region-bundle 1\n`. Each
+  entry follows as a header line `<name> <length>\n` and then exactly `<length>` raw bytes.
+  `<length>` is in decimal without leading zeros. The main file comes first as `<id>.ron`, then
+  each referenced sidecar once as `<id>/<file>`, in ascending byte order of name. Nothing follows
+  the last entry.
+- **Decoding is strict, so every region has exactly one bundle.** Bytes that start with the magic
+  must be a well-formed v1 bundle and must contain at least one sidecar. Their sidecar set must
+  equal the set the main file references. Anything else is a typed error, never a fallback.
+  Bytes without the magic are a one-file region and take today's path unchanged, so a one-file
+  main that references sidecars fails as missing them.
+- **Resolution.** References are inlined into the schema-4 DTO before mapping, so mapping,
+  rasterisation, the outline and the zone tool see what they always saw. A sidecar in a bundle
+  whose main file is schema 3 or earlier is an error, because only schema 4 has reference fields.
+- **Archive file.** The archive keeps its name, `<log-name>.region.ron`, and holds the bundle
+  bytes, which may be framed. The §7.1 sentence "region files may not depend on external includes"
+  now applies to the bundle: the bundle is self-contained, even though a main file is not.
+
+**Typed errors.** `RegionLoadError` gains two variants.
+
+- `Sidecar { region, file, problem }` names the file. `problem` is one of `Missing`,
+  `Unreferenced`, `InvalidName`, `Io` or `Parse`.
+- `Bundle { region, problem }` covers framing: bad magic or version, truncation, unsorted or
+  duplicate entries, no sidecars, and trailing bytes.
+
+A sidecar whose content is valid RON but has the wrong cell count is still the existing
+`Invalid` error. A sidecar changed after a save was made gives a different bundle, which the
+existing `RegionFingerprintMismatch` refuses.
+
+**Compatibility.**
+
+- Archived one-file saves and logs restore byte-identically through today's path. Their bytes
+  are verified against the recorded fingerprint before any parsing.
+- Old bytes are never upcast into a bundle. An old archive is never rewritten.
+- New games on a migrated shipped region record the bundle's new fingerprint. The resolved
+  definition is identical to the one-file original, so no simulation outcome changes.
+- A build from before this change reads a framed bundle as a RON parse error. Older builds never
+  promised to load newer saves.
+
+**Versioning: region schema 4 with an optional extension, not schema 5.**
+
+- The region schema number keys *meaning*: it selects the mapping and the frozen legacy defaults.
+  Sidecars change only *packaging*. Resolution is a syntactic inlining step before mapping, and a
+  bundle maps to the same `RegionDefinition` as its inlined one-file form.
+- The container is versioned separately by the bundle magic (`1`), and readers dispatch on it.
+- Schema 5 would duplicate or alias the schema-4 DTO and mapping and change
+  `CURRENT_REGION_SCHEMA` without changing any behaviour. It would also wrongly suggest that the
+  data's meaning had changed.
+- For the same reason, `SIM_RULES_VERSION` does not change and the scenario snapshots stay as
+  they are. Only the migrated regions' fingerprints change.
+
+**Tools.**
+
+- `natural_earth.py` gains `--out <sidecar>`, which writes `(land: [...], exclude: [...])`.
+  `--extent` writes `(exclude: [...])`, and the canonical Ukraine extent's `polygons` member is
+  renamed to `exclude` to match.
+- `author_economic_zone_cells` and `author_irradiance_grid` write `(cells: [...])` sidecars.
+- Each `tools/region_authoring/selections/*.args` names its target sidecar. Reproducibility
+  tests compare a fresh run with the committed sidecar byte for byte. The Natural Earth test is
+  skipped with a message when `target/natural-earth/` is absent.
+- The two region copies of the Ukraine extent are tested to be byte-identical to
+  `crates/infrastructure/authoring/ukraine_ips_operating_extent.ron`.
+
+**Migration.** Every shipped region moves its generated blocks into sidecars: the irradiance cells
+of both North American files, Europe–Maghreb's zone cells, and the Natural Earth runs of all five
+Plan 7 regions. Hand-authored rings stay inline. A one-off check confirms that each migrated
+bundle maps to a `RegionDefinition` equal to its pre-migration file. Packaging installs `assets/`
+recursively, so the sidecar directories ship without further changes.
+
 ### 28.12 Acceptance
 
 - **Time.**
