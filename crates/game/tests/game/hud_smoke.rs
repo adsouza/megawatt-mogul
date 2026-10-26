@@ -1424,7 +1424,7 @@ fn the_map_does_not_move_when_the_selection_changes_kind() {
 
 // ---- the planning panel ---------------------------------------------------------------------
 
-/// The first land cell, which both shipped regions have, to select on the map.
+/// The first land cell of the game's region, to select on the map.
 fn some_land(game: &Game) -> CellCoord {
     let terrain = game.session().region().terrain();
     (0..terrain.height())

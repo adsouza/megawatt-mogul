@@ -1,6 +1,7 @@
 //! The shortfall confirmation (spec §16.4) through the real egui pass, at the smallest window,
-//! for both shipped regions: *Start the day* on a short forecast asks first, *Keep planning* and a
-//! click outside back out, and *Start anyway* begins the day with exactly one `BeginOperating`.
+//! for the Eastern and Western regions: *Start the day* on a short forecast asks first, *Keep
+//! planning* and a click outside back out, and *Start anyway* begins the day with exactly one
+//! `BeginOperating`.
 //!
 //! Every pass is checked, settled or not, including the press and release of each click and the
 //! frames around the phase change: the prompt and the Operating panels never draw together.

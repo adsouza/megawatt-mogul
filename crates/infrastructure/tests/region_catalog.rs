@@ -568,6 +568,22 @@ fn a_file_declaring_another_id_is_an_id_mismatch() {
     );
 }
 
+/// The schema-4 fast path in `parse_region_file` checks the id too.
+#[test]
+fn a_v4_file_declaring_another_id_is_an_id_mismatch() {
+    let dir = dir_with(&[("other.ron", V4)]);
+    let err = catalog(dir.path())
+        .load(&RegionId::new("other"))
+        .unwrap_err();
+    assert_eq!(
+        err,
+        RegionLoadError::IdMismatch {
+            requested: RegionId::new("other"),
+            found: RegionId::new("minimal"),
+        }
+    );
+}
+
 #[test]
 fn out_of_range_numbers_are_invalid_not_panics() {
     let cases = [

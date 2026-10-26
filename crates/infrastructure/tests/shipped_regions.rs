@@ -2311,6 +2311,7 @@ mod southern_china {
             ("Kunming", 102.83, 24.88),
             ("Hanoi", 105.85, 21.03),
             ("Changsha", 112.94, 28.23),
+            ("Wenshan", 104.24, 23.37),
         ] {
             assert!(!map.land_at(lon, lat), "{name} is outside the footprint");
         }
@@ -2649,6 +2650,7 @@ mod ips_ups {
             ("Norilsk", 88.20, 69.35),
             ("Nakhchivan", 45.41, 39.21),
             ("Khorugh", 71.55, 37.49),
+            ("Mirny", 113.96, 62.53),
         ] {
             assert!(!map.land_at(lon, lat), "{name} is outside the footprint");
         }
