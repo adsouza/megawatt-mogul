@@ -481,13 +481,14 @@ schedule, which the rows use as `build_months_real`.
 
 All `DZ` rows were accessed on 2026-10-26. Algerian figures come mostly from the Algerian trade press reporting
 Sonelgaz, ministry or APS statements. No development-bank appraisal of an Algerian generation or
-line project was found (see [Gaps](#gaps)). Solar lot capacities are stated as MW in the 2023
-award notice; that they are peak (DC) ratings is an inference, recorded in each row.
+line project was found (see [Gaps](#gaps)). Solar lot capacities are peak (DC) ratings. The 2023
+award article states the programme as 2,000 MWc in its scope description, though it gives each lot
+in MW. The Touggourt lot is 150 MW in that article and 150 MWc in its 2025 re-award (P7-DZ-006).
 
 | ID | Region | Market | Technology | Metric | Value as stated | Unit/currency | Price year | Normalised value (region currency) | Source | Scope notes |
 |---|---|---|---|---|---|---|---|---|---|---|
-| P7-DZ-001 | Europe–Maghreb | Algeria | Solar | capital_per_kw | provisional award 15.76 billion for 200 MW (Tendla lot) | DZD | 2023 | derived 15.76e9 ÷ 200,000 kW = 78,800 DZD/kW ÷ 146.8827 = 536.5 EUR/kW, treated as per kWp; FX: P7-FX-029, P7-FX-030 | Algérie Eco, reporting the provisional award notice of Sonelgaz Energies renouvelables — article on the provisional award of the 2,000 MW project — https://www.algerie-eco.com/2023/11/03/projet-2000-mw-attribution-provisoire-des-marches/ — pub. 2023-11-03 — acc. 2026-10-26 — loc. Tendla (El M'Ghaier) lot paragraph | CSCEC; EPC scope (studies, engineering, civil works, supply), so it excludes the owner's costs; tax basis not stated; 14-month delivery period. DC basis inferred: the plant has 364,000 panels (P7-DZ-004 source), 549 W per panel at 200 MW, and the 2025 re-awards of two lots from the same programme state MWc (P7-DZ-006, -008). The notice's lot capacities sum to 2,060 MW against a stated 2,000 MW programme, so no programme average is derived |
-| P7-DZ-002 | Europe–Maghreb | Algeria | Solar | capital_per_kw | provisional award 18.13 billion for 200 MW (Laghrous lot) | DZD | 2023 | derived 18.13e9 ÷ 200,000 kW = 90,650 DZD/kW ÷ 146.8827 = 617.2 EUR/kW, treated as per kWp; FX: P7-FX-029, P7-FX-030 | Algérie Eco — https://www.algerie-eco.com/2023/11/03/projet-2000-mw-attribution-provisoire-des-marches/ — 2,000 MW award article (as P7-DZ-001) — pub. 2023-11-03 — acc. 2026-10-26 — loc. Laghrous (Biskra) lot paragraph | El Ghrous plant; PowerChina NTL–Sinohydro; EPC scope as P7-DZ-001; 16-month delivery period. More than 390,000 panels (P7-DZ-005 source), at most 513 W per panel at 200 MW (DC basis inferred) |
+| P7-DZ-001 | Europe–Maghreb | Algeria | Solar | capital_per_kw | provisional award 15.76 billion for 200 MW (Tendla lot) | DZD | 2023 | derived 15.76e9 ÷ 200,000 kW = 78,800 DZD/kW ÷ 146.8827 = 536.5 EUR/kW, treated as per kWp; FX: P7-FX-029, P7-FX-030 | Algérie Eco, reporting the provisional award notice of Sonelgaz Energies renouvelables — article on the provisional award of the 2,000 MW project — https://www.algerie-eco.com/2023/11/03/projet-2000-mw-attribution-provisoire-des-marches/ — pub. 2023-11-03 — acc. 2026-10-26 — loc. Tendla (El M'Ghaier) lot paragraph | CSCEC; EPC scope (studies, engineering, civil works, supply, transport, installation, testing and commissioning, including the works connecting the plant to the transmission grid), so it excludes the owner's costs and is a lower bound; tax basis not stated; 14-month delivery period. DC basis: the article states the programme as 2,000 MWc (programme paragraph), and the Touggourt lot is 150 MW here and 150 MWc in its 2025 re-award (P7-DZ-006). The notice's lot capacities sum to 2,060 MW against a stated 2,000 MW programme, so no programme average is derived |
+| P7-DZ-002 | Europe–Maghreb | Algeria | Solar | capital_per_kw | provisional award 18.13 billion for 200 MW (Laghrous lot) | DZD | 2023 | derived 18.13e9 ÷ 200,000 kW = 90,650 DZD/kW ÷ 146.8827 = 617.2 EUR/kW, treated as per kWp; FX: P7-FX-029, P7-FX-030 | Algérie Eco — https://www.algerie-eco.com/2023/11/03/projet-2000-mw-attribution-provisoire-des-marches/ — 2,000 MW award article (as P7-DZ-001) — pub. 2023-11-03 — acc. 2026-10-26 — loc. Laghrous (Biskra) lot paragraph | El Ghrous plant; PowerChina NTL–Sinohydro; EPC scope as P7-DZ-001, including the grid-connection works, so a lower bound; 16-month delivery period; DC basis as P7-DZ-001 |
 | P7-DZ-003 | Europe–Maghreb | Algeria | Solar | build_months_real | delivery periods 14 months (Tendla) and 16 months (Laghrous); programme range 7–16 months | months | — | *planned* 14 and 16 months; FX: none | Algérie Eco — https://www.algerie-eco.com/2023/11/03/projet-2000-mw-attribution-provisoire-des-marches/ — 2,000 MW award article (as P7-DZ-001) — pub. 2023-11-03 — acc. 2026-10-26 — loc. lot paragraphs; programme paragraph | Contracted delivery periods; the actual durations (P7-DZ-004, -005) ran 8–12 months longer |
 | P7-DZ-004 | Europe–Maghreb | Algeria | Solar | build_months_real | first stone laid 2024-03-25; plant commissioned by the minister 2026-05-18 | dates | — | derived 784 days ÷ 30.4375 = 25.8 months (upper bound: the date of grid energisation was not found); FX: none | Algérie Eco — article on the first stone of the 200 MW El M'Ghaier PV plant — https://www.algerie-eco.com/2024/03/25/el-meghaier-pose-de-la-1ere-pierre-dune-centrale-solaire-photovoltaique-de-200-mw/ — pub. 2024-03-25 — acc. 2026-10-26 — loc. paragraphs 1–2 (first stone; 14-month plan); and Horizons — article on the commissioning of the 200 MW El M'Ghaier PV plant — https://www.horizons.dz/2026/05/adjal-met-en-service-une-centrale-photovoltaique-de-200-mw-a-el-meghaier/ — pub. 2026-05-18 — acc. 2026-10-26 — loc. paragraphs 1–2 | Tendla, El M'Ghaier wilaya, in the footprint. The ceremony is dated by the article's day (Monday). Radio Algérie's report (https://news.radioalgerie.dz/fr/node/86449) rejected the request: not reached |
 | P7-DZ-005 | Europe–Maghreb | Algeria | Solar | build_months_real | 24 months of works; plant received in April 2026; inaugurated 2026-05-18 | months | — | 24 months; FX: none | Algérie Eco — article on the inauguration of the 200 MW El Ghrous PV plant — https://algerie-eco.com/2026/05/19/biskra-inauguration-de-la-centrale-solaire-photovoltaique-de-200-mw-del-ghrous/ — pub. 2026-05-19 — acc. 2026-10-26 — loc. paragraphs 1–3 | El Ghrous (Laghrous lot of P7-DZ-002), Biskra wilaya, in the footprint; works duration as stated by the article, against a 16-month delivery period |
@@ -701,8 +702,19 @@ Morocco pattern:
 
 The paced values use the method of record. They are illustrative, and the region task recomputes them.
 Zone ids 3 and 4 follow on from Spain (1) and Morocco (2). The proposal overrides only kinds with project
-evidence, and that evidence makes each kind dearer or slower on its own merits, so it is not a
-blanket Maghreb discount.
+evidence. Every override is cheaper but slower than zone 0, kind by kind, and each value comes from a
+sourced project, not from a wage assumption. It is therefore not a blanket Maghreb discount.
+
+**Final proposed values** (game EUR per kW and game months; the arithmetic is below):
+
+- **Algeria (zone 3).**
+  - Solar: **263 EUR/kW**, with zone 0's DC-to-AC conversion (authoring judgment: DC to AC
+    conversion by the Núñez de Balboa ratio, P7-ES-004), and **3 months**.
+  - Ccgt: **574 EUR/kW**, a planned launch-of-works budget envelope, and **6 months** (planned).
+- **Tunisia (zone 4).**
+  - Solar: **309 EUR/kW** and **3 months**.
+  - Ccgt: **471 EUR/kW** and **6 months**. The capital is a 2014 appraisal on a 450 MW basis (430 MW
+    gives 493). The duration includes about 29 months of delay.
 
 | Zone id | name_key | Covers | Plant overrides (rows) | AC overrides |
 |---|---|---|---|---|
@@ -713,24 +725,26 @@ blanket Maghreb discount.
 
 | Zone | Kind | Real value | Paced | Zone 0 (shipped) |
 |---|---|---|---|---|
-| Algeria | Solar capital | 617.2 EUR/kWp (P7-DZ-002) | per kWp: 617.2 × 0.33289 = 205.4, so 205 EUR/kW × 300,000 kW = 61,500,000. With zone 0's DC-to-AC authoring judgment (× 500 ÷ 391, P7-ES-004): 789.2 EUR/kWac × 0.33289 = 262.7, so 263 × 300,000 = 78,900,000 | 341 EUR/kW (102,300,000) |
+| Algeria | Solar capital | 617.2 EUR/kWp (P7-DZ-002) | DC to AC by zone 0's authoring judgment (× 500 ÷ 391, P7-ES-004): 789.2 EUR/kWac × 0.33289 = 262.7, so **263** EUR/kW × 300,000 kW = 78,900,000. Sensitivity only, per kWp without conversion: 617.2 × 0.33289 = 205.4, so 205 | 341 EUR/kW (102,300,000) |
 | Algeria | Solar months | 24 months (P7-DZ-005) | 24 × 2 ÷ 12 = 4, clamped to the ceiling, so **3** (P7-DZ-004: 25.8 × 2 ÷ 12 = 4.29, also 3) | 2 |
-| Algeria | Ccgt capital | 880.4 EUR/kW *planned* (P7-DZ-011) | × (600 ÷ 921 = 0.65147) = 573.6, so 574 EUR/kW × 500,000 kW = 287,000,000 | 717 EUR/kW (358,500,000) |
+| Algeria | Ccgt capital | 880.4 EUR/kW, a *planned* launch-of-works budget envelope (P7-DZ-011) | × (600 ÷ 921 = 0.65147) = 573.6, so 574 EUR/kW × 500,000 kW = 287,000,000 | 717 EUR/kW (358,500,000) |
 | Algeria | Ccgt months | 48 months *planned* (P7-DZ-012) | 48 × 4 ÷ 22 = 8.73, so 9, clamped to the ceiling: **6** | 4 |
 | Tunisia | Solar capital | 927 EUR/kWac (P7-TN-001) | × 0.33289 = 308.6, so 309 EUR/kW × 300,000 kW = 92,700,000 | 341 EUR/kW |
 | Tunisia | Solar months | 19.3 months (P7-TN-011) | 19.29 × 2 ÷ 12 = 3.21, so **3** (P7-TN-006: 2.81 → 3; P7-TN-007: 3.15 → 3) | 2 |
-| Tunisia | Ccgt capital | 723.6 EUR/kW (P7-TN-012, 2014) | × 0.65147 = 471.4, so 471 EUR/kW × 500,000 kW = 235,500,000 | 717 EUR/kW |
+| Tunisia | Ccgt capital | 723.6 EUR/kW (P7-TN-012, 2014 appraisal, 450 MW basis) | × 0.65147 = 471.4, so 471 EUR/kW × 500,000 kW = 235,500,000 (on 430 MW: 757.2 × 0.65147 = 493.3, so 493) | 717 EUR/kW |
 | Tunisia | Ccgt months | 62.5 months (P7-TN-014) | 62.52 × 4 ÷ 22 = 11.37, so 11, clamped: **6** (planned P7-TN-013: 33.35 × 4 ÷ 22 = 6.06, so 6) | 4 |
 
 ### Disclosures
 
 - **Algerian solar capital is an EPC award, not a whole-project outturn.** The figures are provisional
-  award prices: they exclude the owner's costs, and their tax basis is not stated. They are therefore
-  a lower bound on the whole project.
-  - Their capacities are treated as peak (DC) by inference (panel counts; MWc in the 2025 re-awards).
-  - Zone 0's solar row is also per kWp, converted to AC by an authoring judgment. Whether to apply
-    the same conversion here is the region task's call, and it should be labelled the same way.
-  - Tendla (P7-DZ-001) would pace to 179 per kWp, or 228 per kWac on the same conversion.
+  award prices. Their scope includes the grid-connection works, but they exclude the owner's costs,
+  and their tax basis is not stated. They are therefore a lower bound on the whole project.
+  - The capacities are peak (DC): the award article states the programme as 2,000 MWc, and the
+    Touggourt lot is 150 MW in 2023 and 150 MWc in 2025 (P7-DZ-006).
+  - The note's convention is capital per kW of AC capacity, so 263 applies zone 0's DC-to-AC
+    conversion (P7-ES-004) and carries the same authoring-judgment label. 205 (per kWp) is a
+    sensitivity only.
+  - Tendla (P7-DZ-001) would pace to 228 per kWac on the same conversion.
 - **The Algerian CCGT values are planned.** They are a launch-of-works estimate and a planned 48 months,
   like Morocco's planned solar row (P7-MA-006). The paced months reach the CCGT ceiling of 6 under any
   reading. P7-DZ-013 shows a 2014 contract that is still unfinished, so a long schedule is not an
