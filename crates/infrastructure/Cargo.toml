@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 flate2 = "1.1"
+zip = { version = "=9.1.2", default-features = false, features = ["deflate-flate2"] }
 application = { workspace = true }
 domain = { workspace = true }
 serde = { workspace = true }
@@ -26,3 +27,8 @@ domain = { workspace = true, features = ["test-fixtures"] }
 
 [lints]
 workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "=0.2.129"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"

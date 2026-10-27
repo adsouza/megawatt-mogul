@@ -1,0 +1,14 @@
+browser-loading = Loading Megawatt Mogul…
+browser-reload = Reload
+browser-failed = A new version may be available. Reload to retry.
+browser-preview = Browser preview — progress is not kept across reloads.
+browser-source = Source
+browser-notices = Third-party notices
+browser-small-viewport = Use a larger window for the full game interface.
+browser-local-saves = Saved games stay in this browser. Clearing site data removes them.
+browser-storage-not-persistent = Automatic storage cleanup may remove saves.
+browser-error-storage = Browser storage is unavailable or full. Free space or allow site storage, then retry.
+browser-error-newer = Saved-game storage was created by a newer version. Reload the latest game; your saves are unchanged.
+browser-error-blocked = Close other Megawatt Mogul tabs, then retry to update saved-game storage.
+browser-export = Download backup
+browser-import = Import backup…

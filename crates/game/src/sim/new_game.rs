@@ -3,22 +3,35 @@
 //! The wall clock is allowed here, and only here in the simulation bridge: it names the log file
 //! and seeds the default seed. Neither reaches the domain except as the seed the player confirms.
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::fs;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use application::{CommandError, CommandLogError, Game, RegionCatalog};
+#[cfg(not(target_arch = "wasm32"))]
+use application::CommandLogError;
+use application::Game;
+#[cfg(not(target_arch = "wasm32"))]
+use application::{CommandError, RegionCatalog};
 use bevy::prelude::*;
+#[cfg(not(target_arch = "wasm32"))]
 use domain::ids::RegionId;
 use domain::session::GameSettings;
+#[cfg(not(target_arch = "wasm32"))]
 use infrastructure::command_log::{FileCommandLog, region_archive_path};
 
 use super::{Catalog, CommandFailed, NewGameRequest, Session};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::crash::CrashContext;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::paths::LogDir;
 use crate::state::AppState;
 
 /// How many `-2`, `-3`, … suffixes to try before giving up on a log name.
+#[cfg(not(target_arch = "wasm32"))]
 const MAX_LOG_NAME_ATTEMPTS: u32 = 1_000;
 
 /// A seed for the menu to offer, from the wall clock's nanoseconds (the low 64 bits). The player
@@ -28,6 +41,7 @@ pub fn default_seed() -> u64 {
     since_epoch().as_nanos() as u64
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn since_epoch() -> Duration {
     // A clock before 1970 is a broken clock; the epoch itself still names a valid file.
     SystemTime::now()
@@ -38,6 +52,7 @@ fn since_epoch() -> Duration {
 /// Starts the first `NewGameRequest` that succeeds and enters `InGame`; each one that fails
 /// becomes a `CommandFailed`, and the app stays in the menu. Requests after a success are dropped.
 #[allow(clippy::too_many_arguments)] // Independent ECS resources and message channels.
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn start_new_game(
     mut requests: MessageReader<NewGameRequest>,
     catalog: Res<Catalog>,
@@ -71,6 +86,7 @@ pub(super) fn start_new_game(
 
 /// Creates the log under `log_dir` (named for `unix_secs`, the region and seed) and starts the
 /// game on it. Returns the game and its log's path.
+#[cfg(not(target_arch = "wasm32"))]
 fn new_game(
     catalog: &dyn RegionCatalog,
     log_dir: &Path,
@@ -102,6 +118,7 @@ fn new_game(
 }
 
 /// `<YYYYMMDD-HHMMSS>-<region>-<seed>`, in UTC. Characters a file name shouldn't carry become `_`.
+#[cfg(not(target_arch = "wasm32"))]
 fn log_stem(unix_secs: u64, region: &RegionId, seed: u64) -> String {
     let region: String = region
         .as_str()
@@ -120,6 +137,7 @@ fn log_stem(unix_secs: u64, region: &RegionId, seed: u64) -> String {
 /// Creates `<dir>/<stem>.log`, making `dir` if needed. If that name (or its region archive) is
 /// taken, tries `<stem>-2.log`, `<stem>-3.log`, …: two games started in the same second with the
 /// same region and seed both get a log.
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn create_log(
     dir: &Path,
     stem: &str,
@@ -283,4 +301,42 @@ mod tests {
 
         assert!(error.message.contains("not-a-dir"), "{}", error.message);
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn since_epoch() -> Duration {
+    Duration::from_millis(js_sys::Date::now().max(0.0) as u64)
+}
+#[cfg(target_arch = "wasm32")]
+pub(super) fn start_new_game(
+    mut requests: MessageReader<NewGameRequest>,
+    catalog: Res<Catalog>,
+    mut commands: Commands,
+    mut generation: ResMut<super::SessionGeneration>,
+    mut persistence: ResMut<super::Persistence>,
+    mut next: ResMut<NextState<AppState>>,
+    mut failures: MessageWriter<CommandFailed>,
+) {
+    for request in requests.read() {
+        match Game::start_new(
+            &catalog.0,
+            &request.region,
+            request.seed,
+            GameSettings::default(),
+            Box::<application::InMemoryCommandLog>::default(),
+        ) {
+            Ok(game) => {
+                generation.0 = generation.0.wrapping_add(1);
+                persistence.abandon();
+                persistence.enter(generation.0);
+                commands.insert_resource(Session(game));
+                next.set(AppState::InGame);
+                break;
+            }
+            Err(error) => {
+                failures.write(CommandFailed(error));
+            }
+        }
+    }
+    requests.clear();
 }

@@ -935,3 +935,20 @@ orders through `dispatch`: Enter/Escape default to Cancel, both buttons remain r
 smallest window, cancellation leaves the checkpoint unchanged, Proceed orders once, isolated
 orders skip the prompt, and stale confirmations cannot order after Planning. Changed capacity
 refreshes the warning and requires another confirmation before placing the order.
+
+## Browser target (Plan 9)
+
+`infrastructure::web_assets` verifies native and browser canonical region bundles.
+`tools/web/test_contracts.py` checks early-shell localization. `web/tests/` uses pinned
+Playwright against the optimized distribution served at the Pages subpath, with fresh
+browser contexts and databases. This is separate from Bevy-linked native integration tests;
+new native game tests still join the single existing `game.rs` binary. See `docs/web.md`.
+
+
+`infrastructure::backup_transport` covers frozen directory/portable fixtures, exact archive bytes,
+continuation against the source game, malformed and mutated ZIPs, duplicate/traversing entries,
+unsupported versions/encryption, bounds and missing/extra parts. Each I/O test uses its own temp
+directory. Playwright's `backup.spec.js` uses the native `save_backup` executable plus actual WASM
+workers and IndexedDB, checks boundary hashes in both directions, and exercises library download
+and file-picker upload. Build that example before running browser tests. These checks do not use
+personal save directories and never regenerate released golden files.

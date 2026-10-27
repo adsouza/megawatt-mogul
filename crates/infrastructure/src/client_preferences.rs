@@ -87,13 +87,22 @@ pub fn read_preferences(root: &Path) -> Result<ClientPreferences, SaveError> {
         return Err(io("preferences read", e));
     }
     let bytes = read_bounded(&path, 128 * 1024)?;
+    decode_preferences(&bytes)
+}
+
+/// Decode bounded preference bytes without any platform I/O.
+pub fn decode_preferences(bytes: &[u8]) -> Result<ClientPreferences, SaveError> {
+    if bytes.len() > 128 * 1024 {
+        return Err(SaveError::SaveTooLarge);
+    }
     let value: ClientPreferences = ron::Options::default()
         .with_recursion_limit(32)
-        .from_bytes(&bytes)
+        .from_bytes(bytes)
         .map_err(|e| SaveError::Malformed(e.to_string()))?;
     value.validate()?;
     Ok(value)
 }
+
 pub fn write_preferences(root: &Path, preferences: &ClientPreferences) -> Result<(), SaveError> {
     write_preferences_with(root, preferences, &sync_directory)
 }
@@ -108,16 +117,12 @@ pub fn write_preferences_with(
     preferences: &ClientPreferences,
     sync: &dyn Fn(&Path) -> std::io::Result<()>,
 ) -> Result<(), SaveError> {
-    preferences.validate()?;
-    let bytes = ron::to_string(preferences).map_err(|e| SaveError::Malformed(e.to_string()))?;
-    if bytes.len() > 128 * 1024 {
-        return Err(SaveError::SaveTooLarge);
-    }
+    let bytes = encode_preferences(preferences)?;
     let mut gained = BTreeSet::new();
     make_directory(root, &mut gained)?;
     let mut file =
         tempfile::NamedTempFile::new_in(root).map_err(|e| io("preferences temporary file", e))?;
-    file.write_all(bytes.as_bytes())
+    file.write_all(&bytes)
         .map_err(|e| io("preferences write", e))?;
     file.flush()
         .and_then(|()| file.as_file().sync_all())
@@ -131,4 +136,16 @@ pub fn write_preferences_with(
         .try_for_each(sync)
         .map_err(|e| io("preferences directory sync", e))?;
     Ok(())
+}
+
+/// Encode only validated preference values; native and browser share the exact representation.
+pub fn encode_preferences(preferences: &ClientPreferences) -> Result<Vec<u8>, SaveError> {
+    preferences.validate()?;
+    let bytes = ron::to_string(preferences)
+        .map_err(|e| SaveError::Malformed(e.to_string()))?
+        .into_bytes();
+    if bytes.len() > 128 * 1024 {
+        return Err(SaveError::SaveTooLarge);
+    }
+    Ok(bytes)
 }

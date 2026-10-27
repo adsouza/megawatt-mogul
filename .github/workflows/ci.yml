@@ -6,11 +6,15 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 # A new push to a pull request cancels its superseded run. Runs on main always finish.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -46,3 +50,98 @@ jobs:
         run: cargo clippy -p game --all-targets --features dev -- -D warnings
       - name: Test (development tools)
         run: cargo nextest run -p game --features dev --profile ci
+
+  browser:
+    permissions:
+      contents: read
+      pages: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      MM_BUILD_SHA: ${{ github.sha }}
+      NODE_OPTIONS: --max-old-space-size=1536
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/rust-setup
+        with:
+          cache: 'false'
+      - run: rustup target add wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: browser-wasm
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: trunk@0.22.1
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/tests/package-lock.json
+      - run: python3 tools/web/test_contracts.py
+      - name: Read configured Pages metadata
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        id: pages
+        uses: actions/configure-pages@v6
+      - name: Select the tested public path
+        env:
+          IS_MAIN: ${{ github.ref == 'refs/heads/main' }}
+          CONFIGURED_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+        run: |
+          base='/megawatt-mogul'
+          if [[ "$IS_MAIN" == 'true' ]]; then
+            base="$CONFIGURED_BASE_PATH"
+          fi
+          printf 'WEB_PUBLIC_PATH=%s/\n' "$base" >> "$GITHUB_ENV"
+      - name: Build browser distribution
+        working-directory: web
+        run: trunk build --release --public-url "$WEB_PUBLIC_PATH"
+      - name: Build native backup acceptance tool
+        run: cargo build --locked -p infrastructure --example save_backup
+      - run: npm ci --prefix web/tests
+      - run: cd web/tests && npx playwright install --with-deps chromium
+      - name: Test the distribution at its deployed subpath
+        run: |
+          export WEB_BASE_URL="http://127.0.0.1:8765$WEB_PUBLIC_PATH"
+          python3 tools/web/serve.py &
+          npm test --prefix web/tests
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: browser-failures
+          path: web/tests/test-results/
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist
+
+  deploy-pages:
+    needs: [check, dev-tools, browser]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Check this commit is still main's head
+        id: current
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          head=$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq .object.sha)
+          if [[ "$head" == "$SOURCE_SHA" ]]; then
+            echo 'deploy=true' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/configure-pages@v6
+        if: steps.current.outputs.deploy == 'true'
+      - uses: actions/deploy-pages@v5.0.1
+        if: steps.current.outputs.deploy == 'true'
+        id: deploy

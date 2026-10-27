@@ -44,14 +44,31 @@ struct DailyAudio {
 struct DailyPlayback(u64);
 
 fn load_sounds(
-    root: Res<AssetRoot>,
+    root: Option<Res<AssetRoot>>,
+    #[cfg(target_arch = "wasm32")] assets: Res<crate::browser::WebAssets>,
     mut sources: ResMut<Assets<AudioSource>>,
     mut audio: ResMut<DailyAudio>,
 ) {
     // Read once from the CLI root, including packaged installs and --assets overrides.
     for sound in DailySound::ALL {
-        let path = root.0.join("audio").join(sound.filename());
-        match std::fs::read(&path) {
+        #[cfg(not(target_arch = "wasm32"))]
+        let path = root
+            .as_ref()
+            .map(|r| r.0.join("audio").join(sound.filename()))
+            .unwrap_or_default();
+        #[cfg(not(target_arch = "wasm32"))]
+        let read = std::fs::read(&path);
+        #[cfg(target_arch = "wasm32")]
+        let path = std::path::PathBuf::from(sound.filename());
+        #[cfg(target_arch = "wasm32")]
+        let read = assets
+            .0
+            .get(&format!("audio/{}", sound.filename()))
+            .cloned()
+            .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound));
+        #[cfg(target_arch = "wasm32")]
+        let _ = &root;
+        match read {
             Ok(bytes) => {
                 audio.sources.insert(
                     sound,

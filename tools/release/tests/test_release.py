@@ -92,7 +92,8 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(png[:8], b"\x89PNG\r\n\x1a\n")
         self.assertEqual(struct.unpack(">II", png[16:24]), (512, 512))
         self.assertEqual(png[25], 6)  # RGBA
-        window = (ROOT / "crates/game/src/main.rs").read_text()
+        # Native window setup lives in the library entry point shared by packaged builds.
+        window = (ROOT / "crates/game/src/desktop.rs").read_text()
         self.assertIn(f'name: Some("{release.APP_ID}".into())', window)
 
     def test_staged_packages_share_assets_icon_version_and_desktop_identity(self):

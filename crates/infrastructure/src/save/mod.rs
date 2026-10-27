@@ -19,3 +19,7 @@ pub fn replay_compatibility() -> application::ReplayCompatibility {
 
 pub(crate) mod file_store;
 pub use file_store::{DirectorySync, FileSaveStore, PublishStage};
+
+pub use monthly::{EncodedArchive, decode_archive, encode as encode_archive, inspect_archive};
+
+pub use monthly::read_archive_directory;

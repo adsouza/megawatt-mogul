@@ -35,6 +35,8 @@ pub struct SaveRowModel {
     pub automatic: bool,
     pub problem: Option<String>,
     pub action: Option<ButtonModel>,
+    #[cfg(target_arch = "wasm32")]
+    pub export: Option<ButtonModel>,
     pub rename: Option<ButtonModel>,
     pub delete: Option<ButtonModel>,
 }
@@ -298,6 +300,16 @@ pub fn saves_model(p: &Persistence, form: &SaveForm, l10n: &Localizer) -> SavesM
                         })),
                         automatic,
                         problem: None,
+                        #[cfg(target_arch = "wasm32")]
+                        export: (p.screen == SaveScreen::Browser).then(|| {
+                            ButtonModel::new(
+                                l10n.text("browser-export"),
+                                UiAction::Persistence(PersistAction::Export(
+                                    entry.metadata.slot.clone(),
+                                )),
+                            )
+                            .enabled_if(!p.busy())
+                        }),
                         delete: delete_button(listing),
                         action,
                         rename: Some(
@@ -318,6 +330,8 @@ pub fn saves_model(p: &Persistence, form: &SaveForm, l10n: &Localizer) -> SavesM
                     automatic: false,
                     problem: Some(save_error(error, l10n)),
                     action: None,
+                    #[cfg(target_arch = "wasm32")]
+                    export: None,
                     rename: None,
                     delete: delete_button(listing),
                 },
@@ -333,6 +347,10 @@ pub fn saves_model(p: &Persistence, form: &SaveForm, l10n: &Localizer) -> SavesM
     let action =
         |key: &str, action| ButtonModel::new(l10n.text(key), UiAction::Persistence(action));
     let mut buttons = Vec::new();
+    #[cfg(target_arch = "wasm32")]
+    if p.screen == SaveScreen::Browser {
+        buttons.push(action("browser-import", PersistAction::Import).enabled_if(!p.busy()));
+    }
     if !p.busy() {
         if p.error.is_some() {
             buttons.push(action("save-retry", PersistAction::Retry));
@@ -427,7 +445,23 @@ pub fn save_error(error: &SaveError, l10n: &Localizer) -> String {
         SaveError::DurabilityUnconfirmed { .. } => "save-error-durability",
         SaveError::DeleteDurabilityUnconfirmed { .. } => "save-error-delete-durability",
         SaveError::Cancelled => "save-error-cancelled",
-        SaveError::Io { .. } => "save-error-io",
+        #[cfg(target_arch = "wasm32")]
+        SaveError::Io {
+            stage: "browser-version",
+            ..
+        } => "browser-error-newer",
+        #[cfg(target_arch = "wasm32")]
+        SaveError::Io {
+            stage: "browser-blocked",
+            ..
+        } => "browser-error-blocked",
+        SaveError::Io { .. } => {
+            if cfg!(target_arch = "wasm32") {
+                "browser-error-storage"
+            } else {
+                "save-error-io"
+            }
+        }
         SaveError::Restore(error) => match error {
             application::RestoreError::Replay(_) => "save-error-rules",
             application::RestoreError::RegionSourceMismatch
@@ -573,6 +607,10 @@ fn draw_save_card(
                         if let Some(action) = &row.action {
                             card_action(ui, action, true, compact, actions);
                         }
+                        #[cfg(target_arch = "wasm32")]
+                        if let Some(export) = &row.export {
+                            card_action(ui, export, false, compact, actions);
+                        }
                         if let Some(rename) = &row.rename {
                             card_action(ui, rename, false, compact, actions);
                         }
@@ -588,6 +626,10 @@ fn draw_save_card(
                     ui.spacing_mut().item_spacing.x = 6.0;
                     if let Some(action) = &row.action {
                         card_action(ui, action, true, compact, actions);
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    if let Some(export) = &row.export {
+                        card_action(ui, export, false, compact, actions);
                     }
                     if let Some(rename) = &row.rename {
                         card_action(ui, rename, false, compact, actions);

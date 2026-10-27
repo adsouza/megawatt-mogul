@@ -2,6 +2,7 @@
 
 use bevy::prelude::*;
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::paths::{AssetRoot, LogDir};
 
 /// The top-level screens.
@@ -86,9 +87,10 @@ impl Plugin for AppStatePlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<AppState>()
             .add_sub_state::<PhaseState>()
-            .require_for_boot::<AssetRoot>()
-            .require_for_boot::<LogDir>()
             .add_systems(Update, finish_boot.run_if(in_state(AppState::Boot)));
+        #[cfg(not(target_arch = "wasm32"))]
+        app.require_for_boot::<AssetRoot>()
+            .require_for_boot::<LogDir>();
     }
 }
 

@@ -38,7 +38,6 @@ unic-langid = { workspace = true }
 workspace = true
 features = [
     "std",                # the standard library (Bevy 0.20 also builds no_std)
-    "multi_threaded",     # parallel system executor and task pools
     "bevy_state",         # States / SubStates and StatesPlugin (in DefaultPlugins)
     "bevy_window",        # Window, WindowPlugin
     "bevy_winit",         # the winit event loop and windowing backend
@@ -48,8 +47,6 @@ features = [
     "audio",              # Bevy audio playback and the Ogg Vorbis decoder
     "keyboard",           # keyboard input (each bevy_input device is an opt-in feature in 0.20)
     "mouse",              # mouse input
-    "x11",                # Linux X11 backend for winit
-    "wayland",            # Linux Wayland backend for winit
     "bevy_pbr",
     "bevy_light",
     "bevy_post_process",
@@ -66,3 +63,19 @@ tempfile = { workspace = true }
 
 [lints]
 workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies.bevy]
+workspace = true
+features = ["multi_threaded"]
+
+[target.'cfg(target_os = "linux")'.dependencies.bevy]
+workspace = true
+features = ["x11", "wayland"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+bevy = { workspace = true, features = ["web", "webgl2"] }
+wasm-bindgen = "=0.2.129"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["Window", "Document", "Response", "HtmlElement", "StorageManager", "Navigator", "console"] }
+ron = { workspace = true }

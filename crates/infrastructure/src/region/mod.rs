@@ -2,6 +2,8 @@
 //! rasterised into terrain and mapped through the domain's validating constructors.
 
 mod bundle;
+mod bundled;
+pub use bundled::BundleRegionCatalog;
 mod catalog;
 mod dto;
 pub mod legacy;

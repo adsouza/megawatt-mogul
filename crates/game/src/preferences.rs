@@ -9,10 +9,13 @@ use bevy::{
     window::{PrimaryWindow, WindowPosition},
 };
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
-use infrastructure::client_preferences::{
-    ClientPreferences, PreferenceWindow, read_preferences, write_preferences,
-};
-use std::{path::PathBuf, thread::JoinHandle};
+use infrastructure::client_preferences::{ClientPreferences, PreferenceWindow};
+#[cfg(not(target_arch = "wasm32"))]
+use infrastructure::client_preferences::{read_preferences, write_preferences};
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::PathBuf;
+#[cfg(not(target_arch = "wasm32"))]
+use std::thread::JoinHandle;
 
 const PANELS: [&str; 6] = [
     "inspector",
@@ -22,16 +25,29 @@ const PANELS: [&str; 6] = [
     "operating_side",
     "operating_log",
 ];
+#[cfg(not(target_arch = "wasm32"))]
 struct PendingWrite {
     value: ClientPreferences,
     handle: JoinHandle<Result<(), application::SaveError>>,
+}
+#[cfg(target_arch = "wasm32")]
+struct PendingWrite {
+    value: ClientPreferences,
+    receiver: std::sync::Mutex<std::sync::mpsc::Receiver<Result<(), application::SaveError>>>,
 }
 #[derive(Resource, Default)]
 pub struct ClientSettings {
     pub value: ClientPreferences,
     pub loaded: bool,
     pub(crate) egui_applied: bool,
+    #[cfg(not(target_arch = "wasm32"))]
     root: Option<PathBuf>,
+    #[cfg(target_arch = "wasm32")]
+    reading: Option<
+        std::sync::Mutex<
+            std::sync::mpsc::Receiver<Result<ClientPreferences, application::SaveError>>,
+        >,
+    >,
     written: Option<ClientPreferences>,
     pending: Option<PendingWrite>,
     dirty_at: Option<f64>,
@@ -74,14 +90,41 @@ fn load(
     if settings.loaded {
         return;
     }
-    let Some(dir) = dir else {
-        return;
-    };
-    match read_preferences(&dir.0) {
-        Ok(value) => settings.value = value,
-        Err(error) => warn!("cannot read client preferences: {error}"),
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let Some(dir) = dir else {
+            return;
+        };
+        match read_preferences(&dir.0) {
+            Ok(value) => settings.value = value,
+            Err(error) => warn!("cannot read client preferences: {error}"),
+        }
+        settings.root = Some(dir.0.clone());
     }
-    settings.root = Some(dir.0.clone());
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = dir;
+        if settings.reading.is_none() {
+            let (tx, rx) = std::sync::mpsc::channel();
+            wasm_bindgen_futures::spawn_local(async move {
+                let _ = tx.send(infrastructure::browser::read_preferences().await);
+            });
+            settings.reading = Some(std::sync::Mutex::new(rx));
+            return;
+        }
+        let result = settings
+            .reading
+            .as_ref()
+            .and_then(|rx| rx.lock().ok()?.try_recv().ok());
+        let Some(result) = result else {
+            return;
+        };
+        settings.reading = None;
+        match result {
+            Ok(value) => settings.value = value,
+            Err(error) => warn!("cannot read browser preferences: {error}"),
+        }
+    }
     settings.written = Some(settings.value.clone());
     settings.loaded = true;
     // The menu already owns LastSpeed before its first egui pass. Seed it before the observer
@@ -183,6 +226,7 @@ fn observe_window(
         });
     }
 }
+#[cfg(not(target_arch = "wasm32"))]
 fn write_changed(time: Res<Time<Real>>, mut settings: ResMut<ClientSettings>) {
     if settings
         .pending
@@ -223,6 +267,7 @@ fn write_changed(time: Res<Time<Real>>, mut settings: ResMut<ClientSettings>) {
     }
     settings.dirty_at = None;
 }
+#[cfg(not(target_arch = "wasm32"))]
 fn flush_exit(mut exit: MessageReader<AppExit>, mut settings: ResMut<ClientSettings>) {
     if exit.read().next().is_none() || !settings.loaded {
         return;
@@ -267,3 +312,45 @@ pub fn fit_window(
             .round() as i32,
     }
 }
+
+#[cfg(target_arch = "wasm32")]
+fn write_changed(time: Res<Time<Real>>, mut settings: ResMut<ClientSettings>) {
+    let result = settings
+        .pending
+        .as_ref()
+        .and_then(|p| p.receiver.lock().ok()?.try_recv().ok());
+    if let Some(result) = result {
+        let pending = settings.pending.take().expect("completed preference job");
+        match result {
+            Ok(()) => settings.written = Some(pending.value),
+            Err(error) => {
+                warn!("cannot write browser preferences: {error}");
+                settings.dirty_at = Some(time.elapsed_secs_f64());
+            }
+        }
+    }
+    if !settings.loaded
+        || settings.pending.is_some()
+        || settings.written.as_ref() == Some(&settings.value)
+    {
+        return;
+    }
+    let now = time.elapsed_secs_f64();
+    let since = *settings.dirty_at.get_or_insert(now);
+    if now - since < 0.3 {
+        return;
+    }
+    let value = settings.value.clone();
+    let captured = value.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    wasm_bindgen_futures::spawn_local(async move {
+        let _ = tx.send(infrastructure::browser::write_preferences(&captured).await);
+    });
+    settings.pending = Some(PendingWrite {
+        value,
+        receiver: std::sync::Mutex::new(rx),
+    });
+    settings.dirty_at = None;
+}
+#[cfg(target_arch = "wasm32")]
+fn flush_exit() {}
