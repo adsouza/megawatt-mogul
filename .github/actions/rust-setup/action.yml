@@ -38,9 +38,8 @@ runs:
         fi
     # Linking the large game test binary dominates a warm build; mold is much faster than ld.
     - uses: rui314/setup-mold@v1
-    - uses: dtolnay/rust-toolchain@master
+    - uses: ./.github/actions/rust-toolchain
       with:
-        toolchain: "1.98.1"
         components: ${{ inputs.components }}
     - uses: taiki-e/install-action@v2
       with:
