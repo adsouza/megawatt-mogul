@@ -173,10 +173,11 @@ repository setup:
 - PRs build the optimized browser artifact and run browser tests without deployment
   permissions or secrets. Pushes to `main` run the same checks and deploy only after success.
   `workflow_dispatch` permits deliberate rebuilds; only `main` can publish.
-- Add the deploy as a job in `.github/workflows/ci.yml` with `needs:` on the native `check`
-  job and the browser job, and `if:` restricted to pushes to `main` (or dispatch on `main`).
-  Checks and the published artifact then refer to the same commit, without a privileged
-  `workflow_run` trigger.
+- Add the deploy as a job in `.github/workflows/ci.yml` with `needs:` on both existing native
+  jobs (`check` and `dev-tools`) and the browser job, and `if:` restricted to pushes to `main`
+  (or dispatch on `main`). Every required job must succeed before publishing; a failed,
+  cancelled or skipped dependency cannot permit deployment. Checks and the published artifact
+  then refer to the same commit, without a privileged `workflow_run` trigger.
 - Give the deploy job its own `concurrency: { group: pages, cancel-in-progress: false }`.
   Concurrency does not order runs by commit: an older run whose checks finish later can still
   deploy after a newer one. Before deploying, the job confirms its SHA is still the head of
@@ -232,8 +233,10 @@ repository setup:
       Decide whether a codec worker is required for performance; 9d requires one for untrusted
       import regardless unless decode and restore are shown not to panic.
 - [ ] Page hiding pauses play; returning does not burst ticks.
-- [ ] Deploy job, concurrency and head-of-`main` guard; reload behavior across two consecutive
-      deployments (stale `index.html`, removed hashed files) shows the reload state.
+- [ ] Deploy job waits for `check`, `dev-tools` and the browser job; failure, cancellation or
+      skipping of any required job prevents publication. Verify concurrency and the
+      head-of-`main` guard; reload behavior across two consecutive deployments (stale
+      `index.html`, removed hashed files) shows the reload state.
 - [ ] Enable Pages (authorized), verify the first deployment's URL and exact source SHA, and
       repeat the browser checks on the deployed URL.
 
@@ -296,7 +299,8 @@ Version 1 has these stores:
 | Store | Key | Value |
 | --- | --- | --- |
 | `meta` | `schema` | Value-level schema version and the build that last upgraded the database |
-| `slots` | Slot ID | Format-4 manifest bytes, manifest digest/revision, lightweight save-card metadata, value schema tag |
+| `cards` | Slot ID | Lightweight save-card metadata, manifest digest/revision and value schema tag; no manifest, state, journal or chart bytes |
+| `slots` | Slot ID | Format-4 manifest bytes, manifest digest/revision and value schema tag |
 | `charts` | `[slot ID, validated chart filename]` | Immutable compressed monthly chart bytes |
 | `preferences` | `client` | Validated, versioned client-preference payload |
 
@@ -314,28 +318,32 @@ Write sequence:
 
 1. Capture the accepted-command boundary and encode/validate the archive outside the
    transaction. A later simulation tick must not change the capture.
-2. Open one `readwrite` transaction covering `slots` and `charts`. Read the current revision
-   and enforce `Create`/`Replace` compare-and-swap semantics in that same transaction,
-   including operations from other tabs.
-3. Reuse matching immutable chart records, insert missing records, update manifest and listing
-   metadata together, and remove obsolete parts for that slot. Await only requests on this
-   transaction inside it: any other await (fetch, compression, hashing, channels, timers,
-   waiting for a frame) lets the transaction auto-commit.
+2. Open one `readwrite` transaction covering `cards`, `slots` and `charts`. Read the current
+   revision from `slots` and enforce `Create`/`Replace` compare-and-swap semantics in that same
+   transaction, including operations from other tabs. Card metadata is not authoritative for
+   conflict checks.
+3. Reuse matching immutable chart records, insert missing records, update the manifest in
+   `slots` and its matching metadata/revision in `cards` together, and remove obsolete parts
+   for that slot. Await only requests on this transaction inside it: any other await (fetch,
+   compression, hashing, channels, timers, waiting for a frame) lets the transaction auto-commit.
 4. Acknowledge success only on transaction completion, not on a request's success callback.
    On abort/quota failure, retain the previous complete save and report the error through the
    current save/retry UI. Request strict durability where supported; do not describe browser
    guarantees as native file `fsync` guarantees.
 
-Rename changes only name-bearing manifest/metadata with the expected revision; it preserves
-saved-at time and gameplay/chart content. Delete checks the revision and removes the slot and
-its parts atomically. A retry may accept an already absent slot but must reject a replacement.
+Rename checks the expected revision and updates the name-bearing manifest in `slots` and the
+matching metadata/revision in `cards` in one transaction; it preserves saved-at time and
+gameplay/chart content. Delete checks the revision and removes the card, slot and its parts
+atomically. A retry may accept an already absent slot but must reject a replacement.
 A new revision is the digest of the actual committed manifest bytes, retaining the native
 convention. The browser store's `now()` comes from JS `Date`.
 
-List only save-card rows, never all chart buffers or restored games. On selected load, read a
-consistent manifest/part snapshot, verify every referenced part and restore through the normal
-verified path. Recheck the source before installing a preloaded candidate. Metadata is a hint;
-it cannot bypass validation.
+List only rows from `cards`, without reading `slots` or `charts`. IndexedDB value reads return
+the complete stored record, so separating the cards prevents library browsing from retrieving
+every compressed manifest and its embedded state/journal. On selected load, read a consistent
+manifest/part snapshot, verify every referenced part and restore through the normal verified
+path. Recheck the source before installing a preloaded candidate. Metadata is a hint; it cannot
+bypass validation.
 
 Handle database open failure, blocked upgrades and `versionchange` explicitly. Close old
 connections when asked to upgrade; tell the player when another tab needs to close/reload.
@@ -365,7 +373,12 @@ library hints, and a Web Lock per playing slot can warn when a second tab opens 
 
 ### 9c acceptance gates
 
-- [ ] IndexedDB schema (including `meta`), transactional publication and typed errors.
+- [ ] IndexedDB schema (including separate `cards` and `slots` stores and `meta`), transactional
+      publication and typed errors.
+- [ ] Instrument library listing to prove it reads only `cards`, with no `slots` or `charts`
+      reads even for long-history saves. Create, replace, rename and delete keep cards and
+      manifests consistent; an aborted transaction changes neither, and their revisions agree
+      after reload.
 - [ ] Wire manual/automatic saves, library, Resume/preload, retry and settings; remove the
       preview label.
 - [ ] Test blocked/unavailable storage, denied persistence, quota/abort, cancellation, stale
