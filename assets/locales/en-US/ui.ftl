@@ -351,6 +351,7 @@ city-served-now = Served now
 city-cut = Cut
 operating-tab-supply = Supply
 supply-history-title = History
+supply-history-zone = Grid zone: { $zone }
 supply-history-month = Month
 supply-history-note = The complete played day representing this month.
 supply-history-empty = Complete a day to see its supply and demand history.

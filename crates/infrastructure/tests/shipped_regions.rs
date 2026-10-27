@@ -438,17 +438,22 @@ fn unknown_citations(ron: &str, rows: &std::collections::BTreeSet<String>) -> Ve
     cited.into_iter().filter(|id| !rows.contains(id)).collect()
 }
 
-/// The highest demand multiplier of the year: every month's shape at every
-/// hour boundary (interpolation between hours never exceeds the endpoints).
-fn max_shape_factor(region: &RegionDefinition) -> f64 {
+/// Exact annual peak of the requested cities, respecting each city's climate and clock.
+fn peak_demand(region: &RegionDefinition, cities: &[domain::ids::CityId]) -> f64 {
     (1..=12)
         .flat_map(|month| {
             let month = SimMonth::new(2027, month).expect("valid month");
-            (0..24).map(move |hour| {
-                region.load_factor(region.cities()[0].id, month, hour * TICKS_PER_HOUR)
+            (0..TICKS_PER_DAY).map(move |tick| {
+                cities
+                    .iter()
+                    .map(|id| {
+                        region.city(*id).expect("known city").base_load.value()
+                            * region.load_factor(*id, month, tick)
+                    })
+                    .sum::<f64>()
             })
         })
-        .fold(f64::MIN, f64::max)
+        .fold(0.0, f64::max)
 }
 
 /// Civil clocks must shift demand by the city's authored local hour, including
@@ -681,12 +686,7 @@ fn start_fleet_covers_connected_peak_with_margin() {
                 spec.capacity_credit.of(spec.capacity).value()
             })
             .sum();
-        let connected: f64 = start
-            .connected_cities
-            .iter()
-            .map(|&city| region.city(city).expect("known city").base_load.value())
-            .sum();
-        let peak = connected * max_shape_factor(&region);
+        let peak = peak_demand(&region, &start.connected_cities);
         assert!(
             firm >= 1.10 * peak,
             "{id}: firm {firm} MW against a connected peak of {peak} MW"
@@ -1187,15 +1187,15 @@ fn assert_first_expansion(id: &str, seed: u64) {
         .find(|city| city.name_key == city_key)
         .unwrap();
     assert!(!target.connected);
-    let future_base: f64 = region
+    let future_cities: Vec<_> = region
         .cities()
         .iter()
         .filter(|city| {
             (region.start().connected_cities.contains(&city.id) || city.id == target.id)
                 && region.area_at(city.cell) == region.area_at(target.cell)
         })
-        .map(|city| city.base_load.value())
-        .sum();
+        .map(|city| city.id)
+        .collect();
     let firm: f64 = region
         .start()
         .fleet
@@ -1209,7 +1209,7 @@ fn assert_first_expansion(id: &str, seed: u64) {
     let gas = region.spec(PlantKind::Ccgt);
     // Cover the entire year's peak plus 10% operating headroom, using the same capacity
     // credits as the starting-fleet acceptance check. This includes existing spare capacity.
-    let count = ((future_base * max_shape_factor(&region) * 1.10 - firm)
+    let count = ((peak_demand(&region, &future_cities) * 1.10 - firm)
         / gas.capacity_credit.of(gas.capacity).value())
     .ceil()
     .max(1.0) as usize;
@@ -3290,6 +3290,156 @@ mod continental_europe_maghreb {
 mod sgcc {
     use super::*;
     #[test]
+    fn starter_zones_have_distinct_shapes_and_regionally_characteristic_fleets() {
+        use std::collections::BTreeMap;
+        let game = new_game(&catalog(), SGCC, 7);
+        let session = game.session();
+        let mut fleets = Vec::new();
+        let mut zones = Vec::new();
+        for (&id, nodes) in session.power().island_nodes() {
+            let fleet = session
+                .plant_views()
+                .into_iter()
+                .filter(|p| nodes.contains(&p.node))
+                .fold(BTreeMap::<_, usize>::new(), |mut counts, p| {
+                    *counts.entry(p.kind).or_default() += 1;
+                    counts
+                });
+            let area = session
+                .region()
+                .area_at(session.power().network().node(id).unwrap().cell)
+                .0;
+            match area {
+                1 => assert!(
+                    fleet.contains_key(&PlantKind::Coal) && fleet.contains_key(&PlantKind::Ccgt)
+                ),
+                2 => assert!(
+                    fleet.contains_key(&PlantKind::Nuclear)
+                        && fleet.contains_key(&PlantKind::Solar),
+                    "coastal East inherits nuclear and solar"
+                ),
+                3 => assert!(
+                    fleet.contains_key(&PlantKind::Coal)
+                        && fleet.contains_key(&PlantKind::Wind)
+                        && fleet.contains_key(&PlantKind::Solar),
+                    "Northwest inherits thermal-backed wind and solar"
+                ),
+                4 => assert!(
+                    fleet.contains_key(&PlantKind::Coal)
+                        && fleet.contains_key(&PlantKind::Wind)
+                        && !fleet.contains_key(&PlantKind::Solar),
+                    "Northeast inherits coal and wind"
+                ),
+                5 => assert!(
+                    fleet.get(&PlantKind::Hydro).copied().unwrap_or(0) >= 2
+                        && fleet.contains_key(&PlantKind::Ccgt),
+                    "Southwest inherits hydro and dry-season backup"
+                ),
+                _ => panic!("unknown SGCC area"),
+            }
+            assert!(
+                !fleets.contains(&fleet),
+                "starter fleet composition must be distinct"
+            );
+            fleets.push(fleet);
+            zones.push(id);
+        }
+        for month in 1..=12 {
+            let date = SimMonth::new(2027, month).unwrap();
+            let profiles: Vec<_> = zones
+                .iter()
+                .map(|id| {
+                    let nodes = &session.power().island_nodes()[id];
+                    let expected: Vec<_> = (0..24)
+                        .map(|h| {
+                            session
+                                .city_views()
+                                .iter()
+                                .filter(|c| nodes.contains(&c.node))
+                                .map(|c| {
+                                    session.region().city(c.id).unwrap().base_load.value()
+                                        * session.region().load_factor(
+                                            c.id,
+                                            date,
+                                            h * TICKS_PER_HOUR,
+                                        )
+                                })
+                                .sum::<f64>()
+                        })
+                        .collect();
+                    let peak = expected.iter().copied().fold(0.0, f64::max);
+                    expected.into_iter().map(|v| v / peak).collect::<Vec<_>>()
+                })
+                .collect();
+            for (i, a) in profiles.iter().enumerate() {
+                for b in profiles.iter().skip(i + 1) {
+                    let difference = a
+                        .iter()
+                        .zip(b)
+                        .map(|(a, b)| (a - b).abs())
+                        .fold(0.0, f64::max);
+                    assert!(
+                        difference >= 0.05,
+                        "month {month}: shapes must differ, not just load scale: {difference}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn starter_regional_sources_generate_and_retrospectives_are_distinct() {
+        let mut game = new_game(&catalog(), SGCC, 7);
+        let played = play_month(&mut game);
+        let mut demands = Vec::new();
+        for (id, nodes) in game.session().power().island_nodes() {
+            let area = game
+                .session()
+                .region()
+                .area_at(game.session().power().network().node(*id).unwrap().cell)
+                .0;
+            let demand: Vec<_> = played.ticks.iter().map(|p| p.islands[id].demand).collect();
+            assert!(!demands.contains(&demand), "starter histories must differ");
+            demands.push(demand);
+            let output = |kind| {
+                played
+                    .ticks
+                    .iter()
+                    .map(|p| {
+                        p.islands[id]
+                            .by_kind
+                            .get(&kind)
+                            .map_or(0.0, |mw| mw.value())
+                    })
+                    .sum::<f64>()
+            };
+            match area {
+                2 => assert!(output(PlantKind::Nuclear) > 0.0 && output(PlantKind::Solar) > 0.0),
+                3 => assert!(output(PlantKind::Wind) > 0.0 && output(PlantKind::Solar) > 0.0),
+                4 => assert!(output(PlantKind::Coal) > 0.0 && output(PlantKind::Wind) > 0.0),
+                5 => {
+                    let total: f64 = played
+                        .ticks
+                        .iter()
+                        .map(|p| p.islands[id].generation.value())
+                        .sum();
+                    assert!(
+                        output(PlantKind::Hydro) > total * 0.5,
+                        "Southwest is hydro-led, not merely labelled hydro"
+                    );
+                }
+                _ => {}
+            }
+            assert!(
+                game.session()
+                    .plant_views()
+                    .iter()
+                    .any(|p| nodes.contains(&p.node))
+            );
+        }
+    }
+
+    #[test]
     fn each_sgcc_starter_grid_covers_its_own_full_year_without_imports() {
         for seed in 0..8 {
             let mut game = new_game(&catalog(), SGCC, seed);
@@ -3309,6 +3459,23 @@ mod sgcc {
                 }
                 let played = play_month(&mut game);
                 assert_eq!(played.report.islands.len(), 5);
+                assert_eq!(
+                    played.report.over_frequency_trips, 0,
+                    "seed {seed}, month {month}: inherited fleets must not trip on surplus"
+                );
+                for (id, local) in &played.report.islands {
+                    let share = f64::from(local.minutes_outside_band) / f64::from(TICKS_PER_DAY);
+                    assert!(
+                        share
+                            <= game
+                                .session()
+                                .region()
+                                .regulator()
+                                .frequency_violation_share
+                                .value(),
+                        "seed {seed}, month {month}, zone {id:?}: frequency must be viable locally ({share})"
+                    );
+                }
                 for tick in &played.ticks {
                     assert_eq!(tick.islands.len(), 5);
                     for (id, local) in &tick.islands {

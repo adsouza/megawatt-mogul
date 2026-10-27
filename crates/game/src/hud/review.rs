@@ -843,6 +843,88 @@ mod tests {
                 .collect::<Vec<_>>()
         );
     }
+
+    #[test]
+    fn a_local_shortage_changes_only_its_zones_archived_retrospective() {
+        use application::{Command, InMemoryCommandLog};
+        let mut game =
+            crate::hud::test_support::shipped_game("sgcc", Box::new(InMemoryCommandLog::default()));
+        let city = game
+            .session()
+            .city_views()
+            .into_iter()
+            .find(|c| c.name_key == "city-chengdu")
+            .unwrap();
+        let local_nodes = game.session().power().island_nodes()[&city.node].clone();
+        for plant in game
+            .session()
+            .plant_views()
+            .into_iter()
+            .filter(|p| local_nodes.contains(&p.node))
+        {
+            game.execute(Command::StopPlant { plant: plant.id })
+                .unwrap();
+        }
+        game.execute(Command::BeginOperating).unwrap();
+        game.execute(Command::AdvanceTicks { n: 1440 }).unwrap();
+        let l10n = crate::hud::test_support::shipped_l10n();
+        let checkpoint = game.checkpoint();
+        let day = game.projections().timeline.completed_days().last().unwrap();
+        let mut unserved_chart = None;
+        for name in ["city-chengdu", "city-lanzhou", "city-changchun"] {
+            let id = game
+                .session()
+                .city_views()
+                .into_iter()
+                .find(|c| c.name_key == name)
+                .unwrap()
+                .node;
+            let ui = UiState {
+                island: Some(id),
+                review_supply: true,
+                ..Default::default()
+            };
+            let history =
+                review_model_with_history(&game, GameOverView::default(), &ui, &l10n, &usd_style())
+                    .unwrap()
+                    .supply
+                    .unwrap();
+            let chart = history.chart.unwrap();
+            assert_eq!(
+                chart.demand,
+                day.points
+                    .iter()
+                    .map(|p| p.islands[&id].demand.value())
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                chart.served,
+                day.points
+                    .iter()
+                    .map(|p| p.islands[&id].served.value())
+                    .collect::<Vec<_>>()
+            );
+            for stack in &chart.stacks {
+                for (index, point) in day.points.iter().enumerate() {
+                    let actual = point.islands[&id]
+                        .by_kind
+                        .get(&stack.kind)
+                        .map_or(0.0, |mw| mw.value());
+                    assert!((stack.high[index] - stack.low[index] - actual).abs() < 1e-6);
+                }
+            }
+            if id == city.node {
+                assert!(chart.served.iter().all(|mw| *mw == 0.0));
+                assert!(chart.stacks.is_empty());
+                unserved_chart = Some(chart.served);
+            } else {
+                assert!(chart.served.iter().all(|mw| *mw > 0.0));
+                assert_ne!(Some(&chart.served), unserved_chart.as_ref());
+                assert!(!chart.stacks.is_empty());
+            }
+        }
+        assert_eq!(game.checkpoint(), checkpoint);
+    }
     use domain::region::PlantKind;
     use std::collections::BTreeMap;
 

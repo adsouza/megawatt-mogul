@@ -540,7 +540,7 @@ pub fn draw_commitment(
     form: &mut CommitmentForm,
 ) -> Vec<UiAction> {
     let mut actions = Vec::new();
-    if !model.scopes.is_empty() {
+    if model.scopes.len() > 1 {
         ui.horizontal_wrapped(|ui| {
             ui.label(&model.scope_label);
             let selected = model
@@ -771,7 +771,14 @@ mod tests {
                 );
             }
         }
-        assert_eq!(all_plants.len(), 19);
+        assert_eq!(
+            all_plants.len(),
+            game.session()
+                .plant_views()
+                .iter()
+                .filter(|p| super::super::plant_list::is_commitable(p))
+                .count()
+        );
     }
 
     #[test]

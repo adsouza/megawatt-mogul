@@ -202,31 +202,60 @@
         (id:10,name_key:"city-wuhan",lon:114.31,lat:30.59,base_load_mw:8500.0,zone:1,climate:1),
         (id:11,name_key:"city-changsha",lon:112.94,lat:28.23,base_load_mw:5500.0,zone:1,climate:1),
         (id:12,name_key:"city-nanchang",lon:115.86,lat:28.68,base_load_mw:4500.0,zone:1,climate:1),
-        (id:13,name_key:"city-shanghai",lon:121.47,lat:31.23,base_load_mw:14000.0,zone:1,climate:1),
-        (id:14,name_key:"city-nanjing",lon:118.8,lat:32.06,base_load_mw:7000.0,zone:1,climate:1),
-        (id:15,name_key:"city-hangzhou",lon:120.16,lat:30.27,base_load_mw:7000.0,zone:1,climate:1),
-        (id:16,name_key:"city-hefei",lon:117.23,lat:31.82,base_load_mw:5000.0,zone:1,climate:1),
-        (id:17,name_key:"city-fuzhou",lon:119.3,lat:26.08,base_load_mw:750.0,zone:1,climate:1),
-        (id:18,name_key:"city-xian",lon:108.94,lat:34.34,base_load_mw:6000.0,zone:1,climate:1),
-        (id:19,name_key:"city-lanzhou",lon:103.83,lat:36.06,base_load_mw:750.0,zone:1,climate:1),
-        (id:20,name_key:"city-xining",lon:101.78,lat:36.62,base_load_mw:1800.0,zone:1,climate:1),
-        (id:21,name_key:"city-yinchuan",lon:106.23,lat:38.49,base_load_mw:1800.0,zone:1,climate:1),
-        (id:22,name_key:"city-urumqi",lon:87.62,lat:43.83,base_load_mw:3800.0,zone:1,climate:1),
-        (id:23,name_key:"city-shenyang",lon:123.43,lat:41.8,base_load_mw:5500.0,zone:1,climate:1),
-        (id:24,name_key:"city-changchun",lon:125.32,lat:43.9,base_load_mw:750.0,zone:1,climate:1),
-        (id:25,name_key:"city-harbin",lon:126.64,lat:45.76,base_load_mw:4500.0,zone:1,climate:1),
-        (id:26,name_key:"city-chifeng",lon:118.89,lat:42.26,base_load_mw:1500.0,zone:1,climate:1),
-        (id:27,name_key:"city-chengdu",lon:104.07,lat:30.57,base_load_mw:750.0,zone:1,climate:1),
-        (id:28,name_key:"city-chongqing",lon:106.55,lat:29.56,base_load_mw:9000.0,zone:1,climate:1),
-        (id:29,name_key:"city-lhasa",lon:91.13,lat:29.65,base_load_mw:800.0,zone:1,climate:1),
+        (id:13,name_key:"city-shanghai",lon:121.47,lat:31.23,base_load_mw:14000.0,zone:1,climate:2),
+        (id:14,name_key:"city-nanjing",lon:118.8,lat:32.06,base_load_mw:7000.0,zone:1,climate:2),
+        (id:15,name_key:"city-hangzhou",lon:120.16,lat:30.27,base_load_mw:7000.0,zone:1,climate:2),
+        (id:16,name_key:"city-hefei",lon:117.23,lat:31.82,base_load_mw:5000.0,zone:1,climate:2),
+        (id:17,name_key:"city-fuzhou",lon:119.3,lat:26.08,base_load_mw:1300.0,zone:1,climate:2),
+        (id:18,name_key:"city-xian",lon:108.94,lat:34.34,base_load_mw:6000.0,zone:1,climate:3),
+        (id:19,name_key:"city-lanzhou",lon:103.83,lat:36.06,base_load_mw:1150.0,zone:1,climate:3),
+        (id:20,name_key:"city-xining",lon:101.78,lat:36.62,base_load_mw:1800.0,zone:1,climate:3),
+        (id:21,name_key:"city-yinchuan",lon:106.23,lat:38.49,base_load_mw:1800.0,zone:1,climate:3),
+        (id:22,name_key:"city-urumqi",lon:87.62,lat:43.83,base_load_mw:3800.0,zone:1,climate:3),
+        (id:23,name_key:"city-shenyang",lon:123.43,lat:41.8,base_load_mw:5500.0,zone:1,climate:4),
+        (id:24,name_key:"city-changchun",lon:125.32,lat:43.9,base_load_mw:1100.0,zone:1,climate:4),
+        (id:25,name_key:"city-harbin",lon:126.64,lat:45.76,base_load_mw:4500.0,zone:1,climate:4),
+        (id:26,name_key:"city-chifeng",lon:118.89,lat:42.26,base_load_mw:1500.0,zone:1,climate:4),
+        (id:27,name_key:"city-chengdu",lon:104.07,lat:30.57,base_load_mw:1000.0,zone:1,climate:5),
+        (id:28,name_key:"city-chongqing",lon:106.55,lat:29.56,base_load_mw:9000.0,zone:1,climate:5),
+        (id:29,name_key:"city-lhasa",lon:91.13,lat:29.65,base_load_mw:800.0,zone:1,climate:5),
     ],
-    // CST industry/evening load; regional averages are illustrative tuning.
+    // Five CST climate profiles. Shapes, monthly multipliers and starter loads are game tuning,
+    // not measured regional demand. See the 27 October regional-character authoring note.
     climates: [(id:1,shapes:[
         ("winter",[0.72,0.68,0.65,0.64,0.64,0.68,0.78,0.9,1.0,1.04,1.05,1.03,1.0,1.0,1.02,1.04,1.08,1.15,1.2,1.18,1.1,1.0,0.9,0.8]),
         ("summer",[0.75,0.71,0.68,0.66,0.66,0.7,0.8,0.9,1.0,1.08,1.13,1.15,1.12,1.18,1.22,1.23,1.2,1.14,1.1,1.12,1.1,1.02,0.92,0.82]),
         ("shoulder",[0.7,0.66,0.64,0.63,0.64,0.68,0.76,0.85,0.9,0.92,0.93,0.94,0.94,0.94,0.95,0.96,0.98,1.0,0.99,0.96,0.91,0.85,0.78,0.73])],
         month_shapes:["winter","winter","shoulder","shoulder","shoulder","summer","summer","summer","shoulder","shoulder","shoulder","winter"],
-        monthly:[1.0,0.92,0.95,0.92,0.95,1.0,1.08,1.08,1.0,0.95,0.97,1.02])],
+        monthly:[1.0,0.92,0.95,0.92,0.95,1.0,1.08,1.08,1.0,0.95,0.97,1.02]),
+        // East: coastal industry and summer cooling; a high overnight floor supports inherited nuclear.
+        (id:2,shapes:[
+            ("winter",[0.93,0.92,0.91,0.9,0.9,0.92,0.96,1.0,1.05,1.09,1.11,1.12,1.09,1.08,1.08,1.07,1.05,1.03,1.01,1.02,1.01,0.99,0.97,0.95]),
+            ("summer",[0.98,0.96,0.95,0.94,0.94,0.96,1.0,1.04,1.08,1.11,1.14,1.16,1.17,1.18,1.19,1.2,1.18,1.15,1.12,1.1,1.08,1.05,1.02,1.0]),
+            ("shoulder",[0.91,0.9,0.89,0.88,0.88,0.9,0.94,1.0,1.05,1.08,1.09,1.1,1.06,1.04,1.05,1.06,1.04,1.02,1.0,1.01,1.0,0.97,0.94,0.92])],
+            month_shapes:["winter","winter","shoulder","shoulder","shoulder","summer","summer","summer","shoulder","shoulder","shoulder","winter"],
+            monthly:[0.98,0.96,0.96,0.95,0.98,1.04,1.1,1.1,1.04,0.98,0.96,0.99]),
+        // Northwest: flatter industrial demand, a later evening peak and a modest cold-season lift.
+        (id:3,shapes:[
+            ("winter",[0.96,0.94,0.93,0.92,0.92,0.93,0.95,0.97,0.99,1.0,1.01,1.0,0.99,0.99,1.0,1.01,1.03,1.05,1.07,1.09,1.11,1.12,1.06,1.0]),
+            ("summer",[0.98,0.97,0.96,0.96,0.96,0.97,0.98,1.0,1.02,1.04,1.05,1.06,1.06,1.07,1.08,1.08,1.07,1.06,1.05,1.07,1.09,1.1,1.06,1.01]),
+            ("shoulder",[0.96,0.95,0.94,0.94,0.94,0.95,0.96,0.98,1.0,1.01,1.02,1.01,1.0,1.0,1.01,1.02,1.03,1.04,1.05,1.06,1.07,1.08,1.04,0.99])],
+            month_shapes:["winter","winter","shoulder","shoulder","shoulder","summer","summer","summer","shoulder","shoulder","shoulder","winter"],
+            monthly:[1.04,1.02,0.98,0.95,0.96,1.0,1.04,1.03,0.99,0.98,1.01,1.05]),
+        // Northeast: winter heating, an early morning peak, and lower shoulder-season demand.
+        (id:4,shapes:[
+            ("winter",[1.0,0.98,0.96,0.95,0.98,1.05,1.17,1.24,1.2,1.13,1.08,1.05,1.03,1.02,1.04,1.07,1.12,1.17,1.19,1.17,1.11,1.07,1.04,1.02]),
+            ("summer",[0.87,0.86,0.85,0.84,0.84,0.88,0.95,1.02,1.06,1.07,1.06,1.04,1.02,1.03,1.05,1.08,1.1,1.09,1.07,1.04,1.0,0.96,0.92,0.89]),
+            ("shoulder",[0.89,0.88,0.87,0.86,0.87,0.92,1.03,1.1,1.08,1.04,1.0,0.98,0.97,0.96,0.97,0.99,1.02,1.05,1.06,1.04,1.0,0.96,0.93,0.91])],
+            month_shapes:["winter","winter","shoulder","shoulder","shoulder","summer","summer","summer","shoulder","shoulder","shoulder","winter"],
+            monthly:[1.16,1.12,1.04,0.96,0.92,0.96,1.04,1.03,0.96,0.98,1.08,1.18]),
+        // Southwest: a pronounced evening peak, summer cooling and a smaller winter rise.
+        (id:5,shapes:[
+            ("winter",[0.78,0.75,0.73,0.72,0.72,0.76,0.84,0.94,1.0,1.02,1.01,0.99,0.97,0.96,0.97,1.0,1.05,1.1,1.14,1.17,1.18,1.1,0.96,0.85]),
+            ("summer",[0.76,0.73,0.71,0.7,0.7,0.74,0.82,0.92,1.0,1.05,1.09,1.12,1.14,1.16,1.18,1.17,1.14,1.12,1.15,1.21,1.23,1.15,0.99,0.84]),
+            ("shoulder",[0.71,0.69,0.67,0.66,0.66,0.7,0.78,0.88,0.94,0.97,0.97,0.95,0.93,0.92,0.93,0.95,0.98,1.02,1.06,1.1,1.11,1.02,0.88,0.77])],
+            month_shapes:["winter","winter","shoulder","shoulder","shoulder","summer","summer","summer","shoulder","shoulder","shoulder","winter"],
+            monthly:[0.96,0.92,0.92,0.9,0.96,1.04,1.12,1.13,1.04,0.96,0.94,1.0])],
     demand_noise:(forecast_error:0.03,error_persistence:0.995),
     frequency: (
         nominal_hz: 50.0,
@@ -288,16 +317,12 @@
         fleet:[(Coal,117.8,39.4),(Coal,116.4,40.3),
             (Ccgt,116.1,39.7),(Ccgt,117.5,39.1),(Ccgt,116.9,40.0),
             (Peaker,115.7,39.4),(Peaker,117.2,40.5),
-            // East: Fuzhou, 750 MW base load; 1,200 MW fast thermal capacity, 340 MW minimum.
-            (Ccgt,118.7,26.3),(Ccgt,118.6,26.0),
-            (Peaker,118.2,26.2),
-            // Northwest: Lanzhou. No imports are needed to operate the inherited territory.
-            (Ccgt,103.3,36.3),(Ccgt,103.8,36.6),
-            (Peaker,103.5,35.6),
-            // Northeast: Changchun.
-            (Ccgt,124.7,44.2),(Ccgt,125.2,44.5),
-            (Peaker,125.0,43.5),
-            // Southwest: Chengdu. Hydro and renewable development remain player choices.
-            (Ccgt,103.5,30.8),(Ccgt,104.0,31.1),
-            (Peaker,103.8,30.0)]),
+            // East: Fuzhou's coastal nuclear/solar mix, with gas flexibility.
+            (Nuclear,118.7,26.3),(Ccgt,118.6,26.0),(Peaker,118.2,26.2),(Solar,118.9,25.7),
+            // Northwest: Lanzhou's coal-backed wind and solar; no import dependency.
+            (Coal,103.3,36.3),(Ccgt,103.8,36.6),(Wind,103.5,35.6),(Solar,104.2,36.2),
+            // Northeast: Changchun's coal/heat heritage, wind and flexible reserves.
+            (Coal,124.7,44.2),(Ccgt,125.2,44.5),(Peaker,125.0,43.5),(Wind,124.4,44.0),
+            // Southwest: two Sichuan hydro stations, backed by gas in the dry season.
+            (Hydro,103.5,30.8),(Hydro,104.0,31.1),(Ccgt,103.8,30.0),(Peaker,104.4,30.4)]),
 )

@@ -141,14 +141,15 @@ fn choose_a_local_fleet_edit_it_and_keep_the_same_island_in_the_forecast() {
                     .all(|group| group.island == Some(island))
             );
             for plant in app.world().resource::<Session>().0.session().plant_views() {
-                let local = app
-                    .world()
-                    .resource::<Session>()
-                    .0
-                    .session()
-                    .power()
-                    .island_nodes()[&island]
-                    .contains(&plant.node);
+                let local = hud::is_commitable(&plant)
+                    && app
+                        .world()
+                        .resource::<Session>()
+                        .0
+                        .session()
+                        .power()
+                        .island_nodes()[&island]
+                        .contains(&plant.node);
                 let name =
                     game::l10n::Names::new(&l10n, app.world().resource::<Session>().0.session())
                         .plant(plant.id);
@@ -303,6 +304,62 @@ fn island_planning_opens_locally_and_all_islands_is_an_overview() {
             .all(|group| group.island == Some(remote))
     );
     assert_eq!(app.world().resource::<Session>().0.checkpoint(), before);
+}
+
+#[test]
+fn the_retrospective_identifies_the_selected_zone_at_minimum_size() {
+    use crate::hud_smoke::dispatch_in;
+    use game::{hud::UiAction, sim::Persistence};
+    let logs = TempDir::new().unwrap();
+    let mut app = hud_app(logs.path());
+    request(&mut app, "sgcc");
+    {
+        let mut game = app.world_mut().resource_mut::<Session>();
+        game.0.execute(Command::BeginOperating).unwrap();
+        game.0.execute(Command::AdvanceTicks { n: 1440 }).unwrap();
+    }
+    update_n(&mut app, 3);
+    let checkpoint = app.world().resource::<Session>().0.checkpoint();
+    let l10n = shipped_l10n();
+    let scopes = hud::top_bar_model(
+        &app.world().resource::<Session>().0,
+        app.world().resource::<Persistence>(),
+        &l10n,
+        &usd_style(),
+    )
+    .islands;
+    dispatch_in(&mut app, vec![UiAction::ShowReviewSupply(true)]);
+    let pass = EguiPass::attach(&mut app);
+    for zoom in [1.0, 1.25] {
+        pass.ctx().set_zoom_factor(zoom);
+        let size = (1024.0 / zoom, 640.0 / zoom);
+        for scope in &scopes {
+            let widgets = pass.settled(&mut app, size.0, size.1);
+            pass.click_at(
+                &mut app,
+                size.0,
+                size.1,
+                button(&widgets, &scope.button.label).rect.center(),
+            );
+            let title = match scope.button.action {
+                UiAction::SelectIsland(Some(id)) => format!(
+                    "Grid zone: {}",
+                    game::l10n::Names::new(&l10n, app.world().resource::<Session>().0.session())
+                        .island(app.world().resource::<Session>().0.session(), id)
+                ),
+                UiAction::SelectIsland(None) => l10n.text("islands-all"),
+                _ => panic!("zone option"),
+            };
+            let widgets = pass.settled(&mut app, size.0, size.1);
+            assert!(
+                widgets.iter().any(|w| w.text == title
+                    && egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(size.0, size.1))
+                        .contains_rect(w.rect)),
+                "retrospective must identify {title}"
+            );
+        }
+    }
+    assert_eq!(app.world().resource::<Session>().0.checkpoint(), checkpoint);
 }
 
 #[test]

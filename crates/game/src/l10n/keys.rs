@@ -537,6 +537,7 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "city-cut",
     "operating-tab-supply",
     "supply-history-title",
+    "supply-history-zone",
     "supply-history-month",
     "supply-history-note",
     "supply-history-empty",

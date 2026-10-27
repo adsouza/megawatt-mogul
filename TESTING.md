@@ -1028,10 +1028,16 @@ hours and range; Operating shows actual flow/losses, and Review labels the last 
 ## Five SGCC starter grids (rules 27)
 
 New SGCC games inherit five active AC components without HVDC: Beijing/Tianjin/Langfang,
-Fuzhou, Lanzhou, Changchun and Chengdu. Each added local grid has two CCGTs and one peaker;
-plant parameters remain in the regional catalog. `shipped_regions::sgcc` checks each local
+Fuzhou, Lanzhou, Changchun and Chengdu. The zone fleets are distinct: North–Central coal/gas,
+East nuclear/solar, Northwest thermal-backed wind/solar, Northeast coal/wind, and Southwest
+hydro with gas backup. Plant parameters remain in the regional catalog. Five climates give
+all cities local daily and seasonal load patterns; a normalized-shape check requires meaningful
+pairwise differences in every month, not just different base loads. A played-day check requires
+the characteristic sources to generate and each zone's archived demand curve to differ.
+`shipped_regions::sgcc` checks each local
 forecast for capacity shortfall and excess minimum generation through all 12 months on seeds
 0–7. Every operating minute must have zero imports, exports, planned outage and unserved load.
+Each zone also passes its own frequency limit, and inherited fleets have zero over-frequency trips.
 A Beijing-only shortage leaves the other four tick summaries unchanged. Mid-day snapshot
 continuation and journal replay preserve the independently owned grids.
 
