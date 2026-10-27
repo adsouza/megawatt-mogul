@@ -1,6 +1,6 @@
 # Plan 9 — browser client and automatic GitHub Pages deployment
 
-Status: implementation in progress; 9a local runtime evidence recorded below. Requested on 26 October 2026; revised the same
+Status: 9a–9c implemented locally; 9d in progress. Evidence is recorded below. Requested on 26 October 2026; revised the same
 day after review, splitting the work into Plans 9a–9d. This document plans the work; it does not
 enable Pages, change repository settings, or claim that the current client builds for WebAssembly.
 
@@ -538,3 +538,33 @@ logic stays in the state machine. The executor has direct result/panic-containme
 
 Validation: 84 selected infrastructure tests and 56 selected game save/preferences/executor
 tests passed. Released fixtures remain unchanged. No complete local workspace suite was run.
+
+
+## Implementation evidence — 9c
+
+The browser uses separate `cards`, `slots`, `charts`, `meta` and `preferences` stores. A narrow
+request-callback adapter owns the transaction; source digests are calculated before it, and
+source-byte equality plus the expected revision are checked inside it. Only transaction
+completion acknowledges publication. Metadata-only listing, cross-tab conflicts, aborted writes
+and protection of unknown newer cards have real IndexedDB tests.
+
+The shared persistence state machine now awaits platform storage operations. Native execution
+retains threads and panic containment; browser execution uses local futures and disposable
+codec workers. Boot retains the worker source, bindings/snippets and compiled module, avoiding
+later requests for files removed by a deployment. The worker transfers bounded binary buffers,
+validates and normalizes a candidate checkpoint; installing the live `Game` still reconstructs
+the verified boundary on the main thread. This remaining activation cost belongs to the load
+modal, while background save compression/parsing leaves the render thread.
+
+Chromium UI acceptance saves with Enter, reloads, opens the library and resumes paused, including
+when worker/module requests have been blocked after boot. A separate real 32× day produces a
+monthly autosave, reloads and resumes Review at tick 1440; the speed preference remains 32×
+while the resumed game is paused. Native save/preferences/localization/executor regressions
+passed all 78 selected tests, and the isolated native 120-frame smoke exited successfully.
+
+The final 9c browser selection passed all 13 tests, including typed malformed-worker failure,
+quota failure after requests were queued, newer-database refusal without deletion and the exact
+saved name. Headless Chromium reports all tabs visible, so the visibility test injects the
+`document.hidden` signal into the real running game; a human tab-hide check remains distinct.
+Both native workspace Clippy and WASM-target Clippy pass with warnings denied. The full local
+workspace suite remains unrun, pending the user's response about publication/pre-push checks.

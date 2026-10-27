@@ -3,19 +3,24 @@
 //! The wall clock is allowed here, and only here in the simulation bridge: it names the log file
 //! and seeds the default seed. Neither reaches the domain except as the seed the player confirms.
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::fs;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(not(target_arch = "wasm32"))]
+use application::CommandLogError;
+use application::Game;
+#[cfg(not(target_arch = "wasm32"))]
 use application::{CommandError, RegionCatalog};
-use application::{CommandLogError, Game};
 use bevy::prelude::*;
 #[cfg(not(target_arch = "wasm32"))]
 use domain::ids::RegionId;
 use domain::session::GameSettings;
+#[cfg(not(target_arch = "wasm32"))]
 use infrastructure::command_log::{FileCommandLog, region_archive_path};
 
 use super::{Catalog, CommandFailed, NewGameRequest, Session};
@@ -26,6 +31,7 @@ use crate::paths::LogDir;
 use crate::state::AppState;
 
 /// How many `-2`, `-3`, … suffixes to try before giving up on a log name.
+#[cfg(not(target_arch = "wasm32"))]
 const MAX_LOG_NAME_ATTEMPTS: u32 = 1_000;
 
 /// A seed for the menu to offer, from the wall clock's nanoseconds (the low 64 bits). The player
@@ -131,6 +137,7 @@ fn log_stem(unix_secs: u64, region: &RegionId, seed: u64) -> String {
 /// Creates `<dir>/<stem>.log`, making `dir` if needed. If that name (or its region archive) is
 /// taken, tries `<stem>-2.log`, `<stem>-3.log`, …: two games started in the same second with the
 /// same region and seed both get a log.
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn create_log(
     dir: &Path,
     stem: &str,

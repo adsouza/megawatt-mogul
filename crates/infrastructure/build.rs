@@ -1,6 +1,7 @@
 mod build_support;
 use std::{env, path::PathBuf, process::Command};
 fn main() {
+    println!("cargo:rerun-if-changed=src/browser_storage.js");
     let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("../..");
     let mut inputs = build_support::backend_inputs(&root).expect("backend fingerprint inputs");
     // Track the directories too: adding or removing a source must rerun the generator.

@@ -5,7 +5,7 @@ test('real browser client boots at the Pages project subpath', async ({page}) =>
   await page.goto('./');
   await expect(page.locator('body')).toHaveAttribute('data-ready','true', {timeout:150000});
   await expect(page.locator('#game')).toBeVisible();
-  await expect(page.locator('#preview')).toContainText('progress is not kept');
+  await expect(page.locator('#preview')).toContainText('Saved games stay in this browser');
   await expect(page.locator('#status')).toBeHidden();
   expect(errors).toEqual([]);
 });
@@ -54,7 +54,7 @@ test('all eight regions complete a day and restore exactly on WASM', async ({pag
   expect(metrics).toHaveLength(8);
   for(const row of metrics) expect(row.timings[5]).toBeGreaterThan(0);
   console.log('WASM region measurements',JSON.stringify(metrics));
-  await page.mouse.click(230,370);
+  if(await page.locator('body').getAttribute('data-app-state')==='MainMenu') await page.mouse.click(230,370);
   await expect(page.locator('body')).toHaveAttribute('data-app-state','RegionSelect');
   await page.mouse.click(860,420);
   await expect(page.locator('body')).toHaveAttribute('data-app-state','InGame');
@@ -66,4 +66,16 @@ test('a stale page with a removed module offers reload before WASM starts', asyn
   await expect(page.locator('#reload')).toBeVisible();
   await expect(page.locator('#status')).toContainText('Reload to retry');
   await expect(page.locator('body')).not.toHaveAttribute('data-ready','true');
+});
+
+test('a codec worker rejects malformed data without breaking the running client',async({page})=>{
+ await page.goto('./');await expect(page.locator('body')).toHaveAttribute('data-ready','true',{timeout:150000});
+ const failure=await page.evaluate(async()=>{
+  const module=document.querySelector('link[rel=modulepreload]').href;
+  const source=await(await fetch(module)).text();const path=source.match(/from ['"]([^'"]+browser_storage.js)['"]/)[1];
+  const service=await import(new URL(path,module));
+  try{await service.codec('decode',{manifest:new Uint8Array([1]),files:[]});return null;}catch(error){return {kind:error.kind,message:error.message};}
+ });
+ expect(failure.kind).toBe('Malformed');await expect(page.locator('body')).toHaveAttribute('data-ready','true');
+ await expect(page.locator('#status')).toBeHidden();
 });

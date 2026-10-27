@@ -57,10 +57,9 @@ impl PluginGroup for GamePlugins {
             .add(audio::DailyAudioPlugin)
             .add(world::WorldViewPlugin)
             .add(world::CameraPlugin);
+        let plugins = plugins.add(preferences::PreferencesPlugin);
         #[cfg(not(target_arch = "wasm32"))]
-        let plugins = plugins
-            .add(preferences::PreferencesPlugin)
-            .add(window::IdleRedrawPlugin);
+        let plugins = plugins.add(window::IdleRedrawPlugin);
         #[cfg(feature = "dev")]
         let plugins = plugins.add(world::DevToolsPlugin);
         plugins

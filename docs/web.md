@@ -1,7 +1,9 @@
 # Browser builds and GitHub Pages
 
-The browser client shares the native Rust simulation and egui UI. Plan 9a is a preview:
-progress is not retained across reloads until the IndexedDB adapter in Plan 9c ships.
+The browser client shares the native Rust simulation and egui UI. Saves and preferences live
+in this browser/profile's `megawatt-mogul` IndexedDB database. Manual saves, monthly autosaves
+and Resume preserve the complete verified game and history. Clearing site data removes saves;
+the header reports when automatic cleanup protection has not been granted.
 
 ## Build and run
 
@@ -43,3 +45,20 @@ WASM/JS and runtime assets are content-addressed. A stale page or mismatched ass
 shows Reload; browser data is never cleared by deployment. This release has no service worker
 and does not promise offline startup. Desktop keyboard/mouse and a 1280×640 content area
 are the initial interface target; the published browser support matrix awaits runtime evidence.
+
+
+## Browser storage
+
+`cards` contains only lightweight library metadata. `slots` contains manifests and their
+revisions; `charts` contains immutable monthly buffers. Create/replace/rename/delete update
+all three stores in one transaction and acknowledge only its completion. Revision hashes and
+an in-transaction source-byte comparison protect against another tab's changes. Unknown newer
+record schemas are preserved. Preferences use a separate store and the same byte validator as
+native files. No per-command disk log or unload-time save is promised.
+
+Codecs run in disposable workers using an independent WASM instance. Boot retains the compiled
+module and module sources as object URLs, so later saves need no files from a replacement
+deployment. Worker messages carry explicit bounded metadata and binary checkpoint buffers;
+the live Bevy game remains on the main thread. Loading still reconstructs the verified game
+on the main thread after the worker validates and normalizes the checkpoint. Dialogs stay open
+until completion, and obsolete generation results cannot install a game.

@@ -3558,6 +3558,7 @@ dependencies = [
  "application",
  "domain",
  "flate2",
+ "js-sys",
  "proptest",
  "ron",
  "serde",
@@ -3565,6 +3566,8 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tracing",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]

@@ -427,7 +427,23 @@ pub fn save_error(error: &SaveError, l10n: &Localizer) -> String {
         SaveError::DurabilityUnconfirmed { .. } => "save-error-durability",
         SaveError::DeleteDurabilityUnconfirmed { .. } => "save-error-delete-durability",
         SaveError::Cancelled => "save-error-cancelled",
-        SaveError::Io { .. } => "save-error-io",
+        #[cfg(target_arch = "wasm32")]
+        SaveError::Io {
+            stage: "browser-version",
+            ..
+        } => "browser-error-newer",
+        #[cfg(target_arch = "wasm32")]
+        SaveError::Io {
+            stage: "browser-blocked",
+            ..
+        } => "browser-error-blocked",
+        SaveError::Io { .. } => {
+            if cfg!(target_arch = "wasm32") {
+                "browser-error-storage"
+            } else {
+                "save-error-io"
+            }
+        }
         SaveError::Restore(error) => match error {
             application::RestoreError::Replay(_) => "save-error-rules",
             application::RestoreError::RegionSourceMismatch

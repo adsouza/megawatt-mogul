@@ -13,6 +13,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   # No debug info in CI: it multiplies the size of target/, and so of the cache to save and
@@ -57,6 +60,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/rust-setup
+        with:
+          cache: 'false'
       - run: rustup target add wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         with:

@@ -56,8 +56,35 @@ async fn assets() -> Result<WebAssets, JsValue> {
     Ok(WebAssets(files))
 }
 pub fn run() {
+    if web_sys::window().is_none() {
+        return;
+    }
     wasm_bindgen_futures::spawn_local(async {
-        match assets().await.and_then(launch) {
+        let result = async {
+            let assets = assets().await?;
+            wasm_bindgen_futures::JsFuture::from(infrastructure::browser::prepare_codec(BUILD))
+                .await?;
+            if let Some(window) = web_sys::window() {
+                let persisted = match window.navigator().storage().persisted() {
+                    Ok(promise) => wasm_bindgen_futures::JsFuture::from(promise)
+                        .await
+                        .ok()
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false),
+                    Err(_) => false,
+                };
+                if let Some(body) = window.document().and_then(|d| d.body()) {
+                    body.set_attribute(
+                        "data-storage-persistent",
+                        if persisted { "true" } else { "false" },
+                    )
+                    .ok();
+                }
+            }
+            launch(assets)
+        }
+        .await;
+        match result {
             Ok(()) => (),
             Err(error) => {
                 web_sys::console::error_1(&error);
@@ -92,8 +119,6 @@ fn launch(assets: WebAssets) -> Result<(), JsValue> {
                 .map(|id| (domain::ids::RegionId::new(id), bytes.clone()))
         })
         .collect();
-    let mut settings = crate::preferences::ClientSettings::default();
-    settings.loaded = true;
     if let Some(link) = web_sys::window()
         .and_then(|w| w.document())
         .and_then(|d| d.get_element_by_id("source"))
@@ -108,7 +133,6 @@ fn launch(assets: WebAssets) -> Result<(), JsValue> {
     app.insert_resource(assets)
         .insert_resource(localizer)
         .insert_resource(Catalog(BundleRegionCatalog::new(bundles)))
-        .insert_resource(settings)
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Megawatt Mogul".into(),
@@ -132,11 +156,34 @@ fn visibility(mut speed: ResMut<SimSpeed>) {
         *speed = SimSpeed::Paused;
     }
 }
-fn readiness(state: Res<State<AppState>>, localizer: Res<Localizer>) {
+fn readiness(
+    state: Res<State<AppState>>,
+    localizer: Res<Localizer>,
+    persistence: Res<crate::sim::Persistence>,
+    session: Option<Res<crate::sim::Session>>,
+    speed: Res<SimSpeed>,
+) {
     let Some(document) = web_sys::window().and_then(|w| w.document()) else {
         return;
     };
     if let Some(body) = document.body() {
+        body.set_attribute("data-save-screen", &format!("{:?}", persistence.screen))
+            .ok();
+        body.set_attribute("data-save-busy", &persistence.busy().to_string())
+            .ok();
+        body.set_attribute("data-save-count", &persistence.entries.len().to_string())
+            .ok();
+        body.set_attribute("data-save-error", &persistence.error.is_some().to_string())
+            .ok();
+        body.set_attribute("data-speed", &speed.ticks().to_string())
+            .ok();
+        if let Some(session) = session {
+            body.set_attribute(
+                "data-sim-tick",
+                &session.0.session().clock().tick().to_string(),
+            )
+            .ok();
+        }
         body.set_attribute("data-app-state", &format!("{:?}", state.get()))
             .ok();
     }
@@ -149,6 +196,38 @@ fn readiness(state: Res<State<AppState>>, localizer: Res<Localizer>) {
         }
     }
     if let Some(banner) = document.get_element_by_id("preview") {
-        banner.set_text_content(Some(&localizer.text("browser-preview")));
+        let mut hint = localizer.text("browser-local-saves");
+        if document
+            .body()
+            .and_then(|b| b.get_attribute("data-storage-persistent"))
+            .as_deref()
+            == Some("false")
+        {
+            hint.push(' ');
+            hint.push_str(&localizer.text("browser-storage-not-persistent"));
+        }
+        banner.set_text_content(Some(&hint));
     }
+}
+
+/// Persistence permission is requested only from a deliberate save action.
+pub fn request_storage_persistence() {
+    wasm_bindgen_futures::spawn_local(async {
+        let result =
+            wasm_bindgen_futures::JsFuture::from(infrastructure::browser::request_persistence())
+                .await
+                .ok()
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+        if let Some(body) = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.body())
+        {
+            body.set_attribute(
+                "data-storage-persistent",
+                if result { "true" } else { "false" },
+            )
+            .ok();
+        }
+    });
 }

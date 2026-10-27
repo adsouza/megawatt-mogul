@@ -8,6 +8,7 @@ window.addEventListener("unhandledrejection", () => { window.mmBootFailed = true
 <link data-trunk rel="rust" href="../crates/game/Cargo.toml" data-bin="game" data-cargo-profile="wasm-release" data-wasm-opt="2">
 <link data-trunk rel="copy-dir" href="assets">
 <link data-trunk rel="copy-file" href="shell.js">
+<link data-trunk rel="copy-file" href="codec-worker.js">
 <style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#101922;color:#e6e8ea;font:16px system-ui}#surface{position:absolute;inset:30px 0 0}canvas{width:100%;height:100%;outline:none}#preview{height:30px;text-align:center;font-size:14px}#status{position:absolute;inset:40% 10%;text-align:center}button,a{color:inherit}#reload{margin:12px}a{position:absolute;right:12px;top:4px}</style>
 <script src="shell.js" defer></script></head><body>
 <div id="preview"></div><a id="source" href="https://github.com/adsouza/megawatt-mogul"></a>

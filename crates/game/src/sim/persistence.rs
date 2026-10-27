@@ -1,6 +1,8 @@
 //! Persistence orchestration. Immutable captures leave the main thread; only verified candidates
 //! return. Commands and worker results are scoped to a session generation.
 mod executor;
+#[cfg(not(target_arch = "wasm32"))]
+mod storage;
 use super::{CommandFailed, DomainEventMessage, PlayerCommand, ReturnToMenu, Session, SimSpeed};
 use crate::{
     crash::CrashContext,
@@ -10,6 +12,9 @@ use crate::{
 use application::*;
 use bevy::prelude::*;
 use domain::session::{DayPhase, SessionStatus};
+#[cfg(target_arch = "wasm32")]
+use infrastructure::browser::BrowserSaveStore as Storage;
+#[cfg(not(target_arch = "wasm32"))]
 use infrastructure::save::FileSaveStore;
 use std::{
     collections::VecDeque,
@@ -19,6 +24,8 @@ use std::{
         mpsc::Receiver,
     },
 };
+#[cfg(not(target_arch = "wasm32"))]
+use storage::Storage;
 
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SessionGeneration(pub u64);
@@ -108,7 +115,7 @@ enum Completion {
 /// A restored game and the resume log it records to.
 struct LoadedGame {
     game: Box<Game>,
-    log: std::path::PathBuf,
+    log: Option<std::path::PathBuf>,
 }
 /// The boundary whose autosave failed. Boundaries of one run are ordered by their accepted-command
 /// count, so a save with at least as many commands covers it.
@@ -127,6 +134,7 @@ struct PreloadedGame {
     game: PendingRecording,
     slot: SaveId,
     revision: SaveRevision,
+    #[cfg(not(target_arch = "wasm32"))]
     recording: infrastructure::command_log::PreparedRecording,
 }
 struct PreloadJob {
@@ -137,14 +145,14 @@ struct PreloadJob {
 
 #[derive(Resource, Default)]
 pub struct Persistence {
-    store: Option<Arc<dyn SaveStore>>,
+    store: Option<Arc<Storage>>,
     pub screen: SaveScreen,
     pub entries: Vec<SaveListing>,
     listed: bool,
     preload_key: Option<(SaveId, SaveRevision)>,
     preload: Option<PreloadJob>,
     preloaded: Option<Result<PreloadedGame, SaveError>>,
-    waiting_resume: Option<std::path::PathBuf>,
+    waiting_resume: Option<Option<std::path::PathBuf>>,
     pub error: Option<SaveError>,
     pub last_summary: Option<CheckpointSummary>,
     last_saved: Option<SaveReceipt>,
@@ -170,9 +178,10 @@ pub struct Persistence {
     return_after_save: bool,
 }
 impl Persistence {
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn with_store(store: Arc<dyn SaveStore>) -> Self {
         Self {
-            store: Some(store),
+            store: Some(Arc::new(Storage::new(store))),
             ..Default::default()
         }
     }
@@ -232,11 +241,12 @@ impl Persistence {
         let worker_cancel = cancel.clone();
         match executor::spawn(
             "resume-preload",
-            move || {
+            move || async move {
                 let (bundle, region, running) = read_snapshot(store.as_ref(), &slot, &|| {
                     worker_cancel.load(Ordering::Relaxed)
-                })?;
-                if store.revision(&slot)? != revision {
+                })
+                .await?;
+                if store.revision(&slot).await? != revision {
                     return Err(SaveError::SlotChanged);
                 }
                 let game = bundle.restore(
@@ -246,12 +256,14 @@ impl Persistence {
                     &|| worker_cancel.load(Ordering::Relaxed),
                 )?;
                 let game = game.prepare_recording();
+                #[cfg(not(target_arch = "wasm32"))]
                 let recording = infrastructure::command_log::PreparedRecording::new(
                     game.checkpoint().clone(),
                     &|| worker_cancel.load(Ordering::Relaxed),
                 )
                 .map_err(RestoreError::Log)?;
                 Ok(PreloadedGame {
+                    #[cfg(not(target_arch = "wasm32"))]
                     recording,
                     game,
                     slot,
@@ -280,7 +292,7 @@ impl Persistence {
             }
         }
     }
-    fn activate_preloaded(&mut self, generation: u64, dir: std::path::PathBuf) {
+    fn activate_preloaded(&mut self, generation: u64, dir: Option<std::path::PathBuf>) {
         let Some(candidate) = self.preloaded.take() else {
             return;
         };
@@ -296,32 +308,55 @@ impl Persistence {
             self.unavailable();
             return;
         };
-        self.spawn(generation, move |cancel| {
-            Completion::Loaded((|| {
-                if store.revision(&candidate.slot)? != candidate.revision {
-                    return Err(SaveError::SlotChanged);
-                }
-                if cancel.load(Ordering::Relaxed) {
-                    return Err(SaveError::Cancelled);
-                }
-                let (log, sink) = super::new_game::create_log(
-                    &dir,
-                    &format!("resume-{}", store.allocate_id().as_str()),
-                )
-                .map_err(RestoreError::Log)?;
-                candidate
-                    .game
-                    .activate(
-                        Box::new(sink.with_prepared_recording(candidate.recording)),
-                        &|| cancel.load(Ordering::Relaxed),
-                    )
-                    .map_err(SaveError::Restore)
-                    .inspect_err(|_| discard_branch_log(&log))
-                    .map(|game| LoadedGame {
-                        game: Box::new(game),
-                        log,
-                    })
-            })())
+        self.spawn(generation, move |cancel| async move {
+            Completion::Loaded(
+                (async {
+                    if store.revision(&candidate.slot).await? != candidate.revision {
+                        return Err(SaveError::SlotChanged);
+                    }
+                    if cancel.load(Ordering::Relaxed) {
+                        return Err(SaveError::Cancelled);
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let (log, sink) = super::new_game::create_log(
+                            &dir.ok_or(SaveError::Io {
+                                stage: "recording",
+                                message: "missing native log directory".into(),
+                            })?,
+                            &format!("resume-{}", store.allocate_id().as_str()),
+                        )
+                        .map_err(RestoreError::Log)?;
+                        candidate
+                            .game
+                            .activate(
+                                Box::new(sink.with_prepared_recording(candidate.recording)),
+                                &|| cancel.load(Ordering::Relaxed),
+                            )
+                            .map_err(SaveError::Restore)
+                            .inspect_err(|_| discard_branch_log(&log))
+                            .map(|game| LoadedGame {
+                                game: Box::new(game),
+                                log: Some(log),
+                            })
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        let _ = dir;
+                        candidate
+                            .game
+                            .activate(Box::<InMemoryCommandLog>::default(), &|| {
+                                cancel.load(Ordering::Relaxed)
+                            })
+                            .map(|game| LoadedGame {
+                                game: Box::new(game),
+                                log: None,
+                            })
+                            .map_err(SaveError::Restore)
+                    }
+                })
+                .await,
+            )
         });
         if self.error.is_some() {
             self.screen = SaveScreen::Browser;
@@ -448,11 +483,11 @@ impl Persistence {
             ..Default::default()
         };
     }
-    fn spawn(
-        &mut self,
-        generation: u64,
-        work: impl FnOnce(Arc<AtomicBool>) -> Completion + Send + 'static,
-    ) {
+    fn spawn<F, Fut>(&mut self, generation: u64, work: F)
+    where
+        F: FnOnce(Arc<AtomicBool>) -> Fut + executor::PlatformSend + 'static,
+        Fut: std::future::Future<Output = Completion> + executor::PlatformSend + 'static,
+    {
         if self.job.is_some() {
             return;
         }
@@ -494,7 +529,9 @@ impl Persistence {
         };
         self.error = None;
         self.listed = false;
-        self.spawn(generation, move |_| Completion::Listed(store.list()));
+        self.spawn(generation, move |_| async move {
+            Completion::Listed(store.list().await)
+        });
         if self.job.is_none() {
             self.listed = true;
         }
@@ -511,10 +548,14 @@ impl Persistence {
             return;
         };
         self.error = None;
-        self.spawn(generation, move |cancel| {
-            Completion::Saved(store.write(&task.bundle, &task.target, &|| {
-                cancel.load(Ordering::Relaxed)
-            }))
+        self.spawn(generation, move |cancel| async move {
+            Completion::Saved(
+                store
+                    .write(&task.bundle, &task.target, &|| {
+                        cancel.load(Ordering::Relaxed)
+                    })
+                    .await,
+            )
         });
         if self.automatic_error() {
             self.screen = SaveScreen::Automatic;
@@ -540,10 +581,14 @@ impl Persistence {
             return;
         };
         self.error = None;
-        self.spawn(generation, move |cancel| {
-            Completion::Renamed(store.rename(&task.slot, task.revision, &task.name, &|| {
-                cancel.load(Ordering::Relaxed)
-            }))
+        self.spawn(generation, move |cancel| async move {
+            Completion::Renamed(
+                store
+                    .rename(&task.slot, task.revision, &task.name, &|| {
+                        cancel.load(Ordering::Relaxed)
+                    })
+                    .await,
+            )
         });
     }
     fn delete(&mut self, generation: u64) {
@@ -552,10 +597,14 @@ impl Persistence {
             return;
         };
         self.error = None;
-        self.spawn(generation, move |cancel| {
-            Completion::Deleted(store.delete(&task.slot, task.revision, &|| {
-                cancel.load(Ordering::Relaxed)
-            }))
+        self.spawn(generation, move |cancel| async move {
+            Completion::Deleted(
+                store
+                    .delete(&task.slot, task.revision, &|| {
+                        cancel.load(Ordering::Relaxed)
+                    })
+                    .await,
+            )
         });
     }
     fn remember_automatic_rename(&mut self, slot: &SaveId, revision: SaveRevision, name: &str) {
@@ -611,6 +660,13 @@ impl Persistence {
         speed: &mut SimSpeed,
         log_dir: Option<std::path::PathBuf>,
     ) {
+        #[cfg(target_arch = "wasm32")]
+        if matches!(
+            &action,
+            PersistAction::SaveNew(_) | PersistAction::ConfirmOverwrite
+        ) {
+            crate::browser::request_storage_persistence();
+        }
         let background = self.background_write();
         if self.busy()
             && !(background
@@ -665,7 +721,7 @@ impl Persistence {
                     if self.preload_key.as_ref() == Some(&(slot.clone(), revision))
                         && (self.preload.is_some() || self.preloaded.is_some())
                     {
-                        if let Some(dir) = log_dir {
+                        if let Some(dir) = resume_destination(log_dir) {
                             if self.preloaded.is_some() {
                                 self.activate_preloaded(generation, dir);
                             } else {
@@ -764,43 +820,64 @@ impl Persistence {
             PersistAction::Load(slot)
                 if matches!(self.screen, SaveScreen::Browser | SaveScreen::Loading) =>
             {
-                let (Some(store), Some(dir)) = (self.store.clone(), log_dir) else {
+                let (Some(store), Some(dir)) = (self.store.clone(), resume_destination(log_dir))
+                else {
                     self.unavailable();
                     return;
                 };
                 self.error = None;
-                self.spawn(generation, move |cancel| {
-                    Completion::Loaded((|| {
-                        let revision = store.revision(&slot)?;
-                        let (bundle, region, running) =
-                            read_snapshot(store.as_ref(), &slot, &|| {
-                                cancel.load(Ordering::Relaxed)
-                            })?;
-                        if cancel.load(Ordering::Relaxed) {
-                            return Err(SaveError::Cancelled);
-                        }
-                        let game = bundle.restore(
-                            region,
-                            &running,
-                            Box::new(InMemoryCommandLog::default()),
-                            &|| cancel.load(Ordering::Relaxed),
-                        )?;
-                        if store.revision(&slot)? != revision {
-                            return Err(SaveError::SlotChanged);
-                        }
-                        let (log, sink) = super::new_game::create_log(
-                            &dir,
-                            &format!("resume-{}", store.allocate_id().as_str()),
-                        )
-                        .map_err(RestoreError::Log)?;
-                        game.with_recording(Box::new(sink), &|| cancel.load(Ordering::Relaxed))
-                            .map_err(SaveError::Restore)
-                            .inspect_err(|_| discard_branch_log(&log))
-                            .map(|game| LoadedGame {
-                                game: Box::new(game),
-                                log,
-                            })
-                    })())
+                self.spawn(generation, move |cancel| async move {
+                    Completion::Loaded(
+                        (async {
+                            let revision = store.revision(&slot).await?;
+                            let (bundle, region, running) =
+                                read_snapshot(store.as_ref(), &slot, &|| {
+                                    cancel.load(Ordering::Relaxed)
+                                })
+                                .await?;
+                            if cancel.load(Ordering::Relaxed) {
+                                return Err(SaveError::Cancelled);
+                            }
+                            let game = bundle.restore(
+                                region,
+                                &running,
+                                Box::new(InMemoryCommandLog::default()),
+                                &|| cancel.load(Ordering::Relaxed),
+                            )?;
+                            if store.revision(&slot).await? != revision {
+                                return Err(SaveError::SlotChanged);
+                            }
+                            #[cfg(not(target_arch = "wasm32"))]
+                            {
+                                let (log, sink) = super::new_game::create_log(
+                                    &dir.ok_or(SaveError::Io {
+                                        stage: "recording",
+                                        message: "missing native log directory".into(),
+                                    })?,
+                                    &format!("resume-{}", store.allocate_id().as_str()),
+                                )
+                                .map_err(RestoreError::Log)?;
+                                game.with_recording(Box::new(sink), &|| {
+                                    cancel.load(Ordering::Relaxed)
+                                })
+                                .map_err(SaveError::Restore)
+                                .inspect_err(|_| discard_branch_log(&log))
+                                .map(|game| LoadedGame {
+                                    game: Box::new(game),
+                                    log: Some(log),
+                                })
+                            }
+                            #[cfg(target_arch = "wasm32")]
+                            {
+                                let _ = dir;
+                                Ok(LoadedGame {
+                                    game: Box::new(game),
+                                    log: None,
+                                })
+                            }
+                        })
+                        .await,
+                    )
                 });
             }
             PersistAction::Retry if self.error.is_some() => {
@@ -930,13 +1007,13 @@ impl Persistence {
     }
 }
 
-fn read_snapshot(
-    store: &dyn SaveStore,
+async fn read_snapshot(
+    store: &Storage,
     slot: &SaveId,
-    cancelled: &dyn Fn() -> bool,
+    cancelled: &(dyn Fn() -> bool + Sync),
 ) -> Result<(SaveBundle, LoadedRegion, ReplayCompatibility), SaveError> {
     let running = store.compatibility();
-    let read = store.read_cancellable(slot, cancelled);
+    let read = store.read_cancellable(slot, cancelled).await;
     // The recorded build is diagnostics: replay verification decides. Name
     // it next to the running one, so a failure that follows can be traced.
     let recorded = match &read {
@@ -966,6 +1043,7 @@ pub(super) fn discard_menu_preload(mut persistence: ResMut<Persistence>) {
 /// Removes the branch log, and its region archive, that a failed load created for a candidate it
 /// then abandoned, so no attempt or Retry leaves files behind. Either may not exist: the archive
 /// is written only once verification passes.
+#[cfg(not(target_arch = "wasm32"))]
 fn discard_branch_log(log: &std::path::Path) {
     let archive = infrastructure::command_log::region_archive_path(log);
     for path in std::iter::once(log.to_path_buf())
@@ -997,9 +1075,20 @@ pub(super) fn initialise_store(
     if persistence.store.is_none()
         && let Some(dir) = dir
     {
-        persistence.store = Some(Arc::new(
-            FileSaveStore::new(dir.0.clone()).with_monthly_charts(),
-        ));
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            persistence.store = Some(Arc::new(Storage::new(Arc::new(
+                FileSaveStore::new(dir.0.clone()).with_monthly_charts(),
+            ))));
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = dir;
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    if persistence.store.is_none() {
+        persistence.store = Some(Arc::new(Storage));
     }
     if *state.get() == AppState::Boot
         && persistence.enabled()
@@ -1199,7 +1288,7 @@ pub(super) fn poll_persistence(
         },
         Completion::Loaded(result) => match result {
             Ok(LoadedGame { game, log }) => {
-                crash.set_game_log(Some(log));
+                crash.set_game_log(log);
                 generation.0 = generation.0.wrapping_add(1);
                 persistence.abandon();
                 persistence.enter(generation.0);
@@ -1234,6 +1323,18 @@ pub(super) fn resume_cancel_speed(
             }))
     {
         *speed = SimSpeed::Paused;
+    }
+}
+
+fn resume_destination(dir: Option<std::path::PathBuf>) -> Option<Option<std::path::PathBuf>> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        dir.map(Some)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = dir;
+        Some(None)
     }
 }
 

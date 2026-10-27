@@ -755,3 +755,14 @@ before applying in-memory defaults; original files, RNG, inventory, reports and 
 intact. New wind fields are neutral and future plans are marked stale separately from legacy
 fields. New captures write schema 2; monthly chart split/join carries the source schema until
 verification. Directory 4, flat envelope 3 and diagnostic log 2 remain independent and unchanged.
+
+
+## Browser adapters
+
+The browser entry point launches the same game plugins after fetching a complete, verified
+asset inventory. The infrastructure bundle catalog parses the same canonical bytes as native
+files. No browser APIs enter domain or application. The persistence state machine is shared:
+native futures execute on threads with panic containment, while browser local futures use
+IndexedDB and codec workers. Only ordinary Rust completions enter ECS resources; JS handles
+stay in local tasks. Native file logging and directory publication retain their contracts.
+See `docs/web.md` and Plan 9 for storage, lifecycle and deployment details.

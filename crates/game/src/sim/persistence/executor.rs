@@ -1,21 +1,53 @@
-//! Native job execution. Only typed completions leave the worker; panics become failures.
+//! Platform job execution. Only ordinary Rust completion data leaves the local future/thread.
 use std::{
-    panic::{AssertUnwindSafe, catch_unwind},
+    future::Future,
     sync::mpsc::{self, Receiver},
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) trait PlatformSend: Send {}
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: Send> PlatformSend for T {}
+#[cfg(target_arch = "wasm32")]
+pub(super) trait PlatformSend {}
+#[cfg(target_arch = "wasm32")]
+impl<T> PlatformSend for T {}
 
-pub(super) fn spawn<T: Send + 'static>(
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn spawn<T: Send + 'static, F, Fut>(
     name: &str,
-    work: impl FnOnce() -> T + Send + 'static,
+    work: F,
     failed: impl FnOnce() -> T + Send + 'static,
-) -> std::io::Result<Receiver<T>> {
+) -> std::io::Result<Receiver<T>>
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = T> + Send + 'static,
+{
     let (tx, rx) = mpsc::channel();
     std::thread::Builder::new()
         .name(name.into())
         .spawn(move || {
-            let result = catch_unwind(AssertUnwindSafe(work)).unwrap_or_else(|_| failed());
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                bevy::tasks::block_on(work())
+            }))
+            .unwrap_or_else(|_| failed());
             let _ = tx.send(result);
         })?;
+    Ok(rx)
+}
+#[cfg(target_arch = "wasm32")]
+pub(super) fn spawn<T: 'static, F, Fut>(
+    _: &str,
+    work: F,
+    _failed: impl FnOnce() -> T + 'static,
+) -> std::io::Result<Receiver<T>>
+where
+    F: FnOnce() -> Fut + 'static,
+    Fut: Future<Output = T> + 'static,
+{
+    let (tx, rx) = mpsc::channel();
+    wasm_bindgen_futures::spawn_local(async move {
+        let _ = tx.send(work().await);
+    });
     Ok(rx)
 }
 #[cfg(test)]
@@ -24,7 +56,7 @@ mod tests {
     #[test]
     fn worker_returns_its_typed_result() {
         assert_eq!(
-            spawn("test", || Ok::<_, &str>(42), || Err("panic"))
+            spawn("test", || async { Ok::<_, &str>(42) }, || Err("panic"))
                 .unwrap()
                 .recv()
                 .unwrap(),
@@ -36,7 +68,7 @@ mod tests {
         assert_eq!(
             spawn(
                 "test",
-                || panic!("injected worker panic"),
+                || async { panic!("injected worker panic") },
                 || Err::<u32, _>("panic")
             )
             .unwrap()
