@@ -38,7 +38,7 @@ test('IndexedDB retains bytes across reload and rejects an inactive transaction'
   expect(value).toEqual({bytes:[1,2,3],error:'TransactionInactiveError'});
 });
 
-test('all eight regions complete a day and restore exactly on WASM', async ({page}) => {
+test('all eight regions complete a day, restore, and continue through backups on WASM', async ({page}) => {
   await page.goto('./');
   await expect(page.locator('body')).toHaveAttribute('data-ready','true',{timeout:150000});
   const metrics=await page.evaluate(async()=>{

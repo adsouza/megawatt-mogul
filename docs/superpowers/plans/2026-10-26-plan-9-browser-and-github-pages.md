@@ -1,6 +1,6 @@
 # Plan 9 — browser client and automatic GitHub Pages deployment
 
-Status: 9a–9c implemented locally; 9d in progress. Evidence is recorded below. Requested on 26 October 2026; revised the same
+Status: 9a–9d implemented locally. Live Pages publication remains pending; Firefox/Safari are unverified. Evidence is recorded below. Requested on 26 October 2026; revised the same
 day after review, splitting the work into Plans 9a–9d. This document plans the work; it does not
 enable Pages, change repository settings, or claim that the current client builds for WebAssembly.
 
@@ -218,21 +218,21 @@ repository setup:
 
 ### 9a acceptance gates
 
-- [ ] Target-specific build configuration, shell, asset packaging and browser boot.
-- [ ] Audit target dependencies, entropy/time sources and native-only APIs against the call
+- [x] Target-specific build configuration, shell, asset packaging and browser boot.
+- [x] Audit target dependencies, entropy/time sources and native-only APIs against the call
       sites listed above; `tempfile` compiles or is gated.
 - [ ] Render the real title globe, localized menu and smallest supported game HUD at the
       project subpath. Start all eight regions and run a normal simulation day.
-- [ ] Choose the IndexedDB binding (`indexed_db_futures`, `rexie` or raw `web-sys`) and prove
+- [x] Choose the IndexedDB binding (`indexed_db_futures`, `rexie` or raw `web-sys`) and prove
       write → reload → read with a disposable database. Prove that awaiting a non-IndexedDB
       future inside a transaction surfaces as a typed error, not a silent early commit.
 - [ ] Measure gzip transfer size, boot, region selection, first planning frame, maximum-speed
       play, and save capture/encode and decode/restore of the existing native codecs compiled to
       WASM, including an authored long-history fixture. Record machine, browser and timings.
-- [ ] Choose the rendering backend and set measured budgets (transfer size, boot, frame time).
+- [x] Choose the rendering backend and set measured budgets (transfer size, boot, frame time).
       Decide whether a codec worker is required for performance; 9d requires one for untrusted
       import regardless unless decode and restore are shown not to panic.
-- [ ] Page hiding pauses play; returning does not burst ticks.
+- [x] Page hiding pauses play; returning does not burst ticks.
 - [ ] Deploy job waits for `check`, `dev-tools` and the browser job; failure, cancellation or
       skipping of any required job prevents publication. Verify concurrency and the
       head-of-`main` guard; reload behavior across two consecutive deployments (stale
@@ -262,12 +262,12 @@ change.
 
 ### 9b acceptance gates
 
-- [ ] Byte-oriented monthly archive and preference codecs with no filesystem calls.
-- [ ] Existing native directory and flat-save fixtures retain exact behavior; released fixture
+- [x] Byte-oriented monthly archive and preference codecs with no filesystem calls.
+- [x] Existing native directory and flat-save fixtures retain exact behavior; released fixture
       bytes stay immutable.
-- [ ] The persistence executor lands as a pure native refactor behind the existing tests
+- [x] The persistence executor lands as a pure native refactor behind the existing tests
       before any browser executor exists.
-- [ ] Generated-operation/property coverage for archive split/join and store
+- [x] Generated-operation/property coverage for archive split/join and store
       create/replace/rename/delete sequences, revision conflicts and rejected-operation
       atomicity, comparing complete checkpoints and metadata, not only visible cards.
 
@@ -373,25 +373,25 @@ library hints, and a Web Lock per playing slot can warn when a second tab opens 
 
 ### 9c acceptance gates
 
-- [ ] IndexedDB schema (including separate `cards` and `slots` stores and `meta`), transactional
+- [x] IndexedDB schema (including separate `cards` and `slots` stores and `meta`), transactional
       publication and typed errors.
-- [ ] Instrument library listing to prove it reads only `cards`, with no `slots` or `charts`
+- [x] Instrument library listing to prove it reads only `cards`, with no `slots` or `charts`
       reads even for long-history saves. Create, replace, rename and delete keep cards and
       manifests consistent; an aborted transaction changes neither, and their revisions agree
       after reload.
-- [ ] Wire manual/automatic saves, library, Resume/preload, retry and settings; remove the
+- [x] Wire manual/automatic saves, library, Resume/preload, retry and settings; remove the
       preview label.
 - [ ] Test blocked/unavailable storage, denied persistence, quota/abort, cancellation, stale
       completions, other-tab replacement, upgrade blocking, `VersionError` from a newer
       database, and recreated slots.
-- [ ] Failure before transaction commit leaves the previous complete revision, and the UI
+- [x] Failure before transaction commit leaves the previous complete revision, and the UI
       cannot announce success before completion.
 - [ ] Browser reload restores Planning, mid-Operating and Review, including batteries, wind,
       SGCC/HVDC, historical island charts, journal and RNG state.
-- [ ] A background autosave retains its captured month while play continues; cancelling a
+- [x] A background autosave retains its captured month while play continues; cancelling a
       manual dialog cannot cancel it. Failed-boundary warning tests still pass.
-- [ ] Browser settings survive reload.
-- [ ] Simulate a newer deployment against an existing saved library: Resume still works, and
+- [x] Browser settings survive reload.
+- [x] Simulate a newer deployment against an existing saved library: Resume still works, and
       records with unknown newer value schemas remain untouched by older code.
 
 ## Plan 9d — portable backups
@@ -426,11 +426,11 @@ transport codec with native tooling.
 
 ### 9d acceptance gates
 
-- [ ] Bounded transport codec and native import/export tool (needs only 9b).
-- [ ] Contained browser import (worker or evidence), localized download/upload controls,
+- [x] Bounded transport codec and native import/export tool (needs only 9b).
+- [x] Contained browser import (worker or evidence), localized download/upload controls,
       validation errors and confirmations.
-- [ ] Malformed/oversized archives and every supported historical schema reader.
-- [ ] Native → browser → native boundaries and each target's uninterrupted continuation
+- [x] Malformed/oversized archives and every supported historical schema reader.
+- [x] Native → browser → native boundaries and each target's uninterrupted continuation
       oracle. Record any float differences; never relax integrity hashes to conceal them or
       promise bit-identical cross-target futures without evidence.
 
@@ -441,7 +441,7 @@ transport codec with native tooling.
       versions and manual checks that automation cannot cover.
 - [ ] Serve the production artifact under `/megawatt-mogul/` and verify assets, downloads,
       workers, refreshes and storage on the deployed URL.
-- [ ] Update README, architecture, testing, web deployment documentation and the design spec
+- [x] Update README, architecture, testing, web deployment documentation and the design spec
       with the implemented browser durability/lifecycle contracts and evidence.
 
 ## Validation and workflow limits
@@ -568,3 +568,43 @@ saved name. Headless Chromium reports all tabs visible, so the visibility test i
 `document.hidden` signal into the real running game; a human tab-hide check remains distinct.
 Both native workspace Clippy and WASM-target Clippy pass with warnings denied. The full local
 workspace suite remains unrun, pending the user's response about publication/pre-push checks.
+
+
+## Implementation evidence — 9d
+
+The pinned pure-Rust ZIP 9.1.2 dependency builds on WASM. Transport version 1 is separate from
+format 4 and portable schemas. A preflight bounds the central directory before the ZIP parser
+allocates metadata; file count, methods, names, encryption, expanded/input sizes and actual reads
+are checked. Existing archive checks enforce referenced parts, checksums and bounded inner
+parsing. Browser import decodes/restores in a disposable worker, normalizes only after verification
+and atomically creates a fresh manual slot. The live session is not replaced. Download reads one
+committed IndexedDB snapshot. All UI actions pass through presenters and dispatch.
+
+The native `save_backup` example exports directory or supported flat saves, imports into a fresh
+native directory slot, and validates boundary hashes. Output creation never overwrites a file.
+Its cross-target regression caught and fixed a missing receiving-build stamp on native import;
+the store's original stamp assertion stays intact. Released fixtures remain unchanged.
+
+A frozen charged-battery save passes native → browser → native with identical checkpoint,
+session and projection hashes plus accepted journal count. Each direction also publishes and
+re-exports a real slot. Native historical portable fixtures continue identically after transport;
+WASM probes now compare successful future commands and complete checkpoints after backup
+restore in all eight regions. These are same-target continuation oracles and cross-target boundary
+checks; they do not promise identical floating-point futures across different targets.
+
+Validation includes 52 selected infrastructure tests plus a generated monthly-store operation
+property (create/replace/rename/delete, stale/rejected writes, complete bundles and revisions),
+78 selected game save/preferences/localization/executor tests, native workspace and WASM Clippy
+with warnings denied, formatting, shell contracts, workflow lint and the isolated native
+120-frame launch smoke. Browser tests exercise actual downloads, file chooser upload/cancel,
+oversize rejection before file reads, malformed-worker containment, fresh identities and reload.
+Planning and Review reloads and the imported Operating battery boundary are covered. The final rebuilt distribution passed all 17 Chromium tests in 1.2 minutes, including actual
+Resume of the imported charged-battery Operating snapshot at tick 900 with paused speed.
+
+Main builds now obtain the public path from Pages metadata; PR checks retain the repository
+subpath. Build, server and browser tests use that same path. Only the deployment job has Pages
+write/OIDC permissions. The documented runtime matrix is limited to tested desktop Chromium;
+Firefox/Safari checks, live URL/source-SHA verification and two real deployments remain pending.
+Unchecked gates above retain their broader runtime/manual requirements; local probes are not
+claimed as live publication evidence. The full local workspace suite has not run: permission
+for the pre-push hook's full suite and publication is still pending.

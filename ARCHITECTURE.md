@@ -766,3 +766,16 @@ native futures execute on threads with panic containment, while browser local fu
 IndexedDB and codec workers. Only ordinary Rust completions enter ECS resources; JS handles
 stay in local tasks. Native file logging and directory publication retain their contracts.
 See `docs/web.md` and Plan 9 for storage, lifecycle and deployment details.
+
+
+Browser library metadata is separated from committed manifests and immutable chart buffers.
+IndexedDB publication acknowledges transaction completion and checks the source revision inside
+the write transaction. Client preferences share the native byte codec but use asynchronous browser
+storage. Hidden pages pause simulation; returning stays paused. There is no unload-time save.
+
+Portable backups are a bounded version-1 ZIP transport around the format-4 archive, shared with
+the native `save_backup` tool. Browser uploads decode and restore in an independent worker before
+an atomic fresh-slot publication. Workers retain their boot-time sources/compiled module across
+deployments. No untrusted archive bytes or JS objects enter the live ECS session. Imported state
+uses existing compatibility and integrity fences; future cross-target floating-point equivalence
+is not assumed. Asset inventories and hashed module names protect startup from mixed deployments.

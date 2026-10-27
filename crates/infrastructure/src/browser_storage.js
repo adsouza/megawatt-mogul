@@ -164,3 +164,26 @@ export function codec(operation,payload){
     worker.postMessage({operation,payload,module:prepared.module,wasm:prepared.wasm},buffers(payload));
   });
 }
+
+// Player-selected backup bytes only; no filesystem paths or network uploads.
+export function chooseBackup(limit){
+  return new Promise((resolve,reject)=>{
+    const input=document.createElement('input');input.type='file';input.accept='.mgsave.zip,.zip';input.hidden=true;
+    function finish(error,value){input.remove();error?reject(error):resolve(value);}
+    input.oncancel=()=>finish(new Error('Cancelled'));
+    input.onchange=async()=>{
+      try{
+        const file=input.files?.[0];
+        if(!file){finish(new Error('Cancelled'));return;}
+        if(file.size>limit){finish(new Error('BackupTooLarge'));return;}
+        finish(null,new Uint8Array(await file.arrayBuffer()));
+      }catch(error){finish(error);}
+    };
+    document.body.append(input);input.click();
+  });
+}
+export function downloadBackup(bytes,filename){
+  const url=URL.createObjectURL(new Blob([bytes],{type:'application/zip'}));
+  const link=document.createElement('a');link.href=url;link.download=filename;
+  document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
+}

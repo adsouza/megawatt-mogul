@@ -2,8 +2,9 @@
 use application::*;
 use domain::{ids::RegionId, session::GameSettings};
 use infrastructure::{
+    backup::{decode_backup, encode_backup},
     region::BundleRegionCatalog,
-    save::{decode_save, encode_save, replay_compatibility},
+    save::{decode_archive, decode_save, encode_archive, encode_save, replay_compatibility},
 };
 use wasm_bindgen::prelude::*;
 
@@ -69,6 +70,29 @@ fn probe(id: &str, bytes: &[u8], months: u32) -> Result<js_sys::Array, Box<dyn s
     )?;
     if restored.checkpoint() != checkpoint {
         return Err("probe checkpoint differs".into());
+    }
+    // Compare same-target future evolution after the portable transport boundary.
+    let archive = decode_backup(&encode_backup(&encode_archive(
+        &bundle,
+        &bundle.compatibility,
+    )?)?)?;
+    let (candidate, region) = decode_archive(&archive, &replay_compatibility(), &|| false)?;
+    let mut candidate = candidate.restore(
+        region,
+        &replay_compatibility(),
+        Box::<InMemoryCommandLog>::default(),
+        &|| false,
+    )?;
+    for command in [
+        Command::FinishReview,
+        Command::BeginOperating,
+        Command::AdvanceTicks { n: 10 },
+    ] {
+        let expected = game.execute(command.clone())?;
+        let actual = candidate.execute(command)?;
+        if expected != actual || game.checkpoint() != candidate.checkpoint() {
+            return Err("backup continuation differs".into());
+        }
     }
     let output = js_sys::Array::new();
     for value in [

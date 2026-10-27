@@ -4291,3 +4291,28 @@ This is a game resource rating, not a percentage of sunny days or a PV yield for
   random seeds/start months, plus beginner survival and affordable first-city expansion.
 - This retunes new games only. Archived region bytes and owned plant specifications retain their
   original terms; no saved state, released fixture, or historical ledger is rewritten.
+
+
+## 32. Amendment A18: Browser client and portable backups (Plan 9, 2026-10-26)
+
+The browser entry point runs the same Rust simulation and presenter/dispatch UI under WebGL2.
+Its region catalog consumes native canonical bundle bytes; startup verifies the complete hashed
+asset inventory before opening the game. GitHub Actions builds/tests the project subpath and
+publishes only a passing current `main` revision through the GitHub Pages environment.
+
+Browser saves and preferences live in IndexedDB. A monthly/manual save becomes successful only
+when the transaction committing metadata, manifest and referenced chart buffers completes.
+Expected revisions and in-transaction source equality protect against cross-tab replacement.
+Unknown database/record versions are refused without resetting storage. Browser profiles do not
+share saves; clearing site data or browser eviction can remove them. Manual saves request optional
+persistent storage, and the UI reports when it has not been granted. No save on tab close is
+promised. Hiding the page pauses simulation; returning leaves it paused.
+
+A version-1 `.mgsave.zip` transport contains the existing format-4 manifest and exactly its
+referenced files, including complete canonical region bytes, accepted journal and history.
+Download reads a consistent committed revision. Upload enforces compressed/expanded/count/depth
+bounds, rejects unsafe/duplicate/extra/missing entries, then validates and restores a candidate in
+a disposable worker. Successful import creates a new manual slot and does not replace the live
+game. The native infrastructure tool shares this codec. Existing rules, portable schemas, source
+hashes and historical compatibility fences remain unchanged; cross-target future float identity
+is not promised. Current runtime evidence supports desktop Chromium; Firefox/Safari await checks.

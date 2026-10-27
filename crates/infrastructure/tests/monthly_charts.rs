@@ -614,3 +614,56 @@ proptest::proptest! {
         let _=infrastructure::save::decode_archive(&archive,&infrastructure::save::replay_compatibility(),&||false);
     }
 }
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(12))]
+    #[test]
+    fn generated_monthly_store_operations_preserve_complete_bundles_and_reject_stale_writes(
+        operations in proptest::collection::vec((0usize..2, 0u8..6), 1..10)
+    ) {
+        let directory = TempDir::new().unwrap();
+        let store = FileSaveStore::new(directory.path().into()).with_monthly_charts();
+        let original = bundle(&store);
+        let ids = [store.allocate_id(), store.allocate_id()];
+        let mut expected = std::collections::BTreeMap::new();
+        for (index, id) in ids.iter().enumerate() {
+            let mut value = original.clone(); value.metadata.slot = id.clone(); value.metadata.name = format!("Slot {index}");
+            let receipt = store.write(&value, &SaveTarget::Create, &|| false).unwrap();
+            expected.insert(id.clone(), (value, receipt.revision));
+        }
+        for (step, (index, operation)) in operations.into_iter().enumerate() {
+            let id = &ids[index];
+            let prior = expected.get(id).cloned();
+            match (operation, prior) {
+                (0, None) => {
+                    let mut value = original.clone(); value.metadata.slot = id.clone();
+                    let receipt = store.write(&value, &SaveTarget::Create, &|| false).unwrap();
+                    expected.insert(id.clone(), (value, receipt.revision));
+                }
+                (0, Some((value, _))) => { proptest::prop_assert!(matches!(store.write(&value, &SaveTarget::Create, &|| false), Err(SaveError::SlotChanged))); }
+                (1, Some((mut value, revision))) => {
+                    value.metadata.saved_at += 1;
+                    let receipt = store.write(&value, &SaveTarget::Replace(revision), &|| false).unwrap();
+                    expected.insert(id.clone(), (value, receipt.revision));
+                }
+                (2, Some((mut value, revision))) => {
+                    let name = format!("Renamed {step}");
+                    let receipt = store.rename(id, revision, &name, &|| false).unwrap();
+                    value.metadata.name = name; expected.insert(id.clone(), (value, receipt.revision));
+                }
+                (3, Some((_, revision))) => { store.delete(id, revision, &|| false).unwrap(); expected.remove(id); }
+                (4, Some((value, _))) => { proptest::prop_assert!(matches!(store.write(&value, &SaveTarget::Replace(SaveRevision([0;32])), &|| false), Err(SaveError::SlotChanged))); }
+                (5, Some((mut value, revision))) => {
+                    value.metadata.name.clear();
+                    proptest::prop_assert!(store.write(&value, &SaveTarget::Replace(revision), &|| false).is_err());
+                }
+                _ => (),
+            }
+            proptest::prop_assert_eq!(store.list().unwrap().len(), expected.len());
+            for (id, (value, revision)) in &expected {
+                proptest::prop_assert_eq!(store.read(id).unwrap().0, value.clone());
+                proptest::prop_assert_eq!(store.revision(id).unwrap(), *revision);
+            }
+        }
+    }
+}

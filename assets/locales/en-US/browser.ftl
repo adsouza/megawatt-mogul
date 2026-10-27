@@ -10,3 +10,5 @@ browser-storage-not-persistent = Automatic storage cleanup may remove saves.
 browser-error-storage = Browser storage is unavailable or full. Free space or allow site storage, then retry.
 browser-error-newer = Saved-game storage was created by a newer version. Reload the latest game; your saves are unchanged.
 browser-error-blocked = Close other Megawatt Mogul tabs, then retry to update saved-game storage.
+browser-export = Download backup
+browser-import = Import backup…

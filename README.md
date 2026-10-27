@@ -38,6 +38,14 @@ covers the original shell; [Plan 3](docs/superpowers/plans/2026-10-20-plan-3-dio
 [Plan 5](docs/superpowers/plans/2026-10-23-plan-5-wind-farms.md) adds wind farms. Current new-game
 batteries can charge from 00:00 until 22:00 and support generation gaps from 06:00 until midnight.
 
+## Browser client
+
+The browser client shares the Rust game and stores saves/preferences in IndexedDB. Portable
+`.mgsave.zip` backups transfer saves between browser and native play. See [browser builds,
+backups and deployment](docs/web.md). The GitHub Actions workflow builds and checks the web
+app on pull requests and deploys passing changes on `main` to GitHub Pages once Pages is enabled.
+Desktop Chromium with WebGL2 is the tested browser target; Firefox and Safari await validation.
+
 ## Run
 
 Linux `.deb` and Flatpak downloads are built by the version-tag release workflow.

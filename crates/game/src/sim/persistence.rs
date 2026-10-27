@@ -32,13 +32,22 @@ pub struct SessionGeneration(pub u64);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PersistAction {
-    OpenSave { leave: bool },
+    OpenSave {
+        leave: bool,
+    },
     OpenLeave,
     OpenBrowser,
+    #[cfg(target_arch = "wasm32")]
+    Export(SaveId),
+    #[cfg(target_arch = "wasm32")]
+    Import,
     Continue(SaveId),
     PreloadResume,
     SaveNew(String),
-    ChooseOverwrite { slot: SaveId, name: String },
+    ChooseOverwrite {
+        slot: SaveId,
+        name: String,
+    },
     ConfirmOverwrite,
     BeginDelete(SaveId),
     ConfirmDelete,
@@ -106,6 +115,10 @@ struct Run {
 }
 enum Completion {
     Listed(Result<Vec<SaveListing>, SaveError>),
+    #[cfg(target_arch = "wasm32")]
+    Exported(Result<(), SaveError>),
+    #[cfg(target_arch = "wasm32")]
+    Imported(Result<SaveReceipt, SaveError>),
     Saved(Result<SaveReceipt, SaveError>),
     Renamed(Result<SaveReceipt, SaveError>),
     Deleted(Result<(), SaveError>),
@@ -744,6 +757,32 @@ impl Persistence {
                 self.screen = SaveScreen::Browser;
                 self.list(generation);
             }
+            #[cfg(target_arch = "wasm32")]
+            PersistAction::Export(slot) if self.screen == SaveScreen::Browser => {
+                if let Some(store) = self.store.clone() {
+                    self.error = None;
+                    self.spawn(generation, move |cancel| async move {
+                        Completion::Exported(
+                            store
+                                .export(&slot, &|| cancel.load(Ordering::Relaxed))
+                                .await,
+                        )
+                    });
+                } else {
+                    self.unavailable();
+                }
+            }
+            #[cfg(target_arch = "wasm32")]
+            PersistAction::Import if self.screen == SaveScreen::Browser => {
+                if let Some(store) = self.store.clone() {
+                    self.error = None;
+                    self.spawn(generation, move |cancel| async move {
+                        Completion::Imported(store.import(&|| cancel.load(Ordering::Relaxed)).await)
+                    });
+                } else {
+                    self.unavailable();
+                }
+            }
             PersistAction::Refresh
                 if matches!(self.screen, SaveScreen::Save | SaveScreen::Browser) =>
             {
@@ -1167,6 +1206,23 @@ pub(super) fn poll_persistence(
                 *speed = SimSpeed::Paused;
             }
         }
+        #[cfg(target_arch = "wasm32")]
+        Completion::Exported(result) => {
+            if let Err(error) = result
+                && error != SaveError::Cancelled
+            {
+                persistence.error = Some(error);
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        Completion::Imported(result) => match result {
+            Ok(_) => {
+                persistence.discard_preload();
+                persistence.list(generation.0);
+            }
+            Err(SaveError::Cancelled) => (),
+            Err(error) => persistence.error = Some(error),
+        },
         Completion::Listed(result) => {
             persistence.listed = true;
             match result {

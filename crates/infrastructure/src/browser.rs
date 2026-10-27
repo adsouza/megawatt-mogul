@@ -1,5 +1,10 @@
 //! Browser adapters. JavaScript handles stay inside local futures, outside ECS resources.
-use crate::{command_log::dto::LogHeaderDto, region::load_region_bytes, save::*};
+use crate::{
+    backup::{MAX_BACKUP_BYTES, decode_backup, encode_backup},
+    command_log::dto::LogHeaderDto,
+    region::load_region_bytes,
+    save::*,
+};
 use application::*;
 use domain::{
     ids::RegionId,
@@ -31,6 +36,10 @@ extern "C" {
     ) -> js_sys::Promise;
     #[wasm_bindgen(js_name=codec)]
     fn worker(op: &str, payload: JsValue) -> js_sys::Promise;
+    #[wasm_bindgen(js_name=chooseBackup)]
+    fn choose_backup(limit: usize) -> js_sys::Promise;
+    #[wasm_bindgen(js_name=downloadBackup)]
+    fn download_backup(bytes: &[u8], filename: &str);
     #[wasm_bindgen(js_name=randomId)]
     fn random_id() -> String;
     #[wasm_bindgen(js_name=preferenceRead)]
@@ -165,7 +174,11 @@ fn error(value: JsValue) -> SaveError {
             return error;
         }
     }
-    if message == "SlotChanged" {
+    if message == "Cancelled" {
+        SaveError::Cancelled
+    } else if message == "BackupTooLarge" {
+        SaveError::SaveTooLarge
+    } else if message == "SlotChanged" {
         SaveError::SlotChanged
     } else {
         SaveError::Io {
@@ -203,10 +216,13 @@ fn array(value: JsValue) -> Result<Array, SaveError> {
         .map_err(|_| malformed("expected array"))
 }
 fn bytes(value: JsValue) -> Result<Vec<u8>, SaveError> {
+    bounded_bytes(value, MAX_SAVE_BYTES)
+}
+fn bounded_bytes(value: JsValue, limit: usize) -> Result<Vec<u8>, SaveError> {
     let value = value
         .dyn_into::<Uint8Array>()
         .map_err(|_| malformed("expected bytes"))?;
-    if value.length() as usize > MAX_SAVE_BYTES {
+    if value.length() as usize > limit {
         return Err(SaveError::SaveTooLarge);
     }
     Ok(value.to_vec())
@@ -494,6 +510,25 @@ pub fn browser_codec(operation: &str, payload: JsValue) -> Result<JsValue, JsVal
 }
 fn codec(operation: &str, payload: JsValue) -> Result<JsValue, SaveError> {
     match operation {
+        "export" => {
+            Ok(Uint8Array::from(encode_backup(&archive_from(&payload)?)?.as_slice()).into())
+        }
+        "import" => {
+            let archive =
+                decode_backup(&bounded_bytes(get(&payload, "bytes")?, MAX_BACKUP_BYTES)?)?;
+            let (mut bundle, region) =
+                decode_archive(&archive, &replay_compatibility(), &|| false)?;
+            let game = bundle.clone().restore(
+                region,
+                &replay_compatibility(),
+                Box::<InMemoryCommandLog>::default(),
+                &|| false,
+            )?;
+            bundle.checkpoint = game.checkpoint();
+            bundle.metadata.slot = SaveId::new(text(get(&payload, "slot")?)?)?;
+            bundle.metadata.kind = SaveKind::Manual;
+            encode_for_worker(&bundle, &replay_compatibility())
+        }
         "encode" => encode_for_worker(&unwire(payload)?, &replay_compatibility()),
         "decode" => {
             let archive = archive_from(&payload)?;
@@ -529,6 +564,46 @@ impl BrowserSaveStore {
     }
     pub fn now(&self) -> u64 {
         (js_sys::Date::now().max(0.0) / 1000.0) as u64
+    }
+    pub async fn export(&self, id: &SaveId, cancelled: &dyn Fn() -> bool) -> Result<(), SaveError> {
+        let archive = wait(db_read(id.as_str())).await?;
+        let bytes = bounded_bytes(wait(worker("export", archive)).await?, MAX_BACKUP_BYTES)?;
+        if cancelled() {
+            return Err(SaveError::Cancelled);
+        }
+        download_backup(&bytes, &format!("{}.mgsave.zip", id.as_str()));
+        Ok(())
+    }
+    pub async fn import(&self, cancelled: &dyn Fn() -> bool) -> Result<SaveReceipt, SaveError> {
+        let bytes = wait(choose_backup(MAX_BACKUP_BYTES)).await?;
+        if cancelled() {
+            return Err(SaveError::Cancelled);
+        }
+        let slot = self.allocate_id();
+        let payload = js_sys::Object::new();
+        js_sys::Reflect::set(&payload, &"bytes".into(), &bytes).map_err(error)?;
+        js_sys::Reflect::set(&payload, &"slot".into(), &slot.as_str().into()).map_err(error)?;
+        let archive = wait(worker("import", payload.into())).await?;
+        if cancelled() {
+            return Err(SaveError::Cancelled);
+        }
+        let card_source = get(&archive, "card")?;
+        let card: Card = ron::Options::default()
+            .with_recursion_limit(32)
+            .from_str(&text(card_source.clone())?)
+            .map_err(malformed)?;
+        let metadata = card.metadata()?;
+        let revision = revision(
+            wait(db_mutate(
+                "write",
+                slot.as_str(),
+                JsValue::NULL,
+                archive,
+                card_source,
+            ))
+            .await?,
+        )?;
+        Ok(SaveReceipt { metadata, revision })
     }
     pub async fn list(&self) -> Result<Vec<SaveListing>, SaveError> {
         let rows = array(wait(db_list()).await?)?;

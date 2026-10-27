@@ -52,6 +52,9 @@ jobs:
         run: cargo nextest run -p game --features dev --profile ci
 
   browser:
+    permissions:
+      contents: read
+      pages: read
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -76,13 +79,30 @@ jobs:
           cache: npm
           cache-dependency-path: web/tests/package-lock.json
       - run: python3 tools/web/test_contracts.py
+      - name: Read configured Pages metadata
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        id: pages
+        uses: actions/configure-pages@v6
+      - name: Select the tested public path
+        env:
+          IS_MAIN: ${{ github.ref == 'refs/heads/main' }}
+          CONFIGURED_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+        run: |
+          base='/megawatt-mogul'
+          if [[ "$IS_MAIN" == 'true' ]]; then
+            base="$CONFIGURED_BASE_PATH"
+          fi
+          printf 'WEB_PUBLIC_PATH=%s/\n' "$base" >> "$GITHUB_ENV"
       - name: Build browser distribution
         working-directory: web
-        run: trunk build --release --public-url /megawatt-mogul/
+        run: trunk build --release --public-url "$WEB_PUBLIC_PATH"
+      - name: Build native backup acceptance tool
+        run: cargo build --locked -p infrastructure --example save_backup
       - run: npm ci --prefix web/tests
       - run: cd web/tests && npx playwright install --with-deps chromium
       - name: Test the distribution at its deployed subpath
         run: |
+          export WEB_BASE_URL="http://127.0.0.1:8765$WEB_PUBLIC_PATH"
           python3 tools/web/serve.py &
           npm test --prefix web/tests
       - uses: actions/upload-artifact@v7

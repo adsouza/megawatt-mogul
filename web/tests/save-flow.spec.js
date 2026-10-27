@@ -74,3 +74,18 @@ test('a hidden-page visibility signal pauses play and returning stays paused',as
  await expect(page.locator('body')).toHaveAttribute('data-speed','0');
  expect(Number(await page.locator('body').getAttribute('data-sim-tick'))).toBeLessThanOrEqual(before+4);
 });
+
+test('unavailable storage reports a save error and keeps an unsaved session playable',async({page})=>{
+ await page.addInitScript(()=>{
+  IDBFactory.prototype.open=function(){throw new DOMException('Site storage is disabled','SecurityError');};
+  if(navigator.storage){navigator.storage.persist=async()=>false;navigator.storage.persisted=async()=>false;}
+ });
+ await page.goto('./');await expect(page.locator('body')).toHaveAttribute('data-app-state','MainMenu',{timeout:150000});await settled(page);
+ await page.mouse.click(230,412);await expect(page.locator('body')).toHaveAttribute('data-app-state','RegionSelect');await settled(page);
+ await page.mouse.click(860,420);await expect(page.locator('body')).toHaveAttribute('data-app-state','InGame');await settled(page);
+ await page.mouse.click(1345,40);await expect(page.locator('body')).toHaveAttribute('data-save-screen','Save');await expect(page.locator('body')).toHaveAttribute('data-save-busy','false');
+ await expect(page.locator('body')).toHaveAttribute('data-save-error','true');
+ await page.keyboard.press('Escape');await expect(page.locator('body')).toHaveAttribute('data-save-screen','Closed');
+ await expect(page.locator('body')).toHaveAttribute('data-app-state','InGame');await expect(page.locator('body')).toHaveAttribute('data-sim-tick','0');
+ await expect(page.locator('#preview')).toContainText('Automatic storage cleanup may remove saves');
+});

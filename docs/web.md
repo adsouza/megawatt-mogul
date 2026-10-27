@@ -31,11 +31,14 @@ are ignored by Git. Trunk supports `--public-url /` when serving at the root ins
 `python3 tools/web/test_contracts.py` checks shell localization. The infrastructure
 `web_assets` test compares every bundled region with the native catalog. Playwright tests
 under `web/tests/` open the real canvas and probe browser persistence across reload.
+Build the native round-trip tool with `cargo build -p infrastructure --example save_backup`.
 Run `npm ci`, `npx playwright install chromium`, then `npm test` there while the local
 server runs. Each test gets its own browser context; no personal saves are accessed.
 
 The CI `browser` job builds the production artifact and tests the project subpath.
-`deploy-pages` depends on `check`, `dev-tools` and `browser`. It publishes only the current
+Main builds derive the base path from `configure-pages` metadata; PR builds use the repository
+subpath. The test server and Playwright use that same path. `deploy-pages` depends on `check`,
+`dev-tools` and `browser`. It publishes only the current
 head of `main`, serializes deployments, and uses the `github-pages` environment. Repository
 Pages must use GitHub Actions as its publishing source. A manual CI dispatch on `main`
 rebuilds the current revision. To roll back source, revert the offending changes on `main`
@@ -62,3 +65,37 @@ deployment. Worker messages carry explicit bounded metadata and binary checkpoin
 the live Bevy game remains on the main thread. Loading still reconstructs the verified game
 on the main thread after the worker validates and normalizes the checkpoint. Dialogs stay open
 until completion, and obsolete generation results cannot install a game.
+
+
+## Portable backups
+
+Open the saved-game library and choose **Download backup** for a committed save. **Import
+backup…** validates a selected `.mgsave.zip` in a disposable worker, then adds a new named
+save; it never replaces a matching local slot or changes the running session. Canceling the
+file picker leaves the library unchanged. Keep downloaded copies outside browser site data.
+
+The same transport works with the native infrastructure tool:
+
+```sh
+cargo run -p infrastructure --example save_backup -- export saves/<id>.mgsave backup.mgsave.zip
+cargo run -p infrastructure --example save_backup -- import backup.mgsave.zip saves
+cargo run -p infrastructure --example save_backup -- validate backup.mgsave.zip
+```
+
+Export accepts directory saves or supported historical flat saves and refuses to replace an
+existing output file. Import creates a fresh manual slot in the native directory store. Validation
+prints checkpoint, session and projection hashes plus the accepted command count. Historical
+command-only saves still require their recorded rules and verification; incompatible ones are
+refused. Source saves and released fixtures are never rewritten by export or validation.
+
+Transport version 1 wraps the existing format-4 manifest and its referenced files. It does not
+change simulation rules or portable-state schemas. ZIP metadata is bounded before parsing:
+at most 4,097 files, 64 MiB per entry, 128 MiB total expanded transport bytes and 130 MiB input.
+The existing archive codec separately bounds inner decompression and RON depth. Duplicates,
+paths, symlinks, extra/missing parts, unsupported versions/methods and checksum failures are
+rejected before publication. Encryption and multipart/ZIP64 archives are unsupported.
+
+Chromium 156 has automated runtime evidence, including reload, monthly autosave, worker failure,
+backup transfer and project-subpath assets. Firefox and Safari remain unverified; the initial
+tested browser target is desktop Chromium with WebGL2. Hardware rendering is needed for useful
+frame rates; CI uses software rendering for functional acceptance.

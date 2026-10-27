@@ -342,3 +342,17 @@ pub(crate) fn publish_fresh(
     std::fs::rename(temp.path(), path).map_err(malformed)?;
     super::file_store::sync_directory(parent).map_err(malformed)
 }
+
+/// Read only the committed manifest and its referenced parts; ignore publication leftovers.
+pub fn read_archive_directory(root: &Path) -> Result<EncodedArchive, SaveError> {
+    let manifest = read_manifest(root)?;
+    let parsed = unpack(&manifest)?;
+    let mut files = BTreeMap::new();
+    for part in parsed.charts {
+        files.insert(
+            part.file.clone(),
+            safe_read(&root.join(part.file), MAX_SAVE_BYTES)?,
+        );
+    }
+    Ok(EncodedArchive { manifest, files })
+}
