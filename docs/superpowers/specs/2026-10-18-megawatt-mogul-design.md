@@ -2192,7 +2192,10 @@ from `LogDir`, and a failure to access it does not prevent boot or a new game. T
   captured state or an unconditional overwrite. A newer autosave supersedes older pending retries,
   which must never replace it. Manual saves and other runs' autosaves are never rotated away.
 - Bound decoding to 64 MiB per save file and 1,000,000 commands, with checked lengths and nesting
-  limits. Oversized captures fail before publication with `SaveTooLarge`; oversized, truncated,
+  limits. Monthly directory saves retain a 64 MiB combined compressed chart limit and a separate
+  512 MiB limit for combined decoded chart history and reconstructed projections; each individual
+  monthly file remains bounded to 64 MiB both compressed and decoded. Oversized captures fail
+  before publication with `SaveTooLarge`; oversized, truncated,
   malformed or checksum-invalid files return typed errors, never a partial replay or panic.
   Limits are storage limits, not permission to truncate history.
 

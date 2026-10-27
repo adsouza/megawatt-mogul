@@ -425,7 +425,7 @@ fn unwire(value: JsValue) -> Result<SaveBundle, SaveError> {
                     })
                     .transpose()?,
                 session: bytes(a.get(3))?,
-                projections: bytes(a.get(4))?,
+                projections: bounded_bytes(a.get(4), MAX_PROJECTION_BYTES)?,
             })
         })
         .transpose()?;
