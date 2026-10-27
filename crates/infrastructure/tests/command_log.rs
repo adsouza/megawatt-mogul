@@ -530,6 +530,11 @@ fn hvdc_commands_round_trip_through_logs_and_portable_command_tags() {
     use domain::{ids::LinkId, state::State};
     let link = LinkId(31);
     for command in [
+        Command::ActivateService {
+            island: NodeId(4),
+            accept_shortfall: true,
+            expected_revision: 12345,
+        },
         Command::BuildLink {
             from: NodeId(1),
             to: NodeId(2),

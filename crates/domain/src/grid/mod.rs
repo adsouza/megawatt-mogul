@@ -2,7 +2,7 @@
 //! protection, combined by the [`PowerSystem`] aggregate.
 
 pub mod hvdc;
-pub use hvdc::DcLink;
+pub use hvdc::{ConverterEnd, ConverterStation, ConverterStationId, DcLink};
 pub mod dispatch;
 pub mod frequency;
 pub mod network;

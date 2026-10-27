@@ -47,9 +47,22 @@ expected to miss the overlay and picker budgets.
 Property tests use `proptest`; set `PROPTEST_CASES` to run more cases locally. Note that nextest does
 not run doctests; run `cargo test --doc --workspace` for those.
 
-Test builds optimize the `domain` crate at level 2, including when downstream integration tests
-exercise it. Debug assertions and integer overflow checks remain enabled. Ordinary development
-builds keep their existing settings; this does not switch tests to the release profile.
+Test builds optimize `domain` and `application` at level 2 and `infrastructure` at level 1,
+including when downstream integration tests exercise them. Debug assertions, integer overflow
+checks and debug symbols remain enabled. Ordinary development builds keep their existing
+settings; this does not switch tests to the release profile. Changing these settings causes a
+one-time rebuild, so compare test execution time separately from compilation time.
+
+Nextest starts `shipped_regions` before other binaries to overlap the longer multi-month
+scenarios with the rest of the suite. This changes scheduling only: no filter, reduced seed
+count, shortened simulation or skipped assertion is used to speed up a full run.
+
+Measured on the ten-core development machine on 2026-10-27: the full CI-profile run went from
+241.5 s (1,914 tests) to 104.3 s (2,040 tests), excluding compilation. The extra 126 test names
+come from splitting two serial scenarios into the same 128 region/seed cases. The existing
+ignored test stayed ignored. The split scenarios alone went from 48.7 s to 13.6 s. These are
+single-run measurements, not CI performance guarantees; optimized test builds cost an initial
+rebuild before subsequent runs use their cached artifacts.
 
 ### Behavioral contracts across features
 
@@ -129,11 +142,13 @@ Card-body tests cover selection from the hidden hemisphere, midpoint alignment a
 hold before automatic rotation resumes; pure motion properties pin shortest arcs, frame partition
 independence and manual interruption. Rendering clips the far hemisphere before triangulation.
 
-The year-one checks in `infrastructure::shipped_regions` run one test per region and mode, so
-nextest schedules them in parallel and names a failure: `year_one_hands_off_<id>` and
-`year_one_no_commands_<id>` for each of the seven shipped regions, each playing eight seeds ×
-twelve months. `year_one_cases_cover_every_shipped_region` fails if a shipped region lacks its
-pair. `shipped_regions_never_order_outages_hands_off` covers every shipped region and seed too.
+The scenario checks in `infrastructure::shipped_regions` run one test per region and scenario,
+so nextest schedules them in parallel and names a failure. `year_one_hands_off_<id>`,
+`year_one_no_commands_<id>` each play eight seeds × twelve months.
+`no_outages_<id>::seed_<n>` and `first_expansion_<id>::seed_<n>` retain all eight seeds as
+independently schedulable tests; every outage case still plays all twelve months. All four
+families use one shared region table, and one macro emits seeds 0–7 for both split families.
+`scenario_cases_cover_every_shipped_region` fails if the table differs from the shipped list.
 A12's three-review battery comparison covers the Eastern and Western regions only, with sixteen
 independent region/seed tests (seeds 0-7 each), each playing two companies for 36 months. They use
 `GameSession` through the real core command handler and invariant checks, without application
@@ -614,6 +629,18 @@ checks the full-width report/retrospective at 1024 and 1920 pixels with 1× and 
 and opens Operating history without changing the simulation or displaying today's incidents
 beside an old curve.
 
+`player_workflows::single_grid_charts_keep_their_sources_after_month_close_and_resume` runs
+all seven shipped single-grid regions through month close, checkpoint restoration and a second
+played month. It checks the actual HUD's enabled supply-source controls in Live Supply, Operating
+History, Review and Planning History, plus the live hydro allocation labels. This catches a gap in
+the earlier workflows: live checks ran before the first close, while later history assertions used
+an unscoped presenter instead of the scoped model displayed by the HUD. Month close populates the
+physical topology cache even in single-grid games; it does not enable per-zone controllers or
+per-zone timeline records. The India presenter regressions compare numerical stacks to retained
+tick data, preserve hydro schedules and first-month archives, and reject stale zone selections in
+supply, forecast, commitments, planning warnings and the start-day confirmation. SGCC tests
+continue to require genuine zone scoping. Do not use a nonempty topology cache as evidence that a region records per-zone data.
+
 `tests/game/world.rs` covers terrain winding/coverage and the Eastern and Western regions, camera fit and
 projection/ray round trips, bounded camera gestures, pointer-anchored zoom across camera angles,
 terrain/roof heights and distance limits, physical viewport rounding and zero-sized
@@ -908,7 +935,7 @@ both as region land and an electrical area.
 
 `tests/game/hvdc.rs`, included by the existing game binary, checks real SGCC build previews and
 link cards, Escape dismissal, and cancellation's default keyboard focus. Existing picker and
-localisation coverage includes SGCC. Save codec gates admit schemas 1–4 and reject schema 5;
+localisation coverage includes SGCC. Save codec gates admit schemas 1–5 and reject schema 6;
 older source captures and journals remain the compatibility oracle. Island selection scopes live
 and archived supply charts; the latter retain the original month's island demand forecast.
 The real HUD test checks selection through the Planning-to-Operating transition and hides the
@@ -925,6 +952,35 @@ to All. All three phases use the same scoped history presenter.
 
 Validation uses focused nextest selections, workspace clippy with warnings denied, formatting,
 and isolated native smoke checks. Do not run the entire local suite without advance permission.
+
+Rules 24 exclude scheduled HVDC transfers in hours when either terminal has no commissioned,
+committed synchronous generator. `power_system::islands` checks missing, unfinished and variable-only
+terminals, stale operating flags, and a property over signed transfers and both commitment calendars;
+unavailable transfers must disappear from both ends without changing the source state. The normal
+planning forecast and initial outage sizing share this eligibility. Portable schemas are unchanged.
+
+The planning chart's All view plots each island's shortfall and excess minimum separately; its
+drill-down uses the same minimum-generation samples as the warning, including renewables and net
+imports before optional charging. Presenter regressions pin the local risk magnitudes, island names,
+and missing-generator explanations. `tests/game/hvdc.rs` clicks the real warning, island chart and
+link-details controls at 1024×640 with 125% zoom. New text remains covered by the Fluent key gate.
+
+Remote islands stay inactive until explicit service activation (rules 25, portable schema 5).
+The home grid retains its customers, and normal shutdowns, trips and commitment changes never
+remove an established island's demand. Schemas 1–4 inherit the previous structural eligibility
+on read, preserving established obligations and original source-schema bytes. Tests cover zero
+forecast/operating demand and unserved energy while inactive, prospective connection warnings,
+commissioning without automatic activation, and persisted activation. Inactive cities and island
+controls explain this status; historical reports remain intact.
+
+`session::activation` checks committed synchronous coverage during demand hours, scheduled import
+readiness, ratings/losses and capacity shortages in both the candidate and exporting islands.
+Capacity shortages require explicit acknowledgement; missing grid support or unavailable imports
+remain blocked. A portable plan revision rejects stale commands before mutation. Property tests
+check preview purity, atomic rejection and durable successful activation. The real HUD tests in
+`tests/game/hvdc.rs` cover safe default keyboard focus, Escape, minimum-window button reachability,
+blocked/raw/stale confirmations, edits queued before activation, duplicate clicks, snapshot restore
+and journal replay. Construction labels explicitly say “Build inactive connection”.
 
 ## Connection capacity confirmation
 
@@ -952,3 +1008,71 @@ directory. Playwright's `backup.spec.js` uses the native `save_backup` executabl
 workers and IndexedDB, checks boundary hashes in both directions, and exercises library download
 and file-picker upload. Build that example before running browser tests. These checks do not use
 personal save directories and never regenerate released golden files.
+
+
+## Explicit converter stations (rules 26)
+
+`grid::hvdc` keeps a frozen pre-station link field contract independent of the new writer. A
+property migrates generated schema-4/5 links with construction status, signed schedules/flow,
+overrides and runback, checks distinct terminal identities and exact source bytes. Network
+properties check two unique, locally attached stations per project without merging AC islands;
+construction cancellation removes the project's stations together. Existing economics, codec,
+portable golden and two-live-island continuation tests retain schedules, state and history.
+
+The real SGCC construction tests distinguish local AC and HVDC tools, check that targets never
+silently change connection type, exercise the tool buttons at minimum width and 125% zoom, and
+show station/local-grid details. The converter marker test checks separate bus/station hit areas
+and distinct markers for parallel projects. Native smoke remains isolated from personal saves.
+
+
+## Focused HVDC equipment inspection
+
+`tests/game/hvdc.rs` checks direct station/project selection, responsive overview and costs tabs,
+minimum-window Close/Escape access, selected-only terminal details and Enter submission using the
+current range text. Invalid values disable Apply, and Escape from a text field cannot change the
+simulation. `hud::links` has a property preserving every hour outside a valid edited range and
+rejecting non-finite, over-rating and reversed ranges. `hud::ui_state` keeps inspected equipment
+and tabs across month boundaries while clearing drafts. `world::electrical` checks closest-route
+picking, separate station hits and parallel/degenerate routes. Planning metrics show scheduled
+hours and range; Operating shows actual flow/losses, and Review labels the last readings.
+
+
+## Five SGCC starter grids (rules 27)
+
+New SGCC games inherit five active AC components without HVDC: Beijing/Tianjin/Langfang,
+Fuzhou, Lanzhou, Changchun and Chengdu. The zone fleets are distinct: North–Central coal/gas,
+East nuclear/solar, Northwest thermal-backed wind/solar, Northeast coal/wind, and Southwest
+hydro with gas backup. Plant parameters remain in the regional catalog. Five climates give
+all cities local daily and seasonal load patterns; a normalized-shape check requires meaningful
+pairwise differences in every month, not just different base loads. A played-day check requires
+the characteristic sources to generate and each zone's archived demand curve to differ.
+`shipped_regions::sgcc` checks each local
+forecast for capacity shortfall and excess minimum generation through all 12 months on seeds
+0–7. Every operating minute must have zero imports, exports, planned outage and unserved load.
+Each zone also passes its own frequency limit, and inherited fleets have zero over-frequency trips.
+A Beijing-only shortage leaves the other four tick summaries unchanged. Mid-day snapshot
+continuation and journal replay preserve the independently owned grids.
+
+Network topology properties vary the service-root set independently of AC/DC edges and compare
+against a transitive-closure oracle. Starter-home validation properties reject missing, duplicate,
+unknown and non-synchronous grid configurations. The first-expansion acceptance helper sizes
+capacity and chooses connections within the target's own area. The minimum-window HUD test
+opens each inherited island through the forecast picker, while inactive/at-risk islands retain
+one-click shortcuts. Existing snapshots use their archived region data and retain their original
+assets, city loads, source-schema bytes and topology; no starter fleet is granted on restore.
+
+The commitment planner follows the same selected island as its forecast. Presenter tests check
+local-only fleets, island-first defaults, remembered overview/return navigation, merit order, empty grids and
+hidden draft recovery. `player_workflows::choose_a_local_fleet_edit_it_and_keep_the_same_island_in_the_forecast`
+selects all five actual grid-picker options at minimum window size and 125% zoom, opens their
+forecasts and returns to the same fleet, changes only one local plant, and recovers/reverts an
+unapplied draft after switching grids. Apply/Revert remain within reach beneath the edited row.
+
+Zone selection also frames the connected local grid in the map. `world::camera` varies bounds,
+view angles, viewport sizes and legend visibility and checks all eight projected bounds corners;
+invalid bounds leave the camera unchanged. Real `world_zone_*` widget tests cover all five SGCC
+zones at minimum window size and 125% zoom, top-bar/forecast entry points, deferred focus behind
+dialogs and restoration of the All-zones overview. Manual panning persists after framing,
+plant inspection still works, and camera changes neither rebuild terrain nor mutate the session.
+`world::focus` verifies that local bounds stop at HVDC terminals and support inactive single-bus
+zones and stale IDs.

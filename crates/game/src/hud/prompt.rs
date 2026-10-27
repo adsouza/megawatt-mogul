@@ -43,7 +43,47 @@ pub fn prompt_model(
     game: Option<&Game>,
     l10n: &Localizer,
 ) -> Option<PromptModel> {
+    prompt_model_cached(open, game, l10n, None)
+}
+
+fn prompt_model_cached(
+    open: OpenPrompt,
+    game: Option<&Game>,
+    l10n: &Localizer,
+    cached: Option<&std::collections::BTreeMap<domain::ids::NodeId, super::ActivationCardModel>>,
+) -> Option<PromptModel> {
     match open.0? {
+        Prompt::Activation { island, revision } => {
+            let session = game?.session();
+            prompt_in_phase(prompt_after(open, session.status()), session.phase()).0?;
+            let card = cached
+                .and_then(|cards| cards.get(&island))
+                .cloned()
+                .or_else(|| super::activation::activation_card(session, island, l10n))?;
+            let mut question = l10n.args("activation-question", &[("island", card.title.into())]);
+            question.push_str("\n\n");
+            question.push_str(&card.stats.join("\n"));
+            question.push_str("\n\n");
+            question.push_str(&l10n.text("activation-obligations"));
+            if revision != card.revision {
+                question.push('\n');
+                question.push_str(&l10n.text("activation-plan-changed"));
+            }
+            Some(PromptModel {
+                question,
+                confirm: ButtonModel::new(
+                    l10n.text(if card.has_shortfall {
+                        "activation-confirm-shortfall"
+                    } else {
+                        "activation-confirm"
+                    }),
+                    UiAction::ConfirmActivation { island, revision },
+                )
+                .enabled_if(card.review.enabled),
+                cancel: ButtonModel::new(l10n.text("activation-cancel"), UiAction::Prompt(None)),
+                dismiss: UiAction::Prompt(None),
+            })
+        }
         Prompt::Connection {
             kind,
             from,
@@ -60,31 +100,40 @@ pub fn prompt_model(
                     session.link_quote(from, to).ok()?;
                 }
             }
+            let mut question = l10n.args(
+                "connection-warning-question",
+                &[
+                    ("cities", warning.cities.into()),
+                    ("month", format::month_year(warning.month).into()),
+                    ("added", format::megawatts(warning.added_peak).into()),
+                    (
+                        "island",
+                        Names::new(l10n, session).node(warning.island).into(),
+                    ),
+                    ("time", time_of(warning.shortage.hour).into()),
+                    ("demand", format::megawatts(warning.shortage.demand).into()),
+                    (
+                        "supply",
+                        format::megawatts(warning.shortage.deliverable).into(),
+                    ),
+                    (
+                        "shortfall",
+                        format::megawatts(warning.shortage.shortfall).into(),
+                    ),
+                ],
+            );
+            if kind == domain::session::ConnectionKind::Dc {
+                question.push_str("\n\n");
+                question.push_str(&l10n.text("hvdc-planning-help"));
+            }
             Some(PromptModel {
-                question: l10n.args(
-                    "connection-warning-question",
-                    &[
-                        ("cities", warning.cities.into()),
-                        ("month", format::month_year(warning.month).into()),
-                        ("added", format::megawatts(warning.added_peak).into()),
-                        (
-                            "island",
-                            Names::new(l10n, session).node(warning.island).into(),
-                        ),
-                        ("time", time_of(warning.shortage.hour).into()),
-                        ("demand", format::megawatts(warning.shortage.demand).into()),
-                        (
-                            "supply",
-                            format::megawatts(warning.shortage.deliverable).into(),
-                        ),
-                        (
-                            "shortfall",
-                            format::megawatts(warning.shortage.shortfall).into(),
-                        ),
-                    ],
-                ),
+                question,
                 confirm: ButtonModel::new(
-                    l10n.text("connection-proceed"),
+                    l10n.text(if kind == domain::session::ConnectionKind::Dc {
+                        "connection-build-inactive"
+                    } else {
+                        "connection-proceed"
+                    }),
                     UiAction::ConfirmConnection { kind, from, to },
                 ),
                 cancel: ButtonModel::new(l10n.text("connection-cancel"), UiAction::Prompt(None)),
@@ -150,14 +199,37 @@ pub fn prompt_model(
             let session = game?.session();
             prompt_in_phase(prompt_after(open, session.status()), session.phase()).0?;
             let keep_planning = UiAction::Prompt(None);
+            let mut question = l10n.args(
+                "shortfall-start-question",
+                &[
+                    ("amount", format::megawatts(shortfall).into()),
+                    ("time", time_of(hour).into()),
+                ],
+            );
+            let names = Names::new(l10n, session);
+            for id in session
+                .power()
+                .island_nodes()
+                .keys()
+                .filter(|_| session.region().areas().is_some())
+            {
+                if let Some(warning) = session
+                    .island_session(*id)
+                    .and_then(|s| s.capacity_shortfall_check())
+                {
+                    question.push('\n');
+                    question.push_str(&l10n.args(
+                        "shortfall-island-detail",
+                        &[
+                            ("island", names.island(session, *id).into()),
+                            ("amount", format::megawatts(warning.shortfall).into()),
+                            ("time", time_of(warning.hour).into()),
+                        ],
+                    ));
+                }
+            }
             Some(PromptModel {
-                question: l10n.args(
-                    "shortfall-start-question",
-                    &[
-                        ("amount", format::megawatts(shortfall).into()),
-                        ("time", time_of(hour).into()),
-                    ],
-                ),
+                question,
                 confirm: ButtonModel::new(
                     l10n.text("shortfall-start-anyway"),
                     UiAction::Command(Command::BeginOperating),
@@ -186,6 +258,7 @@ pub fn prompt_in_phase(open: OpenPrompt, phase: DayPhase) -> OpenPrompt {
     match open.0 {
         Some(
             Prompt::ShortfallStart { .. }
+            | Prompt::Activation { .. }
             | Prompt::Connection { .. }
             | Prompt::CancelLineConstruction { .. }
             | Prompt::CancelLinkConstruction { .. },
@@ -197,12 +270,19 @@ pub fn prompt_in_phase(open: OpenPrompt, phase: DayPhase) -> OpenPrompt {
 pub fn draw_prompt(ui: &mut egui::Ui, model: &PromptModel) -> Vec<UiAction> {
     let dismiss = super::action::cancelled(ui, &model.cancel);
     let mut actions = Vec::new();
-    ui.label(model.question.as_str());
+    ui.set_max_width((ui.ctx().content_rect().width() - 48.0).min(620.0));
+    egui::ScrollArea::vertical()
+        .id_salt("prompt_question")
+        .max_height((ui.ctx().content_rect().height() * 0.6).max(100.0))
+        .show(ui, |ui| {
+            ui.label(model.question.as_str());
+        });
     ui.add_space(12.0);
     ui.horizontal(|ui| {
         if matches!(
             model.confirm.action,
             UiAction::ConfirmConnection { .. }
+                | UiAction::ConfirmActivation { .. }
                 | UiAction::Command(
                     Command::CancelLineConstruction { .. } | Command::CancelLinkConstruction { .. }
                 )
@@ -235,10 +315,15 @@ pub(super) fn prompt_overlay(
     mut contexts: EguiContexts,
     session: Option<Res<Session>>,
     l10n: Res<Localizer>,
+    forecast: Res<super::PlanningForecastCache>,
     mut sink: ActionSink,
 ) -> Result {
-    let Some(model) = prompt_model(sink.open_prompt(), session.as_deref().map(|s| &s.0), &l10n)
-    else {
+    let Some(model) = prompt_model_cached(
+        sink.open_prompt(),
+        session.as_deref().map(|s| &s.0),
+        &l10n,
+        forecast.get().map(|f| &f.activations),
+    ) else {
         return Ok(());
     };
     let shown = egui::Modal::new(egui::Id::new("prompt"))
@@ -258,6 +343,12 @@ pub(super) fn close_stale_prompt(session: Res<Session>, mut open: ResMut<OpenPro
     let session = session.0.session();
     let after = prompt_in_phase(prompt_after(*open, session.status()), session.phase());
     let after = match after.0 {
+        Some(Prompt::Activation { island, .. })
+            if session.power().island_active(island)
+                || !session.power().island_nodes().contains_key(&island) =>
+        {
+            OpenPrompt(None)
+        }
         Some(Prompt::Connection { kind, from, to, .. })
             if match kind {
                 domain::session::ConnectionKind::Ac => session.line_quote(from, to).is_err(),
@@ -328,6 +419,44 @@ mod tests {
 
         assert_eq!(prompt_model(OpenPrompt(None), Some(&game), &l10n), None);
         assert_eq!(prompt_model(LEAVE, None, &l10n), None);
+    }
+
+    #[test]
+    fn a_single_grid_topology_cache_adds_no_zone_details_to_the_shortfall_prompt() {
+        let mut game = super::super::test_support::shipped_game(
+            "india_nepal_bhutan",
+            Box::new(InMemoryCommandLog::default()),
+        );
+        for command in [
+            Command::BeginOperating,
+            Command::AdvanceTicks { n: 1440 },
+            Command::FinishReview,
+        ] {
+            game.execute(command).unwrap();
+        }
+        assert!(!game.session().power().island_nodes().is_empty());
+        empty_start(&mut game);
+        let warning = game.session().capacity_shortfall_check().unwrap();
+        let l10n = shipped_l10n();
+        let prompt = prompt_model(
+            short_by(warning.hour, warning.shortfall.value()),
+            Some(&game),
+            &l10n,
+        )
+        .unwrap();
+        assert_eq!(
+            prompt.question,
+            l10n.args(
+                "shortfall-start-question",
+                &[
+                    ("amount", format::megawatts(warning.shortfall).into()),
+                    (
+                        "time",
+                        format::clock(u32::from(warning.hour) * TICKS_PER_HOUR).into()
+                    ),
+                ],
+            )
+        );
     }
 
     #[test]

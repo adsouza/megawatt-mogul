@@ -99,7 +99,7 @@ pub fn region_outline(source: &[u8], id: &RegionId) -> Result<RegionOutline, Reg
             // Optional construction maps must not acquire a geographic click target when the
             // playable loader would reject their IDs, rates, costs or land assignments.
             if file.economic_zones.is_some() {
-                super::map_region_v4(file.clone()).map_err(|error| RegionLoadError::Invalid {
+                super::map_region_v4(*file.clone()).map_err(|error| RegionLoadError::Invalid {
                     region: id.clone(),
                     error,
                 })?;
@@ -194,7 +194,7 @@ mod tests {
             let ParsedRegionFile::V4(file) = parse_region_bundle(&source, &id).unwrap() else {
                 panic!("{} is schema 4", id.as_str());
             };
-            let region = map_region_v4(file.clone()).unwrap();
+            let region = map_region_v4(*file.clone()).unwrap();
             let grid = region.terrain();
             for y in 0..file.grid.height {
                 for x in 0..file.grid.width {

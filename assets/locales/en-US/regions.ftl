@@ -276,7 +276,7 @@ city-warsaw = Warsaw
 city-zurich = Zurich
 
 region-sgcc = SGCC system group
-region-sgcc-description = Five asynchronous grids: schedule HVDC transfers, balance each island and manage Northwest renewable curtailment.
+region-sgcc-description = Five asynchronous grid zones: schedule HVDC transfers, balance each zone and manage Northwest renewable curtailment.
 area-north-central-china = North–Central China
 area-east-china = East China
 area-northwest-china = Northwest China

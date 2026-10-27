@@ -651,9 +651,9 @@ pub fn update_visuals(
             model.region.terrain().height(),
         )
         .cell_center(model.region.terrain(), c),
-        Selection::LineFrom(node) => model.nodes.get(&node).copied(),
+        Selection::LineFrom(node) | Selection::HvdcFrom(node) => model.nodes.get(&node).copied(),
         Selection::Line(id) => model.lines.get(&id).map(|line| line.midpoint),
-        Selection::None => None,
+        Selection::None | Selection::HvdcStart => None,
     };
     for (mut t, mut v) in &mut marker {
         if let Some(at) = selected {

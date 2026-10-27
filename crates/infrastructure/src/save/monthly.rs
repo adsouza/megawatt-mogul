@@ -18,6 +18,9 @@ use std::{
 };
 pub(crate) const MANIFEST: &str = "snapshot.ron.z";
 const MAX_MONTHS: usize = 4096;
+/// Combined decoded projections span many independently bounded monthly files.
+/// Keep the 64 MiB per-file/encoded-history limit without capping a long run at that size.
+pub const MAX_PROJECTION_BYTES: usize = 512 * 1024 * 1024;
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Envelope {
@@ -98,6 +101,9 @@ fn unpack(bytes: &[u8]) -> Result<Manifest, SaveError> {
     let mut plain = 0usize;
     let mut last = None;
     for c in &m.charts {
+        if c.length > MAX_SAVE_BYTES || c.decoded > MAX_SAVE_BYTES {
+            return Err(SaveError::SaveTooLarge);
+        }
         let month = SimMonth::new(c.year, c.month).map_err(malformed)?;
         if last.is_some_and(|p| p >= month)
             || c.file != file_name(c.year, c.month, &c.checksum)
@@ -112,7 +118,7 @@ fn unpack(bytes: &[u8]) -> Result<Manifest, SaveError> {
             .ok_or(SaveError::SaveTooLarge)?;
         plain = plain
             .checked_add(c.decoded)
-            .filter(|n| *n <= MAX_SAVE_BYTES)
+            .filter(|n| *n <= MAX_PROJECTION_BYTES)
             .ok_or(SaveError::SaveTooLarge)?;
     }
     Ok(m)
@@ -127,6 +133,9 @@ pub fn encode(
         .snapshot
         .as_mut()
         .ok_or(RestoreError::InvalidSnapshot)?;
+    if snapshot.projections.len() > MAX_PROJECTION_BYTES {
+        return Err(SaveError::SaveTooLarge);
+    }
     let p = Projections::from_state_bytes_schema(&snapshot.projections, snapshot.schema)
         .map_err(malformed)?;
     let (rest, charts) = p
@@ -139,12 +148,17 @@ pub fn encode(
     let mut references = Vec::new();
     let mut files = BTreeMap::new();
     let mut total = 0usize;
+    let mut encoded = 0usize;
     for chart in charts {
         total = total
             .checked_add(chart.bytes.len())
-            .filter(|n| *n <= MAX_SAVE_BYTES)
+            .filter(|n| *n <= MAX_PROJECTION_BYTES)
             .ok_or(SaveError::SaveTooLarge)?;
         let bytes = compress(&chart.bytes)?;
+        encoded = encoded
+            .checked_add(bytes.len())
+            .filter(|n| *n <= MAX_SAVE_BYTES)
+            .ok_or(SaveError::SaveTooLarge)?;
         let checksum = digest(&bytes);
         let file = file_name(chart.month.year(), chart.month.month(), &checksum);
         references.push(ChartRef {
@@ -304,7 +318,7 @@ fn decode_parts(
             .restore_charts_schema(charts, snapshot.schema)
             .map_err(malformed)?
             .state_bytes_schema(snapshot.schema);
-    if snapshot.projections.len() > MAX_SAVE_BYTES {
+    if snapshot.projections.len() > MAX_PROJECTION_BYTES {
         return Err(SaveError::SaveTooLarge);
     }
     Ok((bundle, region))
@@ -355,4 +369,66 @@ pub fn read_archive_directory(root: &Path) -> Result<EncodedArchive, SaveError> 
         );
     }
     Ok(EncodedArchive { manifest, files })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manifest(decoded: &[usize]) -> Vec<u8> {
+        let charts = decoded
+            .iter()
+            .enumerate()
+            .map(|(i, &decoded)| ChartRef {
+                file: file_name(2027, i as u8 + 1, &[0; 32]),
+                year: 2027,
+                month: i as u8 + 1,
+                length: 1,
+                decoded,
+                checksum: [0; 32],
+            })
+            .collect();
+        let payload = ron::to_string(&Manifest {
+            state: String::new(),
+            charts,
+        })
+        .unwrap();
+        compress(
+            ron::to_string(&Envelope {
+                version: 4,
+                length: payload.len(),
+                checksum: digest(payload.as_bytes()),
+                payload,
+            })
+            .unwrap()
+            .as_bytes(),
+        )
+        .unwrap()
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn monthly_and_combined_decoded_limits_are_checked_before_reading_parts(
+            decoded in proptest::collection::vec(0usize..=MAX_SAVE_BYTES + 1, 1..=10),
+        ) {
+            let within_limits = decoded.iter().all(|&n| n <= MAX_SAVE_BYTES)
+                && decoded.iter().sum::<usize>() <= MAX_PROJECTION_BYTES;
+            proptest::prop_assert_eq!(unpack(&manifest(&decoded)).is_ok(), within_limits);
+        }
+    }
+
+    #[test]
+    fn decoded_limits_include_the_boundary_and_reject_one_byte_more() {
+        assert!(unpack(&manifest(&[MAX_SAVE_BYTES; 8])).is_ok());
+        for decoded in [vec![MAX_SAVE_BYTES + 1], {
+            let mut decoded = vec![MAX_SAVE_BYTES; 8];
+            decoded.push(1);
+            decoded
+        }] {
+            assert!(matches!(
+                unpack(&manifest(&decoded)),
+                Err(SaveError::SaveTooLarge)
+            ));
+        }
+    }
 }

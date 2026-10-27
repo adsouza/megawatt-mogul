@@ -86,6 +86,22 @@ Regional weather and demand-noise draws happen once before islands step, preserv
 contract independently of the island count. The original scalar controller remains the implicit island for every earlier single-area region,
 so old sources and state schemas preserve their original single-bus behavior.
 
+**Explicit converter stations (rules 26).** The construction UI has separate local AC and
+HVDC tools. Local AC targets stay within their electrical area; crossing an area never silently
+changes the construction action to DC. `BuildLink` orders one project containing two converter
+stations and their DC route. Each station has a stable `ConverterStationId` `(link ID, end)` and
+a `grid_node` attachment to a local city substation or plant switchyard. Stations are co-located
+with those selected buses; the existing regional converter terms include their attachments,
+capital and construction time. Stations share the project's lifecycle, so cancellation cannot
+leave orphaned terminals. The DC route joins stations while the cities retain their local AC
+connections and activation decisions.
+
+Existing portable endpoint bytes already specify those local bus attachments. The reader wraps
+them in station objects, deriving identities from the preserved link ID and orientation. No node
+IDs, source-schema bytes, construction payments, schedules, flows, runback latches or histories
+are rewritten. Portable schema 5 remains current. Station markers are drawn separately from the
+AC bus, with local attachment tethers; selection opens the HVDC project details.
+
 `BuildLink`, `CancelLinkConstruction`, `SetLinkSchedule`, `SetLinkTarget` and `ClearLinkOverride`
 are ordinary journalled commands. DC ramps, blocking and runback read the previous terminal states
 before islands step. Runback persists the triggering converter terminal through zero flow and
@@ -779,3 +795,13 @@ an atomic fresh-slot publication. Workers retain their boot-time sources/compile
 deployments. No untrusted archive bytes or JS objects enter the live ECS session. Imported state
 uses existing compatibility and integrity fences; future cross-target floating-point equivalence
 is not assumed. Asset inventories and hashed module names protect startup from mixed deployments.
+
+
+SGCC new games (rules 27) use optional `start.island_homes`: Beijing, Fuzhou, Lanzhou, Changchun
+and Chengdu anchor five inherited local AC grids. Each starter asset joins its own area's home;
+there are no cross-area AC lines or starting HVDC links. Customer service is already enrolled
+for those inherited grids. `Network.service_roots` is a derived cache of the original home bus
+and `PowerSystem.activated_service`; rebuilding it on read preserves existing portable schema-5
+bytes. Owned grids therefore remain connected to their own local service networks without
+requiring a physical route to company headquarters. An omitted/empty `island_homes` preserves
+the legacy single-home construction and ID allocation, including archived SGCC definitions.

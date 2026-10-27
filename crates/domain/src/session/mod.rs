@@ -8,6 +8,7 @@
 //! that the phase allows it, and validates fully before mutating anything, so
 //! a command that returns `Err` leaves [`GameSession::state_hash`] unchanged.
 
+mod activation;
 #[cfg(test)]
 mod battery_tests;
 mod commands;
@@ -26,6 +27,7 @@ mod wind_tests;
 #[cfg(test)]
 mod tests;
 
+pub use activation::{ActivationAssessment, ActivationBlocker};
 pub use commands::{LineQuote, PlantQuote};
 pub use connection::{ConnectionKind, ConnectionWarning};
 pub use invariants::InvariantViolation;
@@ -35,7 +37,8 @@ pub use report::{
 pub use settings::{GameSettings, SimulationFidelity};
 pub use views::{
     BatteryView, CapacityShortfallWarning, CityDetail, CityView, CompanyView, GridSnapshot,
-    LineView, MinimumGenerationWarning, PlantView, RateReviewEstimate, WindView,
+    LineView, MinimumGenerationPoint, MinimumGenerationWarning, PlantView, RateReviewEstimate,
+    WindView,
 };
 
 use std::collections::{BTreeMap, VecDeque};
@@ -115,8 +118,9 @@ pub struct GameSession {
 impl GameSession {
     /// Starts a new game in `region`'s starting scenario.
     ///
-    /// The home city's node is the network root. Every other start-connected
-    /// city gets an in-service line from it. Each start-fleet plant is commissioned on the start month on its own node
+    /// The home city's node remains headquarters. Optional inherited island homes anchor
+    /// independent local grids; starter cities and plants connect only to their area's home.
+    /// Each start-fleet plant is commissioned on the start month on its own node
     /// with an in-service line to the home city, and is treated as
     /// established (not returning from a month offline), so month 1 charges
     /// no boundary start. The new operator inherits the previous operator's
@@ -150,7 +154,7 @@ impl GameSession {
             } else {
                 let node: NodeId = ids.next();
                 add_start_node(&mut network, node, NodeKind::City(def.id), def.cell);
-                if start.connected_cities.contains(&def.id) {
+                if start.island_homes.is_empty() && start.connected_cities.contains(&def.id) {
                     add_start_line(&mut network, &mut ids, anchor, node);
                 }
                 node
@@ -158,12 +162,34 @@ impl GameSession {
             cities.insert(def.id, DemandCenter::new(def.clone(), node));
         }
 
+        if !start.island_homes.is_empty() {
+            for def in region
+                .cities()
+                .iter()
+                .filter(|c| start.connected_cities.contains(&c.id))
+            {
+                let local_home = region.start_home_at(def.cell).id;
+                if def.id != local_home {
+                    add_start_line(
+                        &mut network,
+                        &mut ids,
+                        cities[&local_home].node(),
+                        cities[&def.id].node(),
+                    );
+                }
+            }
+        }
         let mut plants = BTreeMap::new();
         for def in &start.fleet {
             let id: PlantId = ids.next();
             let node: NodeId = ids.next();
             add_start_node(&mut network, node, NodeKind::Plant(id), def.cell);
-            add_start_line(&mut network, &mut ids, anchor, node);
+            add_start_line(
+                &mut network,
+                &mut ids,
+                cities[&region.start_home_at(def.cell).id].node(),
+                node,
+            );
             let spec = region
                 .plant_spec_at(def.kind, def.cell)
                 .expect("validated starter construction terms");
@@ -179,7 +205,15 @@ impl GameSession {
         }
 
         let mut power = PowerSystem::new(network, plants, cities, settings.fidelity.network);
-        if region.areas().is_some() {
+        if !start.island_homes.is_empty() {
+            power.seed_starting_service(
+                start
+                    .island_homes
+                    .iter()
+                    .map(|id| power.cities()[id].node())
+                    .collect(),
+            );
+        } else if region.areas().is_some() {
             power.recompute_islands();
         }
         let mut company = Company::new(start.cash, region.satisfaction().starting);
@@ -683,16 +717,20 @@ impl GameSession {
         for link in self.power.network().links() {
             let spec = self.region.hvdc().ok_or(StateError::Invalid)?;
             let network = self.power.network();
-            if self
-                .region
-                .area_at(network.node(link.from).ok_or(StateError::Invalid)?.cell)
-                == self
-                    .region
-                    .area_at(network.node(link.to).ok_or(StateError::Invalid)?.cell)
-                || link
-                    .schedule
-                    .iter()
-                    .any(|v| !v.is_finite() || v.abs() > spec.rating_mw)
+            if self.region.area_at(
+                network
+                    .node(link.from_grid())
+                    .ok_or(StateError::Invalid)?
+                    .cell,
+            ) == self.region.area_at(
+                network
+                    .node(link.to_grid())
+                    .ok_or(StateError::Invalid)?
+                    .cell,
+            ) || link
+                .schedule
+                .iter()
+                .any(|v| !v.is_finite() || v.abs() > spec.rating_mw)
                 || link
                     .override_mw
                     .is_some_and(|v| !v.is_finite() || v.abs() > spec.rating_mw)
@@ -702,7 +740,7 @@ impl GameSession {
                 || link.runback != link.runback_terminal.is_some()
                 || link
                     .runback_terminal
-                    .is_some_and(|node| node != link.from && node != link.to)
+                    .is_some_and(|node| node != link.from_grid() && node != link.to_grid())
                 || self.link_construction(link.id).is_none()
             {
                 return Err(StateError::Invalid);

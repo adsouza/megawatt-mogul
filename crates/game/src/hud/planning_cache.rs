@@ -1,20 +1,21 @@
 //! Planning analysis is immutable until a command changes the session or localisation changes.
 use application::Game;
 use bevy::prelude::*;
-use domain::session::{CapacityShortfallWarning, DayPhase, GameSession, MinimumGenerationWarning};
+use domain::session::{CapacityShortfallWarning, DayPhase, GameSession};
 
 use super::{ForecastModel, UiState};
 use crate::{
-    l10n::{Localizer, Names},
+    l10n::Localizer,
     sim::{Session, SessionGeneration},
 };
 
 #[derive(Debug, Clone)]
 pub struct PlanningForecast {
+    pub(super) activations:
+        std::collections::BTreeMap<domain::ids::NodeId, super::ActivationCardModel>,
     pub(super) chart: ForecastModel,
     pub(super) shortfall: Option<CapacityShortfallWarning>,
-    pub(super) minimum: Option<MinimumGenerationWarning>,
-    pub(super) dry_hydro: Vec<String>,
+    pub(super) warnings: super::planning_warnings::WarningsModel,
 }
 
 impl PlanningForecast {
@@ -22,6 +23,17 @@ impl PlanningForecast {
         let session = game.session();
         let supply = session.supply_forecast();
         Self {
+            activations: session
+                .power()
+                .island_nodes()
+                .keys()
+                .filter(|_| session.region().areas().is_some())
+                .filter(|id| !session.power().island_active(**id))
+                .filter_map(|id| {
+                    Some((*id, super::activation::activation_card(session, *id, l10n)?))
+                })
+                .collect(),
+            warnings: super::planning_warnings::warnings_model(game, l10n, &UiState::default()),
             chart: super::forecast_chart::forecast_model_for(
                 game,
                 l10n,
@@ -33,11 +45,6 @@ impl PlanningForecast {
             } else {
                 GameSession::capacity_shortfall_for(&supply)
             },
-            minimum: session.minimum_generation_check(),
-            dry_hydro: super::planning_warnings::dry_hydro_plants(
-                &session.plant_views(),
-                &Names::new(l10n, session),
-            ),
         }
     }
 }

@@ -34,12 +34,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         blobs: Vec::new(),
     });
     let catalog = RonRegionCatalog::new(path.parent().unwrap_or(Path::new(".")));
-    let ParsedRegionFile::V4(mut file) =
-        catalog.resolve(&RegionId::new(&file.id), ParsedRegionFile::V4(file))?
+    let ParsedRegionFile::V4(mut file) = catalog.resolve(
+        &RegionId::new(&file.id),
+        ParsedRegionFile::V4(Box::new(file)),
+    )?
     else {
         return Err("a schema-4 region resolved to another schema".into());
     };
-    let unit = map_region_v4(file.clone())?;
+    let unit = map_region_v4(*file.clone())?;
     let before = &legacy.definition;
     let (width, height) = (unit.terrain().width(), unit.terrain().height());
     if unit.geo() != before.geo()

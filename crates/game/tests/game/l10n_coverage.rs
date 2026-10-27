@@ -112,6 +112,15 @@ fn site_errors() -> Vec<SiteError> {
 
 fn domain_errors() -> Vec<DomainError> {
     vec![
+        DomainError::ActivationBlocked {
+            island: domain::ids::NodeId(1),
+        },
+        DomainError::ActivationShortfall {
+            island: domain::ids::NodeId(1),
+        },
+        DomainError::ActivationPlanChanged {
+            island: domain::ids::NodeId(1),
+        },
         DomainError::LineCrossesAreas,
         DomainError::LinkWithinArea,
         DomainError::HvdcUnavailable,
@@ -603,7 +612,10 @@ fn events() -> Vec<(DomainEvent, bool)> {
 
 #[test]
 fn the_variant_tables_cover_every_variant() {
-    assert_covers_every_variant("DomainError", &domain_errors(), 34, |e| match e {
+    assert_covers_every_variant("DomainError", &domain_errors(), 37, |e| match e {
+        DomainError::ActivationBlocked { .. } => 34,
+        DomainError::ActivationShortfall { .. } => 35,
+        DomainError::ActivationPlanChanged { .. } => 36,
         DomainError::LineCrossesAreas => 27,
         DomainError::LinkWithinArea => 28,
         DomainError::HvdcUnavailable => 29,

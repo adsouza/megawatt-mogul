@@ -83,7 +83,7 @@ impl GameSession {
                     (
                         nodes,
                         before
-                            .scoped_island(*id, &self.region)
+                            .scoped_connection_island(*id, &self.region)
                             .expect("projected island")
                             .supply_forecast(&self.region, month),
                     )
@@ -105,7 +105,7 @@ impl GameSession {
             let mut worst: Option<ConnectionWarning> = None;
             for (id, nodes) in after.island_nodes() {
                 let forecast = after
-                    .scoped_island(*id, &self.region)
+                    .scoped_connection_island(*id, &self.region)
                     .expect("projected island")
                     .supply_forecast(&self.region, month);
                 let prior: Vec<_> = baseline
@@ -177,6 +177,7 @@ impl GameSession {
             self.power.model(),
         );
         power.recompute_islands();
+        power.prospective_service();
         let synchronous: BTreeSet<_> = power
             .island_nodes()
             .iter()
@@ -195,7 +196,7 @@ impl GameSession {
             .flat_map(|(id, nodes)| nodes.iter().map(|n| (*n, *id)))
             .collect();
         for link in power.network_mut().links_mut() {
-            if ![link.from, link.to].iter().all(|node| {
+            if ![link.from_grid(), link.to_grid()].iter().all(|node| {
                 node_islands
                     .get(node)
                     .is_some_and(|id| synchronous.contains(id))

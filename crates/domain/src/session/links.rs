@@ -124,8 +124,8 @@ impl GameSession {
         let link = network.link(id)?;
         self.region
             .link_terms(
-                network.node(link.from)?.cell,
-                network.node(link.to)?.cell,
+                network.node(link.from_grid())?.cell,
+                network.node(link.to_grid())?.cell,
                 link.length_cells,
             )
             .ok()
@@ -279,6 +279,7 @@ mod tests {
         );
         assert_eq!(q, s.link_quote(far, home).unwrap());
         let link = s.build_link(home, far).unwrap().0;
+        assert_eq!(s.power.network().converter_stations().count(), 2);
         assert_eq!(
             s.pending_instalments(AssetRef::Link(link))
                 .unwrap()
@@ -289,6 +290,12 @@ mod tests {
         );
         assert!(s.build_link(home, far).is_ok());
         s.cancel_link_construction(link).unwrap();
+        assert!(
+            s.power
+                .network()
+                .converter_stations()
+                .all(|station| station.id.link != link)
+        );
         assert!(s.power.network().link(link).is_none());
         assert!(s.pending_instalments(AssetRef::Link(link)).is_none());
     }
@@ -331,6 +338,9 @@ mod tests {
         p.set_auto_follow(true).unwrap();
         s.power.insert_plant(p);
         s.set_link_schedule(link, [100.0; 24]).unwrap();
+        s.power.recompute_islands();
+        let a = s.activation_assessment(far).unwrap();
+        s.activate_island(far, true, a.revision).unwrap();
         s.begin_operating().unwrap();
         s.tick().unwrap();
         let dc = s.power.network().link(link).unwrap();
@@ -456,6 +466,8 @@ mod tests {
             }
             s.finish_review().unwrap();
         }
+        // Established customer obligations survive complete loss of local generation.
+        s.power.activate_service(far);
         s.begin_operating().unwrap();
         s.tick().unwrap();
         let tick = s.grid_snapshot().last_tick.unwrap();

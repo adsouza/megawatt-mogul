@@ -1,6 +1,12 @@
 [profile.default]
 fail-fast = false
 
+# Start the multi-month acceptance scenarios while all workers are still available. Otherwise
+# lexicographic binary ordering leaves these CPU-heavy tests at the end of a workspace run.
+[[profile.default.overrides]]
+filter = 'binary(shipped_regions)'
+priority = 100
+
 [profile.ci]
 retries = 0
 

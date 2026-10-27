@@ -514,6 +514,8 @@ pub struct StartDtoV4 {
     pub month: u8,
     pub cash: i64,
     pub home_city: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub island_homes: Vec<u32>,
     pub connected_cities: Vec<u32>,
     pub fleet: Vec<(PlantKindDto, f64, f64)>,
 }
@@ -590,8 +592,8 @@ impl<'de> Deserialize<'de> for AtlasDto {
 }
 #[derive(Debug, Clone)]
 pub enum ParsedRegionFile {
-    Legacy(RegionFile),
-    V4(RegionFileV4),
+    Legacy(Box<RegionFile>),
+    V4(Box<RegionFileV4>),
 }
 impl ParsedRegionFile {
     pub fn id(&self) -> &str {

@@ -8,7 +8,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.98"
 license = "AGPL-3.0-only"
@@ -67,6 +67,18 @@ debug = false # no debug info for dependencies: much smaller binaries and target
 # retaining the same invariant assertions and checked integer arithmetic as ordinary debug tests.
 [profile.test.package.domain]
 opt-level = 2
+debug-assertions = true
+overflow-checks = true
+
+# Projection folding, portable-state encoding and region parsing are substantial test work too.
+# Optimize these layers without changing debug checks, symbols or ordinary development builds.
+[profile.test.package.application]
+opt-level = 2
+debug-assertions = true
+overflow-checks = true
+
+[profile.test.package.infrastructure]
+opt-level = 1
 debug-assertions = true
 overflow-checks = true
 

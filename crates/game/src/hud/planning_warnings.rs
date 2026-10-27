@@ -28,6 +28,8 @@ pub enum WarningKind {
     MinimumGeneration,
     /// A hydro plant has no water for the day.
     DryHydro,
+    Hvdc,
+    InactiveIsland,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -109,6 +111,10 @@ pub fn warnings_for(
             show_hour: None,
         });
     }
+    model_for_rows(rows, expanded, l10n)
+}
+
+fn model_for_rows(rows: Vec<WarningRow>, expanded: bool, l10n: &Localizer) -> WarningsModel {
     let more = (rows.len() > 1).then(|| ToggleModel {
         button: ButtonModel::new(
             if expanded {
@@ -149,7 +155,98 @@ pub fn dry_hydro_plants(views: &[PlantView], names: &Names) -> Vec<String> {
 
 /// The warnings for the game as planned now.
 pub fn warnings_model(game: &Game, l10n: &Localizer, ui: &UiState) -> WarningsModel {
-    let session = game.session();
+    warnings_for_session(game.session(), l10n, ui)
+}
+
+pub(super) fn warnings_for_session(
+    session: &domain::session::GameSession,
+    l10n: &Localizer,
+    ui: &UiState,
+) -> WarningsModel {
+    if session.region().areas().is_some() && !session.power().island_nodes().is_empty() {
+        let mut rows = Vec::new();
+        let names = Names::new(l10n, session);
+        for id in session
+            .power()
+            .island_nodes()
+            .keys()
+            .filter(|id| ui.island.is_none_or(|selected| selected == **id))
+        {
+            if !session.power().island_active(*id) {
+                rows.push(WarningRow {
+                    kind: WarningKind::InactiveIsland,
+                    text: l10n.args(
+                        "island-inactive-warning",
+                        &[("island", names.island(session, *id).into())],
+                    ),
+                    show_hour: Some(ButtonModel::new(
+                        l10n.text("forecast-inspect-island"),
+                        UiAction::InspectForecast {
+                            island: *id,
+                            hour: 0,
+                        },
+                    )),
+                });
+                continue;
+            }
+            let Some(local) = session.island_session(*id) else {
+                continue;
+            };
+            let dry = dry_hydro_plants(&local.plant_views(), &names);
+            let model = warnings_for(
+                local.capacity_shortfall_check(),
+                local.minimum_generation_check(),
+                &dry,
+                false,
+                l10n,
+            );
+            for mut row in model.rows {
+                row.text = l10n.args(
+                    "warning-island",
+                    &[
+                        ("island", names.island(session, *id).into()),
+                        ("warning", row.text.into()),
+                    ],
+                );
+                if let Some(show) = &mut row.show_hour
+                    && let UiAction::ShowHour(Some(hour)) = show.action
+                {
+                    show.action = UiAction::InspectForecast { island: *id, hour };
+                    show.label = l10n.text("forecast-inspect-island");
+                }
+                rows.push(row);
+            }
+        }
+        rows.sort_by_key(|r| match r.kind {
+            WarningKind::Shortfall => 0,
+            WarningKind::MinimumGeneration => 1,
+            WarningKind::DryHydro => 2,
+            WarningKind::Hvdc => 3,
+            WarningKind::InactiveIsland => 3,
+        });
+        for link in session.power().network().links() {
+            let readiness = session
+                .power()
+                .link_planning_forecast(link.id)
+                .expect("existing link");
+            if ui.island.is_some_and(|id| {
+                readiness.from_island != Some(id) && readiness.to_island != Some(id)
+            }) {
+                continue;
+            }
+            for text in super::links::link_planning_issues(session, link.id, l10n) {
+                rows.push(WarningRow {
+                    kind: WarningKind::Hvdc,
+                    text,
+                    show_hour: Some(ButtonModel::new(
+                        l10n.text("hvdc-title"),
+                        UiAction::ShowLinks(true),
+                    )),
+                });
+            }
+        }
+        return model_for_rows(rows, ui.warnings_open, l10n);
+    }
     let names = Names::new(l10n, session);
     let views = session.plant_views();
     let dry_hydro = dry_hydro_plants(&views, &names);
@@ -167,7 +264,7 @@ pub fn warnings_model(game: &Game, l10n: &Localizer, ui: &UiState) -> WarningsMo
 pub fn draw_warnings(ui: &mut egui::Ui, model: &WarningsModel) -> Vec<UiAction> {
     let mut actions = Vec::new();
     let mut more_at = None;
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label(
             egui::RichText::new(&model.heading)
                 .strong()
@@ -189,10 +286,16 @@ pub fn draw_warnings(ui: &mut egui::Ui, model: &WarningsModel) -> Vec<UiAction> 
             .pivot(egui::Align2::LEFT_BOTTOM)
             .fixed_pos(at.left_top())
             .show(ui.ctx(), |ui| {
+                ui.set_max_width((ui.ctx().content_rect().width() - 32.0).max(200.0));
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    for row in &model.rows[1..] {
-                        ui.horizontal(|ui| draw_row(ui, row, &mut actions));
-                    }
+                    egui::ScrollArea::vertical()
+                        .id_salt("planning_warning_details")
+                        .max_height(240.0)
+                        .show(ui, |ui| {
+                            for row in &model.rows[1..] {
+                                ui.horizontal_wrapped(|ui| draw_row(ui, row, &mut actions));
+                            }
+                        });
                 });
             });
     }
@@ -202,7 +305,10 @@ pub fn draw_warnings(ui: &mut egui::Ui, model: &WarningsModel) -> Vec<UiAction> 
 fn draw_row(ui: &mut egui::Ui, row: &WarningRow, actions: &mut Vec<UiAction>) {
     let tone = match row.kind {
         WarningKind::Shortfall => TextTone::Negative,
-        WarningKind::MinimumGeneration | WarningKind::DryHydro => TextTone::Caution,
+        WarningKind::MinimumGeneration
+        | WarningKind::DryHydro
+        | WarningKind::Hvdc
+        | WarningKind::InactiveIsland => TextTone::Caution,
     };
     ui.colored_label(tone.color(), &row.text);
     if let Some(show) = &row.show_hour {
@@ -237,6 +343,62 @@ mod tests {
             net_load: Megawatts::new(3_000.0),
             excess: Megawatts::new(300.0),
         }
+    }
+
+    #[test]
+    fn multi_island_warnings_identify_the_starved_city_and_the_surplus_island() {
+        let l10n = shipped_l10n();
+        let mut game = crate::hud::test_support::sgcc_planning_with_small_remote_source();
+        for plant in game
+            .session()
+            .plant_views()
+            .into_iter()
+            .filter(|p| p.kind.is_dispatchable())
+        {
+            game.execute(Command::CommitPlant {
+                plant: plant.id,
+                hours: [true; 24],
+            })
+            .unwrap();
+            game.execute(Command::SetAutoFollow {
+                plant: plant.id,
+                on: false,
+            })
+            .unwrap();
+            let mw = game.session().region().spec(plant.kind).capacity;
+            game.execute(Command::SetDispatchTarget {
+                plant: plant.id,
+                mw,
+            })
+            .unwrap();
+        }
+        let model = warnings_model(&game, &l10n, &UiState::default());
+        assert!(
+            model
+                .rows
+                .iter()
+                .any(|row| row.kind == WarningKind::Shortfall && row.text.contains("Shanghai")),
+            "{:?}",
+            model.rows
+        );
+        assert!(
+            model
+                .rows
+                .iter()
+                .any(|row| row.kind == WarningKind::MinimumGeneration
+                    && row.text.contains("Beijing")),
+            "{:?}",
+            model.rows
+        );
+        assert!(
+            model
+                .rows
+                .iter()
+                .any(|row| row.text.contains("hourly transfers are zero")),
+            "{:?}",
+            model.rows
+        );
+        assert!(l10n.problems().is_empty());
     }
 
     #[test]

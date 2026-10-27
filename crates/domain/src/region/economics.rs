@@ -272,12 +272,6 @@ impl RegionDefinition {
         })
     }
     pub(super) fn validate_start_construction(&self) -> Result<(), RegionError> {
-        let home = self
-            .cities
-            .iter()
-            .find(|c| c.id == self.start.home_city)
-            .expect("validated home")
-            .cell;
         let mut total = 0i128;
         let mut add = |cost: Money| -> Result<(), RegionError> {
             total += i128::from(cost.cents());
@@ -297,10 +291,12 @@ impl RegionDefinition {
             self.cities
                 .iter()
                 .filter(|c| {
-                    c.id != self.start.home_city && self.start.connected_cities.contains(&c.id)
+                    c.id != self.start_home_at(c.cell).id
+                        && self.start.connected_cities.contains(&c.id)
                 })
                 .map(|c| c.cell),
         ) {
+            let home = self.start_home_at(cell).cell;
             add(self
                 .line_terms(home, cell, crate::grid::distance_cells(home, cell))
                 .map_err(|_| invalid(None, "start.lines"))?

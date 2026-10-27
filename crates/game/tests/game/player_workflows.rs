@@ -77,6 +77,472 @@ pub(super) fn settle_save(app: &mut App) {
 }
 
 #[test]
+fn choose_a_local_fleet_edit_it_and_keep_the_same_island_in_the_forecast() {
+    use game::hud::UiAction;
+    for zoom in [1.0, 1.25] {
+        let dir = TempDir::new().unwrap();
+        let mut app = hud_app(dir.path());
+        request(&mut app, "sgcc");
+        let l10n = shipped_l10n();
+        let pass = EguiPass::attach(&mut app);
+        pass.ctx().set_zoom_factor(zoom);
+        let size = (1024.0 / zoom, 640.0 / zoom);
+        let before = app.world().resource::<Session>().0.checkpoint();
+        let initial = hud::commitment_model(
+            &app.world().resource::<Session>().0,
+            &l10n,
+            app.world().resource::<UiState>(),
+            &CommitmentForm::default(),
+        );
+        let scopes: Vec<_> = initial.scopes.clone();
+        assert_eq!(scopes.len(), 5);
+        for scope in &scopes {
+            let current = hud::commitment_model(
+                &app.world().resource::<Session>().0,
+                &l10n,
+                app.world().resource::<UiState>(),
+                &CommitmentForm::default(),
+            );
+            let selected = &current
+                .scopes
+                .iter()
+                .find(|scope| scope.on)
+                .unwrap()
+                .button
+                .label;
+            let widgets = pass.settled(&mut app, size.0, size.1);
+            let picker = widgets
+                .iter()
+                .find(|w| w.text == *selected && w.role == egui::accesskit::Role::ComboBox)
+                .unwrap();
+            assert!(
+                egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(size.0, size.1))
+                    .contains_rect(picker.rect)
+            );
+            pass.click_at(&mut app, size.0, size.1, picker.rect.center());
+            let widgets = pass.settled(&mut app, size.0, size.1);
+            let option = button(&widgets, &scope.button.label);
+            pass.click_at(&mut app, size.0, size.1, option.rect.center());
+            let UiAction::SelectIsland(Some(island)) = scope.button.action else {
+                panic!("island option")
+            };
+            assert_eq!(app.world().resource::<UiState>().island, Some(island));
+            let current = hud::commitment_model(
+                &app.world().resource::<Session>().0,
+                &l10n,
+                app.world().resource::<UiState>(),
+                &CommitmentForm::default(),
+            );
+            let widgets = pass.settled(&mut app, size.0, size.1);
+            assert!(
+                current
+                    .groups
+                    .iter()
+                    .all(|group| group.island == Some(island))
+            );
+            for plant in app.world().resource::<Session>().0.session().plant_views() {
+                let local = hud::is_commitable(&plant)
+                    && app
+                        .world()
+                        .resource::<Session>()
+                        .0
+                        .session()
+                        .power()
+                        .island_nodes()[&island]
+                        .contains(&plant.node);
+                let name =
+                    game::l10n::Names::new(&l10n, app.world().resource::<Session>().0.session())
+                        .plant(plant.id);
+                assert_eq!(
+                    widgets.iter().any(|w| w.text == name),
+                    local,
+                    "only the local fleet is drawn"
+                );
+            }
+            // The section shortcut carries its island to the forecast; returning to commitments
+            // must keep the same fleet selected, without any simulation command.
+            let forecast = current.groups[0].forecast.as_ref().unwrap();
+            click(&pass, &mut app, size, &forecast.label);
+            assert_eq!(app.world().resource::<UiState>().tab, PlanningTab::Forecast);
+            let chart = hud::forecast_model(
+                &app.world().resource::<Session>().0,
+                &l10n,
+                app.world().resource::<UiState>(),
+            );
+            assert_eq!(
+                chart.scope_label.as_ref(),
+                current.groups[0].heading.as_ref()
+            );
+            click(&pass, &mut app, size, &l10n.text("commitment-title"));
+            assert_eq!(app.world().resource::<UiState>().island, Some(island));
+        }
+        assert_eq!(app.world().resource::<Session>().0.checkpoint(), before);
+
+        // The last selected grid is Chengdu. An Off click must affect just its first local plant.
+        let current = hud::commitment_model(
+            &app.world().resource::<Session>().0,
+            &l10n,
+            app.world().resource::<UiState>(),
+            &CommitmentForm::default(),
+        );
+        let plant = current.groups[0].rows[0].plant;
+        let views = app.world().resource::<Session>().0.session().plant_views();
+        let widgets = pass.settled(&mut app, size.0, size.1);
+        let off =
+            crate::support::egui_harness::nth_button(&widgets, &l10n.text("commitment-off"), 0);
+        pass.click_at(&mut app, size.0, size.1, off.rect.center());
+        update_n(&mut app, 2);
+        let after = app.world().resource::<Session>().0.session().plant_views();
+        for previous in &views {
+            let next = after.iter().find(|p| p.id == previous.id).unwrap();
+            if previous.id == plant {
+                assert_eq!(next.commitment, [false; 24]);
+            } else {
+                assert_eq!(
+                    next, previous,
+                    "other islands and local plants stay unchanged"
+                );
+            }
+        }
+        assert_eq!(
+            app.world()
+                .resource::<Session>()
+                .0
+                .checkpoint()
+                .command_count,
+            before.command_count + 1
+        );
+
+        let current = hud::commitment_model(
+            &app.world().resource::<Session>().0,
+            &l10n,
+            app.world().resource::<UiState>(),
+            &CommitmentForm::default(),
+        );
+        let draft_row = &current.groups[0].rows[0];
+        let local_island = current.island;
+        click(&pass, &mut app, size, &draft_row.cells[18].label);
+        let draft = app.world().resource::<UiState>().draft;
+        crate::hud_smoke::dispatch_in(&mut app, vec![scopes[0].button.action.clone()]);
+        let widgets = pass.settled(&mut app, size.0, size.1);
+        assert!(button(&widgets, &l10n.text("start-operating")).disabled);
+        click(
+            &pass,
+            &mut app,
+            size,
+            &l10n.text("commitment-return-to-draft"),
+        );
+        assert_eq!(app.world().resource::<UiState>().island, local_island);
+        assert_eq!(app.world().resource::<UiState>().draft, draft);
+        click(&pass, &mut app, size, &l10n.text("commitment-revert"));
+        assert!(app.world().resource::<UiState>().draft.is_none());
+        assert_eq!(
+            app.world()
+                .resource::<Session>()
+                .0
+                .checkpoint()
+                .command_count,
+            before.command_count + 1,
+            "switching grids and reverting a draft emits no simulation command"
+        );
+    }
+}
+
+#[test]
+fn island_planning_opens_locally_and_all_islands_is_an_overview() {
+    use crate::hud_smoke::dispatch_in;
+    use game::hud::UiAction;
+    let dir = TempDir::new().unwrap();
+    let mut app = hud_app(dir.path());
+    request(&mut app, "sgcc");
+    let pass = EguiPass::attach(&mut app);
+    let before = app.world().resource::<Session>().0.checkpoint();
+    pass.settled(&mut app, 1024.0, 640.0);
+    let home = app.world().resource::<Session>().0.session().anchor_node();
+    assert_eq!(app.world().resource::<UiState>().island, Some(home));
+    assert_eq!(
+        app.world().resource::<UiState>().tab,
+        PlanningTab::Commitments
+    );
+    let remote = *app
+        .world()
+        .resource::<Session>()
+        .0
+        .session()
+        .power()
+        .island_nodes()
+        .keys()
+        .last()
+        .unwrap();
+    dispatch_in(&mut app, vec![UiAction::SelectIsland(Some(remote))]);
+    click(
+        &pass,
+        &mut app,
+        (1024.0, 640.0),
+        &shipped_l10n().text("islands-all"),
+    );
+    assert_eq!(app.world().resource::<UiState>().island, None);
+    assert_eq!(app.world().resource::<UiState>().tab, PlanningTab::Forecast);
+    click(&pass, &mut app, (1024.0, 640.0), "Commitments");
+    assert_eq!(app.world().resource::<UiState>().island, Some(remote));
+    let l10n = shipped_l10n();
+    let model = hud::commitment_model(
+        &app.world().resource::<Session>().0,
+        &l10n,
+        app.world().resource::<UiState>(),
+        &CommitmentForm::default(),
+    );
+    assert_eq!(
+        model.scopes.len(),
+        5,
+        "only individual islands can be planned"
+    );
+    assert!(
+        model
+            .groups
+            .iter()
+            .all(|group| group.island == Some(remote))
+    );
+    assert_eq!(app.world().resource::<Session>().0.checkpoint(), before);
+}
+
+#[test]
+fn the_retrospective_identifies_the_selected_zone_at_minimum_size() {
+    use crate::hud_smoke::dispatch_in;
+    use game::{hud::UiAction, sim::Persistence};
+    let logs = TempDir::new().unwrap();
+    let mut app = hud_app(logs.path());
+    request(&mut app, "sgcc");
+    {
+        let mut game = app.world_mut().resource_mut::<Session>();
+        game.0.execute(Command::BeginOperating).unwrap();
+        game.0.execute(Command::AdvanceTicks { n: 1440 }).unwrap();
+    }
+    update_n(&mut app, 3);
+    let checkpoint = app.world().resource::<Session>().0.checkpoint();
+    let l10n = shipped_l10n();
+    let scopes = hud::top_bar_model(
+        &app.world().resource::<Session>().0,
+        app.world().resource::<Persistence>(),
+        &l10n,
+        &usd_style(),
+    )
+    .islands;
+    dispatch_in(&mut app, vec![UiAction::ShowReviewSupply(true)]);
+    let pass = EguiPass::attach(&mut app);
+    for zoom in [1.0, 1.25] {
+        pass.ctx().set_zoom_factor(zoom);
+        let size = (1024.0 / zoom, 640.0 / zoom);
+        for scope in &scopes {
+            let widgets = pass.settled(&mut app, size.0, size.1);
+            pass.click_at(
+                &mut app,
+                size.0,
+                size.1,
+                button(&widgets, &scope.button.label).rect.center(),
+            );
+            let title = match scope.button.action {
+                UiAction::SelectIsland(Some(id)) => format!(
+                    "Grid zone: {}",
+                    game::l10n::Names::new(&l10n, app.world().resource::<Session>().0.session())
+                        .island(app.world().resource::<Session>().0.session(), id)
+                ),
+                UiAction::SelectIsland(None) => l10n.text("islands-all"),
+                _ => panic!("zone option"),
+            };
+            let widgets = pass.settled(&mut app, size.0, size.1);
+            assert!(
+                widgets.iter().any(|w| w.text == title
+                    && egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(size.0, size.1))
+                        .contains_rect(w.rect)),
+                "retrospective must identify {title}"
+            );
+        }
+    }
+    assert_eq!(app.world().resource::<Session>().0.checkpoint(), checkpoint);
+}
+
+#[test]
+fn single_grid_charts_keep_their_sources_after_month_close_and_resume() {
+    use crate::hud_smoke::dispatch_in;
+    use crate::support::{SHIPPED_REGIONS, egui_harness::has};
+    use application::InMemoryCommandLog;
+    use domain::ids::RegionId;
+    use game::hud::{OperatingTab, UiAction};
+    use infrastructure::region::RonRegionCatalog;
+    for region in SHIPPED_REGIONS.iter().copied().filter(|r| *r != "sgcc") {
+        let logs = TempDir::new().unwrap();
+        let mut app = hud_app(logs.path());
+        request(&mut app, region);
+        let l10n = shipped_l10n();
+        {
+            let mut session = app.world_mut().resource_mut::<Session>();
+            session.0.execute(Command::BeginOperating).unwrap();
+            session
+                .0
+                .execute(Command::AdvanceTicks { n: 1440 })
+                .unwrap();
+            session.0.execute(Command::FinishReview).unwrap();
+        }
+        update_n(&mut app, 3);
+        let pass = EguiPass::attach(&mut app);
+        pass.ctx().set_zoom_factor(1.25);
+        let size = (1024.0 / 1.25, 640.0 / 1.25);
+        pass.settled(&mut app, size.0, size.1);
+        assert!(
+            app.world()
+                .resource::<Session>()
+                .0
+                .session()
+                .region()
+                .areas()
+                .is_none()
+        );
+        assert!(
+            !app.world()
+                .resource::<Session>()
+                .0
+                .session()
+                .power()
+                .island_nodes()
+                .is_empty(),
+            "{region}: reproduce the populated topology cache"
+        );
+        assert_eq!(
+            app.world().resource::<UiState>().island,
+            None,
+            "{region}: single-grid planning must not select a controller zone"
+        );
+        {
+            let mut session = app.world_mut().resource_mut::<Session>();
+            session.0.execute(Command::BeginOperating).unwrap();
+            session.0.execute(Command::AdvanceTicks { n: 300 }).unwrap();
+        }
+        update_n(&mut app, 3);
+        // Resume exactly the state that previously acquired a bogus zone selection.
+        let checkpoint = app.world().resource::<Session>().0.checkpoint();
+        let loaded = application::RegionCatalog::load(
+            &RonRegionCatalog::new(crate::support::shipped_assets().join("regions")),
+            &RegionId::new(region),
+        )
+        .unwrap();
+        let restored = application::Game::restore(
+            loaded,
+            checkpoint.clone(),
+            Box::new(InMemoryCommandLog::default()),
+            &|| false,
+        )
+        .unwrap();
+        assert_eq!(restored.checkpoint(), checkpoint);
+        app.world_mut().resource_mut::<Session>().0 = restored;
+        let expected = hud::supply_model(&app.world().resource::<Session>().0, &l10n, &usd_style());
+        assert!(
+            !expected.stacks.is_empty(),
+            "{region}: actual supply exists"
+        );
+        dispatch_in(
+            &mut app,
+            vec![UiAction::SetOperatingTab(OperatingTab::Supply)],
+        );
+        let widgets = pass.settled(&mut app, size.0, size.1);
+        for stack in &expected.stacks {
+            assert!(
+                widgets.iter().any(|w| w.text == stack.name
+                    && w.role == egui::accesskit::Role::CheckBox
+                    && w.selected),
+                "{region}: live HUD must draw enabled supply source {}",
+                stack.name
+            );
+        }
+        let hydro = hud::hydro_model(&app.world().resource::<Session>().0, &l10n);
+        if !hydro.rows.is_empty() {
+            assert!(hydro.rows.iter().any(|r| r.hourly.iter().any(|v| *v > 0.0)));
+            dispatch_in(
+                &mut app,
+                vec![UiAction::SetOperatingTab(OperatingTab::Hydro)],
+            );
+            let widgets = pass.settled(&mut app, size.0, size.1);
+            for row in &hydro.rows {
+                assert!(
+                    has(&widgets, &row.level),
+                    "{region}: actual hydro allocation must remain visible"
+                );
+            }
+        }
+        dispatch_in(
+            &mut app,
+            vec![UiAction::SetOperatingTab(OperatingTab::History)],
+        );
+        let widgets = pass.settled(&mut app, size.0, size.1);
+        let history = hud::supply_history_model(
+            &app.world().resource::<Session>().0,
+            None,
+            &l10n,
+            &usd_style(),
+        );
+        let history = history.chart.unwrap();
+        assert_eq!(history.x.len(), 1440);
+        assert!(!history.stacks.is_empty());
+        for stack in &history.stacks {
+            assert!(
+                widgets.iter().any(|w| w.text == stack.name
+                    && w.role == egui::accesskit::Role::CheckBox
+                    && w.selected),
+                "{region}: first-month history retains {}",
+                stack.name
+            );
+        }
+        app.world_mut()
+            .resource_mut::<Session>()
+            .0
+            .execute(Command::AdvanceTicks { n: 1140 })
+            .unwrap();
+        update_n(&mut app, 3);
+        let retrospective = hud::supply_history_model(
+            &app.world().resource::<Session>().0,
+            None,
+            &l10n,
+            &usd_style(),
+        )
+        .chart
+        .unwrap();
+        assert_eq!(retrospective.x.len(), 1440);
+        assert!(!retrospective.stacks.is_empty());
+        dispatch_in(&mut app, vec![UiAction::ShowReviewSupply(true)]);
+        let widgets = pass.settled(&mut app, size.0, size.1);
+        for stack in &retrospective.stacks {
+            assert!(
+                widgets.iter().any(|w| w.text == stack.name
+                    && w.role == egui::accesskit::Role::CheckBox
+                    && w.selected),
+                "{region}: review retrospective retains {}",
+                stack.name
+            );
+        }
+        app.world_mut()
+            .resource_mut::<Session>()
+            .0
+            .execute(Command::FinishReview)
+            .unwrap();
+        update_n(&mut app, 3);
+        dispatch_in(
+            &mut app,
+            vec![UiAction::SetPlanningTab(PlanningTab::History)],
+        );
+        let widgets = pass.settled(&mut app, size.0, size.1);
+        for stack in &retrospective.stacks {
+            assert!(
+                widgets.iter().any(|w| w.text == stack.name
+                    && w.role == egui::accesskit::Role::CheckBox
+                    && w.selected),
+                "{region}: planning history retains {}",
+                stack.name
+            );
+        }
+    }
+}
+
+#[test]
 fn edit_a_valid_schedule_check_forecast_operate_review_and_revisit_history() {
     for (region, zoom) in [
         ("eastern_interconnection", 1.0),

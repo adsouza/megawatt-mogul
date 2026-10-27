@@ -11,6 +11,8 @@
 //! [`Localizer`]: crate::l10n::Localizer
 
 mod action;
+mod activation;
+pub use activation::ActivationCardModel;
 mod build;
 mod chart_style;
 mod city_card;
@@ -25,7 +27,9 @@ mod incidents;
 mod inspector;
 mod layout;
 mod links;
-pub use links::{LinkCardModel, LinksModel, draw_links, links_model};
+pub use links::{
+    HvdcRangeForm, HvdcTab, LinkCardModel, LinksModel, draw_links, links_model, links_model_with_ui,
+};
 pub(crate) mod map;
 mod menu;
 mod milestones;
@@ -473,10 +477,11 @@ pub(crate) mod test_support {
         game_in_dir(&shipped_assets().join("regions"), region, sink)
     }
 
-    /// A closed SGCC day with a supplied home island and an unserved remote island.
-    /// The preceding construction months contain only the home island's history.
-    pub fn sgcc_review_with_two_islands() -> Game {
+    /// A closed SGCC day with the inherited grids and an additional inactive remote island.
+    /// The preceding construction months contain the inherited grids' history.
+    pub fn sgcc_review_with_remote_island() -> Game {
         let mut game = shipped_game("sgcc", Box::new(application::InMemoryCommandLog::default()));
+        let inherited = game.session().power().island_nodes().len();
         let from = game.session().anchor_node();
         let to = game
             .session()
@@ -501,8 +506,83 @@ pub(crate) mod test_support {
                 .unwrap()
                 .islands
                 .len(),
-            2
+            inherited + 1
         );
+        game
+    }
+
+    /// A remote island with a real but undersized source, so shortfall charts still
+    /// exercise active obligations separately from dormant, unsupported customers.
+    pub fn sgcc_planning_with_small_remote_source() -> Game {
+        let mut game = sgcc_review_with_remote_island();
+        game.execute(Command::FinishReview).unwrap();
+        let city = game
+            .session()
+            .city_views()
+            .into_iter()
+            .find(|c| c.name_key == "city-shanghai")
+            .unwrap();
+        let area = game.session().region().area_at(city.cell);
+        let (w, h) = (
+            game.session().region().terrain().width(),
+            game.session().region().terrain().height(),
+        );
+        let cell = (0..h)
+            .flat_map(|y| (0..w).map(move |x| CellCoord { x, y }))
+            .filter(|cell| {
+                game.session().region().area_at(*cell) == area
+                    && game.session().plant_quote(PlantKind::Peaker, *cell).is_ok()
+            })
+            .min_by(|a, b| {
+                domain::grid::distance_cells(*a, city.cell)
+                    .total_cmp(&domain::grid::distance_cells(*b, city.cell))
+            })
+            .unwrap();
+        let events = game
+            .execute(Command::BuildPlant {
+                kind: PlantKind::Peaker,
+                cell,
+            })
+            .unwrap();
+        let plant = events
+            .iter()
+            .find_map(|event| {
+                if let DomainEvent::PlantConstructionStarted { plant, .. } = event {
+                    Some(*plant)
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+        let p = game.session().power().plant(plant).unwrap();
+        let domain::generation::PlantStatus::UnderConstruction { months_left } = p.status() else {
+            panic!("new order");
+        };
+        let node = p.node();
+        let months = months_left.max(game.session().line_quote(city.node, node).unwrap().months);
+        game.execute(Command::BuildLine {
+            from: city.node,
+            to: node,
+        })
+        .unwrap();
+        for _ in 0..months {
+            game.execute(Command::BeginOperating).unwrap();
+            game.execute(Command::AdvanceTicks { n: 1440 }).unwrap();
+            game.execute(Command::FinishReview).unwrap();
+        }
+        game.execute(Command::CommitPlant {
+            plant,
+            hours: [true; 24],
+        })
+        .unwrap();
+        let a = game.session().activation_assessment(city.node).unwrap();
+        game.execute(Command::ActivateService {
+            island: city.node,
+            accept_shortfall: true,
+            expected_revision: a.revision,
+        })
+        .unwrap();
+        assert!(game.session().power().island_active(city.node));
         game
     }
 

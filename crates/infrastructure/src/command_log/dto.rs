@@ -184,28 +184,81 @@ impl TryFrom<LogHeaderDto> for LogHeader {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum CommandDto {
-    BuildLink { from: u32, to: u32 },
-    CancelLinkConstruction { link: u32 },
-    SetLinkSchedule { link: u32, mw: [f64; 24] },
-    SetLinkTarget { link: u32, mw: f64 },
-    ClearLinkOverride { link: u32 },
-    BuildPlant { kind: PlantKindDto, cell: CellDto },
-    BuildLine { from: u32, to: u32 },
-    CommitPlant { plant: u32, hours: [bool; 24] },
+    ActivateService {
+        island: u32,
+        accept_shortfall: bool,
+        expected_revision: u64,
+    },
+    BuildLink {
+        from: u32,
+        to: u32,
+    },
+    CancelLinkConstruction {
+        link: u32,
+    },
+    SetLinkSchedule {
+        link: u32,
+        mw: [f64; 24],
+    },
+    SetLinkTarget {
+        link: u32,
+        mw: f64,
+    },
+    ClearLinkOverride {
+        link: u32,
+    },
+    BuildPlant {
+        kind: PlantKindDto,
+        cell: CellDto,
+    },
+    BuildLine {
+        from: u32,
+        to: u32,
+    },
+    CommitPlant {
+        plant: u32,
+        hours: [bool; 24],
+    },
     BeginOperating,
-    SetDispatchTarget { plant: u32, mw: f64 },
-    SetAutoFollow { plant: u32, on: bool },
-    SetBatteryEnabled { plant: u32, on: bool },
-    StartPlant { plant: u32 },
-    StopPlant { plant: u32 },
-    AdvanceTicks { n: u32 },
+    SetDispatchTarget {
+        plant: u32,
+        mw: f64,
+    },
+    SetAutoFollow {
+        plant: u32,
+        on: bool,
+    },
+    SetBatteryEnabled {
+        plant: u32,
+        on: bool,
+    },
+    StartPlant {
+        plant: u32,
+    },
+    StopPlant {
+        plant: u32,
+    },
+    AdvanceTicks {
+        n: u32,
+    },
     FinishReview,
-    CancelLineConstruction { line: u32 },
+    CancelLineConstruction {
+        line: u32,
+    },
 }
 
 impl From<&Command> for CommandDto {
     fn from(command: &Command) -> Self {
         match *command {
+            Command::ActivateService {
+                island,
+                accept_shortfall,
+                expected_revision,
+            } => Self::ActivateService {
+                island: island.0,
+                accept_shortfall,
+                expected_revision,
+            },
             Command::BuildLink { from, to } => Self::BuildLink {
                 from: from.0,
                 to: to.0,
@@ -259,6 +312,15 @@ impl TryFrom<CommandDto> for Command {
 
     fn try_from(dto: CommandDto) -> Result<Self, LogDtoError> {
         Ok(match dto {
+            CommandDto::ActivateService {
+                island,
+                accept_shortfall,
+                expected_revision,
+            } => Self::ActivateService {
+                island: NodeId(island),
+                accept_shortfall,
+                expected_revision,
+            },
             CommandDto::BuildLink { from, to } => Self::BuildLink {
                 from: NodeId(from),
                 to: NodeId(to),

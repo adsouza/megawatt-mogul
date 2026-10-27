@@ -11,6 +11,11 @@ use crate::error::CommandError;
 /// Everything the player (or a replay) can ask the game to do.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
+    ActivateService {
+        island: NodeId,
+        accept_shortfall: bool,
+        expected_revision: u64,
+    },
     BuildLink {
         from: NodeId,
         to: NodeId,
@@ -96,6 +101,16 @@ impl<H: CommandHandler + ?Sized> CommandHandler for Box<H> {
 impl domain::state::State for Command {
     fn write(&self, out: &mut Vec<u8>) {
         match self {
+            Self::ActivateService {
+                island,
+                accept_shortfall,
+                expected_revision,
+            } => {
+                domain::state::State::write(&17u8, out);
+                domain::state::State::write(island, out);
+                domain::state::State::write(accept_shortfall, out);
+                domain::state::State::write(expected_revision, out);
+            }
             Self::BuildLink { from, to } => {
                 domain::state::State::write(&12u8, out);
                 domain::state::State::write(from, out);
@@ -175,6 +190,11 @@ impl domain::state::State for Command {
     }
     fn read(input: &mut domain::state::StateReader<'_>) -> Result<Self, domain::state::StateError> {
         Ok(match <u8 as domain::state::State>::read(input)? {
+            17 => Self::ActivateService {
+                island: domain::state::State::read(input)?,
+                accept_shortfall: domain::state::State::read(input)?,
+                expected_revision: domain::state::State::read(input)?,
+            },
             12 => Self::BuildLink {
                 from: domain::state::State::read(input)?,
                 to: domain::state::State::read(input)?,

@@ -149,11 +149,32 @@ connection-warning-question =
         [one] This order would connect one new city by { $month }, adding a forecast peak of { $added }.
        *[other] This order would connect { $cities } new cities by { $month }, adding a forecast peak of { $added }.
     }
-    In the island around { $island } at { $time }, forecast demand is { $demand } and supply after planned transfers is { $supply }: a shortfall of { $shortfall }.
+    In grid zone { $island } at { $time }, forecast demand is { $demand } and supply after planned transfers is { $supply }: a shortfall of { $shortfall }.
     This assumes ready generators run all day and current HVDC schedules are used. Proceed with construction?
 connection-proceed = Proceed
+connection-build-inactive = Build inactive connection
+activation-review = Review service activation
+activation-confirm = Activate service
+activation-confirm-shortfall = Activate despite shortfall
+activation-cancel = Keep inactive
+activation-question = Activate service in { $island }?
+activation-demand = Adds { $cities ->
+        [one] one city
+       *[other] { $cities } cities
+    }. Forecast peak demand: { $demand }; deliverable supply at that peak: { $supply }, including scheduled imports after losses.
+activation-missing-source = { $island } needs a commissioned, committed thermal, nuclear or hydro generator during { $hours }.
+activation-import-unavailable = Scheduled imports on { $from } → { $to } cannot be delivered during { $hours }. Check commissioning, active service and synchronous generators at both ends.
+activation-blocked = Activation blocked. Fix the grid support or unavailable imports first; a shortfall override cannot bypass this.
+activation-shortfall = This plan leaves a capacity shortfall. Activation requires accepting the shortage and possible outages explicitly.
+activation-ready = The forecast covers demand in all active grid zones, including the exporting zones. Ramps and random forecast errors may still cause operating shortages.
+activation-obligations = Activation enrols these customers. Their demand remains during shutdowns, trips and later plan changes. Construction alone never activates a remote grid zone.
+activation-plan-changed = The plan changed. Review these updated figures and confirm again.
+error-activation-blocked = Service activation is blocked. Review the zone's supply plan and synchronous generators.
+error-activation-shortfall = Review and explicitly accept the forecast shortfall before activating service.
+error-activation-changed = The supply plan changed. Review activation again.
+hvdc-service-inactive = { $route }: service in { $island } is inactive. No transfers until service is explicitly activated.
 connection-cancel = Cancel
-build-line-heading = Transmission line
+build-line-heading = Local AC transmission line
 build-line-hint-from = Choose where the line starts.
 build-line-hint-to = Starting at { $node }. Choose where it ends.
 build-line-from = Line from { $node }
@@ -191,6 +212,11 @@ tariff-review-months = { $months ->
    *[other] The December review is { $months } months away.
 }
 commitment-title = Commitments
+commitment-grid = Planning zone
+commitment-unconnected = Not connected to a grid zone
+commitment-hidden-draft = Unapplied changes to { $plant } in { $island }.
+commitment-return-to-draft = Return to draft
+commitment-view-forecast = View forecast
 commitment-forecast = Forecast demand
 commitment-committed = Committed output
 commitment-empty = No plants are ready to commit yet.
@@ -212,7 +238,26 @@ commitment-unsaved = Apply or revert your changes before starting the day.
 forecast-title = Forecast
 forecast-band = Forecast range
 forecast-solar = Expected solar
-forecast-net-supply = Net supply
+forecast-net-supply = Available net supply
+forecast-island-name = { $area } ({ $node })
+forecast-island-shortfall = { $island } — short { $amount } ({ $time })
+forecast-island-excess = { $island } — excess minimum { $amount } ({ $time })
+forecast-island-inspect = View { $island }
+forecast-inspect-island = Inspect zone
+forecast-island-note = Each grid zone must balance separately. Solid: shortfall. Dashed: minimum generation above load, before optional battery charging. Select a zone for supply and demand.
+forecast-risk-axis = Shortfall / excess minimum (MW)
+forecast-minimum = Minimum supply before charging
+forecast-hvdc-constraints = HVDC supply constraints ({ $count })
+forecast-hour-range = { $start }–{ $end }
+warning-island = { $island }: { $warning }
+hvdc-planning-construction = { $route }: under construction; no power transfers for { $months ->
+    [one] one more month.
+   *[other] { $months } more months.
+}
+hvdc-planning-terminal = { $route }: no synchronous generator committed in { $island } during { $hours }. This link cannot supply power then. Build or commit a thermal, nuclear or hydro generator there.
+hvdc-planning-zero = { $route }: all hourly transfers are zero. Set a signed schedule to move power; connecting cities does not schedule imports automatically.
+hvdc-planning-help = HVDC connects grid zones without synchronising them. Both ends need an online thermal, nuclear or hydro generator; wind, solar and batteries do not qualify. Rating and losses limit imports. Forecasts ignore ramp and protection transients.
+shortfall-island-detail = { $island }: { $amount } short during the { $time } hour.
 forecast-axis-hour = Hour of day
 forecast-axis-power = Power (MW)
 warnings-title = Warnings
@@ -286,6 +331,11 @@ plant-start = Start
 plant-stop = Stop
 # The city card (spec §16.8), in Planning's inspector and Operating's side panel.
 city-connected = Connected
+city-inactive = Connected route — service inactive
+island-inactive-name = Inactive: { $island }
+island-inactive-status = Inactive: no customer demand. Review the supply plan and explicitly activate service when ready.
+island-inactive-warning = { $island } has inactive service. Its cities add no demand or outage penalties until you review and activate their supply plan.
+island-inactive-help = Construction does not activate service. Connect and commit a local thermal, nuclear or hydro generator, plan imports, then review service activation in HVDC links. Wind, solar and batteries cannot support these converters. Activation keeps customer obligations through later shutdowns and trips.
 city-not-connected = Not connected
 city-connect-hint = Build a line to it from the build menu to connect it.
 # The connection date accounts for every unfinished line on a complete route to the home grid.
@@ -301,6 +351,7 @@ city-served-now = Served now
 city-cut = Cut
 operating-tab-supply = Supply
 supply-history-title = History
+supply-history-zone = Grid zone: { $zone }
 supply-history-month = Month
 supply-history-note = The complete played day representing this month.
 supply-history-empty = Complete a day to see its supply and demand history.
@@ -550,7 +601,7 @@ construction-regional-default = Regional default
 build-plant-heading-market = Build at ({ $x }, { $y }) · { $market }
 construction-route-work = { $cells } cells · { $capital } · { $numerator }/{ $denominator } months of work
 
-# Synchronous islands and DC transfer
+# Grid zones and DC transfer
 error-line-crosses-areas = AC lines cannot cross electrical areas. Build an HVDC link.
 error-link-within-area = HVDC links must join different electrical areas.
 error-hvdc-unavailable = This region has no HVDC catalog.
@@ -558,10 +609,10 @@ error-unknown-link = This HVDC link no longer exists.
 error-link-not-building = This HVDC link is already in service.
 error-link-not-in-service = This HVDC link is still under construction.
 error-link-target = Enter a finite MW target within the link rating.
-hvdc-title = HVDC links
+hvdc-title = HVDC equipment
 hvdc-close = Close
-hvdc-empty = Choose two nodes in different electrical areas in the build menu.
-hvdc-build = Build HVDC link
+hvdc-empty = In Construction, select the HVDC interconnector tool and choose the local AC bus for each converter station.
+hvdc-build = Build inactive connection
 hvdc-route = { $from } → { $to }
 hvdc-rating = Rating: { $value }
 hvdc-flow = Actual signed flow: { $value }
@@ -569,15 +620,16 @@ hvdc-loss = Transfer losses: { $value }
 hvdc-capital = Capital: { $value } · { $months } game months
 hvdc-utilisation = Year-to-date utilisation: { $value }%
 hvdc-blocked = Blocked: both ends need an online synchronous generator and a live AC grid.
-hvdc-runback = Runback: reducing exports while the sending island recovers.
+hvdc-runback = Runback: reducing exports while the sending zone recovers.
 hvdc-schedule = Hourly schedule (MW; positive follows the arrow)
 hvdc-target = Override for the rest of today (MW)
 hvdc-clear-override = Return to schedule
 hvdc-cancel-question = Cancel this unfinished HVDC link? Paid instalments remain spent.
-islands-all = All
+islands-all = All zones
 island-chip = { $area } { $frequency }
 island-suffix = { $area } ({ $id })
-hvdc-map-legend = DC pulses show actual flow and direction; AC pulses illustrate routes.
+hvdc-map-legend = Squares: converters · Tethers: local AC
+    DC pulses show actual flow and direction.
 
 hvdc-payment = Monthly instalment: { $value }
 
@@ -586,3 +638,67 @@ hvdc-chart-exports = DC exports
 
 island-frequency-dot = ●
 build-ac-status = AC connection
+
+# Converter stations belong to their HVDC project and attach to an existing local AC bus.
+converter-station-name = Converter station { $id } ({ $grid })
+converter-local-grid = { $station }: attached to the local AC grid at { $grid }. Built and paid for with this HVDC project.
+build-hvdc-heading = HVDC interconnector
+build-hvdc-hint-from = Choose the local AC bus for the first converter station. This builds two stations and a DC route; cities keep their local AC connections.
+build-hvdc-from = Site first converter at { $node }
+build-hvdc-hint-to = First station at { $node }. Choose a local AC bus in another zone for the second station. Service activation remains separate.
+build-hvdc-to = Second converter at { $node }
+build-hvdc-stations-included = Includes two converter stations and their local AC bus attachments. Does not synchronise the two grids.
+converter-map-hint = { $station }. Select to review this HVDC project's stations, schedule and service requirements.
+
+build-ac-tool = Local AC line
+build-hvdc-tool = HVDC interconnector
+
+build-hvdc-includes = Project includes
+
+hvdc-project-title = HVDC { $id }: { $from } → { $to }
+
+# Focused HVDC equipment inspector.
+hvdc-tab-overview = Overview
+hvdc-tab-dispatch = Dispatch
+hvdc-tab-costs = Costs
+hvdc-project-picker = Project
+hvdc-status-building = Under construction · { $months } months remaining
+hvdc-status-inactive = Service inactive
+hvdc-status-unavailable = Scheduled transfer unavailable
+hvdc-status-standby = Standby
+hvdc-status-ready = Ready for scheduled transfers
+hvdc-status-blocked = Blocked
+hvdc-status-runback = Runback
+hvdc-status-transferring = Transferring power
+hvdc-terminal-support = Synchronous support committed for { $hours } of 24 hours.
+hvdc-terminal-live-blocked = Check synchronous generators and grid recovery at both ends.
+hvdc-terminal-live-support = Converter can use the local AC grid.
+hvdc-service-active = Customer service active
+hvdc-service-pending = Customer service inactive
+hvdc-open-grid = Inspect local grid
+hvdc-no-schedule = No transfers are scheduled. Set a time range in Dispatch to plan imports or exports.
+hvdc-inactive-summary = Transfers are unavailable until customer service is activated at both ends. Review the inactive zone below.
+hvdc-unsupported-summary = Some scheduled hours lack committed synchronous support. Review the terminal calendars below.
+hvdc-metric-flow = Flow
+hvdc-metric-rating = Rating
+hvdc-metric-loss = Losses
+hvdc-metric-capital = Total project capital
+hvdc-metric-payment = Monthly construction instalment
+hvdc-metric-utilisation = Year-to-date utilisation
+hvdc-range-from = From
+hvdc-range-until = Until
+hvdc-range-mw = MW
+hvdc-range-apply = Apply range
+hvdc-range-validation = Enter a finite MW value within the link rating and an end time after the start time.
+hvdc-direction-help = Positive MW flows from station A to B; negative MW flows from B to A. Apply changes to one time range; other hours stay as planned.
+hvdc-read-only = Dispatch is read-only in this phase.
+
+hvdc-support-all-day = Synchronous support: all day.
+hvdc-support-missing = No committed synchronous support during { $hours }.
+
+hvdc-metric-schedule-range = Planned range
+hvdc-value-schedule-range = { $low } to { $high }
+hvdc-metric-scheduled-hours = Scheduled
+hvdc-value-scheduled-hours = { $hours }/24 h
+hvdc-metric-last-flow = Last flow
+hvdc-metric-last-loss = Last losses

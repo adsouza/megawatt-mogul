@@ -16,6 +16,15 @@ use domain::time::SimMonth;
 
 use super::action::UiAction;
 
+/// A topology cache also exists in single-grid games after month close. Only regions
+/// with electrical areas run local controllers and record per-zone chart data.
+pub(super) fn island_scope(
+    session: &domain::session::GameSession,
+    requested: Option<domain::ids::NodeId>,
+) -> Option<domain::ids::NodeId> {
+    requested.filter(|_| session.region().areas().is_some())
+}
+
 /// The tabs of the bottom Planning panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PlanningTab {
@@ -61,7 +70,15 @@ pub struct PendingCommit {
 #[derive(Resource, Debug, Clone, PartialEq, Eq, Default)]
 pub struct UiState {
     pub island: Option<domain::ids::NodeId>,
+    /// The local planner to return to after viewing the company-wide overview.
+    pub last_planning_island: Option<domain::ids::NodeId>,
     pub links_open: bool,
+    pub hvdc_selected: Option<domain::ids::LinkId>,
+    pub hvdc_terminal: Option<domain::grid::ConverterStationId>,
+    pub hvdc_tab: super::links::HvdcTab,
+    pub hvdc_range: super::links::HvdcRangeForm,
+    /// Keep the chosen transmission tool while a city/plant is selected on the map.
+    pub hvdc_construction: bool,
     pub tab: PlanningTab,
     pub supply_chart_layout: SupplyChartLayout,
     /// The archived supply chart's month; `None` selects the latest completed month.
@@ -89,8 +106,37 @@ impl UiState {
     /// Takes in one action. The only writer of this state.
     pub fn apply(&mut self, action: &UiAction) {
         match action {
-            UiAction::SelectIsland(id) => self.island = *id,
+            UiAction::Select(super::Selection::HvdcStart | super::Selection::HvdcFrom(_)) => {
+                self.hvdc_construction = true
+            }
+            UiAction::Select(super::Selection::None | super::Selection::LineFrom(_)) => {
+                self.hvdc_construction = false
+            }
+            UiAction::SelectIsland(id) => {
+                self.island = *id;
+                if id.is_some() {
+                    self.last_planning_island = *id;
+                }
+            }
+            UiAction::InspectForecast { island, hour } => {
+                self.island = Some(*island);
+                self.last_planning_island = Some(*island);
+                self.highlight_hour = Some(*hour);
+                self.tab = PlanningTab::Forecast;
+                self.warnings_open = false;
+            }
             UiAction::ShowLinks(open) => self.links_open = *open,
+            UiAction::InspectHvdc { link, station } => {
+                if self.hvdc_selected != Some(*link) {
+                    self.hvdc_range = Default::default();
+                }
+                self.links_open = true;
+                self.hvdc_selected = Some(*link);
+                self.hvdc_terminal = station.filter(|s| s.link == *link);
+                self.hvdc_tab = super::links::HvdcTab::Overview;
+            }
+            UiAction::SetHvdcTab(tab) => self.hvdc_tab = *tab,
+            UiAction::EditHvdcRange(form) => self.hvdc_range = form.clone(),
             UiAction::SetSupplyChartLayout(layout) => self.supply_chart_layout = *layout,
             UiAction::SelectSupplyMonth(month) => self.supply_month = Some(*month),
             UiAction::ShowReviewSupply(show) => {
@@ -158,7 +204,11 @@ pub(super) fn reset_ui_state(mut ui: ResMut<UiState>, mut form: ResMut<Commitmen
 pub(super) fn reset_planning_state(mut ui: ResMut<UiState>, mut form: ResMut<CommitmentForm>) {
     *ui = UiState {
         island: ui.island,
+        last_planning_island: ui.last_planning_island,
         links_open: ui.links_open,
+        hvdc_selected: ui.hvdc_selected,
+        hvdc_terminal: ui.hvdc_terminal,
+        hvdc_tab: ui.hvdc_tab,
         supply_chart_layout: ui.supply_chart_layout,
         ..Default::default()
     };
@@ -183,6 +233,59 @@ mod tests {
         let mut hours = [false; 24];
         hours[6..18].fill(true);
         hours
+    }
+
+    #[test]
+    fn single_grid_scope_ignores_arbitrary_current_and_remembered_zones() {
+        use proptest::prelude::*;
+        let mut game = super::super::test_support::shipped_game(
+            "india_nepal_bhutan",
+            Box::new(application::InMemoryCommandLog::default()),
+        );
+        for command in [
+            Command::BeginOperating,
+            Command::AdvanceTicks { n: 1440 },
+            Command::FinishReview,
+        ] {
+            game.execute(command).unwrap();
+        }
+        assert!(!game.session().power().island_nodes().is_empty());
+        proptest!(|(current in proptest::option::of(any::<u32>()), remembered in proptest::option::of(any::<u32>()))| {
+            let ui = UiState {
+                island: current.map(domain::ids::NodeId),
+                last_planning_island: remembered.map(domain::ids::NodeId),
+                ..Default::default()
+            };
+            prop_assert_eq!(island_scope(game.session(), ui.island), None);
+            prop_assert_eq!(super::super::commitment::selected_commitment_island(game.session(), &ui), None);
+        });
+    }
+
+    #[test]
+    fn equipment_selection_survives_month_transition_but_schedule_drafts_do_not() {
+        let mut app = App::new();
+        let station = domain::grid::ConverterStationId {
+            link: domain::ids::LinkId(97),
+            end: domain::grid::ConverterEnd::To,
+        };
+        let mut state = UiState::default();
+        state.apply(&UiAction::InspectHvdc {
+            link: station.link,
+            station: Some(station),
+        });
+        state.apply(&UiAction::SetHvdcTab(
+            super::super::links::HvdcTab::Dispatch,
+        ));
+        state.hvdc_range.mw = "450".into();
+        app.insert_resource(state)
+            .init_resource::<CommitmentForm>()
+            .add_systems(Update, reset_planning_state);
+        app.update();
+        let state = app.world().resource::<UiState>();
+        assert_eq!(state.hvdc_selected, Some(station.link));
+        assert_eq!(state.hvdc_terminal, Some(station));
+        assert_eq!(state.hvdc_tab, super::super::links::HvdcTab::Dispatch);
+        assert_eq!(state.hvdc_range, Default::default());
     }
 
     #[test]

@@ -6,13 +6,21 @@ use super::{DayPhase, GameSession, Incident};
 use crate::company::CapitalChange;
 use crate::demand::{ForecastPoint, hourly_forecast};
 use crate::generation::{BatteryFlow, BatteryMode, BatteryTotals, Plant, PlantStatus};
-use crate::grid::power_system::{HourEnd, day_hydro_budget};
+use crate::grid::power_system::day_hydro_budget;
 use crate::grid::{GridMode, HydroScheduleView, LineStatus, TickSummary};
 use crate::ids::{CellCoord, CityId, LineId, NodeId, PlantId};
 use crate::region::PlantKind;
 use crate::regulation::{Licence, compute_rate_review};
 use crate::time::{SimMonth, TICKS_PER_HOUR};
 use crate::units::{Hertz, MegawattHours, Megawatts, Money, Price, Ratio};
+
+/// A sample used by the minimum-generation warning, before optional battery charging.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MinimumGenerationPoint {
+    pub tick: u32,
+    pub committed_minimum: Megawatts,
+    pub net_load: Megawatts,
+}
 
 /// One plant as the player sees it.
 #[derive(Debug, Clone, PartialEq)]
@@ -70,7 +78,7 @@ pub struct CityView {
     pub name_key: String,
     pub cell: CellCoord,
     pub node: NodeId,
-    /// Whether the city is energised and therefore a customer.
+    /// Whether the city is an active customer; unsupported remote islands wait inactive.
     pub connected: bool,
 }
 
@@ -82,8 +90,10 @@ pub struct CityView {
 pub struct CityDetail {
     pub id: CityId,
     pub name_key: String,
-    /// Whether the city is energised and therefore a customer.
+    /// Whether the city is an active customer; a physical route alone is insufficient.
     pub connected: bool,
+    /// A physical route exists, but this remote island has no commissioned synchronous source.
+    pub inactive: bool,
     pub base_load: Megawatts,
     /// `base_load` over the connected cities' total base load; zero for an
     /// unconnected city.
@@ -374,7 +384,7 @@ impl GameSession {
                 name_key: city.def().name_key.clone(),
                 cell: city.def().cell,
                 node: city.node(),
-                connected: self.power.network().is_connected(city.node()),
+                connected: self.power.node_active(city.node()),
             })
             .collect()
     }
@@ -384,13 +394,14 @@ impl GameSession {
     pub fn city_detail(&self, id: CityId) -> Option<CityDetail> {
         let city = self.power.cities().get(&id)?;
         let network = self.power.network();
-        let connected = network.is_connected(city.node());
+        let connected = self.power.node_active(city.node());
+        let inactive = network.is_connected(city.node()) && !connected;
         let base_load = city.def().base_load;
         let connected_load: Megawatts = self
             .power
             .cities()
             .values()
-            .filter(|other| network.is_connected(other.node()))
+            .filter(|other| self.power.node_active(other.node()))
             .map(|other| other.def().base_load)
             .sum();
         let share = if connected && connected_load > Megawatts::ZERO {
@@ -415,7 +426,7 @@ impl GameSession {
                 .power
                 .cities()
                 .values()
-                .filter(|other| network.is_connected(other.node()))
+                .filter(|other| self.power.node_active(other.node()))
                 .map(|other| {
                     let other_factor = self.region.load_factor(other.id(), month, tick.tick);
                     identical &= other_factor == factor;
@@ -455,6 +466,7 @@ impl GameSession {
             id,
             name_key: city.def().name_key.clone(),
             connected,
+            inactive,
             base_load,
             share,
             peak: peak.mean,
@@ -498,12 +510,11 @@ impl GameSession {
     /// The noise-free demand forecast of connected cities for each hour of
     /// the current month's representative day.
     pub fn hourly_forecast(&self) -> [ForecastPoint; 24] {
-        let network = self.power.network();
         let connected = self
             .power
             .cities()
             .values()
-            .filter(|city| network.is_connected(city.node()));
+            .filter(|city| self.power.node_active(city.node()));
         hourly_forecast(connected, &self.region, self.clock.month())
     }
 
@@ -607,7 +618,7 @@ impl GameSession {
     ///
     /// Each hour is judged at its endpoints and connected cities' local-hour
     /// bends by the evaluator the capacity check and operating-time sizing use
-    /// ([`HourEnd`]); the hour's excess is that of the sample with the lower
+    /// (`HourEnd`); the hour's excess is that of the sample with the lower
     /// net load, earliest on ties, and the warning's `net_load` is that sample's.
     /// Reads the plants'
     /// commitment patterns (not the per-day suppression override), so it is
@@ -627,18 +638,18 @@ impl GameSession {
                     }
                 });
         }
-        let hours = self
-            .power
-            .committed_minimum_hour_ends(&self.region, self.clock.month());
         let mut worst: Option<MinimumGenerationWarning> = None;
-        for (hour, (committed_minimum, ends)) in hours.into_iter().enumerate() {
-            let end = HourEnd::worse_by(ends, |end| committed_minimum - end.net_load());
-            let net_load = end.net_load();
+        for MinimumGenerationPoint {
+            tick,
+            committed_minimum,
+            net_load,
+        } in self.minimum_generation_forecast()
+        {
             let excess = committed_minimum - net_load;
             let beats_worst = worst.map_or(excess > Megawatts::ZERO, |w| excess > w.excess);
             if beats_worst {
                 worst = Some(MinimumGenerationWarning {
-                    hour: hour as u8,
+                    hour: (tick / TICKS_PER_HOUR) as u8,
                     committed_minimum,
                     net_load,
                     excess,
@@ -646,6 +657,35 @@ impl GameSession {
             }
         }
         worst
+    }
+
+    /// Exact minimum-warning samples for one controller. For multi-area regions,
+    /// call on `island_session(id)` so other islands cannot absorb a local surplus.
+    pub fn minimum_generation_forecast(&self) -> Vec<MinimumGenerationPoint> {
+        let minutes = self.region.hour_sample_minutes(
+            self.power
+                .cities()
+                .values()
+                .filter(|city| self.power.node_active(city.node()))
+                .map(|city| city.id()),
+            self.clock.month(),
+        );
+        self.power
+            .committed_minimum_hour_ends(&self.region, self.clock.month())
+            .into_iter()
+            .enumerate()
+            .flat_map(|(hour, (committed_minimum, ends))| {
+                minutes
+                    .iter()
+                    .copied()
+                    .zip(ends)
+                    .map(move |(minute, end)| MinimumGenerationPoint {
+                        tick: hour as u32 * TICKS_PER_HOUR + minute,
+                        committed_minimum,
+                        net_load: end.net_load(),
+                    })
+            })
+            .collect()
     }
 
     /// The Planning-time check of the commitment plan against the demand

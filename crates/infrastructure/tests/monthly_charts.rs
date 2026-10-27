@@ -64,6 +64,71 @@ fn directory_snapshot_has_binary_files_per_month_and_restores_exactly() {
     );
 }
 
+#[test]
+fn long_run_chart_history_can_exceed_the_single_file_limit_without_losing_months() {
+    use application::projections::{Projection, Projections};
+    use domain::{events::DomainEvent, session::DayPhase, state::State};
+    use infrastructure::save::MAX_SAVE_BYTES;
+
+    let dir = TempDir::new().unwrap();
+    let store = FileSaveStore::new(dir.path().into()).with_monthly_charts();
+    let mut saved = bundle(&store);
+    let catalog =
+        RonRegionCatalog::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/regions"));
+    let game = Game::start_new(
+        &catalog,
+        &RegionId::new("western_interconnection"),
+        7,
+        GameSettings::default(),
+        Box::new(InMemoryCommandLog::default()),
+    )
+    .unwrap();
+    let snapshot = saved.checkpoint.snapshot.as_mut().unwrap();
+    let mut projections = Projections::from_state_bytes(&snapshot.projections).unwrap();
+    let (_, charts) = projections
+        .clone()
+        .split_charts(saved.checkpoint.summary.month)
+        .unwrap();
+    let mut report = projections.monthly_reports.latest().unwrap().clone();
+    // Reuse a real complete day to build a long history without simulating decades.
+    // Every individual month remains small; only their combined decoded size exceeds 64 MiB.
+    for _ in 0..(MAX_SAVE_BYTES / charts[0].bytes.len() + 2) {
+        report.month = report.month.next();
+        projections.timeline.apply(
+            &DomainEvent::PhaseChanged {
+                from: DayPhase::Planning,
+                to: DayPhase::Operating,
+            },
+            game.session(),
+        );
+        projections.timeline.apply(
+            &DomainEvent::MonthClosed(Box::new(report.clone())),
+            game.session(),
+        );
+    }
+    let months = projections.timeline.completed_days().len();
+    snapshot.projections = projections.state_bytes();
+    assert!(snapshot.projections.len() > MAX_SAVE_BYTES);
+    saved.checkpoint.summary.month = report.month;
+    drop(projections);
+
+    store.write(&saved, &SaveTarget::Create, &|| false).unwrap();
+    let (decoded, _) = store.read(&saved.metadata.slot).unwrap();
+    assert!(decoded == saved, "the complete checkpoint must survive");
+    let restored =
+        Projections::from_state_bytes(&decoded.checkpoint.snapshot.as_ref().unwrap().projections)
+            .unwrap();
+    assert_eq!(restored.timeline.completed_days().len(), months);
+    assert!(store.list().unwrap()[0].entry.is_ok());
+    let path = slot(&dir, &saved.metadata.slot);
+    drop(restored);
+    drop(decoded);
+    drop(saved);
+    let archive = infrastructure::save::read_archive_directory(&path).unwrap();
+    let backup = infrastructure::backup::encode_backup(&archive).unwrap();
+    assert!(infrastructure::backup::decode_backup(&backup).unwrap() == archive);
+}
+
 fn slot(dir: &TempDir, id: &SaveId) -> std::path::PathBuf {
     dir.path().join(format!("{}.mgsave", id.as_str()))
 }
@@ -533,7 +598,7 @@ fn wind_and_overlapping_battery_policy_restore_through_flat_and_monthly_snapshot
             },
             checkpoint: game.checkpoint(),
         };
-        assert_eq!(saved.checkpoint.snapshot.as_ref().unwrap().schema, 4);
+        assert_eq!(saved.checkpoint.snapshot.as_ref().unwrap().schema, 5);
         store.write(&saved, &SaveTarget::Create, &|| false).unwrap();
         let (decoded, region) = store.read(&saved.metadata.slot).unwrap();
         let mut resumed = decoded

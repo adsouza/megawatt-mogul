@@ -23,7 +23,8 @@
   A15 extends battery discharge eligibility to 06:00–24:00 and charging to 00:00–22:00
   (§29, 2026-10-26, rules 21). A16 standardizes solar calibration and counts annual clouds once
   (§30, 2026-10-26, rules 22). A17 rebalances Southern China’s starting economy
-  (§31, 2026-10-26, rules 23).
+  (§31, 2026-10-26, rules 23). A19 proposes geothermal plants with exploration risk and
+  reservoir decline (§33, 2026-10-27, targeting rules 24).
 - **Engine:** Rust 1.98, Bevy 0.20, bevy_egui 0.43, bevy-inspector-egui 0.38
 
 ## 1. Vision and goals
@@ -2191,7 +2192,10 @@ from `LogDir`, and a failure to access it does not prevent boot or a new game. T
   captured state or an unconditional overwrite. A newer autosave supersedes older pending retries,
   which must never replace it. Manual saves and other runs' autosaves are never rotated away.
 - Bound decoding to 64 MiB per save file and 1,000,000 commands, with checked lengths and nesting
-  limits. Oversized captures fail before publication with `SaveTooLarge`; oversized, truncated,
+  limits. Monthly directory saves retain a 64 MiB combined compressed chart limit and a separate
+  512 MiB limit for combined decoded chart history and reconstructed projections; each individual
+  monthly file remains bounded to 64 MiB both compressed and decoded. Oversized captures fail
+  before publication with `SaveTooLarge`; oversized, truncated,
   malformed or checksum-invalid files return typed errors, never a partial replay or panic.
   Limits are storage limits, not permission to truncate history.
 
@@ -4316,3 +4320,331 @@ a disposable worker. Successful import creates a new manual slot and does not re
 game. The native infrastructure tool shares this codec. Existing rules, portable schemas, source
 hashes and historical compatibility fences remain unchanged; cross-target future float identity
 is not promised. Current runtime evidence supports desktop Chromium; Firefox/Safari await checks.
+
+## 33. Amendment A19: Geothermal plants with reservoir decline (2026-10-27)
+
+**Status:** Proposed design, not yet implemented. It targets simulation rules **24**, portable state
+schema **5** and region schema **5**. The implementation plan follows approval.
+
+### 33.1 Why
+
+Geothermal is the one firm, fuel-free generator the game lacks. It belongs to the game's teaching
+goal because its lessons are different from every shipped kind:
+
+- **Where, not what.** It can only be built on a hydrothermal resource. Real capacity is concentrated
+  in the Western Interconnection (The Geysers, the Imperial Valley and Salton Sea, Coso, northern
+  Nevada, Utah, and Cerro Prieto in Baja California) and in Continental Europe (Larderello and Monte
+  Amiata in Tuscany, and western Turkey). The other six shipped regions have little or none.
+- **Risk comes first.** Real projects drill exploration wells before committing to the power plant.
+  About 60% of exploration-phase wells succeed worldwide, rising to about 75% in development and over
+  80% in operation (IFC global study, 2013). First wells in a new field fare worse; one study of
+  Iceland's high-temperature fields found 43% (ÍSOR).
+- **Fields wear down.** Steam and brine production declines as a field is drawn down. Reported
+  declines are a few percent a year, for example about 2.3% at Hengill in Iceland and 2.7% at Patuha in
+  Indonesia. Operators drill **makeup wells** to restore output, and each round buys less. The Geysers
+  is the classic warning: overbuilt in the 1980s, its steam pressure fell faster than planned.
+
+Sources:
+[IFC study coverage (ThinkGeoEnergy)](https://www.thinkgeoenergy.com/global-study-on-success-of-drilling-geothermal-wells-by-ifc/),
+[Icelandic well success (ThinkGeoEnergy)](https://www.thinkgeoenergy.com/report-success-of-high-temperature-geothermal-wells-in-iceland/),
+[Hengill makeup wells (ThinkGeoEnergy)](https://www.thinkgeoenergy.com/additional-wells-required-to-maintain-output-hellisheidi-geothermal-plant/),
+[Patuha decline (Garuda)](https://garuda.kemdikbud.go.id/documents/detail/1874396).
+Confirm each figure against its primary source before authoring the final tuning.
+
+### 33.2 Goals, non-goals, anti-goals
+
+**Goals**
+
+- Add a buildable geothermal plant. It is dispatchable, firm and fuel-free, and it can only be built
+  on cells with a geothermal resource.
+- Every region ships a geothermal plant spec. Regions without a resource ship an all-zero resource
+  field. There, the build row stays visible but disabled, with a "no geothermal resource in this
+  region" reason.
+- **Exploration risk is bounded and surfaces early.** A short, cheap exploration stage ends with a
+  success-or-dry result before the expensive construction begins.
+- **Lead time stays within two years.** The initial tuning is 12 played months in total, exploration
+  included. No geothermal tuning may exceed 24 played months.
+- **Fields decline gradually**, and **makeup drilling** on an existing plant pushes back at rising
+  cost.
+- **The player notices.** Decline and dry wells reach the player in the paused Planning and Review
+  phases and on the plant card, because many players run Operating at 32×, where real-time toasts
+  fly by.
+- **Geothermal is a real option.** At a good site near a city, it is the cheapest firm baseload energy
+  over its life, even after expected dry-well losses, decline and makeup drilling. At a marginal site,
+  gas wins. A test that reads the shipped region data enforces both halves (§33.6).
+
+**Non-goals**
+
+- No enhanced or advanced geothermal (EGS, closed-loop systems or buildable-anywhere drilling). These
+  are emerging technology; revisit them later.
+- No other decline remedies: no reinjection or wastewater recharge, no production caps, and no
+  turbine or binary-cycle retrofits. Makeup drilling is the only lever.
+- No shared reservoirs. Each plant's field declines independently; nearby plants do not draw down
+  each other's field. The Geysers-style interference is a candidate for a later amendment.
+- No starter-fleet changes in any region. Geothermal is a player investment.
+- No carbon price. Geothermal's advantage over fossil plants is fuel cost alone, as today.
+- No direct-use heat, district heating or combined heat and power.
+
+**Anti-goals** (failures even if everything works)
+
+- Geothermal is an obvious non-starter in the regions that offer it, or the obvious choice wherever
+  a site exists.
+- Decline happens silently: a 32× player loses a third of a plant's output without ever being told
+  why or what to do.
+- Notices nag: a row, toast or lesson repeats every month for a known, accepted decline.
+- Dry wells feel like a trap: the loss is large, arrives late, or is unexplained.
+- Game speed, batch size, reload or save/resume changes any outcome.
+
+### 33.3 Player contract
+
+**Building and exploration**
+
+1. The player selects a cell with geothermal potential at or above the spec's siting minimum and
+   orders a geothermal plant in Planning, like any other plant. The quote shows:
+   - total capital, build months and nameplate MW;
+   - the exploration stage's months and the capital at risk during it;
+   - the chance of success at this cell;
+   - the expected output at this cell (nameplate × the cell's field quality, below).
+2. **Exploration stage** (initial tuning: 3 months). The plant is under construction and paying
+   instalments on the exploration share of its capital (initial tuning: 12%).
+3. At the month close that ends exploration, the result is revealed:
+   - **Success:** construction continues for the remaining months (initial tuning: 9), paying the
+     rest of the capital in instalments, and commissions as usual. Under rules 20, a newly
+     commissioned dispatchable plant starts all-day committed with AGC on, which suits baseload.
+   - **Dry:** the project stops. Instalments already paid are lost. The plant and its grid node are
+     removed; its ID is never reused, and histories and ledger entries keep referring to it. Its
+     cell is marked **explored, dry**: no plant can be ordered there again, and the map shows it.
+     Neighbouring cells stay available.
+   - **No lines while exploring.** A line order with an endpoint at an exploring plant's node is
+     refused with a reason ("wait for exploration results"), so a dry result never strands a line
+     or line capital. The 9 remaining construction months leave time to build the connection after
+     success.
+4. The player bears the loss. Dry-well spending never enters the rate base, depreciation or the
+   operating costs in the revenue requirement, so the regulator does not recover it from customers.
+5. Plant orders cannot be cancelled today (only line and HVDC link orders can), and this amendment
+   adds no plant cancellation.
+
+**Operation and decline**
+
+6. A commissioned plant's **available capacity** is `nameplate × field`. The field is a ratio in
+   (0, 1] that starts at the cell's **field quality** and declines at every month close by the
+   region's monthly decline rate. Available capacity bounds output, dispatch targets and the
+   commitment plan. Minimum stable output is `min_stable × available capacity`. Firm capacity at a
+   rate review is `capacity_credit × available capacity` at that review.
+7. Fixed O&M, marginal cost, ramp rate and start-up are unaffected by decline.
+
+**Makeup drilling**
+
+8. In Planning, the plant card offers **Drill makeup wells** with a quote: capital, months and the
+   capacity it restores (from MW to MW). It is a construction project on an existing plant, paid in
+   equal monthly instalments. The plant keeps running and declining while drilling. Only one round
+   runs at a time, per plant.
+9. On completion, the field rises to that round's **ceiling**. The round's capital is added to the
+   plant's rate-base entry as new capital in that review year. It depreciates straight-line over the
+   plant's remaining book life, and A12's held-for-future-use test treats it as new capital whose
+   firm MW is `capacity_credit × MW restored`.
+10. Each round's ceiling is lower than the last: round *k* restores to
+    `initial field × (1 − k × ceiling_step)`, never lowering the current field. Each round costs the
+    same, so later rounds buy less. The button is disabled with a reason when a round would restore
+    less than the minimum worthwhile gain (region data).
+11. Makeup wells carry no dry-well risk: they are drilled into a proven field.
+
+### 33.4 Model
+
+- **Kind.** Append `PlantKind::Geothermal` as the ninth asset kind, with stable portable tag **8**,
+  readable only at schema ≥ 5. Tags 0–7 and the existing kind order do not change. Geothermal is
+  dispatchable (`is_dispatchable() == true`), not variable and not storage, so commitment, dispatch,
+  AGC and protection apply unchanged.
+- **Resource.** Add `Cell.geothermal_potential: Ratio`, a geographic field rasterised by
+  infrastructure from region data, using the same base-plus-blobs authoring format as
+  `hydro_potential`. Add `SitingRule::GeothermalSite { min }` with its own schema-gated tag, and
+  `SiteError::NoGeothermalSite`.
+- **Region parameters.** Add `GeothermalParams` to region data:
+  - success odds at the siting minimum and at full potential;
+  - field quality at the siting minimum and at full potential;
+  - exploration months and capital share;
+  - the monthly decline rate;
+  - makeup capital, months, ceiling step and minimum worthwhile gain.
+
+  Odds and field quality interpolate linearly in potential between the siting minimum and 1.0.
+  Validation requires probabilities and ratios in range, exploration months shorter than
+  `build_months`, and `build_months` ≤ 24.
+- **Why potential sets both odds and field quality.** Odds alone cannot meet the balance target: the
+  expected dry-well loss (about 5% of capital at a mid-quality site) is too small to let gas win
+  anywhere. A marginal resource must also yield less output for the same plant.
+- **Plant state.** A geothermal plant carries:
+  - its construction stage (exploring or building);
+  - its initial field and current field;
+  - its count of completed makeup rounds;
+  - any makeup project in progress (months left, instalments);
+  - its decline-notice thresholds (§33.7).
+
+  `PlantSpec` stays immutable per plant; decline lives in plant state.
+- **The exploration roll.** One `SimRng` draw per plant, at the month close that ends its
+  exploration, in plant-ID order, after construction progress and before commissioning. A game that
+  never completes a geothermal exploration makes no new draws, so its RNG stream, and every existing
+  golden digest that depends on it, is unchanged.
+- **Decline arithmetic.** Apply the monthly rate by multiplication (`field × (1 − monthly_rate)`).
+  Do not call `powf`, `exp` or `ln` in the simulation. Basic IEEE operations round identically on
+  native and WebAssembly builds; libm functions need not.
+- **Events.** Add typed domain events, with no strings: `ExplorationSucceeded`, `ExplorationDry`
+  (with the capital lost), `FieldDeclineThreshold` (plant and threshold), `MakeupDrillingOrdered`
+  and `MakeupDrillingCompleted` (with MW restored).
+- **Commands.**
+  - `DrillMakeupWells { plant }` is refused with a `DomainError` outside Planning, for a
+    non-geothermal plant, while a round is in progress, or below the minimum worthwhile gain. Like
+    every other construction order, it does not check cash; bankruptcy remains the only cash limit.
+  - `DismissFieldNotice { plant }` records **Not now** in the plant's notice state, so the dismissal
+    is journaled and survives save and resume. It is refused when no notice is showing.
+  - `BuildLine` gains the exploring-plant refusal (§33.3).
+
+### 33.5 Region data and initial tuning
+
+All tuning lives in region RON files and the test fixture, never in code. The initial values below
+are a starting point; the balance test (§33.6) decides the final ones, per region and per Continental
+Europe economic zone that contains sites.
+
+| Field | Initial value | Basis |
+|---|---:|---|
+| Nameplate | 150 MW | Real units are 20–150 MW; small units make siting the constraint |
+| Minimum stable / ramp | 50% / 2 MW per min | Baseload-oriented flash plant |
+| Start-up time / cost | 12 h / $100k | Slow to restart; avoid cycling |
+| Marginal cost | $5/MWh | No fuel; chemicals and variable O&M |
+| Capital cost | $225M ($1,500/kW) | On the shipped hydro's scale; compressed like other kinds (§18) |
+| Fixed O&M | $750k per month | High for a fuel-free plant, as in reality |
+| Build months (exploration included) | 12 (3 + 9) | Within the 24-month cap; between coal and hydro |
+| Exploration capital share | 12% | |
+| Capacity credit / book life | 0.95 / 360 months | Thermal credit, applied to available capacity |
+| Success odds (site minimum → full potential) | 0.45 → 0.80 | IFC and ÍSOR ranges |
+| Field quality (site minimum → full potential) | 0.55 → 1.00 | Chosen so marginal sites lose to gas |
+| Decline | 3% a year, as a monthly rate | Reported field declines of 2–5% a year |
+| Makeup round | 10% of capital, 3 months | |
+| Ceiling step / minimum worthwhile gain | 5% / 3% of nameplate | |
+| Siting minimum | 0.3 | |
+
+- **Resource maps.** Author blobs over operating and well-documented fields, each with a comment
+  naming the field and its source, as the hydro and wind maps do. The Western Interconnection needs
+  The Geysers, Imperial Valley and Salton Sea, Coso, northern Nevada, Utah (Roosevelt Hot Springs and
+  Cove Fort), and Cerro Prieto in Baja California. Continental Europe needs Larderello–Travale, Monte
+  Amiata and western Turkey (the Büyük Menderes and Gediz grabens). Smaller fields may be added where
+  sourced. All other regions ship `geothermal_potential: (base: 0.0, blobs: [])`.
+- **Continental Europe economic zones.** Italy and Turkey are both in economic zone 0 by authoring
+  choice (see the region file's header), so they share base geothermal costs. No new zones are
+  added. The balance test still checks the two countries separately (§33.6).
+- Update §3.2's plant table and its capacity-credit and book-life lists to include geothermal.
+
+### 33.6 Economics and the balance target
+
+Under cost-of-service ratemaking (§2.5), capital-heavy, fuel-free plants are naturally attractive:
+capital grows the rate base that earns the allowed return, and low operating cost per MWh improves
+the cost-performance adjustment. The risks that could make geothermal a non-starter are cash during
+the build, unrecovered dry-well losses, line distance from remote sites, and decline. The opposite
+risk is that a hydro-like plant without a water budget dominates.
+
+Add a balance test that reads the shipped region data. It runs for the Western Interconnection, and
+separately for Italy and Turkey in Continental Europe. Each run compares the expected lifetime cost per MWh served,
+at a 90% capacity-factor baseload duty, including capital recovery at the region's base return,
+depreciation, fixed O&M and marginal cost:
+
+- **Good site:** the highest-potential cell within a modest distance of a city in that region or
+  country, including the line cost to that city. Geothermal's expected cost must be lower than CCGT,
+  coal and nuclear at the same duty and city.
+- **Marginal site:** a cell at the siting minimum, with the same line distance. Geothermal's expected
+  cost must be higher than CCGT's.
+- Geothermal's expected cost includes:
+  - the expected dry-well loss: `(1 − odds) × exploration capital`, spread over the expected
+    successful plant;
+  - output that declines at the monthly rate;
+  - a makeup policy of drilling whenever a decline notice fires and a round is worthwhile.
+
+The test reports the margins it found so retuning shows how close each region is to the line. The
+builder chooses the exact distance and line-cost treatment, documented in the test.
+
+### 33.7 HUD, notices and lessons
+
+Notices go where the game pauses, Planning and Review, and on the plant card, so they work at 32×.
+
+- **Build menu and map.**
+  - A ninth build row: geothermal, disabled with a reason in regions without sites. In a game
+    started before this amendment (§33.8), the reason is "not available in games started before
+    geothermal", so it doesn't claim the region has no resource.
+  - A resource overlay with the same legend and contrast conventions as hydro and wind.
+  - Hovering or selecting a cell shows its potential, success odds and expected output.
+  - Explored-dry cells get a distinct map marker and tooltip.
+  - The build list must fit at the minimum supported window size; adding a fourth region's card
+    previously overflowed a fixed layout.
+- **Exploration.** While exploring, the construction card shows the months left, the chance of
+  success and the capital at risk. The outcome produces:
+  - a Review lesson that month: success, or dry with what was lost and why;
+  - a toast, and a map change for a dry result.
+- **Decline notices.** A notice fires when available capacity first falls below 90%, 80%, 70% and so
+  on of the plant's **commissioned** capacity. Notices are relative to the plant's own starting
+  output, not nameplate, so marginal sites are not flagged at commissioning. Restoring capacity above
+  a threshold re-arms it. Each crossing produces:
+  - a Review lesson, the first time per plant, explaining decline and makeup drilling, and a shorter
+    lesson for later crossings, within the existing three-lessons-per-month limit and its priority
+    order;
+  - a Planning warning row, "Field output falling at <plant>", with a **Show plant** button that
+    selects the plant and opens its card. The row persists across Plannings until the player drills,
+    the field is restored, or the player chooses **Not now** (`DismissFieldNotice`), which hides it
+  until the next threshold, including after save and resume.
+- **Plant card.** Shows the field ("Field: 87% of commissioned output, falling about 3% a year"),
+  makeup rounds completed, and the **Drill makeup wells** quote and button in Planning. The button
+  is disabled with a reason outside Planning, while a round is in progress, or when not
+  worthwhile. In Operating, the card shows the same field line read-only.
+- **3D diorama.** A recognisable geothermal plant (cooling towers with steam and a well pad) within
+  the existing footprint, with the usual construction, selection and picking behaviour. Any steam
+  animation is visual only.
+- Charts, reports, the supply stack, plant lists, histories and event translations include
+  geothermal. New text goes in `assets/locales/en-US/*.ftl` with keys in `l10n/keys.rs`. Panels
+  follow the presenter → draw → `UiAction` → `dispatch` pattern.
+
+### 33.8 Persistence and compatibility
+
+- Advance simulation rules **23 → 24**, portable state schema **4 → 5** and region schema **4 → 5**.
+- Keep the schema-4 reader and canonical encoder. Verify old bytes, hashes and archived regions with
+  schema-4 semantics first; only then upcast in memory. A schema-4 game has no geothermal plants,
+  explored-dry cells or new RNG draws, so the upcast adds none.
+- **Old games load and play on, without geothermal.** Unlike A11, which gave resumed games the new
+  wind data, a game started before this amendment never gains geothermal. Saved games exist only
+  for the developer, so per-region frozen copies of the site data aren't worth maintaining.
+  - Every archived pre-geothermal region, whatever its ID, gets one small frozen stub at load time:
+    `geothermal_unavailable_v1.ron`, alongside A11's frozen wind extensions. It holds an all-zero
+    `geothermal_potential`, a placeholder geothermal spec, and a marker that geothermal is
+    unavailable in this game. The archived snapshot bytes are unchanged.
+  - Pre-wind archives get the wind extension first, then this stub.
+  - The schema-5 save records the marker, so later loads don't depend on the compiled stub.
+  - New-format region files must declare the geothermal fields. The stub applies only to archived
+    schemas ≤ 4 and is never a silent default for malformed new content.
+- The command log, monthly chart archives and every schema gate recognise schema 5 and keep reading
+  schemas 1–4.
+
+### 33.9 Acceptance
+
+- Kind tag 8 and the siting tag round-trip at schema 5 and are refused at schema ≤ 4. Classifiers:
+  dispatchable, not variable, not storage.
+- Siting accepts at the minimum and refuses below it, on water, on occupied cells and on explored-dry
+  cells. A line order to an exploring plant is refused. A dry result leaves no node, line or rate-base
+  entry behind.
+- Properties (`proptest`):
+  - success odds and field quality lie within their configured bounds and are monotone in potential;
+  - between makeup rounds the field never rises and stays in (0, 1];
+  - ceilings fall strictly with each round;
+  - available capacity, minimum output and firm capacity scale with the field;
+  - a dry result never adds to the rate base, depreciation or revenue requirement.
+- The exploration roll is deterministic: identical across speeds, batch sizes and save/resume at any
+  month, and absent from games without geothermal.
+- Decline notices fire exactly once per threshold crossing, re-arm after restoration, and **Not now**
+  hides the Planning row until the next threshold, across save and resume.
+- The balance test (§33.6) passes for the Western Interconnection, Italy and Turkey.
+- Schema-4 golden saves in every phase restore unchanged, then continue and re-save under schema 5.
+  In a restored Western Interconnection game, geothermal cannot be ordered on any cell, the build row
+  shows the "started before geothermal" reason, and the marker survives a further save and resume.
+  Schema-5 saves mid-exploration, mid-makeup and after a dry result resume identically to
+  uninterrupted play.
+- Glue tests send each new `UiAction` through the real `dispatch`. A fit test covers the widest
+  geothermal UI states (nine build rows, the plant card with a makeup quote, the Planning warning) at
+  the minimum window size. l10n coverage includes every new key.
+- Hands-off starter service in every shipped region is unchanged.
+- The native launch smoke passes. A 32× playtest in the Western Interconnection covers a dry well, a
+  successful build, at least two decline notices and one makeup round.

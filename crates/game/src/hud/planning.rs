@@ -36,7 +36,7 @@ use super::construction::{
 use super::forecast_chart::{ForecastModel, draw_forecast_chart};
 use super::layout::{Edge, HudArea, OuterPanel};
 use super::planning_cache::{PlanningForecast, PlanningForecastCache};
-use super::planning_warnings::{WarningsModel, draw_warnings, warnings_for};
+use super::planning_warnings::{WarningsModel, draw_warnings};
 use super::tariff::{TariffModel, draw_tariff, tariff_model};
 use super::theme::TextTone;
 use super::ui_state::{CommitmentForm, PlanningTab, UiState};
@@ -58,7 +58,7 @@ pub const PLANNING_PANEL: OuterPanel = OuterPanel {
 pub enum PlanningContent {
     Commitments {
         warnings: WarningsModel,
-        grid: CommitmentModel,
+        grid: Box<CommitmentModel>,
     },
     Forecast(Box<ForecastModel>),
     Tariff(TariffModel),
@@ -110,6 +110,13 @@ fn planning_model_for(
     if game.session().phase() != DayPhase::Planning {
         return None;
     }
+    let mut local_ui = ui.clone();
+    local_ui.island = if ui.tab == PlanningTab::Commitments {
+        super::commitment::selected_commitment_island(game.session(), ui)
+    } else {
+        super::ui_state::island_scope(game.session(), ui.island)
+    };
+    let ui = &local_ui;
     let tab = |tab: PlanningTab, label: String| ToggleModel {
         button: ButtonModel::new(label, UiAction::SetPlanningTab(tab)),
         on: ui.tab == tab,
@@ -132,35 +139,45 @@ fn planning_model_for(
         begin_hint: unsaved.then(|| l10n.text("commitment-unsaved")),
         content: match ui.tab {
             PlanningTab::Commitments => PlanningContent::Commitments {
-                warnings: warnings_for(
-                    scoped
-                        .as_ref()
-                        .map_or(forecast.shortfall, |s| s.capacity_shortfall_check()),
-                    scoped
-                        .as_ref()
-                        .map_or(forecast.minimum, |s| s.minimum_generation_check()),
-                    &scoped
-                        .as_ref()
-                        .map(|s| {
-                            super::planning_warnings::dry_hydro_plants(
-                                &s.plant_views(),
-                                &crate::l10n::Names::new(l10n, s),
+                warnings: if scoped.is_some() {
+                    super::planning_warnings::warnings_for_session(game.session(), l10n, ui)
+                } else {
+                    let mut warnings = forecast.warnings.clone();
+                    warnings.expanded = ui.warnings_open && warnings.more.is_some();
+                    if let Some(more) = &mut warnings.more {
+                        more.on = warnings.expanded;
+                        more.button.label = if warnings.expanded {
+                            l10n.text("warnings-less")
+                        } else {
+                            l10n.args(
+                                "warnings-more",
+                                &[("count", (warnings.rows.len() as u32 - 1).into())],
                             )
-                        })
-                        .unwrap_or_else(|| forecast.dry_hydro.clone()),
-                    ui.warnings_open,
-                    l10n,
-                ),
-                grid: commitment_model(game, l10n, ui, form),
+                        };
+                    }
+                    warnings
+                },
+                grid: Box::new(commitment_model(game, l10n, ui, form)),
             },
             PlanningTab::Forecast => {
                 let mut chart = if let Some(s) = &scoped {
-                    super::forecast_chart::forecast_model_for_session(
+                    let mut chart = super::forecast_chart::forecast_model_for_session(
                         s,
                         l10n,
                         ui,
                         &s.supply_forecast(),
-                    )
+                    );
+                    chart.link_issues =
+                        super::links::planning_issues(game.session(), l10n, ui.island);
+                    chart.constraint_label = l10n.args(
+                        "forecast-hvdc-constraints",
+                        &[("count", (chart.link_issues.len() as u32).into())],
+                    );
+                    if let Some(card) = ui.island.and_then(|id| forecast.activations.get(&id)) {
+                        chart.activation = Some(card.review.clone());
+                        chart.service_note = Some(l10n.text("island-inactive-status"));
+                    }
+                    chart
                 } else {
                     forecast.chart.clone()
                 };
@@ -244,6 +261,13 @@ pub(super) fn planning_panel(
     mut sink: ActionSink,
 ) -> Result {
     let (l10n, style) = text;
+    if sink.ui_state().tab == PlanningTab::Commitments
+        && let Some(island) =
+            super::commitment::selected_commitment_island(session.0.session(), sink.ui_state())
+        && sink.ui_state().island != Some(island)
+    {
+        dispatch([UiAction::SelectIsland(Some(island))], &mut sink);
+    }
     let Some(forecast) = forecast.get() else {
         return Ok(());
     };
@@ -286,8 +310,66 @@ mod tests {
     }
 
     #[test]
+    fn a_single_grid_topology_cache_never_creates_a_zone_planner_or_warnings() {
+        let mut game = shipped_game(
+            "india_nepal_bhutan",
+            Box::new(application::InMemoryCommandLog::default()),
+        );
+        for command in [
+            Command::BeginOperating,
+            Command::AdvanceTicks { n: 1440 },
+            Command::FinishReview,
+        ] {
+            game.execute(command).unwrap();
+        }
+        let id = *game.session().power().island_nodes().keys().next().unwrap();
+        let l10n = shipped_l10n();
+        for tab in [
+            PlanningTab::Commitments,
+            PlanningTab::Forecast,
+            PlanningTab::History,
+        ] {
+            let unscoped = UiState {
+                tab,
+                ..Default::default()
+            };
+            let stale = UiState {
+                island: Some(id),
+                last_planning_island: Some(id),
+                ..unscoped.clone()
+            };
+            assert_eq!(build(&game, &stale), build(&game, &unscoped), "{tab:?}");
+            assert_eq!(
+                super::super::forecast_model(&game, &l10n, &stale),
+                super::super::forecast_model(&game, &l10n, &unscoped),
+            );
+        }
+        let commitments = super::super::commitment_model(
+            &game,
+            &l10n,
+            &UiState::default(),
+            &CommitmentForm::default(),
+        );
+        assert!(commitments.scopes.is_empty());
+        assert_eq!(
+            commitments
+                .groups
+                .iter()
+                .map(|group| group.rows.len())
+                .sum::<usize>(),
+            game.session().plant_views().len(),
+        );
+        let forecast = super::super::PlanningForecast::of(&game, &l10n);
+        assert!(forecast.activations.is_empty());
+        assert!(forecast.chart.islands.is_empty());
+        assert!(forecast.warnings.rows.iter().all(|row|
+            row.kind != super::super::planning_warnings::WarningKind::InactiveIsland
+        ));
+    }
+
+    #[test]
     fn planning_history_scopes_each_island_and_all_restores_region_totals() {
-        let mut game = crate::hud::test_support::sgcc_review_with_two_islands();
+        let mut game = crate::hud::test_support::sgcc_review_with_remote_island();
         game.execute(Command::FinishReview).unwrap();
         let day = game.projections().timeline.completed_days().last().unwrap();
         let mut ui = UiState {

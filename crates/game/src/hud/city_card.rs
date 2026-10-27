@@ -79,7 +79,9 @@ pub fn city_card_model(game: &Game, l10n: &Localizer, city: CityId) -> Option<Ci
     Some(CityCardModel {
         city,
         name: Names::new(l10n, session).city(city),
-        connection: l10n.text(if detail.connected {
+        connection: l10n.text(if detail.inactive {
+            "city-inactive"
+        } else if detail.connected {
             "city-connected"
         } else {
             "city-not-connected"
@@ -106,12 +108,18 @@ pub fn city_card_model(game: &Game, l10n: &Localizer, city: CityId) -> Option<Ci
             .zip(detail.served_now)
             .is_some_and(|(demand, served)| cut_share(demand, served).is_some()),
         stats,
-        hint: (!detail.connected).then(|| match connected_from(game, city) {
-            Some(month) => l10n.args(
-                "city-line-under-construction",
-                &[("month", format::month_year(month).into())],
-            ),
-            None => l10n.text("city-connect-hint"),
+        hint: (!detail.connected).then(|| {
+            if detail.inactive {
+                l10n.text("island-inactive-help")
+            } else {
+                match connected_from(game, city) {
+                    Some(month) => l10n.args(
+                        "city-line-under-construction",
+                        &[("month", format::month_year(month).into())],
+                    ),
+                    None => l10n.text("city-connect-hint"),
+                }
+            }
         }),
     })
 }

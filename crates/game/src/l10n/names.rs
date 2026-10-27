@@ -32,6 +32,28 @@ enum NodeThing {
 }
 
 impl<'a> Names<'a> {
+    /// The electrical area plus its stable representative node, distinguishing split islands.
+    pub fn island(&self, session: &GameSession, id: NodeId) -> String {
+        let node = self.node(id);
+        let area = session.power().network().node(id).and_then(|n| {
+            session.region().areas().and_then(|areas| {
+                areas
+                    .areas
+                    .iter()
+                    .find(|area| area.id == session.region().area_at(n.cell))
+            })
+        });
+        area.map_or(node.clone(), |area| {
+            self.l10n.args(
+                "forecast-island-name",
+                &[
+                    ("area", self.l10n.text(&area.name_key).into()),
+                    ("node", node.into()),
+                ],
+            )
+        })
+    }
+
     /// A snapshot of the plants and cities of `session`.
     pub fn new(l10n: &'a Localizer, session: &GameSession) -> Self {
         let plant_views = session.plant_views();
@@ -108,6 +130,20 @@ impl<'a> Names<'a> {
                 .l10n
                 .args("name-city-unknown", &[("id", id.0.to_string().into())]),
         }
+    }
+
+    pub fn converter(&self, station: domain::grid::ConverterStation) -> String {
+        let end = match station.id.end {
+            domain::grid::ConverterEnd::From => "A",
+            domain::grid::ConverterEnd::To => "B",
+        };
+        self.l10n.args(
+            "converter-station-name",
+            &[
+                ("id", format!("{}{}", station.id.link.0, end).into()),
+                ("grid", self.node(station.grid_node).into()),
+            ],
+        )
     }
 
     /// The name of a network node: a city's name or `Coal plant 7`; a node the

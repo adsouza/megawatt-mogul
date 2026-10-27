@@ -5,10 +5,11 @@ use bevy_egui::egui;
 use domain::{ids::NodeId, time::SimMonth};
 
 use super::{SupplyModel, UiAction};
-use crate::l10n::{Localizer, format};
+use crate::l10n::{Localizer, Names, format};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SupplyHistoryModel {
+    pub scope_label: Option<String>,
     pub month_label: String,
     pub months: Vec<(SimMonth, String)>,
     pub selected: Option<SimMonth>,
@@ -44,6 +45,7 @@ pub(super) fn supply_history_model_scoped(
     l10n: &Localizer,
     style: &MoneyStyle,
 ) -> SupplyHistoryModel {
+    let island = super::ui_state::island_scope(game.session(), island);
     let days: Vec<_> = game
         .projections()
         .timeline
@@ -55,6 +57,25 @@ pub(super) fn supply_history_model_scoped(
         .and_then(|month| days.iter().find(|day| day.month == month))
         .or_else(|| days.last());
     SupplyHistoryModel {
+        scope_label: island
+            .map(|id| {
+                l10n.args(
+                    "supply-history-zone",
+                    &[(
+                        "zone",
+                        Names::new(l10n, game.session())
+                            .island(game.session(), id)
+                            .into(),
+                    )],
+                )
+            })
+            .or_else(|| {
+                game.session()
+                    .region()
+                    .areas()
+                    .is_some()
+                    .then(|| l10n.text("islands-all"))
+            }),
         month_label: l10n.text("supply-history-month"),
         months: days
             .iter()
@@ -78,10 +99,16 @@ pub(super) fn supply_history_model_scoped(
 pub fn draw_supply_history(ui: &mut egui::Ui, model: &SupplyHistoryModel) -> Vec<UiAction> {
     let mut actions = Vec::new();
     let Some(chart) = &model.chart else {
+        if let Some(scope) = &model.scope_label {
+            ui.strong(scope);
+        }
         ui.colored_label(super::theme::TextTone::Neutral.color(), &model.empty);
         return actions;
     };
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
+        if let Some(scope) = &model.scope_label {
+            ui.strong(scope);
+        }
         ui.colored_label(super::theme::TextTone::Neutral.color(), &model.month_label)
             .on_hover_text(&model.note);
         let selected = model

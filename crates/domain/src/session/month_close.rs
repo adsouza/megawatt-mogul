@@ -299,8 +299,8 @@ impl GameSession {
                 self.region.hvdc().expect("link catalog").book_life_months,
                 month,
                 AssetProfile::Link {
-                    from: link.from,
-                    to: link.to,
+                    from: link.from_grid(),
+                    to: link.to_grid(),
                 },
             );
         }
@@ -319,7 +319,7 @@ impl GameSession {
         network
             .nodes()
             .filter_map(|(id, node)| match node.kind {
-                NodeKind::City(city) if network.is_connected(id) => Some(city),
+                NodeKind::City(city) if self.power.node_active(id) => Some(city),
                 _ => None,
             })
             .collect()
