@@ -90,6 +90,12 @@ impl UiState {
     pub fn apply(&mut self, action: &UiAction) {
         match action {
             UiAction::SelectIsland(id) => self.island = *id,
+            UiAction::InspectForecast { island, hour } => {
+                self.island = Some(*island);
+                self.highlight_hour = Some(*hour);
+                self.tab = PlanningTab::Forecast;
+                self.warnings_open = false;
+            }
             UiAction::ShowLinks(open) => self.links_open = *open,
             UiAction::SetSupplyChartLayout(layout) => self.supply_chart_layout = *layout,
             UiAction::SelectSupplyMonth(month) => self.supply_month = Some(*month),

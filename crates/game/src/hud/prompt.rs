@@ -60,29 +60,34 @@ pub fn prompt_model(
                     session.link_quote(from, to).ok()?;
                 }
             }
+            let mut question = l10n.args(
+                "connection-warning-question",
+                &[
+                    ("cities", warning.cities.into()),
+                    ("month", format::month_year(warning.month).into()),
+                    ("added", format::megawatts(warning.added_peak).into()),
+                    (
+                        "island",
+                        Names::new(l10n, session).node(warning.island).into(),
+                    ),
+                    ("time", time_of(warning.shortage.hour).into()),
+                    ("demand", format::megawatts(warning.shortage.demand).into()),
+                    (
+                        "supply",
+                        format::megawatts(warning.shortage.deliverable).into(),
+                    ),
+                    (
+                        "shortfall",
+                        format::megawatts(warning.shortage.shortfall).into(),
+                    ),
+                ],
+            );
+            if kind == domain::session::ConnectionKind::Dc {
+                question.push_str("\n\n");
+                question.push_str(&l10n.text("hvdc-planning-help"));
+            }
             Some(PromptModel {
-                question: l10n.args(
-                    "connection-warning-question",
-                    &[
-                        ("cities", warning.cities.into()),
-                        ("month", format::month_year(warning.month).into()),
-                        ("added", format::megawatts(warning.added_peak).into()),
-                        (
-                            "island",
-                            Names::new(l10n, session).node(warning.island).into(),
-                        ),
-                        ("time", time_of(warning.shortage.hour).into()),
-                        ("demand", format::megawatts(warning.shortage.demand).into()),
-                        (
-                            "supply",
-                            format::megawatts(warning.shortage.deliverable).into(),
-                        ),
-                        (
-                            "shortfall",
-                            format::megawatts(warning.shortage.shortfall).into(),
-                        ),
-                    ],
-                ),
+                question,
                 confirm: ButtonModel::new(
                     l10n.text("connection-proceed"),
                     UiAction::ConfirmConnection { kind, from, to },
@@ -150,14 +155,32 @@ pub fn prompt_model(
             let session = game?.session();
             prompt_in_phase(prompt_after(open, session.status()), session.phase()).0?;
             let keep_planning = UiAction::Prompt(None);
+            let mut question = l10n.args(
+                "shortfall-start-question",
+                &[
+                    ("amount", format::megawatts(shortfall).into()),
+                    ("time", time_of(hour).into()),
+                ],
+            );
+            let names = Names::new(l10n, session);
+            for id in session.power().island_nodes().keys() {
+                if let Some(warning) = session
+                    .island_session(*id)
+                    .and_then(|s| s.capacity_shortfall_check())
+                {
+                    question.push('\n');
+                    question.push_str(&l10n.args(
+                        "shortfall-island-detail",
+                        &[
+                            ("island", names.island(session, *id).into()),
+                            ("amount", format::megawatts(warning.shortfall).into()),
+                            ("time", time_of(warning.hour).into()),
+                        ],
+                    ));
+                }
+            }
             Some(PromptModel {
-                question: l10n.args(
-                    "shortfall-start-question",
-                    &[
-                        ("amount", format::megawatts(shortfall).into()),
-                        ("time", time_of(hour).into()),
-                    ],
-                ),
+                question,
                 confirm: ButtonModel::new(
                     l10n.text("shortfall-start-anyway"),
                     UiAction::Command(Command::BeginOperating),

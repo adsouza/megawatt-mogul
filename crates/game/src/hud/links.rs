@@ -32,6 +32,106 @@ pub struct LinksModel {
     pub cards: Vec<LinkCardModel>,
     pub close: ButtonModel,
 }
+
+pub(super) fn planning_issues(
+    session: &domain::session::GameSession,
+    l10n: &Localizer,
+    selected: Option<domain::ids::NodeId>,
+) -> Vec<String> {
+    session
+        .power()
+        .network()
+        .links()
+        .filter(|link| {
+            selected.is_none_or(|id| {
+                session
+                    .power()
+                    .link_planning_forecast(link.id)
+                    .is_some_and(|plan| plan.from_island == Some(id) || plan.to_island == Some(id))
+            })
+        })
+        .flat_map(|link| link_planning_issues(session, link.id, l10n))
+        .collect()
+}
+
+/// The same eligibility used by the supply forecast, explained at the actual route.
+pub(super) fn link_planning_issues(
+    session: &domain::session::GameSession,
+    id: LinkId,
+    l10n: &Localizer,
+) -> Vec<String> {
+    let Some(link) = session.power().network().link(id) else {
+        return Vec::new();
+    };
+    let Some(plan) = session.power().link_planning_forecast(id) else {
+        return Vec::new();
+    };
+    let names = Names::new(l10n, session);
+    let route = l10n.args(
+        "hvdc-route",
+        &[
+            ("from", names.node(link.from).into()),
+            ("to", names.node(link.to).into()),
+        ],
+    );
+    let mut issues = Vec::new();
+    if let LineStatus::UnderConstruction { months_left } = link.status {
+        issues.push(l10n.args(
+            "hvdc-planning-construction",
+            &[
+                ("route", route.clone().into()),
+                ("months", months_left.into()),
+            ],
+        ));
+    } else {
+        for (island, node, ready) in [
+            (plan.from_island, link.from, plan.from_ready),
+            (plan.to_island, link.to, plan.to_ready),
+        ] {
+            if ready.iter().all(|ready| *ready) {
+                continue;
+            }
+            let mut ranges = Vec::new();
+            let mut h = 0;
+            while h < 24 {
+                if ready[h] {
+                    h += 1;
+                    continue;
+                }
+                let start = h;
+                while h < 24 && !ready[h] {
+                    h += 1;
+                }
+                ranges.push(l10n.args(
+                    "forecast-hour-range",
+                    &[
+                        ("start", format::clock(start as u32 * 60).into()),
+                        ("end", format::clock(h as u32 * 60).into()),
+                    ],
+                ));
+            }
+            issues.push(
+                l10n.args(
+                    "hvdc-planning-terminal",
+                    &[
+                        ("route", route.clone().into()),
+                        (
+                            "island",
+                            island
+                                .map_or_else(|| names.node(node), |id| names.island(session, id))
+                                .into(),
+                        ),
+                        ("hours", ranges.join(", ").into()),
+                    ],
+                ),
+            );
+        }
+    }
+    if link.schedule.iter().all(|mw| *mw == 0.0) {
+        issues.push(l10n.args("hvdc-planning-zero", &[("route", route.into())]));
+    }
+    issues
+}
 pub fn links_model(game: &Game, l10n: &Localizer, style: &MoneyStyle) -> Option<LinksModel> {
     let session = game.session();
     let spec = session.region().hvdc()?;
@@ -94,7 +194,10 @@ pub fn links_model(game: &Game, l10n: &Localizer, style: &MoneyStyle) -> Option<
                     )],
                 ),
             ];
-            if link.blocked {
+            if session.phase() == DayPhase::Planning {
+                stats.extend(link_planning_issues(session, link.id, l10n));
+                stats.push(l10n.text("hvdc-planning-help"));
+            } else if link.blocked {
                 stats.push(l10n.text("hvdc-blocked"));
             } else if link.runback {
                 stats.push(l10n.text("hvdc-runback"));

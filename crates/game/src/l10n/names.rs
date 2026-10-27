@@ -32,6 +32,28 @@ enum NodeThing {
 }
 
 impl<'a> Names<'a> {
+    /// The electrical area plus its stable representative node, distinguishing split islands.
+    pub fn island(&self, session: &GameSession, id: NodeId) -> String {
+        let node = self.node(id);
+        let area = session.power().network().node(id).and_then(|n| {
+            session.region().areas().and_then(|areas| {
+                areas
+                    .areas
+                    .iter()
+                    .find(|area| area.id == session.region().area_at(n.cell))
+            })
+        });
+        area.map_or(node.clone(), |area| {
+            self.l10n.args(
+                "forecast-island-name",
+                &[
+                    ("area", self.l10n.text(&area.name_key).into()),
+                    ("node", node.into()),
+                ],
+            )
+        })
+    }
+
     /// A snapshot of the plants and cities of `session`.
     pub fn new(l10n: &'a Localizer, session: &GameSession) -> Self {
         let plant_views = session.plant_views();

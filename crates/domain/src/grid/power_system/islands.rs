@@ -2,6 +2,25 @@
 use super::*;
 use std::collections::BTreeSet;
 
+/// Planning eligibility, independent of last month's transient blocked/runback flags.
+/// A capacity forecast still ignores start-up/ramp transients and random protection actions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkPlanningForecast {
+    pub in_service: bool,
+    pub from_island: Option<NodeId>,
+    pub to_island: Option<NodeId>,
+    pub from_ready: [bool; 24],
+    pub to_ready: [bool; 24],
+}
+
+impl LinkPlanningForecast {
+    pub fn available(&self, hour: usize) -> bool {
+        self.in_service
+            && self.from_ready.get(hour).copied().unwrap_or(false)
+            && self.to_ready.get(hour).copied().unwrap_or(false)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct IslandState {
     noise: DemandNoise,
@@ -244,10 +263,62 @@ impl PowerSystem {
     pub fn island_nodes(&self) -> &BTreeMap<NodeId, BTreeSet<NodeId>> {
         &self.island_nodes
     }
+
+    /// Service eligibility is structural: normal trips, commitments and dispatch do not
+    /// remove existing customers. The original home grid always retains its obligations.
+    /// A remote HVDC island needs a commissioned synchronous source before taking load.
+    pub fn island_active(&self, id: NodeId) -> bool {
+        self.island_nodes.get(&id).is_some_and(|nodes| {
+            nodes.contains(&self.network.root())
+                || self.plants.values().any(|plant| {
+                    nodes.contains(&plant.node())
+                        && is_commissioned(plant)
+                        && plant.kind().is_dispatchable()
+                })
+        })
+    }
+
+    pub fn node_active(&self, node: NodeId) -> bool {
+        self.network.is_connected(node)
+            && self
+                .node_island(node)
+                .is_none_or(|id| self.island_active(id))
+    }
     fn node_island(&self, node: NodeId) -> Option<NodeId> {
         self.island_nodes
             .iter()
             .find_map(|(id, nodes)| nodes.contains(&node).then_some(*id))
+    }
+
+    /// Only commissioned, committed synchronous generation can support an HVDC terminal.
+    /// Variable generation and storage cannot form the AC grid required by these converters.
+    pub fn link_planning_forecast(&self, link: crate::ids::LinkId) -> Option<LinkPlanningForecast> {
+        let link = self.network.link(link)?;
+        let readiness = |node| {
+            let island = self.node_island(node);
+            let hours = std::array::from_fn(|hour| {
+                island
+                    .and_then(|id| self.island_nodes.get(&id))
+                    .is_some_and(|nodes| {
+                        self.plants.values().any(|plant| {
+                            nodes.contains(&plant.node())
+                                && is_commissioned(plant)
+                                && plant.kind().is_dispatchable()
+                                && plant.commitment().is_committed(hour as u8)
+                        })
+                    })
+            });
+            (island, hours)
+        };
+        let (from_island, from_ready) = readiness(link.from);
+        let (to_island, to_ready) = readiness(link.to);
+        Some(LinkPlanningForecast {
+            in_service: link.status == super::super::LineStatus::InService,
+            from_island,
+            to_island,
+            from_ready,
+            to_ready,
+        })
     }
     fn transfer_schedule(&self, id: NodeId, region: &RegionDefinition) -> [f64; 24] {
         let Some(spec) = region.hvdc() else {
@@ -259,6 +330,7 @@ impl PowerSystem {
             .links()
             .filter(|l| l.status == super::super::LineStatus::InService)
         {
+            let readiness = self.link_planning_forecast(link.id).expect("existing link");
             let from = self.node_island(link.from);
             let to = self.node_island(link.to);
             if from.is_none() || to.is_none() {
@@ -268,6 +340,9 @@ impl PowerSystem {
                 - 2.0 * spec.converter_loss
                 - spec.loss_per_cell * crate::region::whole_cells(link.length_cells) as f64;
             for (h, value) in injection.iter_mut().enumerate() {
+                if !readiness.available(h) {
+                    continue;
+                }
                 let flow = link.target(h);
                 if from == Some(id) {
                     *value += if flow >= 0.0 { -flow } else { -flow * factor };
@@ -281,12 +356,34 @@ impl PowerSystem {
     }
     /// A pure controller preview for one island, including scheduled transfers.
     pub fn scoped_island(&self, id: NodeId, region: &RegionDefinition) -> Option<Self> {
+        self.scoped_island_with_service(id, region, false)
+    }
+
+    /// Expansion warnings assess the prospective obligation even for an inactive island.
+    pub(crate) fn scoped_connection_island(
+        &self,
+        id: NodeId,
+        region: &RegionDefinition,
+    ) -> Option<Self> {
+        self.scoped_island_with_service(id, region, true)
+    }
+
+    fn scoped_island_with_service(
+        &self,
+        id: NodeId,
+        region: &RegionDefinition,
+        prospective: bool,
+    ) -> Option<Self> {
         let nodes = self.island_nodes.get(&id)?;
         let home = self.node_island(self.network.root());
         let belongs =
             |node| nodes.contains(&node) || (home == Some(id) && !self.network.is_connected(node));
         let mut network = self.network.clone();
-        network.scope_connected(nodes.clone());
+        network.scope_connected(if prospective || self.island_active(id) {
+            nodes.clone()
+        } else {
+            BTreeSet::new()
+        });
         let mut power = Self::new(
             network,
             self.plants
@@ -623,6 +720,217 @@ mod tests {
         expected.standard_normal();
         assert_eq!(rng, expected);
     }
+    #[test]
+    fn remote_customers_wait_for_a_commissioned_source_and_never_vanish_on_shutdown() {
+        let (mut p, r, mut rng) = pair();
+        let def = r.cities()[2].clone();
+        let node = NodeId(6);
+        p.network
+            .add_node(
+                node,
+                Node {
+                    kind: NodeKind::City(def.id),
+                    cell: def.cell,
+                },
+            )
+            .unwrap();
+        p.network
+            .add_line(
+                crate::ids::LineId(7),
+                NodeId(1),
+                node,
+                LineStatus::InService,
+            )
+            .unwrap();
+        p.cities.insert(def.id, DemandCenter::new(def, node));
+        p.plants.remove(&PlantId(3));
+        p.recompute_islands();
+        let before = p.clone();
+        assert!(!p.island_active(NodeId(1)));
+        assert!(!p.node_active(node));
+        assert!(
+            p.scoped_island(NodeId(1), &r)
+                .unwrap()
+                .supply_forecast(&r, r.start().month)
+                .minutes
+                .iter()
+                .all(|p| p.demand == Megawatts::ZERO)
+        );
+        assert!(
+            p.scoped_connection_island(NodeId(1), &r)
+                .unwrap()
+                .supply_forecast(&r, r.start().month)
+                .minutes
+                .iter()
+                .any(|p| p.demand > Megawatts::ZERO)
+        );
+        assert_eq!(p, before, "eligibility and previews are pure");
+        p.begin_day(&r, r.start().month, &mut rng);
+        let (summary, _) = p.tick(&r, r.start().month, 0, &mut rng);
+        let row = &summary.islands[&NodeId(1)];
+        assert_eq!(row.demand, Megawatts::ZERO);
+        assert_eq!(row.unserved, Megawatts::ZERO);
+        assert!(row.incidents.is_empty());
+        let mut source = Plant::new_under_construction(
+            PlantId(3),
+            NodeId(1),
+            CellCoord { x: 3, y: 2 },
+            r.spec(PlantKind::Peaker).clone(),
+        );
+        source.set_commitment(CommitmentSchedule::all_day());
+        p.plants.insert(PlantId(3), source);
+        assert!(!p.node_active(node));
+        let mut source = Plant::new_commissioned(
+            PlantId(3),
+            NodeId(1),
+            CellCoord { x: 3, y: 2 },
+            r.spec(PlantKind::Peaker).clone(),
+            r.start().month,
+        );
+        source.set_commitment(CommitmentSchedule::none());
+        p.plants.insert(PlantId(3), source);
+        assert!(
+            p.node_active(node),
+            "offline source retains customer obligations"
+        );
+        assert!(
+            p.scoped_island(NodeId(1), &r)
+                .unwrap()
+                .supply_forecast(&r, r.start().month)
+                .minutes
+                .iter()
+                .any(|p| p.demand > Megawatts::ZERO)
+        );
+    }
+
+    #[test]
+    fn forecast_never_credits_a_link_without_a_committed_synchronous_terminal() {
+        let (mut p, r, _) = pair();
+        p.network.link_mut(LinkId(10)).unwrap().schedule = [100.0; 24];
+        p.plants.remove(&PlantId(3));
+        let receiver = p.scoped_island(NodeId(1), &r).unwrap();
+        assert_eq!(
+            receiver.supply_forecast(&r, r.start().month).minutes[0].gross_supply,
+            Megawatts::ZERO
+        );
+        assert_eq!(
+            p.scoped_island(NodeId(0), &r)
+                .unwrap()
+                .scheduled_injection(0),
+            Megawatts::ZERO
+        );
+    }
+
+    #[test]
+    fn forecast_rejects_unfinished_and_non_synchronous_terminals_but_ignores_old_trip_flags() {
+        for kind in PlantKind::ALL {
+            for building in [false, true] {
+                let (mut p, r, _) = pair();
+                let mut plant = if building {
+                    Plant::new_under_construction(
+                        PlantId(3),
+                        NodeId(1),
+                        CellCoord { x: 3, y: 2 },
+                        r.spec(kind).clone(),
+                    )
+                } else {
+                    Plant::new_commissioned(
+                        PlantId(3),
+                        NodeId(1),
+                        CellCoord { x: 3, y: 2 },
+                        r.spec(kind).clone(),
+                        r.start().month,
+                    )
+                };
+                plant.set_commitment(CommitmentSchedule::all_day());
+                p.plants.insert(PlantId(3), plant);
+                p.network.link_mut(LinkId(10)).unwrap().blocked = true;
+                let expected = !building && kind.is_dispatchable();
+                assert_eq!(
+                    p.link_planning_forecast(LinkId(10)).unwrap().available(0),
+                    expected,
+                    "{kind:?} building={building}"
+                );
+                let injection = p
+                    .scoped_island(NodeId(1), &r)
+                    .unwrap()
+                    .scheduled_injection(0);
+                assert_eq!(injection > Megawatts::ZERO, expected);
+            }
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn service_eligibility_survives_restore_and_never_hides_an_established_islands_load(
+            kind in proptest::sample::select(PlantKind::ALL.to_vec()),
+            building in proptest::bool::ANY,
+            committed in proptest::bool::ANY,
+            target in -200.0f64..200.0,
+        ) {
+            use crate::state::State;
+            let (mut p, r, mut rng) = pair();
+            let def = r.cities()[2].clone();
+            p.network.add_node(NodeId(6), Node { kind: NodeKind::City(def.id), cell: def.cell }).unwrap();
+            p.network.add_line(crate::ids::LineId(7), NodeId(1), NodeId(6), LineStatus::InService).unwrap();
+            p.cities.insert(def.id, DemandCenter::new(def, NodeId(6)));
+            let mut plant = if building {
+                Plant::new_under_construction(PlantId(3), NodeId(1), CellCoord { x: 3, y: 2 }, r.spec(kind).clone())
+            } else {
+                Plant::new_commissioned(PlantId(3), NodeId(1), CellCoord { x: 3, y: 2 }, r.spec(kind).clone(), r.start().month)
+            };
+            plant.set_commitment(if committed { CommitmentSchedule::all_day() } else { CommitmentSchedule::none() });
+            p.plants.insert(PlantId(3), plant);
+            p.network.link_mut(LinkId(10)).unwrap().schedule = [target; 24];
+            p.recompute_islands();
+            p = PowerSystem::from_state_bytes(&p.state_bytes()).unwrap();
+            let expected = !building && kind.is_dispatchable();
+            proptest::prop_assert_eq!(p.node_active(NodeId(6)), expected);
+            let forecast = p.scoped_island(NodeId(1), &r).unwrap().supply_forecast(&r, r.start().month);
+            proptest::prop_assert_eq!(forecast.minutes.iter().any(|p| p.demand > Megawatts::ZERO), expected);
+            p.begin_day(&r, r.start().month, &mut rng);
+            let (tick, _) = p.tick(&r, r.start().month, 0, &mut rng);
+            let row = &tick.islands[&NodeId(1)];
+            proptest::prop_assert_eq!(row.demand > Megawatts::ZERO, expected);
+            if !expected {
+                proptest::prop_assert_eq!(row.unserved, Megawatts::ZERO);
+                proptest::prop_assert!(row.incidents.is_empty());
+            }
+        }
+
+        #[test]
+        fn forecast_transfers_require_both_terminals_in_each_hour(
+            from_hours in proptest::array::uniform24(proptest::bool::ANY),
+            to_hours in proptest::array::uniform24(proptest::bool::ANY),
+            target in -200.0f64..200.0,
+        ) {
+            let (mut p, r, _) = pair();
+            p.plants.get_mut(&PlantId(2)).unwrap().set_commitment(CommitmentSchedule::try_new(from_hours, r.spec(PlantKind::Peaker)).unwrap());
+            p.plants.get_mut(&PlantId(3)).unwrap().set_commitment(CommitmentSchedule::try_new(to_hours, r.spec(PlantKind::Peaker)).unwrap());
+            p.network.link_mut(LinkId(10)).unwrap().schedule = [target; 24];
+            let before = p.clone();
+            let from = p.scoped_island(NodeId(0), &r).unwrap();
+            let to = p.scoped_island(NodeId(1), &r).unwrap();
+            let link = p.network.link(LinkId(10)).unwrap();
+            let spec = r.hvdc().unwrap();
+            let factor = 1.0 - 2.0 * spec.converter_loss - spec.loss_per_cell * crate::region::whole_cells(link.length_cells) as f64;
+            for h in 0..24 {
+                let a = from.scheduled_injection(h as u32 * 60).value();
+                let b = to.scheduled_injection(h as u32 * 60).value();
+                if from_hours[h] && to_hours[h] {
+                    let expected_a = if target >= 0.0 { -target } else { -target * factor };
+                    let expected_b = if target >= 0.0 { target * factor } else { target };
+                    proptest::prop_assert!((a - expected_a).abs() < 1e-9);
+                    proptest::prop_assert!((b - expected_b).abs() < 1e-9);
+                } else {
+                    proptest::prop_assert_eq!(a, 0.0);
+                    proptest::prop_assert_eq!(b, 0.0);
+                }
+            }
+            proptest::prop_assert_eq!(p, before);
+        }
+    }
+
     #[test]
     fn runback_reads_previous_sender_state_never_reverses_and_waits_for_normal_band() {
         let (mut p, r, mut rng) = pair();

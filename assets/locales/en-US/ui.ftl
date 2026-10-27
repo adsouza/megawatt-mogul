@@ -212,7 +212,26 @@ commitment-unsaved = Apply or revert your changes before starting the day.
 forecast-title = Forecast
 forecast-band = Forecast range
 forecast-solar = Expected solar
-forecast-net-supply = Net supply
+forecast-net-supply = Available net supply
+forecast-island-name = { $area } ({ $node })
+forecast-island-shortfall = { $island } — short { $amount } ({ $time })
+forecast-island-excess = { $island } — excess minimum { $amount } ({ $time })
+forecast-island-inspect = View { $island }
+forecast-inspect-island = Inspect island
+forecast-island-note = Each island must balance separately. Solid: shortfall. Dashed: minimum generation above load, before optional battery charging. Select an island for supply and demand.
+forecast-risk-axis = Shortfall / excess minimum (MW)
+forecast-minimum = Minimum supply before charging
+forecast-hvdc-constraints = HVDC supply constraints ({ $count })
+forecast-hour-range = { $start }–{ $end }
+warning-island = { $island }: { $warning }
+hvdc-planning-construction = { $route }: under construction; no power transfers for { $months ->
+    [one] one more month.
+   *[other] { $months } more months.
+}
+hvdc-planning-terminal = { $route }: no synchronous generator committed in { $island } during { $hours }. This link cannot supply power then. Build or commit a thermal, nuclear or hydro generator there.
+hvdc-planning-zero = { $route }: all hourly transfers are zero. Set a signed schedule to move power; connecting cities does not schedule imports automatically.
+hvdc-planning-help = HVDC keeps islands separate. Both ends need an online thermal, nuclear or hydro generator; wind, solar and batteries do not qualify. Rating and losses limit imports. Forecasts ignore ramp and protection transients.
+shortfall-island-detail = { $island }: { $amount } short during the { $time } hour.
 forecast-axis-hour = Hour of day
 forecast-axis-power = Power (MW)
 warnings-title = Warnings
@@ -286,6 +305,11 @@ plant-start = Start
 plant-stop = Stop
 # The city card (spec §16.8), in Planning's inspector and Operating's side panel.
 city-connected = Connected
+city-inactive = Connected route — service inactive
+island-inactive-name = Inactive: { $island }
+island-inactive-status = Inactive: no customer demand until a local synchronous generator is commissioned and connected.
+island-inactive-warning = { $island } is inactive: no commissioned local synchronous generator. Its cities add no customer demand or outage penalties yet.
+island-inactive-help = Service waits for a connected, commissioned thermal, nuclear or hydro generator. Wind, solar and batteries cannot support these HVDC terminals. Normal shutdowns and trips do not deactivate customers once that source exists. Imports still need a schedule and enough capacity.
 city-not-connected = Not connected
 city-connect-hint = Build a line to it from the build menu to connect it.
 # The connection date accounts for every unfinished line on a complete route to the home grid.

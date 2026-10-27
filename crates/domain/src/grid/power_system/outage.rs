@@ -68,6 +68,7 @@ impl HourEnd {
 
     /// The sample scoring highest on `badness`, keeping the first on ties.
     /// Callers supply samples in minute order, with at least the two endpoints.
+    #[cfg(test)]
     pub(crate) fn worse_by(
         samples: impl IntoIterator<Item = HourEnd>,
         badness: impl Fn(HourEnd) -> Megawatts,

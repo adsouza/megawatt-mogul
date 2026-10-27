@@ -112,6 +112,9 @@ pub fn top_bar_model(
             .island_nodes()
             .keys()
             .map(|id| {
+                if !session.power().island_active(*id) {
+                    return [145, 150, 160];
+                }
                 let deviation = session
                     .power()
                     .island_states()
@@ -474,13 +477,17 @@ pub fn island_chips(
             .unwrap_or(domain::units::Hertz::ZERO);
         chips.push(super::ToggleModel {
             button: ButtonModel::new(
-                l10n.args(
-                    "island-chip",
-                    &[
-                        ("area", label.into()),
-                        ("frequency", format::hertz_deviation(dev).into()),
-                    ],
-                ),
+                if !session.power().island_active(*id) {
+                    l10n.args("island-inactive-name", &[("island", label.into())])
+                } else {
+                    l10n.args(
+                        "island-chip",
+                        &[
+                            ("area", label.into()),
+                            ("frequency", format::hertz_deviation(dev).into()),
+                        ],
+                    )
+                },
                 UiAction::SelectIsland(Some(*id)),
             ),
             on: selected == Some(*id),

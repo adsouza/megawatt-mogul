@@ -319,7 +319,7 @@ impl GameSession {
         network
             .nodes()
             .filter_map(|(id, node)| match node.kind {
-                NodeKind::City(city) if network.is_connected(id) => Some(city),
+                NodeKind::City(city) if self.power.node_active(id) => Some(city),
                 _ => None,
             })
             .collect()

@@ -506,6 +506,69 @@ pub(crate) mod test_support {
         game
     }
 
+    /// A remote island with a real but undersized source, so shortfall charts still
+    /// exercise active obligations separately from dormant, unsupported customers.
+    pub fn sgcc_planning_with_small_remote_source() -> Game {
+        let mut game = sgcc_review_with_two_islands();
+        game.execute(Command::FinishReview).unwrap();
+        let city = game
+            .session()
+            .city_views()
+            .into_iter()
+            .find(|c| c.name_key == "city-shanghai")
+            .unwrap();
+        let area = game.session().region().area_at(city.cell);
+        let (w, h) = (
+            game.session().region().terrain().width(),
+            game.session().region().terrain().height(),
+        );
+        let cell = (0..h)
+            .flat_map(|y| (0..w).map(move |x| CellCoord { x, y }))
+            .filter(|cell| {
+                game.session().region().area_at(*cell) == area
+                    && game.session().plant_quote(PlantKind::Peaker, *cell).is_ok()
+            })
+            .min_by(|a, b| {
+                domain::grid::distance_cells(*a, city.cell)
+                    .total_cmp(&domain::grid::distance_cells(*b, city.cell))
+            })
+            .unwrap();
+        let events = game
+            .execute(Command::BuildPlant {
+                kind: PlantKind::Peaker,
+                cell,
+            })
+            .unwrap();
+        let plant = events
+            .iter()
+            .find_map(|event| {
+                if let DomainEvent::PlantConstructionStarted { plant, .. } = event {
+                    Some(*plant)
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+        let p = game.session().power().plant(plant).unwrap();
+        let domain::generation::PlantStatus::UnderConstruction { months_left } = p.status() else {
+            panic!("new order");
+        };
+        let node = p.node();
+        let months = months_left.max(game.session().line_quote(city.node, node).unwrap().months);
+        game.execute(Command::BuildLine {
+            from: city.node,
+            to: node,
+        })
+        .unwrap();
+        for _ in 0..months {
+            game.execute(Command::BeginOperating).unwrap();
+            game.execute(Command::AdvanceTicks { n: 1440 }).unwrap();
+            game.execute(Command::FinishReview).unwrap();
+        }
+        assert!(game.session().power().island_active(city.node));
+        game
+    }
+
     fn shipped_game_in(dir: &Path, region: &str) -> Game {
         game_in_dir(
             dir,

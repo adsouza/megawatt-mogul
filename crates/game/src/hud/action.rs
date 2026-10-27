@@ -35,6 +35,10 @@ pub enum UiAction {
         to: domain::ids::NodeId,
     },
     SelectIsland(Option<domain::ids::NodeId>),
+    InspectForecast {
+        island: domain::ids::NodeId,
+        hour: u8,
+    },
     ShowLinks(bool),
     World(crate::world::WorldAction),
     Persistence(PersistAction),
@@ -372,7 +376,9 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
                 sink.commands
                     .write(PlayerCommand(command, sink.generation.0));
             }
-            UiAction::SelectIsland(_) | UiAction::ShowLinks(_) => {}
+            UiAction::SelectIsland(_)
+            | UiAction::InspectForecast { .. }
+            | UiAction::ShowLinks(_) => {}
             UiAction::World(action) => sink.world.apply(action),
             UiAction::Persistence(action) => {
                 let generation = sink.generation.0;

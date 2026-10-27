@@ -8,18 +8,19 @@
 use std::collections::BTreeMap;
 
 mod islands;
-pub use islands::{IslandState, IslandTickSummary};
+pub use islands::{IslandState, IslandTickSummary, LinkPlanningForecast};
 mod battery;
 pub use battery::{
     BatteryScheduleView, PlantBatteryScheduleView, SupplyForecast, SupplyForecastPoint,
 };
 mod hydro_plan;
 mod outage;
+#[cfg(test)]
+use outage::HourEnd;
 mod wind;
 
 use hydro_plan::{HydroOverride, PlantHydroPlan};
 pub use hydro_plan::{HydroScheduleView, PlantHydroScheduleView};
-pub(crate) use outage::HourEnd;
 
 use super::dispatch::{agc_retarget, boundary_dispatch};
 use super::frequency::{FrequencyBand, band, next_deviation};
@@ -260,7 +261,7 @@ impl PowerSystem {
     }
 
     fn connected_cities(&self) -> impl Iterator<Item = &DemandCenter> {
-        self.cities.values().filter(|c| self.on_grid(c.node()))
+        self.cities.values().filter(|c| self.node_active(c.node()))
     }
 
     /// Commissioned plants on connected nodes, in id order.

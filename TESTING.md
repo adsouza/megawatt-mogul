@@ -926,6 +926,26 @@ to All. All three phases use the same scoped history presenter.
 Validation uses focused nextest selections, workspace clippy with warnings denied, formatting,
 and isolated native smoke checks. Do not run the entire local suite without advance permission.
 
+Rules 24 exclude scheduled HVDC transfers in hours when either terminal has no commissioned,
+committed synchronous generator. `power_system::islands` checks missing, unfinished and variable-only
+terminals, stale operating flags, and a property over signed transfers and both commitment calendars;
+unavailable transfers must disappear from both ends without changing the source state. The normal
+planning forecast and initial outage sizing share this eligibility. Portable schemas are unchanged.
+
+The planning chart's All view plots each island's shortfall and excess minimum separately; its
+drill-down uses the same minimum-generation samples as the warning, including renewables and net
+imports before optional charging. Presenter regressions pin the local risk magnitudes, island names,
+and missing-generator explanations. `tests/game/hvdc.rs` clicks the real warning, island chart and
+link-details controls at 1024×640 with 125% zoom. New text remains covered by the Fluent key gate.
+
+Unsupported remote islands stay inactive until an AC-connected synchronous generator is
+commissioned. The home grid retains its customers, and normal shutdowns, trips and commitment
+changes never remove an established island's demand. Activity is derived from existing assets,
+so old portable saves need no state rewrite. Tests cover zero forecast/operating demand and
+unserved energy while inactive, prospective connection warnings, commissioning and restored
+eligibility across all plant kinds. Inactive cities and island controls explain this status;
+historical reports remain intact.
+
 ## Connection capacity confirmation
 
 `session::connection` covers entire new components, ready versus late generation, future backbone

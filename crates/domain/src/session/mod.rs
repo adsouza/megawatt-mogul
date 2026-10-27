@@ -35,7 +35,8 @@ pub use report::{
 pub use settings::{GameSettings, SimulationFidelity};
 pub use views::{
     BatteryView, CapacityShortfallWarning, CityDetail, CityView, CompanyView, GridSnapshot,
-    LineView, MinimumGenerationWarning, PlantView, RateReviewEstimate, WindView,
+    LineView, MinimumGenerationPoint, MinimumGenerationWarning, PlantView, RateReviewEstimate,
+    WindView,
 };
 
 use std::collections::{BTreeMap, VecDeque};

@@ -21,6 +21,123 @@ fn sgcc() -> Game {
     )
     .unwrap()
 }
+
+#[test]
+fn island_forecast_buttons_and_warnings_navigate_the_real_hud_at_minimum_size() {
+    use super::{
+        hud_smoke::dispatch_in,
+        support::{
+            egui_harness::{button, has},
+            egui_pass::EguiPass,
+            hud_app, request,
+        },
+    };
+    use game::{
+        hud::{self, PlanningTab, UiState},
+        sim::Session,
+    };
+    let logs = tempfile::TempDir::new().unwrap();
+    let mut app = hud_app(logs.path());
+    request(&mut app, "sgcc");
+    let from = app.world().resource::<Session>().0.session().anchor_node();
+    let to = app
+        .world()
+        .resource::<Session>()
+        .0
+        .session()
+        .city_views()
+        .into_iter()
+        .find(|c| c.name_key == "city-shanghai")
+        .unwrap()
+        .node;
+    {
+        let mut session = app.world_mut().resource_mut::<Session>();
+        let months = session.0.session().link_quote(from, to).unwrap().months;
+        session.0.execute(Command::BuildLink { from, to }).unwrap();
+        for _ in 0..months {
+            session.0.execute(Command::BeginOperating).unwrap();
+            session
+                .0
+                .execute(Command::AdvanceTicks { n: 1440 })
+                .unwrap();
+            session.0.execute(Command::FinishReview).unwrap();
+        }
+    }
+    let pass = EguiPass::attach(&mut app);
+    let l10n = shipped_l10n();
+    pass.ctx().set_zoom_factor(1.25);
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    let inspect = button(&widgets, &l10n.text("forecast-inspect-island"));
+    pass.click_at(&mut app, 1024.0, 640.0, inspect.rect.center());
+    assert_eq!(app.world().resource::<UiState>().island, Some(to));
+    assert_eq!(app.world().resource::<UiState>().tab, PlanningTab::Forecast);
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    assert!(has(&widgets, &l10n.text("forecast-minimum")));
+    let chart = hud::forecast_model(
+        &app.world().resource::<Session>().0,
+        &l10n,
+        app.world().resource::<UiState>(),
+    );
+    assert!(chart.scope_label.as_ref().unwrap().contains("Shanghai"));
+    assert!(chart.service_note.is_some());
+    assert!(chart.demand_minutes.iter().all(|p| p[1] == 0.0));
+    let city = app
+        .world()
+        .resource::<Session>()
+        .0
+        .session()
+        .city_views()
+        .into_iter()
+        .find(|c| c.node == to)
+        .unwrap();
+    let card = hud::city_card_model(&app.world().resource::<Session>().0, &l10n, city.id).unwrap();
+    assert_eq!(card.connection, l10n.text("city-inactive"));
+    assert!(!card.cutting_load);
+    assert!(
+        chart
+            .link_issues
+            .iter()
+            .any(|s| s.contains("Shanghai") && s.contains("synchronous"))
+    );
+    assert!(
+        !chart
+            .link_issues
+            .iter()
+            .any(|s| s.contains("no synchronous generator committed in North"))
+    );
+    dispatch_in(&mut app, vec![UiAction::SelectIsland(None)]);
+    let chart = hud::forecast_model(
+        &app.world().resource::<Session>().0,
+        &l10n,
+        app.world().resource::<UiState>(),
+    );
+    let label = &chart
+        .islands
+        .iter()
+        .find(|i| i.island == to)
+        .unwrap()
+        .inspect
+        .label;
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    let view = button(&widgets, label);
+    assert!(view.rect.bottom() < 640.0 / 1.25 && view.rect.right() < 1024.0 / 1.25);
+    pass.click_at(&mut app, 1024.0, 640.0, view.rect.center());
+    assert_eq!(app.world().resource::<UiState>().island, Some(to));
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    pass.click_at(
+        &mut app,
+        1024.0,
+        640.0,
+        super::support::egui_harness::buttons(&widgets, &l10n.text("hvdc-title"))
+            .into_iter()
+            .max_by(|a, b| a.rect.top().total_cmp(&b.rect.top()))
+            .unwrap()
+            .rect
+            .center(),
+    );
+    assert!(app.world().resource::<UiState>().links_open);
+    assert!(l10n.problems().is_empty());
+}
 #[test]
 fn hvdc_cross_area_picker_quotes_a_link_and_card_reports_its_original_terms() {
     let mut game = sgcc();

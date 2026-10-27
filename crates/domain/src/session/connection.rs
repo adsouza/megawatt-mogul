@@ -83,7 +83,7 @@ impl GameSession {
                     (
                         nodes,
                         before
-                            .scoped_island(*id, &self.region)
+                            .scoped_connection_island(*id, &self.region)
                             .expect("projected island")
                             .supply_forecast(&self.region, month),
                     )
@@ -105,7 +105,7 @@ impl GameSession {
             let mut worst: Option<ConnectionWarning> = None;
             for (id, nodes) in after.island_nodes() {
                 let forecast = after
-                    .scoped_island(*id, &self.region)
+                    .scoped_connection_island(*id, &self.region)
                     .expect("projected island")
                     .supply_forecast(&self.region, month);
                 let prior: Vec<_> = baseline

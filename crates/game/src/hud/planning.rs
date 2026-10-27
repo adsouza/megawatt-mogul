@@ -36,7 +36,7 @@ use super::construction::{
 use super::forecast_chart::{ForecastModel, draw_forecast_chart};
 use super::layout::{Edge, HudArea, OuterPanel};
 use super::planning_cache::{PlanningForecast, PlanningForecastCache};
-use super::planning_warnings::{WarningsModel, draw_warnings, warnings_for};
+use super::planning_warnings::{WarningsModel, draw_warnings};
 use super::tariff::{TariffModel, draw_tariff, tariff_model};
 use super::theme::TextTone;
 use super::ui_state::{CommitmentForm, PlanningTab, UiState};
@@ -132,35 +132,29 @@ fn planning_model_for(
         begin_hint: unsaved.then(|| l10n.text("commitment-unsaved")),
         content: match ui.tab {
             PlanningTab::Commitments => PlanningContent::Commitments {
-                warnings: warnings_for(
-                    scoped
-                        .as_ref()
-                        .map_or(forecast.shortfall, |s| s.capacity_shortfall_check()),
-                    scoped
-                        .as_ref()
-                        .map_or(forecast.minimum, |s| s.minimum_generation_check()),
-                    &scoped
-                        .as_ref()
-                        .map(|s| {
-                            super::planning_warnings::dry_hydro_plants(
-                                &s.plant_views(),
-                                &crate::l10n::Names::new(l10n, s),
+                warnings: if scoped.is_some() {
+                    super::planning_warnings::warnings_for_session(game.session(), l10n, ui)
+                } else {
+                    let mut warnings = forecast.warnings.clone();
+                    warnings.expanded = ui.warnings_open && warnings.more.is_some();
+                    if let Some(more) = &mut warnings.more {
+                        more.on = warnings.expanded;
+                        more.button.label = if warnings.expanded {
+                            l10n.text("warnings-less")
+                        } else {
+                            l10n.args(
+                                "warnings-more",
+                                &[("count", (warnings.rows.len() as u32 - 1).into())],
                             )
-                        })
-                        .unwrap_or_else(|| forecast.dry_hydro.clone()),
-                    ui.warnings_open,
-                    l10n,
-                ),
+                        };
+                    }
+                    warnings
+                },
                 grid: commitment_model(game, l10n, ui, form),
             },
             PlanningTab::Forecast => {
-                let mut chart = if let Some(s) = &scoped {
-                    super::forecast_chart::forecast_model_for_session(
-                        s,
-                        l10n,
-                        ui,
-                        &s.supply_forecast(),
-                    )
+                let mut chart = if scoped.is_some() {
+                    super::forecast_chart::forecast_model(game, l10n, ui)
                 } else {
                     forecast.chart.clone()
                 };

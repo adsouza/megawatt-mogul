@@ -16,11 +16,21 @@ use domain::time::TICKS_PER_HOUR;
 use domain::units::Megawatts;
 use egui_plot::{Bar, BarChart, FilledArea, Line, Plot, VLine};
 
-use super::action::UiAction;
+use super::action::{ButtonModel, UiAction, button};
 use super::map::{Rgb, color32, kind_color};
 use super::plant_list::{kinds_in_merit_order, plants_by_kind_session};
 use super::ui_state::UiState;
-use crate::l10n::{Localize, Localizer};
+use crate::l10n::{Localize, Localizer, Names, format};
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IslandBalanceModel {
+    pub island: domain::ids::NodeId,
+    pub shortfall_label: String,
+    pub excess_label: String,
+    pub shortfall: Vec<[f64; 2]>,
+    pub excess: Vec<[f64; 2]>,
+    pub inspect: ButtonModel,
+}
 
 /// The forecast supply in each hour for one kind of plant.
 #[derive(Debug, Clone, PartialEq)]
@@ -46,6 +56,18 @@ pub struct WindForecastModel {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ForecastModel {
+    /// "All" must show local risks, never let another island's surplus cancel them.
+    pub islands: Vec<IslandBalanceModel>,
+    pub island_note: String,
+    pub risk_axis: String,
+    pub scope_label: Option<String>,
+    pub service_note: Option<String>,
+    pub minimum_label: String,
+    pub minimum: Vec<[f64; 2]>,
+    pub minimum_demand: Vec<[f64; 2]>,
+    pub constraint_label: String,
+    pub link_issues: Vec<String>,
+    pub links: ButtonModel,
     pub wind: Option<WindForecastModel>,
     pub hour_axis: String,
     pub power_axis: String,
@@ -137,6 +159,21 @@ fn stacked_supply(
 }
 
 pub fn forecast_model(game: &Game, l10n: &Localizer, ui: &UiState) -> ForecastModel {
+    if let Some(local) = ui.island.and_then(|id| game.session().island_session(id)) {
+        let mut chart = forecast_model_for_session(&local, l10n, ui, &local.supply_forecast());
+        if ui
+            .island
+            .is_some_and(|id| !game.session().power().island_active(id))
+        {
+            chart.service_note = Some(l10n.text("island-inactive-status"));
+        }
+        chart.link_issues = super::links::planning_issues(game.session(), l10n, ui.island);
+        chart.constraint_label = l10n.args(
+            "forecast-hvdc-constraints",
+            &[("count", (chart.link_issues.len() as u32).into())],
+        );
+        return chart;
+    }
     forecast_model_for(game, l10n, ui, &game.session().supply_forecast())
 }
 
@@ -182,7 +219,124 @@ pub(super) fn forecast_model_for_session(
             })
             .collect()
     };
+    let minimum_samples = session.minimum_generation_forecast();
+    let names = Names::new(l10n, session);
+    let link_issues = if session.power().island_nodes().is_empty() {
+        Vec::new()
+    } else {
+        super::links::planning_issues(session, l10n, ui.island)
+    };
+    let islands = session
+        .power()
+        .island_nodes()
+        .keys()
+        .filter_map(|id| {
+            let local = session.island_session(*id)?;
+            let supply = local.supply_forecast();
+            let name = names.island(session, *id);
+            let shortage = domain::session::GameSession::capacity_shortfall_for(&supply);
+            let min = local.minimum_generation_check();
+            let hour = shortage
+                .map(|w| w.hour)
+                .or_else(|| min.map(|w| w.hour))
+                .unwrap_or(0);
+            Some(IslandBalanceModel {
+                island: *id,
+                shortfall_label: l10n.args(
+                    "forecast-island-shortfall",
+                    &[
+                        ("island", name.clone().into()),
+                        (
+                            "amount",
+                            format::megawatts(shortage.map_or(Megawatts::ZERO, |w| w.shortfall))
+                                .into(),
+                        ),
+                        (
+                            "time",
+                            super::planning_warnings::time_of(shortage.map_or(0, |w| w.hour))
+                                .into(),
+                        ),
+                    ],
+                ),
+                excess_label: l10n.args(
+                    "forecast-island-excess",
+                    &[
+                        ("island", name.clone().into()),
+                        (
+                            "amount",
+                            format::megawatts(min.map_or(Megawatts::ZERO, |w| w.excess)).into(),
+                        ),
+                        (
+                            "time",
+                            super::planning_warnings::time_of(min.map_or(0, |w| w.hour)).into(),
+                        ),
+                    ],
+                ),
+                shortfall: supply
+                    .assessed_minutes()
+                    .map(|(tick, p)| {
+                        [
+                            tick as f64 / 60.0,
+                            (p.demand - p.gross_supply).value().max(0.0),
+                        ]
+                    })
+                    .collect(),
+                excess: local
+                    .minimum_generation_forecast()
+                    .into_iter()
+                    .map(|p| {
+                        [
+                            p.tick as f64 / 60.0,
+                            (p.committed_minimum - p.net_load).value().max(0.0),
+                        ]
+                    })
+                    .collect(),
+                inspect: ButtonModel::new(
+                    l10n.args(
+                        if session.power().island_active(*id) {
+                            "forecast-island-inspect"
+                        } else {
+                            "island-inactive-name"
+                        },
+                        &[("island", name.into())],
+                    ),
+                    UiAction::InspectForecast { island: *id, hour },
+                ),
+            })
+        })
+        .collect();
     ForecastModel {
+        islands,
+        island_note: l10n.text("forecast-island-note"),
+        risk_axis: l10n.text("forecast-risk-axis"),
+        scope_label: ui.island.map(|id| names.island(session, id)),
+        service_note: None,
+        minimum_label: l10n.text("forecast-minimum"),
+        minimum_demand: minimum_samples
+            .iter()
+            .map(|p| {
+                [
+                    p.tick as f64 / 60.0,
+                    storage[p.tick as usize].demand.value(),
+                ]
+            })
+            .collect(),
+        minimum: minimum_samples
+            .into_iter()
+            .map(|p| {
+                let demand = storage[p.tick as usize].demand;
+                [
+                    p.tick as f64 / 60.0,
+                    (p.committed_minimum + demand - p.net_load).value(),
+                ]
+            })
+            .collect(),
+        constraint_label: l10n.args(
+            "forecast-hvdc-constraints",
+            &[("count", (link_issues.len() as u32).into())],
+        ),
+        link_issues,
+        links: ButtonModel::new(l10n.text("hvdc-title"), UiAction::ShowLinks(true)),
         wind: session
             .plant_views()
             .iter()
@@ -231,9 +385,35 @@ pub(super) fn forecast_model_for_session(
     }
 }
 
-/// The chart, filling the space it is given. It asks for nothing: the plot is not interactive, so
-/// the pointer scrolls past it instead of moving it.
+/// Plot gestures do not consume scrolling. Island buttons and link details navigate the plan.
 pub fn draw_forecast_chart(ui: &mut egui::Ui, model: &ForecastModel) -> Vec<UiAction> {
+    let mut actions = Vec::new();
+    if let Some(scope) = &model.scope_label {
+        ui.strong(scope);
+    }
+    if let Some(note) = &model.service_note {
+        ui.label(note);
+    }
+    if !model.link_issues.is_empty() {
+        ui.horizontal(|ui| {
+            ui.menu_button(&model.constraint_label, |ui| {
+                ui.set_max_width((ui.ctx().content_rect().width() - 32.0).min(560.0));
+                egui::ScrollArea::vertical()
+                    .id_salt("forecast_link_constraints")
+                    .max_height(180.0)
+                    .show(ui, |ui| {
+                        for issue in &model.link_issues {
+                            ui.label(issue);
+                        }
+                    });
+            });
+            button(ui, &model.links, &mut actions);
+        });
+    }
+    if !model.islands.is_empty() {
+        actions.extend(draw_island_balances(ui, model));
+        return actions;
+    }
     let line_color = ui.visuals().strong_text_color();
     let band_color = egui::Color32::from_rgba_unmultiplied(160, 160, 170, 60);
     let solar_color = color32(kind_color(PlantKind::Solar));
@@ -284,6 +464,11 @@ pub fn draw_forecast_chart(ui: &mut egui::Ui, model: &ForecastModel) -> Vec<UiAc
         model.net_supply_label.as_str(),
         net_supply_color,
         KeyMark::Line,
+    ));
+    entries.push((
+        &model.minimum_label,
+        egui::Color32::from_rgb(245, 185, 65),
+        KeyMark::Dashed,
     ));
     if !model.storage_charge.is_empty() {
         entries.extend([
@@ -386,6 +571,25 @@ pub fn draw_forecast_chart(ui: &mut egui::Ui, model: &ForecastModel) -> Vec<UiAc
                     .width(2.0)
                     .highlight(hovered == Some(egui::Id::new(&model.net_supply_label))),
             );
+            let minimum_x: Vec<_> = model.minimum.iter().map(|p| p[0]).collect();
+            let demand: Vec<_> = model.minimum_demand.iter().map(|p| p[1]).collect();
+            let upper: Vec<_> = model
+                .minimum
+                .iter()
+                .zip(&demand)
+                .map(|(p, d)| p[1].max(*d))
+                .collect();
+            plot.add(
+                FilledArea::new(&model.minimum_label, &minimum_x, &demand, &upper)
+                    .fill_color(egui::Color32::from_rgba_unmultiplied(245, 185, 65, 45)),
+            );
+            plot.line(
+                Line::new(&model.minimum_label, model.minimum.clone())
+                    .color(egui::Color32::from_rgb(245, 185, 65))
+                    .style(egui_plot::LineStyle::dashed_dense())
+                    .width(2.0)
+                    .highlight(hovered == Some(egui::Id::new(&model.minimum_label))),
+            );
             if let Some(wind) = &model.wind {
                 let color = color32(kind_color(PlantKind::Wind));
                 plot.add(
@@ -423,7 +627,92 @@ pub fn draw_forecast_chart(ui: &mut egui::Ui, model: &ForecastModel) -> Vec<UiAc
                 );
             }
         });
-    Vec::new()
+    actions
+}
+
+fn draw_island_balances(ui: &mut egui::Ui, model: &ForecastModel) -> Vec<UiAction> {
+    use super::chart_style::KeyMark;
+    let mut actions = Vec::new();
+    ui.label(&model.island_note);
+    egui::ScrollArea::horizontal()
+        .id_salt("forecast_island_buttons")
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                for island in &model.islands {
+                    button(ui, &island.inspect, &mut actions);
+                }
+            });
+        });
+    let id = ui.make_persistent_id("island_forecast_risks");
+    // A stable colour per island; solid means shortage, dashed means surplus floor.
+    let palette = [
+        egui::Color32::from_rgb(245, 110, 110),
+        egui::Color32::from_rgb(245, 190, 70),
+        egui::Color32::from_rgb(110, 195, 255),
+        egui::Color32::from_rgb(195, 150, 255),
+        egui::Color32::from_rgb(100, 225, 175),
+    ];
+    let entries = model.islands.iter().enumerate().flat_map(|(i, island)| {
+        [
+            (
+                island.shortfall_label.as_str(),
+                palette[i % palette.len()],
+                KeyMark::Line,
+            ),
+            (
+                island.excess_label.as_str(),
+                palette[i % palette.len()],
+                KeyMark::Dashed,
+            ),
+        ]
+        .into_iter()
+        .zip([&island.shortfall, &island.excess])
+        .filter(|(_, points)| points.iter().any(|p| p[1] > 0.0))
+        .map(|(entry, _)| entry)
+    });
+    let hovered = egui::ScrollArea::vertical()
+        .id_salt("island_risk_legend")
+        .max_height(48.0)
+        .show(ui, |ui| super::chart_style::draw_key(ui, id, entries))
+        .inner;
+    Plot::new("island_forecast_risks")
+        .id(id)
+        .height(ui.available_height().max(60.0))
+        .allow_zoom(false)
+        .allow_drag(false)
+        .allow_scroll(false)
+        .allow_boxed_zoom(false)
+        .allow_double_click_reset(false)
+        .include_x(0.0)
+        .include_x(24.0)
+        .include_y(0.0)
+        .include_y(1.0)
+        .x_grid_spacer(super::chart_style::hour_grid)
+        .custom_x_axes(vec![super::chart_style::hour_axis(ui, &model.hour_axis)])
+        .custom_y_axes(vec![super::chart_style::y_axis(&model.risk_axis)])
+        .show(ui, |plot| {
+            for (i, island) in model.islands.iter().enumerate() {
+                let color = palette[i % palette.len()];
+                if island.shortfall.iter().any(|p| p[1] > 0.0) {
+                    plot.line(
+                        Line::new(&island.shortfall_label, island.shortfall.clone())
+                            .color(color)
+                            .width(2.5)
+                            .highlight(hovered == Some(egui::Id::new(&island.shortfall_label))),
+                    );
+                }
+                if island.excess.iter().any(|p| p[1] > 0.0) {
+                    plot.line(
+                        Line::new(&island.excess_label, island.excess.clone())
+                            .color(color)
+                            .width(2.5)
+                            .style(egui_plot::LineStyle::dashed_dense())
+                            .highlight(hovered == Some(egui::Id::new(&island.excess_label))),
+                    );
+                }
+            }
+        });
+    actions
 }
 
 #[cfg(test)]
@@ -435,6 +724,77 @@ mod tests {
         eastern_game, edited_western_game, empty_start, flat_load, order_plant, shipped_game,
         shipped_l10n,
     };
+
+    #[test]
+    fn island_risk_curves_match_local_warnings_and_scope_without_cross_island_cancellation() {
+        let mut game = crate::hud::test_support::sgcc_planning_with_small_remote_source();
+        for plant in game
+            .session()
+            .plant_views()
+            .into_iter()
+            .filter(|p| p.kind.is_dispatchable())
+        {
+            game.execute(Command::CommitPlant {
+                plant: plant.id,
+                hours: [true; 24],
+            })
+            .unwrap();
+            game.execute(Command::SetAutoFollow {
+                plant: plant.id,
+                on: false,
+            })
+            .unwrap();
+            let mw = game.session().region().spec(plant.kind).capacity;
+            game.execute(Command::SetDispatchTarget {
+                plant: plant.id,
+                mw,
+            })
+            .unwrap();
+        }
+        let l10n = shipped_l10n();
+        let model = forecast_model(&game, &l10n, &UiState::default());
+        assert_eq!(model.islands.len(), 2);
+        for island in &model.islands {
+            let local = game.session().island_session(island.island).unwrap();
+            let shortage = local.capacity_shortfall_check();
+            let excess = local.minimum_generation_check();
+            let max = |points: &[[f64; 2]]| points.iter().map(|p| p[1]).fold(0.0, f64::max);
+            assert!(
+                (max(&island.shortfall) - shortage.map_or(0.0, |w| w.shortfall.value())).abs()
+                    < 1e-8
+            );
+            assert!((max(&island.excess) - excess.map_or(0.0, |w| w.excess.value())).abs() < 1e-8);
+            if island.island == game.session().anchor_node() {
+                assert!(max(&island.excess) > 0.0);
+                assert_eq!(max(&island.shortfall), 0.0);
+            } else {
+                assert!(max(&island.shortfall) > 0.0);
+                assert_eq!(max(&island.excess), 0.0);
+                assert!(island.shortfall_label.contains("Shanghai"));
+            }
+            let mut ui = UiState::default();
+            ui.apply(&island.inspect.action);
+            assert_eq!(ui.island, Some(island.island));
+            assert_eq!(ui.tab, super::super::PlanningTab::Forecast);
+            let chart = forecast_model(&game, &l10n, &ui);
+            assert!(chart.islands.is_empty());
+            assert!(chart.scope_label.is_some());
+            let worst = chart
+                .minimum
+                .iter()
+                .zip(&chart.minimum_demand)
+                .map(|(floor, demand)| (floor[1] - demand[1]).max(0.0))
+                .fold(0.0, f64::max);
+            assert!((worst - excess.map_or(0.0, |w| w.excess.value())).abs() < 1e-8);
+        }
+        assert!(
+            model
+                .link_issues
+                .iter()
+                .any(|s| s.contains("Shanghai") && s.contains("hourly transfers are zero"))
+        );
+        assert!(l10n.problems().is_empty());
+    }
 
     #[test]
     fn forecast_key_has_its_own_space_and_preserves_series_toggles() {
