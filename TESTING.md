@@ -1023,3 +1023,22 @@ rejecting non-finite, over-rating and reversed ranges. `hud::ui_state` keeps ins
 and tabs across month boundaries while clearing drafts. `world::electrical` checks closest-route
 picking, separate station hits and parallel/degenerate routes. Planning metrics show scheduled
 hours and range; Operating shows actual flow/losses, and Review labels the last readings.
+
+
+## Five SGCC starter grids (rules 27)
+
+New SGCC games inherit five active AC components without HVDC: Beijing/Tianjin/Langfang,
+Fuzhou, Lanzhou, Changchun and Chengdu. Each added local grid has two CCGTs and one peaker;
+plant parameters remain in the regional catalog. `shipped_regions::sgcc` checks each local
+forecast for capacity shortfall and excess minimum generation through all 12 months on seeds
+0–7. Every operating minute must have zero imports, exports, planned outage and unserved load.
+A Beijing-only shortage leaves the other four tick summaries unchanged. Mid-day snapshot
+continuation and journal replay preserve the independently owned grids.
+
+Network topology properties vary the service-root set independently of AC/DC edges and compare
+against a transitive-closure oracle. Starter-home validation properties reject missing, duplicate,
+unknown and non-synchronous grid configurations. The first-expansion acceptance helper sizes
+capacity and chooses connections within the target's own area. The minimum-window HUD test
+opens each inherited island through the forecast picker, while inactive/at-risk islands retain
+one-click shortcuts. Existing snapshots use their archived region data and retain their original
+assets, city loads, source-schema bytes and topology; no starter fleet is granted on restore.

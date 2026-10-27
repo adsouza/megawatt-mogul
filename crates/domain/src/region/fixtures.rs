@@ -320,6 +320,7 @@ fn start() -> StartDef {
         month: SimMonth::new(2027, 4).expect("valid month"),
         cash: dollars(2_000_000_000),
         home_city: CityId(1),
+        island_homes: Vec::new(),
         connected_cities: vec![CityId(1), CityId(2)],
         fleet: vec![
             plant(PlantKind::Coal, 7, 3),

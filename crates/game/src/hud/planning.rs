@@ -297,7 +297,7 @@ mod tests {
 
     #[test]
     fn planning_history_scopes_each_island_and_all_restores_region_totals() {
-        let mut game = crate::hud::test_support::sgcc_review_with_two_islands();
+        let mut game = crate::hud::test_support::sgcc_review_with_remote_island();
         game.execute(Command::FinishReview).unwrap();
         let day = game.projections().timeline.completed_days().last().unwrap();
         let mut ui = UiState {

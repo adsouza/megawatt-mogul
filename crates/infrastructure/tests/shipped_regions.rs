@@ -140,7 +140,7 @@ fn region_file(id: &str) -> RegionFileV4 {
         .expect("shipped region loads")
         .source_bytes;
     match parse_region_bundle(&bundle, &id).expect("bundle parses") {
-        ParsedRegionFile::V4(file) => file,
+        ParsedRegionFile::V4(file) => *file,
         ParsedRegionFile::Legacy(_) => panic!("{} is schema 4", id.as_str()),
     }
 }
@@ -621,7 +621,9 @@ fn shipped_home_cities_anchor_the_existing_city_nodes() {
         );
         assert_eq!(
             session.line_views().len(),
-            session.region().start().connected_cities.len() - 1 + session.plant_views().len()
+            session.region().start().connected_cities.len()
+                - session.region().start().island_homes.len().max(1)
+                + session.plant_views().len()
         );
         session.check_invariants().unwrap();
     }
@@ -1188,13 +1190,17 @@ fn assert_first_expansion(id: &str, seed: u64) {
     let future_base: f64 = region
         .cities()
         .iter()
-        .filter(|city| region.start().connected_cities.contains(&city.id) || city.id == target.id)
+        .filter(|city| {
+            (region.start().connected_cities.contains(&city.id) || city.id == target.id)
+                && region.area_at(city.cell) == region.area_at(target.cell)
+        })
         .map(|city| city.base_load.value())
         .sum();
     let firm: f64 = region
         .start()
         .fleet
         .iter()
+        .filter(|plant| region.area_at(plant.cell) == region.area_at(target.cell))
         .map(|plant| {
             let spec = region.spec(plant.kind);
             spec.capacity_credit.of(spec.capacity).value()
@@ -1228,7 +1234,9 @@ fn assert_first_expansion(id: &str, seed: u64) {
     let mut sites: Vec<_> = (0..region.terrain().height())
         .flat_map(|y| (0..region.terrain().width()).map(move |x| domain::ids::CellCoord { x, y }))
         .filter(|cell| {
-            !occupied.contains(cell) && region.site_check(PlantKind::Ccgt, *cell).is_ok()
+            !occupied.contains(cell)
+                && region.area_at(*cell) == region.area_at(home)
+                && region.site_check(PlantKind::Ccgt, *cell).is_ok()
         })
         .collect();
     sites.sort_by_key(|cell| {
@@ -1269,7 +1277,7 @@ fn assert_first_expansion(id: &str, seed: u64) {
         .session()
         .city_views()
         .into_iter()
-        .filter(|city| city.connected)
+        .filter(|city| city.connected && region.area_at(city.cell) == region.area_at(target.cell))
         .map(|city| {
             (
                 city.node,
@@ -3281,6 +3289,148 @@ mod continental_europe_maghreb {
 
 mod sgcc {
     use super::*;
+    #[test]
+    fn each_sgcc_starter_grid_covers_its_own_full_year_without_imports() {
+        for seed in 0..8 {
+            let mut game = new_game(&catalog(), SGCC, seed);
+            for month in 1..=12 {
+                assert_eq!(game.session().power().network().links().count(), 0);
+                assert_eq!(game.session().power().island_nodes().len(), 5);
+                for id in game.session().power().island_nodes().keys() {
+                    let local = game.session().island_session(*id).unwrap();
+                    assert!(
+                        local.capacity_shortfall_check().is_none(),
+                        "seed {seed}, month {month}, island {id:?}: shortfall"
+                    );
+                    assert!(
+                        local.minimum_generation_check().is_none(),
+                        "seed {seed}, month {month}, island {id:?}: minimum excess"
+                    );
+                }
+                let played = play_month(&mut game);
+                assert_eq!(played.report.islands.len(), 5);
+                for tick in &played.ticks {
+                    assert_eq!(tick.islands.len(), 5);
+                    for (id, local) in &tick.islands {
+                        assert_eq!(local.imports.value(), 0.0);
+                        assert_eq!(local.exports.value(), 0.0);
+                        assert_eq!(
+                            local.outage,
+                            Ratio::ZERO,
+                            "seed {seed}, month {month}, island {id:?}, tick {}",
+                            tick.tick
+                        );
+                        assert!(local.served.value() > 0.0);
+                        assert!(
+                            local.unserved.value() < 1e-6,
+                            "seed {seed}, month {month}, island {id:?}: unserved load at tick {}",
+                            tick.tick
+                        );
+                    }
+                }
+                assert_eq!(game.session().status(), SessionStatus::Active);
+                game.execute(Command::FinishReview).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn starter_service_survives_restore_and_a_shortage_in_beijing_stays_local() {
+        let mut baseline = new_game(&catalog(), SGCC, 7);
+        let mut changed = new_game(&catalog(), SGCC, 7);
+        let home = changed.session().anchor_node();
+        let plants: Vec<_> = changed
+            .session()
+            .plant_views()
+            .into_iter()
+            .filter(|p| changed.session().power().island_nodes()[&home].contains(&p.node))
+            .map(|p| p.id)
+            .collect();
+        for plant in plants {
+            changed
+                .execute(Command::CommitPlant {
+                    plant,
+                    hours: [false; 24],
+                })
+                .unwrap();
+        }
+        baseline.execute(Command::BeginOperating).unwrap();
+        changed.execute(Command::BeginOperating).unwrap();
+        baseline.execute(Command::AdvanceTicks { n: 120 }).unwrap();
+        changed.execute(Command::AdvanceTicks { n: 120 }).unwrap();
+        let normal = baseline.session().grid_snapshot().last_tick.unwrap();
+        let shortage = changed.session().grid_snapshot().last_tick.unwrap();
+        for (id, local) in &shortage.islands {
+            if *id == home {
+                assert!(local.unserved.value() > 0.0);
+            } else {
+                assert_eq!(
+                    local, &normal.islands[id],
+                    "Beijing cannot burden island {id:?}"
+                );
+            }
+        }
+        let checkpoint = changed.checkpoint();
+        let loaded = catalog().load(&RegionId::new(SGCC)).unwrap();
+        let mut restored = Game::restore(
+            loaded,
+            checkpoint.clone(),
+            Box::new(InMemoryCommandLog::default()),
+            &|| false,
+        )
+        .unwrap();
+        assert_eq!(restored.checkpoint(), checkpoint);
+        for _ in 0..3 {
+            changed.execute(Command::AdvanceTicks { n: 100 }).unwrap();
+            restored.execute(Command::AdvanceTicks { n: 100 }).unwrap();
+            assert_eq!(changed.checkpoint(), restored.checkpoint());
+        }
+        let replayed = application::replay(
+            catalog().load(&RegionId::new(SGCC)).unwrap(),
+            &checkpoint.header,
+            &checkpoint.commands,
+        )
+        .unwrap();
+        assert_eq!(
+            replayed.snapshot_state(),
+            Game::restore(
+                catalog().load(&RegionId::new(SGCC)).unwrap(),
+                checkpoint,
+                Box::new(InMemoryCommandLog::default()),
+                &|| false
+            )
+            .unwrap()
+            .session()
+            .snapshot_state()
+        );
+    }
+
+    #[test]
+    fn new_sgcc_has_five_active_independent_starter_grids_without_hvdc() {
+        let game = new_game(&catalog(), "sgcc", 7);
+        let s = game.session();
+        assert_eq!(s.power().island_nodes().len(), 5);
+        assert_eq!(s.power().network().links().count(), 0);
+        let mut areas = std::collections::BTreeSet::new();
+        for (id, nodes) in s.power().island_nodes() {
+            assert!(s.power().island_active(*id));
+            let area = s
+                .region()
+                .area_at(s.power().network().node(*id).unwrap().cell);
+            assert!(areas.insert(area));
+            assert!(nodes.iter().all(|n| {
+                s.region()
+                    .area_at(s.power().network().node(*n).unwrap().cell)
+                    == area
+            }));
+            let local = s.island_session(*id).unwrap();
+            assert!(local.hourly_forecast().iter().any(|p| p.mean.value() > 0.0));
+            assert!(local.capacity_shortfall_check().is_none());
+            assert!(local.minimum_generation_check().is_none());
+        }
+        s.check_invariants().unwrap();
+    }
+
     #[test]
     fn sgcc_loads_as_five_areas_with_beijing_starter_and_dc_catalog() {
         let r = region("sgcc");

@@ -477,10 +477,11 @@ pub(crate) mod test_support {
         game_in_dir(&shipped_assets().join("regions"), region, sink)
     }
 
-    /// A closed SGCC day with a supplied home island and an unserved remote island.
-    /// The preceding construction months contain only the home island's history.
-    pub fn sgcc_review_with_two_islands() -> Game {
+    /// A closed SGCC day with the inherited grids and an additional inactive remote island.
+    /// The preceding construction months contain the inherited grids' history.
+    pub fn sgcc_review_with_remote_island() -> Game {
         let mut game = shipped_game("sgcc", Box::new(application::InMemoryCommandLog::default()));
+        let inherited = game.session().power().island_nodes().len();
         let from = game.session().anchor_node();
         let to = game
             .session()
@@ -505,7 +506,7 @@ pub(crate) mod test_support {
                 .unwrap()
                 .islands
                 .len(),
-            2
+            inherited + 1
         );
         game
     }
@@ -513,7 +514,7 @@ pub(crate) mod test_support {
     /// A remote island with a real but undersized source, so shortfall charts still
     /// exercise active obligations separately from dormant, unsupported customers.
     pub fn sgcc_planning_with_small_remote_source() -> Game {
-        let mut game = sgcc_review_with_two_islands();
+        let mut game = sgcc_review_with_remote_island();
         game.execute(Command::FinishReview).unwrap();
         let city = game
             .session()

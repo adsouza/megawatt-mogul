@@ -795,3 +795,13 @@ an atomic fresh-slot publication. Workers retain their boot-time sources/compile
 deployments. No untrusted archive bytes or JS objects enter the live ECS session. Imported state
 uses existing compatibility and integrity fences; future cross-target floating-point equivalence
 is not assumed. Asset inventories and hashed module names protect startup from mixed deployments.
+
+
+SGCC new games (rules 27) use optional `start.island_homes`: Beijing, Fuzhou, Lanzhou, Changchun
+and Chengdu anchor five inherited local AC grids. Each starter asset joins its own area's home;
+there are no cross-area AC lines or starting HVDC links. Customer service is already enrolled
+for those inherited grids. `Network.service_roots` is a derived cache of the original home bus
+and `PowerSystem.activated_service`; rebuilding it on read preserves existing portable schema-5
+bytes. Owned grids therefore remain connected to their own local service networks without
+requiring a physical route to company headquarters. An omitted/empty `island_homes` preserves
+the legacy single-home construction and ID allocation, including archived SGCC definitions.

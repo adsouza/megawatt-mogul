@@ -313,6 +313,20 @@ impl RegionDefinition {
         self.start_line_names.get(&city).map(String::as_str)
     }
 
+    pub fn start_home_at(&self, cell: CellCoord) -> &CityDef {
+        let id = self
+            .start
+            .island_homes
+            .iter()
+            .find(|id| {
+                self.city(**id)
+                    .is_some_and(|city| self.area_at(city.cell) == self.area_at(cell))
+            })
+            .copied()
+            .unwrap_or(self.start.home_city);
+        self.city(id).expect("validated start home")
+    }
+
     pub fn start(&self) -> &StartDef {
         &self.start
     }
@@ -641,6 +655,7 @@ impl TryFrom<RegionDefinitionParts> for RegionDefinition {
         validate_start(&parts.terrain, &catalog, &parts.cities, &parts.start)?;
         if parts.start_line_names.iter().any(|(city, name)| {
             *city == parts.start.home_city
+                || parts.start.island_homes.contains(city)
                 || !parts.start.connected_cities.contains(city)
                 || name.trim().is_empty()
         }) {

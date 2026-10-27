@@ -1,8 +1,8 @@
 //! Transmission topology: nodes, lines and which nodes are energised.
 //!
-//! A node is *connected* when a path of in-service lines links it to the
-//! root (the player's home city). Connectivity is recomputed after every
-//! change, with ordered collections throughout so results are deterministic.
+//! A node belongs to the service network when an in-service path reaches an enrolled
+//! local grid or the home city. Independent owned grids need no path to headquarters.
+//! Connectivity is recomputed after topology changes in deterministic ID order.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -52,6 +52,8 @@ pub fn distance_cells(a: CellCoord, b: CellCoord) -> f64 {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Network {
     root: NodeId,
+    /// Derived from persistent service enrolment; not an electrical interconnection.
+    service_roots: BTreeSet<NodeId>,
     nodes: BTreeMap<NodeId, Node>,
     lines: BTreeMap<LineId, Line>,
     connected: BTreeSet<NodeId>,
@@ -63,6 +65,7 @@ impl Network {
     pub fn new(root: NodeId, node: Node) -> Self {
         Self {
             root,
+            service_roots: BTreeSet::from([root]),
             nodes: BTreeMap::from([(root, node)]),
             lines: BTreeMap::new(),
             links: BTreeMap::new(),
@@ -195,6 +198,14 @@ impl Network {
         self.root
     }
 
+    pub(crate) fn restore_service_roots(&mut self, roots: BTreeSet<NodeId>) {
+        self.service_roots = roots;
+        self.service_roots.insert(self.root);
+    }
+    pub(crate) fn refresh_service_connectivity(&mut self) {
+        self.recompute_connectivity();
+    }
+
     pub fn is_connected(&self, node: NodeId) -> bool {
         self.connected.contains(&node)
     }
@@ -203,8 +214,8 @@ impl Network {
     /// assuming current construction orders finish. A path waits for its slowest line;
     /// competing paths use the earliest such date. `None` means no ordered path exists.
     pub fn months_until_connected(&self, node: NodeId) -> Option<u32> {
-        let mut earliest = BTreeMap::from([(self.root, 0)]);
-        let mut pending = BTreeSet::from([(0, self.root)]);
+        let mut earliest: BTreeMap<_, _> = self.service_roots.iter().map(|id| (*id, 0)).collect();
+        let mut pending: BTreeSet<_> = self.service_roots.iter().map(|id| (0, *id)).collect();
         while let Some((months, from)) = pending.pop_first() {
             if from == node {
                 return Some(months);
@@ -414,8 +425,8 @@ impl Network {
                 .or_default()
                 .push(link.from_grid());
         }
-        let mut reached = BTreeSet::from([self.root]);
-        let mut queue = VecDeque::from([self.root]);
+        let mut reached = self.service_roots.clone();
+        let mut queue: VecDeque<_> = self.service_roots.iter().copied().collect();
         while let Some(node) = queue.pop_front() {
             for &next in adjacency.get(&node).into_iter().flatten() {
                 if reached.insert(next) {
@@ -479,16 +490,49 @@ impl crate::state::State for LineStatus {
         })
     }
 }
-crate::state_record!(Network {
-    root,
-    nodes,
-    lines,
-    connected; since4 { links: Default::default() }
-});
+// Service roots are a cache of PowerSystem's persisted activated_service plus the home bus.
+// Keep the existing wire contract so archived single-island games remain byte-identical.
+impl crate::state::State for Network {
+    fn write(&self, out: &mut Vec<u8>) {
+        self.write_schema(out, crate::state::CURRENT_STATE_SCHEMA);
+    }
+    fn write_schema(&self, out: &mut Vec<u8>, schema: u32) {
+        self.root.write_schema(out, schema);
+        self.nodes.write_schema(out, schema);
+        self.lines.write_schema(out, schema);
+        self.connected.write_schema(out, schema);
+        if schema >= 4 {
+            self.links.write_schema(out, schema);
+        }
+    }
+    fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
+        use crate::state::State;
+        let root = State::read(input)?;
+        Ok(Self {
+            root,
+            service_roots: BTreeSet::from([root]),
+            nodes: State::read(input)?,
+            lines: State::read(input)?,
+            connected: State::read(input)?,
+            links: if input.schema >= 4 {
+                State::read(input)?
+            } else {
+                Default::default()
+            },
+        })
+    }
+}
 
 impl Network {
     pub(crate) fn valid_snapshot(&self, anchor: NodeId) -> bool {
-        if self.root != anchor || !self.nodes.contains_key(&anchor) {
+        if self.root != anchor
+            || !self.nodes.contains_key(&anchor)
+            || !self.service_roots.contains(&anchor)
+            || self
+                .service_roots
+                .iter()
+                .any(|id| !self.nodes.contains_key(id))
+        {
             return false;
         }
         for (id, line) in &self.lines {
@@ -832,7 +876,8 @@ mod island_topology_tests {
     proptest! {
         #[test]
         fn islands_match_independent_components_of_the_energised_graph(
-            edges in prop::collection::vec((0usize..8, 0usize..8, any::<bool>(), any::<bool>()), 0..40)
+            edges in prop::collection::vec((0usize..8, 0usize..8, any::<bool>(), any::<bool>()), 0..40),
+            roots in prop::collection::btree_set(0usize..8, 0..8)
         ) {
             let node = |i| Node {
                 kind: NodeKind::City(CityId(i as u32)),
@@ -842,6 +887,9 @@ mod island_topology_tests {
             for i in 1..8 {
                 network.add_node(NodeId(i), node(i as usize)).unwrap();
             }
+            let owned: BTreeSet<_> = roots.into_iter().chain(std::iter::once(0)).collect();
+            network.restore_service_roots(owned.iter().map(|id| NodeId(*id as u32)).collect());
+            network.refresh_service_connectivity();
             // Transitive closure is independent of the production breadth-first search.
             let mut ac = [[false; 8]; 8];
             let mut energised = ac;
@@ -877,7 +925,7 @@ mod island_topology_tests {
             }
             let mut expected = BTreeMap::<NodeId, BTreeSet<NodeId>>::new();
             for i in 0..8 {
-                if energised[0][i] {
+                if owned.iter().any(|root| energised[*root][i]) {
                     let root = (0..8).find(|&j| ac[i][j]).unwrap();
                     expected.entry(NodeId(root as u32)).or_default().insert(NodeId(i as u32));
                 }

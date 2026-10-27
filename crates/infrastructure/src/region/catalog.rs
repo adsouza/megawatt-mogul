@@ -153,7 +153,7 @@ pub(super) fn parse_region_file(
     if let Ok(file) = ron::de::from_str::<super::dto::RegionFileV4>(text)
         && file.region_schema == 4
     {
-        return check_id(ParsedRegionFile::V4(file), region);
+        return check_id(ParsedRegionFile::V4(Box::new(file)), region);
     }
     let probe: SchemaProbe = ron::de::from_str(text).map_err(|e| parse_error(e.to_string()))?;
     let file = match probe.region_schema {
@@ -201,8 +201,8 @@ pub fn load_region_bytes(
 ) -> Result<LoadedRegion, RegionLoadError> {
     let file = parse_region_bundle(&source_bytes, region)?;
     let definition = match file {
-        ParsedRegionFile::Legacy(f) => map_region(f),
-        ParsedRegionFile::V4(f) => map_region_v4(f),
+        ParsedRegionFile::Legacy(f) => map_region(*f),
+        ParsedRegionFile::V4(f) => map_region_v4(*f),
     }
     .map_err(|error| RegionLoadError::Invalid {
         region: region.clone(),

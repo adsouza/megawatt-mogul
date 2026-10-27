@@ -169,6 +169,8 @@ pub struct StartDef {
     pub cash: Money,
     /// An existing city in `connected_cities`, whose node anchors the network.
     pub home_city: CityId,
+    /// One inherited local grid per listed city; empty retains the legacy single home.
+    pub island_homes: Vec<CityId>,
     pub connected_cities: Vec<CityId>,
     pub fleet: Vec<StartPlantDef>,
 }

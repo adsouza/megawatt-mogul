@@ -128,17 +128,51 @@ pub(super) fn validate(p: &RegionDefinitionParts) -> Result<(), RegionError> {
             .iter()
             .find(|c| c.id == p.start.home_city)
             .expect("validated home");
+        let homes: Vec<_> = if p.start.island_homes.is_empty() {
+            vec![home.id]
+        } else {
+            p.start.island_homes.clone()
+        };
+        let mut home_areas = BTreeSet::new();
+        if !homes.contains(&home.id) {
+            return Err(invalid("start.island_homes"));
+        }
+        for id in homes {
+            let city = p
+                .cities
+                .iter()
+                .find(|c| c.id == id)
+                .ok_or_else(|| invalid("start.island_homes"))?;
+            if !p.start.connected_cities.contains(&id) || !home_areas.insert(at(city.cell)) {
+                return Err(invalid("start.island_homes"));
+            }
+            if !p.start.island_homes.is_empty()
+                && !p
+                    .start
+                    .fleet
+                    .iter()
+                    .any(|plant| at(plant.cell) == at(city.cell) && plant.kind.is_dispatchable())
+            {
+                return Err(invalid("start.island_homes.synchronous"));
+            }
+        }
         if p.cities
             .iter()
             .filter(|c| p.start.connected_cities.contains(&c.id))
-            .any(|c| at(c.cell) != at(home.cell))
+            .any(|c| !home_areas.contains(&at(c.cell)))
             || p.start
                 .fleet
                 .iter()
-                .any(|plant| at(plant.cell) != at(home.cell))
+                .any(|plant| !home_areas.contains(&at(plant.cell)))
         {
             return Err(invalid("start.areas"));
         }
+    }
+    if p.areas.is_none()
+        && !p.start.island_homes.is_empty()
+        && p.start.island_homes != [p.start.home_city]
+    {
+        return Err(invalid("start.island_homes"));
     }
     if let Some(h) = &p.hvdc {
         let longest = f64::from(p.terrain.width())
@@ -312,5 +346,30 @@ mod tests {
         assert_eq!(dc.capital.cents(), dc.route.capital.cents() + 100);
         assert_ne!(dc.route.capital, ac.capital);
         assert_eq!(dc, r.link_terms(b, a, len).unwrap());
+    }
+}
+
+#[cfg(test)]
+mod starting_island_tests {
+    use super::*;
+    use crate::{
+        ids::{CellCoord, CityId},
+        region::{PlantKind, StartPlantDef, fixtures},
+    };
+    proptest::proptest! {
+        #[test]
+        fn starter_homes_require_distinct_connected_areas_with_synchronous_support(
+            unknown in proptest::bool::ANY, duplicate in proptest::bool::ANY,
+            missing in proptest::bool::ANY, variable_only in proptest::bool::ANY,
+        ) {
+            let mut p = fixtures::two_area_parts();
+            p.start.connected_cities.push(CityId(3));
+            p.start.island_homes = vec![CityId(1)];
+            if !missing { p.start.island_homes.push(CityId(if unknown {99} else {3})); }
+            if duplicate { p.start.island_homes.push(CityId(1)); }
+            p.start.fleet.push(StartPlantDef { kind: if variable_only {PlantKind::Wind} else {PlantKind::Peaker}, cell: CellCoord {x:4,y:3} });
+            let accepted = RegionDefinition::try_from(p).is_ok();
+            proptest::prop_assert_eq!(accepted, !unknown && !duplicate && !missing && !variable_only);
+        }
     }
 }

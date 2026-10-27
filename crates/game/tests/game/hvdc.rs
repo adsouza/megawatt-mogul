@@ -308,6 +308,50 @@ fn a_plan_edit_queued_before_activation_cannot_bypass_the_domain_revision_check(
 }
 
 #[test]
+fn all_five_starter_grids_are_reachable_in_the_forecast_picker_at_minimum_size() {
+    use super::{
+        hud_smoke::dispatch_in,
+        support::{egui_harness::widget, egui_pass::EguiPass, hud_app, request},
+    };
+    use game::{
+        hud::{self, PlanningTab, UiState},
+        sim::Session,
+    };
+    let logs = tempfile::TempDir::new().unwrap();
+    let mut app = hud_app(logs.path());
+    request(&mut app, "sgcc");
+    dispatch_in(
+        &mut app,
+        vec![UiAction::SetPlanningTab(PlanningTab::Forecast)],
+    );
+    let l10n = shipped_l10n();
+    let model = hud::forecast_model(
+        &app.world().resource::<Session>().0,
+        &l10n,
+        app.world().resource::<UiState>(),
+    );
+    assert_eq!(model.islands.len(), 5);
+    assert!(model.islands.iter().all(|island| island.active));
+    let checkpoint = app.world().resource::<Session>().0.checkpoint();
+    let pass = EguiPass::attach(&mut app);
+    pass.ctx().set_zoom_factor(1.25);
+    for island in &model.islands {
+        dispatch_in(&mut app, vec![UiAction::SelectIsland(None)]);
+        let widgets = pass.settled(&mut app, 1024.0, 640.0);
+        let at = widget(&widgets, &model.island_picker_label).rect.center();
+        pass.click_at(&mut app, 1024.0, 640.0, at);
+        let widgets = pass.settled(&mut app, 1024.0, 640.0);
+        let at = widget(&widgets, &island.inspect.label).rect.center();
+        pass.click_at(&mut app, 1024.0, 640.0, at);
+        assert_eq!(
+            app.world().resource::<UiState>().island,
+            Some(island.island)
+        );
+    }
+    assert_eq!(app.world().resource::<Session>().0.checkpoint(), checkpoint);
+}
+
+#[test]
 fn island_forecast_buttons_and_warnings_navigate_the_real_hud_at_minimum_size() {
     use super::{
         hud_smoke::dispatch_in,

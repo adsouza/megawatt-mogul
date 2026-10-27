@@ -275,9 +275,19 @@ impl PowerSystem {
         })
     }
 
+    pub(crate) fn seed_starting_service(&mut self, roots: BTreeSet<NodeId>) {
+        self.activated_service.extend(roots);
+        self.network
+            .restore_service_roots(self.activated_service.clone());
+        self.network.refresh_service_connectivity();
+        self.recompute_islands();
+    }
     pub(crate) fn activate_service(&mut self, id: NodeId) {
         if let Some(nodes) = self.island_nodes.get(&id) {
             self.activated_service.extend(nodes);
+            self.network
+                .restore_service_roots(self.activated_service.clone());
+            self.network.refresh_service_connectivity();
         }
     }
 
@@ -292,6 +302,8 @@ impl PowerSystem {
                 self.activated_service.extend(nodes);
             }
         }
+        self.network
+            .restore_service_roots(self.activated_service.clone());
     }
 
     pub(crate) fn prospective_service(&mut self) {

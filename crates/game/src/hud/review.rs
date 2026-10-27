@@ -793,7 +793,7 @@ mod tests {
 
     #[test]
     fn review_history_scopes_each_island_and_all_restores_region_totals() {
-        let game = crate::hud::test_support::sgcc_review_with_two_islands();
+        let game = crate::hud::test_support::sgcc_review_with_remote_island();
         let day = game.projections().timeline.completed_days().last().unwrap();
         let l10n = crate::hud::test_support::shipped_l10n();
         let style = usd_style();

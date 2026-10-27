@@ -35,8 +35,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         zones.cells.clear();
     }
     let catalog = RonRegionCatalog::new(region_path.parent().unwrap_or(Path::new(".")));
-    let ParsedRegionFile::V4(region) =
-        catalog.resolve(&RegionId::new(&region.id), ParsedRegionFile::V4(region))?
+    let ParsedRegionFile::V4(region) = catalog.resolve(
+        &RegionId::new(&region.id),
+        ParsedRegionFile::V4(Box::new(region)),
+    )?
     else {
         return Err("a schema-4 region resolved to another schema".into());
     };

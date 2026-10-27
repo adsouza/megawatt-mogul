@@ -25,6 +25,7 @@ use crate::l10n::{Localize, Localizer, Names, format};
 #[derive(Debug, Clone, PartialEq)]
 pub struct IslandBalanceModel {
     pub island: domain::ids::NodeId,
+    pub active: bool,
     pub shortfall_label: String,
     pub excess_label: String,
     pub shortfall: Vec<[f64; 2]>,
@@ -59,6 +60,7 @@ pub struct ForecastModel {
     /// "All" must show local risks, never let another island's surplus cancel them.
     pub islands: Vec<IslandBalanceModel>,
     pub island_note: String,
+    pub island_picker_label: String,
     pub risk_axis: String,
     pub scope_label: Option<String>,
     pub service_note: Option<String>,
@@ -246,6 +248,7 @@ pub(super) fn forecast_model_for_session(
                 .unwrap_or(0);
             Some(IslandBalanceModel {
                 island: *id,
+                active: session.power().island_active(*id),
                 shortfall_label: l10n.args(
                     "forecast-island-shortfall",
                     &[
@@ -312,6 +315,7 @@ pub(super) fn forecast_model_for_session(
     ForecastModel {
         islands,
         island_note: l10n.text("forecast-island-note"),
+        island_picker_label: l10n.text("forecast-inspect-island"),
         risk_axis: l10n.text("forecast-risk-axis"),
         scope_label: ui.island.map(|id| names.island(session, id)),
         service_note: None,
@@ -644,15 +648,34 @@ fn draw_island_balances(ui: &mut egui::Ui, model: &ForecastModel) -> Vec<UiActio
     use super::chart_style::KeyMark;
     let mut actions = Vec::new();
     ui.label(&model.island_note);
-    egui::ScrollArea::horizontal()
-        .id_salt("forecast_island_buttons")
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
+        egui::ComboBox::from_id_salt("forecast_island_picker")
+            .selected_text(&model.island_picker_label)
+            .show_ui(ui, |ui| {
                 for island in &model.islands {
-                    button(ui, &island.inspect, &mut actions);
+                    if ui.selectable_label(false, &island.inspect.label).clicked() {
+                        actions.push(island.inspect.action.clone());
+                        ui.close();
+                    }
                 }
             });
-        });
+        // Keep urgent grids one click away; balanced inherited grids stay in the picker.
+        for island in model
+            .islands
+            .iter()
+            .filter(|island| {
+                !island.active
+                    || island
+                        .shortfall
+                        .iter()
+                        .chain(&island.excess)
+                        .any(|point| point[1] > 0.0)
+            })
+            .take(2)
+        {
+            button(ui, &island.inspect, &mut actions);
+        }
+    });
     let id = ui.make_persistent_id("island_forecast_risks");
     // A stable colour per island; solid means shortage, dashed means surplus floor.
     let palette = [
@@ -763,7 +786,10 @@ mod tests {
         }
         let l10n = shipped_l10n();
         let model = forecast_model(&game, &l10n, &UiState::default());
-        assert_eq!(model.islands.len(), 2);
+        assert_eq!(
+            model.islands.len(),
+            game.session().power().island_nodes().len()
+        );
         for island in &model.islands {
             let local = game.session().island_session(island.island).unwrap();
             let shortage = local.capacity_shortfall_check();
@@ -774,7 +800,7 @@ mod tests {
                     < 1e-8
             );
             assert!((max(&island.excess) - excess.map_or(0.0, |w| w.excess.value())).abs() < 1e-8);
-            if island.island == game.session().anchor_node() {
+            if !island.shortfall_label.contains("Shanghai") {
                 assert!(max(&island.excess) > 0.0);
                 assert_eq!(max(&island.shortfall), 0.0);
             } else {

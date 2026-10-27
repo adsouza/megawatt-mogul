@@ -1567,6 +1567,9 @@ impl crate::state::State for PowerSystem {
         if input.schema < 5 {
             power.inherit_legacy_service();
         }
+        power
+            .network
+            .restore_service_roots(power.activated_service.clone());
         Ok(power)
     }
 }

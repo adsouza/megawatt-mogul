@@ -447,6 +447,7 @@ fn map_start(file: Geography<'_>, start: &StartDto) -> Result<StartDef> {
         month: SimMonth::new(start.year, start.month).map_err(|_| invalid("start.month"))?,
         cash: major_units(start.cash_usd, "start.cash_usd")?,
         home_city: CityId(start.home_city),
+        island_homes: Vec::new(),
         connected_cities: start.connected_cities.iter().copied().map(CityId).collect(),
         fleet: start
             .fleet
@@ -515,6 +516,7 @@ fn map_start_v4(file: Geography<'_>, start: &StartDtoV4) -> Result<StartDef> {
         month: SimMonth::new(start.year, start.month).map_err(|_| invalid("start.month"))?,
         cash: major_units(start.cash, "start.cash")?,
         home_city: CityId(start.home_city),
+        island_homes: start.island_homes.iter().copied().map(CityId).collect(),
         connected_cities: start.connected_cities.iter().copied().map(CityId).collect(),
         fleet: start
             .fleet
