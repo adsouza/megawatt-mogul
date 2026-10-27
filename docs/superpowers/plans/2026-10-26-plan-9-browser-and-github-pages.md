@@ -520,3 +520,21 @@ bundle test passed, workspace Clippy with warnings denied passed, and the isolat
 120-frame smoke exited successfully. Shell localization, actionlint, formatting and diff checks
 passed. The stale-module test initially found that module-load errors could precede the deferred
 shell listener; an early capture listener now retains the failure until the shell initializes.
+
+
+## Implementation evidence — 9b
+
+The archive encoder and bounded byte decoder/metadata inspector are public infrastructure
+adapters. Native directory reading delegates to the same decoder while keeping filesystem
+traversal/symlink defenses. New tests compare the generated manifest and every part byte with
+native publication and reject missing or corrupted parts without changing the original save.
+Preference bytes use the same validation and encoding as native files. Generated tests cover
+valid preference round trips and hostile archive bytes.
+
+Native persistence jobs now use a shared executor boundary that returns typed completions and
+contains panics. The existing generation, cancellation, ordered autosave and recording activation
+logic stays in the state machine. The executor has direct result/panic-containment regressions;
+9c will supply local futures at this boundary rather than spawning browser threads.
+
+Validation: 84 selected infrastructure tests and 56 selected game save/preferences/executor
+tests passed. Released fixtures remain unchanged. No complete local workspace suite was run.

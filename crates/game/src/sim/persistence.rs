@@ -1,5 +1,6 @@
 //! Persistence orchestration. Immutable captures leave the main thread; only verified candidates
 //! return. Commands and worker results are scoped to a session generation.
+mod executor;
 use super::{CommandFailed, DomainEventMessage, PlayerCommand, ReturnToMenu, Session, SimSpeed};
 use crate::{
     crash::CrashContext,
@@ -15,9 +16,8 @@ use std::{
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
-        mpsc::{self, Receiver},
+        mpsc::Receiver,
     },
-    thread,
 };
 
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -228,47 +228,44 @@ impl Persistence {
         };
         self.preload_key = Some(key.clone());
         let (slot, revision) = key;
-        let (tx, rx) = mpsc::channel();
         let cancel = Arc::new(AtomicBool::new(false));
         let worker_cancel = cancel.clone();
-        match thread::Builder::new()
-            .name("resume-preload".into())
-            .spawn(move || {
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let (bundle, region, running) = read_snapshot(store.as_ref(), &slot, &|| {
-                        worker_cancel.load(Ordering::Relaxed)
-                    })?;
-                    if store.revision(&slot)? != revision {
-                        return Err(SaveError::SlotChanged);
-                    }
-                    let game = bundle.restore(
-                        region,
-                        &running,
-                        Box::new(InMemoryCommandLog::default()),
-                        &|| worker_cancel.load(Ordering::Relaxed),
-                    )?;
-                    let game = game.prepare_recording();
-                    let recording = infrastructure::command_log::PreparedRecording::new(
-                        game.checkpoint().clone(),
-                        &|| worker_cancel.load(Ordering::Relaxed),
-                    )
-                    .map_err(RestoreError::Log)?;
-                    Ok(PreloadedGame {
-                        recording,
-                        game,
-                        slot,
-                        revision,
-                    })
-                }))
-                .unwrap_or_else(|_| {
-                    Err(SaveError::Io {
-                        stage: "preload",
-                        message: "preload worker panicked".into(),
-                    })
-                });
-                let _ = tx.send(result);
-            }) {
-            Ok(_) => {
+        match executor::spawn(
+            "resume-preload",
+            move || {
+                let (bundle, region, running) = read_snapshot(store.as_ref(), &slot, &|| {
+                    worker_cancel.load(Ordering::Relaxed)
+                })?;
+                if store.revision(&slot)? != revision {
+                    return Err(SaveError::SlotChanged);
+                }
+                let game = bundle.restore(
+                    region,
+                    &running,
+                    Box::new(InMemoryCommandLog::default()),
+                    &|| worker_cancel.load(Ordering::Relaxed),
+                )?;
+                let game = game.prepare_recording();
+                let recording = infrastructure::command_log::PreparedRecording::new(
+                    game.checkpoint().clone(),
+                    &|| worker_cancel.load(Ordering::Relaxed),
+                )
+                .map_err(RestoreError::Log)?;
+                Ok(PreloadedGame {
+                    recording,
+                    game,
+                    slot,
+                    revision,
+                })
+            },
+            || {
+                Err(SaveError::Io {
+                    stage: "preload",
+                    message: "preload worker panicked".into(),
+                })
+            },
+        ) {
+            Ok(rx) => {
                 self.preload = Some(PreloadJob {
                     receiver: Mutex::new(rx),
                     cancel,
@@ -460,23 +457,19 @@ impl Persistence {
             return;
         }
         self.token = self.token.wrapping_add(1);
-        let (tx, rx) = mpsc::channel();
         let cancel = Arc::new(AtomicBool::new(false));
         let worker_cancel = cancel.clone();
-        match thread::Builder::new()
-            .name("save-resume".into())
-            .spawn(move || {
-                let completion =
-                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| work(worker_cancel)))
-                        .unwrap_or_else(|_| {
-                            Completion::Failed(SaveError::Io {
-                                stage: "worker",
-                                message: "persistence worker panicked".into(),
-                            })
-                        });
-                let _ = tx.send(completion);
-            }) {
-            Ok(_) => {
+        match executor::spawn(
+            "save-resume",
+            move || work(worker_cancel),
+            || {
+                Completion::Failed(SaveError::Io {
+                    stage: "worker",
+                    message: "persistence worker panicked".into(),
+                })
+            },
+        ) {
+            Ok(rx) => {
                 self.job = Some(Job {
                     receiver: Mutex::new(rx),
                     cancel,

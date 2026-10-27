@@ -572,3 +572,45 @@ fn wind_and_overlapping_battery_policy_restore_through_flat_and_monthly_snapshot
         }
     }
 }
+
+#[test]
+fn byte_archive_matches_native_publication_and_rejects_missing_or_changed_parts() {
+    use infrastructure::save::{decode_archive, encode_archive, inspect_archive};
+    let dir = TempDir::new().unwrap();
+    let store = FileSaveStore::new(dir.path().into()).with_monthly_charts();
+    let saved = bundle(&store);
+    let archive = encode_archive(&saved, &store.compatibility()).unwrap();
+    store.write(&saved, &SaveTarget::Create, &|| false).unwrap();
+    let mut native = contents(&slot(&dir, &saved.metadata.slot));
+    assert_eq!(native.remove("snapshot.ron.z").unwrap(), archive.manifest);
+    assert_eq!(native, archive.files);
+    assert_eq!(
+        decode_archive(&archive, &store.compatibility(), &|| false)
+            .unwrap()
+            .0,
+        saved
+    );
+    assert_eq!(
+        inspect_archive(&archive.manifest, &store.compatibility())
+            .unwrap()
+            .metadata,
+        saved.metadata
+    );
+    let mut bad = archive.clone();
+    bad.files.pop_first();
+    assert!(decode_archive(&bad, &store.compatibility(), &|| false).is_err());
+    let mut bad = archive.clone();
+    bad.files.first_entry().unwrap().get_mut()[0] ^= 1;
+    assert!(decode_archive(&bad, &store.compatibility(), &|| false).is_err());
+    assert_eq!(store.read(&saved.metadata.slot).unwrap().0, saved);
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(64))]
+    #[test]
+    fn hostile_byte_archives_never_panic(manifest in proptest::collection::vec(proptest::num::u8::ANY,0..8192),
+        part in proptest::collection::vec(proptest::num::u8::ANY,0..2048)) {
+        let archive=infrastructure::save::EncodedArchive {manifest,files:[("unreferenced.bin.z".into(),part)].into()};
+        let _=infrastructure::save::decode_archive(&archive,&infrastructure::save::replay_compatibility(),&||false);
+    }
+}

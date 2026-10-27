@@ -42,8 +42,8 @@ struct ChartRef {
     decoded: usize,
     checksum: [u8; 32],
 }
-#[derive(Debug)]
-pub(crate) struct EncodedArchive {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EncodedArchive {
     pub manifest: Vec<u8>,
     pub files: BTreeMap<String, Vec<u8>>,
 }
@@ -74,6 +74,9 @@ fn file_name(year: i32, month: u8, checksum: &[u8; 32]) -> String {
     format!("{year:04}-{month:02}-{hash}.bin.z")
 }
 fn unpack(bytes: &[u8]) -> Result<Manifest, SaveError> {
+    if bytes.len() > MAX_SAVE_BYTES {
+        return Err(SaveError::SaveTooLarge);
+    }
     let raw = inflate(bytes)?;
     let options = ron::Options::default().with_recursion_limit(64);
     let e: Envelope = options.from_bytes(&raw).map_err(malformed)?;
@@ -114,7 +117,7 @@ fn unpack(bytes: &[u8]) -> Result<Manifest, SaveError> {
     }
     Ok(m)
 }
-pub(crate) fn encode(
+pub fn encode(
     bundle: &SaveBundle,
     compatibility: &ReplayCompatibility,
 ) -> Result<EncodedArchive, SaveError> {
@@ -216,7 +219,60 @@ pub(crate) fn read(
     cancelled: &dyn Fn() -> bool,
 ) -> Result<(SaveBundle, LoadedRegion), SaveError> {
     let bytes = read_manifest(root)?;
-    let m = unpack(&bytes)?;
+    decode_parts(
+        &bytes,
+        |name| safe_read(&root.join(name), MAX_SAVE_BYTES),
+        running,
+        cancelled,
+    )
+}
+
+/// Restore a complete byte archive, rejecting unreferenced as well as missing parts.
+pub fn decode_archive(
+    archive: &EncodedArchive,
+    running: &ReplayCompatibility,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(SaveBundle, LoadedRegion), SaveError> {
+    let manifest = unpack(&archive.manifest)?;
+    if manifest.charts.len() != archive.files.len() {
+        return Err(malformed("archive part count"));
+    }
+    decode_parts(
+        &archive.manifest,
+        |name| {
+            archive
+                .files
+                .get(name)
+                .cloned()
+                .ok_or_else(|| malformed("missing archive part"))
+        },
+        running,
+        cancelled,
+    )
+}
+/// Metadata only, with no chart decode or simulation construction.
+pub fn inspect_archive(
+    bytes: &[u8],
+    running: &ReplayCompatibility,
+) -> Result<SaveEntry, SaveError> {
+    let manifest = unpack(bytes)?;
+    super::listing::inspect(
+        manifest.state.as_bytes(),
+        SaveRevision(digest(bytes)),
+        running,
+    )
+    .map(|(entry, _)| entry)
+}
+fn decode_parts(
+    bytes: &[u8],
+    mut read: impl FnMut(&str) -> Result<Vec<u8>, SaveError>,
+    running: &ReplayCompatibility,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(SaveBundle, LoadedRegion), SaveError> {
+    if bytes.len() > MAX_SAVE_BYTES {
+        return Err(SaveError::SaveTooLarge);
+    }
+    let m = unpack(bytes)?;
     let (mut bundle, region) =
         super::decode_save_cancellable(m.state.as_bytes(), running, cancelled)?;
     let mut charts = Vec::new();
@@ -224,7 +280,7 @@ pub(crate) fn read(
         if cancelled() {
             return Err(SaveError::Cancelled);
         }
-        let data = safe_read(&root.join(c.file), MAX_SAVE_BYTES)?;
+        let data = read(&c.file)?;
         if data.len() != c.length || digest(&data) != c.checksum {
             return Err(SaveError::ChecksumMismatch);
         }
