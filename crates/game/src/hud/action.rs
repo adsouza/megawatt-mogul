@@ -462,6 +462,16 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
                 sink.commands
                     .write(PlayerCommand(command, sink.generation.0));
             }
+            UiAction::SelectIsland(None)
+                if sink.ui.tab == PlanningTab::Commitments
+                    && sink.session.as_ref().is_some_and(|game| {
+                        game.0.session().phase() == domain::session::DayPhase::Planning
+                            && !game.0.session().power().island_nodes().is_empty()
+                    }) =>
+            {
+                sink.ui
+                    .apply(&UiAction::SetPlanningTab(PlanningTab::Forecast));
+            }
             UiAction::SelectIsland(_)
             | UiAction::InspectForecast { .. }
             | UiAction::ShowLinks(_)
@@ -553,6 +563,13 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             }
             UiAction::ShowLegend(open) => *sink.legend = LegendChoice(Some(open)),
             // Written by `UiState::apply`, above.
+            UiAction::SetPlanningTab(PlanningTab::Commitments) => {
+                if let Some(island) = sink.session.as_ref().and_then(|game| {
+                    super::commitment::selected_commitment_island(game.0.session(), &sink.ui)
+                }) {
+                    sink.ui.apply(&UiAction::SelectIsland(Some(island)));
+                }
+            }
             UiAction::SetPlanningTab(_)
             | UiAction::ShowHour(_)
             | UiAction::EditCommitment { .. }

@@ -58,7 +58,7 @@ pub const PLANNING_PANEL: OuterPanel = OuterPanel {
 pub enum PlanningContent {
     Commitments {
         warnings: WarningsModel,
-        grid: CommitmentModel,
+        grid: Box<CommitmentModel>,
     },
     Forecast(Box<ForecastModel>),
     Tariff(TariffModel),
@@ -110,6 +110,14 @@ fn planning_model_for(
     if game.session().phase() != DayPhase::Planning {
         return None;
     }
+    let mut local_ui;
+    let ui = if ui.tab == PlanningTab::Commitments {
+        local_ui = ui.clone();
+        local_ui.island = super::commitment::selected_commitment_island(game.session(), ui);
+        &local_ui
+    } else {
+        ui
+    };
     let tab = |tab: PlanningTab, label: String| ToggleModel {
         button: ButtonModel::new(label, UiAction::SetPlanningTab(tab)),
         on: ui.tab == tab,
@@ -150,7 +158,7 @@ fn planning_model_for(
                     }
                     warnings
                 },
-                grid: commitment_model(game, l10n, ui, form),
+                grid: Box::new(commitment_model(game, l10n, ui, form)),
             },
             PlanningTab::Forecast => {
                 let mut chart = if let Some(s) = &scoped {
@@ -254,6 +262,13 @@ pub(super) fn planning_panel(
     mut sink: ActionSink,
 ) -> Result {
     let (l10n, style) = text;
+    if sink.ui_state().tab == PlanningTab::Commitments
+        && let Some(island) =
+            super::commitment::selected_commitment_island(session.0.session(), sink.ui_state())
+        && sink.ui_state().island != Some(island)
+    {
+        dispatch([UiAction::SelectIsland(Some(island))], &mut sink);
+    }
     let Some(forecast) = forecast.get() else {
         return Ok(());
     };

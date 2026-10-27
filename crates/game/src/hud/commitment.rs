@@ -1,5 +1,5 @@
 //! The commitment grid (spec §8.4: "the primary planning tool"): one row per commissioned
-//! dispatchable plant, grouped by kind in merit order, with 24 hour toggles.
+//! dispatchable plant, grouped by local island and then kind in merit order, with 24 hour toggles.
 //!
 //! A toggle edits a draft pattern held in [`UiState`]. *Apply* sends it as `CommitPlant`; so does
 //! starting to edit another row, which leaves this one. The domain validates the pattern (every
@@ -10,7 +10,7 @@
 
 use application::{Command, Game};
 use bevy_egui::egui;
-use domain::ids::PlantId;
+use domain::ids::{NodeId, PlantId};
 use domain::region::PlantKind;
 use domain::session::PlantView;
 use domain::units::Megawatts;
@@ -97,18 +97,33 @@ pub struct CommitmentRow {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct KindGroup {
+    pub island: Option<NodeId>,
+    /// Named local-grid section, shown before its first kind.
+    pub heading: Option<String>,
+    pub forecast: Option<ButtonModel>,
     pub kind: PlantKind,
     pub rows: Vec<CommitmentRow>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CommitmentModel {
+    pub island: Option<NodeId>,
+    pub scope_label: String,
+    pub scopes: Vec<ToggleModel>,
+    /// An unapplied edit outside the selected grid remains recoverable.
+    pub hidden_draft: Option<HiddenDraftModel>,
     pub time_axis: String,
     pub hours: Vec<HourHeader>,
-    /// Kinds in merit order, each with its plants by id.
+    /// Islands by representative node, then kinds in merit order and plants by id.
     pub groups: Vec<KindGroup>,
     /// Shown instead of the grid when there is no plant to commit.
     pub empty: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct HiddenDraftModel {
+    pub message: String,
+    pub reveal: ButtonModel,
 }
 
 /// Whether some row holds a draft the player has not applied. The day can't begin until it is
@@ -150,6 +165,27 @@ impl TargetModel {
     }
 }
 
+/// Commitments always belong to one physical local grid. The company-wide selection is a
+/// forecast overview; re-entering the planner restores the last valid local selection.
+pub(super) fn selected_commitment_island(
+    session: &domain::session::GameSession,
+    ui: &UiState,
+) -> Option<NodeId> {
+    let islands = session.power().island_nodes();
+    ui.island
+        .filter(|id| islands.contains_key(id))
+        .or_else(|| {
+            ui.last_planning_island
+                .filter(|id| islands.contains_key(id))
+        })
+        .or_else(|| {
+            islands
+                .iter()
+                .find_map(|(id, nodes)| nodes.contains(&session.anchor_node()).then_some(*id))
+        })
+        .or_else(|| islands.keys().next().copied())
+}
+
 pub fn commitment_model(
     game: &Game,
     l10n: &Localizer,
@@ -160,6 +196,32 @@ pub fn commitment_model(
     let region = session.region();
     let names = Names::new(l10n, session);
     let groups = plants_by_kind(game);
+    let islands = session.power().island_nodes();
+    let selected = selected_commitment_island(session, ui);
+    let node_islands: std::collections::BTreeMap<_, _> = islands
+        .iter()
+        .flat_map(|(id, nodes)| nodes.iter().map(move |node| (*node, *id)))
+        .collect();
+    let plant_island = |plant: &PlantView| node_islands.get(&plant.node).copied();
+    let island_name = |id| {
+        let label = names.island(session, id);
+        if session.power().island_active(id) {
+            label
+        } else {
+            l10n.args("island-inactive-name", &[("island", label.into())])
+        }
+    };
+    let scopes = if islands.is_empty() {
+        Vec::new()
+    } else {
+        islands
+            .keys()
+            .map(|id| ToggleModel {
+                button: ButtonModel::new(island_name(*id), UiAction::SelectIsland(Some(*id))),
+                on: selected == Some(*id),
+            })
+            .collect()
+    };
 
     // The draft is sent when another row starts being edited, if it differs from the plant's own.
     let flush = ui.draft.filter(|draft| {
@@ -310,14 +372,72 @@ pub fn commitment_model(
         }
     };
 
-    let groups: Vec<KindGroup> = groups
-        .iter()
-        .map(|group| KindGroup {
-            kind: group.kind,
-            rows: group.plants.iter().map(row).collect(),
+    let hidden_draft = flush.and_then(|draft| {
+        let plant = groups
+            .iter()
+            .flat_map(|g| &g.plants)
+            .find(|p| p.id == draft.plant)?;
+        let island = plant_island(plant);
+        (selected.is_some() && island != selected).then(|| HiddenDraftModel {
+            message: l10n.args(
+                "commitment-hidden-draft",
+                &[
+                    ("plant", names.plant(plant.id).into()),
+                    (
+                        "island",
+                        island
+                            .map_or_else(|| l10n.text("commitment-unconnected"), island_name)
+                            .into(),
+                    ),
+                ],
+            ),
+            reveal: ButtonModel::new(
+                l10n.text("commitment-return-to-draft"),
+                UiAction::SelectIsland(island),
+            ),
         })
-        .collect();
+    });
+    let sections = [selected];
+    let mut local_groups = Vec::new();
+    for island in sections {
+        let mut first = true;
+        for group in &groups {
+            let rows: Vec<_> = group
+                .plants
+                .iter()
+                .filter(|plant| plant_island(plant) == island)
+                .map(row)
+                .collect();
+            if rows.is_empty() {
+                continue;
+            }
+            let show_heading = first && !islands.is_empty();
+            local_groups.push(KindGroup {
+                island,
+                heading: show_heading.then(|| {
+                    island.map_or_else(|| l10n.text("commitment-unconnected"), island_name)
+                }),
+                forecast: island.filter(|_| show_heading).map(|island| {
+                    ButtonModel::new(
+                        l10n.text("commitment-view-forecast"),
+                        UiAction::InspectForecast {
+                            island,
+                            hour: ui.highlight_hour.unwrap_or(0),
+                        },
+                    )
+                }),
+                kind: group.kind,
+                rows,
+            });
+            first = false;
+        }
+    }
+    let groups = local_groups;
     CommitmentModel {
+        island: selected,
+        scope_label: l10n.text("commitment-grid"),
+        scopes,
+        hidden_draft,
         time_axis: region.system_zone().name_key.as_ref().map_or_else(
             || l10n.text("commitment-system-time"),
             |key| l10n.args("commitment-system-zone", &[("zone", l10n.text(key).into())]),
@@ -420,19 +540,54 @@ pub fn draw_commitment(
     form: &mut CommitmentForm,
 ) -> Vec<UiAction> {
     let mut actions = Vec::new();
+    if !model.scopes.is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(&model.scope_label);
+            let selected = model
+                .scopes
+                .iter()
+                .find(|scope| scope.on)
+                .expect("selected scope");
+            egui::ComboBox::from_id_salt("commitment_island_picker")
+                .selected_text(&selected.button.label)
+                .width(240.0)
+                .show_ui(ui, |ui| {
+                    for scope in &model.scopes {
+                        if ui.selectable_label(scope.on, &scope.button.label).clicked() {
+                            actions.push(scope.button.action.clone());
+                            ui.close();
+                        }
+                    }
+                });
+        });
+    }
+    if let Some(draft) = &model.hidden_draft {
+        ui.horizontal_wrapped(|ui| {
+            ui.colored_label(TextTone::Caution.color(), &draft.message);
+            button(ui, &draft.reveal, &mut actions);
+        });
+    }
     if let Some(empty) = &model.empty {
         ui.weak(empty.as_str());
         return actions;
     }
     draw_commitment_header(ui, model, &mut actions);
     egui::ScrollArea::vertical()
-        .id_salt("commitment_rows")
+        .id_salt(("commitment_rows", model.island))
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
             for (index, group) in model.groups.iter().enumerate() {
                 if index > 0 {
                     ui.add_space(3.0);
+                }
+                if let Some(heading) = &group.heading {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.strong(heading);
+                        if let Some(forecast) = &group.forecast {
+                            button(ui, forecast, &mut actions);
+                        }
+                    });
                 }
                 for row in &group.rows {
                     draw_row(ui, row, form, &mut actions);
@@ -495,11 +650,14 @@ fn draw_row(
         } else {
             ui.colored_label(TextTone::Negative.color(), range);
         }
-        if row.dirty {
+    });
+    if row.dirty {
+        ui.horizontal(|ui| {
+            ui.add_space(NAME_WIDTH + 4.0);
             button(ui, &row.apply, actions);
             button(ui, &row.revert, actions);
-        }
-    });
+        });
+    }
     if let Some(budget) = &row.budget {
         ui.horizontal(|ui| {
             ui.add_space(NAME_WIDTH + 4.0);
@@ -531,6 +689,185 @@ mod tests {
 
     fn model(game: &Game, ui: &UiState, form: &CommitmentForm) -> CommitmentModel {
         commitment_model(game, &shipped_l10n(), ui, form)
+    }
+
+    #[test]
+    fn selected_forecast_island_limits_commitments_to_its_local_plants() {
+        let game = shipped_game("sgcc", Box::new(InMemoryCommandLog::default()));
+        let before = game.checkpoint();
+        for (&island, nodes) in game.session().power().island_nodes() {
+            let ui = UiState {
+                island: Some(island),
+                ..Default::default()
+            };
+            let built = model(&game, &ui, &CommitmentForm::default());
+            let actual: Vec<_> = built
+                .groups
+                .iter()
+                .flat_map(|g| &g.rows)
+                .map(|r| r.plant)
+                .collect();
+            let expected: std::collections::BTreeSet<_> = game
+                .session()
+                .plant_views()
+                .into_iter()
+                .filter(|p| nodes.contains(&p.node) && super::super::plant_list::is_commitable(p))
+                .map(|p| p.id)
+                .collect();
+            assert_eq!(
+                actual.len(),
+                expected.len(),
+                "only local plants for {island:?}"
+            );
+            assert_eq!(
+                actual
+                    .into_iter()
+                    .collect::<std::collections::BTreeSet<_>>(),
+                expected
+            );
+        }
+        assert_eq!(game.checkpoint(), before);
+    }
+
+    #[test]
+    fn every_island_has_its_own_named_merit_ordered_fleet() {
+        let game = shipped_game("sgcc", Box::new(InMemoryCommandLog::default()));
+        let default = model(&game, &UiState::default(), &CommitmentForm::default());
+        assert_eq!(default.island, Some(game.session().anchor_node()));
+        assert_eq!(default.scopes.len(), 5);
+        let mut all_plants = std::collections::BTreeSet::new();
+        for &island in game.session().power().island_nodes().keys() {
+            let ui = UiState {
+                island: Some(island),
+                ..Default::default()
+            };
+            let built = model(&game, &ui, &CommitmentForm::default());
+            assert!(built.groups.iter().all(|g| g.island == Some(island)));
+            assert_eq!(
+                built.groups.iter().filter(|g| g.heading.is_some()).count(),
+                1
+            );
+            assert_eq!(
+                built.groups[0].heading.as_ref().unwrap(),
+                &Names::new(&shipped_l10n(), game.session()).island(game.session(), island)
+            );
+            assert!(built.groups.windows(2).all(|pair| {
+                game.session()
+                    .region()
+                    .spec(pair[0].kind)
+                    .marginal_cost
+                    .value()
+                    <= game
+                        .session()
+                        .region()
+                        .spec(pair[1].kind)
+                        .marginal_cost
+                        .value()
+            }));
+            for row in built.groups.iter().flat_map(|g| &g.rows) {
+                assert!(
+                    all_plants.insert(row.plant),
+                    "a plant belongs to exactly one planner"
+                );
+            }
+        }
+        assert_eq!(all_plants.len(), 19);
+    }
+
+    #[test]
+    fn returning_to_commitments_skips_stale_island_ids() {
+        let game = shipped_game("sgcc", Box::new(InMemoryCommandLog::default()));
+        let session = game.session();
+        let remote = *session.power().island_nodes().keys().last().unwrap();
+        let mut ui = UiState {
+            island: Some(NodeId(u32::MAX)),
+            last_planning_island: Some(remote),
+            ..Default::default()
+        };
+        assert_eq!(selected_commitment_island(session, &ui), Some(remote));
+        ui.last_planning_island = Some(NodeId(u32::MAX));
+        assert_eq!(
+            selected_commitment_island(session, &ui),
+            Some(session.anchor_node())
+        );
+    }
+
+    #[test]
+    fn switching_grids_preserves_and_reveals_hidden_edits_and_flushes_them_before_another_edit() {
+        let game = shipped_game("sgcc", Box::new(InMemoryCommandLog::default()));
+        let first = game.session().plant_views()[0].clone();
+        let home = game.session().anchor_node();
+        let remote = *game
+            .session()
+            .power()
+            .island_nodes()
+            .keys()
+            .find(|id| **id != home)
+            .unwrap();
+        let mut ui = UiState::default();
+        let hours = [false; 24];
+        ui.apply(&UiAction::EditCommitment {
+            plant: first.id,
+            hours,
+        });
+        ui.apply(&UiAction::SelectIsland(Some(remote)));
+        let before = ui.draft;
+        let built = model(&game, &ui, &CommitmentForm::default());
+        let hidden = built.hidden_draft.unwrap();
+        assert!(
+            hidden
+                .message
+                .contains(&Names::new(&shipped_l10n(), game.session()).plant(first.id))
+        );
+        assert_eq!(hidden.reveal.action, UiAction::SelectIsland(Some(home)));
+        assert_eq!(ui.draft, before);
+        assert!(has_unsaved_draft(&game, &ui));
+        assert_eq!(
+            built.groups[0].rows[0].cells[0].toggle[0],
+            UiAction::Command(Command::CommitPlant {
+                plant: first.id,
+                hours
+            })
+        );
+        ui.apply(&hidden.reveal.action);
+        let restored = model(&game, &ui, &CommitmentForm::default());
+        assert!(restored.hidden_draft.is_none());
+        let row = restored
+            .groups
+            .iter()
+            .flat_map(|g| &g.rows)
+            .find(|r| r.plant == first.id)
+            .unwrap();
+        assert!(row.dirty && row.apply.enabled);
+        assert!(row.cells.iter().all(|cell| !cell.on));
+    }
+
+    #[test]
+    fn an_empty_island_keeps_the_picker_so_the_player_can_return_to_their_fleet() {
+        let game = crate::hud::test_support::sgcc_review_with_remote_island();
+        let remote = game
+            .session()
+            .city_views()
+            .into_iter()
+            .find(|c| c.name_key == "city-shanghai")
+            .unwrap();
+        let built = model(
+            &game,
+            &UiState {
+                island: Some(remote.node),
+                ..Default::default()
+            },
+            &CommitmentForm::default(),
+        );
+        assert!(built.groups.is_empty());
+        assert!(built.empty.is_some());
+        assert_eq!(built.scopes.len(), 6);
+        assert!(
+            built
+                .scopes
+                .iter()
+                .any(|scope| scope.on && scope.button.label.contains("Shanghai"))
+        );
     }
 
     fn first_row(model: &CommitmentModel, kind: PlantKind) -> &CommitmentRow {

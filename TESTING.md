@@ -1042,3 +1042,10 @@ capacity and chooses connections within the target's own area. The minimum-windo
 opens each inherited island through the forecast picker, while inactive/at-risk islands retain
 one-click shortcuts. Existing snapshots use their archived region data and retain their original
 assets, city loads, source-schema bytes and topology; no starter fleet is granted on restore.
+
+The commitment planner follows the same selected island as its forecast. Presenter tests check
+local-only fleets, island-first defaults, remembered overview/return navigation, merit order, empty grids and
+hidden draft recovery. `player_workflows::choose_a_local_fleet_edit_it_and_keep_the_same_island_in_the_forecast`
+selects all five actual grid-picker options at minimum window size and 125% zoom, opens their
+forecasts and returns to the same fleet, changes only one local plant, and recovers/reverts an
+unapplied draft after switching grids. Apply/Revert remain within reach beneath the edited row.

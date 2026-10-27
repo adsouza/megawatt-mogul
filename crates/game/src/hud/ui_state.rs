@@ -61,6 +61,8 @@ pub struct PendingCommit {
 #[derive(Resource, Debug, Clone, PartialEq, Eq, Default)]
 pub struct UiState {
     pub island: Option<domain::ids::NodeId>,
+    /// The local planner to return to after viewing the company-wide overview.
+    pub last_planning_island: Option<domain::ids::NodeId>,
     pub links_open: bool,
     pub hvdc_selected: Option<domain::ids::LinkId>,
     pub hvdc_terminal: Option<domain::grid::ConverterStationId>,
@@ -101,9 +103,15 @@ impl UiState {
             UiAction::Select(super::Selection::None | super::Selection::LineFrom(_)) => {
                 self.hvdc_construction = false
             }
-            UiAction::SelectIsland(id) => self.island = *id,
+            UiAction::SelectIsland(id) => {
+                self.island = *id;
+                if id.is_some() {
+                    self.last_planning_island = *id;
+                }
+            }
             UiAction::InspectForecast { island, hour } => {
                 self.island = Some(*island);
+                self.last_planning_island = Some(*island);
                 self.highlight_hour = Some(*hour);
                 self.tab = PlanningTab::Forecast;
                 self.warnings_open = false;
@@ -187,6 +195,7 @@ pub(super) fn reset_ui_state(mut ui: ResMut<UiState>, mut form: ResMut<Commitmen
 pub(super) fn reset_planning_state(mut ui: ResMut<UiState>, mut form: ResMut<CommitmentForm>) {
     *ui = UiState {
         island: ui.island,
+        last_planning_island: ui.last_planning_island,
         links_open: ui.links_open,
         hvdc_selected: ui.hvdc_selected,
         hvdc_terminal: ui.hvdc_terminal,

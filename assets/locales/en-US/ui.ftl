@@ -149,7 +149,7 @@ connection-warning-question =
         [one] This order would connect one new city by { $month }, adding a forecast peak of { $added }.
        *[other] This order would connect { $cities } new cities by { $month }, adding a forecast peak of { $added }.
     }
-    In the island around { $island } at { $time }, forecast demand is { $demand } and supply after planned transfers is { $supply }: a shortfall of { $shortfall }.
+    In grid zone { $island } at { $time }, forecast demand is { $demand } and supply after planned transfers is { $supply }: a shortfall of { $shortfall }.
     This assumes ready generators run all day and current HVDC schedules are used. Proceed with construction?
 connection-proceed = Proceed
 connection-build-inactive = Build inactive connection
@@ -166,10 +166,10 @@ activation-missing-source = { $island } needs a commissioned, committed thermal,
 activation-import-unavailable = Scheduled imports on { $from } → { $to } cannot be delivered during { $hours }. Check commissioning, active service and synchronous generators at both ends.
 activation-blocked = Activation blocked. Fix the grid support or unavailable imports first; a shortfall override cannot bypass this.
 activation-shortfall = This plan leaves a capacity shortfall. Activation requires accepting the shortage and possible outages explicitly.
-activation-ready = The forecast covers demand in all active islands, including the exporting grids. Ramps and random forecast errors may still cause operating shortages.
-activation-obligations = Activation enrols these customers. Their demand remains during shutdowns, trips and later plan changes. Construction alone never activates a remote island.
+activation-ready = The forecast covers demand in all active grid zones, including the exporting zones. Ramps and random forecast errors may still cause operating shortages.
+activation-obligations = Activation enrols these customers. Their demand remains during shutdowns, trips and later plan changes. Construction alone never activates a remote grid zone.
 activation-plan-changed = The plan changed. Review these updated figures and confirm again.
-error-activation-blocked = Service activation is blocked. Review the island's supply plan and synchronous generators.
+error-activation-blocked = Service activation is blocked. Review the zone's supply plan and synchronous generators.
 error-activation-shortfall = Review and explicitly accept the forecast shortfall before activating service.
 error-activation-changed = The supply plan changed. Review activation again.
 hvdc-service-inactive = { $route }: service in { $island } is inactive. No transfers until service is explicitly activated.
@@ -212,6 +212,11 @@ tariff-review-months = { $months ->
    *[other] The December review is { $months } months away.
 }
 commitment-title = Commitments
+commitment-grid = Planning zone
+commitment-unconnected = Not connected to a grid zone
+commitment-hidden-draft = Unapplied changes to { $plant } in { $island }.
+commitment-return-to-draft = Return to draft
+commitment-view-forecast = View forecast
 commitment-forecast = Forecast demand
 commitment-committed = Committed output
 commitment-empty = No plants are ready to commit yet.
@@ -238,8 +243,8 @@ forecast-island-name = { $area } ({ $node })
 forecast-island-shortfall = { $island } — short { $amount } ({ $time })
 forecast-island-excess = { $island } — excess minimum { $amount } ({ $time })
 forecast-island-inspect = View { $island }
-forecast-inspect-island = Inspect island
-forecast-island-note = Each island must balance separately. Solid: shortfall. Dashed: minimum generation above load, before optional battery charging. Select an island for supply and demand.
+forecast-inspect-island = Inspect zone
+forecast-island-note = Each grid zone must balance separately. Solid: shortfall. Dashed: minimum generation above load, before optional battery charging. Select a zone for supply and demand.
 forecast-risk-axis = Shortfall / excess minimum (MW)
 forecast-minimum = Minimum supply before charging
 forecast-hvdc-constraints = HVDC supply constraints ({ $count })
@@ -251,7 +256,7 @@ hvdc-planning-construction = { $route }: under construction; no power transfers 
 }
 hvdc-planning-terminal = { $route }: no synchronous generator committed in { $island } during { $hours }. This link cannot supply power then. Build or commit a thermal, nuclear or hydro generator there.
 hvdc-planning-zero = { $route }: all hourly transfers are zero. Set a signed schedule to move power; connecting cities does not schedule imports automatically.
-hvdc-planning-help = HVDC keeps islands separate. Both ends need an online thermal, nuclear or hydro generator; wind, solar and batteries do not qualify. Rating and losses limit imports. Forecasts ignore ramp and protection transients.
+hvdc-planning-help = HVDC connects grid zones without synchronising them. Both ends need an online thermal, nuclear or hydro generator; wind, solar and batteries do not qualify. Rating and losses limit imports. Forecasts ignore ramp and protection transients.
 shortfall-island-detail = { $island }: { $amount } short during the { $time } hour.
 forecast-axis-hour = Hour of day
 forecast-axis-power = Power (MW)
@@ -595,7 +600,7 @@ construction-regional-default = Regional default
 build-plant-heading-market = Build at ({ $x }, { $y }) · { $market }
 construction-route-work = { $cells } cells · { $capital } · { $numerator }/{ $denominator } months of work
 
-# Synchronous islands and DC transfer
+# Grid zones and DC transfer
 error-line-crosses-areas = AC lines cannot cross electrical areas. Build an HVDC link.
 error-link-within-area = HVDC links must join different electrical areas.
 error-hvdc-unavailable = This region has no HVDC catalog.
@@ -614,12 +619,12 @@ hvdc-loss = Transfer losses: { $value }
 hvdc-capital = Capital: { $value } · { $months } game months
 hvdc-utilisation = Year-to-date utilisation: { $value }%
 hvdc-blocked = Blocked: both ends need an online synchronous generator and a live AC grid.
-hvdc-runback = Runback: reducing exports while the sending island recovers.
+hvdc-runback = Runback: reducing exports while the sending zone recovers.
 hvdc-schedule = Hourly schedule (MW; positive follows the arrow)
 hvdc-target = Override for the rest of today (MW)
 hvdc-clear-override = Return to schedule
 hvdc-cancel-question = Cancel this unfinished HVDC link? Paid instalments remain spent.
-islands-all = All
+islands-all = All zones
 island-chip = { $area } { $frequency }
 island-suffix = { $area } ({ $id })
 hvdc-map-legend = Squares: converters · Tethers: local AC
@@ -671,7 +676,7 @@ hvdc-service-active = Customer service active
 hvdc-service-pending = Customer service inactive
 hvdc-open-grid = Inspect local grid
 hvdc-no-schedule = No transfers are scheduled. Set a time range in Dispatch to plan imports or exports.
-hvdc-inactive-summary = Transfers are unavailable until customer service is activated at both ends. Review the inactive island below.
+hvdc-inactive-summary = Transfers are unavailable until customer service is activated at both ends. Review the inactive zone below.
 hvdc-unsupported-summary = Some scheduled hours lack committed synchronous support. Review the terminal calendars below.
 hvdc-metric-flow = Flow
 hvdc-metric-rating = Rating

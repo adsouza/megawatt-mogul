@@ -395,8 +395,21 @@ fn island_forecast_buttons_and_warnings_navigate_the_real_hud_at_minimum_size() 
     let pass = EguiPass::attach(&mut app);
     let l10n = shipped_l10n();
     pass.ctx().set_zoom_factor(1.25);
+    dispatch_in(&mut app, vec![UiAction::SelectIsland(None)]);
+    let overview = hud::forecast_model(
+        &app.world().resource::<Session>().0,
+        &l10n,
+        app.world().resource::<UiState>(),
+    );
+    let inspect_label = &overview
+        .islands
+        .iter()
+        .find(|i| i.island == to)
+        .unwrap()
+        .inspect
+        .label;
     let widgets = pass.settled(&mut app, 1024.0, 640.0);
-    let inspect = button(&widgets, &l10n.text("forecast-inspect-island"));
+    let inspect = button(&widgets, inspect_label);
     pass.click_at(&mut app, 1024.0, 640.0, inspect.rect.center());
     assert_eq!(app.world().resource::<UiState>().island, Some(to));
     assert_eq!(app.world().resource::<UiState>().tab, PlanningTab::Forecast);
