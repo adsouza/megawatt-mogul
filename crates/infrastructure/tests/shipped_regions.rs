@@ -556,15 +556,6 @@ fn shipped_city_clocks_shift_local_demand_and_sun() {
 }
 
 #[test]
-fn shipped_first_expansion_acceptance_seeds_zero_through_seven() {
-    for &id in SHIPPED {
-        for seed in 0..8 {
-            assert_first_expansion(id, seed);
-        }
-    }
-}
-
-#[test]
 fn every_shipped_region_allows_battery_discharge_from_six_am_and_charge_until_ten_pm() {
     for &id in SHIPPED {
         let region = region(id);
@@ -939,13 +930,31 @@ fn shipped_regions_start_without_a_shortfall() {
     }
 }
 
-/// One test per region and mode, so nextest runs the regions in parallel and names a failure.
+/// The same eight seeds for each region, as independent tests so a large region does not leave
+/// one worker playing eight games while the other workers are idle.
+macro_rules! scenario_seeds {
+    ($scenario:ident, $id:expr) => {
+        scenario_seeds!(@cases $scenario, $id;
+            (seed_0, 0), (seed_1, 1), (seed_2, 2), (seed_3, 3),
+            (seed_4, 4), (seed_5, 5), (seed_6, 6), (seed_7, 7));
+    };
+    (@cases $scenario:ident, $id:expr; $(($case:ident, $seed:expr)),+) => {
+        $(
+            #[test]
+            fn $case() {
+                $scenario($id, $seed);
+            }
+        )+
+    };
+}
+
+/// One test group per region and scenario, so nextest runs regions/seeds in parallel and names a failure.
 /// Spec §14.5 beginner acceptance: with the hands-off plan (every dispatchable plant committed
 /// all day under AGC, no other commands), each shipped region is still `Active` after twelve
 /// months on seeds 0-7. Spec §16.5: the beginner acceptance check also passes with no commands
 /// at all, on the previous operator's schedule. Each region task adds one line here.
-macro_rules! year_one_cases {
-    ($(($hands_off:ident, $no_commands:ident, $id:expr)),+ $(,)?) => {
+macro_rules! shipped_scenario_cases {
+    ($(($hands_off:ident, $no_commands:ident, $expansion:ident, $outages:ident, $id:expr)),+ $(,)?) => {
         $(
             #[test]
             fn $hands_off() {
@@ -956,55 +965,85 @@ macro_rules! year_one_cases {
             fn $no_commands() {
                 assert_survives_year_one(new_game, $id);
             }
+
+            mod $expansion {
+                use super::*;
+                scenario_seeds!(assert_first_expansion, $id);
+            }
+
+            mod $outages {
+                use super::*;
+                scenario_seeds!(assert_no_outages_year_one, $id);
+            }
         )+
 
-        /// The regions the year-one cases cover.
-        const YEAR_ONE_REGIONS: &[&str] = &[$($id),+];
+        /// All four scenario families cover exactly this same region matrix.
+        const SCENARIO_REGIONS: &[&str] = &[$($id),+];
     };
 }
 
-year_one_cases! {
+shipped_scenario_cases! {
     (
         year_one_hands_off_brazil_sin,
         year_one_no_commands_brazil_sin,
+        first_expansion_brazil_sin,
+        no_outages_brazil_sin,
         BRAZIL
     ),
     (
         year_one_hands_off_continental_europe_maghreb,
         year_one_no_commands_continental_europe_maghreb,
+        first_expansion_continental_europe_maghreb,
+        no_outages_continental_europe_maghreb,
         EUROPE_MAGHREB
     ),
     (
         year_one_hands_off_eastern_interconnection,
         year_one_no_commands_eastern_interconnection,
+        first_expansion_eastern_interconnection,
+        no_outages_eastern_interconnection,
         EAST
     ),
     (
         year_one_hands_off_india_nepal_bhutan,
         year_one_no_commands_india_nepal_bhutan,
+        first_expansion_india_nepal_bhutan,
+        no_outages_india_nepal_bhutan,
         INDIA
     ),
     (
         year_one_hands_off_ips_ups,
         year_one_no_commands_ips_ups,
+        first_expansion_ips_ups,
+        no_outages_ips_ups,
         IPS
     ),
-    (year_one_hands_off_sgcc,year_one_no_commands_sgcc,SGCC),
+    (
+        year_one_hands_off_sgcc,
+        year_one_no_commands_sgcc,
+        first_expansion_sgcc,
+        no_outages_sgcc,
+        SGCC
+    ),
     (
         year_one_hands_off_southern_china,
         year_one_no_commands_southern_china,
+        first_expansion_southern_china,
+        no_outages_southern_china,
         SOUTHERN_CHINA
     ),
     (
         year_one_hands_off_western_interconnection,
         year_one_no_commands_western_interconnection,
+        first_expansion_western_interconnection,
+        no_outages_western_interconnection,
         WEST
     ),
 }
 
 #[test]
-fn year_one_cases_cover_every_shipped_region() {
-    assert_eq!(YEAR_ONE_REGIONS, SHIPPED);
+fn scenario_cases_cover_every_shipped_region() {
+    assert_eq!(SCENARIO_REGIONS, SHIPPED);
 }
 
 /// Plays twelve months on region `id` at seeds 0-7, each game started by `start` and given no
@@ -1040,38 +1079,33 @@ fn assert_survives_year_one(start: fn(&dyn RegionCatalog, &str, u64) -> Game, id
 /// on seeds 0-7, every month of every shipped region closes with no planned outage;
 /// a failure lists each month that had one, with the hours it ran and its
 /// size.
-#[test]
-fn shipped_regions_never_order_outages_hands_off() {
+fn assert_no_outages_year_one(id: &str, seed: u64) {
     let mut outages = Vec::new();
-    for &id in SHIPPED {
-        for seed in 0..8 {
-            let mut game = hands_off_game(&catalog(), id, seed);
-            let mut months_played = 0;
-            for _ in 1..=12 {
-                let played = play_month(&mut game);
-                months_played += 1;
-                let report = &played.report;
-                if report.rotating_outage.value() != 0.0 {
-                    let hours: std::collections::BTreeSet<u32> = played
-                        .ticks
-                        .iter()
-                        .filter(|summary| summary.outage > Ratio::ZERO)
-                        .map(|summary| summary.tick / TICKS_PER_HOUR)
-                        .collect();
-                    outages.push(format!(
-                        "{id} seed {seed} {:?}: {:?} planned (peak share {:?}) in hours {hours:?}",
-                        report.month, report.rotating_outage, report.peak_outage_share,
-                    ));
-                }
-                if game.session().status() != SessionStatus::Active {
-                    break;
-                }
-                game.execute(Command::FinishReview).expect("finish review");
-            }
-            // An early game over would end the year with fewer months checked.
-            assert_eq!(months_played, 12, "{id} seed {seed}: months played");
+    let mut game = hands_off_game(&catalog(), id, seed);
+    let mut months_played = 0;
+    for _ in 1..=12 {
+        let played = play_month(&mut game);
+        months_played += 1;
+        let report = &played.report;
+        if report.rotating_outage.value() != 0.0 {
+            let hours: std::collections::BTreeSet<u32> = played
+                .ticks
+                .iter()
+                .filter(|summary| summary.outage > Ratio::ZERO)
+                .map(|summary| summary.tick / TICKS_PER_HOUR)
+                .collect();
+            outages.push(format!(
+                "{id} seed {seed} {:?}: {:?} planned (peak share {:?}) in hours {hours:?}",
+                report.month, report.rotating_outage, report.peak_outage_share,
+            ));
         }
+        if game.session().status() != SessionStatus::Active {
+            break;
+        }
+        game.execute(Command::FinishReview).expect("finish review");
     }
+    // An early game over would end the year with fewer months checked.
+    assert_eq!(months_played, 12, "{id} seed {seed}: months played");
     assert!(
         outages.is_empty(),
         "rotating outages:\n{}",

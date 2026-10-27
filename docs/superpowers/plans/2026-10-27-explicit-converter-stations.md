@@ -35,3 +35,19 @@ station marker selection without a simulation write, and preserving visible DC r
 terminal is outside the viewport. Workspace clippy with warnings denied, formatting and diff
 checks passed. The isolated native launch drew 120 frames and exited 0. The full local suite
 was not run. The unrelated design-spec edits were left untouched.
+
+## Focused equipment inspector
+
+Equipment inspection now opens the clicked station or DC route directly. A responsive catalogue
+and focused detail view replace the global stack of activation paragraphs and collapsed project
+cards. Overview shows status, terminal support calendars and only the relevant service actions;
+Dispatch shows a compact hourly profile and an explicit time-range editor; Costs holds capital,
+instalments, utilisation and construction cancellation. The inspected project/tab survive reopening
+and month transitions; range drafts reset at the month boundary. Planning headers show scheduled
+range/hours, Operating shows actual readings, and Review labels the last readings.
+
+Validation: 49 focused game checks passed, including property-based range edits, current-text Enter
+submission, invalid input, Escape, operating-phase refusal, responsive layouts at minimum size and
+125% zoom, selection persistence, route picking and existing activation safeguards. Workspace clippy
+with warnings denied, formatting and diff checks pass. The isolated native launch drew 120 frames
+and exited 0. The full local suite was not run.

@@ -70,6 +70,18 @@ opt-level = 2
 debug-assertions = true
 overflow-checks = true
 
+# Projection folding, portable-state encoding and region parsing are substantial test work too.
+# Optimize these layers without changing debug checks, symbols or ordinary development builds.
+[profile.test.package.application]
+opt-level = 2
+debug-assertions = true
+overflow-checks = true
+
+[profile.test.package.infrastructure]
+opt-level = 1
+debug-assertions = true
+overflow-checks = true
+
 # Money is plain i64 arithmetic: an overflow must panic, never wrap, in every profile.
 [profile.release]
 overflow-checks = true

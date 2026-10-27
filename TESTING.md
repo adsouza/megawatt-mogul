@@ -47,9 +47,22 @@ expected to miss the overlay and picker budgets.
 Property tests use `proptest`; set `PROPTEST_CASES` to run more cases locally. Note that nextest does
 not run doctests; run `cargo test --doc --workspace` for those.
 
-Test builds optimize the `domain` crate at level 2, including when downstream integration tests
-exercise it. Debug assertions and integer overflow checks remain enabled. Ordinary development
-builds keep their existing settings; this does not switch tests to the release profile.
+Test builds optimize `domain` and `application` at level 2 and `infrastructure` at level 1,
+including when downstream integration tests exercise them. Debug assertions, integer overflow
+checks and debug symbols remain enabled. Ordinary development builds keep their existing
+settings; this does not switch tests to the release profile. Changing these settings causes a
+one-time rebuild, so compare test execution time separately from compilation time.
+
+Nextest starts `shipped_regions` before other binaries to overlap the longer multi-month
+scenarios with the rest of the suite. This changes scheduling only: no filter, reduced seed
+count, shortened simulation or skipped assertion is used to speed up a full run.
+
+Measured on the ten-core development machine on 2026-10-27: the full CI-profile run went from
+241.5 s (1,914 tests) to 104.3 s (2,040 tests), excluding compilation. The extra 126 test names
+come from splitting two serial scenarios into the same 128 region/seed cases. The existing
+ignored test stayed ignored. The split scenarios alone went from 48.7 s to 13.6 s. These are
+single-run measurements, not CI performance guarantees; optimized test builds cost an initial
+rebuild before subsequent runs use their cached artifacts.
 
 ### Behavioral contracts across features
 
@@ -129,11 +142,13 @@ Card-body tests cover selection from the hidden hemisphere, midpoint alignment a
 hold before automatic rotation resumes; pure motion properties pin shortest arcs, frame partition
 independence and manual interruption. Rendering clips the far hemisphere before triangulation.
 
-The year-one checks in `infrastructure::shipped_regions` run one test per region and mode, so
-nextest schedules them in parallel and names a failure: `year_one_hands_off_<id>` and
-`year_one_no_commands_<id>` for each of the seven shipped regions, each playing eight seeds ×
-twelve months. `year_one_cases_cover_every_shipped_region` fails if a shipped region lacks its
-pair. `shipped_regions_never_order_outages_hands_off` covers every shipped region and seed too.
+The scenario checks in `infrastructure::shipped_regions` run one test per region and scenario,
+so nextest schedules them in parallel and names a failure. `year_one_hands_off_<id>`,
+`year_one_no_commands_<id>` each play eight seeds × twelve months.
+`no_outages_<id>::seed_<n>` and `first_expansion_<id>::seed_<n>` retain all eight seeds as
+independently schedulable tests; every outage case still plays all twelve months. All four
+families use one shared region table, and one macro emits seeds 0–7 for both split families.
+`scenario_cases_cover_every_shipped_region` fails if the table differs from the shipped list.
 A12's three-review battery comparison covers the Eastern and Western regions only, with sixteen
 independent region/seed tests (seeds 0-7 each), each playing two companies for 36 months. They use
 `GameSession` through the real core command handler and invariant checks, without application
