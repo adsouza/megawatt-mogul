@@ -6,6 +6,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 # A new push to a pull request cancels its superseded run. Runs on main always finish.
 concurrency:
@@ -46,3 +47,76 @@ jobs:
         run: cargo clippy -p game --all-targets --features dev -- -D warnings
       - name: Test (development tools)
         run: cargo nextest run -p game --features dev --profile ci
+
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      MM_BUILD_SHA: ${{ github.sha }}
+      NODE_OPTIONS: --max-old-space-size=1536
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/rust-setup
+      - run: rustup target add wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: browser-wasm
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: trunk@0.22.1
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/tests/package-lock.json
+      - run: python3 tools/web/test_contracts.py
+      - name: Build browser distribution
+        working-directory: web
+        run: trunk build --release --public-url /megawatt-mogul/
+      - run: npm ci --prefix web/tests
+      - run: cd web/tests && npx playwright install --with-deps chromium
+      - name: Test the distribution at its deployed subpath
+        run: |
+          python3 tools/web/serve.py &
+          npm test --prefix web/tests
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: browser-failures
+          path: web/tests/test-results/
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist
+
+  deploy-pages:
+    needs: [check, dev-tools, browser]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Check this commit is still main's head
+        id: current
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          head=$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq .object.sha)
+          if [[ "$head" == "$SOURCE_SHA" ]]; then
+            echo 'deploy=true' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/configure-pages@v6
+        if: steps.current.outputs.deploy == 'true'
+      - uses: actions/deploy-pages@v5.0.1
+        if: steps.current.outputs.deploy == 'true'
+        id: deploy

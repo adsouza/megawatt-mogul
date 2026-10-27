@@ -30,3 +30,8 @@ mutants.out*/
 
 # Local one-off recovery tooling and backups
 /tools/archive/
+
+/web/assets/
+/web/tests/node_modules/
+/web/tests/test-results/
+/web/tests/playwright-report/

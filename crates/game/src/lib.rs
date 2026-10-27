@@ -5,7 +5,15 @@
 #![forbid(unsafe_code)]
 
 pub mod audio;
+#[cfg(target_arch = "wasm32")]
+pub mod browser;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod crash;
+#[cfg(target_arch = "wasm32")]
+#[path = "browser/crash.rs"]
+pub mod crash;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod desktop;
 pub mod hud;
 pub mod l10n;
 pub mod paths;
@@ -48,9 +56,11 @@ impl PluginGroup for GamePlugins {
             .add(HudPlugin)
             .add(audio::DailyAudioPlugin)
             .add(world::WorldViewPlugin)
-            .add(world::CameraPlugin)
-            .add(preferences::PreferencesPlugin);
-        let plugins = plugins.add(window::IdleRedrawPlugin);
+            .add(world::CameraPlugin);
+        #[cfg(not(target_arch = "wasm32"))]
+        let plugins = plugins
+            .add(preferences::PreferencesPlugin)
+            .add(window::IdleRedrawPlugin);
         #[cfg(feature = "dev")]
         let plugins = plugins.add(world::DevToolsPlugin);
         plugins

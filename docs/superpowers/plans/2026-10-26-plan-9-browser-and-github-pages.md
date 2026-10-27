@@ -1,6 +1,6 @@
 # Plan 9 — browser client and automatic GitHub Pages deployment
 
-Status: proposed, implementation not started. Requested on 26 October 2026; revised the same
+Status: implementation in progress; 9a local runtime evidence recorded below. Requested on 26 October 2026; revised the same
 day after review, splitting the work into Plans 9a–9d. This document plans the work; it does not
 enable Pages, change repository settings, or claim that the current client builds for WebAssembly.
 
@@ -482,3 +482,41 @@ without bypassing them.
 - [MDN: storage quotas and eviction](https://developer.mozilla.org/en-US/docs/Web/API/Storage_API/Storage_quotas_and_eviction_criteria)
   for quota errors and persistent-storage behavior. IndexedDB is preferable to localStorage for
   these potentially large binary saves; persistence is not a backup.
+
+
+## Implementation evidence — 9a
+
+The WebGL2 build boots the existing title scene, interactive globe picker and 3D Planning
+HUD in Chromium 156.0.8078.4 on an Apple M4 at 1440×900. The native infrastructure target and
+complete game pass WASM checks without threads or cross-origin isolation. Canonical bundle
+comparison passes for all eight shipped regions; the browser probe operates one complete day
+in each and restores the exact checkpoint. The probe runs an isolated application and never
+changes the player's session.
+
+The optimized artifact is 47,363,823 bytes, or 12,954,148 bytes using gzip. Local HTTP boot was
+2.2–2.9 seconds. Region construction was 23–125 ms. Flat save encode was 8–56 ms and decode plus
+verified restore 47–271 ms for one-month saves. An authored 24-month Eastern game took 144 ms
+to simulate, 5 ms to capture, 57 ms to encode and 154 ms to decode/restore (4,226,198 encoded
+bytes). These are local measurements, not CI software-renderer budgets or internet load times.
+Hardware-accelerated Chromium (ANGLE Metal on Apple M4) measured 16.7 ms median and 16.8 ms
+p95 menu frames over 60 samples; SwiftShader measured 83.3/133.3 ms and is used only for CI
+functional checks. Initial desktop budgets are 16 MiB gzip for WASM, 10 seconds for local boot
+and 33 ms p95 frames with hardware acceleration. A codec worker
+is required in 9c because the measured main-thread codec steps exceed a 50 ms interaction budget.
+WebGL2 is the selected backend; Firefox and Safari still need recorded runtime checks.
+
+The browser layer currently uses Playwright to execute the actual compiled Rust exports and
+IndexedDB lifecycle probe, rather than an additional wasm-bindgen-test binary. It uses the raw
+IndexedDB API; 9c will keep transaction request chaining inside a narrow adapter. Browser tests
+cover the deployed project subpath and detect stale-module boot failure. Native focused checks
+cover boot/new-game/localization and preserve the one-game-integration-binary rule.
+
+The preview workflow is ready for `main`; live Pages deployment and post-deployment checks
+remain pending publication of the feature branch. These are not claimed as completed by a local
+preview build. The repository's existing plan edits are included with 9a.
+
+Native validation for 9a: 95 selected boot/new-game/localization tests passed, the canonical
+bundle test passed, workspace Clippy with warnings denied passed, and the isolated native
+120-frame smoke exited successfully. Shell localization, actionlint, formatting and diff checks
+passed. The stale-module test initially found that module-load errors could precede the deferred
+shell listener; an early capture listener now retains the failure until the shell initializes.

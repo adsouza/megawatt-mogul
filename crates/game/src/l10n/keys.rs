@@ -10,6 +10,13 @@
 
 /// Every literal key the HUD uses, grouped as in `ui.ftl`.
 pub const ALL_UI_KEYS: &[&str] = &[
+    "browser-loading",
+    "browser-reload",
+    "browser-failed",
+    "browser-preview",
+    "browser-source",
+    "browser-notices",
+    "browser-small-viewport",
     "event-plant-commissioned-agc",
     "connection-warning-question",
     "connection-proceed",

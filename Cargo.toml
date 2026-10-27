@@ -73,3 +73,9 @@ overflow-checks = true
 # Money is plain i64 arithmetic: an overflow must panic, never wrap, in every profile.
 [profile.release]
 overflow-checks = true
+
+[profile.wasm-release]
+inherits = "release"
+opt-level = 2
+debug = false
+strip = "debuginfo"

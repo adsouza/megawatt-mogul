@@ -8,3 +8,5 @@ pub mod region;
 pub mod save;
 
 pub mod client_preferences;
+
+pub mod web_assets;

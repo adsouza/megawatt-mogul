@@ -935,3 +935,11 @@ orders through `dispatch`: Enter/Escape default to Cancel, both buttons remain r
 smallest window, cancellation leaves the checkpoint unchanged, Proceed orders once, isolated
 orders skip the prompt, and stale confirmations cannot order after Planning. Changed capacity
 refreshes the warning and requires another confirmation before placing the order.
+
+## Browser target (Plan 9)
+
+`infrastructure::web_assets` verifies native and browser canonical region bundles.
+`tools/web/test_contracts.py` checks early-shell localization. `web/tests/` uses pinned
+Playwright against the optimized distribution served at the Pages subpath, with fresh
+browser contexts and databases. This is separate from Bevy-linked native integration tests;
+new native game tests still join the single existing `game.rs` binary. See `docs/web.md`.

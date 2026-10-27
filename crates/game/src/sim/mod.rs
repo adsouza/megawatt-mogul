@@ -17,6 +17,9 @@ use bevy::prelude::*;
 use domain::events::DomainEvent;
 use domain::ids::RegionId;
 use domain::session::DayPhase;
+#[cfg(target_arch = "wasm32")]
+use infrastructure::region::BundleRegionCatalog as RonRegionCatalog;
+#[cfg(not(target_arch = "wasm32"))]
 use infrastructure::region::RonRegionCatalog;
 
 use self::driver::TicksInFlight;
@@ -172,6 +175,7 @@ impl Plugin for SimulationPlugin {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn insert_catalog(mut commands: Commands, root: Res<AssetRoot>) {
     commands.insert_resource(Catalog(RonRegionCatalog::new(root.0.join("regions"))));
 }
@@ -321,3 +325,6 @@ mod tests {
         assert_eq!(PhaseState::from(DayPhase::Review), PhaseState::Review);
     }
 }
+
+#[cfg(target_arch = "wasm32")]
+fn insert_catalog() {}
