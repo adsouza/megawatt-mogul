@@ -385,7 +385,7 @@ pub(super) fn operating_side(
     let Some(mut model) = operating_side_model(&session.0, &l10n, sink.selection(), &style) else {
         return Ok(());
     };
-    if let Some(id) = sink.ui_state().island
+    if let Some(id) = super::ui_state::island_scope(session.0.session(), sink.ui_state().island)
         && let Some(scoped) = session.0.session().island_session(id)
     {
         model.frequency =
@@ -407,6 +407,9 @@ fn apply_island_scope(
     style: &MoneyStyle,
     layout: super::SupplyChartLayout,
 ) {
+    let Some(id) = super::ui_state::island_scope(game.session(), Some(id)) else {
+        return;
+    };
     let Some(scoped) = game.session().island_session(id) else {
         return;
     };
@@ -457,6 +460,96 @@ mod tests {
 
     use super::*;
     use crate::hud::test_support::{eastern_game, order_plant, shipped_l10n};
+
+    #[test]
+    fn a_single_grid_topology_cache_cannot_hide_supply_hydro_or_archived_months() {
+        let mut game = crate::hud::test_support::shipped_game(
+            "india_nepal_bhutan",
+            Box::new(InMemoryCommandLog::default()),
+        );
+        for command in [
+            Command::BeginOperating,
+            Command::AdvanceTicks { n: 1440 },
+            Command::FinishReview,
+            Command::BeginOperating,
+            Command::AdvanceTicks { n: 300 },
+        ] {
+            game.execute(command).unwrap();
+        }
+        let id = *game.session().power().island_nodes().keys().next().unwrap();
+        assert!(game.session().region().areas().is_none());
+        let day = &game.projections().timeline.completed_days()[0];
+        assert!(day.island_forecasts.is_empty());
+        assert!(day.points.iter().all(|point| point.islands.is_empty()));
+        let l10n = shipped_l10n();
+        let style = usd_style();
+        // Even a stale UI selection must leave the actual panel data unchanged.
+        for tab in [
+            OperatingTab::Supply,
+            OperatingTab::Hydro,
+            OperatingTab::History,
+        ] {
+            let expected = operating_panel_model(&game, &l10n, tab, &style).unwrap();
+            let mut actual = expected.clone();
+            apply_island_scope(
+                &mut actual,
+                &game,
+                id,
+                &l10n,
+                &style,
+                super::super::SupplyChartLayout::default(),
+            );
+            assert_eq!(actual, expected, "{tab:?}");
+        }
+        let hydro = hydro_model(&game, &l10n);
+        assert!(!hydro.rows.is_empty());
+        assert!(
+            hydro
+                .rows
+                .iter()
+                .any(|row| row.hourly.iter().any(|mw| *mw > 0.0))
+        );
+        let supply = supply_model(&game, &l10n, &style);
+        assert_eq!(supply.x.len(), 300);
+        // Check every numerical stack sample against the retained simulation data.
+        for stack in &supply.stacks {
+            for ((low, high), point) in
+                stack
+                    .low
+                    .iter()
+                    .zip(&stack.high)
+                    .zip(super::super::supply_chart::todays_points(
+                        game.projections().timeline.points(),
+                        300,
+                    ))
+            {
+                let mw = point.by_kind.get(&stack.kind).map_or(0.0, |mw| mw.value());
+                assert!((high - low - mw).abs() < 1e-8);
+            }
+        }
+        assert_eq!(
+            super::super::supply_chart::island_supply_model(&game, id, &l10n, &style),
+            supply
+        );
+        assert_eq!(
+            super::super::supply_chart::island_completed_supply_model(
+                &game, id, day, &l10n, &style
+            ),
+            Some(super::super::supply_chart::completed_supply_model(
+                &game, day, &l10n, &style
+            )),
+        );
+        assert_eq!(
+            super::super::supply_history::supply_history_model_scoped(
+                &game,
+                None,
+                Some(id),
+                &l10n,
+                &style
+            ),
+            super::super::supply_history_model(&game, None, &l10n, &style),
+        );
+    }
 
     #[test]
     fn selected_island_scopes_the_archived_day_without_using_todays_forecast() {

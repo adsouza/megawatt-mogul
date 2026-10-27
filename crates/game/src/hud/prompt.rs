@@ -207,7 +207,12 @@ fn prompt_model_cached(
                 ],
             );
             let names = Names::new(l10n, session);
-            for id in session.power().island_nodes().keys() {
+            for id in session
+                .power()
+                .island_nodes()
+                .keys()
+                .filter(|_| session.region().areas().is_some())
+            {
                 if let Some(warning) = session
                     .island_session(*id)
                     .and_then(|s| s.capacity_shortfall_check())
@@ -414,6 +419,44 @@ mod tests {
 
         assert_eq!(prompt_model(OpenPrompt(None), Some(&game), &l10n), None);
         assert_eq!(prompt_model(LEAVE, None, &l10n), None);
+    }
+
+    #[test]
+    fn a_single_grid_topology_cache_adds_no_zone_details_to_the_shortfall_prompt() {
+        let mut game = super::super::test_support::shipped_game(
+            "india_nepal_bhutan",
+            Box::new(InMemoryCommandLog::default()),
+        );
+        for command in [
+            Command::BeginOperating,
+            Command::AdvanceTicks { n: 1440 },
+            Command::FinishReview,
+        ] {
+            game.execute(command).unwrap();
+        }
+        assert!(!game.session().power().island_nodes().is_empty());
+        empty_start(&mut game);
+        let warning = game.session().capacity_shortfall_check().unwrap();
+        let l10n = shipped_l10n();
+        let prompt = prompt_model(
+            short_by(warning.hour, warning.shortfall.value()),
+            Some(&game),
+            &l10n,
+        )
+        .unwrap();
+        assert_eq!(
+            prompt.question,
+            l10n.args(
+                "shortfall-start-question",
+                &[
+                    ("amount", format::megawatts(warning.shortfall).into()),
+                    (
+                        "time",
+                        format::clock(u32::from(warning.hour) * TICKS_PER_HOUR).into()
+                    ),
+                ],
+            )
+        );
     }
 
     #[test]

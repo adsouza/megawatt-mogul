@@ -45,6 +45,7 @@ pub(super) fn supply_history_model_scoped(
     l10n: &Localizer,
     style: &MoneyStyle,
 ) -> SupplyHistoryModel {
+    let island = super::ui_state::island_scope(game.session(), island);
     let days: Vec<_> = game
         .projections()
         .timeline

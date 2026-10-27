@@ -16,6 +16,15 @@ use domain::time::SimMonth;
 
 use super::action::UiAction;
 
+/// A topology cache also exists in single-grid games after month close. Only regions
+/// with electrical areas run local controllers and record per-zone chart data.
+pub(super) fn island_scope(
+    session: &domain::session::GameSession,
+    requested: Option<domain::ids::NodeId>,
+) -> Option<domain::ids::NodeId> {
+    requested.filter(|_| session.region().areas().is_some())
+}
+
 /// The tabs of the bottom Planning panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PlanningTab {
@@ -224,6 +233,32 @@ mod tests {
         let mut hours = [false; 24];
         hours[6..18].fill(true);
         hours
+    }
+
+    #[test]
+    fn single_grid_scope_ignores_arbitrary_current_and_remembered_zones() {
+        use proptest::prelude::*;
+        let mut game = super::super::test_support::shipped_game(
+            "india_nepal_bhutan",
+            Box::new(application::InMemoryCommandLog::default()),
+        );
+        for command in [
+            Command::BeginOperating,
+            Command::AdvanceTicks { n: 1440 },
+            Command::FinishReview,
+        ] {
+            game.execute(command).unwrap();
+        }
+        assert!(!game.session().power().island_nodes().is_empty());
+        proptest!(|(current in proptest::option::of(any::<u32>()), remembered in proptest::option::of(any::<u32>()))| {
+            let ui = UiState {
+                island: current.map(domain::ids::NodeId),
+                last_planning_island: remembered.map(domain::ids::NodeId),
+                ..Default::default()
+            };
+            prop_assert_eq!(island_scope(game.session(), ui.island), None);
+            prop_assert_eq!(super::super::commitment::selected_commitment_island(game.session(), &ui), None);
+        });
     }
 
     #[test]

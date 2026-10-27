@@ -629,6 +629,18 @@ checks the full-width report/retrospective at 1024 and 1920 pixels with 1× and 
 and opens Operating history without changing the simulation or displaying today's incidents
 beside an old curve.
 
+`player_workflows::single_grid_charts_keep_their_sources_after_month_close_and_resume` runs
+all seven shipped single-grid regions through month close, checkpoint restoration and a second
+played month. It checks the actual HUD's enabled supply-source controls in Live Supply, Operating
+History, Review and Planning History, plus the live hydro allocation labels. This catches a gap in
+the earlier workflows: live checks ran before the first close, while later history assertions used
+an unscoped presenter instead of the scoped model displayed by the HUD. Month close populates the
+physical topology cache even in single-grid games; it does not enable per-zone controllers or
+per-zone timeline records. The India presenter regressions compare numerical stacks to retained
+tick data, preserve hydro schedules and first-month archives, and reject stale zone selections in
+supply, forecast, commitments, planning warnings and the start-day confirmation. SGCC tests
+continue to require genuine zone scoping. Do not use a nonempty topology cache as evidence that a region records per-zone data.
+
 `tests/game/world.rs` covers terrain winding/coverage and the Eastern and Western regions, camera fit and
 projection/ray round trips, bounded camera gestures, pointer-anchored zoom across camera angles,
 terrain/roof heights and distance limits, physical viewport rounding and zero-sized

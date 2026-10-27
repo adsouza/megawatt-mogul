@@ -529,6 +529,9 @@ pub fn island_supply_model(
     style: &MoneyStyle,
 ) -> SupplyModel {
     let session = game.session();
+    if super::ui_state::island_scope(session, Some(id)).is_none() {
+        return supply_model(game, l10n, style);
+    }
     let now = session.clock().tick();
     let scoped = session.island_session(id).expect("selected island");
     scoped_supply_model(
@@ -549,6 +552,9 @@ pub(super) fn island_completed_supply_model(
     l10n: &Localizer,
     style: &MoneyStyle,
 ) -> Option<SupplyModel> {
+    if super::ui_state::island_scope(game.session(), Some(id)).is_none() {
+        return Some(completed_supply_model(game, day, l10n, style));
+    }
     Some(scoped_supply_model(
         game,
         id,

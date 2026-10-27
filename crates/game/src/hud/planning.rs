@@ -110,14 +110,13 @@ fn planning_model_for(
     if game.session().phase() != DayPhase::Planning {
         return None;
     }
-    let mut local_ui;
-    let ui = if ui.tab == PlanningTab::Commitments {
-        local_ui = ui.clone();
-        local_ui.island = super::commitment::selected_commitment_island(game.session(), ui);
-        &local_ui
+    let mut local_ui = ui.clone();
+    local_ui.island = if ui.tab == PlanningTab::Commitments {
+        super::commitment::selected_commitment_island(game.session(), ui)
     } else {
-        ui
+        super::ui_state::island_scope(game.session(), ui.island)
     };
+    let ui = &local_ui;
     let tab = |tab: PlanningTab, label: String| ToggleModel {
         button: ButtonModel::new(label, UiAction::SetPlanningTab(tab)),
         on: ui.tab == tab,
@@ -308,6 +307,64 @@ mod tests {
             &usd_style(),
         )
         .expect("the game is planning")
+    }
+
+    #[test]
+    fn a_single_grid_topology_cache_never_creates_a_zone_planner_or_warnings() {
+        let mut game = shipped_game(
+            "india_nepal_bhutan",
+            Box::new(application::InMemoryCommandLog::default()),
+        );
+        for command in [
+            Command::BeginOperating,
+            Command::AdvanceTicks { n: 1440 },
+            Command::FinishReview,
+        ] {
+            game.execute(command).unwrap();
+        }
+        let id = *game.session().power().island_nodes().keys().next().unwrap();
+        let l10n = shipped_l10n();
+        for tab in [
+            PlanningTab::Commitments,
+            PlanningTab::Forecast,
+            PlanningTab::History,
+        ] {
+            let unscoped = UiState {
+                tab,
+                ..Default::default()
+            };
+            let stale = UiState {
+                island: Some(id),
+                last_planning_island: Some(id),
+                ..unscoped.clone()
+            };
+            assert_eq!(build(&game, &stale), build(&game, &unscoped), "{tab:?}");
+            assert_eq!(
+                super::super::forecast_model(&game, &l10n, &stale),
+                super::super::forecast_model(&game, &l10n, &unscoped),
+            );
+        }
+        let commitments = super::super::commitment_model(
+            &game,
+            &l10n,
+            &UiState::default(),
+            &CommitmentForm::default(),
+        );
+        assert!(commitments.scopes.is_empty());
+        assert_eq!(
+            commitments
+                .groups
+                .iter()
+                .map(|group| group.rows.len())
+                .sum::<usize>(),
+            game.session().plant_views().len(),
+        );
+        let forecast = super::super::PlanningForecast::of(&game, &l10n);
+        assert!(forecast.activations.is_empty());
+        assert!(forecast.chart.islands.is_empty());
+        assert!(forecast.warnings.rows.iter().all(|row|
+            row.kind != super::super::planning_warnings::WarningKind::InactiveIsland
+        ));
     }
 
     #[test]

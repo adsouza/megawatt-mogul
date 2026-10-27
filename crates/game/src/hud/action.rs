@@ -471,6 +471,7 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
                 if sink.ui.tab == PlanningTab::Commitments
                     && sink.session.as_ref().is_some_and(|game| {
                         game.0.session().phase() == domain::session::DayPhase::Planning
+                            && game.0.session().region().areas().is_some()
                             && !game.0.session().power().island_nodes().is_empty()
                     }) =>
             {
@@ -604,7 +605,7 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
         if (explicit_zone || sink.ui.island != previous_zone)
             && let Some(game) = sink.session.as_ref()
         {
-            match sink.ui.island {
+            match super::ui_state::island_scope(game.0.session(), sink.ui.island) {
                 Some(id) if game.0.session().power().island_nodes().contains_key(&id) => {
                     sink.world.focus = Some(crate::world::CameraFocus::Zone(id));
                 }

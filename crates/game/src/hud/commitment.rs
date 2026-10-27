@@ -171,6 +171,7 @@ pub(super) fn selected_commitment_island(
     session: &domain::session::GameSession,
     ui: &UiState,
 ) -> Option<NodeId> {
+    session.region().areas()?;
     let islands = session.power().island_nodes();
     ui.island
         .filter(|id| islands.contains_key(id))
@@ -196,7 +197,12 @@ pub fn commitment_model(
     let region = session.region();
     let names = Names::new(l10n, session);
     let groups = plants_by_kind(game);
-    let islands = session.power().island_nodes();
+    let empty = std::collections::BTreeMap::new();
+    let islands = if region.areas().is_some() {
+        session.power().island_nodes()
+    } else {
+        &empty
+    };
     let selected = selected_commitment_island(session, ui);
     let node_islands: std::collections::BTreeMap<_, _> = islands
         .iter()

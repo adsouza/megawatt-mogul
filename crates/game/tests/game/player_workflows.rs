@@ -363,6 +363,186 @@ fn the_retrospective_identifies_the_selected_zone_at_minimum_size() {
 }
 
 #[test]
+fn single_grid_charts_keep_their_sources_after_month_close_and_resume() {
+    use crate::hud_smoke::dispatch_in;
+    use crate::support::{SHIPPED_REGIONS, egui_harness::has};
+    use application::InMemoryCommandLog;
+    use domain::ids::RegionId;
+    use game::hud::{OperatingTab, UiAction};
+    use infrastructure::region::RonRegionCatalog;
+    for region in SHIPPED_REGIONS.iter().copied().filter(|r| *r != "sgcc") {
+        let logs = TempDir::new().unwrap();
+        let mut app = hud_app(logs.path());
+        request(&mut app, region);
+        let l10n = shipped_l10n();
+        {
+            let mut session = app.world_mut().resource_mut::<Session>();
+            session.0.execute(Command::BeginOperating).unwrap();
+            session
+                .0
+                .execute(Command::AdvanceTicks { n: 1440 })
+                .unwrap();
+            session.0.execute(Command::FinishReview).unwrap();
+        }
+        update_n(&mut app, 3);
+        let pass = EguiPass::attach(&mut app);
+        pass.ctx().set_zoom_factor(1.25);
+        let size = (1024.0 / 1.25, 640.0 / 1.25);
+        pass.settled(&mut app, size.0, size.1);
+        assert!(
+            app.world()
+                .resource::<Session>()
+                .0
+                .session()
+                .region()
+                .areas()
+                .is_none()
+        );
+        assert!(
+            !app.world()
+                .resource::<Session>()
+                .0
+                .session()
+                .power()
+                .island_nodes()
+                .is_empty(),
+            "{region}: reproduce the populated topology cache"
+        );
+        assert_eq!(
+            app.world().resource::<UiState>().island,
+            None,
+            "{region}: single-grid planning must not select a controller zone"
+        );
+        {
+            let mut session = app.world_mut().resource_mut::<Session>();
+            session.0.execute(Command::BeginOperating).unwrap();
+            session.0.execute(Command::AdvanceTicks { n: 300 }).unwrap();
+        }
+        update_n(&mut app, 3);
+        // Resume exactly the state that previously acquired a bogus zone selection.
+        let checkpoint = app.world().resource::<Session>().0.checkpoint();
+        let loaded = application::RegionCatalog::load(
+            &RonRegionCatalog::new(crate::support::shipped_assets().join("regions")),
+            &RegionId::new(region),
+        )
+        .unwrap();
+        let restored = application::Game::restore(
+            loaded,
+            checkpoint.clone(),
+            Box::new(InMemoryCommandLog::default()),
+            &|| false,
+        )
+        .unwrap();
+        assert_eq!(restored.checkpoint(), checkpoint);
+        app.world_mut().resource_mut::<Session>().0 = restored;
+        let expected = hud::supply_model(&app.world().resource::<Session>().0, &l10n, &usd_style());
+        assert!(
+            !expected.stacks.is_empty(),
+            "{region}: actual supply exists"
+        );
+        dispatch_in(
+            &mut app,
+            vec![UiAction::SetOperatingTab(OperatingTab::Supply)],
+        );
+        let widgets = pass.settled(&mut app, size.0, size.1);
+        for stack in &expected.stacks {
+            assert!(
+                widgets.iter().any(|w| w.text == stack.name
+                    && w.role == egui::accesskit::Role::CheckBox
+                    && w.selected),
+                "{region}: live HUD must draw enabled supply source {}",
+                stack.name
+            );
+        }
+        let hydro = hud::hydro_model(&app.world().resource::<Session>().0, &l10n);
+        if !hydro.rows.is_empty() {
+            assert!(hydro.rows.iter().any(|r| r.hourly.iter().any(|v| *v > 0.0)));
+            dispatch_in(
+                &mut app,
+                vec![UiAction::SetOperatingTab(OperatingTab::Hydro)],
+            );
+            let widgets = pass.settled(&mut app, size.0, size.1);
+            for row in &hydro.rows {
+                assert!(
+                    has(&widgets, &row.level),
+                    "{region}: actual hydro allocation must remain visible"
+                );
+            }
+        }
+        dispatch_in(
+            &mut app,
+            vec![UiAction::SetOperatingTab(OperatingTab::History)],
+        );
+        let widgets = pass.settled(&mut app, size.0, size.1);
+        let history = hud::supply_history_model(
+            &app.world().resource::<Session>().0,
+            None,
+            &l10n,
+            &usd_style(),
+        );
+        let history = history.chart.unwrap();
+        assert_eq!(history.x.len(), 1440);
+        assert!(!history.stacks.is_empty());
+        for stack in &history.stacks {
+            assert!(
+                widgets.iter().any(|w| w.text == stack.name
+                    && w.role == egui::accesskit::Role::CheckBox
+                    && w.selected),
+                "{region}: first-month history retains {}",
+                stack.name
+            );
+        }
+        app.world_mut()
+            .resource_mut::<Session>()
+            .0
+            .execute(Command::AdvanceTicks { n: 1140 })
+            .unwrap();
+        update_n(&mut app, 3);
+        let retrospective = hud::supply_history_model(
+            &app.world().resource::<Session>().0,
+            None,
+            &l10n,
+            &usd_style(),
+        )
+        .chart
+        .unwrap();
+        assert_eq!(retrospective.x.len(), 1440);
+        assert!(!retrospective.stacks.is_empty());
+        dispatch_in(&mut app, vec![UiAction::ShowReviewSupply(true)]);
+        let widgets = pass.settled(&mut app, size.0, size.1);
+        for stack in &retrospective.stacks {
+            assert!(
+                widgets.iter().any(|w| w.text == stack.name
+                    && w.role == egui::accesskit::Role::CheckBox
+                    && w.selected),
+                "{region}: review retrospective retains {}",
+                stack.name
+            );
+        }
+        app.world_mut()
+            .resource_mut::<Session>()
+            .0
+            .execute(Command::FinishReview)
+            .unwrap();
+        update_n(&mut app, 3);
+        dispatch_in(
+            &mut app,
+            vec![UiAction::SetPlanningTab(PlanningTab::History)],
+        );
+        let widgets = pass.settled(&mut app, size.0, size.1);
+        for stack in &retrospective.stacks {
+            assert!(
+                widgets.iter().any(|w| w.text == stack.name
+                    && w.role == egui::accesskit::Role::CheckBox
+                    && w.selected),
+                "{region}: planning history retains {}",
+                stack.name
+            );
+        }
+    }
+}
+
+#[test]
 fn edit_a_valid_schedule_check_forecast_operate_review_and_revisit_history() {
     for (region, zoom) in [
         ("eastern_interconnection", 1.0),

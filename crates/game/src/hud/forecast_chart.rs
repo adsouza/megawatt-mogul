@@ -162,7 +162,9 @@ fn stacked_supply(
 }
 
 pub fn forecast_model(game: &Game, l10n: &Localizer, ui: &UiState) -> ForecastModel {
-    if let Some(local) = ui.island.and_then(|id| game.session().island_session(id)) {
+    if let Some(local) = super::ui_state::island_scope(game.session(), ui.island)
+        .and_then(|id| game.session().island_session(id))
+    {
         let mut chart = forecast_model_for_session(&local, l10n, ui, &local.supply_forecast());
         if ui
             .island
@@ -227,15 +229,17 @@ pub(super) fn forecast_model_for_session(
     };
     let minimum_samples = session.minimum_generation_forecast();
     let names = Names::new(l10n, session);
-    let link_issues = if session.power().island_nodes().is_empty() {
-        Vec::new()
-    } else {
-        super::links::planning_issues(session, l10n, ui.island)
-    };
+    let link_issues =
+        if session.region().areas().is_none() || session.power().island_nodes().is_empty() {
+            Vec::new()
+        } else {
+            super::links::planning_issues(session, l10n, ui.island)
+        };
     let islands = session
         .power()
         .island_nodes()
         .keys()
+        .filter(|_| session.region().areas().is_some())
         .filter_map(|id| {
             let local = session.island_session(*id)?;
             let supply = local.supply_forecast();
@@ -317,7 +321,8 @@ pub(super) fn forecast_model_for_session(
         island_note: l10n.text("forecast-island-note"),
         island_picker_label: l10n.text("forecast-inspect-island"),
         risk_axis: l10n.text("forecast-risk-axis"),
-        scope_label: ui.island.map(|id| names.island(session, id)),
+        scope_label: super::ui_state::island_scope(session, ui.island)
+            .map(|id| names.island(session, id)),
         service_note: None,
         activation: None,
         minimum_label: l10n.text("forecast-minimum"),

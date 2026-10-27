@@ -163,7 +163,7 @@ pub(super) fn warnings_for_session(
     l10n: &Localizer,
     ui: &UiState,
 ) -> WarningsModel {
-    if !session.power().island_nodes().is_empty() {
+    if session.region().areas().is_some() && !session.power().island_nodes().is_empty() {
         let mut rows = Vec::new();
         let names = Names::new(l10n, session);
         for id in session

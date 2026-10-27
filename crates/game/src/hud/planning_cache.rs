@@ -27,6 +27,7 @@ impl PlanningForecast {
                 .power()
                 .island_nodes()
                 .keys()
+                .filter(|_| session.region().areas().is_some())
                 .filter(|id| !session.power().island_active(**id))
                 .filter_map(|id| {
                     Some((*id, super::activation::activation_card(session, *id, l10n)?))
