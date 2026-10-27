@@ -1,7 +1,7 @@
 name: CI
 
-# Pull requests run on their own event; pushes run only on main, whose runs save the cache that
-# every pull request restores. (Running on every push as well duplicated each PR's checks.)
+# Pull requests run on their own event; pushes run only on main. Browser dependency caches
+# also persist within each PR; native test caches are shared from main.
 on:
   push:
     branches: [main]
@@ -55,21 +55,25 @@ jobs:
     permissions:
       contents: read
       pages: read
-    runs-on: ubuntu-latest
+    # Match the Playwright image baseline so the native backup helper runs inside it.
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
+      PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright:v1.64.1-noble@sha256:47b510dd9230bf0b9bfc9b20102241e577ea7a99334ab4c3ca19f19770e9b8ea
       MM_BUILD_SHA: ${{ github.sha }}
       NODE_OPTIONS: --max-old-space-size=1536
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/rust-setup
+      # Only infrastructure tools are built natively; the Bevy client targets WASM.
+      - uses: ./.github/actions/rust-toolchain
         with:
-          cache: 'false'
-      - run: rustup target add wasm32-unknown-unknown
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: browser-wasm
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          prefix-key: browser-rust-v1
+          shared-key: ubuntu24-wasm
+          save-if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'pull_request' }}
+          cache-on-failure: true
       - uses: taiki-e/install-action@v2
         with:
           tool: trunk@0.22.1
@@ -78,7 +82,17 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: web/tests/package-lock.json
-      - run: python3 tools/web/test_contracts.py
+      - name: Check browser tooling and image version
+        run: |
+          python3 tools/web/test_contracts.py
+          node --test tools/web/tests/prune_browser_cache.test.cjs
+          node --input-type=module <<'JS'
+          import {readFileSync} from 'node:fs';
+          const version = JSON.parse(readFileSync('web/tests/package.json')).devDependencies['@playwright/test'];
+          if (!process.env.PLAYWRIGHT_IMAGE.startsWith(`mcr.microsoft.com/playwright:v${version}-noble@sha256:`)) {
+            throw new Error('Playwright package and pinned container versions must match');
+          }
+          JS
       - name: Read configured Pages metadata
         if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         id: pages
@@ -99,17 +113,23 @@ jobs:
       - name: Build native backup acceptance tool
         run: cargo build --locked -p infrastructure --example save_backup
       - run: npm ci --prefix web/tests
-      - run: cd web/tests && npx playwright install --with-deps chromium
       - name: Test the distribution at its deployed subpath
         run: |
           export WEB_BASE_URL="http://127.0.0.1:8765$WEB_PUBLIC_PATH"
-          python3 tools/web/serve.py &
-          npm test --prefix web/tests
+          python3 tools/web/serve.py > target/web-server.log 2>&1 &
+          web_server_pid=$!
+          trap 'kill "$web_server_pid" 2>/dev/null || true' EXIT
+          docker run --rm --init --ipc=host --network=host \
+            --env CI=true --env NODE_OPTIONS --env WEB_BASE_URL \
+            --volume "$PWD:$PWD" --workdir "$PWD" \
+            "$PLAYWRIGHT_IMAGE" npm test --prefix web/tests -- --reporter=line
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: browser-failures
-          path: web/tests/test-results/
+          path: |
+            web/tests/test-results/
+            target/web-server.log
       - uses: actions/upload-pages-artifact@v5
         with:
           path: dist

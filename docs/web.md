@@ -44,6 +44,17 @@ Pages must use GitHub Actions as its publishing source. A manual CI dispatch on 
 rebuilds the current revision. To roll back source, revert the offending changes on `main`
 and let the same checks/deployment run; an old workflow cannot bypass the head guard.
 
+The browser job uses a minimal pinned Rust toolchain and builds on Ubuntu 24.04. It runs all
+17 acceptance tests, with one worker, in the digest-pinned Playwright 1.64.1 Noble image. The
+image supplies Chromium and its system dependencies; CI does not install desktop Bevy libraries,
+nextest or browser apt packages for this job. The native backup helper uses the same Ubuntu
+baseline as the test container. The image tag and npm package version must be upgraded together.
+
+Browser Rust dependencies are cached separately from native CI, on both main and PR merge refs,
+including failed runs. PRs can restore main's cache and their own earlier cache; they cannot
+replace main's cache. Closing a PR removes only its `browser-rust-*` caches through a trusted
+default-branch workflow. Other cache namespaces and refs are left alone.
+
 WASM/JS and runtime assets are content-addressed. A stale page or mismatched asset inventory
 shows Reload; browser data is never cleared by deployment. This release has no service worker
 and does not promise offline startup. Desktop keyboard/mouse and a 1280×640 content area
