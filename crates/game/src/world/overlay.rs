@@ -1,14 +1,14 @@
 use super::OrbitCamera;
 use bevy::prelude::*;
-use domain::ids::PlantId;
+use domain::ids::{NodeId, PlantId};
 use domain::session::DayPhase;
 
 /// Presentation controls. Never serialised into the simulation or exposed as domain tuning.
 #[derive(Resource, Debug, Clone)]
 pub struct WorldControls {
     pub orbit: OrbitCamera,
-    /// Consumed by the map once its current viewport and plant positions are available.
-    pub(crate) focus_plant: Option<PlantId>,
+    /// Consumed once the current map viewport and geometry are available.
+    pub(crate) focus: Option<CameraFocus>,
     pub overlay: bool,
     pub effects: bool,
     pub resource_mode: bool,
@@ -18,13 +18,19 @@ impl Default for WorldControls {
     fn default() -> Self {
         Self {
             orbit: default(),
-            focus_plant: None,
+            focus: None,
             overlay: true,
             effects: true,
             resource_mode: false,
             phase: None,
         }
     }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CameraFocus {
+    Plant(PlantId),
+    Zone(NodeId),
+    Region,
 }
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum WorldAction {
@@ -72,9 +78,12 @@ impl WorldControls {
             } => self.orbit.zoom_at(delta, anchor, size, aspect),
             WorldAction::FocusResolved(orbit) => {
                 self.orbit = orbit;
-                self.focus_plant = None;
+                self.focus = None;
             }
-            WorldAction::Reset => self.orbit = default(),
+            WorldAction::Reset => {
+                self.orbit = default();
+                self.focus = None;
+            }
             WorldAction::ToggleOverlay => self.overlay = !self.overlay,
             WorldAction::ToggleEffects => self.effects = !self.effects,
             WorldAction::ControlRoom => {

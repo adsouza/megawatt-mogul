@@ -251,10 +251,25 @@ pub fn finish_surface(
             && !egui::Popup::is_any_open(ctx)
     });
     let allowed = !surface.blocked && !blocked(&session, &sink);
-    if allowed && let Some(plant) = sink.world().focus_plant {
+    if allowed && let Some(focus) = sink.world().focus {
         let mut orbit = sink.world().orbit;
-        if let Some(plant) = model.plants.get(&plant) {
-            orbit.reveal(plant.at, model.size(), rect, surface.legend);
+        match focus {
+            super::CameraFocus::Plant(id) => {
+                if let Some(plant) = model.plants.get(&id) {
+                    orbit.reveal(plant.at, model.size(), rect, surface.legend);
+                }
+            }
+            super::CameraFocus::Zone(id) => {
+                if let Some((min, max)) =
+                    super::focus::zone_bounds(model, session.0.session(), id, tuning.scale())
+                {
+                    orbit.frame_bounds(min, max, model.size(), rect, surface.legend);
+                }
+            }
+            super::CameraFocus::Region => {
+                orbit.target = Vec2::ZERO;
+                orbit.zoom = 1.0;
+            }
         }
         dispatch(
             [UiAction::World(WorldAction::FocusResolved(orbit))],

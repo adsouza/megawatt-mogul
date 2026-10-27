@@ -41,6 +41,7 @@ pub fn region_terrain_colors(
 
 mod camera;
 mod electrical;
+mod focus;
 pub use camera::{CameraPose, OrbitCamera, physical_viewport};
 
 mod flow;
@@ -50,6 +51,7 @@ mod model;
 pub use lighting::{SunPosition, sun_position};
 pub(crate) use model::line_breaks;
 mod overlay;
+pub(crate) use overlay::CameraFocus;
 mod picking;
 pub use model::{
     Part, WorldCity, WorldLine, WorldModel, WorldPlant, city_parts, plant_parts, selection_parts,

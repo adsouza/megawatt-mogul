@@ -665,6 +665,261 @@ fn diorama_app(logs: &std::path::Path) -> bevy::prelude::App {
 }
 
 #[test]
+fn world_zone_picker_frames_each_local_grid_once_and_all_zones_restores_the_overview() {
+    use crate::support::{
+        egui_harness::{button, widget},
+        egui_pass::EguiPass,
+        shipped_l10n,
+    };
+    use bevy::prelude::*;
+    use game::{
+        hud::{self, CommitmentForm, UiAction, UiState},
+        sim::Session,
+        world::{MapSurface, WorldAction, WorldAssets, WorldControls, WorldScene},
+    };
+    for zoom in [1.0, 1.25] {
+        let logs = tempfile::TempDir::new().unwrap();
+        let mut app = diorama_app(logs.path());
+        crate::support::request(&mut app, "sgcc");
+        let pass = EguiPass::attach(&mut app);
+        pass.ctx().set_zoom_factor(zoom);
+        let (w, h) = (1024.0 / zoom, 640.0 / zoom);
+        pass.settled(&mut app, w, h);
+        let l10n = shipped_l10n();
+        let checkpoint = app.world().resource::<Session>().0.checkpoint();
+        let assets = app.world().resource::<WorldAssets>().counts();
+        let terrain_builds = app.world().resource::<WorldScene>().terrain_builds;
+        let scopes = hud::commitment_model(
+            &app.world().resource::<Session>().0,
+            &l10n,
+            app.world().resource::<UiState>(),
+            &CommitmentForm::default(),
+        )
+        .scopes;
+        assert_eq!(scopes.len(), 5);
+        for scope in scopes {
+            crate::hud_smoke::dispatch_in(&mut app, vec![UiAction::World(WorldAction::Reset)]);
+            let model = hud::commitment_model(
+                &app.world().resource::<Session>().0,
+                &l10n,
+                app.world().resource::<UiState>(),
+                &CommitmentForm::default(),
+            );
+            let selected = &model.scopes.iter().find(|s| s.on).unwrap().button.label;
+            let widgets = pass.settled(&mut app, w, h);
+            let picker = widgets
+                .iter()
+                .find(|v| {
+                    v.text == *selected && v.role == bevy_egui::egui::accesskit::Role::ComboBox
+                })
+                .unwrap();
+            pass.click_at(&mut app, w, h, picker.rect.center());
+            let widgets = pass.settled(&mut app, w, h);
+            pass.click_at(
+                &mut app,
+                w,
+                h,
+                button(&widgets, &scope.button.label).rect.center(),
+            );
+            pass.settled(&mut app, w, h);
+            let UiAction::SelectIsland(Some(id)) = scope.button.action else {
+                panic!("zone")
+            };
+            let orbit = app.world().resource::<WorldControls>().orbit;
+            assert_ne!(orbit.target, Vec2::ZERO, "zone selection pans to its grid");
+            assert!(orbit.zoom < 1.0, "small starter zones zoom in");
+            let surface = app.world().resource::<MapSurface>();
+            let rect = surface.rect.unwrap();
+            let world = app.world().resource::<WorldScene>().model.as_ref().unwrap();
+            for node in &app
+                .world()
+                .resource::<Session>()
+                .0
+                .session()
+                .power()
+                .island_nodes()[&id]
+            {
+                let ndc = surface.pose.unwrap().project(world.nodes[node]).unwrap();
+                let pixel = bevy_egui::egui::pos2(
+                    rect.left() + (ndc.x + 1.0) * rect.width() / 2.0,
+                    rect.top() + (1.0 - ndc.y) * rect.height() / 2.0,
+                );
+                assert!(
+                    rect.shrink(8.0).contains(pixel),
+                    "all local nodes fit: {id:?}, {pixel:?}"
+                );
+                assert!(
+                    !surface.legend.is_some_and(|legend| legend.contains(pixel)),
+                    "grid is not hidden under the legend"
+                );
+            }
+            let size = world.size();
+            let height = rect.height();
+            crate::hud_smoke::dispatch_in(
+                &mut app,
+                vec![UiAction::World(WorldAction::Pan(
+                    Vec2::new(20.0, 10.0),
+                    size,
+                    height,
+                ))],
+            );
+            let manual = app.world().resource::<WorldControls>().orbit;
+            pass.settled(&mut app, w, h);
+            assert_eq!(
+                app.world().resource::<WorldControls>().orbit,
+                manual,
+                "framing is one-shot"
+            );
+        }
+        let widgets = pass.settled(&mut app, w, h);
+        pass.click_at(
+            &mut app,
+            w,
+            h,
+            widget(&widgets, &l10n.text("islands-all")).rect.center(),
+        );
+        pass.settled(&mut app, w, h);
+        let overview = app.world().resource::<WorldControls>().orbit;
+        assert_eq!(overview.target, Vec2::ZERO);
+        assert_eq!(overview.zoom, 1.0);
+        assert_eq!(app.world().resource::<WorldAssets>().counts(), assets);
+        assert_eq!(
+            app.world().resource::<WorldScene>().terrain_builds,
+            terrain_builds
+        );
+        assert_eq!(app.world().resource::<Session>().0.checkpoint(), checkpoint);
+    }
+}
+
+#[test]
+fn world_zone_focus_works_from_top_bar_and_forecast_and_defers_behind_a_dialog() {
+    use crate::hud_smoke::dispatch_in;
+    use crate::support::{
+        egui_harness::{button, widget},
+        egui_pass::EguiPass,
+        shipped_l10n,
+    };
+    use bevy::prelude::*;
+    use game::{
+        hud::{self, OpenPrompt, Prompt, UiAction, UiState},
+        sim::{Persistence, Session},
+        world::{MapSurface, WorldAction, WorldControls},
+    };
+    let logs = tempfile::TempDir::new().unwrap();
+    let mut app = diorama_app(logs.path());
+    crate::support::request(&mut app, "sgcc");
+    let pass = EguiPass::attach(&mut app);
+    let l10n = shipped_l10n();
+    pass.settled(&mut app, 1024.0, 640.0);
+    let checkpoint = app.world().resource::<Session>().0.checkpoint();
+    let top = hud::top_bar_model(
+        &app.world().resource::<Session>().0,
+        app.world().resource::<Persistence>(),
+        &l10n,
+        &usd_style(),
+    );
+    let remote = top.islands.last().unwrap();
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    pass.click_at(
+        &mut app,
+        1024.0,
+        640.0,
+        button(&widgets, &remote.button.label).rect.center(),
+    );
+    pass.settled(&mut app, 1024.0, 640.0);
+    let framed = app.world().resource::<WorldControls>().orbit;
+    assert_ne!(framed.target, Vec2::ZERO);
+
+    dispatch_in(&mut app, vec![UiAction::SelectIsland(None)]);
+    pass.settled(&mut app, 1024.0, 640.0);
+    let forecast = hud::forecast_model(
+        &app.world().resource::<Session>().0,
+        &l10n,
+        app.world().resource::<UiState>(),
+    );
+    let target = &forecast.islands[2];
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    pass.click_at(
+        &mut app,
+        1024.0,
+        640.0,
+        widget(&widgets, &forecast.island_picker_label)
+            .rect
+            .center(),
+    );
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    pass.click_at(
+        &mut app,
+        1024.0,
+        640.0,
+        button(&widgets, &target.inspect.label).rect.center(),
+    );
+    pass.settled(&mut app, 1024.0, 640.0);
+    let forecast_view = app.world().resource::<WorldControls>().orbit;
+    assert_eq!(
+        app.world().resource::<UiState>().island,
+        Some(target.island)
+    );
+    assert_ne!(forecast_view.target, framed.target);
+    assert!(forecast_view.zoom < 1.0);
+
+    dispatch_in(
+        &mut app,
+        vec![
+            UiAction::Prompt(Some(Prompt::LeaveGame)),
+            remote.button.action.clone(),
+        ],
+    );
+    pass.settled(&mut app, 1024.0, 640.0);
+    assert_eq!(
+        app.world().resource::<WorldControls>().orbit,
+        forecast_view,
+        "a modal defers framing"
+    );
+    assert!(app.world().resource::<OpenPrompt>().0.is_some());
+    dispatch_in(&mut app, vec![UiAction::Prompt(None)]);
+    pass.settled(&mut app, 1024.0, 640.0);
+    assert_eq!(app.world().resource::<WorldControls>().orbit, framed);
+
+    // The latest list selection wins over a queued zone selection, and stale IDs do not move the map.
+    let plant = app.world().resource::<Session>().0.session().plant_views()[0].clone();
+    dispatch_in(
+        &mut app,
+        vec![
+            target.inspect.action.clone(),
+            UiAction::InspectPlant(plant.id),
+        ],
+    );
+    pass.settled(&mut app, 1024.0, 640.0);
+    let model = game::world::WorldModel::of(&app.world().resource::<Session>().0);
+    let ndc = app
+        .world()
+        .resource::<MapSurface>()
+        .pose
+        .unwrap()
+        .project(model.plants[&plant.id].at)
+        .unwrap();
+    assert!(ndc.x.abs() < 0.9 && ndc.y.abs() < 0.9);
+    let before = app.world().resource::<WorldControls>().orbit;
+    dispatch_in(
+        &mut app,
+        vec![UiAction::InspectForecast {
+            island: domain::ids::NodeId(u32::MAX),
+            hour: 0,
+        }],
+    );
+    pass.settled(&mut app, 1024.0, 640.0);
+    assert_eq!(app.world().resource::<WorldControls>().orbit, before);
+    dispatch_in(&mut app, vec![UiAction::World(WorldAction::Reset)]);
+    pass.settled(&mut app, 1024.0, 640.0);
+    assert_eq!(
+        app.world().resource::<WorldControls>().orbit,
+        game::world::OrbitCamera::default()
+    );
+    assert_eq!(app.world().resource::<Session>().0.checkpoint(), checkpoint);
+}
+
+#[test]
 fn world_power_lines_stay_fine_when_zoomed_in() {
     use bevy::prelude::*;
     use bevy_egui::egui;

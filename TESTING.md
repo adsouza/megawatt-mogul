@@ -1049,3 +1049,12 @@ hidden draft recovery. `player_workflows::choose_a_local_fleet_edit_it_and_keep_
 selects all five actual grid-picker options at minimum window size and 125% zoom, opens their
 forecasts and returns to the same fleet, changes only one local plant, and recovers/reverts an
 unapplied draft after switching grids. Apply/Revert remain within reach beneath the edited row.
+
+Zone selection also frames the connected local grid in the map. `world::camera` varies bounds,
+view angles, viewport sizes and legend visibility and checks all eight projected bounds corners;
+invalid bounds leave the camera unchanged. Real `world_zone_*` widget tests cover all five SGCC
+zones at minimum window size and 125% zoom, top-bar/forecast entry points, deferred focus behind
+dialogs and restoration of the All-zones overview. Manual panning persists after framing,
+plant inspection still works, and camera changes neither rebuild terrain nor mutate the session.
+`world::focus` verifies that local bounds stop at HVDC terminals and support inactive single-bus
+zones and stale IDs.

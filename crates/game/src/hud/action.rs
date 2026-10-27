@@ -350,6 +350,11 @@ impl ActionSink<'_> {
 /// click to the rest of the game.
 pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSink) {
     for action in actions {
+        let previous_zone = sink.ui.island;
+        let explicit_zone = matches!(
+            action,
+            UiAction::SelectIsland(_) | UiAction::InspectForecast { .. }
+        );
         sink.ui.apply(&action);
         match action {
             UiAction::ApplyHvdcRange(link) => {
@@ -550,11 +555,11 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             | UiAction::SetSupplyChartLayout(_) => {}
             UiAction::Select(selection) => {
                 *sink.selection = selection;
-                sink.world.focus_plant = None;
+                sink.world.focus = None;
             }
             UiAction::InspectPlant(plant) => {
                 *sink.selection = Selection::Plant(plant);
-                sink.world.focus_plant = Some(plant);
+                sink.world.focus = Some(crate::world::CameraFocus::Plant(plant));
             }
             UiAction::SetLayer(layer) => {
                 *sink.layer = layer;
@@ -594,6 +599,17 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             UiAction::Quit => {
                 sink.persistence.discard_preload();
                 sink.exit.write(AppExit::Success);
+            }
+        }
+        if (explicit_zone || sink.ui.island != previous_zone)
+            && let Some(game) = sink.session.as_ref()
+        {
+            match sink.ui.island {
+                Some(id) if game.0.session().power().island_nodes().contains_key(&id) => {
+                    sink.world.focus = Some(crate::world::CameraFocus::Zone(id));
+                }
+                None => sink.world.focus = Some(crate::world::CameraFocus::Region),
+                _ => {}
             }
         }
     }
