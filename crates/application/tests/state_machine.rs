@@ -78,6 +78,7 @@ impl Model {
 fn allowed_phases(command: &Command) -> &'static [DayPhase] {
     use DayPhase::{Operating, Planning, Review};
     match command {
+        Command::ActivateService { .. } => &[Planning],
         Command::BuildLink { .. }
         | Command::CancelLinkConstruction { .. }
         | Command::SetLinkSchedule { .. }
@@ -187,6 +188,10 @@ impl ReferenceStateMachine for SessionMachine {
             begin => Just(Command::BeginOperating),
             step => advance(),
             finish => Just(Command::FinishReview),
+            2 => (node_id(model), any::<bool>(), any::<u64>())
+                .prop_map(|(island, accept_shortfall, expected_revision)| Command::ActivateService {
+                    island, accept_shortfall, expected_revision,
+                }),
             2 => (select(PlantKind::ALL.to_vec()), cell())
                 .prop_map(|(kind, cell)| Command::BuildPlant { kind, cell }),
             2 => (node_id(model), node_id(model))

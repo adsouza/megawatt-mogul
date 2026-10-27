@@ -16,6 +16,11 @@ impl CommandHandler for CoreHandler {
         command: &Command,
     ) -> Result<Vec<DomainEvent>, CommandError> {
         let events = match command {
+            Command::ActivateService {
+                island,
+                accept_shortfall,
+                expected_revision,
+            } => session.activate_island(*island, *accept_shortfall, *expected_revision)?,
             Command::BuildLink { from, to } => session.build_link(*from, *to)?.1,
             Command::CancelLinkConstruction { link } => session.cancel_link_construction(*link)?,
             Command::SetLinkSchedule { link, mw } => session.set_link_schedule(*link, **mw)?,

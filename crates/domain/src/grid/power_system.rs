@@ -94,6 +94,8 @@ fn wind_fall_uncovered(lost: Megawatts, fall: Megawatts, reach: Megawatts) -> bo
 /// frequency and protection state between ticks.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PowerSystem {
+    /// Nodes enrolled by an explicit service activation. Home service is always active.
+    activated_service: std::collections::BTreeSet<NodeId>,
     island_states: BTreeMap<NodeId, IslandState>,
     island_nodes: BTreeMap<NodeId, std::collections::BTreeSet<NodeId>>,
     injections: [f64; 24],
@@ -182,6 +184,7 @@ impl PowerSystem {
         model: NetworkModel,
     ) -> Self {
         Self {
+            activated_service: Default::default(),
             island_states: BTreeMap::new(),
             island_nodes: BTreeMap::new(),
             injections: [0.0; 24],
@@ -1484,9 +1487,12 @@ impl crate::state::State for PowerSystem {
             self.injections.write_schema(out, schema);
             self.injection.write_schema(out, schema);
         }
+        if schema >= 5 {
+            self.activated_service.write_schema(out, schema);
+        }
     }
     fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
-        Ok(Self {
+        let mut power = Self {
             transfer_exports: 0.0,
             shared_error: None,
             network: crate::state::State::read(input)?,
@@ -1552,7 +1558,16 @@ impl crate::state::State for PowerSystem {
             } else {
                 0.0
             },
-        })
+            activated_service: if input.schema >= 5 {
+                crate::state::State::read(input)?
+            } else {
+                Default::default()
+            },
+        };
+        if input.schema < 5 {
+            power.inherit_legacy_service();
+        }
+        Ok(power)
     }
 }
 

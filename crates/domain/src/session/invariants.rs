@@ -105,14 +105,13 @@ impl GameSession {
     /// compare exactly. The one command that can move an output after a tick
     /// is a zero-length manual start, straight from 0 MW to online.
     fn reports_live_outputs(&self, s: &TickSummary) -> bool {
-        let network = self.power.network();
         let live: Vec<&Plant> = self
             .power
             .plants()
             .values()
             .filter(|p| {
                 !matches!(p.status(), PlantStatus::UnderConstruction { .. })
-                    && network.is_connected(p.node())
+                    && self.power.node_active(p.node())
             })
             .collect();
         live.len() == s.by_plant.len()

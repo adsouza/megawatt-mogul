@@ -8,6 +8,7 @@
 //! that the phase allows it, and validates fully before mutating anything, so
 //! a command that returns `Err` leaves [`GameSession::state_hash`] unchanged.
 
+mod activation;
 #[cfg(test)]
 mod battery_tests;
 mod commands;
@@ -26,6 +27,7 @@ mod wind_tests;
 #[cfg(test)]
 mod tests;
 
+pub use activation::{ActivationAssessment, ActivationBlocker};
 pub use commands::{LineQuote, PlantQuote};
 pub use connection::{ConnectionKind, ConnectionWarning};
 pub use invariants::InvariantViolation;
@@ -684,16 +686,20 @@ impl GameSession {
         for link in self.power.network().links() {
             let spec = self.region.hvdc().ok_or(StateError::Invalid)?;
             let network = self.power.network();
-            if self
-                .region
-                .area_at(network.node(link.from).ok_or(StateError::Invalid)?.cell)
-                == self
-                    .region
-                    .area_at(network.node(link.to).ok_or(StateError::Invalid)?.cell)
-                || link
-                    .schedule
-                    .iter()
-                    .any(|v| !v.is_finite() || v.abs() > spec.rating_mw)
+            if self.region.area_at(
+                network
+                    .node(link.from_grid())
+                    .ok_or(StateError::Invalid)?
+                    .cell,
+            ) == self.region.area_at(
+                network
+                    .node(link.to_grid())
+                    .ok_or(StateError::Invalid)?
+                    .cell,
+            ) || link
+                .schedule
+                .iter()
+                .any(|v| !v.is_finite() || v.abs() > spec.rating_mw)
                 || link
                     .override_mw
                     .is_some_and(|v| !v.is_finite() || v.abs() > spec.rating_mw)
@@ -703,7 +709,7 @@ impl GameSession {
                 || link.runback != link.runback_terminal.is_some()
                 || link
                     .runback_terminal
-                    .is_some_and(|node| node != link.from && node != link.to)
+                    .is_some_and(|node| node != link.from_grid() && node != link.to_grid())
                 || self.link_construction(link.id).is_none()
             {
                 return Err(StateError::Invalid);

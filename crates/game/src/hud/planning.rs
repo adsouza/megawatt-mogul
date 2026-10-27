@@ -153,8 +153,24 @@ fn planning_model_for(
                 grid: commitment_model(game, l10n, ui, form),
             },
             PlanningTab::Forecast => {
-                let mut chart = if scoped.is_some() {
-                    super::forecast_chart::forecast_model(game, l10n, ui)
+                let mut chart = if let Some(s) = &scoped {
+                    let mut chart = super::forecast_chart::forecast_model_for_session(
+                        s,
+                        l10n,
+                        ui,
+                        &s.supply_forecast(),
+                    );
+                    chart.link_issues =
+                        super::links::planning_issues(game.session(), l10n, ui.island);
+                    chart.constraint_label = l10n.args(
+                        "forecast-hvdc-constraints",
+                        &[("count", (chart.link_issues.len() as u32).into())],
+                    );
+                    if let Some(card) = ui.island.and_then(|id| forecast.activations.get(&id)) {
+                        chart.activation = Some(card.review.clone());
+                        chart.service_note = Some(l10n.text("island-inactive-status"));
+                    }
+                    chart
                 } else {
                     forecast.chart.clone()
                 };

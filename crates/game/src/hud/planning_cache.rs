@@ -11,6 +11,8 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct PlanningForecast {
+    pub(super) activations:
+        std::collections::BTreeMap<domain::ids::NodeId, super::ActivationCardModel>,
     pub(super) chart: ForecastModel,
     pub(super) shortfall: Option<CapacityShortfallWarning>,
     pub(super) warnings: super::planning_warnings::WarningsModel,
@@ -21,6 +23,15 @@ impl PlanningForecast {
         let session = game.session();
         let supply = session.supply_forecast();
         Self {
+            activations: session
+                .power()
+                .island_nodes()
+                .keys()
+                .filter(|id| !session.power().island_active(**id))
+                .filter_map(|id| {
+                    Some((*id, super::activation::activation_card(session, *id, l10n)?))
+                })
+                .collect(),
             warnings: super::planning_warnings::warnings_model(game, l10n, &UiState::default()),
             chart: super::forecast_chart::forecast_model_for(
                 game,

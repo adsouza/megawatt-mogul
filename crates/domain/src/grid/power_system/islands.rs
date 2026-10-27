@@ -229,30 +229,33 @@ impl PowerSystem {
         month: SimMonth,
         tick: u32,
     ) -> bool {
-        self.island_states.iter().any(|(id, s)| {
-            let Some(nodes) = self.island_nodes.get(id) else {
-                return true;
-            };
-            !(0.0..=1.0).contains(&s.wind_factor)
-                || !(0.0..=1.0).contains(&s.clearness)
-                || s.hydro_planned_from > 24
-                || s.battery_tick > TICKS_PER_DAY
-                || s.curtailment < Megawatts::ZERO
-                || s.hydro_plan.keys().any(|id| {
-                    self.plants
-                        .get(id)
-                        .is_none_or(|p| p.kind() != PlantKind::Hydro || !nodes.contains(&p.node()))
-                })
-                || s.battery_plan.plants.iter().any(|(id, plan)| {
-                    self.plants.get(id).is_none_or(|p| {
-                        p.kind() != PlantKind::Battery || !nodes.contains(&p.node())
-                    }) || plan.charge.len() != TICKS_PER_DAY as usize
-                        || plan.discharge.len() != TICKS_PER_DAY as usize
-                })
-                || self
-                    .scoped_island(*id, region)
-                    .is_some_and(|p| p.wind_state_invalid(month, tick))
-        })
+        self.activated_service
+            .iter()
+            .any(|id| self.network.node(*id).is_none())
+            || self.island_states.iter().any(|(id, s)| {
+                let Some(nodes) = self.island_nodes.get(id) else {
+                    return true;
+                };
+                !(0.0..=1.0).contains(&s.wind_factor)
+                    || !(0.0..=1.0).contains(&s.clearness)
+                    || s.hydro_planned_from > 24
+                    || s.battery_tick > TICKS_PER_DAY
+                    || s.curtailment < Megawatts::ZERO
+                    || s.hydro_plan.keys().any(|id| {
+                        self.plants.get(id).is_none_or(|p| {
+                            p.kind() != PlantKind::Hydro || !nodes.contains(&p.node())
+                        })
+                    })
+                    || s.battery_plan.plants.iter().any(|(id, plan)| {
+                        self.plants.get(id).is_none_or(|p| {
+                            p.kind() != PlantKind::Battery || !nodes.contains(&p.node())
+                        }) || plan.charge.len() != TICKS_PER_DAY as usize
+                            || plan.discharge.len() != TICKS_PER_DAY as usize
+                    })
+                    || self
+                        .scoped_island(*id, region)
+                        .is_some_and(|p| p.wind_state_invalid(month, tick))
+            })
     }
     pub fn scheduled_injection(&self, tick: u32) -> Megawatts {
         Megawatts::new(self.injections[(tick / TICKS_PER_HOUR).min(23) as usize])
@@ -264,17 +267,48 @@ impl PowerSystem {
         &self.island_nodes
     }
 
-    /// Service eligibility is structural: normal trips, commitments and dispatch do not
+    /// Remote service is explicitly enrolled; normal trips, commitments and dispatch do not
     /// remove existing customers. The original home grid always retains its obligations.
-    /// A remote HVDC island needs a commissioned synchronous source before taking load.
     pub fn island_active(&self, id: NodeId) -> bool {
         self.island_nodes.get(&id).is_some_and(|nodes| {
-            nodes.contains(&self.network.root())
-                || self.plants.values().any(|plant| {
-                    nodes.contains(&plant.node())
-                        && is_commissioned(plant)
-                        && plant.kind().is_dispatchable()
+            nodes.contains(&self.network.root()) || !nodes.is_disjoint(&self.activated_service)
+        })
+    }
+
+    pub(crate) fn activate_service(&mut self, id: NodeId) {
+        if let Some(nodes) = self.island_nodes.get(&id) {
+            self.activated_service.extend(nodes);
+        }
+    }
+
+    /// Schemas 1–4 used automatic structural eligibility. Preserve established obligations.
+    pub(crate) fn inherit_legacy_service(&mut self) {
+        for nodes in self.island_nodes.values() {
+            if !nodes.contains(&self.network.root())
+                && self.plants.values().any(|p| {
+                    nodes.contains(&p.node()) && is_commissioned(p) && p.kind().is_dispatchable()
                 })
+            {
+                self.activated_service.extend(nodes);
+            }
+        }
+    }
+
+    pub(crate) fn prospective_service(&mut self) {
+        self.activated_service
+            .extend(self.network.connected_nodes());
+    }
+
+    pub fn planned_synchronous_hours(&self, id: NodeId) -> [bool; 24] {
+        std::array::from_fn(|hour| {
+            self.island_nodes.get(&id).is_some_and(|nodes| {
+                self.plants.values().any(|p| {
+                    nodes.contains(&p.node())
+                        && is_commissioned(p)
+                        && p.kind().is_dispatchable()
+                        && p.commitment().is_committed(hour as u8)
+                })
+            })
         })
     }
 
@@ -296,22 +330,11 @@ impl PowerSystem {
         let link = self.network.link(link)?;
         let readiness = |node| {
             let island = self.node_island(node);
-            let hours = std::array::from_fn(|hour| {
-                island
-                    .and_then(|id| self.island_nodes.get(&id))
-                    .is_some_and(|nodes| {
-                        self.plants.values().any(|plant| {
-                            nodes.contains(&plant.node())
-                                && is_commissioned(plant)
-                                && plant.kind().is_dispatchable()
-                                && plant.commitment().is_committed(hour as u8)
-                        })
-                    })
-            });
+            let hours = island.map_or([false; 24], |id| self.planned_synchronous_hours(id));
             (island, hours)
         };
-        let (from_island, from_ready) = readiness(link.from);
-        let (to_island, to_ready) = readiness(link.to);
+        let (from_island, from_ready) = readiness(link.from_grid());
+        let (to_island, to_ready) = readiness(link.to_grid());
         Some(LinkPlanningForecast {
             in_service: link.status == super::super::LineStatus::InService,
             from_island,
@@ -331,9 +354,14 @@ impl PowerSystem {
             .filter(|l| l.status == super::super::LineStatus::InService)
         {
             let readiness = self.link_planning_forecast(link.id).expect("existing link");
-            let from = self.node_island(link.from);
-            let to = self.node_island(link.to);
+            let from = self.node_island(link.from_grid());
+            let to = self.node_island(link.to_grid());
             if from.is_none() || to.is_none() {
+                continue;
+            }
+            if !from.is_some_and(|id| self.island_active(id))
+                || !to.is_some_and(|id| self.island_active(id))
+            {
                 continue;
             }
             let factor = 1.0
@@ -478,7 +506,9 @@ impl PowerSystem {
                 (
                     *id,
                     (
-                        state.protection.mode == GridMode::Blackout || !synchronous,
+                        !self.island_active(*id)
+                            || state.protection.mode == GridMode::Blackout
+                            || !synchronous,
                         state.deviation,
                     ),
                 )
@@ -494,7 +524,9 @@ impl PowerSystem {
                 if link.status != super::super::LineStatus::InService {
                     continue;
                 }
-                let endpoints = node_islands.get(&link.from).zip(node_islands.get(&link.to));
+                let endpoints = node_islands
+                    .get(&link.from_grid())
+                    .zip(node_islands.get(&link.to_grid()));
                 let Some((&from, &to)) = endpoints else {
                     link.flow = Megawatts::ZERO;
                     link.blocked = true;
@@ -516,9 +548,9 @@ impl PowerSystem {
                     // introduce. A reversal cannot start exporting from a weak terminal.
                     for flow in [old, next] {
                         let terminal = if flow < 0.0 || (flow == 0.0 && intended < 0.0) {
-                            link.to
+                            link.to_grid()
                         } else {
-                            link.from
+                            link.from_grid()
                         };
                         if terminals[&node_islands[&terminal]].1 < region.frequency().shed_below {
                             link.runback_terminal = Some(terminal);
@@ -702,6 +734,8 @@ mod tests {
             PowerSystem::new(network, plants, BTreeMap::new(), NetworkModel::CopperPlate);
         power.network.link_mut(LinkId(10)).unwrap().schedule = [100.0; 24];
         let mut rng = SimRng::from_seed(7);
+        power.recompute_islands();
+        power.inherit_legacy_service();
         power.begin_day(&region, month, &mut rng);
         (power, region, rng)
     }
@@ -721,8 +755,9 @@ mod tests {
         assert_eq!(rng, expected);
     }
     #[test]
-    fn remote_customers_wait_for_a_commissioned_source_and_never_vanish_on_shutdown() {
+    fn remote_customers_wait_for_explicit_activation_and_never_vanish_on_shutdown() {
         let (mut p, r, mut rng) = pair();
+        p.activated_service.clear();
         let def = r.cities()[2].clone();
         let node = NodeId(6);
         p.network
@@ -789,6 +824,11 @@ mod tests {
         );
         source.set_commitment(CommitmentSchedule::none());
         p.plants.insert(PlantId(3), source);
+        assert!(
+            !p.node_active(node),
+            "commissioning alone does not enrol customers"
+        );
+        p.activate_service(NodeId(1));
         assert!(
             p.node_active(node),
             "offline source retains customer obligations"
@@ -866,6 +906,7 @@ mod tests {
             kind in proptest::sample::select(PlantKind::ALL.to_vec()),
             building in proptest::bool::ANY,
             committed in proptest::bool::ANY,
+            enrolled in proptest::bool::ANY,
             target in -200.0f64..200.0,
         ) {
             use crate::state::State;
@@ -883,8 +924,10 @@ mod tests {
             p.plants.insert(PlantId(3), plant);
             p.network.link_mut(LinkId(10)).unwrap().schedule = [target; 24];
             p.recompute_islands();
+            p.activated_service.clear();
+            let expected = !building && kind.is_dispatchable() && enrolled;
+            if expected { p.activate_service(NodeId(1)); }
             p = PowerSystem::from_state_bytes(&p.state_bytes()).unwrap();
-            let expected = !building && kind.is_dispatchable();
             proptest::prop_assert_eq!(p.node_active(NodeId(6)), expected);
             let forecast = p.scoped_island(NodeId(1), &r).unwrap().supply_forecast(&r, r.start().month);
             proptest::prop_assert_eq!(forecast.minutes.iter().any(|p| p.demand > Megawatts::ZERO), expected);

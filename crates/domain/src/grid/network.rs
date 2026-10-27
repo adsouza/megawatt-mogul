@@ -213,7 +213,11 @@ impl Network {
                 .lines
                 .values()
                 .map(|l| (l.from, l.to, l.status))
-                .chain(self.links.values().map(|l| (l.from, l.to, l.status)))
+                .chain(
+                    self.links
+                        .values()
+                        .map(|l| (l.from_grid(), l.to_grid(), l.status)),
+                )
                 .filter(|(a, b, _)| *a == from || *b == from)
             {
                 let to = if a == from { b } else { a };
@@ -288,6 +292,19 @@ impl Network {
     }
     pub fn link(&self, id: LinkId) -> Option<&super::DcLink> {
         self.links.get(&id)
+    }
+    /// Explicit project-owned stations, including stations still under construction.
+    pub fn converter_stations(&self) -> impl Iterator<Item = super::ConverterStation> + '_ {
+        self.links.values().flat_map(|link| link.stations())
+    }
+    pub fn converter_station(
+        &self,
+        id: super::ConverterStationId,
+    ) -> Option<super::ConverterStation> {
+        self.links.get(&id.link).map(|link| match id.end {
+            super::ConverterEnd::From => link.from,
+            super::ConverterEnd::To => link.to,
+        })
     }
     pub fn link_mut(&mut self, id: LinkId) -> Option<&mut super::DcLink> {
         self.links.get_mut(&id)
@@ -388,8 +405,14 @@ impl Network {
             .values()
             .filter(|l| l.status == LineStatus::InService)
         {
-            adjacency.entry(link.from).or_default().push(link.to);
-            adjacency.entry(link.to).or_default().push(link.from);
+            adjacency
+                .entry(link.from_grid())
+                .or_default()
+                .push(link.to_grid());
+            adjacency
+                .entry(link.to_grid())
+                .or_default()
+                .push(link.from_grid());
         }
         let mut reached = BTreeSet::from([self.root]);
         let mut queue = VecDeque::from([self.root]);
@@ -480,13 +503,26 @@ impl Network {
         }
         for (id, link) in &self.links {
             if *id != link.id
-                || link.from == link.to
-                || !self.nodes.contains_key(&link.from)
-                || !self.nodes.contains_key(&link.to)
+                || link.from.id
+                    != (super::ConverterStationId {
+                        link: *id,
+                        end: super::ConverterEnd::From,
+                    })
+                || link.to.id
+                    != (super::ConverterStationId {
+                        link: *id,
+                        end: super::ConverterEnd::To,
+                    })
+                || link.from_grid() == link.to_grid()
+                || !self.nodes.contains_key(&link.from_grid())
+                || !self.nodes.contains_key(&link.to_grid())
                 || link.length_cells < 0.0
                 || !link.length_cells.is_finite()
                 || (link.length_cells
-                    - distance_cells(self.nodes[&link.from].cell, self.nodes[&link.to].cell))
+                    - distance_cells(
+                        self.nodes[&link.from_grid()].cell,
+                        self.nodes[&link.to_grid()].cell,
+                    ))
                 .abs()
                     > 1e-9
                 || matches!(
@@ -846,6 +882,11 @@ mod island_topology_tests {
                     expected.entry(NodeId(root as u32)).or_default().insert(NodeId(i as u32));
                 }
             }
+            let stations: Vec<_> = network.converter_stations().collect();
+            let ids: BTreeSet<_> = stations.iter().map(|s| s.id).collect();
+            prop_assert_eq!(stations.len(), network.links().count() * 2);
+            prop_assert_eq!(ids.len(), stations.len());
+            prop_assert!(stations.iter().all(|s| network.node(s.grid_node).is_some()));
             prop_assert_eq!(network.islands(), expected);
         }
     }

@@ -15,6 +15,12 @@ use crate::units::Megawatts;
 /// leaves the session unchanged.
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum DomainError {
+    #[error("island {island:?} has no viable activation plan")]
+    ActivationBlocked { island: NodeId },
+    #[error("activation of {island:?} needs explicit shortfall acknowledgement")]
+    ActivationShortfall { island: NodeId },
+    #[error("activation plan for {island:?} changed")]
+    ActivationPlanChanged { island: NodeId },
     #[error("AC endpoints lie in different electrical areas")]
     LineCrossesAreas,
     #[error("HVDC endpoints lie in the same electrical area")]

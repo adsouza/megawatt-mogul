@@ -343,15 +343,43 @@ pub fn finish_surface(
         .orbit
         .pose(model.size(), rect.width() / rect.height());
     surface.pose = Some(pose);
+    let mut converters = super::electrical::converter_markers(session.0.session(), pose, rect);
+    for marker in &mut converters {
+        marker.highlighted = sink.ui_state().links_open
+            && sink.ui_state().hvdc_selected == Some(marker.station.id.link)
+            && sink
+                .ui_state()
+                .hvdc_terminal
+                .is_none_or(|station| station == marker.station.id);
+    }
+    let converter_hover = pointer.and_then(|p| super::electrical::hit_converter(&converters, p));
     if allowed
         && owns
         && response.clicked_by(egui::PointerButton::Primary)
         && let Some(p) = pointer
         && let Some(ray) = pose.ray(screen_ndc(rect, p))
     {
-        let selected = presented_hit(ray, model, sink.world(), &tuning)
-            .map_or(crate::hud::Selection::None, |hit| hit.selection);
-        dispatch([UiAction::Select(selected)], &mut sink);
+        if let Some(station) = converter_hover {
+            dispatch(
+                [UiAction::InspectHvdc {
+                    link: station.id.link,
+                    station: Some(station.id),
+                }],
+                &mut sink,
+            );
+        } else if let Some(link) = super::electrical::hit_dc_route(&converters, p) {
+            dispatch(
+                [UiAction::InspectHvdc {
+                    link,
+                    station: None,
+                }],
+                &mut sink,
+            );
+        } else {
+            let selected = presented_hit(ray, model, sink.world(), &tuning)
+                .map_or(crate::hud::Selection::None, |hit| hit.selection);
+            dispatch([UiAction::Select(selected)], &mut sink);
+        }
     }
     let painter = ctx.layer_painter(response.layer_id).with_clip_rect(rect);
     super::electrical::draw(
@@ -361,8 +389,27 @@ pub fn finish_surface(
         session.0.session(),
         &l10n,
         ctx.input(|input| input.time),
+        &converters,
     );
-    let mut occupied = surface.legend.into_iter().collect::<Vec<_>>();
+    if allowed
+        && owns
+        && let Some(station) = converter_hover
+    {
+        let names = crate::l10n::Names::new(&l10n, session.0.session());
+        response.clone().on_hover_text(l10n.args(
+            "converter-map-hint",
+            &[("station", names.converter(station).into())],
+        ));
+    }
+    let mut occupied = surface
+        .legend
+        .into_iter()
+        .chain(
+            converters
+                .iter()
+                .map(|marker| egui::Rect::from_center_size(marker.at, egui::vec2(16.0, 16.0))),
+        )
+        .collect::<Vec<_>>();
     // Construction labels and selected/hovered objects take priority over city names.
     let hover = if owns {
         pointer

@@ -29,6 +29,13 @@ use crate::state::AppState;
 /// Something the player asked for through the HUD.
 #[derive(Debug, Clone, PartialEq)]
 pub enum UiAction {
+    RequestActivation {
+        island: domain::ids::NodeId,
+    },
+    ConfirmActivation {
+        island: domain::ids::NodeId,
+        revision: u64,
+    },
     ConfirmConnection {
         kind: domain::session::ConnectionKind,
         from: domain::ids::NodeId,
@@ -40,6 +47,13 @@ pub enum UiAction {
         hour: u8,
     },
     ShowLinks(bool),
+    InspectHvdc {
+        link: domain::ids::LinkId,
+        station: Option<domain::grid::ConverterStationId>,
+    },
+    SetHvdcTab(super::links::HvdcTab),
+    EditHvdcRange(super::links::HvdcRangeForm),
+    ApplyHvdcRange(domain::ids::LinkId),
     World(crate::world::WorldAction),
     Persistence(PersistAction),
     /// A command for the running game.
@@ -112,6 +126,10 @@ impl From<MenuScreen> for AppState {
 /// A question the HUD asks before doing something it can't undo.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Prompt {
+    Activation {
+        island: domain::ids::NodeId,
+        revision: u64,
+    },
     Connection {
         kind: domain::session::ConnectionKind,
         from: domain::ids::NodeId,
@@ -334,6 +352,74 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
     for action in actions {
         sink.ui.apply(&action);
         match action {
+            UiAction::ApplyHvdcRange(link) => {
+                if !sink.persistence.frozen()
+                    && let Some(session) = sink.session.as_ref()
+                    && session.0.session().phase() == domain::session::DayPhase::Planning
+                    && sink.ui.hvdc_range.link == Some(link)
+                    && let Some(route) = session.0.session().power().network().link(link)
+                    && let Some(spec) = session.0.session().region().hvdc()
+                    && let Some(values) = super::links::schedule_range(
+                        &route.schedule,
+                        &sink.ui.hvdc_range,
+                        spec.rating_mw,
+                    )
+                {
+                    sink.commands.write(PlayerCommand(
+                        Command::SetLinkSchedule {
+                            link,
+                            mw: Box::new(values),
+                        },
+                        sink.generation.0,
+                    ));
+                }
+            }
+            UiAction::RequestActivation { island } => {
+                if sink.persistence.frozen() {
+                    continue;
+                }
+                if let Some(a) = sink
+                    .session
+                    .as_ref()
+                    .and_then(|s| s.0.session().activation_assessment(island).ok())
+                {
+                    sink.prompt.0 = Some(Prompt::Activation {
+                        island,
+                        revision: a.revision,
+                    });
+                }
+            }
+            UiAction::ConfirmActivation { island, revision } => {
+                if sink.persistence.frozen()
+                    || sink.prompt.0 != Some(Prompt::Activation { island, revision })
+                {
+                    continue;
+                }
+                let Some(a) = sink
+                    .session
+                    .as_ref()
+                    .and_then(|s| s.0.session().activation_assessment(island).ok())
+                else {
+                    sink.prompt.0 = None;
+                    continue;
+                };
+                if a.revision != revision || !a.blockers.is_empty() {
+                    sink.prompt.0 = Some(Prompt::Activation {
+                        island,
+                        revision: a.revision,
+                    });
+                    continue;
+                }
+                sink.prompt.0 = None;
+                sink.commands.write(PlayerCommand(
+                    Command::ActivateService {
+                        island,
+                        accept_shortfall: !a.shortfalls.is_empty(),
+                        expected_revision: revision,
+                    },
+                    sink.generation.0,
+                ));
+            }
             UiAction::ConfirmConnection { kind, from, to } => {
                 if sink.persistence.frozen() {
                     continue;
@@ -378,7 +464,10 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             }
             UiAction::SelectIsland(_)
             | UiAction::InspectForecast { .. }
-            | UiAction::ShowLinks(_) => {}
+            | UiAction::ShowLinks(_)
+            | UiAction::InspectHvdc { .. }
+            | UiAction::SetHvdcTab(_)
+            | UiAction::EditHvdcRange(_) => {}
             UiAction::World(action) => sink.world.apply(action),
             UiAction::Persistence(action) => {
                 let generation = sink.generation.0;
@@ -388,6 +477,19 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             }
             UiAction::Command(command) => {
                 if !sink.persistence.frozen() {
+                    if let Command::ActivateService { island, .. } = command {
+                        if let Some(a) = sink
+                            .session
+                            .as_ref()
+                            .and_then(|s| s.0.session().activation_assessment(island).ok())
+                        {
+                            sink.prompt.0 = Some(Prompt::Activation {
+                                island,
+                                revision: a.revision,
+                            });
+                        }
+                        continue;
+                    }
                     let route = match command {
                         Command::BuildLine { from, to } => {
                             Some((domain::session::ConnectionKind::Ac, from, to))

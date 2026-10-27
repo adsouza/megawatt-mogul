@@ -78,6 +78,9 @@ impl LocalizeWith for DomainError {
     fn localize_with(&self, l10n: &Localizer, names: &Names) -> String {
         match self {
             Self::LineCrossesAreas => l10n.text("error-line-crosses-areas"),
+            Self::ActivationBlocked { .. } => l10n.text("error-activation-blocked"),
+            Self::ActivationShortfall { .. } => l10n.text("error-activation-shortfall"),
+            Self::ActivationPlanChanged { .. } => l10n.text("error-activation-changed"),
             Self::LinkWithinArea => l10n.text("error-link-within-area"),
             Self::HvdcUnavailable => l10n.text("error-hvdc-unavailable"),
             Self::UnknownLink { .. } => l10n.text("error-unknown-link"),

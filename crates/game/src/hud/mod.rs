@@ -11,6 +11,8 @@
 //! [`Localizer`]: crate::l10n::Localizer
 
 mod action;
+mod activation;
+pub use activation::ActivationCardModel;
 mod build;
 mod chart_style;
 mod city_card;
@@ -25,7 +27,9 @@ mod incidents;
 mod inspector;
 mod layout;
 mod links;
-pub use links::{LinkCardModel, LinksModel, draw_links, links_model};
+pub use links::{
+    HvdcRangeForm, HvdcTab, LinkCardModel, LinksModel, draw_links, links_model, links_model_with_ui,
+};
 pub(crate) mod map;
 mod menu;
 mod milestones;
@@ -565,6 +569,18 @@ pub(crate) mod test_support {
             game.execute(Command::AdvanceTicks { n: 1440 }).unwrap();
             game.execute(Command::FinishReview).unwrap();
         }
+        game.execute(Command::CommitPlant {
+            plant,
+            hours: [true; 24],
+        })
+        .unwrap();
+        let a = game.session().activation_assessment(city.node).unwrap();
+        game.execute(Command::ActivateService {
+            island: city.node,
+            accept_shortfall: true,
+            expected_revision: a.revision,
+        })
+        .unwrap();
         assert!(game.session().power().island_active(city.node));
         game
     }

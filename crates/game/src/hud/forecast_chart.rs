@@ -62,6 +62,7 @@ pub struct ForecastModel {
     pub risk_axis: String,
     pub scope_label: Option<String>,
     pub service_note: Option<String>,
+    pub activation: Option<ButtonModel>,
     pub minimum_label: String,
     pub minimum: Vec<[f64; 2]>,
     pub minimum_demand: Vec<[f64; 2]>,
@@ -166,6 +167,9 @@ pub fn forecast_model(game: &Game, l10n: &Localizer, ui: &UiState) -> ForecastMo
             .is_some_and(|id| !game.session().power().island_active(id))
         {
             chart.service_note = Some(l10n.text("island-inactive-status"));
+            chart.activation = ui.island.and_then(|id| {
+                super::activation::activation_card(game.session(), id, l10n).map(|card| card.review)
+            });
         }
         chart.link_issues = super::links::planning_issues(game.session(), l10n, ui.island);
         chart.constraint_label = l10n.args(
@@ -311,6 +315,7 @@ pub(super) fn forecast_model_for_session(
         risk_axis: l10n.text("forecast-risk-axis"),
         scope_label: ui.island.map(|id| names.island(session, id)),
         service_note: None,
+        activation: None,
         minimum_label: l10n.text("forecast-minimum"),
         minimum_demand: minimum_samples
             .iter()
@@ -389,7 +394,12 @@ pub(super) fn forecast_model_for_session(
 pub fn draw_forecast_chart(ui: &mut egui::Ui, model: &ForecastModel) -> Vec<UiAction> {
     let mut actions = Vec::new();
     if let Some(scope) = &model.scope_label {
-        ui.strong(scope);
+        ui.horizontal_wrapped(|ui| {
+            ui.strong(scope);
+            if let Some(review) = &model.activation {
+                button(ui, review, &mut actions);
+            }
+        });
     }
     if let Some(note) = &model.service_note {
         ui.label(note);

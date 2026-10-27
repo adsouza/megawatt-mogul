@@ -908,7 +908,7 @@ both as region land and an electrical area.
 
 `tests/game/hvdc.rs`, included by the existing game binary, checks real SGCC build previews and
 link cards, Escape dismissal, and cancellation's default keyboard focus. Existing picker and
-localisation coverage includes SGCC. Save codec gates admit schemas 1–4 and reject schema 5;
+localisation coverage includes SGCC. Save codec gates admit schemas 1–5 and reject schema 6;
 older source captures and journals remain the compatibility oracle. Island selection scopes live
 and archived supply charts; the latter retain the original month's island demand forecast.
 The real HUD test checks selection through the Planning-to-Operating transition and hides the
@@ -938,13 +938,22 @@ imports before optional charging. Presenter regressions pin the local risk magni
 and missing-generator explanations. `tests/game/hvdc.rs` clicks the real warning, island chart and
 link-details controls at 1024×640 with 125% zoom. New text remains covered by the Fluent key gate.
 
-Unsupported remote islands stay inactive until an AC-connected synchronous generator is
-commissioned. The home grid retains its customers, and normal shutdowns, trips and commitment
-changes never remove an established island's demand. Activity is derived from existing assets,
-so old portable saves need no state rewrite. Tests cover zero forecast/operating demand and
-unserved energy while inactive, prospective connection warnings, commissioning and restored
-eligibility across all plant kinds. Inactive cities and island controls explain this status;
-historical reports remain intact.
+Remote islands stay inactive until explicit service activation (rules 25, portable schema 5).
+The home grid retains its customers, and normal shutdowns, trips and commitment changes never
+remove an established island's demand. Schemas 1–4 inherit the previous structural eligibility
+on read, preserving established obligations and original source-schema bytes. Tests cover zero
+forecast/operating demand and unserved energy while inactive, prospective connection warnings,
+commissioning without automatic activation, and persisted activation. Inactive cities and island
+controls explain this status; historical reports remain intact.
+
+`session::activation` checks committed synchronous coverage during demand hours, scheduled import
+readiness, ratings/losses and capacity shortages in both the candidate and exporting islands.
+Capacity shortages require explicit acknowledgement; missing grid support or unavailable imports
+remain blocked. A portable plan revision rejects stale commands before mutation. Property tests
+check preview purity, atomic rejection and durable successful activation. The real HUD tests in
+`tests/game/hvdc.rs` cover safe default keyboard focus, Escape, minimum-window button reachability,
+blocked/raw/stale confirmations, edits queued before activation, duplicate clicks, snapshot restore
+and journal replay. Construction labels explicitly say “Build inactive connection”.
 
 ## Connection capacity confirmation
 
@@ -972,3 +981,30 @@ directory. Playwright's `backup.spec.js` uses the native `save_backup` executabl
 workers and IndexedDB, checks boundary hashes in both directions, and exercises library download
 and file-picker upload. Build that example before running browser tests. These checks do not use
 personal save directories and never regenerate released golden files.
+
+
+## Explicit converter stations (rules 26)
+
+`grid::hvdc` keeps a frozen pre-station link field contract independent of the new writer. A
+property migrates generated schema-4/5 links with construction status, signed schedules/flow,
+overrides and runback, checks distinct terminal identities and exact source bytes. Network
+properties check two unique, locally attached stations per project without merging AC islands;
+construction cancellation removes the project's stations together. Existing economics, codec,
+portable golden and two-live-island continuation tests retain schedules, state and history.
+
+The real SGCC construction tests distinguish local AC and HVDC tools, check that targets never
+silently change connection type, exercise the tool buttons at minimum width and 125% zoom, and
+show station/local-grid details. The converter marker test checks separate bus/station hit areas
+and distinct markers for parallel projects. Native smoke remains isolated from personal saves.
+
+
+## Focused HVDC equipment inspection
+
+`tests/game/hvdc.rs` checks direct station/project selection, responsive overview and costs tabs,
+minimum-window Close/Escape access, selected-only terminal details and Enter submission using the
+current range text. Invalid values disable Apply, and Escape from a text field cannot change the
+simulation. `hud::links` has a property preserving every hour outside a valid edited range and
+rejecting non-finite, over-rating and reversed ranges. `hud::ui_state` keeps inspected equipment
+and tabs across month boundaries while clearing drafts. `world::electrical` checks closest-route
+picking, separate station hits and parallel/degenerate routes. Planning metrics show scheduled
+hours and range; Operating shows actual flow/losses, and Review labels the last readings.

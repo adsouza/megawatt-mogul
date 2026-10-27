@@ -98,6 +98,9 @@ pub struct BuildModel {
     pub title: String,
     pub plant: PlantSection,
     pub line: LineSection,
+    pub hvdc: Option<LineSection>,
+    pub hvdc_active: bool,
+    pub transport_modes: Vec<super::ToggleModel>,
 }
 
 /// A node of the network a line can start or end at, with its name and place.
@@ -136,15 +139,57 @@ pub fn build_model(
     selection: Selection,
     style: &MoneyStyle,
 ) -> Option<BuildModel> {
+    build_model_for_tool(
+        game,
+        l10n,
+        selection,
+        style,
+        matches!(selection, Selection::HvdcStart | Selection::HvdcFrom(_)),
+    )
+}
+
+fn build_model_for_tool(
+    game: &Game,
+    l10n: &Localizer,
+    selection: Selection,
+    style: &MoneyStyle,
+    hvdc_active: bool,
+) -> Option<BuildModel> {
     let session = game.session();
+    let hvdc_active = hvdc_active && session.region().hvdc().is_some();
     if session.phase() != DayPhase::Planning {
         return None;
     }
     let nodes = node_choices(game, l10n);
     Some(BuildModel {
         title: l10n.text("build-title"),
+        hvdc_active,
+        transport_modes: if session.region().hvdc().is_some() {
+            vec![
+                super::ToggleModel {
+                    button: ButtonModel::new(
+                        l10n.text("build-ac-tool"),
+                        UiAction::Select(Selection::None),
+                    ),
+                    on: !hvdc_active,
+                },
+                super::ToggleModel {
+                    button: ButtonModel::new(
+                        l10n.text("build-hvdc-tool"),
+                        UiAction::Select(Selection::HvdcStart),
+                    ),
+                    on: hvdc_active,
+                },
+            ]
+        } else {
+            Vec::new()
+        },
         plant: plant_section(game, l10n, selection, style),
-        line: line_section(game, l10n, selection, &nodes, style),
+        line: line_section(game, l10n, selection, &nodes, style, false),
+        hvdc: session
+            .region()
+            .hvdc()
+            .map(|_| line_section(game, l10n, selection, &nodes, style, true)),
     })
 }
 
@@ -350,15 +395,21 @@ fn line_section(
     selection: Selection,
     nodes: &[NodeChoice],
     style: &MoneyStyle,
+    dc: bool,
 ) -> LineSection {
-    let heading = l10n.text("build-line-heading");
+    let heading = l10n.text(if dc {
+        "build-hvdc-heading"
+    } else {
+        "build-line-heading"
+    });
     let from = match selection {
-        Selection::LineFrom(node) => nodes.iter().find(|choice| choice.node == node),
+        Selection::LineFrom(node) if !dc => nodes.iter().find(|choice| choice.node == node),
+        Selection::HvdcFrom(node) if dc => nodes.iter().find(|choice| choice.node == node),
         _ => None,
     };
     match from {
-        Some(from) => line_end_section(game, l10n, heading, from, nodes, style),
-        None => line_start_section(game, l10n, selection, heading, nodes),
+        Some(from) => line_end_section(game, l10n, heading, from, nodes, style, dc),
+        None => line_start_section(game, l10n, selection, heading, nodes, dc),
     }
 }
 
@@ -369,6 +420,7 @@ fn line_start_section(
     selection: Selection,
     heading: String,
     nodes: &[NodeChoice],
+    dc: bool,
 ) -> LineSection {
     let session = game.session();
     let selected_node = match selection {
@@ -389,13 +441,28 @@ fn line_start_section(
     from.sort_by_key(|choice| Some(choice.node) != selected_node);
     LineSection::Start {
         heading,
-        hint: l10n.text("build-line-hint-from"),
+        hint: l10n.text(if dc {
+            "build-hvdc-hint-from"
+        } else {
+            "build-line-hint-from"
+        }),
         from: from
             .into_iter()
             .map(|choice| {
                 ButtonModel::new(
-                    l10n.args("build-line-from", &[("node", choice.name.as_str().into())]),
-                    UiAction::Select(Selection::LineFrom(choice.node)),
+                    l10n.args(
+                        if dc {
+                            "build-hvdc-from"
+                        } else {
+                            "build-line-from"
+                        },
+                        &[("node", choice.name.as_str().into())],
+                    ),
+                    UiAction::Select(if dc {
+                        Selection::HvdcFrom(choice.node)
+                    } else {
+                        Selection::LineFrom(choice.node)
+                    }),
                 )
             })
             .collect(),
@@ -411,12 +478,17 @@ fn line_end_section(
     from: &NodeChoice,
     nodes: &[NodeChoice],
     style: &MoneyStyle,
+    dc: bool,
 ) -> LineSection {
     let session = game.session();
     let names = Names::new(l10n, session);
     let mut others: Vec<(f64, &NodeChoice)> = nodes
         .iter()
-        .filter(|choice| choice.node != from.node)
+        .filter(|choice| {
+            choice.node != from.node
+                && ((session.region().area_at(from.cell) != session.region().area_at(choice.cell))
+                    == dc)
+        })
         .map(|choice| (distance_cells(from.cell, choice.cell), choice))
         .collect();
     others.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -424,7 +496,6 @@ fn line_end_section(
     let mut targets: Vec<LineTarget> = others
         .into_iter()
         .map(|(_, to)| {
-            let dc = session.region().area_at(from.cell) != session.region().area_at(to.cell);
             let link_quote = dc.then(|| session.link_quote(from.node, to.node));
             let quote = match link_quote {
                 Some(result) => result.map(|q| domain::region::LineConstructionTerms {
@@ -471,8 +542,8 @@ fn line_end_section(
                     ));
                     if dc {
                         stats.push(stat(
-                            "build-ac-status",
-                            l10n.text("error-line-crosses-areas"),
+                            "build-hvdc-includes",
+                            l10n.text("build-hvdc-stations-included"),
                         ));
                     }
                     LinePreview::Quote(stats)
@@ -481,7 +552,10 @@ fn line_end_section(
             };
             LineTarget {
                 node: to.node,
-                name: l10n.args("build-line-to", &[("node", to.name.as_str().into())]),
+                name: l10n.args(
+                    if dc { "build-hvdc-to" } else { "build-line-to" },
+                    &[("node", to.name.as_str().into())],
+                ),
                 preview,
                 build,
             }
@@ -491,7 +565,14 @@ fn line_end_section(
     targets.sort_by_key(|target| matches!(target.preview, LinePreview::Rejected(_)));
     LineSection::End {
         heading,
-        hint: l10n.args("build-line-hint-to", &[("node", from.name.as_str().into())]),
+        hint: l10n.args(
+            if dc {
+                "build-hvdc-hint-to"
+            } else {
+                "build-line-hint-to"
+            },
+            &[("node", from.name.as_str().into())],
+        ),
         targets,
         cancel: ButtonModel::new(
             l10n.text("build-line-cancel"),
@@ -504,15 +585,29 @@ pub fn draw_build(ui: &mut egui::Ui, model: &BuildModel) -> Vec<UiAction> {
     let mut actions = Vec::new();
     ui.heading(egui::RichText::new(&model.title).color(heading_color()));
     // Each line stage scrolls on its own, so switching stage starts at the top.
-    let stage = match model.line {
+    let active = if model.hvdc_active {
+        model.hvdc.as_ref().unwrap_or(&model.line)
+    } else {
+        &model.line
+    };
+    let stage = match active {
         LineSection::Start { .. } => "build_line_start",
         LineSection::End { .. } => "build_line_end",
     };
-    egui::ScrollArea::vertical().id_salt(stage).show(ui, |ui| {
-        draw_plant_section(ui, &model.plant, &mut actions);
-        ui.separator();
-        draw_line_section(ui, &model.line, &mut actions);
-    });
+    egui::ScrollArea::vertical()
+        .id_salt((stage, model.hvdc_active))
+        .show(ui, |ui| {
+            draw_plant_section(ui, &model.plant, &mut actions);
+            ui.separator();
+            ui.horizontal_wrapped(|ui| {
+                for mode in &model.transport_modes {
+                    super::toggle_button(ui, mode, &mut actions);
+                }
+            });
+            ui.push_id(model.hvdc_active, |ui| {
+                draw_line_section(ui, active, &mut actions)
+            });
+        });
     actions
 }
 
@@ -576,7 +671,13 @@ fn draw_line_section(ui: &mut egui::Ui, section: &LineSection, actions: &mut Vec
                             for stat in stats {
                                 ui.horizontal(|ui| {
                                     ui.colored_label(TextTone::Neutral.color(), &stat.label);
-                                    ui.colored_label(stat.color.color(), &stat.value);
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(&stat.value)
+                                                .color(stat.color.color()),
+                                        )
+                                        .wrap(),
+                                    );
                                 });
                             }
                         }
@@ -599,7 +700,13 @@ pub(super) fn build_panel(
     mut sink: ActionSink,
     style: Res<MoneyStyle>,
 ) -> Result {
-    let Some(model) = build_model(&session.0, &l10n, sink.selection(), &style) else {
+    let Some(model) = build_model_for_tool(
+        &session.0,
+        &l10n,
+        sink.selection(),
+        &style,
+        sink.ui_state().hvdc_construction,
+    ) else {
         return Ok(());
     };
     let actions = area.show_panel(contexts.ctx_mut()?, BUILD_PANEL, 0.0, |ui| {

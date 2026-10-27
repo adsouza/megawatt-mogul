@@ -299,8 +299,8 @@ impl GameSession {
                 self.region.hvdc().expect("link catalog").book_life_months,
                 month,
                 AssetProfile::Link {
-                    from: link.from,
-                    to: link.to,
+                    from: link.from_grid(),
+                    to: link.to_grid(),
                 },
             );
         }

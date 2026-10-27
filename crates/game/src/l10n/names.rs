@@ -132,6 +132,20 @@ impl<'a> Names<'a> {
         }
     }
 
+    pub fn converter(&self, station: domain::grid::ConverterStation) -> String {
+        let end = match station.id.end {
+            domain::grid::ConverterEnd::From => "A",
+            domain::grid::ConverterEnd::To => "B",
+        };
+        self.l10n.args(
+            "converter-station-name",
+            &[
+                ("id", format!("{}{}", station.id.link.0, end).into()),
+                ("grid", self.node(station.grid_node).into()),
+            ],
+        )
+    }
+
     /// The name of a network node: a city's name or `Coal plant 7`; a node the
     /// session does not know is `Grid point 12`.
     pub fn node(&self, id: NodeId) -> String {

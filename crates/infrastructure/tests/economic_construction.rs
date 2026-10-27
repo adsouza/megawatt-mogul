@@ -177,7 +177,7 @@ fn zoned_hvdc_partial_overrides_survive_payments_cancellation_commissioning_and_
             assert_eq!(live.session().link_construction(kept), Some(quote.clone()));
             let link = live.session().power().network().link(kept).unwrap();
             assert_eq!(
-                (link.from, link.to),
+                (link.from_grid(), link.to_grid()),
                 (from, to),
                 "pricing must not reverse flow orientation"
             );
@@ -284,7 +284,10 @@ fn zoned_hvdc_partial_overrides_survive_payments_cancellation_commissioning_and_
             assert_eq!(live.checkpoint(), resumed.checkpoint());
             let restored = economic_round_trip(&resumed);
             let link = restored.session().power().network().link(kept).unwrap();
-            assert_eq!((link.from, link.to, link.schedule), (from, to, [-50.0; 24]));
+            assert_eq!(
+                (link.from_grid(), link.to_grid(), link.schedule),
+                (from, to, [-50.0; 24])
+            );
         }
     }
 }

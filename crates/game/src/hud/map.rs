@@ -1226,7 +1226,7 @@ fn paint_selection(painter: &egui::Painter, layout: &MapLayout, model: &MapModel
                 );
             }
         }
-        Selection::None => {}
+        Selection::None | Selection::HvdcStart => {}
         Selection::Cell(at) => {
             painter.rect_stroke(
                 layout.cell_rect(at),
@@ -1245,7 +1245,7 @@ fn paint_selection(painter: &egui::Painter, layout: &MapLayout, model: &MapModel
                 around(city.cell);
             }
         }
-        Selection::LineFrom(node) => {
+        Selection::LineFrom(node) | Selection::HvdcFrom(node) => {
             if let Some(cell) = objects.nodes.get(&node) {
                 around(*cell);
             }

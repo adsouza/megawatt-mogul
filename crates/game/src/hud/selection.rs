@@ -18,6 +18,9 @@ pub enum Selection {
     Line(LineId),
     /// The first end of a line being drawn: the next node picked is its other end.
     LineFrom(NodeId),
+    /// Two local AC bus sites for a bundled pair of converter stations and their DC route.
+    HvdcFrom(NodeId),
+    HvdcStart,
 }
 
 pub(super) fn reset_selection(mut selection: ResMut<Selection>) {
