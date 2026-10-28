@@ -284,6 +284,8 @@ mod tests {
             to: link.to_grid(),
         })
         .unwrap();
+        // Include inherited corridors as well as the fixture's two parallel projects.
+        let station_count = 2 * game.session().power().network().links().count();
         let terrain = game.session().region().terrain();
         let pose = super::super::OrbitCamera::default().pose(
             Vec2::new(f32::from(terrain.width()), f32::from(terrain.height())),
@@ -291,7 +293,7 @@ mod tests {
         );
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1024.0, 640.0));
         let markers = converter_markers(game.session(), pose, rect);
-        assert_eq!(markers.len(), 4);
+        assert_eq!(markers.len(), station_count);
         for marker in &markers {
             assert!(marker.at.distance(marker.bus_at) > 7.0);
             assert_eq!(hit_converter(&markers, marker.at), Some(marker.station));
@@ -320,7 +322,7 @@ mod tests {
             1.6,
         );
         let markers = converter_markers(game.session(), close_pose, rect);
-        assert_eq!(markers.len(), 4);
+        assert_eq!(markers.len(), station_count);
         assert!(markers.iter().any(|marker| !rect.contains(marker.at)));
     }
 }
