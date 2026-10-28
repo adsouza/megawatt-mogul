@@ -3,6 +3,8 @@
 The symmetric starter mix below is superseded by
 [regional starter profiles and fleets](2026-10-27-sgcc-regional-starters.md).
 
+The zero-link topology below is superseded by [inherited HVDC corridors](2026-10-27-sgcc-inherited-hvdc.md).
+
 New SGCC games inherit five small local AC grids: Beijing/Tianjin/Langfang, Fuzhou, Lanzhou,
 Changchun and Chengdu. Each has commissioned synchronous generation and active customer service;
 none starts with an HVDC link or depends on imports. Beijing remains the company headquarters.

@@ -318,6 +318,14 @@ impl RegionDefinition {
                 .map_err(|_| invalid(None, "start.lines"))?
                 .capital)?;
         }
+        for &(from, to) in &self.start.hvdc_links {
+            let a = self.city(from).expect("validated starter link city").cell;
+            let b = self.city(to).expect("validated starter link city").cell;
+            add(self
+                .link_terms(a, b, crate::grid::distance_cells(a, b))
+                .map_err(|_| invalid(None, "start.hvdc_links"))?
+                .capital)?;
+        }
         Ok(())
     }
 }

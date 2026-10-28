@@ -171,6 +171,9 @@ pub struct StartDef {
     pub home_city: CityId,
     /// One inherited local grid per listed city; empty retains the legacy single home.
     pub island_homes: Vec<CityId>,
+    /// Inherited, commissioned HVDC links between served city buses, in flow orientation.
+    /// Empty preserves the topology and ID order of existing region definitions.
+    pub hvdc_links: Vec<(CityId, CityId)>,
     pub connected_cities: Vec<CityId>,
     pub fleet: Vec<StartPlantDef>,
 }

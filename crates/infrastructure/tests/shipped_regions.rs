@@ -3444,7 +3444,13 @@ mod sgcc {
         for seed in 0..8 {
             let mut game = new_game(&catalog(), SGCC, seed);
             for month in 1..=12 {
-                assert_eq!(game.session().power().network().links().count(), 0);
+                assert!(
+                    game.session()
+                        .power()
+                        .network()
+                        .links()
+                        .all(|link| link.schedule == [0.0; 24] && link.flow.value() == 0.0)
+                );
                 assert_eq!(game.session().power().island_nodes().len(), 5);
                 for id in game.session().power().island_nodes().keys() {
                     let local = game.session().island_session(*id).unwrap();
@@ -3573,11 +3579,55 @@ mod sgcc {
     }
 
     #[test]
-    fn new_sgcc_has_five_active_independent_starter_grids_without_hvdc() {
+    fn new_sgcc_has_five_active_starter_grids_with_neighbouring_hvdc() {
         let game = new_game(&catalog(), "sgcc", 7);
         let s = game.session();
         assert_eq!(s.power().island_nodes().len(), 5);
-        assert_eq!(s.power().network().links().count(), 0);
+        assert_eq!(s.power().network().links().count(), 5);
+        let network = s.power().network();
+        let pairs: std::collections::BTreeSet<_> = network
+            .links()
+            .map(|link| {
+                assert_eq!(link.status, domain::grid::LineStatus::InService);
+                assert_eq!(link.schedule, [0.0; 24]);
+                assert_eq!(link.flow.value(), 0.0);
+                let a = network.node(link.from_grid()).unwrap().cell;
+                let b = network.node(link.to_grid()).unwrap().cell;
+                let asset = s
+                    .company()
+                    .rate_base()
+                    .assets()
+                    .find(|asset| asset.asset == domain::company::AssetRef::Link(link.id))
+                    .unwrap();
+                assert_eq!(
+                    asset.original,
+                    s.region()
+                        .link_terms(a, b, link.length_cells)
+                        .unwrap()
+                        .capital
+                );
+                assert!(asset.legacy);
+                let (a, b) = (s.region().area_at(a).0, s.region().area_at(b).0);
+                (a.min(b), a.max(b))
+            })
+            .collect();
+        assert_eq!(pairs, [(1, 2), (1, 3), (1, 4), (1, 5), (3, 5)].into());
+        // Every pair of areas sharing a land-cell edge has one direct inherited corridor.
+        let terrain = s.region().terrain();
+        let mut neighbours = std::collections::BTreeSet::new();
+        for y in 0..terrain.height() {
+            for x in 0..terrain.width() {
+                let a = s.region().area_at(domain::ids::CellCoord { x, y }).0;
+                for (x, y) in [(x + 1, y), (x, y + 1)] {
+                    let b = s.region().area_at(domain::ids::CellCoord { x, y }).0;
+                    if a != 0 && b != 0 && a != b {
+                        neighbours.insert((a.min(b), a.max(b)));
+                    }
+                }
+            }
+        }
+        assert_eq!(pairs, neighbours);
+        assert_eq!(s.company().cash(), s.region().start().cash);
         let mut areas = std::collections::BTreeSet::new();
         for (id, nodes) in s.power().island_nodes() {
             assert!(s.power().island_active(*id));
@@ -3596,6 +3646,62 @@ mod sgcc {
             assert!(local.minimum_generation_check().is_none());
         }
         s.check_invariants().unwrap();
+    }
+
+    #[test]
+    fn inherited_hvdc_transfers_and_survives_archive_restore_and_journal_replay() {
+        use application::{SaveBundle, SaveId, SaveKind, SaveMetadata};
+        use infrastructure::save::{decode_archive, encode_archive, replay_compatibility};
+        let mut game = new_game(&catalog(), SGCC, 7);
+        let link = game.session().power().network().links().next().unwrap().id;
+        game.execute(Command::SetLinkSchedule {
+            link,
+            mw: Box::new([100.0; 24]),
+        })
+        .unwrap();
+        game.execute(Command::BeginOperating).unwrap();
+        game.execute(Command::AdvanceTicks { n: 60 }).unwrap();
+        let dc = game.session().power().network().link(link).unwrap();
+        assert!(dc.flow.value() > 0.0);
+        assert!(dc.loss.value() > 0.0);
+        assert!(dc.sent.value() > 0.0);
+        let bundle = SaveBundle {
+            compatibility: replay_compatibility(),
+            metadata: SaveMetadata {
+                slot: SaveId::new("a".repeat(32)).unwrap(),
+                run: SaveId::new("b".repeat(32)).unwrap(),
+                kind: SaveKind::Manual,
+                name: "inherited HVDC".into(),
+                saved_at: 0,
+            },
+            checkpoint: game.checkpoint(),
+        };
+        let bytes = encode_archive(&bundle, &bundle.compatibility).unwrap();
+        let (decoded, loaded) = decode_archive(&bytes, &bundle.compatibility, &|| false).unwrap();
+        let mut restored = decoded
+            .restore(
+                loaded,
+                &bundle.compatibility,
+                Box::new(InMemoryCommandLog::default()),
+                &|| false,
+            )
+            .unwrap();
+        assert_eq!(restored.checkpoint(), game.checkpoint());
+        let replayed = application::replay(
+            catalog().load(&RegionId::new(SGCC)).unwrap(),
+            &bundle.checkpoint.header,
+            &bundle.checkpoint.commands,
+        )
+        .unwrap();
+        assert_eq!(replayed.snapshot_state(), game.session().snapshot_state());
+        for command in [
+            Command::AdvanceTicks { n: 60 },
+            Command::AdvanceTicks { n: 1320 },
+        ] {
+            assert_eq!(game.execute(command.clone()), restored.execute(command));
+            assert_eq!(restored.checkpoint(), game.checkpoint());
+        }
+        restored.session().check_invariants().unwrap();
     }
 
     #[test]

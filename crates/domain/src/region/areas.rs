@@ -199,6 +199,34 @@ pub(super) fn validate(p: &RegionDefinitionParts) -> Result<(), RegionError> {
             return Err(invalid("hvdc"));
         }
     }
+    let mut links = BTreeSet::new();
+    for &(from, to) in &p.start.hvdc_links {
+        let invalid_link = || invalid("start.hvdc_links");
+        let a = p
+            .cities
+            .iter()
+            .find(|c| c.id == from)
+            .ok_or_else(invalid_link)?;
+        let b = p
+            .cities
+            .iter()
+            .find(|c| c.id == to)
+            .ok_or_else(invalid_link)?;
+        let Some(areas) = &p.areas else {
+            return Err(invalid_link());
+        };
+        let at = |cell: CellCoord| {
+            areas.cells[usize::from(cell.y) * usize::from(p.terrain.width()) + usize::from(cell.x)]
+        };
+        if p.hvdc.is_none()
+            || !p.start.connected_cities.contains(&from)
+            || !p.start.connected_cities.contains(&to)
+            || at(a.cell) == at(b.cell)
+            || !links.insert((from.min(to), from.max(to)))
+        {
+            return Err(invalid_link());
+        }
+    }
     Ok(())
 }
 crate::state_tuple!(AreaId);
@@ -357,6 +385,28 @@ mod starting_island_tests {
         region::{PlantKind, StartPlantDef, fixtures},
     };
     proptest::proptest! {
+        #[test]
+        fn starter_hvdc_requires_distinct_served_areas_and_unique_pairs(
+            from in 1u32..6, to in 1u32..6,
+            connected in proptest::bool::ANY, duplicate in proptest::bool::ANY,
+            catalog in proptest::bool::ANY, areas in proptest::bool::ANY,
+        ) {
+            let mut p = fixtures::two_area_parts();
+            p.start.island_homes = vec![CityId(1), CityId(3)];
+            p.start.connected_cities.push(CityId(3));
+            p.start.fleet.push(StartPlantDef { kind: PlantKind::Peaker, cell: CellCoord { x:4, y:3 } });
+            p.start.hvdc_links = vec![(CityId(from), CityId(to))];
+            if duplicate { p.start.hvdc_links.push((CityId(to), CityId(from))); }
+            if !connected { p.start.connected_cities.retain(|c| *c != CityId(2)); }
+            if !catalog { p.hvdc = None; }
+            if !areas { p.areas = None; p.start.island_homes.clear(); }
+            let cross_area = (from == 3 && (to == 1 || to == 2))
+                || (to == 3 && (from == 1 || from == 2));
+            let served = connected || (from != 2 && to != 2);
+            proptest::prop_assert_eq!(RegionDefinition::try_from(p).is_ok(),
+                cross_area && served && !duplicate && catalog && areas);
+        }
+
         #[test]
         fn starter_homes_require_distinct_connected_areas_with_synchronous_support(
             unknown in proptest::bool::ANY, duplicate in proptest::bool::ANY,

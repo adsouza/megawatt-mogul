@@ -337,6 +337,7 @@ fn start() -> StartDef {
         cash: dollars(2_000_000_000),
         home_city: CityId(1),
         island_homes: Vec::new(),
+        hvdc_links: Vec::new(),
         connected_cities: vec![CityId(1), CityId(2)],
         fleet: vec![
             plant(PlantKind::Coal, 7, 3),

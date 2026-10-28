@@ -592,7 +592,7 @@ fn hvdc_range_enter_uses_current_text_once_and_escape_never_changes_the_plan() {
         .power()
         .network()
         .links()
-        .next()
+        .find(|link| link.to_grid() == far)
         .unwrap()
         .id;
     dispatch_in(
@@ -925,10 +925,17 @@ fn hvdc_cross_area_picker_quotes_a_link_and_card_reports_its_original_terms() {
     );
     game.execute(Command::BuildLink { from, to }).unwrap();
     let model = links_model(&game, &l10n, &style).unwrap();
-    assert_eq!(model.cards.len(), 1);
-    assert!(model.cards[0].planning);
-    assert_eq!(model.cards[0].schedule, [0.0; 24]);
-    assert!(model.cards[0].cancel.is_some());
+    assert_eq!(model.cards.len(), 6);
+    let added = model.cards.last().unwrap();
+    assert!(added.planning);
+    assert_eq!(added.schedule, [0.0; 24]);
+    assert!(added.cancel.is_some());
+    for inherited in &model.cards[..5] {
+        assert!(inherited.planning);
+        assert_eq!(inherited.rating, 1000.0);
+        assert_eq!(inherited.schedule, [0.0; 24]);
+        assert!(inherited.cancel.is_none());
+    }
     assert!(l10n.problems().is_empty());
     let harness = Harness::with_screen(1024.0, 640.0);
     let draw = |ui: &mut egui::Ui| central(ui, |ui| draw_links(ui, &model));
@@ -950,7 +957,14 @@ fn hvdc_cancellation_defaults_to_keep_and_escape_cancels_the_dialog() {
         .unwrap()
         .node;
     game.execute(Command::BuildLink { from, to }).unwrap();
-    let link = game.session().power().network().links().next().unwrap().id;
+    let link = game
+        .session()
+        .power()
+        .network()
+        .links()
+        .find(|link| link.to_grid() == to)
+        .unwrap()
+        .id;
     let model = prompt_model(
         OpenPrompt(Some(Prompt::CancelLinkConstruction { link })),
         Some(&game),
@@ -1253,7 +1267,7 @@ fn connection_proceed_refreshes_changed_capacity_before_ordering() {
             .network()
             .links()
             .count(),
-        0
+        5
     );
     dispatch_in(&mut app, vec![action]);
     update_n(&mut app, 2);

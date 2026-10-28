@@ -320,6 +320,10 @@
     // Five inherited local grids. Small starter loads/fleets are explicit game pacing, not observed city demand.
     // Beijing/Tianjin/Langfang; Fuzhou; Lanzhou; Changchun; Chengdu. Cash remains company-wide.
     start:(year:2027,month:1,cash:4760000000,home_city:1,island_homes:[1,17,19,24,27],connected_cities:[1,2,3,17,19,24,27],
+        // Inherited 1 GW DC corridors between neighbouring areas, using their served home buses.
+        // Illustrative game infrastructure, not a claim about actual transmission projects.
+        // Zero initial schedules preserve each local fleet's independently balanced start.
+        hvdc_links:[(1,17),(1,19),(1,24),(1,27),(19,27)],
         // North–Central fleet; schematic sites near named generating centres, all on separate cells.
         fleet:[(Coal,117.8,39.4),(Coal,116.4,40.3),
             (Ccgt,116.1,39.7),(Ccgt,117.5,39.1),(Ccgt,116.9,40.0),

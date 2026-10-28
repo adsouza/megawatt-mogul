@@ -124,6 +124,8 @@ impl GameSession {
     ///
     /// The home city's node remains headquarters. Optional inherited island homes anchor
     /// independent local grids; starter cities and plants connect only to their area's home.
+    /// Optional inherited HVDC corridors join served city buses without merging AC grids;
+    /// they start in service with zero schedules and enter the legacy rate base.
     /// Each start-fleet plant is commissioned on the start month on its own node
     /// with an in-service line to the home city, and is treated as
     /// established (not returning from a month offline), so month 1 charges
@@ -235,6 +237,16 @@ impl GameSession {
             plants.insert(id, plant);
         }
 
+        for &(from, to) in &start.hvdc_links {
+            network
+                .add_link(
+                    ids.next(),
+                    cities[&from].node(),
+                    cities[&to].node(),
+                    LineStatus::InService,
+                )
+                .expect("validated starter HVDC link");
+        }
         let mut power = PowerSystem::new(network, plants, cities, settings.fidelity.network);
         if !start.island_homes.is_empty() {
             power.seed_starting_service(
@@ -279,6 +291,35 @@ impl GameSession {
                 AssetProfile::Line {
                     from: line.from,
                     to: line.to,
+                },
+            );
+        }
+
+        for link in power.network().links() {
+            let a = power
+                .network()
+                .node(link.from_grid())
+                .expect("link endpoint")
+                .cell;
+            let b = power
+                .network()
+                .node(link.to_grid())
+                .expect("link endpoint")
+                .cell;
+            rate_base.add_legacy(
+                AssetRef::Link(link.id),
+                region
+                    .link_terms(a, b, link.length_cells)
+                    .expect("validated starter link terms")
+                    .capital,
+                region
+                    .hvdc()
+                    .expect("validated starter link catalog")
+                    .book_life_months,
+                month,
+                AssetProfile::Link {
+                    from: link.from_grid(),
+                    to: link.to_grid(),
                 },
             );
         }

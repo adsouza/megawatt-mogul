@@ -3866,6 +3866,22 @@ plant lies in one area. A region without areas has one implicit area covering it
 - **AC need test.** §26.4 now counts AC paths only. A path that joins two nodes only through HVDC
   does not make an AC line between them redundant, because the AC line would synchronise them.
 
+**Inherited HVDC (rules 30).** Optional `start.hvdc_links` lists oriented pairs of served city
+IDs. Each pair must cross electrical areas, have a regional HVDC catalog, and be unique even
+when reversed. New games commission both converters and the corridor immediately, with zero
+schedules and flows. These assets enter the legacy rate base at the full route-plus-converter
+quote and regional book life, without construction instalments or a starting-cash deduction.
+HVDC never merges the local AC grids. Empty or absent lists retain the original topology and ID
+order; archived source definitions and saved assets are preserved. Region and portable schemas
+remain unchanged.
+
+New SGCC games inherit one 1,000 MW corridor for every pair of neighbouring electrical areas:
+North–Central to East, Northwest, Northeast and Southwest, plus Northwest to Southwest. Terminals
+attach to their served starter homes (Beijing, Fuzhou, Lanzhou, Changchun and Chengdu). These are
+illustrative gameplay corridors using the regional rating, ramp, losses and construction terms;
+they are not representations of named real-world projects. Players can schedule transfers
+immediately while the initial zero schedules preserve each starter fleet's independent balance.
+
 **HVDC links.** These are a buildable asset where region data authors an `hvdc` catalog entry. Its
 fields are `rating_mw`, `converter_cost` (for both ends), `cost_per_cell`, `converter_build_months`,
 `ramp_mw_per_min`, `converter_loss` (per end), `loss_per_cell`, `book_life_months` and

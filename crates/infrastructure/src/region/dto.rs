@@ -531,6 +531,8 @@ pub struct StartDtoV4 {
     pub home_city: u32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub island_homes: Vec<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hvdc_links: Vec<(u32, u32)>,
     pub connected_cities: Vec<u32>,
     pub fleet: Vec<(PlantKindDto, f64, f64)>,
 }
