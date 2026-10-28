@@ -27,7 +27,7 @@
 // file (the coarser grid gives way). With the three cuts no centre is
 // playable in both regions.
 (
-    region_schema: 4,
+    region_schema: 5,
     id: "western_interconnection",
     system_zone: 1,
     time_zones: [
@@ -226,8 +226,29 @@
     // O&M is per month; book life in months.
     // Capital costs and lead times are tuned for tycoon pacing, not literal project forecasts.
     wind_potential: (base: 0.4, blobs: [(lon: -119.5, lat: 46.0, radius_deg: 2.0, value: 0.45), (lon: -107.0, lat: 44.0, radius_deg: 3.0, value: 0.4)]),
+    geothermal_potential: (base: 0.0, blobs: [
+        // The Geysers: https://www.conservation.ca.gov/calgem/geothermal/maps
+        (lon: -122.8, lat: 38.8, radius_deg: 0.55, value: 1.0),
+        // Imperial Valley / Salton Sea: https://www.conservation.ca.gov/calgem/geothermal/maps
+        (lon: -115.6, lat: 33.2, radius_deg: 0.65, value: 1.0),
+        // Coso: https://www.conservation.ca.gov/calgem/geothermal/maps
+        (lon: -117.8, lat: 36.0, radius_deg: 0.5, value: 1.0),
+        // Northern Nevada (Steamboat): https://data.nbmg.unr.edu/public/Geothermal/GreyLiterature/Penfield_Map161_2010.pdf
+        (lon: -119.4, lat: 39.5, radius_deg: 0.7, value: 1.0),
+        // Dixie Valley: https://data.nbmg.unr.edu/public/Geothermal/GreyLiterature/Penfield_Map161_2010.pdf
+        (lon: -117.85, lat: 39.96, radius_deg: 0.4, value: 1.0),
+        // Roosevelt Hot Springs: https://geology.utah.gov/map-pub/survey-notes/geosights/roosevelt_hot_springs/
+        (lon: -112.85, lat: 38.5, radius_deg: 0.5, value: 1.0),
+        // Cove Fort: https://geology.utah.gov/energy-minerals/geothermal/
+        (lon: -112.5, lat: 38.6, radius_deg: 0.4, value: 1.0),
+        // Cerro Prieto: https://www.worldgeothermal.org/pdf/IGAstandard/WGC/2023/562.pdf
+        (lon: -115.25, lat: 32.4, radius_deg: 0.45, value: 1.0),
+    ]),
+    // A19 balance tuning; amounts below are local major currency units, not cents.
+    geothermal: (success_min: 0.45, success_max: 0.80, quality_min: 0.15, quality_max: 1.0, exploration_months: 3, exploration_share: 0.12, monthly_decline: 0.002535048613836126, makeup_capital: 15000000, makeup_months: 3, ceiling_step: 0.05, minimum_gain: 0.03),
     wind: (monthly: [0.6, 0.6, 0.65, 0.65, 0.6, 0.55, 0.5, 0.5, 0.55, 0.6, 0.6, 0.6], persistence: 0.995, innovation_sd: 0.015, initial_sd: 0.15, band: 0.25),
     catalog: [
+        (kind: Geothermal, capacity_mw: 150.0, min_stable: 0.5, ramp_mw_per_min: 2.0, startup_hours: 12.0, startup_cost: 100000, marginal_cost_per_mwh: 5.0, fixed_om_per_month: 300000, capital_cost: 150000000, build_months: 12, capacity_credit: 0.95, book_life_months: 360, siting: GeothermalSite(0.3)),
         (kind: Wind, capacity_mw: 300.0, min_stable: 0.0, ramp_mw_per_min: 0.0, startup_hours: 0.0, startup_cost: 0, marginal_cost_per_mwh: 0.0, fixed_om_per_month: 500000, capital_cost: 300000000, build_months: 3, capacity_credit: 0.2, book_life_months: 300, siting: Anywhere),
         (
             kind: Nuclear,

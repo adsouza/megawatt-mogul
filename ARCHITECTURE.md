@@ -43,12 +43,12 @@ never compile Bevy, so feedback takes seconds.
 | Rendering, input, UI and localised text | `game` (see [The game crate](#the-game-crate)) |
 
 Region data (plant tuning numbers, cities, regulator parameters) lives in `assets/regions/*.ron`,
-never as code constants. Shipped files declare `region_schema: 4`, including explicit clock,
-climate, calendar, currency, and astronomical-sun data. Legacy region schemas retain frozen
+never as code constants. Shipped files declare `region_schema: 5`, including explicit clock,
+climate, calendar, currency, astronomical-sun and geothermal data. Legacy region schemas retain frozen
 defaults in `infrastructure::region::legacy`; old-source integrity is checked before any
 upcast. Unexpected new fields on legacy sources and unsupported schemas fail with typed errors.
-Region schema versions are independent of portable state schema 4, written by current saves;
-readers retain schemas 1–4.
+Region schema versions are independent of portable state schema 6, written by current saves;
+readers retain schemas 1–6.
 
 **Sidecars and the region bundle.** Spec §28.11.1 describes the format. Tool-generated blocks
 live in sidecars under `assets/regions/<id>/`, and the hand-authored main file references them:
@@ -57,7 +57,7 @@ live in sidecars under `assets/regions/<id>/`, and the hand-authored main file r
 its sidecars into one canonical bundle (`infrastructure::region::bundle`). A region without
 sidecars is its own bundle. With sidecars, the bundle is a framed `megawatt-region-bundle 1`
 container. The bundle is the region's source bytes: it is parsed, fingerprinted and archived as
-one unit. Sidecars are inlined before mapping, so the region schema stays 4. Missing,
+one unit. Sidecars are inlined before mapping without changing the declared region schema. Missing,
 unreferenced or misnamed sidecars, and malformed framing, are typed `RegionLoadError`s.
 
 Eight regions ship in `assets/regions/`, each a single synchronous balancing area (a copper plate)
@@ -99,7 +99,8 @@ connections and activation decisions.
 Existing portable endpoint bytes already specify those local bus attachments. The reader wraps
 them in station objects, deriving identities from the preserved link ID and orientation. No node
 IDs, source-schema bytes, construction payments, schedules, flows, runback latches or histories
-are rewritten. Portable schema 5 remains current. Station markers are drawn separately from the
+are rewritten. These station identities retain their schema-5 encoding under current schema 6.
+Station markers are drawn separately from the
 AC bus, with local attachment tethers; selection opens the HVDC project details.
 
 `BuildLink`, `CancelLinkConstruction`, `SetLinkSchedule`, `SetLinkTarget` and `ClearLinkOverride`
@@ -452,6 +453,47 @@ Storage uses rules version 8 with existing save/log envelope version 1. Command-
 reconstructs enabled state, inventory, schedules and history from exact archived region data; it
 does not initialise a new day. Converted rules-6/7 games are ordinary portable snapshots. Historical
 recovery is archived outside the shipped game; diagnostic command-only logs need matching rules.
+
+## Geothermal lifecycle (A19, rules 29)
+
+Geothermal is the ninth asset kind, dispatchable with stable portable tag 8 from schema 6.
+Region schema 5 requires its parameters, catalog entry and potential field. Western and
+Europe–Maghreb author hydrothermal sites; the other six regions explicitly have zero potential.
+Archived region schemas through 4 use a single frozen unavailable extension after any pre-wind
+extension. Session availability is persisted independently: an old game stays unavailable after
+re-saving, even if installed region content changes.
+
+`PlantSpec` remains immutable. `GeothermalState` owns exploration, initial/current field, makeup
+payments and notice state; plant accessors provide available MW, minimum output and accredited
+firm MW to dispatch, commitment, forecasts, protection and reviews. Catalog displays retain
+nameplate. Ephemeral control specs use current available MW without rewriting the installed spec.
+
+At month close, book due instalments, progress exploration in plant-ID order with exactly one
+`SimRng` draw at each outcome, then commission successful construction. A dry outcome removes the
+live plant and unconnected node, retains their identities and loss in a `DrySite`, and permanently
+blocks further geothermal orders on that cell. Other plant kinds retain ordinary siting rules;
+the dry identity/loss survives reuse and save/resume. AC/HVDC endpoint checks prevent stranded connections. Ledger
+and per-plant history retain the loss; it never becomes recoverable operating expense or capital.
+
+Previously commissioned fields decline once by multiplication, then makeup completions restore
+their diminishing ceilings, and threshold crossings are evaluated on the final field. New
+commissions skip decline that close. The boundary refresh clamps the synthetic next-day output
+and target to the new limits, including a higher minimum after restoration; it does not rewrite
+the finished day's energy. Depreciation and regulatory review follow these updates.
+
+Each makeup round adds a capital component inside its original rate-base entry, with its own
+completion date, remaining-life depreciation and held/write-off history. Aggregate accessors
+include components; original component fields keep their original basis. A12 assesses only new
+component capital against restored firm MW. Firm attribution across original and added components
+sums to current physical capacity, which remains distinct from capital eligibility. An addition
+after book-life exhaustion depreciates at its completion close without extending original life.
+
+Portable schema 6 appends plant, session, capital and projection fields; old canonical encoders
+remain available for integrity checks before upcasting. Native and browser continuation preserve
+stored reservoir bits; validation allows only a small numerical tolerance when comparing initial
+site values against infrastructure's cross-target rasterization. Monthly decline uses no libm.
+Planning warnings and Review lessons survive 32× play. Dismissal is a command, and HUD actions use
+the existing presenter/draw/dispatch path. Removed selections are reconciled through that path.
 
 ## Settings seams
 

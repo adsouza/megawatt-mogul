@@ -81,6 +81,22 @@ pub(super) fn validate(parts: &RegionDefinitionParts) -> Result<(u64, u64), Regi
             if !kinds.insert(p.kind) {
                 return Err(bad("economic_zones.plants.kind"));
             }
+            if p.kind == PlantKind::Geothermal
+                && let Some(params) = &parts.geothermal
+            {
+                let mut spec = parts
+                    .catalog
+                    .iter()
+                    .find(|s| s.kind == PlantKind::Geothermal)
+                    .expect("validated kind")
+                    .clone();
+                if let Some(months) = p.build_months {
+                    spec.build_months = months;
+                }
+                params
+                    .validate(&spec)
+                    .map_err(|_| bad("economic_zones.geothermal.build_months"))?;
+            }
             if p.capital_cost.is_some_and(|m| m.is_negative()) {
                 return Err(bad("economic_zones.plants.capital_cost"));
             }

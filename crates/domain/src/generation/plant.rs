@@ -48,6 +48,7 @@ pub struct Plant {
     /// Remaining energy for the month; `Some` only for hydro.
     hydro_budget: Option<MegawattHours>,
     battery: Option<BatteryState>,
+    geothermal: Option<super::GeothermalState>,
     /// Whether the plant sat offline for the whole previous month.
     previous_month_offline: bool,
     initial_target: Megawatts,
@@ -77,6 +78,7 @@ impl Plant {
             commissioned_on: None,
             hydro_budget,
             battery,
+            geothermal: None,
             previous_month_offline: true,
             initial_target,
             commitment_suppressed: false,
@@ -142,6 +144,50 @@ impl Plant {
 
     pub fn kind(&self) -> PlantKind {
         self.spec.kind
+    }
+
+    pub(crate) fn refresh_resource_boundary(&mut self) {
+        let capacity = self.available_capacity();
+        let min = self.min_output();
+        self.initial_target = self.initial_target.clamp(min, capacity);
+        match &mut self.status {
+            PlantStatus::Online { output, target } => {
+                *output = output.clamp(min, capacity);
+                *target = target.clamp(min, capacity);
+            }
+            PlantStatus::Stopping { output } => {
+                *output = output.min(capacity);
+            }
+            _ => {}
+        }
+    }
+    pub fn geothermal(&self) -> Option<&super::GeothermalState> {
+        self.geothermal.as_ref()
+    }
+    pub fn geothermal_mut(&mut self) -> Option<&mut super::GeothermalState> {
+        self.geothermal.as_mut()
+    }
+    pub fn set_geothermal(&mut self, state: super::GeothermalState) {
+        self.geothermal = Some(state);
+        self.initial_target = self.min_output();
+    }
+    pub fn available_capacity(&self) -> Megawatts {
+        self.spec.capacity * self.geothermal.as_ref().map_or(1.0, |g| g.field.value())
+    }
+    pub fn control_spec(&self) -> PlantSpec {
+        let mut spec = self.spec.clone();
+        spec.capacity = self.available_capacity();
+        spec
+    }
+    pub fn min_output(&self) -> Megawatts {
+        self.available_capacity() * self.spec.min_stable.value()
+    }
+    pub fn firm_capacity(&self, accreditation: &crate::region::StorageAccreditation) -> Megawatts {
+        if self.geothermal.is_some() {
+            self.available_capacity() * self.spec.capacity_credit.value()
+        } else {
+            self.spec.firm_capacity(accreditation)
+        }
     }
 
     pub fn spec(&self) -> &PlantSpec {
@@ -287,10 +333,10 @@ impl Plant {
         }
         self.initial_target = self
             .initial_target
-            .clamp(self.spec.min_output(), self.spec.capacity);
+            .clamp(self.min_output(), self.available_capacity());
         self.status = self
             .commitment
-            .initial_status(&self.spec, self.initial_target);
+            .initial_status(&self.control_spec(), self.initial_target);
         if let PlantStatus::Stopping { output } = self.status {
             // A synthetic shutdown tail cannot contain more output than today's
             // resource permits. Otherwise boundary dispatch displaces real supply.
@@ -359,17 +405,17 @@ impl Plant {
         if !mw.value().is_finite() {
             return Err(DomainError::NonFiniteMegawatts { plant: self.id });
         }
-        let min = self.spec.min_output();
+        let min = self.min_output();
         if mw < min {
             return Err(DomainError::BelowMinimumStableOutput {
                 plant: self.id,
                 min,
             });
         }
-        if mw > self.spec.capacity {
+        if mw > self.available_capacity() {
             return Err(DomainError::AboveCapacity {
                 plant: self.id,
-                max: self.spec.capacity,
+                max: self.available_capacity(),
             });
         }
         Ok(())
@@ -383,7 +429,7 @@ impl Plant {
     /// [`Plant::set_target`]. No effect in any other state.
     pub(crate) fn set_boundary_output(&mut self, mw: Megawatts) {
         if self.is_online() && self.spec.kind.is_dispatchable() {
-            let mw = mw.clamp(self.spec.min_output(), self.spec.capacity);
+            let mw = mw.clamp(self.min_output(), self.available_capacity());
             self.status = PlantStatus::Online {
                 output: mw,
                 target: mw,
@@ -402,7 +448,7 @@ impl Plant {
     }
 
     fn go_online(&mut self) {
-        let min = self.spec.min_output();
+        let min = self.min_output();
         self.status = PlantStatus::Online {
             output: min,
             target: min,
@@ -430,7 +476,9 @@ impl Plant {
             return Vec::new();
         }
         let mut events = Vec::new();
-        let cap = available.max(Megawatts::ZERO).min(self.spec.capacity);
+        let cap = available
+            .max(Megawatts::ZERO)
+            .min(self.available_capacity());
         match self.status {
             PlantStatus::Starting { ticks_left } => {
                 let left = ticks_left.saturating_sub(1);
@@ -449,7 +497,7 @@ impl Plant {
             }
             PlantStatus::Online { output, target } => {
                 let ramp = self.spec.ramp.per_tick();
-                let lo = (output - ramp).max(self.spec.min_output());
+                let lo = (output - ramp).max(self.min_output());
                 let hi = output + ramp;
                 let goal = target.min(cap);
                 self.status = PlantStatus::Online {
@@ -501,7 +549,7 @@ impl Plant {
     pub fn headroom_up_within(&self, available: Megawatts, ticks: u32) -> Megawatts {
         match self.status {
             PlantStatus::Online { output, .. } if self.spec.kind.is_dispatchable() => {
-                let room = available.min(self.spec.capacity) - output;
+                let room = available.min(self.available_capacity()) - output;
                 self.spec
                     .ramp
                     .over_ticks(ticks)
@@ -517,7 +565,7 @@ impl Plant {
     pub fn headroom_down(&self) -> Megawatts {
         match self.status {
             PlantStatus::Online { output, .. } if self.spec.kind.is_dispatchable() => {
-                let room = output - self.spec.min_output();
+                let room = output - self.min_output();
                 self.spec.ramp.per_tick().min(room).max(Megawatts::ZERO)
             }
             _ => Megawatts::ZERO,
@@ -579,10 +627,9 @@ impl Plant {
     /// resource limit, so this is simply capacity.
     pub fn hydro_available(&self) -> Megawatts {
         match self.hydro_budget {
-            Some(budget) => {
-                Megawatts::new(budget.value() * f64::from(TICKS_PER_HOUR)).min(self.spec.capacity)
-            }
-            None => self.spec.capacity,
+            Some(budget) => Megawatts::new(budget.value() * f64::from(TICKS_PER_HOUR))
+                .min(self.available_capacity()),
+            None => self.available_capacity(),
         }
     }
 
@@ -626,7 +673,7 @@ crate::state_record!(Plant {
     previous_month_offline,
     initial_target,
     commitment_suppressed,
-    battery
+    battery; since6 { geothermal: None }
 });
 impl crate::state::State for PlantStatus {
     fn write(&self, out: &mut Vec<u8>) {

@@ -22,6 +22,7 @@ fn cell(x: u16, y: u16) -> Cell {
         wind_potential: r(0.8),
         cooling_water: r(if x >= 6 { 1.0 } else { 0.2 }),
         hydro_potential: r(if (x, y) == (10, 1) { 0.8 } else { 0.0 }),
+        geothermal_potential: r(0.8),
     }
 }
 
@@ -198,6 +199,21 @@ fn catalog() -> Vec<PlantSpec> {
             0.0,
             180,
             SitingRule::Anywhere,
+        ),
+        spec(
+            PlantKind::Geothermal,
+            150.0,
+            0.5,
+            2.0,
+            SimDuration::from_hours(12),
+            dollars(100_000),
+            5.0,
+            dollars(300_000),
+            dollars(150_000_000),
+            12,
+            0.95,
+            360,
+            SitingRule::GeothermalSite { min: r(0.3) },
         ),
     ]
 }
@@ -383,6 +399,7 @@ pub fn tiny_region_parts() -> RegionDefinitionParts {
             initial_sd: 0.15,
             band: r(0.25),
         },
+        geothermal: Some(geothermal_params()),
         hydro: HydroParams {
             monthly_flow: [0.6, 0.6, 0.9, 1.2, 1.4, 1.3, 1.0, 0.8, 0.7, 0.6, 0.6, 0.6],
         },
@@ -462,6 +479,7 @@ pub fn max_grid_region() -> RegionDefinition {
                     land: x != 0 && (fx - LAKE.0).hypot(fy - LAKE.1) >= LAKE.2,
                     height: r(relief.clamp(0.0, 1.0)),
                     hydro_potential: Ratio::ZERO,
+                    geothermal_potential: Ratio::ZERO,
                     ..cell(x, y)
                 }
             })
@@ -613,4 +631,35 @@ pub fn two_area_parts() -> RegionDefinitionParts {
         designed_hours_per_year: 4000.0,
     });
     p
+}
+
+/// A19 tuning in the test fixture; production tuning is authored in region RON.
+pub fn geothermal_params() -> GeothermalParams {
+    GeothermalParams {
+        success_min: r(0.45),
+        success_max: r(0.80),
+        quality_min: r(0.15),
+        quality_max: Ratio::ONE,
+        exploration_months: 3,
+        exploration_share: r(0.12),
+        monthly_decline: r(0.002535048613836126),
+        makeup_capital: dollars(15_000_000),
+        makeup_months: 3,
+        ceiling_step: r(0.05),
+        minimum_gain: r(0.03),
+    }
+}
+
+/// Fast A19 acceptance fixture: a proven starting field with accelerated reservoir decline.
+pub fn geothermal_acceptance_parts() -> RegionDefinitionParts {
+    let mut parts = tiny_region_parts();
+    let g = parts.geothermal.as_mut().expect("fixture geothermal");
+    g.success_min = Ratio::ONE;
+    g.success_max = Ratio::ONE;
+    g.monthly_decline = r(0.04);
+    parts.start.fleet.push(StartPlantDef {
+        kind: PlantKind::Geothermal,
+        cell: CellCoord { x: 4, y: 4 },
+    });
+    parts
 }

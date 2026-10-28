@@ -430,6 +430,9 @@ fn regulatory_tone(event: &DomainEvent) -> ReviewTone {
 
 fn lesson_tone(lesson: &Lesson) -> ReviewTone {
     match lesson {
+        Lesson::GeothermalSuccess { .. } => ReviewTone::Positive,
+        Lesson::GeothermalDry { .. } => ReviewTone::Negative,
+        Lesson::GeothermalDecline { .. } => ReviewTone::Caution,
         Lesson::AllClear => ReviewTone::Positive,
         Lesson::RateReview { .. } => ReviewTone::Information,
         Lesson::UnservedEnergy { .. } | Lesson::FrequencyPerformance { notice: false, .. } => {

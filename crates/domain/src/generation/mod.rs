@@ -1,5 +1,7 @@
 //! Generating plants: lifecycle, ramping and daily commitment.
 
+mod geothermal;
+pub use geothermal::{GeothermalState, MakeupProject, MakeupQuote};
 mod battery;
 mod battery_schedule;
 mod commitment;

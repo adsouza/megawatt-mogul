@@ -21,4 +21,4 @@ pub use raster::{
     rasterize, to_cell,
 };
 
-pub const CURRENT_REGION_SCHEMA: u32 = 4;
+pub const CURRENT_REGION_SCHEMA: u32 = 5;

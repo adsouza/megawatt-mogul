@@ -118,6 +118,7 @@ pub struct RateBaseAsset {
     /// Units of capacity not written off.
     live_share: u64,
     held: Option<HeldSlice>,
+    additions: Vec<RateBaseAsset>,
 }
 
 impl RateBaseAsset {
@@ -142,10 +143,24 @@ impl RateBaseAsset {
             written_off: Money::ZERO,
             live_share: SHARE_UNITS,
             held: None,
+            additions: Vec::new(),
         }
     }
 
-    /// Remaining book value held out of the eligible rate base.
+    /// Independently dated capital added to this asset.
+    pub fn additions(&self) -> &[RateBaseAsset] {
+        &self.additions
+    }
+    pub fn original_total(&self) -> Money {
+        self.original + self.additions.iter().map(Self::original_total).sum()
+    }
+    pub fn remaining_total(&self) -> Money {
+        self.remaining + self.additions.iter().map(Self::remaining_total).sum()
+    }
+    pub fn held_total(&self) -> Money {
+        self.held() + self.additions.iter().map(Self::held_total).sum()
+    }
+    /// Remaining book value of the original component held out of the eligible rate base.
     pub fn held(&self) -> Money {
         self.held
             .as_ref()
@@ -154,17 +169,17 @@ impl RateBaseAsset {
 
     /// Remaining book value that earns a return.
     pub fn eligible(&self) -> Money {
-        self.remaining - self.held()
+        self.remaining - self.held() + self.additions.iter().map(Self::eligible).sum()
     }
 
     /// Book value permanently written off.
     pub fn written_off(&self) -> Money {
-        self.written_off
+        self.written_off + self.additions.iter().map(Self::written_off).sum()
     }
 
     /// Book value recovered through depreciation so far.
     pub fn depreciated(&self) -> Money {
-        self.depreciated
+        self.depreciated + self.additions.iter().map(Self::depreciated).sum()
     }
 
     /// Months of book life still to depreciate.
@@ -222,8 +237,9 @@ impl RateBaseAsset {
     }
 
     fn depreciate(&mut self) -> Money {
+        let additions: Money = self.additions.iter_mut().map(Self::depreciate).sum();
         if self.months_left == 0 {
-            return Money::ZERO;
+            return additions;
         }
         let amount = if self.months_left == 1 {
             self.remaining
@@ -233,7 +249,7 @@ impl RateBaseAsset {
         self.remaining -= amount;
         self.depreciated += amount;
         self.months_left -= 1;
-        amount
+        amount + additions
     }
 
     /// Permanently removes `share` units and their `amount` of book value,
@@ -307,6 +323,86 @@ pub struct RateBase {
 }
 
 impl RateBase {
+    pub(crate) fn valid_additions(&self) -> bool {
+        self.assets.values().all(|a| {
+            a.additions.iter().all(|c| {
+                c.asset == a.asset
+                    && matches!(c.asset, AssetRef::Plant(_))
+                    && c.additions.is_empty()
+                    && !c.original.is_negative()
+                    && !c.remaining.is_negative()
+                    && !c.monthly_depreciation.is_negative()
+                    && c.remaining <= c.original
+                    && c.months_left <= a.months_left.max(1)
+                    && c.live_share <= SHARE_UNITS
+                    && c.firm()
+                        .is_some_and(|f| f.value().is_finite() && f >= Megawatts::ZERO)
+                    && c.held.as_ref().is_none_or(|h| h.share <= c.live_share)
+                    && i128::from(c.original.cents())
+                        == i128::from(c.remaining.cents())
+                            + i128::from(c.depreciated.cents())
+                            + i128::from(c.written_off.cents())
+            }) && i128::from(a.original.cents())
+                + a.additions
+                    .iter()
+                    .map(|c| i128::from(c.original.cents()))
+                    .sum::<i128>()
+                <= i128::from(i64::MAX)
+        })
+    }
+    pub fn validate_addition(
+        &self,
+        plant: PlantId,
+        cost: Money,
+    ) -> Result<(), crate::error::DomainError> {
+        let asset = self
+            .assets
+            .get(&AssetRef::Plant(plant))
+            .ok_or(crate::error::DomainError::PlantNotGeothermal { plant })?;
+        if cost.is_negative()
+            || asset
+                .original_total()
+                .cents()
+                .checked_add(cost.cents())
+                .is_none()
+            || self.total().cents().checked_add(cost.cents()).is_none()
+        {
+            return Err(crate::error::DomainError::ConstructionOverflow);
+        }
+        Ok(())
+    }
+    pub(crate) fn add_improvement(
+        &mut self,
+        plant: PlantId,
+        cost: Money,
+        month: SimMonth,
+        firm: Megawatts,
+        node: NodeId,
+    ) {
+        let asset = self
+            .assets
+            .get_mut(&AssetRef::Plant(plant))
+            .expect("commissioned plant capital");
+        // A one-close recovery at end of life implements immediate depreciation without extending life.
+        let life = asset.months_left.max(1);
+        asset.additions.push(RateBaseAsset::new(
+            AssetRef::Plant(plant),
+            cost,
+            life,
+            month,
+            AssetProfile::Plant { firm, node },
+            false,
+        ));
+    }
+    pub(crate) fn decline_additions(&mut self, plant: PlantId, rate: crate::units::Ratio) {
+        if let Some(asset) = self.assets.get_mut(&AssetRef::Plant(plant)) {
+            for addition in &mut asset.additions {
+                if let AssetProfile::Plant { firm, .. } = &mut addition.profile {
+                    *firm = *firm * (1.0 - rate.value());
+                }
+            }
+        }
+    }
     /// Adds new capital, recovered straight-line over `book_life_months`.
     pub fn add(
         &mut self,
@@ -364,7 +460,10 @@ impl RateBase {
 
     /// Book value still recoverable: eligible plus held.
     pub fn total(&self) -> Money {
-        self.assets.values().map(|a| a.remaining).sum()
+        self.assets
+            .values()
+            .map(RateBaseAsset::remaining_total)
+            .sum()
     }
 
     /// Book value that earns a return: excludes held and written-off capital.
@@ -373,7 +472,7 @@ impl RateBase {
     }
 
     pub fn held_total(&self) -> Money {
-        self.assets.values().map(RateBaseAsset::held).sum()
+        self.assets.values().map(RateBaseAsset::held_total).sum()
     }
 
     pub fn written_off_total(&self) -> Money {
@@ -397,7 +496,9 @@ impl RateBase {
                 (id, &mut asset.profile)
                 && let Some(current) = firm_of(*id)
             {
-                *firm = current;
+                let restored: Megawatts =
+                    asset.additions.iter().filter_map(RateBaseAsset::firm).sum();
+                *firm = (current - restored).max(Megawatts::ZERO);
             }
         }
     }
@@ -491,39 +592,147 @@ impl RateBase {
         let excess = inputs.excess.value().max(0.0);
         let mut changes = Vec::new();
 
-        // 1. Re-test held plant slices first, against the whole excess.
-        let held: Vec<(PlantId, f64)> = self
-            .assets
-            .values()
-            .filter_map(|a| match (a.asset, a.held_firm()) {
-                (AssetRef::Plant(id), Some(mw)) => Some((id, mw.value())),
-                _ => None,
-            })
-            .collect();
-        let held_mw: f64 = held.iter().map(|(_, mw)| mw).sum();
-        let weights: Vec<f64> = held.iter().map(|(_, mw)| *mw).collect();
-        for ((plant, _), keep_mw) in held.iter().zip(allocate(excess, &weights)) {
-            self.retest_plant(*plant, keep_mw, year, &mut changes);
-        }
+        if self.assets.values().any(|a| !a.additions.is_empty()) {
+            self.review_components(year, excess, &mut changes);
+        } else {
+            // 1. Re-test held plant slices first, against the whole excess.
+            let held: Vec<(PlantId, f64)> = self
+                .assets
+                .values()
+                .filter_map(|a| match (a.asset, a.held_firm()) {
+                    (AssetRef::Plant(id), Some(mw)) => Some((id, mw.value())),
+                    _ => None,
+                })
+                .collect();
+            let held_mw: f64 = held.iter().map(|(_, mw)| mw).sum();
+            let weights: Vec<f64> = held.iter().map(|(_, mw)| *mw).collect();
+            for ((plant, _), keep_mw) in held.iter().zip(allocate(excess, &weights)) {
+                self.retest_plant(*plant, keep_mw, year, &mut changes);
+            }
 
-        // 2. Spread what excess is left across this year's new plant capital.
-        let new: Vec<(PlantId, f64)> = self
-            .assets
-            .values()
-            .filter(|a| a.is_new_in(year) && a.held.is_none())
-            .filter_map(|a| match a.asset {
-                AssetRef::Plant(id) => Some((id, a.live_firm())),
-                AssetRef::Line(_) | AssetRef::Link(_) => None,
-            })
-            .filter(|(_, mw)| *mw > 0.0)
-            .collect();
-        let weights: Vec<f64> = new.iter().map(|(_, mw)| *mw).collect();
-        for ((plant, _), mw) in new.iter().zip(allocate(excess - held_mw, &weights)) {
-            self.hold_new(*plant, mw, year, &mut changes);
+            // 2. Spread what excess is left across this year's new plant capital.
+            let new: Vec<(PlantId, f64)> = self
+                .assets
+                .values()
+                .filter(|a| a.is_new_in(year) && a.held.is_none())
+                .filter_map(|a| match a.asset {
+                    AssetRef::Plant(id) => Some((id, a.live_firm())),
+                    AssetRef::Line(_) | AssetRef::Link(_) => None,
+                })
+                .filter(|(_, mw)| *mw > 0.0)
+                .collect();
+            let weights: Vec<f64> = new.iter().map(|(_, mw)| *mw).collect();
+            for ((plant, _), mw) in new.iter().zip(allocate(excess - held_mw, &weights)) {
+                self.hold_new(*plant, mw, year, &mut changes);
+            }
         }
         changes
     }
 
+    fn component(&self, id: PlantId, index: Option<usize>) -> &RateBaseAsset {
+        let asset = &self.assets[&AssetRef::Plant(id)];
+        index.map_or(asset, |i| &asset.additions[i])
+    }
+    fn review_components(&mut self, year: i32, excess: f64, changes: &mut Vec<CapitalChange>) {
+        let keys: Vec<_> = self
+            .assets
+            .values()
+            .filter_map(|a| match a.asset {
+                AssetRef::Plant(id) => Some((id, a.additions.len())),
+                _ => None,
+            })
+            .flat_map(|(id, n)| {
+                std::iter::once((id, None)).chain((0..n).map(move |i| (id, Some(i))))
+            })
+            .collect();
+        let held: Vec<_> = keys
+            .iter()
+            .copied()
+            .filter_map(|key| {
+                self.component(key.0, key.1)
+                    .held_firm()
+                    .map(|mw| (key, mw.value()))
+            })
+            .collect();
+        let weights: Vec<_> = held.iter().map(|(_, w)| *w).collect();
+        let held_mw: f64 = weights.iter().sum();
+        for ((key, _), mw) in held.into_iter().zip(allocate(excess, &weights)) {
+            if let Some(i) = key.1 {
+                let a = &mut self
+                    .assets
+                    .get_mut(&AssetRef::Plant(key.0))
+                    .expect("listed asset")
+                    .additions[i];
+                let keep = a.share_for_firm(mw);
+                Self::retest_component(a, keep, year, changes);
+            } else {
+                self.retest_plant(key.0, mw, year, changes);
+            }
+        }
+        let new: Vec<_> = keys
+            .into_iter()
+            .filter_map(|key| {
+                let a = self.component(key.0, key.1);
+                (a.is_new_in(year) && a.held.is_none() && a.live_firm() > 0.0)
+                    .then_some((key, a.live_firm()))
+            })
+            .collect();
+        let weights: Vec<_> = new.iter().map(|(_, w)| *w).collect();
+        for ((key, _), mw) in new.into_iter().zip(allocate(excess - held_mw, &weights)) {
+            if let Some(i) = key.1 {
+                let a = &mut self
+                    .assets
+                    .get_mut(&AssetRef::Plant(key.0))
+                    .expect("listed asset")
+                    .additions[i];
+                let share = a.share_for_firm(mw);
+                if share > 0 {
+                    a.held = Some(HeldSlice::new(share, None, year));
+                    changes.push(CapitalChange::Held {
+                        asset: a.asset,
+                        amount: a.held(),
+                    });
+                }
+            } else {
+                self.hold_new(key.0, mw, year, changes);
+            }
+        }
+    }
+    fn retest_component(
+        a: &mut RateBaseAsset,
+        keep: u64,
+        year: i32,
+        changes: &mut Vec<CapitalChange>,
+    ) {
+        let Some(mut slice) = a.held.take() else {
+            return;
+        };
+        let keep = keep.min(slice.share);
+        if keep < slice.share {
+            changes.push(CapitalChange::Released {
+                asset: a.asset,
+                amount: a.book_of(slice.share) - a.book_of(keep),
+            });
+        }
+        if keep == 0 {
+            return;
+        }
+        slice.share = keep;
+        if slice.last_excess_review != year {
+            slice.consecutive_excess_reviews = slice.consecutive_excess_reviews.saturating_add(1);
+            slice.last_excess_review = year;
+        }
+        if slice.consecutive_excess_reviews >= WRITE_OFF_AT_REVIEW {
+            let amount = a.book_of(keep);
+            a.write_off(keep, amount);
+            changes.push(CapitalChange::Disallowed {
+                asset: a.asset,
+                amount,
+            });
+        } else {
+            a.held = Some(slice);
+        }
+    }
     /// Re-tests a plant's held slice, keeping `keep_mw` of it held, and
     /// carries the same split to the line slices that follow it.
     fn retest_plant(
@@ -734,7 +943,7 @@ crate::state_record!(RateBaseAsset {
     depreciated,
     written_off,
     live_share,
-    held
+    held; since6 { additions: Vec::new() }
 });
 crate::state_record!(HeldSlice {
     share,

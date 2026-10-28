@@ -1,0 +1,5 @@
+// Frozen A19 placeholder for archived region schemas <=4. Resource is zero and unavailable.
+(available: false, potential: (base: 0.0, blobs: []), plant: (kind: Geothermal, capacity_mw: 150.0, min_stable: 0.5, ramp_mw_per_min: 2.0,
+ startup_hours: 12.0, startup_cost: 100000, marginal_cost_per_mwh: 5.0,
+ fixed_om_per_month: 750000, capital_cost: 225000000, build_months: 12,
+ capacity_credit: 0.95, book_life_months: 360, siting: GeothermalSite(0.3)))

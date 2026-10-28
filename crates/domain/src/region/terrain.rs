@@ -13,6 +13,7 @@ pub struct Cell {
     pub wind_potential: Ratio,
     pub cooling_water: Ratio,
     pub hydro_potential: Ratio,
+    pub geothermal_potential: Ratio,
 }
 
 /// A rectangular grid of cells, stored row-major (`y * width + x`).
@@ -93,6 +94,12 @@ impl TerrainGrid {
         water
     }
 
+    pub fn has_geothermal(&self, min: Ratio) -> bool {
+        self.cells
+            .iter()
+            .any(|c| c.land && c.geothermal_potential >= min)
+    }
+
     pub fn width(&self) -> u16 {
         self.width
     }
@@ -117,7 +124,8 @@ mod tests {
                     irradiance: Ratio::ZERO,
                     wind_potential: Ratio::ZERO,
                     cooling_water: Ratio::ZERO,
-                    hydro_potential: Ratio::ZERO
+                    hydro_potential: Ratio::ZERO,
+                    geothermal_potential: Ratio::ZERO,
                 };
                 64
             ],

@@ -717,7 +717,7 @@ fn format1_ticks_reencode_to_rle_and_replay_with_identical_projections_and_conti
 fn new_schema_five_save_round_trips_on_disk_and_restores() {
     let dir = tempfile::TempDir::new().unwrap();
     let saved = bundle();
-    assert_eq!(saved.checkpoint.snapshot.as_ref().unwrap().schema, 5);
+    assert_eq!(saved.checkpoint.snapshot.as_ref().unwrap().schema, 6);
     let path = dir.path().join("schema5.mgsave");
     std::fs::write(&path, encode_save(&saved).unwrap()).unwrap();
     let (decoded, region) = decode_save(&std::fs::read(path).unwrap(), &identity()).unwrap();
@@ -733,11 +733,11 @@ fn new_schema_five_save_round_trips_on_disk_and_restores() {
 }
 
 #[test]
-fn every_save_gate_accepts_schemas_one_through_five_and_rejects_six() {
+fn every_save_gate_accepts_schemas_one_through_six_and_rejects_seven() {
     use application::{RestoreError, SaveStore};
     use domain::state::State;
     use infrastructure::save::FileSaveStore;
-    for schema in [0, 1, 2, 3, 4, 5, 6] {
+    for schema in [0, 1, 2, 3, 4, 5, 6, 7] {
         let dir = tempfile::TempDir::new().unwrap();
         let mut saved = bundle();
         let (_, region) = decode_save(&encode_save(&saved).unwrap(), &identity()).unwrap();
@@ -768,7 +768,7 @@ fn every_save_gate_accepts_schemas_one_through_five_and_rejects_six() {
             Box::new(InMemoryCommandLog::default()),
             &|| false,
         );
-        if matches!(schema, 1..=5) {
+        if matches!(schema, 1..=6) {
             assert!(rows[0].entry.is_ok(), "listing schema {schema}");
             let (read, region) = decoded.unwrap();
             assert_eq!(read, saved);

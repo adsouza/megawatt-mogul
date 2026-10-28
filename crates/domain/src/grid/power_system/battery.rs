@@ -132,13 +132,13 @@ impl<'a> BatteryPlanningInputs<'a> {
             solar: plants
                 .iter()
                 .filter(|p| p.kind() == PlantKind::Solar)
-                .map(|p| (p.spec().capacity, p.cell()))
+                .map(|p| (p.available_capacity(), p.cell()))
                 .collect(),
             wind_potential: plants
                 .iter()
                 .filter(|p| p.kind() == PlantKind::Wind)
                 .map(|p| {
-                    p.spec().capacity
+                    p.available_capacity()
                         * super::cell_ratio(region, p.cell(), |c| c.wind_potential).value()
                 })
                 .sum(),
@@ -183,7 +183,7 @@ impl<'a> BatteryPlanningInputs<'a> {
                 if preview {
                     return if committed {
                         if p.auto_follow() {
-                            p.spec().capacity
+                            p.available_capacity()
                         } else {
                             p.initial_target()
                         }
@@ -207,9 +207,8 @@ impl<'a> BatteryPlanningInputs<'a> {
                     PlantStatus::Starting { ticks_left }
                         if tick.saturating_sub(from) >= ticks_left =>
                     {
-                        p.spec().capacity.min(
-                            p.spec().min_output()
-                                + p.spec().ramp.over_ticks(tick - from - ticks_left),
+                        p.available_capacity().min(
+                            p.min_output() + p.spec().ramp.over_ticks(tick - from - ticks_left),
                         )
                     }
                     _ => Megawatts::ZERO,
@@ -477,7 +476,7 @@ impl PowerSystem {
             .filter(|p| {
                 p.auto_follow() && p.kind() != PlantKind::Hydro && p.kind().is_dispatchable()
             })
-            .filter(|p| p.headroom_up(p.spec().capacity) > Megawatts::ZERO)
+            .filter(|p| p.headroom_up(p.available_capacity()) > Megawatts::ZERO)
             .min_by(|a, b| {
                 a.spec()
                     .marginal_cost
@@ -485,7 +484,8 @@ impl PowerSystem {
                     .total_cmp(&b.spec().marginal_cost.value())
                     .then(a.id().cmp(&b.id()))
             });
-        let cheap_room = cheapest.map_or(Megawatts::ZERO, |p| p.headroom_up(p.spec().capacity));
+        let cheap_room =
+            cheapest.map_or(Megawatts::ZERO, |p| p.headroom_up(p.available_capacity()));
         let mut charge_budget =
             (self.primary_supply() + cheap_room - customer_load).max(Megawatts::ZERO);
         for p in self.connected_plants() {
@@ -567,7 +567,7 @@ impl PowerSystem {
                     charge = surplus.min(Megawatts::new(safe).max(renewable_surplus));
                 }
             }
-            let flow = state.feasible(spec, p.spec().capacity, charge, discharge);
+            let flow = state.feasible(spec, p.available_capacity(), charge, discharge);
             surplus = (surplus - flow.charge).max(Megawatts::ZERO);
             deficit = (deficit - flow.discharge).max(Megawatts::ZERO);
             flows.insert(p.id(), flow);
@@ -588,7 +588,7 @@ impl PowerSystem {
         for (id, flow) in flows {
             let p = self.plants.get_mut(id).expect("flow plant");
             let spec = p.spec().battery.expect("storage");
-            let max = p.spec().capacity;
+            let max = p.available_capacity();
             p.battery_mut()
                 .expect("storage")
                 .settle(spec, max, flow.charge, flow.discharge);
@@ -730,7 +730,7 @@ impl PowerSystem {
                             .get(&p.id())
                             .map_or(Megawatts::ZERO, |f| f.hourly[usize::from(hour)])
                     } else if p.auto_follow() {
-                        p.spec().capacity
+                        p.available_capacity()
                     } else {
                         p.initial_target()
                     }
@@ -780,7 +780,7 @@ impl PowerSystem {
                 } else {
                     Megawatts::ZERO
                 };
-                let flow = state.settle(spec, p.spec().capacity, charge, discharge);
+                let flow = state.settle(spec, p.available_capacity(), charge, discharge);
                 if let Some(plan) = plans.plants.get_mut(&p.id()) {
                     plan.discharge[tick as usize] = flow.discharge;
                 }
@@ -821,7 +821,8 @@ impl PowerSystem {
                 let next = state.flow().stored.value() * spec.discharge_efficiency.value() * 60.0
                     / f64::from(minutes);
                 Some(
-                    (p.spec().capacity.min(Megawatts::new(next)) - p.output()).max(Megawatts::ZERO),
+                    (p.available_capacity().min(Megawatts::new(next)) - p.output())
+                        .max(Megawatts::ZERO),
                 )
             })
             .sum()
@@ -842,7 +843,7 @@ impl PowerSystem {
                     [(self.battery_tick as usize + 1).min(1439)..=end as usize]
                     .iter()
                     .copied()
-                    .fold(p.spec().capacity, Megawatts::min);
+                    .fold(p.available_capacity(), Megawatts::min);
                 let remaining = b.flow().stored.value() * spec.discharge_efficiency.value();
                 p.output() > smallest
                     || remaining * 60.0

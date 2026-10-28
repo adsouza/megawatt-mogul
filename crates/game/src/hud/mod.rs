@@ -22,6 +22,7 @@ mod economics;
 mod forecast_chart;
 mod frequency;
 mod game_over;
+pub mod geothermal;
 mod hydro_panel;
 mod incidents;
 mod inspector;
@@ -307,6 +308,9 @@ impl Plugin for HudPlugin {
                         .run_if(has_l10n),
                     toasts::collect_toasts.after(SimSet::Apply).run_if(has_l10n),
                     prompt::close_stale_prompt
+                        .after(SimSet::Apply)
+                        .run_if(in_game.clone()),
+                    geothermal::clean_dry_selection
                         .after(SimSet::Apply)
                         .run_if(in_game.clone()),
                     ui_state::settle_commit

@@ -32,6 +32,19 @@ const UNPLANNED_RELATIVE_TOLERANCE: f64 = 1e-9;
 /// One thing the player can learn from a closed month.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Lesson {
+    GeothermalSuccess {
+        plant: domain::ids::PlantId,
+    },
+    GeothermalDry {
+        plant: domain::ids::PlantId,
+        lost: Money,
+    },
+    GeothermalDecline {
+        plant: domain::ids::PlantId,
+        threshold: u8,
+        first: bool,
+    },
+
     /// Peakers supplied a large share of the month's energy at a high price.
     ExpensivePeaking {
         energy: MegawattHours,
@@ -209,6 +222,7 @@ fn magnitude(money: Money) -> Money {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct LessonsProjection {
     latest: Vec<Lesson>,
+    pending_geothermal: Vec<Lesson>,
 }
 
 impl LessonsProjection {
@@ -220,17 +234,78 @@ impl LessonsProjection {
 
 impl Projection for LessonsProjection {
     fn apply(&mut self, event: &DomainEvent, session: &GameSession) {
-        if let DomainEvent::MonthClosed(report) = event {
-            self.latest = lessons_for(report, session.region());
+        match event {
+            DomainEvent::ExplorationSucceeded { plant } => self
+                .pending_geothermal
+                .push(Lesson::GeothermalSuccess { plant: *plant }),
+            DomainEvent::ExplorationDry {
+                plant,
+                capital_lost,
+            } => self.pending_geothermal.push(Lesson::GeothermalDry {
+                plant: *plant,
+                lost: *capital_lost,
+            }),
+            DomainEvent::FieldDeclineThreshold {
+                plant,
+                threshold,
+                first,
+            } => self.pending_geothermal.push(Lesson::GeothermalDecline {
+                plant: *plant,
+                threshold: *threshold,
+                first: *first,
+            }),
+            DomainEvent::MonthClosed(report) => {
+                self.latest = lessons_for(report, session.region());
+                if !self.pending_geothermal.is_empty() {
+                    self.latest
+                        .retain(|lesson| !matches!(lesson, Lesson::AllClear));
+                    let priority = self
+                        .latest
+                        .iter()
+                        .rposition(|lesson| {
+                            matches!(
+                                lesson,
+                                Lesson::UnservedEnergy { .. }
+                                    | Lesson::RotatingOutages { .. }
+                                    | Lesson::FrequencyPerformance { .. }
+                                    | Lesson::Overgeneration { .. }
+                            )
+                        })
+                        .map_or(0, |i| i + 1);
+                    self.latest
+                        .splice(priority..priority, self.pending_geothermal.drain(..));
+                    self.latest.truncate(MAX_LESSONS);
+                }
+            }
+            _ => {}
         }
     }
 }
 
 // Portable state schema 1: explicit field order and enum tags.
-domain::state_record!(LessonsProjection { latest });
+domain::state_record!(LessonsProjection { latest; since6 { pending_geothermal: Vec::new() } });
 impl domain::state::State for Lesson {
     fn write(&self, out: &mut Vec<u8>) {
         match self {
+            Self::GeothermalSuccess { plant } => {
+                domain::state::State::write(&10u8, out);
+                domain::state::State::write(plant, out);
+            }
+            Self::GeothermalDry { plant, lost } => {
+                domain::state::State::write(&11u8, out);
+                domain::state::State::write(plant, out);
+                domain::state::State::write(lost, out);
+            }
+            Self::GeothermalDecline {
+                plant,
+                threshold,
+                first,
+            } => {
+                domain::state::State::write(&12u8, out);
+                domain::state::State::write(plant, out);
+                domain::state::State::write(threshold, out);
+                domain::state::State::write(first, out);
+            }
             Self::ExpensivePeaking {
                 energy,
                 cost,
@@ -295,6 +370,18 @@ impl domain::state::State for Lesson {
     }
     fn read(input: &mut domain::state::StateReader<'_>) -> Result<Self, domain::state::StateError> {
         Ok(match <u8 as domain::state::State>::read(input)? {
+            10 if input.schema >= 6 => Self::GeothermalSuccess {
+                plant: domain::state::State::read(input)?,
+            },
+            11 if input.schema >= 6 => Self::GeothermalDry {
+                plant: domain::state::State::read(input)?,
+                lost: domain::state::State::read(input)?,
+            },
+            12 if input.schema >= 6 => Self::GeothermalDecline {
+                plant: domain::state::State::read(input)?,
+                threshold: domain::state::State::read(input)?,
+                first: domain::state::State::read(input)?,
+            },
             0 => Self::ExpensivePeaking {
                 energy: domain::state::State::read(input)?,
                 cost: domain::state::State::read(input)?,

@@ -109,6 +109,14 @@ pub fn plant_parts(kind: PlantKind) -> Vec<Part> {
                 parts.push(block(x, 2.05, 0.0, 0.65, 0.15, 0.8, color));
             }
         }
+        PlantKind::Geothermal => {
+            parts.push(block(-0.5, 0.3, 0.0, 1.1, 0.45, 1.2, color));
+            for z in [-0.45, 0.45] {
+                parts.push(block(0.5, 0.6, z, 0.65, 1.0, 0.6, pale));
+                parts.push(block(0.5, 1.2, z, 0.45, 0.25, 0.4, [0.85, 0.9, 0.92, 0.8]));
+            }
+            parts.push(block(-0.7, 0.6, 0.0, 0.15, 0.5, 0.15, pale));
+        }
         PlantKind::Coal => {
             parts.push(block(-0.3, 0.6, 0.0, 1.5, 1.0, 1.3, color));
             for z in [-0.4, 0.4] {
@@ -287,6 +295,7 @@ pub struct WorldLine {
 }
 #[derive(Debug, Clone)]
 pub struct WorldModel {
+    pub dry_cells: BTreeMap<CellCoord, Vec3>,
     pub region: Arc<RegionDefinition>,
     pub phase: DayPhase,
     pub month: SimMonth,
@@ -503,6 +512,11 @@ impl WorldModel {
             .collect();
         let flow_paths = super::flow::net_flow_paths(&lines);
         Self {
+            dry_cells: s
+                .dry_cells()
+                .keys()
+                .filter_map(|at| Some((*at, coordinates.cell_center(terrain, *at)?)))
+                .collect(),
             region,
             phase: s.phase(),
             month: s.clock().month(),

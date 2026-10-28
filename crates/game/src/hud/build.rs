@@ -281,6 +281,10 @@ fn plant_section(
                 .plant_spec_at(kind, cell)
                 .expect("selected cell exists");
             let site = game.session().plant_site_check(kind, cell);
+            let region_lacks_geothermal = kind == PlantKind::Geothermal
+                && game.session().geothermal_available()
+                && matches!(spec.siting, domain::region::SitingRule::GeothermalSite { min }
+                    if !region.terrain().has_geothermal(min));
             let quote = game.session().plant_quote(kind, cell);
             let mut stats = vec![stat("build-capacity", format::megawatts(spec.capacity))];
             stats.extend(construction_stats(
@@ -310,6 +314,21 @@ fn plant_section(
                     ))),
                 );
             }
+            if let Some(exploration) = quote.as_ref().ok().and_then(|q| q.exploration) {
+                stats.push(stat("geothermal-odds", format::percent(exploration.odds)));
+                stats.push(stat(
+                    "geothermal-expected",
+                    format::megawatts(exploration.expected_output),
+                ));
+                stats.push(stat(
+                    "geothermal-risk",
+                    format::money(exploration.capital_at_risk, style),
+                ));
+                stats.push(stat(
+                    "geothermal-exploration-months",
+                    exploration.months.to_string(),
+                ));
+            }
             if kind == PlantKind::Wind {
                 let potential = region
                     .terrain()
@@ -333,7 +352,9 @@ fn plant_section(
             PlantRow {
                 kind,
                 name: kind.localize(l10n),
-                help: if kind == PlantKind::Wind {
+                help: if kind == PlantKind::Geothermal {
+                    Some(l10n.text("geothermal-build-help"))
+                } else if kind == PlantKind::Wind {
                     Some(l10n.text("wind-build-help"))
                 } else {
                     spec.battery
@@ -343,7 +364,15 @@ fn plant_section(
                 blocked: site
                     .as_ref()
                     .err()
-                    .map(|error| error.localize(l10n))
+                    .map(|error| {
+                        if region_lacks_geothermal
+                            && matches!(error, domain::region::SiteError::NoGeothermalSite)
+                        {
+                            l10n.text("geothermal-no-region-resource")
+                        } else {
+                            error.localize(l10n)
+                        }
+                    })
                     .or_else(|| {
                         quote.as_ref().err().map(|error| {
                             error.localize_with(l10n, &Names::new(l10n, game.session()))

@@ -236,6 +236,7 @@ pub fn construction_card_model(
         .into_iter()
         .find(|p| p.project == Project::Plant(plant))?;
     let quote = session.plant_construction(plant)?;
+    let geothermal = session.power().plant(plant).and_then(|p| p.geothermal());
     let mut model = ConstructionCardModel {
         plant,
         name: Names::new(l10n, session).plant(plant),
@@ -280,6 +281,59 @@ pub fn construction_card_model(
                 value: format::megawatt_hours(b.energy_capacity),
             },
         ]);
+    }
+    if let Some(g) = geothermal {
+        model.stats.push(Stat {
+            label: l10n.text("geothermal-odds"),
+            value: format::percent(g.odds),
+        });
+        model.stats.push(Stat {
+            label: l10n.text("geothermal-risk"),
+            value: format::money(g.exploration_capital, style),
+        });
+        if g.exploration_left > 0 {
+            model.status = l10n.args(
+                "geothermal-exploring",
+                &[
+                    ("months", g.exploration_left.into()),
+                    ("odds", format::percent(g.odds).into()),
+                    (
+                        "capital",
+                        format::money(g.exploration_capital, style).into(),
+                    ),
+                ],
+            );
+            if let Some(payment) = model
+                .stats
+                .iter_mut()
+                .find(|s| s.label == l10n.text("build-monthly-payment"))
+            {
+                payment.value = super::build::monthly_payment(
+                    g.exploration_capital,
+                    session
+                        .region()
+                        .geothermal()
+                        .expect("geothermal")
+                        .exploration_months,
+                    style,
+                );
+            }
+        } else if let Some(payment) = model
+            .stats
+            .iter_mut()
+            .find(|s| s.label == l10n.text("build-monthly-payment"))
+        {
+            payment.value = super::build::monthly_payment(
+                quote.capital - g.exploration_capital,
+                quote.months
+                    - session
+                        .region()
+                        .geothermal()
+                        .expect("geothermal")
+                        .exploration_months,
+                style,
+            );
+        }
     }
     Some(model)
 }

@@ -99,3 +99,17 @@ fn map_demand(demand: &DemandDto) -> Result<Climate> {
         monthly: array(&demand.monthly, "demand.monthly")?,
     })
 }
+
+/// One frozen placeholder for every archived pre-geothermal region, independent of its ID.
+pub(super) fn geothermal_stub() -> Result<domain::region::PlantSpec> {
+    let extension: super::dto::GeothermalExtension =
+        ron::from_str(include_str!("geothermal_unavailable_v1.ron"))
+            .expect("frozen geothermal extension is valid");
+    assert!(
+        !extension.available
+            && extension.potential.base == 0.0
+            && extension.potential.blobs.is_empty(),
+        "frozen geothermal stub must remain unavailable and resource-free"
+    );
+    super::mapping::map_spec_v4(&extension.plant)
+}

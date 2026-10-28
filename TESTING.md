@@ -239,8 +239,35 @@ can't pass for the wrong reason on a healthy fleet.
 duration: defaults apply exactly when construction finishes, dispatchable plants receive all-day
 commitment and AGC, automatic resources remain automatic, and later closes preserve player edits.
 The month-close peaker test saves and restores after commissioning and begins the next day without
-scheduling commands. Localization covers all eight kinds; the HUD wiring test checks that the
+scheduling commands. Localization covers all nine kinds; the HUD wiring test checks that the
 commissioning event displays the all-day/AGC notification exactly once.
+
+**Geothermal (A19).** `domain::session::geothermal` covers staged cent-exact payments, definite
+success/dry outcomes, no connections during exploration (AC and HVDC), field-scaled physical and
+firm capacity, deterministic ID-ordered draws and persistent notices. Properties cover site
+interpolation, positive monotone decline including subnormal fields, and exclusion of dry losses
+from depreciation, rate base and customer revenue requirement. Rate-base component tests cover
+new-capital assessment, independent holdings, exact remaining-life depreciation and bounded
+decoding of hostile nesting.
+
+`application/tests/geothermal.rs` compares one-tick/32-tick operation and projections, repeated
+queries, journaled dismissal and mid-makeup restore. Infrastructure's geothermal tests preserve
+immutable pre-change schema-4/5 Planning/Operating/Review saves and schema-5 multi-island/HVDC
+saves, including rules-27 continuation receipts. The capture tool refuses newer engines; never
+regenerate these fixtures. Region validation and the frozen unavailable stub remain separate
+from current data. `geothermal_balance.rs` reads shipped data and independently compares lifetime
+cost at good/marginal sites in the Western grid, Italy and Turkey, reporting every margin.
+
+`game/tests/game/geothermal.rs` uses actual buttons and dispatch for build, inspection, dismissal
+and makeup; the real 32× fixed-step driver runs through decline and completion. It checks persisted
+state and minimum-size/125%-zoom field visibility in the real egui pass. All modules remain in the
+existing game test binary. The accelerated fixture is isolated from shipped tuning and saves.
+`geothermal_acceptance` authors a temporary native QA library and an eight-month reservoir trace;
+`web/tests/geothermal.spec.js` compares that trace with WASM, restoring a checkpoint at every month
+boundary. This checks reservoir arithmetic and exploration outcomes, not general cross-target
+identity of the existing solar/weather physics. Build the native helper with
+`cargo build -p infrastructure --example geothermal_acceptance` before running the focused browser
+test; CI builds it alongside the backup acceptance tool.
 
 `tests/game/l10n_coverage.rs` checks the translations: every literal key in `l10n::keys` exists in
 en-US, every typed value (errors, events, lessons, kinds) translates through an exhaustive table,
@@ -935,7 +962,7 @@ both as region land and an electrical area.
 
 `tests/game/hvdc.rs`, included by the existing game binary, checks real SGCC build previews and
 link cards, Escape dismissal, and cancellation's default keyboard focus. Existing picker and
-localisation coverage includes SGCC. Save codec gates admit schemas 1–5 and reject schema 6;
+localisation coverage includes SGCC. Save codec gates admit schemas 1–6 and reject schema 7;
 older source captures and journals remain the compatibility oracle. Island selection scopes live
 and archived supply charts; the latter retain the original month's island demand forecast.
 The real HUD test checks selection through the Planning-to-Operating transition and hides the

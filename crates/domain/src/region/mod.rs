@@ -36,8 +36,9 @@ use crate::ids::{CellCoord, CityId, RegionId};
 pub use clock::{CityLocale, ClimateId, GeoBounds, RegionClock, TimeZone, ZoneId};
 
 pub use params::{
-    CityDef, FrequencyParams, HydroParams, LineParams, RegulatorParams, SatisfactionParams,
-    SolarModel, SolarParams, StartDef, StartPlantDef, StorageAccreditation, WindParams,
+    CityDef, FrequencyParams, GeothermalParams, HydroParams, LineParams, RegulatorParams,
+    SatisfactionParams, SolarModel, SolarParams, StartDef, StartPlantDef, StorageAccreditation,
+    WindParams,
 };
 pub use plant_spec::{BatterySpec, PlantKind, PlantSpec, SitingRule};
 pub use terrain::{Cell, TerrainGrid};
@@ -57,6 +58,12 @@ pub enum SiteError {
     InsufficientCoolingWater { have: Ratio, need: Ratio },
     #[error("no hydro potential at cell")]
     NoHydroSite,
+    #[error("no geothermal resource at cell")]
+    NoGeothermalSite,
+    #[error("geothermal unavailable in pre-geothermal games")]
+    GeothermalUnavailable,
+    #[error("cell was explored and dry")]
+    ExploredDry,
 }
 
 /// Why a region definition was rejected.
@@ -119,6 +126,7 @@ pub struct RegionDefinitionParts {
     pub solar: SolarParams,
     pub wind: WindParams,
     pub hydro: HydroParams,
+    pub geothermal: Option<GeothermalParams>,
     pub frequency: FrequencyParams,
     pub regulator: RegulatorParams,
     pub satisfaction: SatisfactionParams,
@@ -154,6 +162,7 @@ pub struct RegionDefinition {
     solar_monthly_means: [f64; 12],
     wind: WindParams,
     hydro: HydroParams,
+    geothermal: Option<GeothermalParams>,
     frequency: FrequencyParams,
     regulator: RegulatorParams,
     satisfaction: SatisfactionParams,
@@ -344,7 +353,14 @@ impl RegionDefinition {
     }
 
     /// Whether `kind` may be built on `cell`.
+    pub fn geothermal(&self) -> Option<&GeothermalParams> {
+        self.geothermal.as_ref()
+    }
+
     pub fn site_check(&self, kind: PlantKind, cell: CellCoord) -> Result<(), SiteError> {
+        if kind == PlantKind::Geothermal && self.geothermal.is_none() {
+            return Err(SiteError::GeothermalUnavailable);
+        }
         site_check(&self.terrain, self.spec(kind).siting, cell)
     }
 }
@@ -363,7 +379,12 @@ fn site_check(terrain: &TerrainGrid, siting: SitingRule, at: CellCoord) -> Resul
             })
         }
         SitingRule::HydroSite { min } if cell.hydro_potential < min => Err(SiteError::NoHydroSite),
-        SitingRule::CoolingWater { .. } | SitingRule::HydroSite { .. } => Ok(()),
+        SitingRule::GeothermalSite { min } if cell.geothermal_potential < min => {
+            Err(SiteError::NoGeothermalSite)
+        }
+        SitingRule::CoolingWater { .. }
+        | SitingRule::HydroSite { .. }
+        | SitingRule::GeothermalSite { .. } => Ok(()),
     }
 }
 
@@ -666,6 +687,14 @@ impl TryFrom<RegionDefinitionParts> for RegionDefinition {
         validate_shapes(&parts)?;
         validate_bands(&parts.regulator)?;
         validate_catalog_values(&catalog)?;
+        if let Some(params) = &parts.geothermal {
+            params.validate(
+                catalog
+                    .iter()
+                    .find(|s| s.kind == PlantKind::Geothermal)
+                    .expect("ordered catalog"),
+            )?;
+        }
         validate_frequency(&parts.frequency)?;
         validate_lines(&parts.lines)?;
         areas::validate(&parts)?;
@@ -731,6 +760,7 @@ impl TryFrom<RegionDefinitionParts> for RegionDefinition {
             solar_monthly_means,
             wind: parts.wind,
             hydro: parts.hydro,
+            geothermal: parts.geothermal,
             frequency: parts.frequency,
             regulator: parts.regulator,
             satisfaction: parts.satisfaction,

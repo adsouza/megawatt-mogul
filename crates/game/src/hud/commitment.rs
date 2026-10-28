@@ -259,7 +259,12 @@ pub fn commitment_model(
     let state_on = l10n.text("commitment-state-on");
     let state_off = l10n.text("commitment-state-off");
     let row = |plant: &PlantView| {
-        let spec = region.spec(plant.kind);
+        let control_spec = session
+            .power()
+            .plant(plant.id)
+            .expect("commitment view plant")
+            .control_spec();
+        let spec = &control_spec;
         let draft = ui.draft_of(plant.id);
         let shown = draft.unwrap_or(plant.commitment);
         let dirty = draft.is_some_and(|draft| draft != plant.commitment);

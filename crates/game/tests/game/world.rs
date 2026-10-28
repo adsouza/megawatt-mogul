@@ -19,6 +19,7 @@ fn grid(width: u16, height: u16, heights: &[f64]) -> TerrainGrid {
             wind_potential: Ratio::ZERO,
             cooling_water: Ratio::ZERO,
             hydro_potential: Ratio::ZERO,
+            geothermal_potential: Ratio::ZERO,
         })
         .collect();
     TerrainGrid::new(width, height, cells).unwrap()

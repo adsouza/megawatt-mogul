@@ -107,3 +107,70 @@ fn probe(id: &str, bytes: &[u8], months: u32) -> Result<js_sys::Array, Box<dyn s
     }
     Ok(output)
 }
+
+/// A19 cross-target acceptance: operate an isolated native checkpoint and return only reservoir
+/// state, which uses basic IEEE arithmetic. Broader cross-target physics identity is not assumed.
+#[wasm_bindgen]
+pub fn browser_geothermal_probe(bytes: &[u8]) -> Result<String, JsValue> {
+    geothermal_probe(bytes).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+fn geothermal_probe(bytes: &[u8]) -> Result<String, Box<dyn std::error::Error>> {
+    let (bundle, region) = decode_save(bytes, &replay_compatibility())?;
+    let source = region.clone();
+    let mut game = bundle.restore(
+        region,
+        &replay_compatibility(),
+        Box::<InMemoryCommandLog>::default(),
+        &|| false,
+    )?;
+    let mut traces = Vec::new();
+    for _ in 0..8 {
+        if game.session().phase() == domain::session::DayPhase::Review {
+            game.execute(Command::FinishReview)?;
+        }
+        let drill: Vec<_> = game
+            .session()
+            .power()
+            .plants()
+            .values()
+            .filter(|p| {
+                p.geothermal().is_some_and(|g| g.notice.is_some())
+                    && game.session().makeup_quote(p.id()).is_ok()
+            })
+            .map(|p| p.id())
+            .collect();
+        for plant in drill {
+            game.execute(Command::DrillMakeupWells { plant })?;
+        }
+        game.execute(Command::BeginOperating)?;
+        game.execute(Command::AdvanceTicks { n: 1440 })?;
+        let mut rows = vec![format!("dry={}", game.session().dry_cells().len())];
+        for p in game.session().power().plants().values() {
+            if let Some(g) = p.geothermal() {
+                rows.push(format!(
+                    "{}:{}:{:016x}:{}:{}:{:?}",
+                    p.id().0,
+                    g.exploration_left,
+                    g.field.value().to_bits(),
+                    g.rounds,
+                    g.makeup.as_ref().map_or(0, |m| m.months_left),
+                    g.notice
+                ));
+            }
+        }
+        traces.push(rows.join("|"));
+        // Exercise the target's own state codec at every exploration/decline/makeup boundary.
+        let checkpoint = game.checkpoint();
+        let expected = checkpoint.state_hash;
+        game = Game::restore(
+            source.clone(),
+            checkpoint,
+            Box::<InMemoryCommandLog>::default(),
+            &|| false,
+        )?;
+        if game.checkpoint().state_hash != expected {
+            return Err("geothermal checkpoint differs".into());
+        }
+    }
+    Ok(traces.join("\n"))
+}

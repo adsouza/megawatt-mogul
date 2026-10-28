@@ -113,7 +113,7 @@ fn planned_deliverable(
             .get(&plant.id())
             .map_or(Megawatts::ZERO, |fill| fill.hourly[usize::from(hour)])
     } else {
-        plant.spec().capacity
+        plant.available_capacity()
     }
 }
 
@@ -373,7 +373,7 @@ impl PowerSystem {
                 let budget = plant.hydro_budget().map_or(0.0, |b| b.value());
                 let left = budget - target.energy_over_ticks(minute).value();
                 let limit = Megawatts::new(left.max(0.0) * f64::from(TICKS_PER_HOUR));
-                target.min(limit).min(spec.capacity)
+                target.min(limit).min(plant.available_capacity())
             }
             (_, true) => spec
                 .capacity

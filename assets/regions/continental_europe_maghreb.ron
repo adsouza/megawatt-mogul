@@ -141,7 +141,7 @@
 // Turkiye, Kosovo, Andorra, Monaco, Liechtenstein, San Marino and Vatican
 // City.
 (
-    region_schema: 4,
+    region_schema: 5,
     id: "continental_europe_maghreb",
     system_zone: 2,
     // Civil clocks (spec section 28.4). The EU zones observe summer time from
@@ -503,6 +503,18 @@
     // 8.2, 8.4, 8.3, 8.3, 7.8, 7.4, 7.3, 7.0, 6.9, 7.6, 8.2 and 8.4 mph), times
     // the Eastern Interconnection's annual mean factor, 0.567 (authoring
     // scale, as in the other Plan 7 files).
+    geothermal_potential: (base: 0.0, blobs: [
+        // Larderello–Travale: https://www.regione.toscana.it/-/cosa-e-l-energia-geotermica-e-come-funziona
+        (lon: 10.9, lat: 43.25, radius_deg: 0.65, value: 1.0),
+        // Monte Amiata: https://www.regione.toscana.it/-/cosa-e-l-energia-geotermica-e-come-funziona
+        (lon: 11.6, lat: 42.85, radius_deg: 0.45, value: 1.0),
+        // Büyük Menderes graben: https://www.worldgeothermal.org/pdf/IGAstandard/WGC/2020/01049.pdf
+        (lon: 28.4, lat: 37.85, radius_deg: 0.7, value: 1.0),
+        // Gediz graben: https://www.worldgeothermal.org/pdf/IGAstandard/WGC/2020/01049.pdf
+        (lon: 28.5, lat: 38.55, radius_deg: 0.65, value: 1.0),
+    ]),
+    // A19 balance tuning; amounts below are local major currency units, not cents.
+    geothermal: (success_min: 0.45, success_max: 0.80, quality_min: 0.15, quality_max: 1.0, exploration_months: 3, exploration_share: 0.12, monthly_decline: 0.002535048613836126, makeup_capital: 15000000, makeup_months: 3, ceiling_step: 0.05, minimum_gain: 0.03),
     wind: (monthly: [0.77, 0.74, 0.69, 0.57, 0.48, 0.44, 0.42, 0.39, 0.43, 0.53, 0.63, 0.72], persistence: 0.995, innovation_sd: 0.015, initial_sd: 0.15, band: 0.25),
     // Unit sizes and operating parameters follow the North American catalog
     // (spec section 3.2): no row names a local unit size, so no start-up or
@@ -529,6 +541,7 @@
     // 8.018426 EUR/MMBtu [P7-EM-013] and hard coal 2.97 x 1.055056 = 3.133516
     // EUR/MMBtu [P7-EM-014].
     catalog: [
+        (kind: Geothermal, capacity_mw: 150.0, min_stable: 0.5, ramp_mw_per_min: 2.0, startup_hours: 12.0, startup_cost: 100000, marginal_cost_per_mwh: 5.0, fixed_om_per_month: 300000, capital_cost: 150000000, build_months: 12, capacity_credit: 0.95, book_life_months: 360, siting: GeothermalSite(0.3)),
         // Wind [P7-DE-001] [P7-US-001]: the German 2024 range 1,300-1,900,
         // midpoint 1,600 EUR/kW x (1,000 / 1,489 = 0.67159) = 1,074.5, so
         // 1,070 EUR/kW x 300,000 kW = 321,000,000. Fixed O&M [P7-DE-008]

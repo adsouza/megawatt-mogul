@@ -61,7 +61,7 @@ impl GameSession {
                     || f.charge.value() < 0.0
                     || f.charge > spec.charge_power
                     || f.discharge.value() < 0.0
-                    || f.discharge > plant.spec().capacity
+                    || f.discharge > plant.available_capacity()
                     || (f.charge > Megawatts::ZERO && f.discharge > Megawatts::ZERO)
                 {
                     return Err(InvariantViolation::PlantOutOfBounds { plant: plant.id() });
@@ -77,10 +77,10 @@ impl GameSession {
             let min = if spec.kind == PlantKind::Hydro {
                 Megawatts::ZERO
             } else {
-                spec.min_output()
+                plant.min_output()
             };
             let below = min.value() - output.value() > TOLERANCE;
-            let above = output.value() - spec.capacity.value() > TOLERANCE;
+            let above = output.value() - plant.available_capacity().value() > TOLERANCE;
             if below || above {
                 return Err(InvariantViolation::PlantOutOfBounds { plant: plant.id() });
             }

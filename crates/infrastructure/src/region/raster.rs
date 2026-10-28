@@ -31,6 +31,7 @@ pub(super) struct Geography<'a> {
     pub cooling_water: &'a Field,
     pub hydro_potential: &'a Field,
     pub wind_potential: Option<&'a Field>,
+    pub geothermal_potential: Option<&'a Field>,
 }
 /// Rasterises `file` onto its grid.
 ///
@@ -64,6 +65,9 @@ pub(super) fn rasterize_geometry(file: Geography<'_>) -> TerrainGrid {
                 },
                 wind_potential: file
                     .wind_potential
+                    .map_or(Ratio::ZERO, |f| sample(f, lon, lat)),
+                geothermal_potential: file
+                    .geothermal_potential
                     .map_or(Ratio::ZERO, |f| sample(f, lon, lat)),
                 cooling_water: sample(file.cooling_water, lon, lat),
                 hydro_potential: sample(file.hydro_potential, lon, lat),
@@ -274,6 +278,7 @@ impl RegionFile {
             cooling_water: &self.cooling_water,
             hydro_potential: &self.hydro_potential,
             wind_potential: self.wind_potential.as_ref(),
+            geothermal_potential: None,
         }
     }
 }
@@ -295,6 +300,7 @@ impl RegionFileV4 {
             cooling_water: &self.cooling_water,
             hydro_potential: &self.hydro_potential,
             wind_potential: Some(&self.wind_potential),
+            geothermal_potential: self.geothermal_potential.as_ref(),
         }
     }
 }

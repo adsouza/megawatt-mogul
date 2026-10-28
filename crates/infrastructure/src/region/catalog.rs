@@ -151,7 +151,7 @@ pub(super) fn parse_region_file(
     // loaded. Anything else (another schema, or a file that fails to parse) takes the probe path
     // unchanged, so errors and legacy files behave as before.
     if let Ok(file) = ron::de::from_str::<super::dto::RegionFileV4>(text)
-        && file.region_schema == 4
+        && matches!(file.region_schema, 4 | 5)
     {
         return check_id(ParsedRegionFile::V4(Box::new(file)), region);
     }
@@ -160,7 +160,7 @@ pub(super) fn parse_region_file(
         None | Some(2 | 3) => ParsedRegionFile::Legacy(
             ron::de::from_str(text).map_err(|e| parse_error(e.to_string()))?,
         ),
-        Some(4) => ParsedRegionFile::V4(ron::de::from_str(text).map_err(|e| match e.code {
+        Some(4 | 5) => ParsedRegionFile::V4(ron::de::from_str(text).map_err(|e| match e.code {
             ron::error::Error::MissingStructField { field, .. } => {
                 invalid(domain::region::RegionError::MissingField { field })
             }

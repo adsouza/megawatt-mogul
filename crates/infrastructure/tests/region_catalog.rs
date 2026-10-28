@@ -291,14 +291,26 @@ fn loaded_definition_fingerprint_and_archive_source_share_one_read() {
 }
 
 #[test]
-fn maps_the_same_values_as_the_domain_fixture() {
+fn maps_the_same_pre_geothermal_values_as_the_domain_fixture() {
     let dir = dir_with(&[("minimal.ron", MINIMAL)]);
     let def = catalog(dir.path())
         .load(&RegionId::new("minimal"))
         .unwrap()
         .definition;
     let tiny = tiny_region();
-    assert_eq!(def.catalog(), tiny.catalog());
+    let old_catalog = |region: &domain::region::RegionDefinition| {
+        region
+            .catalog()
+            .iter()
+            .filter(|s| s.kind != PlantKind::Geothermal)
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(old_catalog(&def), old_catalog(&tiny));
+    assert!(
+        def.geothermal().is_none(),
+        "legacy data receives the unavailable stub, not current tuning"
+    );
     assert_eq!(def.cities(), tiny.cities());
     assert_eq!(def.demand_noise(), tiny.demand_noise());
     for m in 1..=12 {

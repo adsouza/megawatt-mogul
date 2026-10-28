@@ -63,6 +63,7 @@ pub enum PlantKindDto {
     Hydro,
     Battery,
     Wind,
+    Geothermal,
 }
 
 impl From<PlantKind> for PlantKindDto {
@@ -76,6 +77,7 @@ impl From<PlantKind> for PlantKindDto {
             PlantKind::Hydro => Self::Hydro,
             PlantKind::Battery => Self::Battery,
             PlantKind::Wind => Self::Wind,
+            PlantKind::Geothermal => Self::Geothermal,
         }
     }
 }
@@ -91,6 +93,7 @@ impl From<PlantKindDto> for PlantKind {
             PlantKindDto::Hydro => Self::Hydro,
             PlantKindDto::Battery => Self::Battery,
             PlantKindDto::Wind => Self::Wind,
+            PlantKindDto::Geothermal => Self::Geothermal,
         }
     }
 }
@@ -184,6 +187,12 @@ impl TryFrom<LogHeaderDto> for LogHeader {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum CommandDto {
+    DrillMakeupWells {
+        plant: u32,
+    },
+    DismissFieldNotice {
+        plant: u32,
+    },
     ActivateService {
         island: u32,
         accept_shortfall: bool,
@@ -250,6 +259,8 @@ pub enum CommandDto {
 impl From<&Command> for CommandDto {
     fn from(command: &Command) -> Self {
         match *command {
+            Command::DrillMakeupWells { plant } => Self::DrillMakeupWells { plant: plant.0 },
+            Command::DismissFieldNotice { plant } => Self::DismissFieldNotice { plant: plant.0 },
             Command::ActivateService {
                 island,
                 accept_shortfall,
@@ -312,6 +323,12 @@ impl TryFrom<CommandDto> for Command {
 
     fn try_from(dto: CommandDto) -> Result<Self, LogDtoError> {
         Ok(match dto {
+            CommandDto::DrillMakeupWells { plant } => Self::DrillMakeupWells {
+                plant: PlantId(plant),
+            },
+            CommandDto::DismissFieldNotice { plant } => Self::DismissFieldNotice {
+                plant: PlantId(plant),
+            },
             CommandDto::ActivateService {
                 island,
                 accept_shortfall,

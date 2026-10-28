@@ -57,6 +57,8 @@ impl GameSession {
             month_to_date: self.month_to_date.for_island(id),
             year_depreciation: self.year_depreciation,
             day_ticks,
+            geothermal_available: self.geothermal_available,
+            dry_cells: self.dry_cells.clone(),
         })
     }
     pub fn link_utilisation(
@@ -103,6 +105,8 @@ impl GameSession {
         to: NodeId,
     ) -> Result<LinkConstructionTerms, DomainError> {
         let length = self.line_length(from, to)?;
+        self.check_exploring_endpoint(from)?;
+        self.check_exploring_endpoint(to)?;
         let network = self.power.network();
         let a = network
             .node(from)

@@ -16,6 +16,8 @@ impl CommandHandler for CoreHandler {
         command: &Command,
     ) -> Result<Vec<DomainEvent>, CommandError> {
         let events = match command {
+            Command::DrillMakeupWells { plant } => session.drill_makeup_wells(*plant)?,
+            Command::DismissFieldNotice { plant } => session.dismiss_field_notice(*plant)?,
             Command::ActivateService {
                 island,
                 accept_shortfall,

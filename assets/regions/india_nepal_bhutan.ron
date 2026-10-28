@@ -53,7 +53,7 @@
 // game values by its pacing method. Each entry's comment cites its rows and
 // shows the arithmetic; the ratios use full precision (ruling 25).
 (
-    region_schema: 4,
+    region_schema: 5,
     id: "india_nepal_bhutan",
     system_zone: 1,
     // Indian Standard Time (IST, UTC+5:30) is the dispatcher's clock for all
@@ -266,6 +266,10 @@
     // in the year) over the year's mean per day, times the Eastern
     // Interconnection's annual mean factor, 0.567 (authoring scale, as in the
     // Southern China and Brazil files). It peaks from May to August.
+    geothermal_potential: (base: 0.0, blobs: [
+    ]),
+    // A19 balance tuning; amounts below are local major currency units, not cents.
+    geothermal: (success_min: 0.45, success_max: 0.80, quality_min: 0.15, quality_max: 1.0, exploration_months: 3, exploration_share: 0.12, monthly_decline: 0.002535048613836126, makeup_capital: 15000000, makeup_months: 3, ceiling_step: 0.05, minimum_gain: 0.03),
     wind: (monthly: [0.47, 0.32, 0.38, 0.4, 0.95, 0.93, 0.95, 0.81, 0.64, 0.32, 0.24, 0.37], persistence: 0.995, innovation_sd: 0.015, initial_sd: 0.15, band: 0.25),
     // Unit sizes and operating parameters follow the North American catalog
     // (spec section 3.2), except where the rows name an Indian unit: coal is
@@ -286,6 +290,7 @@
     // ruling 2 (NA start-up x local marginal / NA marginal, at full
     // precision).
     catalog: [
+        (kind: Geothermal, capacity_mw: 150.0, min_stable: 0.5, ramp_mw_per_min: 2.0, startup_hours: 12.0, startup_cost: 100000, marginal_cost_per_mwh: 5.0, fixed_om_per_month: 300000, capital_cost: 150000000, build_months: 12, capacity_credit: 0.95, book_life_months: 360, siting: GeothermalSite(0.3)),
         // Wind [P7-IN-020] [P7-US-001]: CEA's planning cost, 60,000 INR/kW x
         // (1,000 / 1,489 = 0.67159) = 40,295.5, so 40,300 INR/kW x 300,000 kW
         // = 12,090,000,000 (P7-IN-025, IRENA's market average, is a

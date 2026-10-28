@@ -178,6 +178,7 @@ impl TargetSlider {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelectedPlant {
+    pub geothermal: Option<super::geothermal::GeothermalCard>,
     pub plant: PlantId,
     /// `Coal plant 3`.
     pub name: String,
@@ -202,6 +203,7 @@ pub struct SelectedPlant {
 /// Read-only Planning details for a commissioned plant.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlantCardModel {
+    pub geothermal: Option<super::geothermal::GeothermalCard>,
     pub storage_toggle: Option<ToggleModel>,
     pub storage_hint: Option<String>,
     pub plant: PlantId,
@@ -306,7 +308,12 @@ pub fn plant_card_model(
     if matches!(plant.status, PlantStatus::UnderConstruction { .. }) {
         return None;
     }
-    let spec = session.region().spec(plant.kind);
+    let control_spec = session
+        .power()
+        .plant(plant.id)
+        .expect("view plant")
+        .control_spec();
+    let spec = &control_spec;
     let colors = plant_value_colors(session.region(), spec);
     let stat = |key: &str, value| PlantStat::new(l10n, key, value);
     let mut stats = vec![
@@ -364,6 +371,7 @@ pub fn plant_card_model(
         ));
     }
     Some(PlantCardModel {
+        geothermal: super::geothermal::geothermal_model(game, l10n, id, style),
         storage_toggle: plant
             .battery
             .as_ref()
@@ -388,6 +396,9 @@ pub fn draw_plant_card(ui: &mut egui::Ui, model: &PlantCardModel) -> Vec<UiActio
     let mut actions = Vec::new();
     ui.heading(egui::RichText::new(&model.name).color(heading_color()));
     ui.colored_label(model.status_tone.color(), &model.status);
+    if let Some(geo) = &model.geothermal {
+        super::geothermal::draw_geothermal(ui, geo, &mut actions);
+    }
     if let Some(toggle) = &model.storage_toggle {
         toggle_button(ui, toggle, &mut actions);
     }
@@ -516,7 +527,12 @@ pub fn plant_panel_model(
             hint: l10n.text("plant-select-hint"),
         };
     };
-    let spec = session.region().spec(plant.kind);
+    let control_spec = session
+        .power()
+        .plant(plant.id)
+        .expect("view plant")
+        .control_spec();
+    let spec = &control_spec;
     let operable = is_commitable(&plant);
     let too_late = session.phase() == DayPhase::Operating
         && spec.startup.ticks() > TICKS_PER_DAY.saturating_sub(session.clock().tick());
@@ -593,6 +609,7 @@ pub fn plant_panel_model(
         stats.extend(wind_stats(l10n, wind));
     }
     PlantPanelModel::Plant(Box::new(SelectedPlant {
+        geothermal: super::geothermal::geothermal_model(game, l10n, plant.id, style),
         storage_toggle: plant
             .battery
             .as_ref()
@@ -782,6 +799,9 @@ pub fn draw_plant_panel(
         );
         ui.colored_label(plant.status_tone.color(), &plant.status);
     });
+    if let Some(geo) = &plant.geothermal {
+        super::geothermal::draw_geothermal(ui, geo, &mut actions);
+    }
     if let Some(toggle) = &plant.storage_toggle {
         toggle_button(ui, toggle, &mut actions);
         if let Some(hint) = &plant.storage_hint {

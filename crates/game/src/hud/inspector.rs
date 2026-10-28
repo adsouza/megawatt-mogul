@@ -209,6 +209,7 @@ fn cell_inspector(game: &Game, l10n: &Localizer, at: CellCoord) -> Option<CellIn
         reading("inspector-height", cell.height),
         reading("inspector-irradiance", region.solar_potential(at)),
         reading("wind-potential", cell.wind_potential),
+        reading("geothermal-potential", cell.geothermal_potential),
         reading("inspector-cooling-water", cell.cooling_water),
         reading("inspector-hydro-potential", cell.hydro_potential),
     ];

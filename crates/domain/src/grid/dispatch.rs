@@ -77,7 +77,7 @@ pub fn agc_retarget(
                 let cap = available
                     .get(&plant.id())
                     .copied()
-                    .unwrap_or(plant.spec().capacity);
+                    .unwrap_or(plant.available_capacity());
                 plant.headroom_up(cap)
             } else {
                 plant.headroom_down()
@@ -93,8 +93,8 @@ pub fn agc_retarget(
         let signed = if raising { alloc } else { -alloc };
         // A plant pulled below minimum stable output by its resource (dry
         // hydro) cannot hold that output as a target, so clamp into bounds.
-        let target = (output + Megawatts::new(signed))
-            .clamp(plant.spec().min_output(), plant.spec().capacity);
+        let target =
+            (output + Megawatts::new(signed)).clamp(plant.min_output(), plant.available_capacity());
         let result = plant.set_target(target);
         debug_assert!(result.is_ok(), "AGC target {target:?} rejected: {result:?}");
     }
@@ -127,19 +127,16 @@ pub fn boundary_dispatch(
         .collect();
     order.sort_by(|&a, &b| by_cost_then_id(plants[a], plants[b]));
 
-    let minimum: f64 = order
-        .iter()
-        .map(|&i| plants[i].spec().min_output().value())
-        .sum();
+    let minimum: f64 = order.iter().map(|&i| plants[i].min_output().value()).sum();
     let mut remaining = load.value() - minimum;
     for i in order {
         let plant = &mut *plants[i];
-        let min = plant.spec().min_output();
+        let min = plant.min_output();
         let cap = available
             .get(&plant.id())
             .copied()
-            .unwrap_or(plant.spec().capacity)
-            .min(plant.spec().capacity);
+            .unwrap_or(plant.available_capacity())
+            .min(plant.available_capacity());
         let room = (cap - min).value().max(0.0);
         let add = room.min(remaining.max(0.0));
         remaining -= add;

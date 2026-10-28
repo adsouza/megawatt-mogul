@@ -291,6 +291,9 @@ pub struct ActionSink<'w> {
 }
 
 impl ActionSink<'_> {
+    pub fn game(&self) -> Option<&application::Game> {
+        self.session.as_ref().map(|s| &s.0)
+    }
     pub fn world(&self) -> &crate::world::WorldControls {
         &self.world
     }

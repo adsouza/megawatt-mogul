@@ -14,10 +14,11 @@ pub enum PlantKind {
     Hydro,
     Battery,
     Wind,
+    Geothermal,
 }
 
 impl PlantKind {
-    pub const ALL: [PlantKind; 8] = [
+    pub const ALL: [PlantKind; 9] = [
         PlantKind::Nuclear,
         PlantKind::Coal,
         PlantKind::Ccgt,
@@ -26,6 +27,7 @@ impl PlantKind {
         PlantKind::Hydro,
         PlantKind::Battery,
         PlantKind::Wind,
+        PlantKind::Geothermal,
     ];
 
     pub fn is_variable(self) -> bool {
@@ -48,6 +50,7 @@ pub enum SitingRule {
     Anywhere,
     CoolingWater { min: Ratio },
     HydroSite { min: Ratio },
+    GeothermalSite { min: Ratio },
 }
 
 /// Technical and economic characteristics of one plant kind in a region.
@@ -177,6 +180,10 @@ impl crate::state::State for SitingRule {
                 crate::state::State::write(&1u8, out);
                 crate::state::State::write(min, out);
             }
+            Self::GeothermalSite { min } => {
+                crate::state::State::write(&3u8, out);
+                crate::state::State::write(min, out);
+            }
             Self::HydroSite { min } => {
                 crate::state::State::write(&2u8, out);
                 crate::state::State::write(min, out);
@@ -187,6 +194,9 @@ impl crate::state::State for SitingRule {
         Ok(match <u8 as crate::state::State>::read(input)? {
             0 => Self::Anywhere,
             1 => Self::CoolingWater {
+                min: crate::state::State::read(input)?,
+            },
+            3 if input.schema >= 6 => Self::GeothermalSite {
                 min: crate::state::State::read(input)?,
             },
             2 => Self::HydroSite {
@@ -220,6 +230,9 @@ impl crate::state::State for PlantKind {
             Self::Battery => {
                 crate::state::State::write(&6u8, out);
             }
+            Self::Geothermal => {
+                crate::state::State::write(&8u8, out);
+            }
             Self::Wind => {
                 crate::state::State::write(&7u8, out);
             }
@@ -235,6 +248,7 @@ impl crate::state::State for PlantKind {
             5 => Self::Hydro,
             6 => Self::Battery,
             7 if input.schema >= 2 => Self::Wind,
+            8 if input.schema >= 6 => Self::Geothermal,
             _ => return Err(crate::state::StateError::Invalid),
         })
     }

@@ -14,6 +14,26 @@ use crate::units::{MegawattHours, Megawatts, Money, Price, Ratio};
 /// Something noteworthy that happened during a simulation step.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DomainEvent {
+    ExplorationSucceeded {
+        plant: PlantId,
+    },
+    ExplorationDry {
+        plant: PlantId,
+        capital_lost: Money,
+    },
+    FieldDeclineThreshold {
+        plant: PlantId,
+        threshold: u8,
+        first: bool,
+    },
+    MakeupDrillingOrdered {
+        plant: PlantId,
+    },
+    MakeupDrillingCompleted {
+        plant: PlantId,
+        restored: Megawatts,
+    },
+
     /// A plant began its start-up sequence.
     PlantStarting {
         plant: PlantId,
@@ -159,6 +179,37 @@ impl crate::state::State for DomainEvent {
     }
     fn write_schema(&self, out: &mut Vec<u8>, schema: u32) {
         match self {
+            Self::ExplorationSucceeded { plant } => {
+                crate::state::State::write(&33u8, out);
+                crate::state::State::write_schema(plant, out, schema);
+            }
+            Self::ExplorationDry {
+                plant,
+                capital_lost,
+            } => {
+                crate::state::State::write(&34u8, out);
+                crate::state::State::write_schema(plant, out, schema);
+                crate::state::State::write_schema(capital_lost, out, schema);
+            }
+            Self::FieldDeclineThreshold {
+                plant,
+                threshold,
+                first,
+            } => {
+                crate::state::State::write(&35u8, out);
+                crate::state::State::write_schema(plant, out, schema);
+                crate::state::State::write_schema(threshold, out, schema);
+                crate::state::State::write_schema(first, out, schema);
+            }
+            Self::MakeupDrillingOrdered { plant } => {
+                crate::state::State::write(&36u8, out);
+                crate::state::State::write_schema(plant, out, schema);
+            }
+            Self::MakeupDrillingCompleted { plant, restored } => {
+                crate::state::State::write(&37u8, out);
+                crate::state::State::write_schema(plant, out, schema);
+                crate::state::State::write_schema(restored, out, schema);
+            }
             Self::PlantStarting { plant } => {
                 crate::state::State::write_schema(&0u8, out, schema);
                 crate::state::State::write_schema(plant, out, schema);
@@ -306,6 +357,25 @@ impl crate::state::State for DomainEvent {
     }
     fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
         Ok(match <u8 as crate::state::State>::read(input)? {
+            33 if input.schema >= 6 => Self::ExplorationSucceeded {
+                plant: crate::state::State::read(input)?,
+            },
+            34 if input.schema >= 6 => Self::ExplorationDry {
+                plant: crate::state::State::read(input)?,
+                capital_lost: crate::state::State::read(input)?,
+            },
+            35 if input.schema >= 6 => Self::FieldDeclineThreshold {
+                plant: crate::state::State::read(input)?,
+                threshold: crate::state::State::read(input)?,
+                first: crate::state::State::read(input)?,
+            },
+            36 if input.schema >= 6 => Self::MakeupDrillingOrdered {
+                plant: crate::state::State::read(input)?,
+            },
+            37 if input.schema >= 6 => Self::MakeupDrillingCompleted {
+                plant: crate::state::State::read(input)?,
+                restored: crate::state::State::read(input)?,
+            },
             0 => Self::PlantStarting {
                 plant: crate::state::State::read(input)?,
             },

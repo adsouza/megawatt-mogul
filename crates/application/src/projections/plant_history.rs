@@ -13,6 +13,7 @@ use super::Projection;
 /// One plant's record so far.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PlantHistory {
+    pub exploration_loss: Money,
     pub starts: u32,
     pub storage: BatteryTotals,
     pub trips: u32,
@@ -27,6 +28,7 @@ pub struct PlantHistory {
 impl PlantHistory {
     fn new() -> Self {
         Self {
+            exploration_loss: Money::ZERO,
             starts: 0,
             storage: BatteryTotals::default(),
             trips: 0,
@@ -70,6 +72,10 @@ impl PlantHistoryProjection {
 impl Projection for PlantHistoryProjection {
     fn apply(&mut self, event: &DomainEvent, _session: &GameSession) {
         match event {
+            DomainEvent::ExplorationDry {
+                plant,
+                capital_lost,
+            } => self.entry(*plant).exploration_loss += *capital_lost,
             DomainEvent::PlantStarting { plant } => self.entry(*plant).starts += 1,
             DomainEvent::PlantTripped { plant } => self.entry(*plant).trips += 1,
             // December's review emits its event just before that month's
@@ -112,7 +118,7 @@ domain::state_record!(PlantHistory {
     trips,
     energy,
     revenue,
-    storage
+    storage; since6 { exploration_loss: Money::ZERO }
 });
 
 #[cfg(test)]

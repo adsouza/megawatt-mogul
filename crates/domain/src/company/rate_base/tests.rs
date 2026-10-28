@@ -1256,3 +1256,160 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn geothermal_makeup_capital_is_new_without_reclassifying_original_or_double_counting_firm_mw() {
+    let plant = PlantId(55);
+    let node = NodeId(56);
+    let mut base = RateBase::default();
+    base.add(
+        AssetRef::Plant(plant),
+        Money::from_cents(10200),
+        12,
+        SimMonth::new(2027, 1).unwrap(),
+        AssetProfile::Plant {
+            firm: Megawatts::new(80.0),
+            node,
+        },
+    );
+    for _ in 0..6 {
+        base.depreciate_month();
+    }
+    base.add_improvement(
+        plant,
+        Money::from_cents(1001),
+        SimMonth::new(2028, 1).unwrap(),
+        Megawatts::new(20.0),
+        node,
+    );
+    base.refresh_plant_firm(|_| Some(Megawatts::new(100.0)));
+    let asset = base.asset(AssetRef::Plant(plant)).unwrap();
+    assert_eq!(
+        asset.firm().unwrap() + asset.additions()[0].firm().unwrap(),
+        Megawatts::new(100.0)
+    );
+    base.apply_reserve_review(&ReserveReviewInputs {
+        year: 2028,
+        excess: Megawatts::new(20.0),
+    });
+    assert_eq!(base.held_total(), Money::from_cents(1001));
+    assert_eq!(base.eligible_total(), Money::from_cents(5100));
+    assert_eq!(base.depreciate_month(), Money::from_cents(1016));
+    assert_eq!(base.held_total(), Money::from_cents(835));
+    let mut released = base.clone();
+    released.apply_reserve_review(&ReserveReviewInputs {
+        year: 2029,
+        excess: Megawatts::ZERO,
+    });
+    assert_eq!(released.held_total(), Money::ZERO);
+    assert_eq!(released.total(), base.total());
+    base.apply_reserve_review(&ReserveReviewInputs {
+        year: 2029,
+        excess: Megawatts::new(20.0),
+    });
+    assert_eq!(base.written_off_total(), Money::from_cents(835));
+    assert_eq!(base.total(), Money::from_cents(4250));
+    assert!(base.valid_additions());
+}
+proptest::proptest! {
+    #[test]
+    fn geothermal_capital_components_depreciate_exactly_without_extending_original_life(cost in 1i64..1_000_000_000, addition in 1i64..1_000_000_000, life in 2u32..100, elapsed_fraction in 0u32..100) {
+        let elapsed=elapsed_fraction%life;
+        let plant=PlantId(1); let node=NodeId(2);
+        let mut base=RateBase::default();
+        base.add(AssetRef::Plant(plant),Money::from_cents(cost),life,SimMonth::new(2027,1).unwrap(),AssetProfile::Plant {firm:Megawatts::new(80.0),node});
+        let mut recovered=Money::ZERO;
+        for _ in 0..elapsed {recovered+=base.depreciate_month();}
+        base.add_improvement(plant,Money::from_cents(addition),SimMonth::new(2028,1).unwrap(),Megawatts::new(20.0),node);
+        for _ in elapsed..life {recovered+=base.depreciate_month();}
+        proptest::prop_assert_eq!(recovered,Money::from_cents(cost+addition));
+        proptest::prop_assert_eq!(base.total(),Money::ZERO);
+        proptest::prop_assert_eq!(base.depreciate_month(),Money::ZERO);
+        proptest::prop_assert!(base.valid_additions());
+    }
+}
+
+#[test]
+fn geothermal_nested_capital_components_are_bounded_on_untrusted_wire_input() {
+    use crate::state::{State, StateError};
+    let mut entry = RateBaseAsset::new(
+        AssetRef::Plant(PlantId(1)),
+        Money::from_cents(1),
+        1,
+        month(2027, 1),
+        AssetProfile::Plant {
+            firm: Megawatts::new(1.0),
+            node: NodeId(2),
+        },
+        false,
+    );
+    for _ in 0..40 {
+        let mut parent = entry.clone();
+        parent.additions = vec![entry];
+        entry = parent;
+    }
+    assert_eq!(
+        RateBaseAsset::from_state_bytes(&entry.state_bytes()),
+        Err(StateError::Limit)
+    );
+}
+
+#[test]
+fn geothermal_two_additions_preserve_original_hold_and_end_of_life_has_no_division_by_zero() {
+    let plant = PlantId(1);
+    let node = NodeId(2);
+    let mut base = RateBase::default();
+    base.add(
+        AssetRef::Plant(plant),
+        Money::from_cents(12000),
+        12,
+        month(2027, 1),
+        AssetProfile::Plant {
+            firm: Megawatts::new(80.0),
+            node,
+        },
+    );
+    base.apply_reserve_review(&ReserveReviewInputs {
+        year: 2027,
+        excess: Megawatts::new(20.0),
+    });
+    base.depreciate_month();
+    let original_hold = base
+        .asset(AssetRef::Plant(plant))
+        .unwrap()
+        .held_slice()
+        .cloned();
+    base.add_improvement(
+        plant,
+        Money::from_cents(1001),
+        month(2027, 2),
+        Megawatts::new(10.0),
+        node,
+    );
+    base.add_improvement(
+        plant,
+        Money::from_cents(2003),
+        month(2027, 3),
+        Megawatts::new(10.0),
+        node,
+    );
+    assert_eq!(
+        base.asset(AssetRef::Plant(plant)).unwrap().held_slice(),
+        original_hold.as_ref()
+    );
+    assert_eq!(base.total(), Money::from_cents(14004));
+    for _ in 0..11 {
+        base.depreciate_month();
+    }
+    assert_eq!(base.total(), Money::ZERO);
+    base.add_improvement(
+        plant,
+        Money::from_cents(503),
+        month(2028, 1),
+        Megawatts::new(5.0),
+        node,
+    );
+    assert_eq!(base.depreciate_month(), Money::from_cents(503));
+    assert_eq!(base.depreciate_month(), Money::ZERO);
+    assert!(base.valid_additions());
+}

@@ -99,6 +99,9 @@ fn ratio(v: f64) -> Ratio {
 
 fn site_errors() -> Vec<SiteError> {
     vec![
+        SiteError::NoGeothermalSite,
+        SiteError::GeothermalUnavailable,
+        SiteError::ExploredDry,
         SiteError::Occupied,
         SiteError::OutOfBounds,
         SiteError::NotLand,
@@ -112,6 +115,11 @@ fn site_errors() -> Vec<SiteError> {
 
 fn domain_errors() -> Vec<DomainError> {
     vec![
+        DomainError::ExplorationPending { plant: PLANT },
+        DomainError::PlantNotGeothermal { plant: PLANT },
+        DomainError::GeothermalBusy { plant: PLANT },
+        DomainError::MakeupNotWorthwhile { plant: PLANT },
+        DomainError::NoFieldNotice { plant: PLANT },
         DomainError::ActivationBlocked {
             island: domain::ids::NodeId(1),
         },
@@ -305,6 +313,16 @@ fn command_errors() -> Vec<CommandError> {
 fn lessons() -> Vec<Lesson> {
     let mwh = MegawattHours::new(12_345.0);
     vec![
+        Lesson::GeothermalSuccess { plant: PLANT },
+        Lesson::GeothermalDry {
+            plant: PLANT,
+            lost: Money::from_dollars(18_000_000),
+        },
+        Lesson::GeothermalDecline {
+            plant: PLANT,
+            threshold: 90,
+            first: true,
+        },
         Lesson::ExpensivePeaking {
             energy: mwh,
             cost: Money::from_dollars(1_850_000),
@@ -467,6 +485,30 @@ fn tick_summary() -> TickSummary {
 fn events() -> Vec<(DomainEvent, bool)> {
     let month = SimMonth::new(2027, 3).unwrap();
     vec![
+        (DomainEvent::ExplorationSucceeded { plant: PLANT }, true),
+        (
+            DomainEvent::ExplorationDry {
+                plant: PLANT,
+                capital_lost: Money::from_dollars(18_000_000),
+            },
+            true,
+        ),
+        (
+            DomainEvent::FieldDeclineThreshold {
+                plant: PLANT,
+                threshold: 90,
+                first: true,
+            },
+            true,
+        ),
+        (DomainEvent::MakeupDrillingOrdered { plant: PLANT }, true),
+        (
+            DomainEvent::MakeupDrillingCompleted {
+                plant: PLANT,
+                restored: megawatts(15.0),
+            },
+            true,
+        ),
         (DomainEvent::PlantStarting { plant: PLANT }, false),
         (DomainEvent::PlantOnline { plant: PLANT }, false),
         (DomainEvent::PlantStopped { plant: PLANT }, false),
@@ -612,7 +654,12 @@ fn events() -> Vec<(DomainEvent, bool)> {
 
 #[test]
 fn the_variant_tables_cover_every_variant() {
-    assert_covers_every_variant("DomainError", &domain_errors(), 37, |e| match e {
+    assert_covers_every_variant("DomainError", &domain_errors(), 42, |e| match e {
+        DomainError::ExplorationPending { .. } => 37,
+        DomainError::PlantNotGeothermal { .. } => 38,
+        DomainError::GeothermalBusy { .. } => 39,
+        DomainError::MakeupNotWorthwhile { .. } => 40,
+        DomainError::NoFieldNotice { .. } => 41,
         DomainError::ActivationBlocked { .. } => 34,
         DomainError::ActivationShortfall { .. } => 35,
         DomainError::ActivationPlanChanged { .. } => 36,
@@ -698,14 +745,20 @@ fn the_variant_tables_cover_every_variant() {
         CommandError::Region(_) => 1,
         CommandError::Log(_) => 2,
     });
-    assert_covers_every_variant("SiteError", &site_errors(), 5, |e| match e {
+    assert_covers_every_variant("SiteError", &site_errors(), 8, |e| match e {
+        SiteError::NoGeothermalSite => 5,
+        SiteError::GeothermalUnavailable => 6,
+        SiteError::ExploredDry => 7,
         SiteError::Occupied => 4,
         SiteError::OutOfBounds => 0,
         SiteError::NotLand => 1,
         SiteError::InsufficientCoolingWater { .. } => 2,
         SiteError::NoHydroSite => 3,
     });
-    assert_covers_every_variant("Lesson", &lessons(), 10, |l| match l {
+    assert_covers_every_variant("Lesson", &lessons(), 13, |l| match l {
+        Lesson::GeothermalSuccess { .. } => 10,
+        Lesson::GeothermalDry { .. } => 11,
+        Lesson::GeothermalDecline { .. } => 12,
         Lesson::ExpensivePeaking { .. } => 0,
         Lesson::RotatingOutages { .. } => 1,
         Lesson::UnservedEnergy { .. } => 2,
@@ -742,7 +795,12 @@ fn the_variant_tables_cover_every_variant() {
         MilestoneProgress::Cities { .. } => 2,
     });
     let events: Vec<DomainEvent> = events().into_iter().map(|(event, _)| event).collect();
-    assert_covers_every_variant("DomainEvent", &events, 33, |e| match e {
+    assert_covers_every_variant("DomainEvent", &events, 38, |e| match e {
+        DomainEvent::ExplorationSucceeded { .. } => 33,
+        DomainEvent::ExplorationDry { .. } => 34,
+        DomainEvent::FieldDeclineThreshold { .. } => 35,
+        DomainEvent::MakeupDrillingOrdered { .. } => 36,
+        DomainEvent::MakeupDrillingCompleted { .. } => 37,
         DomainEvent::PlantStarting { .. } => 0,
         DomainEvent::PlantOnline { .. } => 1,
         DomainEvent::PlantStopped { .. } => 2,

@@ -34,6 +34,7 @@ pub fn rasterize(file: &RegionFile) -> TerrainGrid {
                     .map_or(Ratio::ZERO, |f| sample(f, lon, lat)),
                 cooling_water: sample(&file.cooling_water, lon, lat),
                 hydro_potential: sample(&file.hydro_potential, lon, lat),
+                geothermal_potential: Ratio::ZERO,
             });
         }
     }

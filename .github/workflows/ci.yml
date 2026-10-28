@@ -110,8 +110,8 @@ jobs:
       - name: Build browser distribution
         working-directory: web
         run: trunk build --release --public-url "$WEB_PUBLIC_PATH"
-      - name: Build native backup acceptance tool
-        run: cargo build --locked -p infrastructure --example save_backup
+      - name: Build native acceptance tools
+        run: cargo build --locked -p infrastructure --example save_backup --example geothermal_acceptance
       - run: npm ci --prefix web/tests
       - name: Test the distribution at its deployed subpath
         run: |

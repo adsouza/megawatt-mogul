@@ -11,6 +11,12 @@ use crate::error::CommandError;
 /// Everything the player (or a replay) can ask the game to do.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
+    DrillMakeupWells {
+        plant: PlantId,
+    },
+    DismissFieldNotice {
+        plant: PlantId,
+    },
     ActivateService {
         island: NodeId,
         accept_shortfall: bool,
@@ -101,6 +107,14 @@ impl<H: CommandHandler + ?Sized> CommandHandler for Box<H> {
 impl domain::state::State for Command {
     fn write(&self, out: &mut Vec<u8>) {
         match self {
+            Self::DrillMakeupWells { plant } => {
+                domain::state::State::write(&18u8, out);
+                domain::state::State::write(plant, out);
+            }
+            Self::DismissFieldNotice { plant } => {
+                domain::state::State::write(&19u8, out);
+                domain::state::State::write(plant, out);
+            }
             Self::ActivateService {
                 island,
                 accept_shortfall,
@@ -190,6 +204,12 @@ impl domain::state::State for Command {
     }
     fn read(input: &mut domain::state::StateReader<'_>) -> Result<Self, domain::state::StateError> {
         Ok(match <u8 as domain::state::State>::read(input)? {
+            18 if input.schema >= 6 => Self::DrillMakeupWells {
+                plant: domain::state::State::read(input)?,
+            },
+            19 if input.schema >= 6 => Self::DismissFieldNotice {
+                plant: domain::state::State::read(input)?,
+            },
             17 => Self::ActivateService {
                 island: domain::state::State::read(input)?,
                 accept_shortfall: domain::state::State::read(input)?,

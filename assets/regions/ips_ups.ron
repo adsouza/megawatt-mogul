@@ -100,7 +100,7 @@
 // game values by its pacing method. Each entry's comment cites its rows and
 // shows the arithmetic; the ratios use full precision (ruling 25).
 (
-    region_schema: 4,
+    region_schema: 5,
     id: "ips_ups",
     system_zone: 1,
     // Moscow time (MSK, UTC+3, which Belarus also keeps) is the dispatcher's
@@ -367,6 +367,10 @@
     // Eastern Interconnection's annual mean factor, 0.567 (authoring scale,
     // as in the other Plan 7 files; the cube law is an authoring judgment).
     // It peaks from November to February.
+    geothermal_potential: (base: 0.0, blobs: [
+    ]),
+    // A19 balance tuning; amounts below are local major currency units, not cents.
+    geothermal: (success_min: 0.45, success_max: 0.80, quality_min: 0.15, quality_max: 1.0, exploration_months: 3, exploration_share: 0.12, monthly_decline: 0.002535048613836126, makeup_capital: 15000000, makeup_months: 3, ceiling_step: 0.05, minimum_gain: 0.03),
     wind: (monthly: [0.85, 0.84, 0.71, 0.52, 0.39, 0.29, 0.26, 0.31, 0.42, 0.6, 0.75, 0.86], persistence: 0.995, innovation_sd: 0.015, initial_sd: 0.15, band: 0.25),
     // Unit sizes and operating parameters follow the North American catalog
     // (spec section 3.2), except where a row names a local unit: coal is a
@@ -394,6 +398,7 @@
     // price-level proxy from [P7-IPS-001]. Start-ups follow ruling 2 (NA
     // start-up x local marginal / NA marginal, at full precision).
     catalog: [
+        (kind: Geothermal, capacity_mw: 150.0, min_stable: 0.5, ramp_mw_per_min: 2.0, startup_hours: 12.0, startup_cost: 100000, marginal_cost_per_mwh: 5.0, fixed_om_per_month: 300000, capital_cost: 150000000, build_months: 12, capacity_credit: 0.95, book_life_months: 360, siting: GeothermalSite(0.3)),
         // Wind [P7-IPS-007] [P7-US-001]: IRENA's 2025 Russian market average,
         // 1,818 USD/kW x 83.6525 RUB/USD [P7-FX-023] = 152,080.2 RUB/kW x
         // (1,000 / 1,489 = 0.67159) = 102,135.8, so 102,000 RUB/kW x 300,000

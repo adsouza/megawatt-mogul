@@ -77,6 +77,11 @@ impl Localize for CommandLogError {
 impl LocalizeWith for DomainError {
     fn localize_with(&self, l10n: &Localizer, names: &Names) -> String {
         match self {
+            Self::ExplorationPending { .. } => l10n.text("geothermal-wait"),
+            Self::PlantNotGeothermal { .. } => l10n.text("geothermal-not-commissioned"),
+            Self::GeothermalBusy { .. } => l10n.text("geothermal-busy"),
+            Self::MakeupNotWorthwhile { .. } => l10n.text("geothermal-not-worthwhile"),
+            Self::NoFieldNotice { .. } => l10n.text("geothermal-no-notice"),
             Self::LineCrossesAreas => l10n.text("error-line-crosses-areas"),
             Self::ActivationBlocked { .. } => l10n.text("error-activation-blocked"),
             Self::ActivationShortfall { .. } => l10n.text("error-activation-shortfall"),
@@ -227,6 +232,9 @@ impl Localize for SiteError {
                 ],
             ),
             Self::NoHydroSite => l10n.text("site-no-hydro-site"),
+            Self::NoGeothermalSite => l10n.text("geothermal-no-resource"),
+            Self::GeothermalUnavailable => l10n.text("geothermal-legacy"),
+            Self::ExploredDry => l10n.text("geothermal-dry-site"),
         }
     }
 }
@@ -408,6 +416,7 @@ impl Localize for PlantKind {
             Self::Hydro => "plant-kind-hydro",
             Self::Battery => "plant-kind-battery",
             Self::Wind => "plant-kind-wind",
+            Self::Geothermal => "plant-kind-geothermal",
         })
     }
 }
@@ -552,6 +561,48 @@ impl LocalizeWith for IncidentKind {
 impl LessonMoneyText for Lesson {
     fn localize_money(&self, l10n: &Localizer, style: &format::MoneyStyle) -> String {
         match self {
+            Self::GeothermalSuccess { plant } => l10n.args(
+                "geothermal-success",
+                &[(
+                    "plant",
+                    Names::empty(l10n)
+                        .plant_as(*plant, PlantKind::Geothermal)
+                        .into(),
+                )],
+            ),
+            Self::GeothermalDry { plant, lost } => l10n.args(
+                "geothermal-dry",
+                &[
+                    (
+                        "plant",
+                        Names::empty(l10n)
+                            .plant_as(*plant, PlantKind::Geothermal)
+                            .into(),
+                    ),
+                    ("capital", format::money(*lost, style).into()),
+                ],
+            ),
+            Self::GeothermalDecline {
+                plant,
+                threshold,
+                first,
+            } => l10n.args(
+                if *first {
+                    "geothermal-decline-lesson"
+                } else {
+                    "geothermal-decline-later"
+                },
+                &[
+                    (
+                        "plant",
+                        Names::empty(l10n)
+                            .plant_as(*plant, PlantKind::Geothermal)
+                            .into(),
+                    ),
+                    ("threshold", u32::from(*threshold).into()),
+                ],
+            ),
+
             Self::ExpensivePeaking {
                 energy,
                 cost,
@@ -649,6 +700,38 @@ impl Localize for RampWarning {
 impl Toast for DomainEvent {
     fn toast(&self, l10n: &Localizer, names: &Names, style: &format::MoneyStyle) -> Option<String> {
         let text = match self {
+            Self::ExplorationSucceeded { plant } => l10n.args(
+                "geothermal-success",
+                &[("plant", names.plant(*plant).into())],
+            ),
+            Self::ExplorationDry {
+                plant,
+                capital_lost,
+            } => l10n.args(
+                "geothermal-dry",
+                &[
+                    ("plant", names.plant(*plant).into()),
+                    ("capital", format::money(*capital_lost, style).into()),
+                ],
+            ),
+            Self::FieldDeclineThreshold {
+                plant, threshold, ..
+            } => l10n.args(
+                "geothermal-decline-later",
+                &[
+                    ("plant", names.plant(*plant).into()),
+                    ("threshold", u32::from(*threshold).into()),
+                ],
+            ),
+            Self::MakeupDrillingOrdered { .. } => l10n.text("geothermal-ordered"),
+            Self::MakeupDrillingCompleted { plant, restored } => l10n.args(
+                "geothermal-completed",
+                &[
+                    ("plant", names.plant(*plant).into()),
+                    ("restored", format::megawatts(*restored).into()),
+                ],
+            ),
+
             Self::Blackout => l10n.text("event-blackout"),
             Self::BlackoutRestored => l10n.text("event-blackout-restored"),
             Self::RotatingOutageOrdered { hour, share } => {

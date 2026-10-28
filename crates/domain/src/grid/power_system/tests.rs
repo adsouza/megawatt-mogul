@@ -429,7 +429,7 @@ fn may_2033_sized_surplus_recovers_without_dropping_the_hydro_fleet() {
     // of the midnight fix. Four hydro units can lower only 400 MW on the next tick.
     let excess = region.spec(PlantKind::Ccgt).capacity;
     let p = sys.plant_mut(PlantId(4)).unwrap();
-    p.set_output_unchecked((p.output() + excess).min(p.spec().capacity));
+    p.set_output_unchecked((p.output() + excess).min(p.available_capacity()));
     for tick in 0..60 {
         let before: BTreeMap<_, _> = sys
             .plants()
@@ -485,7 +485,7 @@ proptest! {
                 2 => {
                     plant.start().unwrap();
                     // Interrupt an already-progressing start; recovery must begin a full start.
-                    plant.step(plant.spec().capacity);
+                    plant.step(plant.available_capacity());
                 }
                 _ => { *plant = Plant::new_under_construction(id, plant.node(), plant.cell(), plant.spec().clone()); }
             }
@@ -546,7 +546,7 @@ fn fixed_target_fleet(region: &RegionDefinition, targets: &[f64]) -> PowerSystem
     for (id, frac) in (1u32..).zip(targets) {
         let p = sys.plant_mut(PlantId(id)).unwrap();
         p.set_commitment(CommitmentSchedule::all_day());
-        p.set_initial_target(p.spec().capacity * *frac);
+        p.set_initial_target(p.available_capacity() * *frac);
     }
     sys
 }
@@ -708,7 +708,7 @@ fn surplus_beyond_solar_keeps_agc_ramp_limited_and_curtails_all_solar() {
     for id in [coal, ccgt, peaker] {
         let p = sys.plant_mut(id).unwrap();
         p.set_commitment(CommitmentSchedule::all_day());
-        p.set_initial_target(p.spec().capacity);
+        p.set_initial_target(p.available_capacity());
     }
     sys.plant_mut(peaker)
         .unwrap()
@@ -3040,7 +3040,7 @@ fn run_down_to_zero(sys: &mut PowerSystem, id: PlantId) {
     let plant = sys.plant_mut(id).unwrap();
     plant.set_target(Megawatts::ZERO).unwrap();
     while plant.output() > Megawatts::ZERO {
-        plant.step(plant.spec().capacity);
+        plant.step(plant.available_capacity());
     }
     assert!(plant.is_online());
 }
@@ -3103,7 +3103,7 @@ fn agc_lowers_scheduled_hydro_sitting_exactly_at_its_ceiling() {
     let thermal_room: Megawatts = [1, 2, 3]
         .map(|id| {
             let plant = sys.plant(PlantId(id)).unwrap();
-            plant.output() - plant.spec().min_output()
+            plant.output() - plant.min_output()
         })
         .into_iter()
         .sum();
@@ -3528,7 +3528,7 @@ fn overbuild_surplus_clears_as_far_as_safe_trips_allow() {
     let mut sys = overbuild_fleet(&region);
     let mut rng = SimRng::from_seed(1);
     sys.begin_day(&region, april(), &mut rng);
-    let minimum: Megawatts = sys.plants().values().map(|p| p.spec().min_output()).sum();
+    let minimum: Megawatts = sys.plants().values().map(|p| p.min_output()).sum();
     assert_eq!(minimum, Megawatts::new(880.0));
 
     let (trips, devs) = run_day_checking_over_frequency(&mut sys, &region, &mut rng);
@@ -4967,7 +4967,7 @@ fn battery_fixture() -> (PowerSystem, RegionDefinition, PlantId) {
 fn charge_inventory(sys: &mut PowerSystem, id: PlantId, ticks: u32) {
     let p = sys.plant_mut(id).unwrap();
     let spec = p.spec().battery.unwrap();
-    let max = p.spec().capacity;
+    let max = p.available_capacity();
     for _ in 0..ticks {
         p.battery_mut()
             .unwrap()
@@ -5034,7 +5034,7 @@ fn battery_charging_stops_for_outages_shedding_low_frequency_and_blackout() {
         .values_mut()
         .filter(|p| p.kind().is_dispatchable())
     {
-        p.set_output_unchecked(p.spec().capacity);
+        p.set_output_unchecked(p.available_capacity());
     }
     let normal = sys.clone();
     for fault in 0..4 {

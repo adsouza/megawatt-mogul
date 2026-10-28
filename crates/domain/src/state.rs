@@ -5,11 +5,11 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ops::RangeInclusive;
 
 /// Schema emitted by new portable state captures.
-pub const CURRENT_STATE_SCHEMA: u32 = 5;
+pub const CURRENT_STATE_SCHEMA: u32 = 6;
 /// Existing portable collection bound, also used for construction payment queues.
 pub const MAX_COLLECTION_LEN: usize = 1_000_000;
 /// Portable state schemas accepted by every reader.
-pub const SUPPORTED_STATE_SCHEMAS: RangeInclusive<u32> = 1..=5;
+pub const SUPPORTED_STATE_SCHEMAS: RangeInclusive<u32> = 1..=6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum StateError {
@@ -26,6 +26,7 @@ pub struct StateReader<'a> {
     bytes: &'a [u8],
     at: usize,
     pub schema: u32,
+    collection_depth: u8,
 }
 impl<'a> StateReader<'a> {
     pub fn new(bytes: &'a [u8]) -> Self {
@@ -33,6 +34,7 @@ impl<'a> StateReader<'a> {
             bytes,
             at: 0,
             schema: CURRENT_STATE_SCHEMA,
+            collection_depth: 0,
         }
     }
     pub fn take(&mut self, n: usize) -> Result<&'a [u8], StateError> {
@@ -169,7 +171,13 @@ impl<T: State> State for Vec<T> {
     }
     fn read(input: &mut StateReader<'_>) -> Result<Self, StateError> {
         let n = input.length()?;
-        (0..n).map(|_| T::read(input)).collect()
+        if input.collection_depth >= 32 {
+            return Err(StateError::Limit);
+        }
+        input.collection_depth += 1;
+        let result = (0..n).map(|_| T::read(input)).collect();
+        input.collection_depth -= 1;
+        result
     }
 }
 impl<T: State> State for VecDeque<T> {
@@ -288,6 +296,19 @@ impl State for String {
 /// Explicit schema-1 field order; adding a Rust field must require an explicit default/migration.
 #[macro_export]
 macro_rules! state_record {
+    ($ty:ty { $($field:ident),* ; since6 { $($added:ident : $default:expr),* $(,)? } }) => {
+        impl $crate::state::State for $ty {
+            fn write(&self, out: &mut Vec<u8>) { self.write_schema(out, $crate::state::CURRENT_STATE_SCHEMA); }
+            fn write_schema(&self, out: &mut Vec<u8>, schema: u32) {
+                $( $crate::state::State::write_schema(&self.$field, out, schema); )*
+                if schema >= 6 { $( $crate::state::State::write_schema(&self.$added, out, schema); )* }
+            }
+            fn read(input: &mut $crate::state::StateReader<'_>) -> Result<Self, $crate::state::StateError> {
+                Ok(Self { $( $field: $crate::state::State::read(input)?, )*
+                    $( $added: if input.schema >= 6 { $crate::state::State::read(input)? } else { $default }, )* })
+            }
+        }
+    };
     ($ty:ty { $($field:ident),* ; since4 { $($added:ident : $default:expr),* $(,)? } }) => {
         impl $crate::state::State for $ty {
             fn write(&self, out: &mut Vec<u8>) { self.write_schema(out, $crate::state::CURRENT_STATE_SCHEMA); }
@@ -347,12 +368,12 @@ mod tests {
 
     #[test]
     fn every_gate_accepts_exactly_the_supported_schemas() {
-        assert_eq!(CURRENT_STATE_SCHEMA, 5);
-        for schema in [1, 2, 3, 4, 5] {
+        assert_eq!(CURRENT_STATE_SCHEMA, 6);
+        for schema in [1, 2, 3, 4, 5, 6] {
             assert!(SUPPORTED_STATE_SCHEMAS.contains(&schema));
             assert_eq!(u8::from_state_bytes_schema(&[7], schema), Ok(7));
         }
-        for schema in [0, 6, u32::MAX] {
+        for schema in [0, 7, u32::MAX] {
             assert!(!SUPPORTED_STATE_SCHEMAS.contains(&schema));
             assert_eq!(
                 u8::from_state_bytes_schema(&[7], schema),

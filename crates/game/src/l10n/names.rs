@@ -81,6 +81,12 @@ impl<'a> Names<'a> {
             plants: plant_views
                 .into_iter()
                 .map(|plant| (plant.id, plant.kind))
+                .chain(
+                    session
+                        .dry_cells()
+                        .values()
+                        .map(|site| (site.plant, PlantKind::Geothermal)),
+                )
                 .collect(),
             cities: city_views
                 .into_iter()

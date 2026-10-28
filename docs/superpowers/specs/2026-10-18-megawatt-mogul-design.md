@@ -23,8 +23,8 @@
   A15 extends battery discharge eligibility to 06:00–24:00 and charging to 00:00–22:00
   (§29, 2026-10-26, rules 21). A16 standardizes solar calibration and counts annual clouds once
   (§30, 2026-10-26, rules 22). A17 rebalances Southern China’s starting economy
-  (§31, 2026-10-26, rules 23). A19 proposes geothermal plants with exploration risk and
-  reservoir decline (§33, 2026-10-27, targeting rules 24).
+  (§31, 2026-10-26, rules 23). A19 adds the approved design for geothermal plants with exploration
+  risk and reservoir decline (§33, 2026-10-27, rules 29; implemented locally).
 - **Engine:** Rust 1.98, Bevy 0.20, bevy_egui 0.43, bevy-inspector-egui 0.38
 
 ## 1. Vision and goals
@@ -252,8 +252,9 @@ preview remain selectable through their cards; broken entries retain their disab
 | Solar | 300 MW | 0% | n/a (weather) | n/a | n/a | $0/MWh | $0.15B | 2 | The duck curve |
 | Wind (§25) | 300 MW | 0% | n/a (resource) | n/a | n/a | $0/MWh | $0.30B | 3 | Correlated variability and overnight generation |
 | Hydro | 800 MW | 0% | 100 MW/min | 5 min | $1k | $0/MWh | $1.2B | 12 | Energy-limited dispatch |
+| Geothermal (§33, Milestone 2) | 150 MW nameplate | 50% of available MW | 2 MW/min | 12 h | $100k | $5/MWh variable O&M, no fuel | $150M | 12 (3 exploration + 9 construction) | Exploration risk, field decline and makeup wells |
 
-- **Battery storage** is a buildable asset kind alongside the seven generators: separate
+- **Battery storage** is a buildable asset kind alongside the eight generators: separate
   charge/discharge MW and stored MWh, automatic 00:00–22:00 charging and 06:00–24:00 gap support,
   and no energy carried past midnight. Its initial tuning is in §20; §25 amends its charging
   contract. It is not a primary energy source.
@@ -269,14 +270,17 @@ preview remain selectable through their cards; broken entries retain their disab
 - **Regulatory accounting values** (region data): capacity credit, which is the share of capacity
   the regulator counts as firm (thermal 0.95, hydro 0.8, solar 0.3, wind 0.2 under §25; batteries
   by accredited duration under §26.3, 0.85 for the shipped four-hour battery); and book
-  life in months (nuclear 480, coal 480, CCGT 360, peaker 360, solar 300, hydro 600, wind 300).
+  life in months (nuclear 480, coal 480, CCGT 360, peaker 360, solar 300, hydro 600, wind 300,
+  geothermal 360). Geothermal's 0.95 credit scales with current field availability.
 - **Siting constraints** come from cell resources. Nuclear and coal need cooling water, solar output
-  scales with irradiance, wind output scales with wind potential, and hydro needs a hydro site.
+  scales with irradiance, wind output scales with wind potential, hydro needs a hydro site, and
+  geothermal needs a hydrothermal resource and an unexplored cell.
 
 ### 3.3 Out of scope for Milestone 1
 
 - Transmission congestion and power-flow physics.
-- Generating plant types beyond the seven in §3.2; storage beyond the daily battery cycle of §20
+- Generating plant types beyond the original seven (geothermal is a Milestone 2 addition, §33);
+  storage beyond the daily battery cycle of §20
   (including pumped hydro, overnight/seasonal carry-over and degradation).
 - Discrete weather events (storms, damage and weather outages). Ordinary solar clouds and the
   correlated wind availability process in §25 are in scope.
@@ -4323,8 +4327,14 @@ is not promised. Current runtime evidence supports desktop Chromium; Firefox/Saf
 
 ## 33. Amendment A19: Geothermal plants with reservoir decline (2026-10-27)
 
-**Status:** Proposed design, not yet implemented. It targets simulation rules **24**, portable state
-schema **5** and region schema **5**. The implementation plan follows approval.
+**Status:** Implemented locally on 2026-10-27 under rules **29**, portable state **6** and region
+schema **5**. Focused native/browser validation is recorded in the implementation plan; CI is pending.
+[Implementation plan](../plans/2026-10-27-amendment-a19-geothermal.md).
+It targets simulation rules **29**, portable state schema **6** and region schema **5**.
+The original rules-24/state-5 targets were overtaken by changes through rules 27/state schema 5;
+these allocations preserve the approved gameplay design against the current baseline.
+Initial A19 used rules 28; rules 29 incorporates the user’s correction that a dry geothermal
+result only excludes geothermal, leaving other plant kinds subject to their normal siting rules.
 
 ### 33.1 Why
 
@@ -4340,16 +4350,19 @@ goal because its lessons are different from every shipped kind:
   80% in operation (IFC global study, 2013). First wells in a new field fare worse; one study of
   Iceland's high-temperature fields found 43% (ÍSOR).
 - **Fields wear down.** Steam and brine production declines as a field is drawn down. Reported
-  declines are a few percent a year, for example about 2.3% at Hengill in Iceland and 2.7% at Patuha in
-  Indonesia. Operators drill **makeup wells** to restore output, and each round buys less. The Geysers
+  declines are a few percent a year, for example about 2.3% steam-flow decline at Hellisheiði in
+  the Hengill area, reported in UNU-GTP's 2014 report 28. Operators drill **makeup wells** to restore
+  output, and each round buys less. The Geysers
   is the classic warning: overbuilt in the 1980s, its steam pressure fell faster than planned.
 
 Sources:
-[IFC study coverage (ThinkGeoEnergy)](https://www.thinkgeoenergy.com/global-study-on-success-of-drilling-geothermal-wells-by-ifc/),
-[Icelandic well success (ThinkGeoEnergy)](https://www.thinkgeoenergy.com/report-success-of-high-temperature-geothermal-wells-in-iceland/),
-[Hengill makeup wells (ThinkGeoEnergy)](https://www.thinkgeoenergy.com/additional-wells-required-to-maintain-output-hellisheidi-geothermal-plant/),
-[Patuha decline (Garuda)](https://garuda.kemdikbud.go.id/documents/detail/1874396).
-Confirm each figure against its primary source before authoring the final tuning.
+[IFC, Success of Geothermal Wells (2013)](https://documents1.worldbank.org/curated/en/305681468168834775/pdf/782300WP0Succe00Box0377330B0PUBLIC0.pdf),
+[Geothermal Exploration Best Practices, 2nd edition](https://documents.worldbank.org/curated/en/190071480069890732/pdf/110532-Geothermal-Exploration-Best-Practices-2nd-Edition-FINAL.pdf),
+[Icelandic National Energy Authority, Geothermal Policy (2015)](https://lbsrafhladan20.landsbokasafn.is/bitstream/handle/10802/17769/OS-2015-06.pdf?sequence=1),
+[UNU-GTP report 28 (2014)](https://rafhladan.is/bitstream/handle/10802/10534/UNU-GTP-2014-28.pdf).
+The best-practices guide reports 59%, 74% and 83% across exploration, development and operation;
+the values above are rounded. The proposed Patuha 2.7% claim was not retained without primary
+verification. The implemented 3% annual decline is a gameplay choice, not a field-specific estimate.
 
 ### 33.2 Goals, non-goals, anti-goals
 
@@ -4413,8 +4426,9 @@ Confirm each figure against its primary source before authoring the final tuning
      commissioned dispatchable plant starts all-day committed with AGC on, which suits baseload.
    - **Dry:** the project stops. Instalments already paid are lost. The plant and its grid node are
      removed; its ID is never reused, and histories and ledger entries keep referring to it. Its
-     cell is marked **explored, dry**: no plant can be ordered there again, and the map shows it.
-     Neighbouring cells stay available.
+     cell is marked **explored, dry** for geothermal: geothermal cannot be ordered there again,
+     and the map shows it. Other plant kinds can use the cell under their normal siting rules;
+     the failed project’s identity and loss remain in history. Neighbouring cells stay available.
    - **No lines while exploring.** A line order with an endpoint at an exploring plant's node is
      refused with a reason ("wait for exploration results"), so a dry result never strands a line
      or line capital. The 9 remaining construction months leave time to build the connection after
@@ -4452,7 +4466,7 @@ Confirm each figure against its primary source before authoring the final tuning
 ### 33.4 Model
 
 - **Kind.** Append `PlantKind::Geothermal` as the ninth asset kind, with stable portable tag **8**,
-  readable only at schema ≥ 5. Tags 0–7 and the existing kind order do not change. Geothermal is
+  readable only at schema ≥ 6. Tags 0–7 and the existing kind order do not change. Geothermal is
   dispatchable (`is_dispatchable() == true`), not variable and not storage, so commitment, dispatch,
   AGC and protection apply unchanged.
 - **Resource.** Add `Cell.geothermal_potential: Ratio`, a geographic field rasterised by
@@ -4500,23 +4514,24 @@ Confirm each figure against its primary source before authoring the final tuning
 
 ### 33.5 Region data and initial tuning
 
-All tuning lives in region RON files and the test fixture, never in code. The initial values below
-are a starting point; the balance test (§33.6) decides the final ones, per region and per Continental
-Europe economic zone that contains sites.
+All tuning lives in region RON files and the test fixture, never in code. The values below are the
+implemented balance tuning. The original starting proposal used $225M capital, $750k monthly O&M
+and 0.55 minimum field quality; the shipped-data balance test (§33.6) required the adjustments below.
+Values in non-USD regions use the region's major currency units.
 
-| Field | Initial value | Basis |
+| Field | Implemented value | Basis |
 |---|---:|---|
 | Nameplate | 150 MW | Real units are 20–150 MW; small units make siting the constraint |
 | Minimum stable / ramp | 50% / 2 MW per min | Baseload-oriented flash plant |
 | Start-up time / cost | 12 h / $100k | Slow to restart; avoid cycling |
 | Marginal cost | $5/MWh | No fuel; chemicals and variable O&M |
-| Capital cost | $225M ($1,500/kW) | On the shipped hydro's scale; compressed like other kinds (§18) |
-| Fixed O&M | $750k per month | High for a fuel-free plant, as in reality |
+| Capital cost | $150M ($1,000/kW) | Compressed gameplay capital; checked against shipped alternatives |
+| Fixed O&M | $300k per month | Fixed regardless of field output; balance-tested |
 | Build months (exploration included) | 12 (3 + 9) | Within the 24-month cap; between coal and hydro |
 | Exploration capital share | 12% | |
 | Capacity credit / book life | 0.95 / 360 months | Thermal credit, applied to available capacity |
 | Success odds (site minimum → full potential) | 0.45 → 0.80 | IFC and ÍSOR ranges |
-| Field quality (site minimum → full potential) | 0.55 → 1.00 | Chosen so marginal sites lose to gas |
+| Field quality (site minimum → full potential) | 0.15 → 1.00 | Chosen so marginal sites lose to gas in all three checks |
 | Decline | 3% a year, as a monthly rate | Reported field declines of 2–5% a year |
 | Makeup round | 10% of capital, 3 months | |
 | Ceiling step / minimum worthwhile gain | 5% / 3% of nameplate | |
@@ -4601,9 +4616,10 @@ Notices go where the game pauses, Planning and Review, and on the plant card, so
 
 ### 33.8 Persistence and compatibility
 
-- Advance simulation rules **23 → 24**, portable state schema **4 → 5** and region schema **4 → 5**.
-- Keep the schema-4 reader and canonical encoder. Verify old bytes, hashes and archived regions with
-  schema-4 semantics first; only then upcast in memory. A schema-4 game has no geothermal plants,
+- Advance simulation rules **27 → 28**, portable state schema **5 → 6** and region schema **4 → 5**.
+- Keep the portable schema-5 and older readers and canonical encoders. Verify old bytes, hashes and
+  archived regions with their source-schema semantics first; only then upcast in memory.
+  A pre-geothermal game (portable schema ≤ 5) has no geothermal plants,
   explored-dry cells or new RNG draws, so the upcast adds none.
 - **Old games load and play on, without geothermal.** Unlike A11, which gave resumed games the new
   wind data, a game started before this amendment never gains geothermal. Saved games exist only
@@ -4613,19 +4629,20 @@ Notices go where the game pauses, Planning and Review, and on the plant card, so
     `geothermal_potential`, a placeholder geothermal spec, and a marker that geothermal is
     unavailable in this game. The archived snapshot bytes are unchanged.
   - Pre-wind archives get the wind extension first, then this stub.
-  - The schema-5 save records the marker, so later loads don't depend on the compiled stub.
+  - The schema-6 save records the marker, so later loads don't depend on the compiled stub.
   - New-format region files must declare the geothermal fields. The stub applies only to archived
     schemas ≤ 4 and is never a silent default for malformed new content.
-- The command log, monthly chart archives and every schema gate recognise schema 5 and keep reading
-  schemas 1–4.
+- The command log, monthly chart archives and every portable schema gate recognise schema 6 and keep
+  reading schemas 1–5. Region schemas are versioned separately.
 
 ### 33.9 Acceptance
 
-- Kind tag 8 and the siting tag round-trip at schema 5 and are refused at schema ≤ 4. Classifiers:
+- Kind tag 8 and the siting tag round-trip at schema 6 and are refused at schema ≤ 5. Classifiers:
   dispatchable, not variable, not storage.
-- Siting accepts at the minimum and refuses below it, on water, on occupied cells and on explored-dry
-  cells. A line order to an exploring plant is refused. A dry result leaves no node, line or rate-base
-  entry behind.
+- Geothermal siting accepts at the minimum and refuses below it, on water, on occupied cells and
+  on explored-dry cells. A dry geothermal result leaves other plant kinds subject to normal siting
+  rules, including after save/resume and reuse of the cell. A line order to an exploring plant is
+  refused. A dry result leaves no node, line or rate-base entry behind.
 - Properties (`proptest`):
   - success odds and field quality lie within their configured bounds and are monotone in potential;
   - between makeup rounds the field never rises and stays in (0, 1];
@@ -4637,10 +4654,11 @@ Notices go where the game pauses, Planning and Review, and on the plant card, so
 - Decline notices fire exactly once per threshold crossing, re-arm after restoration, and **Not now**
   hides the Planning row until the next threshold, across save and resume.
 - The balance test (§33.6) passes for the Western Interconnection, Italy and Turkey.
-- Schema-4 golden saves in every phase restore unchanged, then continue and re-save under schema 5.
+- Schema-4 golden saves in every phase, plus pre-geothermal schema-5 fixtures, restore unchanged,
+  then continue and re-save under schema 6.
   In a restored Western Interconnection game, geothermal cannot be ordered on any cell, the build row
   shows the "started before geothermal" reason, and the marker survives a further save and resume.
-  Schema-5 saves mid-exploration, mid-makeup and after a dry result resume identically to
+  Schema-6 saves mid-exploration, mid-makeup and after a dry result resume identically to
   uninterrupted play.
 - Glue tests send each new `UiAction` through the real `dispatch`. A fit test covers the widest
   geothermal UI states (nine build rows, the plant card with a makeup quote, the Planning warning) at

@@ -342,7 +342,7 @@ impl GameSession {
                     .terrain()
                     .get(plant.cell())
                     .map_or(Ratio::ZERO, |c| c.wind_potential);
-                let rating = plant.spec().capacity * potential.value();
+                let rating = plant.available_capacity() * potential.value();
                 let (actual, (central, low, high)) = self.power.wind_for_node(
                     plant.node(),
                     &self.region,
@@ -757,10 +757,7 @@ impl GameSession {
             self.power
                 .plant(id)
                 .filter(|p| !matches!(p.status(), PlantStatus::UnderConstruction { .. }))
-                .map(|p| {
-                    p.spec()
-                        .firm_capacity(&self.region.regulator().storage_accreditation)
-                })
+                .map(|p| p.firm_capacity(&self.region.regulator().storage_accreditation))
         });
         let link_changes = rate_base.review_link_utilisation(
             self.clock.month().year(),

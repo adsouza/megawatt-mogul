@@ -473,6 +473,9 @@ pub fn finish_surface(
             l10n.text(&c.name_key),
         ));
     }
+    for at in model.dry_cells.values() {
+        labels.push((*at + Vec3::Y * 0.2, l10n.text("geothermal-dry-site")));
+    }
     for (at, text) in labels {
         let Some(ndc) = pose.project(at) else {
             continue;

@@ -15,6 +15,16 @@ use crate::units::Megawatts;
 /// leaves the session unchanged.
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum DomainError {
+    #[error("exploration pending for plant {plant:?}")]
+    ExplorationPending { plant: PlantId },
+    #[error("plant {plant:?} is not commissioned geothermal")]
+    PlantNotGeothermal { plant: PlantId },
+    #[error("makeup drilling in progress at {plant:?}")]
+    GeothermalBusy { plant: PlantId },
+    #[error("makeup gain is too small at {plant:?}")]
+    MakeupNotWorthwhile { plant: PlantId },
+    #[error("no field notice at {plant:?}")]
+    NoFieldNotice { plant: PlantId },
     #[error("island {island:?} has no viable activation plan")]
     ActivationBlocked { island: NodeId },
     #[error("activation of {island:?} needs explicit shortfall acknowledgement")]

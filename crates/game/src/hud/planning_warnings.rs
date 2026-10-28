@@ -28,6 +28,7 @@ pub enum WarningKind {
     MinimumGeneration,
     /// A hydro plant has no water for the day.
     DryHydro,
+    Geothermal(domain::ids::PlantId),
     Hvdc,
     InactiveIsland,
 }
@@ -39,6 +40,7 @@ pub struct WarningRow {
     pub text: String,
     /// Shows the hour in the commitment grid. Only a warning about an hour has one.
     pub show_hour: Option<ButtonModel>,
+    pub dismiss: Option<ButtonModel>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -80,6 +82,7 @@ pub fn warnings_for(
     let mut rows = Vec::new();
     if let Some(warning) = shortfall {
         rows.push(WarningRow {
+            dismiss: None,
             kind: WarningKind::Shortfall,
             text: l10n.args(
                 "warning-shortfall",
@@ -93,6 +96,7 @@ pub fn warnings_for(
     }
     if let Some(warning) = min_generation {
         rows.push(WarningRow {
+            dismiss: None,
             kind: WarningKind::MinimumGeneration,
             text: l10n.args(
                 "warning-min-gen",
@@ -106,6 +110,7 @@ pub fn warnings_for(
     }
     for plant in dry_hydro {
         rows.push(WarningRow {
+            dismiss: None,
             kind: WarningKind::DryHydro,
             text: l10n.args("warning-hydro-dry", &[("plant", plant.as_str().into())]),
             show_hour: None,
@@ -174,6 +179,7 @@ pub(super) fn warnings_for_session(
         {
             if !session.power().island_active(*id) {
                 rows.push(WarningRow {
+                    dismiss: None,
                     kind: WarningKind::InactiveIsland,
                     text: l10n.args(
                         "island-inactive-warning",
@@ -221,6 +227,7 @@ pub(super) fn warnings_for_session(
             WarningKind::Shortfall => 0,
             WarningKind::MinimumGeneration => 1,
             WarningKind::DryHydro => 2,
+            WarningKind::Geothermal(_) => 3,
             WarningKind::Hvdc => 3,
             WarningKind::InactiveIsland => 3,
         });
@@ -236,6 +243,7 @@ pub(super) fn warnings_for_session(
             }
             for text in super::links::link_planning_issues(session, link.id, l10n) {
                 rows.push(WarningRow {
+                    dismiss: None,
                     kind: WarningKind::Hvdc,
                     text,
                     show_hour: Some(ButtonModel::new(
@@ -245,18 +253,21 @@ pub(super) fn warnings_for_session(
                 });
             }
         }
+        rows.extend(geothermal_warnings(session, l10n, ui));
         return model_for_rows(rows, ui.warnings_open, l10n);
     }
     let names = Names::new(l10n, session);
     let views = session.plant_views();
     let dry_hydro = dry_hydro_plants(&views, &names);
-    warnings_for(
+    let mut model = warnings_for(
         session.capacity_shortfall_check(),
         session.minimum_generation_check(),
         &dry_hydro,
         ui.warnings_open,
         l10n,
-    )
+    );
+    model.rows.extend(geothermal_warnings(session, l10n, ui));
+    model_for_rows(model.rows, ui.warnings_open, l10n)
 }
 
 /// The strip: the heading and the first warning on one line, with a button for the rest, which
@@ -308,12 +319,54 @@ fn draw_row(ui: &mut egui::Ui, row: &WarningRow, actions: &mut Vec<UiAction>) {
         WarningKind::MinimumGeneration
         | WarningKind::DryHydro
         | WarningKind::Hvdc
-        | WarningKind::InactiveIsland => TextTone::Caution,
+        | WarningKind::InactiveIsland
+        | WarningKind::Geothermal(_) => TextTone::Caution,
     };
     ui.colored_label(tone.color(), &row.text);
+    if let Some(dismiss) = &row.dismiss {
+        button(ui, dismiss, actions);
+    }
     if let Some(show) = &row.show_hour {
         button(ui, show, actions);
     }
+}
+
+fn geothermal_warnings(
+    session: &domain::session::GameSession,
+    l10n: &Localizer,
+    ui: &UiState,
+) -> Vec<WarningRow> {
+    let names = Names::new(l10n, session);
+    session
+        .power()
+        .plants()
+        .values()
+        .filter(|p| {
+            ui.island.is_none_or(|id| {
+                session
+                    .power()
+                    .island_nodes()
+                    .get(&id)
+                    .is_some_and(|nodes| nodes.contains(&p.node()))
+            })
+        })
+        .filter(|p| p.geothermal().is_some_and(|g| g.notice.is_some()))
+        .map(|p| WarningRow {
+            kind: WarningKind::Geothermal(p.id()),
+            text: l10n.args(
+                "geothermal-warning",
+                &[("plant", names.plant(p.id()).into())],
+            ),
+            show_hour: Some(ButtonModel::new(
+                l10n.text("geothermal-show-plant"),
+                UiAction::InspectPlant(p.id()),
+            )),
+            dismiss: Some(ButtonModel::new(
+                l10n.text("geothermal-not-now"),
+                UiAction::Command(application::Command::DismissFieldNotice { plant: p.id() }),
+            )),
+        })
+        .collect()
 }
 
 #[cfg(test)]

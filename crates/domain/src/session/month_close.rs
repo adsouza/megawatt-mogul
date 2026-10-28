@@ -113,7 +113,9 @@ impl GameSession {
         events.extend(close);
         let ledger_from = self.company.ledger().len();
         self.book_month(month, days, &mut events);
+        self.book_makeup(month, &mut events);
         let commissioned = self.advance_construction(month, &mut events);
+        self.close_geothermal(month, &commissioned, &mut events);
         self.year_depreciation += self.company.rate_base_mut().depreciate_month();
 
         let acc = &self.month_to_date;
@@ -241,13 +243,16 @@ impl GameSession {
             .collect();
         let mut commissioned = BTreeSet::new();
         for id in building {
+            if !self.advance_exploration(id, events) {
+                continue;
+            }
             let plant = self.power.plant_mut(id).expect("plant listed above");
             let done = plant.advance_construction(month);
             if done.is_empty() {
                 continue;
             }
             let spec = plant.spec();
-            let firm = spec.firm_capacity(&self.region.regulator().storage_accreditation);
+            let firm = plant.firm_capacity(&self.region.regulator().storage_accreditation);
             self.company.rate_base_mut().add(
                 AssetRef::Plant(id),
                 spec.capital_cost,
@@ -338,7 +343,7 @@ impl GameSession {
             power
                 .plant(id)
                 .filter(|p| !matches!(p.status(), PlantStatus::UnderConstruction { .. }))
-                .map(|p| p.spec().firm_capacity(accreditation))
+                .map(|p| p.firm_capacity(accreditation))
         });
         let utilisation = self.link_utilisation(month);
         events.extend(

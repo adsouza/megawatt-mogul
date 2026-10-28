@@ -48,7 +48,9 @@ impl PowerSystem {
         let potential: Megawatts = self
             .connected_plants()
             .filter(|p| p.kind() == PlantKind::Wind)
-            .map(|p| p.spec().capacity * cell_ratio(region, p.cell(), |c| c.wind_potential).value())
+            .map(|p| {
+                p.available_capacity() * cell_ratio(region, p.cell(), |c| c.wind_potential).value()
+            })
             .sum();
         (potential * factor, potential * low, potential * high)
     }

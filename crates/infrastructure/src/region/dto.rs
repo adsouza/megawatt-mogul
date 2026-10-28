@@ -94,6 +94,7 @@ pub enum PlantKindDto {
     Hydro,
     Battery,
     Wind,
+    Geothermal,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize, Serialize)]
@@ -101,6 +102,7 @@ pub enum SitingDto {
     Anywhere,
     CoolingWater(f64),
     HydroSite(f64),
+    GeothermalSite(f64),
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -386,6 +388,19 @@ pub struct RegionFileV4 {
     pub cooling_water: Field,
     pub hydro_potential: Field,
     pub wind_potential: Field,
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub geothermal_potential: Option<Field>,
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub geothermal: Option<GeothermalDto>,
+
     pub wind: WindDto,
     pub catalog: Vec<PlantSpecDtoV4>,
     pub cities: Vec<CityDtoV4>,
@@ -772,4 +787,28 @@ pub struct HvdcConstructionDto {
         skip_serializing_if = "Option::is_none"
     )]
     pub cells_per_month: Option<u32>,
+}
+
+/// Fields added by region schema 5. None are defaulted for current content.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GeothermalDto {
+    pub success_min: f64,
+    pub success_max: f64,
+    pub quality_min: f64,
+    pub quality_max: f64,
+    pub exploration_months: u32,
+    pub exploration_share: f64,
+    pub monthly_decline: f64,
+    pub makeup_capital: i64,
+    pub makeup_months: u32,
+    pub ceiling_step: f64,
+    pub minimum_gain: f64,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct GeothermalExtension {
+    pub available: bool,
+    pub potential: Field,
+    pub plant: PlantSpecDtoV4,
 }

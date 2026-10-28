@@ -206,7 +206,7 @@ impl PowerSystem {
             let commitment = plant.commitment();
             let eligible: [bool; HOURS] =
                 std::array::from_fn(|h| h >= from && commitment.is_committed(h as u8));
-            let fill = water_fill(&residual, &eligible, plant.spec().capacity, water);
+            let fill = water_fill(&residual, &eligible, plant.available_capacity(), water);
             for (left, used) in residual.iter_mut().zip(fill.hourly) {
                 *left -= used;
             }

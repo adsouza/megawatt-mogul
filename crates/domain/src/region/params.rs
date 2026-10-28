@@ -248,3 +248,57 @@ mod storage_accreditation_tests {
         }
     }
 }
+
+/// Authored geothermal exploration, reservoir and makeup-drilling terms.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GeothermalParams {
+    pub success_min: Ratio,
+    pub success_max: Ratio,
+    pub quality_min: Ratio,
+    pub quality_max: Ratio,
+    pub exploration_months: u32,
+    pub exploration_share: Ratio,
+    pub monthly_decline: Ratio,
+    pub makeup_capital: Money,
+    pub makeup_months: u32,
+    pub ceiling_step: Ratio,
+    pub minimum_gain: Ratio,
+}
+impl GeothermalParams {
+    pub fn validate(&self, spec: &super::PlantSpec) -> Result<(), RegionError> {
+        if self.success_min > self.success_max
+            || self.quality_min == Ratio::ZERO
+            || self.quality_min > self.quality_max
+            || self.exploration_months == 0
+            || self.exploration_months >= spec.build_months
+            || spec.build_months > 24
+            || self.exploration_share == Ratio::ZERO
+            || self.exploration_share == Ratio::ONE
+            || self.monthly_decline == Ratio::ONE
+            || self.makeup_months == 0
+            || self.makeup_capital.is_negative()
+            || self.ceiling_step == Ratio::ZERO
+            || self.minimum_gain == Ratio::ZERO
+            || !matches!(spec.siting, super::SitingRule::GeothermalSite { .. })
+        {
+            return Err(RegionError::InvalidBand {
+                field: "geothermal",
+            });
+        }
+        Ok(())
+    }
+    pub fn site(&self, potential: Ratio, minimum: Ratio) -> (Ratio, Ratio) {
+        let t = if minimum == Ratio::ONE {
+            1.0
+        } else {
+            ((potential.value() - minimum.value()) / (1.0 - minimum.value())).clamp(0.0, 1.0)
+        };
+        let interpolate = |a: Ratio, b: Ratio| {
+            Ratio::new(a.value() + t * (b.value() - a.value())).expect("bounded interpolation")
+        };
+        (
+            interpolate(self.success_min, self.success_max),
+            interpolate(self.quality_min, self.quality_max),
+        )
+    }
+}

@@ -162,7 +162,9 @@ pub(crate) fn day_hydro_budget(
 ) -> MegawattHours {
     let flow = region.hydro().monthly_flow[month.index0()];
     let potential = cell_ratio(region, plant.cell(), |c| c.hydro_potential);
-    MegawattHours::new(plant.spec().capacity.value() * HOURS_PER_DAY * potential.value() * flow)
+    MegawattHours::new(
+        plant.available_capacity().value() * HOURS_PER_DAY * potential.value() * flow,
+    )
 }
 
 /// The most AGC may ask of plant `id`: its availability, lowered to its hydro
@@ -230,6 +232,12 @@ impl PowerSystem {
     }
 
     /// Adds a plant under its own id, replacing any plant with that id.
+    pub(crate) fn remove_dry_plant(&mut self, id: PlantId) {
+        if let Some(plant) = self.plants.remove(&id) {
+            self.network.remove_unconnected_plant(plant.node());
+        }
+        self.recompute_islands();
+    }
     pub fn insert_plant(&mut self, plant: Plant) {
         self.plants.insert(plant.id(), plant);
     }
@@ -286,7 +294,7 @@ impl PowerSystem {
             .filter(|p| p.kind().is_dispatchable())
         {
             let floor = if plant.auto_follow() {
-                plant.spec().min_output()
+                plant.min_output()
             } else {
                 plant.initial_target()
             };
@@ -440,19 +448,19 @@ impl PowerSystem {
     ) -> Megawatts {
         match plant.kind() {
             PlantKind::Solar => region.solar_available(
-                plant.spec().capacity,
+                plant.available_capacity(),
                 plant.cell(),
                 month,
                 tick,
                 self.clearness,
             ),
             PlantKind::Wind => crate::generation::wind_available(
-                plant.spec().capacity,
+                plant.available_capacity(),
                 cell_ratio(region, plant.cell(), |c| c.wind_potential),
                 self.wind_factor,
             ),
             PlantKind::Hydro => plant.hydro_available(),
-            _ => plant.spec().capacity,
+            _ => plant.available_capacity(),
         }
     }
 
@@ -989,7 +997,7 @@ impl PowerSystem {
                     let step = cover.map_or(spec.ramp.per_tick(), |c| spec.ramp.per_tick().min(c));
                     let target = (output - step)
                         .max(ceiling)
-                        .clamp(spec.min_output(), spec.capacity);
+                        .clamp(plant.min_output(), plant.available_capacity());
                     let result = plant.set_target(target);
                     debug_assert!(result.is_ok(), "ramp-down {target:?} rejected: {result:?}");
                     if let Some(c) = cover.as_mut() {
@@ -1372,7 +1380,9 @@ impl PowerSystem {
         let clearness = region.expected_clearness(month);
         self.connected_plants()
             .filter(|p| p.kind() == PlantKind::Solar)
-            .map(|p| region.solar_available(p.spec().capacity, p.cell(), month, tick, clearness))
+            .map(|p| {
+                region.solar_available(p.available_capacity(), p.cell(), month, tick, clearness)
+            })
             .sum()
     }
 
@@ -1390,11 +1400,11 @@ impl PowerSystem {
                     PlantStatus::Online { output, .. } => spec
                         .ramp
                         .over_ticks(w)
-                        .min(spec.capacity - output)
+                        .min(p.available_capacity() - output)
                         .max(Megawatts::ZERO),
-                    PlantStatus::Starting { ticks_left } if ticks_left <= w => (spec.min_output()
+                    PlantStatus::Starting { ticks_left } if ticks_left <= w => (p.min_output()
                         + spec.ramp.over_ticks(w - ticks_left))
-                    .min(spec.capacity),
+                    .min(p.available_capacity()),
                     _ => Megawatts::ZERO,
                 }
             })
@@ -1406,7 +1416,7 @@ impl PowerSystem {
         self.plants
             .values()
             .filter(|p| is_commissioned(p))
-            .map(|p| p.spec().firm_capacity(accreditation))
+            .map(|p| p.firm_capacity(accreditation))
             .sum()
     }
 

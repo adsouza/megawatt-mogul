@@ -78,7 +78,9 @@ impl Model {
 fn allowed_phases(command: &Command) -> &'static [DayPhase] {
     use DayPhase::{Operating, Planning, Review};
     match command {
-        Command::ActivateService { .. } => &[Planning],
+        Command::ActivateService { .. }
+        | Command::DrillMakeupWells { .. }
+        | Command::DismissFieldNotice { .. } => &[Planning],
         Command::BuildLink { .. }
         | Command::CancelLinkConstruction { .. }
         | Command::SetLinkSchedule { .. }

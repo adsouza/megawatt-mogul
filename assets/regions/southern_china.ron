@@ -41,7 +41,7 @@
 // values by its pacing method. Each entry's comment cites its rows and shows
 // the arithmetic; the ratios use full precision.
 (
-    region_schema: 4,
+    region_schema: 5,
     id: "southern_china",
     system_zone: 1,
     // China Standard Time, UTC+8 with no daylight saving, for every city,
@@ -233,6 +233,10 @@
     // normals, Table 7: 25.1, 24.2, 23.0, 20.5, 19.8, 21.6, 21.3, 18.8, 21.4,
     // 26.3, 26.6 and 26.4 km/h; year 22.9) times the Eastern
     // Interconnection's annual mean factor, 0.567 (authoring scale).
+    geothermal_potential: (base: 0.0, blobs: [
+    ]),
+    // A19 balance tuning; amounts below are local major currency units, not cents.
+    geothermal: (success_min: 0.45, success_max: 0.80, quality_min: 0.15, quality_max: 1.0, exploration_months: 3, exploration_share: 0.12, monthly_decline: 0.002535048613836126, makeup_capital: 15000000, makeup_months: 3, ceiling_step: 0.05, minimum_gain: 0.03),
     wind: (monthly: [0.62, 0.6, 0.57, 0.51, 0.49, 0.53, 0.53, 0.47, 0.53, 0.65, 0.66, 0.65], persistence: 0.995, innovation_sd: 0.015, initial_sd: 0.15, band: 0.25),
     // Unit sizes and operating parameters follow the North American
     // catalog (spec section 3.2), except coal: Guangdong builds 1,000 MW
@@ -253,6 +257,7 @@
     // fixed O&M follows ruling 4 (local capital x the NA fixed O&M /
     // capital ratio), both authoring judgments derived from these rows.
     catalog: [
+        (kind: Geothermal, capacity_mw: 150.0, min_stable: 0.5, ramp_mw_per_min: 2.0, startup_hours: 12.0, startup_cost: 100000, marginal_cost_per_mwh: 5.0, fixed_om_per_month: 300000, capital_cost: 150000000, build_months: 12, capacity_credit: 0.95, book_life_months: 360, siting: GeothermalSite(0.3)),
         // Wind [P7-SC-001] [P7-US-001]: 4,100 CNY/kW x (1,000 / 1,489 =
         // 0.67159) = 2,753.5, so 2,750 CNY/kW x 300,000 kW = 825,000,000.
         // Fixed O&M (ruling 4): 825,000,000 x (500,000 / 300,000,000) =

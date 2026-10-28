@@ -20,11 +20,20 @@ const PLANNING_OR_OPERATING: [DayPhase; 2] = [DayPhase::Planning, DayPhase::Oper
 /// [`GameSession::line_quote`]).
 pub type LineQuote = crate::region::LineConstructionTerms;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PlantQuote {
+    pub exploration: Option<ExplorationQuote>,
     pub capital: Money,
     pub months: u32,
     pub economic_zone: crate::region::EconomicZoneId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ExplorationQuote {
+    pub months: u32,
+    pub capital_at_risk: Money,
+    pub odds: crate::units::Ratio,
+    pub expected_output: Megawatts,
 }
 
 impl GameSession {
@@ -33,8 +42,31 @@ impl GameSession {
         self.plant_site_check(kind, cell)
             .map_err(|reason| DomainError::InvalidSite { kind, cell, reason })?;
         let spec = self.region.plant_spec_at(kind, cell)?;
+        if kind == PlantKind::Geothermal {
+            self.region
+                .geothermal()
+                .expect("available geothermal")
+                .validate(&spec)
+                .map_err(|_| DomainError::ConstructionOverflow)?;
+        }
         self.clock.month().checked_add_months(spec.build_months)?;
+        let exploration = if kind == PlantKind::Geothermal {
+            let params = self.region.geothermal().expect("available geothermal");
+            let (odds, field) = self.geothermal_site(cell)?;
+            Some(ExplorationQuote {
+                months: params.exploration_months,
+                capital_at_risk: super::geothermal::capital_share(
+                    spec.capital_cost,
+                    params.exploration_share,
+                ),
+                odds,
+                expected_output: spec.capacity * field.value(),
+            })
+        } else {
+            None
+        };
         Ok(PlantQuote {
+            exploration,
             capital: spec.capital_cost,
             months: spec.build_months,
             economic_zone: self.region.economic_zone_at(cell)?,
@@ -44,6 +76,16 @@ impl GameSession {
     pub fn plant_construction(&self, plant: PlantId) -> Option<PlantQuote> {
         let plant = self.power.plant(plant)?;
         Some(PlantQuote {
+            exploration: plant.geothermal().map(|g| ExplorationQuote {
+                months: self
+                    .region
+                    .geothermal()
+                    .expect("geothermal")
+                    .exploration_months,
+                capital_at_risk: g.exploration_capital,
+                odds: g.odds,
+                expected_output: plant.spec().capacity * g.initial_field.value(),
+            }),
             capital: plant.spec().capital_cost,
             months: plant.spec().build_months,
             economic_zone: self.region.economic_zone_at(plant.cell()).ok()?,
@@ -64,6 +106,12 @@ impl GameSession {
     /// The current siting verdict, including cities and plants still under construction.
     /// Region resource suitability alone does not establish that a site is available.
     pub fn plant_site_check(&self, kind: PlantKind, cell: CellCoord) -> Result<(), SiteError> {
+        if kind == PlantKind::Geothermal && self.dry_cells.contains_key(&cell) {
+            return Err(SiteError::ExploredDry);
+        }
+        if kind == PlantKind::Geothermal && !self.geothermal_available {
+            return Err(SiteError::GeothermalUnavailable);
+        }
         if self
             .power
             .network()
@@ -98,6 +146,8 @@ impl GameSession {
         self.require_phase(&[DayPhase::Planning])?;
         self.plant_quote(kind, cell)?;
         let spec = self.region.plant_spec_at(kind, cell)?;
+        let geothermal_site = (kind == PlantKind::Geothermal)
+            .then(|| self.geothermal_site(cell).expect("quoted site"));
         let plant: PlantId = self.ids.next();
         let node: NodeId = self.ids.next();
         self.power
@@ -110,11 +160,31 @@ impl GameSession {
                 },
             )
             .expect("freshly allocated node id is unique");
-        let instalments = spec.capital_cost.split_even(spec.build_months);
+        let mut built = Plant::new_under_construction(plant, node, cell, spec.clone());
+        let instalments = if kind == PlantKind::Geothermal {
+            let params = self.region.geothermal().expect("validated geothermal");
+            let (odds, field) = geothermal_site.expect("geothermal order");
+            let capital =
+                super::geothermal::capital_share(spec.capital_cost, params.exploration_share);
+            built.set_geothermal(crate::generation::GeothermalState {
+                exploration_left: params.exploration_months,
+                odds,
+                exploration_capital: capital,
+                initial_field: field,
+                field,
+                rounds: 0,
+                makeup: None,
+                crossed: 0,
+                notice: None,
+                taught: false,
+            });
+            capital.split_even(params.exploration_months)
+        } else {
+            spec.capital_cost.split_even(spec.build_months)
+        };
         self.instalments
             .insert(AssetRef::Plant(plant), instalments.into());
-        self.power
-            .insert_plant(Plant::new_under_construction(plant, node, cell, spec));
+        self.power.insert_plant(built);
         Ok((
             plant,
             vec![DomainEvent::PlantConstructionStarted { plant, kind, cell }],
@@ -158,6 +228,8 @@ impl GameSession {
     /// price a line at any time; only ordering one needs Planning.
     pub fn line_quote(&self, from: NodeId, to: NodeId) -> Result<LineQuote, DomainError> {
         let length = self.line_length(from, to)?;
+        self.check_exploring_endpoint(from)?;
+        self.check_exploring_endpoint(to)?;
         let network = self.power.network();
         if self.region.area_at(
             network
@@ -215,7 +287,7 @@ impl GameSession {
         hours: [bool; 24],
     ) -> Result<Vec<DomainEvent>, DomainError> {
         self.require_phase(&[DayPhase::Planning])?;
-        let schedule = CommitmentSchedule::try_new(hours, self.operable(plant)?.spec())?;
+        let schedule = CommitmentSchedule::try_new(hours, &self.operable(plant)?.control_spec())?;
         self.operable_mut(plant).set_commitment(schedule);
         Ok(Vec::new())
     }

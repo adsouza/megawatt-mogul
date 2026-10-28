@@ -15,6 +15,8 @@ mod commands;
 mod connection;
 #[cfg(test)]
 mod forecast_contract_tests;
+mod geothermal;
+pub use geothermal::DrySite;
 mod invariants;
 mod links;
 mod month_close;
@@ -28,7 +30,7 @@ mod wind_tests;
 mod tests;
 
 pub use activation::{ActivationAssessment, ActivationBlocker};
-pub use commands::{LineQuote, PlantQuote};
+pub use commands::{ExplorationQuote, LineQuote, PlantQuote};
 pub use connection::{ConnectionKind, ConnectionWarning};
 pub use invariants::InvariantViolation;
 pub use report::{
@@ -41,7 +43,7 @@ pub use views::{
     WindView,
 };
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
 use crate::company::{AssetProfile, AssetRef, Company};
@@ -113,6 +115,8 @@ pub struct GameSession {
     /// Every tick summary of the current day, oldest first; cleared when the
     /// month closes.
     day_ticks: Vec<TickSummary>,
+    geothermal_available: bool,
+    dry_cells: BTreeMap<CellCoord, DrySite>,
 }
 
 impl GameSession {
@@ -194,6 +198,33 @@ impl GameSession {
                 .plant_spec_at(def.kind, def.cell)
                 .expect("validated starter construction terms");
             let mut plant = Plant::new_commissioned(id, node, def.cell, spec, month);
+            if def.kind == crate::region::PlantKind::Geothermal {
+                let params = region.geothermal().expect("validated geothermal starter");
+                let crate::region::SitingRule::GeothermalSite { min } = plant.spec().siting else {
+                    unreachable!("geothermal siting")
+                };
+                let potential = region
+                    .terrain()
+                    .get(def.cell)
+                    .expect("starter cell")
+                    .geothermal_potential;
+                let (odds, field) = params.site(potential, min);
+                plant.set_geothermal(crate::generation::GeothermalState {
+                    exploration_left: 0,
+                    odds,
+                    exploration_capital: geothermal::capital_share(
+                        plant.spec().capital_cost,
+                        params.exploration_share,
+                    ),
+                    initial_field: field,
+                    field,
+                    rounds: 0,
+                    makeup: None,
+                    crossed: 0,
+                    notice: None,
+                    taught: false,
+                });
+            }
             plant.set_previous_month_offline(false);
             if def.kind.is_dispatchable() {
                 plant.set_commitment(CommitmentSchedule::all_day());
@@ -226,7 +257,7 @@ impl GameSession {
                 spec.book_life_months,
                 month,
                 AssetProfile::Plant {
-                    firm: spec.firm_capacity(&region.regulator().storage_accreditation),
+                    firm: plant.firm_capacity(&region.regulator().storage_accreditation),
                     node: plant.node(),
                 },
             );
@@ -254,6 +285,8 @@ impl GameSession {
 
         let regulator = Regulator::new(region.regulator());
         Self {
+            geothermal_available: region.geothermal().is_some(),
+            dry_cells: BTreeMap::new(),
             settings,
             clock: SimClock::new(month),
             phase: DayPhase::Planning,
@@ -530,6 +563,10 @@ impl GameSession {
         self.month_to_date.write_schema(&mut out, schema);
         self.year_depreciation.write_schema(&mut out, schema);
         self.day_ticks.write_schema(&mut out, schema);
+        if schema >= 6 {
+            self.geothermal_available.write(&mut out);
+            self.dry_cells.write(&mut out);
+        }
         out
     }
     /// Invoked only after verifying the original schema-1 canonical boundary.
@@ -567,6 +604,16 @@ impl GameSession {
             month_to_date: State::read(&mut input)?,
             year_depreciation: State::read(&mut input)?,
             day_ticks: State::read(&mut input)?,
+            geothermal_available: if schema >= 6 {
+                State::read(&mut input)?
+            } else {
+                false
+            },
+            dry_cells: if schema >= 6 {
+                State::read(&mut input)?
+            } else {
+                BTreeMap::new()
+            },
         };
         input.finish()?;
         session.validate_snapshot(schema)?;
@@ -690,7 +737,49 @@ impl GameSession {
         if ledger != delta {
             return Err(StateError::Invalid);
         }
+        if (!self.geothermal_available
+            && (!self.dry_cells.is_empty()
+                || self
+                    .power
+                    .plants()
+                    .values()
+                    .any(|p| p.geothermal().is_some())))
+            || (self.geothermal_available && self.region.geothermal().is_none())
+        {
+            return Err(StateError::Invalid);
+        }
+        if !self.company.rate_base().valid_additions() {
+            return Err(StateError::Invalid);
+        }
         let mut max_id = 0;
+        let mut dry_ids = BTreeSet::new();
+        for (cell, site) in &self.dry_cells {
+            let id = &site.plant;
+            if site.capital_lost.is_negative()
+                || site.node.0 == id.0
+                || self.power.network().node(site.node).is_some()
+            {
+                return Err(StateError::Invalid);
+            }
+            max_id = max_id.max(site.node.0);
+            if !dry_ids.insert(*id)
+                || self.power.plant(*id).is_some()
+                || self.region.terrain().get(*cell).is_none_or(|c| !c.land)
+                || self.power.network().nodes().any(|(_, node)| {
+                    node.cell == *cell
+                        && match node.kind {
+                            NodeKind::City(_) => true,
+                            NodeKind::Plant(plant) => self
+                                .power
+                                .plant(plant)
+                                .is_none_or(|p| p.kind() == crate::region::PlantKind::Geothermal),
+                        }
+                })
+            {
+                return Err(StateError::Invalid);
+            }
+            max_id = max_id.max(id.0);
+        }
         for (id, node) in self.power.network().nodes() {
             max_id = max_id.max(id.0);
             match node.kind {
@@ -781,6 +870,109 @@ impl GameSession {
         }
         for (id, plant) in self.power.plants() {
             max_id = max_id.max(id.0);
+            if (plant.kind() == crate::region::PlantKind::Geothermal)
+                != plant.geothermal().is_some()
+            {
+                return Err(StateError::Invalid);
+            }
+            if let Some(g) = plant.geothermal() {
+                let params = self.region.geothermal().ok_or(StateError::Invalid)?;
+                let crate::region::SitingRule::GeothermalSite { min } = plant.spec().siting else {
+                    return Err(StateError::Invalid);
+                };
+                let cell = self
+                    .region
+                    .terrain()
+                    .get(plant.cell())
+                    .ok_or(StateError::Invalid)?;
+                let (odds, quality) = params.site(cell.geothermal_potential, min);
+                // Rasterization uses libm in infrastructure; retain original portable bits across targets.
+                if (g.odds.value() - odds.value()).abs() > 1e-12
+                    || (g.initial_field.value() - quality.value()).abs() > 1e-12
+                    || g.exploration_capital
+                        != geothermal::capital_share(
+                            plant.spec().capital_cost,
+                            params.exploration_share,
+                        )
+                {
+                    return Err(StateError::Invalid);
+                }
+                let ceiling = g.initial_field.value()
+                    * (1.0 - f64::from(g.rounds) * params.ceiling_step.value());
+                if g.field.value() > ceiling + 1e-12
+                    || g.notice.is_some_and(|t| {
+                        g.field.value() / g.initial_field.value() >= f64::from(t) / 100.0
+                    })
+                {
+                    return Err(StateError::Invalid);
+                }
+                if let Some(m) = &g.makeup {
+                    let capital = geothermal::makeup_capital(
+                        self.region
+                            .spec(crate::region::PlantKind::Geothermal)
+                            .capital_cost,
+                        plant.spec().capital_cost,
+                        params.makeup_capital,
+                    )
+                    .map_err(|_| StateError::Invalid)?;
+                    if m.capital != capital {
+                        return Err(StateError::Invalid);
+                    }
+                    if m.months_left > params.makeup_months {
+                        return Err(StateError::Invalid);
+                    }
+                    let tail: VecDeque<_> = m
+                        .capital
+                        .split_even(params.makeup_months)
+                        .into_iter()
+                        .skip((params.makeup_months - m.months_left) as usize)
+                        .collect();
+                    let ceiling = g.initial_field.value()
+                        * (1.0 - (f64::from(g.rounds) + 1.0) * params.ceiling_step.value());
+                    if m.payments != tail || (m.ceiling.value() - ceiling).abs() > f64::EPSILON {
+                        return Err(StateError::Invalid);
+                    }
+                }
+                if !g.valid() || g.exploration_left > params.exploration_months {
+                    return Err(StateError::Invalid);
+                }
+                let expected = match plant.status() {
+                    crate::generation::PlantStatus::UnderConstruction { months_left } => {
+                        months_left
+                            .saturating_sub(plant.spec().build_months - params.exploration_months)
+                    }
+                    _ => 0,
+                };
+                if g.exploration_left != expected {
+                    return Err(StateError::Invalid);
+                }
+                if matches!(
+                    plant.status(),
+                    crate::generation::PlantStatus::UnderConstruction { .. }
+                ) && (g.field != g.initial_field
+                    || g.rounds != 0
+                    || g.makeup.is_some()
+                    || g.crossed != 0
+                    || g.notice.is_some()
+                    || g.taught)
+                {
+                    return Err(StateError::Invalid);
+                }
+                if g.exploration_left > 0
+                    && (self
+                        .power
+                        .network()
+                        .lines()
+                        .any(|l| l.from == plant.node() || l.to == plant.node())
+                        || self
+                            .power
+                            .network()
+                            .links()
+                            .any(|l| l.from_grid() == plant.node() || l.to_grid() == plant.node()))
+                {
+                    return Err(StateError::Invalid);
+                }
+            }
             if *id != plant.id()
                 || plant.spec().state_bytes_schema(schema)
                     != self

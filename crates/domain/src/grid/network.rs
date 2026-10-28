@@ -61,6 +61,18 @@ pub struct Network {
 }
 
 impl Network {
+    pub(crate) fn remove_unconnected_plant(&mut self, node: NodeId) {
+        assert!(node != self.root && !self.service_roots.contains(&node));
+        assert!(self.lines.values().all(|l| l.from != node && l.to != node));
+        assert!(
+            self.links
+                .values()
+                .all(|l| l.from_grid() != node && l.to_grid() != node)
+        );
+        self.nodes.remove(&node);
+        self.connected.remove(&node);
+    }
+
     /// A network holding only its root node, which is always connected.
     pub fn new(root: NodeId, node: Node) -> Self {
         Self {

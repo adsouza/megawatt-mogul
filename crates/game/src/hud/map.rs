@@ -30,6 +30,7 @@ pub enum MapLayer {
     Terrain,
     Irradiance,
     WindPotential,
+    GeothermalPotential,
     CoolingWater,
     HydroPotential,
     /// Where a plant of this kind may be built (the region's siting rule).
@@ -44,6 +45,7 @@ impl MapLayer {
             Self::Terrain,
             Self::Irradiance,
             Self::WindPotential,
+            Self::GeothermalPotential,
             Self::CoolingWater,
             Self::HydroPotential,
         ]
@@ -396,6 +398,10 @@ pub fn cell_color(layer: MapLayer, region: &RegionDefinition, at: CellCoord) -> 
         MapLayer::Irradiance => WATER,
         MapLayer::WindPotential if cell.land => solar_color(cell.wind_potential.value()),
         MapLayer::WindPotential => WATER,
+        MapLayer::GeothermalPotential if cell.land => {
+            solar_color(cell.geothermal_potential.value())
+        }
+        MapLayer::GeothermalPotential => WATER,
         MapLayer::CoolingWater => lerp(DARK, COOL, cell.cooling_water.value()),
         MapLayer::HydroPotential => land_shaded(cell.hydro_potential.value(), HYDRO),
         MapLayer::Suitability(_) if !cell.land => WATER,
@@ -415,6 +421,7 @@ pub fn kind_color(kind: PlantKind) -> Rgb {
         PlantKind::Hydro => [80, 170, 235],
         PlantKind::Battery => [45, 225, 195],
         PlantKind::Wind => [120, 190, 245],
+        PlantKind::Geothermal => [225, 145, 90],
     }
 }
 
@@ -448,6 +455,7 @@ fn glyph_key(kind: PlantKind) -> &'static str {
         PlantKind::Hydro => "plant-glyph-hydro",
         PlantKind::Battery => "plant-glyph-battery",
         PlantKind::Wind => "plant-glyph-wind",
+        PlantKind::Geothermal => "plant-glyph-geothermal",
     }
 }
 
@@ -755,6 +763,7 @@ pub struct ResourceScaleModel {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MapModel {
+    pub dry_cells: Vec<(CellCoord, String)>,
     /// The map's accessible name.
     pub label: String,
     /// One button per [`MapLayer`]; the current layer's is on. Clicking it again changes nothing,
@@ -797,6 +806,7 @@ fn layer_label(layer: MapLayer, l10n: &Localizer) -> String {
         MapLayer::Terrain => l10n.text("map-layer-terrain"),
         MapLayer::Irradiance => l10n.text("map-layer-irradiance"),
         MapLayer::WindPotential => l10n.text("map-layer-wind"),
+        MapLayer::GeothermalPotential => l10n.text("geothermal-layer"),
         MapLayer::CoolingWater => l10n.text("map-layer-cooling-water"),
         MapLayer::HydroPotential => l10n.text("map-layer-hydro-potential"),
         MapLayer::Suitability(kind) => l10n.args(
@@ -817,6 +827,12 @@ pub fn map_model(
     let names = crate::l10n::Names::new(l10n, game.session());
     let line_views = game.session().line_views();
     MapModel {
+        dry_cells: game
+            .session()
+            .dry_cells()
+            .keys()
+            .map(|at| (*at, l10n.text("geothermal-dry-site")))
+            .collect(),
         label: l10n.text("map-label"),
         layers: MapLayer::all()
             .map(|choice| ToggleModel {
@@ -825,25 +841,31 @@ pub fn map_model(
             })
             .collect(),
         layer,
-        resource_scale: matches!(layer, MapLayer::Irradiance | MapLayer::WindPotential).then(
-            || ResourceScaleModel {
-                label: l10n.text(if layer == MapLayer::WindPotential {
-                    "wind-potential"
-                } else {
-                    "map-solar-scale"
-                }),
-                ticks: [
-                    l10n.text("map-solar-low"),
-                    l10n.text("map-solar-mid"),
-                    l10n.text("map-solar-high"),
-                ],
-                help: l10n.text(if layer == MapLayer::WindPotential {
-                    "wind-resource-help"
-                } else {
-                    "map-solar-help"
-                }),
-            },
-        ),
+        resource_scale: matches!(
+            layer,
+            MapLayer::Irradiance | MapLayer::WindPotential | MapLayer::GeothermalPotential
+        )
+        .then(|| ResourceScaleModel {
+            label: l10n.text(if layer == MapLayer::GeothermalPotential {
+                "geothermal-potential"
+            } else if layer == MapLayer::WindPotential {
+                "wind-potential"
+            } else {
+                "map-solar-scale"
+            }),
+            ticks: [
+                l10n.text("map-solar-low"),
+                l10n.text("map-solar-mid"),
+                l10n.text("map-solar-high"),
+            ],
+            help: l10n.text(if layer == MapLayer::GeothermalPotential {
+                "geothermal-resource-help"
+            } else if layer == MapLayer::WindPotential {
+                "wind-resource-help"
+            } else {
+                "map-solar-help"
+            }),
+        }),
         region: Arc::clone(game.session().region()),
         months_left: months_left_of(&objects, l10n),
         line_names: objects
@@ -903,6 +925,19 @@ pub fn draw_map(ui: &mut egui::Ui, model: &MapModel, cache: &mut MapCache) -> Ve
         Color32::WHITE,
     );
     paint_objects(&painter, &layout, model);
+    for (at, tooltip) in &model.dry_cells {
+        let center = layout.cell_center(*at);
+        let r = 4.0f32;
+        let stroke = egui::Stroke::new(2.0, Color32::from_rgb(225, 145, 90));
+        painter.line_segment([center - vec2(r, r), center + vec2(r, r)], stroke);
+        painter.line_segment([center + vec2(-r, r), center + vec2(r, -r)], stroke);
+        ui.interact(
+            layout.cell_rect(*at),
+            ui.id().with(("dry", at.x, at.y)),
+            egui::Sense::hover(),
+        )
+        .on_hover_text(tooltip);
+    }
     let legend_layout = measure_legend(ui, response.rect, model);
     let marks = pickable_marks(&layout, &model.objects);
     let corner = legend_corner(
@@ -1798,8 +1833,10 @@ mod tests {
                 }
             }
         }
-        // Cooling water and hydro rules really do rule cells out, and every kind fits somewhere.
-        assert!(seen_suitable.iter().all(|seen| *seen), "{seen_suitable:?}");
+        // Eastern has no authored geothermal resource; every other kind fits somewhere.
+        for (i, kind) in PlantKind::ALL.into_iter().enumerate() {
+            assert_eq!(seen_suitable[i], kind != PlantKind::Geothermal, "{kind:?}");
+        }
         assert!(
             seen_unsuitable[0] && seen_unsuitable[5],
             "{seen_unsuitable:?}"
@@ -1950,6 +1987,7 @@ mod tests {
                 MapLayer::Terrain,
                 MapLayer::Irradiance,
                 MapLayer::WindPotential,
+                MapLayer::GeothermalPotential,
                 MapLayer::CoolingWater,
                 MapLayer::HydroPotential,
                 MapLayer::Suitability(PlantKind::Nuclear),
@@ -1976,11 +2014,12 @@ mod tests {
         assert_eq!(labels[0], l10n.text("map-layer-terrain"));
         assert_eq!(labels[1], "Sunshine");
         assert_eq!(labels[2], "Wind potential");
-        assert_eq!(labels[3], "Cooling water");
-        assert_eq!(labels[4], "Hydro potential");
-        assert_eq!(labels[5], "Suitability: Nuclear plant");
-        assert_eq!(labels[6], "Suitability: Coal plant");
-        assert_eq!(labels[7], "Suitability: Hydro plant");
+        assert_eq!(labels[3], "Geothermal resource");
+        assert_eq!(labels[4], "Cooling water");
+        assert_eq!(labels[5], "Hydro potential");
+        assert_eq!(labels[6], "Suitability: Nuclear plant");
+        assert_eq!(labels[7], "Suitability: Coal plant");
+        assert_eq!(labels[8], "Suitability: Hydro plant");
         assert_eq!(model.layer, MapLayer::Terrain);
         assert_eq!(l10n.problems(), vec![]);
 
@@ -2139,6 +2178,7 @@ mod tests {
             PlantKind::Hydro => 5,
             PlantKind::Battery => 6,
             PlantKind::Wind => 7,
+            PlantKind::Geothermal => 8,
         }
     }
 

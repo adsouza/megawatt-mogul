@@ -44,7 +44,7 @@ pub fn map_region(mut file: RegionFile) -> Result<RegionDefinition> {
     check_field(potential, "wind_potential")?;
     check_geometry(file.geography())?;
     let locale = super::legacy::legacy_locale(&file)?;
-    let parts = RegionDefinitionParts {
+    let mut parts = RegionDefinitionParts {
         id: RegionId::new(&file.id),
         name_key: file.name_key.clone(),
         currency: locale.currency,
@@ -85,6 +85,7 @@ pub fn map_region(mut file: RegionFile) -> Result<RegionDefinition> {
             initial_sd: wind.initial_sd,
             band: ratio(wind.band, "wind.band")?,
         },
+        geothermal: None,
         hydro: HydroParams {
             monthly_flow: array(&file.hydro.monthly_flow, "hydro.monthly_flow")?,
         },
@@ -94,6 +95,7 @@ pub fn map_region(mut file: RegionFile) -> Result<RegionDefinition> {
         lines: map_lines(&file.lines)?,
         start: map_start(file.geography(), &file.start)?,
     };
+    parts.catalog.push(super::legacy::geothermal_stub()?);
     RegionDefinition::try_from(parts)
 }
 
@@ -230,11 +232,15 @@ fn map_kind(kind: PlantKindDto) -> PlantKind {
         PlantKindDto::Hydro => PlantKind::Hydro,
         PlantKindDto::Battery => PlantKind::Battery,
         PlantKindDto::Wind => PlantKind::Wind,
+        PlantKindDto::Geothermal => PlantKind::Geothermal,
     }
 }
 
 fn map_siting(siting: SitingDto) -> Result<SitingRule> {
     Ok(match siting {
+        SitingDto::GeothermalSite(min) => SitingRule::GeothermalSite {
+            min: ratio(min, "catalog.siting")?,
+        },
         SitingDto::Anywhere => SitingRule::Anywhere,
         SitingDto::CoolingWater(min) => SitingRule::CoolingWater {
             min: ratio(min, "catalog.siting")?,
@@ -462,7 +468,7 @@ fn map_start(file: Geography<'_>, start: &StartDto) -> Result<StartDef> {
     })
 }
 
-fn map_spec_v4(spec: &PlantSpecDtoV4) -> Result<PlantSpec> {
+pub(super) fn map_spec_v4(spec: &PlantSpecDtoV4) -> Result<PlantSpec> {
     Ok(PlantSpec {
         kind: map_kind(spec.kind),
         capacity: Megawatts::new(non_negative(spec.capacity_mw, "catalog.capacity_mw")?),
@@ -584,13 +590,36 @@ fn map_regulator_v4(r: &RegulatorDtoV4) -> Result<RegulatorParams> {
 
 /// The schema-4 checks that make `rasterize_geometry(file.geography())` safe to call.
 pub(super) fn check_v4_geography(file: &RegionFileV4) -> Result<()> {
-    if file.region_schema != 4 {
+    if !matches!(file.region_schema, 4 | 5) {
         return Err(RegionError::UnsupportedRegionSchema(file.region_schema));
     }
     if file.grid.width > 256 || file.grid.height > 128 {
         return Err(invalid("grid"));
     }
     check_geometry(file.geography())?;
+    if file.region_schema == 5 {
+        check_field(
+            file.geothermal_potential
+                .as_ref()
+                .ok_or(RegionError::MissingField {
+                    field: "geothermal_potential",
+                })?,
+            "geothermal_potential",
+        )?;
+        if file.geothermal.is_none() {
+            return Err(RegionError::MissingField {
+                field: "geothermal",
+            });
+        }
+    } else if file.geothermal.is_some()
+        || file.geothermal_potential.is_some()
+        || file
+            .catalog
+            .iter()
+            .any(|s| s.kind == PlantKindDto::Geothermal)
+    {
+        return Err(invalid("region_schema"));
+    }
     check_field(&file.wind_potential, "wind_potential")
 }
 
@@ -655,7 +684,8 @@ pub fn map_region_v4(file: RegionFileV4) -> Result<RegionDefinition> {
         .collect::<Vec<_>>()
         .try_into()
         .map_err(|_| invalid("calendar.seasons"))?;
-    RegionDefinition::try_from(RegionDefinitionParts {
+    let geothermal = file.geothermal.as_ref().map(map_geothermal).transpose()?;
+    let mut parts = RegionDefinitionParts {
         id: RegionId::new(&file.id),
         name_key: file.name_key.clone(),
         currency,
@@ -744,6 +774,7 @@ pub fn map_region_v4(file: RegionFileV4) -> Result<RegionDefinition> {
             initial_sd: file.wind.initial_sd,
             band: ratio(file.wind.band, "wind.band")?,
         },
+        geothermal: None,
         hydro: HydroParams {
             monthly_flow: array(&file.hydro.monthly_flow, "hydro.monthly_flow")?,
         },
@@ -752,7 +783,12 @@ pub fn map_region_v4(file: RegionFileV4) -> Result<RegionDefinition> {
         satisfaction: map_satisfaction(&file.satisfaction)?,
         lines: map_lines_v4(&file.lines)?,
         start: map_start_v4(file.geography(), &file.start)?,
-    })
+    };
+    parts.geothermal = geothermal;
+    if file.region_schema <= 4 {
+        parts.catalog.push(super::legacy::geothermal_stub()?);
+    }
+    RegionDefinition::try_from(parts)
 }
 fn map_climate(c: &ClimateDto) -> Result<Climate> {
     let mut names = std::collections::BTreeMap::new();
@@ -923,4 +959,20 @@ fn map_areas(file: &RegionFileV4) -> Result<Option<domain::region::ElectricalAre
             .collect(),
         cells,
     }))
+}
+
+fn map_geothermal(g: &GeothermalDto) -> Result<domain::region::GeothermalParams> {
+    Ok(domain::region::GeothermalParams {
+        success_min: ratio(g.success_min, "geothermal.success_min")?,
+        success_max: ratio(g.success_max, "geothermal.success_max")?,
+        quality_min: ratio(g.quality_min, "geothermal.quality_min")?,
+        quality_max: ratio(g.quality_max, "geothermal.quality_max")?,
+        exploration_months: g.exploration_months,
+        exploration_share: ratio(g.exploration_share, "geothermal.exploration_share")?,
+        monthly_decline: ratio(g.monthly_decline, "geothermal.monthly_decline")?,
+        makeup_capital: major_units(g.makeup_capital, "geothermal.makeup_capital")?,
+        makeup_months: g.makeup_months,
+        ceiling_step: ratio(g.ceiling_step, "geothermal.ceiling_step")?,
+        minimum_gain: ratio(g.minimum_gain, "geothermal.minimum_gain")?,
+    })
 }
