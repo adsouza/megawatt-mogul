@@ -66,8 +66,9 @@ rebuild before subsequent runs use their cached artifacts.
 
 ### CI build and execution shards
 
-The `build-tests` job checks formatting and clippy, then compiles the default-feature workspace
-tests once with `cargo nextest archive --workspace --locked --profile ci`. It uploads one
+The `build-tests` job uses the shared `native-test-build` action to check formatting and clippy,
+then compile the default-feature workspace tests once with
+`cargo nextest archive --workspace --locked --profile ci`. It uploads one
 zstd-compressed archive for three parallel Ubuntu 24.04 runners:
 
 | Shard | Tests |
@@ -89,6 +90,9 @@ without compiling or restoring Cargo build caches. The matrix does not cancel si
 failure. The final `check` job requires the build and every shard to succeed, including when
 a prerequisite fails, is skipped or is cancelled; Pages deployment still depends on `check`.
 The `dev-tools` job retains its separate build and tests because that feature changes the graph.
+Tagged release validation uses the same build and run actions, dependency cache, matrix and
+coverage guard before allowing packaging. A manual dispatch of `release.yml` exercises that
+validation path without creating packages or a release; see [releasing](docs/releasing.md#tagged-source-validation).
 
 Run the fast coverage-checker regressions with:
 

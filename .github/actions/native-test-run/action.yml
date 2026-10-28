@@ -1,0 +1,26 @@
+name: Run an archived native test shard
+description: Execute a shard from this workflow run's archive, without rebuilding tests.
+inputs:
+  filter:
+    description: Nextest filter from the coverage-checked matrix.
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: ./.github/actions/rust-setup
+      with:
+        build-tools: 'false'
+        cache: 'false'
+    - uses: actions/download-artifact@v8
+      with:
+        name: workspace-tests
+        path: ${{ runner.temp }}/workspace-tests
+    - name: Run tests from the shared archive
+      shell: bash
+      env:
+        TEST_FILTER: ${{ inputs.filter }}
+      run: |
+        cargo-nextest nextest run --profile ci \
+          --archive-file "$RUNNER_TEMP/workspace-tests/workspace-tests.tar.zst" \
+          --extract-to "$GITHUB_WORKSPACE" --workspace-remap "$GITHUB_WORKSPACE" \
+          -E "$TEST_FILTER"

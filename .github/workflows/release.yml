@@ -9,6 +9,7 @@ on:
       - '.github/workflows/release.yml'
       - '.github/actions/rust-setup/**'
       - '.github/actions/rust-release-build/**'
+      - '.github/actions/native-test-*/**'
       - '.cargo/**'
       - 'rust-toolchain*'
       - 'Cargo.toml'
@@ -17,21 +18,30 @@ on:
       - 'assets/**'
       - 'packaging/**'
       - 'tools/release/**'
+      - 'tools/ci/**'
   # Exercise packaging before merging changes; only version-tag pushes create releases.
   pull_request:
     paths:
       - '.github/workflows/release.yml'
       - '.github/actions/rust-setup/**'
       - '.github/actions/rust-release-build/**'
+      - '.github/actions/native-test-*/**'
       - '.cargo/**'
       - 'rust-toolchain*'
       - 'packaging/**'
       - 'tools/release/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - 'tools/ci/**'
+  # Exercise exactly the tagged-source validation path without packaging or a release draft.
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: '0'
 
 # Never cancel tag-release uploads midway through; superseded PR checks can stop early.
 concurrency:
@@ -80,9 +90,55 @@ jobs:
         with:
           version: ${{ needs.version.outputs.version }}
 
-  package:
-    if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/v')
+  tagged-source-build:
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     needs: version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    outputs:
+      matrix: ${{ steps.native.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Test CI shard coverage checker
+        run: python3 -m unittest discover -s tools/ci/tests
+      - uses: ./.github/actions/native-test-build
+        id: native
+
+  tagged-source-test:
+    name: Tagged source (${{ matrix.name }})
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    needs: tagged-source-build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.tagged-source-build.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/native-test-run
+        with:
+          filter: ${{ matrix.filter }}
+
+  tagged-source:
+    name: Check tagged source
+    if: always() && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
+    needs: [tagged-source-build, tagged-source-test]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require the build and every tagged-source shard to pass
+        env:
+          BUILD_RESULT: ${{ needs.tagged-source-build.result }}
+          TEST_RESULT: ${{ needs.tagged-source-test.result }}
+        run: test "$BUILD_RESULT" = success && test "$TEST_RESULT" = success
+
+  package:
+    # An explicit status check lets PR packaging proceed when the tag-only gate is skipped.
+    # Tags require a successful gate; manual dispatch is validation-only, even on a tag ref.
+    if: >-
+      !cancelled() && needs.version.result == 'success' &&
+      ((github.event_name == 'pull_request' && needs.tagged-source.result == 'skipped') ||
+       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.tagged-source.result == 'success'))
+    needs: [version, tagged-source]
     # A fixed glibc baseline: Ubuntu 24.04 (2.39), also older than Freedesktop 25.08 (2.42).
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -97,14 +153,6 @@ jobs:
         with:
           components: clippy, rustfmt
           cache: 'false'
-      # Tags can point to any commit, so check them here even if main passed CI earlier.
-      # Pull requests already run these checks in ci.yml.
-      - name: Check tagged source
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          cargo fmt --all --check
-          cargo clippy --workspace --all-targets --locked -- -D warnings
-          cargo nextest run --workspace --locked --profile ci
       - name: Build Linux x86_64
         uses: ./.github/actions/rust-release-build
         with:

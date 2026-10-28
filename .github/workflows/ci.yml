@@ -28,33 +28,15 @@ jobs:
     # checkout path; workers extract into the workspace so those absolute paths remain valid.
     runs-on: ubuntu-24.04
     outputs:
-      matrix: ${{ steps.shards.outputs.matrix }}
+      matrix: ${{ steps.native.outputs.matrix }}
     steps:
       - uses: actions/checkout@v7
       - name: Release metadata and packaging contracts
         run: python3 -m unittest discover -s tools/release/tests
       - name: Test CI shard coverage checker
         run: python3 -m unittest discover -s tools/ci/tests
-      - uses: ./.github/actions/rust-setup
-        with:
-          components: clippy, rustfmt
-          cache-key: check
-      - name: Format
-        run: cargo fmt --all --check
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: Build and archive workspace tests
-        run: cargo nextest archive --workspace --locked --profile ci --archive-file target/workspace-tests.tar.zst
-      - name: Verify every test belongs to exactly one shard
-        id: shards
-        run: python3 tools/ci/test_shards.py --github-output "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@v7
-        with:
-          name: workspace-tests
-          path: target/workspace-tests.tar.zst
-          if-no-files-found: error
-          compression-level: 0 # nextest already compresses the archive with zstd
-          retention-days: 1
+      - uses: ./.github/actions/native-test-build
+        id: native
 
   test:
     name: Test (${{ matrix.name }})
@@ -66,22 +48,9 @@ jobs:
       matrix: ${{ fromJSON(needs.build-tests.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/rust-setup
+      - uses: ./.github/actions/native-test-run
         with:
-          build-tools: 'false'
-          cache: 'false'
-      - uses: actions/download-artifact@v8
-        with:
-          name: workspace-tests
-          path: ${{ runner.temp }}/workspace-tests
-      - name: Run tests from the shared archive
-        env:
-          TEST_FILTER: ${{ matrix.filter }}
-        run: |
-          cargo-nextest nextest run --profile ci \
-            --archive-file "$RUNNER_TEMP/workspace-tests/workspace-tests.tar.zst" \
-            --extract-to "$GITHUB_WORKSPACE" --workspace-remap "$GITHUB_WORKSPACE" \
-            -E "$TEST_FILTER"
+          filter: ${{ matrix.filter }}
 
   # Keep the existing required check name, and never report success when a shard was
   # failed, skipped or cancelled. Pages and branch protection can depend on this gate.

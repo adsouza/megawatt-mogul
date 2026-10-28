@@ -1,0 +1,35 @@
+name: Build and archive native tests
+description: Check the exact source, reuse native CI dependencies, and archive every workspace test once.
+outputs:
+  matrix:
+    description: Coverage-checked matrix of the three execution shards.
+    value: ${{ steps.shards.outputs.matrix }}
+runs:
+  using: composite
+  steps:
+    - uses: ./.github/actions/rust-setup
+      with:
+        components: clippy, rustfmt
+        # Share main's native dependency cache with tagged-source validation. Cargo
+        # checks source freshness; a cache hit never substitutes for validation.
+        cache-key: check
+    - name: Format
+      shell: bash
+      run: cargo fmt --all --check
+    - name: Clippy
+      shell: bash
+      run: cargo clippy --workspace --all-targets --locked -- -D warnings
+    - name: Build and archive workspace tests
+      shell: bash
+      run: cargo nextest archive --workspace --locked --profile ci --archive-file target/workspace-tests.tar.zst
+    - name: Verify every test belongs to exactly one shard
+      id: shards
+      shell: bash
+      run: python3 tools/ci/test_shards.py --github-output "$GITHUB_OUTPUT"
+    - uses: actions/upload-artifact@v7
+      with:
+        name: workspace-tests
+        path: target/workspace-tests.tar.zst
+        if-no-files-found: error
+        compression-level: 0 # nextest already compresses the archive with zstd
+        retention-days: 1
