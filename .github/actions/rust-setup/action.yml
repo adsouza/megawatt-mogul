@@ -1,7 +1,6 @@
 name: Rust setup
 description: >
-  Bevy's Linux libraries, the mold linker, the pinned toolchain, cargo-nextest and the Cargo
-  cache, shared by every CI job so they cannot drift apart.
+  Bevy's Linux libraries and pinned cargo-nextest, with optional compiler, linker and build cache.
 
 inputs:
   components:
@@ -10,6 +9,12 @@ inputs:
   cache:
     description: Restore/save the normal test-build cache (release builds manage their own).
     default: 'true'
+  build-tools:
+    description: Install the compiler and linker (archive execution needs only runtime libraries).
+    default: 'true'
+  cache-key:
+    description: Override the job-based build cache key when renaming a job.
+    default: ''
 
 runs:
   using: composite
@@ -38,12 +43,14 @@ runs:
         fi
     # Linking the large game test binary dominates a warm build; mold is much faster than ld.
     - uses: rui314/setup-mold@v1
+      if: inputs.build-tools == 'true'
     - uses: ./.github/actions/rust-toolchain
+      if: inputs.build-tools == 'true'
       with:
         components: ${{ inputs.components }}
     - uses: taiki-e/install-action@v2
       with:
-        tool: cargo-nextest
+        tool: cargo-nextest@0.9.148
     # Caches ~/.cargo and the compiled dependencies in target/, keyed per job, toolchain and
     # Cargo.lock. GitHub scopes caches by branch: a PR restores its own or main's, never another
     # PR's, and the repository holds 10 GB in total. Only main saves this test-build cache.
@@ -51,7 +58,8 @@ runs:
     # Saved after a failed run too: compiled dependencies are valid whatever a test did, so one
     # failing or flaky test no longer leaves the next pull request to build from cold.
     - uses: Swatinem/rust-cache@v2
-      if: inputs.cache == 'true'
+      if: inputs.cache == 'true' && inputs.build-tools == 'true'
       with:
+        shared-key: ${{ inputs.cache-key }}
         save-if: ${{ github.ref == 'refs/heads/main' }}
         cache-on-failure: true

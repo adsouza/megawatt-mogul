@@ -64,6 +64,38 @@ ignored test stayed ignored. The split scenarios alone went from 48.7 s to 13.6 
 single-run measurements, not CI performance guarantees; optimized test builds cost an initial
 rebuild before subsequent runs use their cached artifacts.
 
+### CI build and execution shards
+
+The `build-tests` job checks formatting and clippy, then compiles the default-feature workspace
+tests once with `cargo nextest archive --workspace --locked --profile ci`. It uploads one
+zstd-compressed archive for three parallel Ubuntu 24.04 runners:
+
+| Shard | Tests |
+|---|---|
+| `shipped-regions` | Every test in `infrastructure::shipped_regions` |
+| `game-integration` | Every test in `game::game`, the game integration binary |
+| `remaining` | Everything else, including game unit tests and all other integration binaries |
+
+`tools/ci/test_shards.py` owns both the matrix and its filters. Before upload, it lists the real
+tests and requires the shards to be disjoint, nonempty and exhaustive. The remaining shard is
+the complement of the first two, so new binaries and tests are covered automatically. The
+inventory check includes ignored tests; execution keeps the existing ignored-test policy,
+property case counts, seeds, scenarios, assertions and CI retry setting.
+
+Workers install runtime libraries and the same pinned nextest version as the builder. They
+check out the same revision and extract the archive into the same workspace path, preserving
+compiled-in fixture paths and the game executable used by crash tests. They execute the archive
+without compiling or restoring Cargo build caches. The matrix does not cancel siblings on a
+failure. The final `check` job requires the build and every shard to succeed, including when
+a prerequisite fails, is skipped or is cancelled; Pages deployment still depends on `check`.
+The `dev-tools` job retains its separate build and tests because that feature changes the graph.
+
+Run the fast coverage-checker regressions with:
+
+```sh
+python3 -m unittest discover -s tools/ci/tests
+```
+
 ### Behavioral contracts across features
 
 Line coverage, replay equality and pinned outcomes do not establish physical correctness. Keep
