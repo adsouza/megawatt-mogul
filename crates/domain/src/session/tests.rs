@@ -23,7 +23,11 @@ proptest::proptest! {
     #[test]
     fn one_firm_derivation_everywhere(orders in proptest::collection::vec(0usize..7, 1..6), seed in proptest::prelude::any::<u64>()) {
         let mut parts = crate::region::fixtures::tiny_region_parts();
-        for spec in &mut parts.catalog { spec.build_months = 1; }
+        // This property commissions ordinary orders in one close; geothermal must retain
+        // a construction duration longer than its exploration stage.
+        for spec in &mut parts.catalog {
+            if spec.kind != PlantKind::Geothermal { spec.build_months = 1; }
+        }
         parts.start.fleet.push(crate::region::StartPlantDef { kind: PlantKind::Battery, cell: CellCoord { x: 5, y: 1 } });
         let mut s = GameSession::new(Arc::new(crate::region::RegionDefinition::try_from(parts).unwrap()), seed, GameSettings::default());
         let battery = s.plant_views().into_iter().find(|p| p.kind == PlantKind::Battery).unwrap().id;

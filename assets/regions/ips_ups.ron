@@ -398,6 +398,8 @@
     // price-level proxy from [P7-IPS-001]. Start-ups follow ruling 2 (NA
     // start-up x local marginal / NA marginal, at full precision).
     catalog: [
+        // Geothermal [P7-GEO-001]: explicit A19 gameplay tuning in local major units;
+        // not derived from this region's real-world costs or Plan 7 pacing ratios.
         (kind: Geothermal, capacity_mw: 150.0, min_stable: 0.5, ramp_mw_per_min: 2.0, startup_hours: 12.0, startup_cost: 100000, marginal_cost_per_mwh: 5.0, fixed_om_per_month: 300000, capital_cost: 150000000, build_months: 12, capacity_credit: 0.95, book_life_months: 360, siting: GeothermalSite(0.3)),
         // Wind [P7-IPS-007] [P7-US-001]: IRENA's 2025 Russian market average,
         // 1,818 USD/kW x 83.6525 RUB/USD [P7-FX-023] = 152,080.2 RUB/kW x

@@ -39,6 +39,8 @@
     hydro: (monthly_flow:[0.6,0.55,0.6,0.75,1.0,1.4,1.7,1.7,1.4,1.1,0.8,0.65]),
     // National construction proxies [P7-SC-001..006] retain Plan 7 arithmetic.
     catalog: [
+        // Geothermal [P7-GEO-001]: explicit A19 gameplay tuning in local major units;
+        // not derived from this region's real-world costs or Plan 7 pacing ratios.
         (kind: Geothermal, capacity_mw: 150.0, min_stable: 0.5, ramp_mw_per_min: 2.0, startup_hours: 12.0, startup_cost: 100000, marginal_cost_per_mwh: 5.0, fixed_om_per_month: 300000, capital_cost: 150000000, build_months: 12, capacity_credit: 0.95, book_life_months: 360, siting: GeothermalSite(0.3)),
         // Wind [P7-SC-001] [P7-US-001]: 4,100 CNY/kW x (1,000 / 1,489 =
         // 0.67159) = 2,753.5, so 2,750 CNY/kW x 300,000 kW = 825,000,000.

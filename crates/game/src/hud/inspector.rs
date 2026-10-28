@@ -533,6 +533,10 @@ mod tests {
                     format::percent(terrain_cell.wind_potential).as_str()
                 ),
                 (
+                    "Geothermal potential",
+                    format::percent(terrain_cell.geothermal_potential).as_str()
+                ),
+                (
                     "Cooling water",
                     format::percent(terrain_cell.cooling_water).as_str()
                 ),

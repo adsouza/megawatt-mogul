@@ -538,3 +538,26 @@ cases (including cell reuse through flat/archive saves), the rules-version diges
 focused game geothermal/build/localization checks pass. The digest's simulation outcomes are
 unchanged; only the rules header advances. Workspace clippy, formatting and build also pass.
 Full local tests and browser acceptance were not rerun for this correction.
+
+
+### Reported regression follow-up — 2026-10-27
+
+The user's full run found ten failures outside the earlier focused validation. All ten were
+reproduced. The geothermal catalog now cites `P7-GEO-001`, an explicitly labelled internal
+A19 balance override in the regional-economics note, in every region; the existing provenance
+checker remains strict. No tuning values changed.
+
+Two catalog-validation tests now remove Battery explicitly instead of assuming it is the last
+entry. The firm-capacity property shortens only ordinary construction, leaving geothermal's
+exploration/build duration valid; the provided regression seed is retained. Inspector and Review
+expectations include geothermal potential and the expanded fuel/variable-O&M label.
+
+The three short-panel chart failures exposed a real layout regression from the ninth legend
+entry. Compact keys keep their font, labels and hit targets while reducing padding. In short
+supply panels the hour caption shares the key, leaving more room for the curve and both battery
+layouts; normal hourly tick labels remain. The existing minimum-curve-height, key bounds,
+keyboard controls and inventory visibility assertions remain, with a new check that the relocated
+hour caption stays visible outside the curve.
+
+All ten originally failing tests now pass in focused runs. Nine shipped-region provenance/ramp/
+pacing checks and 37 supply/forecast/chart-style checks pass. The full local suite was not rerun.

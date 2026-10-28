@@ -364,6 +364,8 @@
     geothermal: (success_min: 0.45, success_max: 0.80, quality_min: 0.15, quality_max: 1.0, exploration_months: 3, exploration_share: 0.12, monthly_decline: 0.002535048613836126, makeup_capital: 15000000, makeup_months: 3, ceiling_step: 0.05, minimum_gain: 0.03),
     wind: (monthly: [0.65, 0.65, 0.65, 0.6, 0.55, 0.5, 0.45, 0.45, 0.5, 0.55, 0.6, 0.65], persistence: 0.995, innovation_sd: 0.015, initial_sd: 0.15, band: 0.25),
     catalog: [
+        // Geothermal [P7-GEO-001]: explicit A19 gameplay tuning in local major units;
+        // not derived from this region's real-world costs or Plan 7 pacing ratios.
         (kind: Geothermal, capacity_mw: 150.0, min_stable: 0.5, ramp_mw_per_min: 2.0, startup_hours: 12.0, startup_cost: 100000, marginal_cost_per_mwh: 5.0, fixed_om_per_month: 300000, capital_cost: 150000000, build_months: 12, capacity_credit: 0.95, book_life_months: 360, siting: GeothermalSite(0.3)),
         (kind: Wind, capacity_mw: 300.0, min_stable: 0.0, ramp_mw_per_min: 0.0, startup_hours: 0.0, startup_cost: 0, marginal_cost_per_mwh: 0.0, fixed_om_per_month: 500000, capital_cost: 300000000, build_months: 3, capacity_credit: 0.2, book_life_months: 300, siting: Anywhere),
         (

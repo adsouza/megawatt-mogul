@@ -81,7 +81,15 @@ pub(super) fn draw_key_with_control<'a>(
     let mut memory = PlotMemory::load(ui.ctx(), plot_id);
     let mut hovered = None;
     ui.scope(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(8.0, 2.0);
+        // Compact chart bars need room for all nine plant kinds without consuming the curve.
+        // Keep the same labels, font and 16-point hit targets; remove surplus layout padding.
+        let compact = ui.available_height() < 180.0;
+        ui.spacing_mut().item_spacing = if compact {
+            egui::vec2(4.0, 0.0)
+        } else {
+            egui::vec2(8.0, 2.0)
+        };
+        ui.spacing_mut().interact_size.y = 16.0;
         ui.horizontal_wrapped(|ui| {
             control(ui);
             for (name, colour, mark) in entries {

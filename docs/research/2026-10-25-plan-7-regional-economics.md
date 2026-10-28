@@ -5,13 +5,15 @@ and construction-time figures live. Region files for Southern China, Brazil, Ind
 IPS/UPS and Continental Europe–Maghreb cite its rows by ID; tuning numbers live only in region RON
 (spec §28.7, §28.7.1). Every row records a number and a locator, not prose. Where no source was
 found, the gap is listed under [Gaps](#gaps) instead of being estimated.
+The later A19 geothermal authoring override is recorded separately below; its game values are
+not local real-world cost estimates or applications of Plan 7's currency/pacing formulas.
 
 ## Conventions
 
 - **Row IDs** are `P7-<area>-<nnn>`. Areas: `US` (pacing reference only), `FX` (exchange rates),
   `SC`, `BR`, `IN` and `IPS` (region-wide baselines), ISO alpha-2 countries inside Europe–Maghreb
   (`ES`, `MA`, `DE`, and `DZ` and `TN` from the 2026-10-26 follow-up), and `EM` (Europe–Maghreb
-  regional default).
+  regional default). `GEO` identifies the later shared A19 gameplay-tuning override.
 - **Columns** follow the Plan 7 Task 1 brief. *Normalised value* is in the region currency
   (CNY, BRL, INR, RUB or EUR) and always names an FX row; `FX: none` means the source is already in
   the region currency. US rows are not normalised: they are only the pacing reference, and no US
@@ -878,7 +880,9 @@ but could not be read without a login, a bot check or a download beyond the roun
 ## Verification
 
 - Row IDs are unique and match `P7-[A-Z]{2,3}-\d{3}`.
-- Every row has a URL, publication date, access date and locator. Undated web pages are marked
+- Every external research row has a URL, publication date, access date and locator. The later
+  `P7-GEO-001` internal authoring override instead identifies its approved design, balance record
+  and decision date explicitly. Undated web pages are marked
   "undated page" alongside a dated primary source.
 - Every normalised value names an FX row or `FX: none`.
 - The note contains no quotations; figures and locators only.
@@ -912,3 +916,21 @@ must consume cash after the first construction payment. A property check also sa
 and start months. Beginner survival and the first-city expansion remain required. These are game
 pacing limits, not assertions about real Chinese utility profitability. Archived saves retain their
 original prices and plant specifications; new-game rules advance to 23 without a state-schema bump.
+
+
+## A19 geothermal authoring override (2026-10-27)
+
+A19 adds a ninth catalog kind after Plan 7. Its catalog values are an explicit gameplay override,
+shared numerically by all eight regions in each region's own major currency units; no FX conversion
+or local real-world cost derivation is claimed. Only Western Interconnection and Continental
+Europe–Maghreb currently have buildable resource sites. The six zero-resource regions retain the
+same catalog definition for a consistent unavailable build row.
+
+| Row ID | Kind / metric | Value and units | Provenance / locator | Date |
+|---|---|---|---|---|
+| P7-GEO-001 | Geothermal / catalog gameplay override | 150 MW; 150,000,000 capital; 300,000 fixed O&M/month; 5 variable O&M/MWh, in local major units. Other operating/lifecycle terms are specified in A19's tuning table. | Approved [A19 §33.5 tuning table](../superpowers/specs/2026-10-18-megawatt-mogul-design.md#335-region-data-and-initial-tuning) and [implementation/balance record](../superpowers/plans/2026-10-27-amendment-a19-geothermal.md#implementation-and-validation-record--2026-10-27). Internal design/balance decision, not an external research measurement. | Approved and implemented 2026-10-27. |
+
+The tuning table explains the revision from the initial proposal, and the balance record gives
+Western/Italy/Turkey lifetime-cost comparisons against gas, coal and nuclear. The RON files and
+domain fixture own the executable values. This row supplies catalog provenance without presenting
+game tuning as country-specific research or borrowing an unrelated technology's source row.

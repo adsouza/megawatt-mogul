@@ -850,7 +850,7 @@ mod tests {
         let cases: Vec<Case> = vec![
             (
                 |p| {
-                    p.catalog.pop();
+                    p.catalog.retain(|spec| spec.kind != PlantKind::Battery);
                 },
                 RegionError::MissingPlantSpec(PlantKind::Battery),
             ),
@@ -1481,7 +1481,7 @@ mod tests {
         let bad_start = |p: &mut RegionDefinitionParts| p.start.home_city = CityId(99);
         let bad_city = |p: &mut RegionDefinitionParts| p.cities[0].cell = CellCoord { x: 50, y: 4 };
         let bad_catalog = |p: &mut RegionDefinitionParts| {
-            p.catalog.pop();
+            p.catalog.retain(|spec| spec.kind != PlantKind::Battery);
         };
 
         let err = |a: &dyn Fn(&mut RegionDefinitionParts),

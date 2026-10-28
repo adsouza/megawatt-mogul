@@ -204,10 +204,24 @@ fn assert_key_fits(model: &SupplyModel, width: f32) {
     let frame = *plot.transform().frame();
     assert!(
         frame.height() >= 40.0,
-        "the curve still needs height: {frame:?}"
+        "{width}: the curve still needs height: {frame:?}; key widgets: {:?}",
+        widgets_of(&output)
+            .iter()
+            .filter(|widget| widget.role == egui::accesskit::Role::CheckBox)
+            .map(|widget| (&widget.text, widget.rect))
+            .collect::<Vec<_>>()
     );
     assert!(plot.bounds().min()[0] <= 0.0 && plot.bounds().max()[0] >= 24.0);
     let widgets = widgets_of(&output);
+    let hour_caption = widgets
+        .iter()
+        .find(|widget| widget.text == model.hour_axis)
+        .expect("short charts keep the hour caption visible in the key");
+    assert!(!frame.intersects(hour_caption.rect));
+    assert!(
+        Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 152.0))
+            .contains_rect(hour_caption.rect)
+    );
     let names = model.stacks.iter().map(|stack| stack.name.as_str()).chain([
         model.demand_label.as_str(),
         model.served_label.as_str(),

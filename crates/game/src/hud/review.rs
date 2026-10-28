@@ -1723,7 +1723,7 @@ mod tests {
             lines,
             [
                 ("Revenue", money(report.revenue).as_str()),
-                ("Fuel", money(report.fuel).as_str()),
+                ("Fuel and variable O&M", money(report.fuel).as_str()),
                 ("Start-ups", money(report.start_up).as_str()),
                 (
                     "Fixed operations and maintenance",

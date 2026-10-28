@@ -222,6 +222,8 @@ pub fn draw_supply_chart(ui: &mut egui::Ui, model: &SupplyModel) -> Vec<UiAction
     let mut actions = Vec::new();
     let combined = model.has_storage && model.layout == SupplyChartLayout::Combined;
     let midnight = model.now >= 24.0;
+    // In short bars, keep the hour caption in the key instead of reserving another axis row.
+    let compact_hours = ui.available_height() < 180.0;
     let line_color = ui.visuals().strong_text_color();
     let now_color = ui.visuals().weak_text_color();
     // Keep the existing plot ID/visibility choices while giving its key real layout space.
@@ -260,6 +262,9 @@ pub fn draw_supply_chart(ui: &mut egui::Ui, model: &SupplyModel) -> Vec<UiAction
         ));
     }
     let hovered = super::chart_style::draw_key_with_control(ui, id, entries, |ui| {
+        if compact_hours {
+            ui.label(egui::RichText::new(&model.hour_axis).size(12.0));
+        }
         if model.has_storage {
             let mut on = combined;
             if ui
@@ -336,6 +341,7 @@ pub fn draw_supply_chart(ui: &mut egui::Ui, model: &SupplyModel) -> Vec<UiAction
     } else {
         &model.storage_energy_label
     };
+    let hour_label = if compact_hours { "" } else { &model.hour_axis };
     let power = |ui: &mut egui::Ui| {
         let mut axes = vec![
             super::chart_style::y_axis(power_label),
@@ -363,7 +369,7 @@ pub fn draw_supply_chart(ui: &mut egui::Ui, model: &SupplyModel) -> Vec<UiAction
             .include_x(24.0)
             .include_y(0.0)
             .x_grid_spacer(super::chart_style::hour_grid)
-            .custom_x_axes(vec![super::chart_style::hour_axis(ui, &model.hour_axis)])
+            .custom_x_axes(vec![super::chart_style::hour_axis(ui, hour_label)])
             .custom_y_axes(axes)
             .label_formatter(|position| {
                 let HoverPosition::NearDataPoint {
@@ -491,7 +497,7 @@ pub fn draw_supply_chart(ui: &mut egui::Ui, model: &SupplyModel) -> Vec<UiAction
                         .include_y(0.0)
                         .include_y(energy_peak)
                         .x_grid_spacer(super::chart_style::hour_grid)
-                        .custom_x_axes(vec![super::chart_style::hour_axis(ui, &model.hour_axis)])
+                        .custom_x_axes(vec![super::chart_style::hour_axis(ui, hour_label)])
                         .custom_y_axes(vec![super::chart_style::y_axis(energy_label)])
                         .show(ui, |plot| {
                             if !hidden {

@@ -409,7 +409,7 @@ fn the_review_modal_draws_every_section_after_a_full_day() {
             "Month in review",
             "Profit and loss",
             "Revenue",
-            "Fuel",
+            "Fuel and variable O&M",
             "Start-ups",
             "Fixed operations and maintenance",
             "Construction",
