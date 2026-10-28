@@ -52,8 +52,12 @@ baseline as the test container. The image tag and npm package version must be up
 
 Browser Rust dependencies are cached separately from native CI, on both main and PR merge refs,
 including failed runs. PRs can restore main's cache and their own earlier cache; they cannot
-replace main's cache. Closing a PR removes only its `browser-rust-*` caches through a trusted
-default-branch workflow. Other cache namespaces and refs are left alone.
+replace main's cache. Before caching, the browser runner removes unused Rust toolchains so
+updates to the runner's preinstalled stable compiler cannot invalidate the pinned compiler's
+cache. The first run with this normalized toolchain inventory builds a fresh cache; subsequent
+runs retain the usual compiler, environment and dependency checks. Closing a PR removes only
+its `browser-rust-*` caches through a trusted default-branch workflow. Other cache namespaces
+and refs are left alone.
 
 WASM/JS and runtime assets are content-addressed. A stale page or mismatched asset inventory
 shows Reload; browser data is never cleared by deployment. This release has no service worker

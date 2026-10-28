@@ -68,6 +68,19 @@ jobs:
       - uses: ./.github/actions/rust-toolchain
         with:
           targets: wasm32-unknown-unknown
+      # rust-cache hashes every installed compiler, including the runner's unused stable
+      # toolchain. Runner image updates otherwise invalidate our pinned 1.98.1 build cache.
+      - name: Keep only the active Rust toolchain
+        shell: bash
+        run: |
+          active_toolchain=$(rustup show active-toolchain)
+          active_toolchain=${active_toolchain%% *}
+          installed_toolchains=$(rustup toolchain list)
+          while read -r installed_toolchain _; do
+            if [[ "$installed_toolchain" != "$active_toolchain" ]]; then
+              rustup toolchain uninstall "$installed_toolchain"
+            fi
+          done <<< "$installed_toolchains"
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: browser-rust-v1
