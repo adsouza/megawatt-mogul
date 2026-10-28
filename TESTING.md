@@ -253,8 +253,11 @@ decoding of hostile nesting.
 `application/tests/geothermal.rs` compares one-tick/32-tick operation and projections, repeated
 queries, journaled dismissal and mid-makeup restore. Infrastructure's geothermal tests preserve
 immutable pre-change schema-4/5 Planning/Operating/Review saves and schema-5 multi-island/HVDC
-saves, including rules-27 continuation receipts. The capture tool refuses newer engines; never
-regenerate these fixtures. Region validation and the frozen unavailable stub remain separate
+saves, including rules-27 continuation receipts. Original source-schema restore bytes are checked
+on every target. Resave/restore continuations compare full checkpoints and events exactly on every
+target; frozen dynamic continuation bytes are compared on their recorded capture target
+(`aarch64-apple-darwin`) because libm can differ in the last bit across platforms.
+The capture tool refuses newer engines; never regenerate these fixtures. Region validation and the frozen unavailable stub remain separate
 from current data. `geothermal_balance.rs` reads shipped data and independently compares lifetime
 cost at good/marginal sites in the Western grid, Italy and Turkey, reporting every margin.
 

@@ -22,6 +22,50 @@ fn restore(bytes: &[u8]) -> Game {
         )
         .unwrap()
 }
+
+fn assert_legacy_continuation(
+    original: &SaveBundle,
+    game: &mut Game,
+    command: Command,
+    root: &std::path::Path,
+    phase: &str,
+) {
+    // Verify exact resave/restore continuation on every target, including targets whose
+    // libm results differ in the last bit from the frozen capture's platform.
+    let bundle = SaveBundle {
+        compatibility: replay_compatibility(),
+        metadata: original.metadata.clone(),
+        checkpoint: game.checkpoint(),
+    };
+    let mut resumed = restore(&encode_save(&bundle).unwrap());
+    assert_eq!(resumed.checkpoint(), game.checkpoint(), "{phase}: boundary");
+    assert_eq!(
+        game.execute(command.clone()).unwrap(),
+        resumed.execute(command).unwrap(),
+        "{phase}: continuation events"
+    );
+    assert_eq!(
+        resumed.checkpoint(),
+        game.checkpoint(),
+        "{phase}: continued"
+    );
+
+    // Source-schema restore bytes are checked unconditionally by the callers. Only
+    // dynamic continuation receipts depend on the platform that captured them.
+    if original.compatibility.platform == replay_compatibility().platform {
+        assert_eq!(
+            game.session().snapshot_state_schema(5),
+            std::fs::read(root.join(format!("{phase}-continued-session.bin"))).unwrap(),
+            "{phase}: captured session"
+        );
+        assert_eq!(
+            game.projections().state_bytes_schema(5),
+            std::fs::read(root.join(format!("{phase}-continued-projections.bin"))).unwrap(),
+            "{phase}: captured projections"
+        );
+    }
+}
+
 #[test]
 fn geothermal_prechange_schema5_saves_verify_original_bytes_and_remain_unavailable() {
     for bytes in [
@@ -45,17 +89,11 @@ fn geothermal_prechange_schema5_saves_verify_original_bytes_and_remain_unavailab
                 );
             }
         }
-        match game.session().phase() {
-            DayPhase::Planning => {
-                game.execute(Command::BeginOperating).unwrap();
-            }
-            DayPhase::Operating => {
-                game.execute(Command::AdvanceTicks { n: 60 }).unwrap();
-            }
-            DayPhase::Review => {
-                game.execute(Command::FinishReview).unwrap();
-            }
-        }
+        let command = match game.session().phase() {
+            DayPhase::Planning => Command::BeginOperating,
+            DayPhase::Operating => Command::AdvanceTicks { n: 60 },
+            DayPhase::Review => Command::FinishReview,
+        };
         let phase = match original.checkpoint.summary.phase {
             DayPhase::Planning => "planning",
             DayPhase::Operating => "operating",
@@ -63,14 +101,7 @@ fn geothermal_prechange_schema5_saves_verify_original_bytes_and_remain_unavailab
         };
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/support/pre-geothermal-rules27");
-        assert_eq!(
-            game.session().snapshot_state_schema(5),
-            std::fs::read(root.join(format!("{phase}-continued-session.bin"))).unwrap()
-        );
-        assert_eq!(
-            game.projections().state_bytes_schema(5),
-            std::fs::read(root.join(format!("{phase}-continued-projections.bin"))).unwrap()
-        );
+        assert_legacy_continuation(&original, &mut game, command, &root, phase);
         let bundle = SaveBundle {
             checkpoint: game.checkpoint(),
             ..original
@@ -261,15 +292,7 @@ fn geothermal_prechange_multi_island_hvdc_saves_keep_original_canonical_continua
             "operating" => Command::AdvanceTicks { n: 60 },
             _ => Command::FinishReview,
         };
-        game.execute(command).unwrap();
-        assert_eq!(
-            game.session().snapshot_state_schema(5),
-            std::fs::read(root.join(format!("{phase}-continued-session.bin"))).unwrap()
-        );
-        assert_eq!(
-            game.projections().state_bytes_schema(5),
-            std::fs::read(root.join(format!("{phase}-continued-projections.bin"))).unwrap()
-        );
+        assert_legacy_continuation(&original, &mut game, command, &root, phase);
     }
 }
 

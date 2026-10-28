@@ -13,8 +13,11 @@ Operating → AdvanceTicks(60), Review → FinishReview. The multi-area source c
 HVDC link and two electrical areas. The schema-4 folder uses the baseline's schema-4
 encoder, without regenerating any earlier historical fixture.
 
-Do not regenerate these with the current engine. Tests verify their original bytes
-before upcasting and compare the baseline continuation receipts exactly.
+Do not regenerate these with the current engine. Capture target: `aarch64-apple-darwin`.
+Tests verify the original source-schema bytes before upcasting on every target, and compare
+full checkpoints and events after resaving, restoring and continuing on every target.
+The baseline dynamic continuation receipts are compared exactly on the capture target;
+other targets can differ in the last bit of libm results after advancing the simulation.
 
 | Save | SHA-256 |
 |---|---|
