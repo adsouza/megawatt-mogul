@@ -111,11 +111,8 @@ impl GameSession {
             .region
             .geothermal()
             .expect("geothermal plant has params");
-        let ceiling = (g.initial_field.value()
-            * (1.0 - (f64::from(g.rounds) + 1.0) * params.ceiling_step.value()))
-        .max(0.0);
-        let previous_ceiling =
-            g.initial_field.value() * (1.0 - f64::from(g.rounds) * params.ceiling_step.value());
+        let ceiling = g.ceiling(g.rounds + 1, params);
+        let previous_ceiling = g.ceiling(g.rounds, params);
         if ceiling >= previous_ceiling
             || ceiling - g.field.value() < params.minimum_gain.value()
             || ceiling <= g.field.value()
@@ -624,7 +621,72 @@ mod tests {
         g.field = Ratio::new(0.494).unwrap();
         assert_eq!(g.thresholds(), vec![90]);
     }
+    /// Resuming from a snapshot taken mid-exploration (RNG position, instalments and stage
+    /// included) closes the remaining months exactly as uninterrupted play does.
+    #[test]
+    fn geothermal_resume_mid_exploration_matches_uninterrupted_play() {
+        for seed in [7, 8, 9, 10] {
+            let mut a = GameSession::new(
+                Arc::new(RegionDefinition::try_from(tiny_region_parts()).unwrap()),
+                seed,
+                GameSettings::default(),
+            );
+            a.build_plant(PlantKind::Geothermal, CELL).unwrap();
+            close(&mut a);
+            let mut b =
+                GameSession::from_snapshot_state(&a.snapshot_state(), a.region.clone()).unwrap();
+            for _ in 0..3 {
+                assert_eq!(close(&mut a), close(&mut b), "seed {seed}");
+            }
+            assert_eq!(a.snapshot_state(), b.snapshot_state(), "seed {seed}");
+        }
+    }
+    #[test]
+    fn geothermal_is_neither_variable_nor_storage() {
+        let region = RegionDefinition::try_from(tiny_region_parts()).unwrap();
+        let spec = region.spec(PlantKind::Geothermal);
+        assert!(PlantKind::Geothermal.is_dispatchable() && !PlantKind::Geothermal.is_variable());
+        assert!(spec.battery.is_none() && spec.kind != PlantKind::Battery);
+    }
     proptest::proptest! {
+        /// Odds and field quality stay within their configured bounds and rise with potential,
+        /// for any valid parameters and siting minimum, not just the shipped fixture.
+        #[test]
+        fn geothermal_site_odds_and_quality_stay_in_bounds_and_rise_with_potential(
+            odds in (0.0f64..=1.0, 0.0f64..=1.0), quality in (0.01f64..=1.0, 0.01f64..=1.0),
+            minimum in 0.0f64..1.0, a in 0.0f64..=1.0, b in 0.0f64..=1.0,
+        ) {
+            let r = |v: f64| Ratio::new(v).unwrap();
+            let mut params = crate::region::fixtures::geothermal_params();
+            (params.success_min, params.success_max) = (r(odds.0.min(odds.1)), r(odds.0.max(odds.1)));
+            (params.quality_min, params.quality_max) = (r(quality.0.min(quality.1)), r(quality.0.max(quality.1)));
+            let (lo, hi) = (params.site(r(a.min(b)), r(minimum)), params.site(r(a.max(b)), r(minimum)));
+            for (odds, quality) in [lo, hi] {
+                proptest::prop_assert!(params.success_min <= odds && odds <= params.success_max);
+                proptest::prop_assert!(params.quality_min <= quality && quality <= params.quality_max);
+            }
+            proptest::prop_assert!(lo.0 <= hi.0 && lo.1 <= hi.1);
+        }
+        /// Available capacity, minimum output and firm MW scale with the field; the commitment
+        /// spec uses the commissioned field, which no decline lowers.
+        #[test]
+        fn geothermal_capacities_scale_with_the_field(initial in 0.15f64..=1.0, share in 0.001f64..=1.0) {
+            let region = RegionDefinition::try_from(tiny_region_parts()).unwrap();
+            let spec = region.spec(PlantKind::Geothermal).clone();
+            let nameplate = spec.capacity.value();
+            let mut p = crate::generation::Plant::new_commissioned(
+                PlantId(1), crate::ids::NodeId(1), CELL, spec.clone(), crate::time::SimMonth::new(2027, 4).unwrap(),
+            );
+            let field = initial * share;
+            p.set_geothermal(crate::generation::GeothermalState {exploration_left:0,odds:Ratio::ONE,exploration_capital:Money::ZERO,initial_field:Ratio::new(initial).unwrap(),field:Ratio::new(field).unwrap(),rounds:0,makeup:None,crossed:0,notice:None,taught:false});
+            let close_to = |a: Megawatts, b: f64| (a.value() - b).abs() <= 1e-9 * nameplate;
+            let available = nameplate * field;
+            proptest::prop_assert!(close_to(p.available_capacity(), available));
+            proptest::prop_assert!(close_to(p.min_output(), available * spec.min_stable.value()));
+            proptest::prop_assert!(close_to(p.firm_capacity(&region.regulator().storage_accreditation), available * spec.capacity_credit.value()));
+            proptest::prop_assert!(close_to(p.commitment_spec().capacity, nameplate * initial));
+            proptest::prop_assert_eq!(p.control_spec().capacity, p.available_capacity());
+        }
         #[test]
         fn geothermal_site_interpolation_and_monthly_decline_are_bounded(a in 0.3f64..=1.0, b in 0.3f64..=1.0, months in 0..1000usize) {
             let params = crate::region::fixtures::geothermal_params();
@@ -723,6 +785,35 @@ mod physical_contracts {
         assert!(p.initial_target() <= p.available_capacity());
         assert!(s.check_invariants().is_ok());
         assert!(GameSession::from_snapshot_state(&s.snapshot_state(), s.region.clone()).is_ok());
+    }
+    /// Makeup can restore capacity up to the commissioned level, which lengthens shutdown. A
+    /// pattern accepted while the field is low must still fit then, so it is validated against
+    /// commissioned capacity: 13 off-hours fit 105 MW (53 + 720 ticks) but not 135 MW (68 + 720).
+    #[test]
+    fn geothermal_commitment_fits_the_commissioned_capacity_makeup_can_restore() {
+        let mut s = GameSession::new(
+            Arc::new(RegionDefinition::try_from(geothermal_acceptance_parts()).unwrap()),
+            7,
+            GameSettings::default(),
+        );
+        let id = s
+            .power
+            .plants()
+            .values()
+            .find(|p| p.kind() == PlantKind::Geothermal)
+            .unwrap()
+            .id();
+        let g = s.power.plant_mut(id).unwrap().geothermal_mut().unwrap();
+        g.initial_field = Ratio::new(0.9).unwrap();
+        g.field = Ratio::new(0.7).unwrap();
+        let off = |hours: usize| std::array::from_fn(|h| h >= hours);
+        let before = s.snapshot_state();
+        assert!(matches!(
+            s.commit_plant(id, off(13)),
+            Err(DomainError::CommitmentInfeasible { .. })
+        ));
+        assert_eq!(s.snapshot_state(), before);
+        s.commit_plant(id, off(14)).unwrap();
     }
     #[test]
     fn geothermal_exploration_draws_once_per_completion_in_id_order_and_never_on_queries() {

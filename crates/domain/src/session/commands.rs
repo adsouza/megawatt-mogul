@@ -287,7 +287,8 @@ impl GameSession {
         hours: [bool; 24],
     ) -> Result<Vec<DomainEvent>, DomainError> {
         self.require_phase(&[DayPhase::Planning])?;
-        let schedule = CommitmentSchedule::try_new(hours, &self.operable(plant)?.control_spec())?;
+        let schedule =
+            CommitmentSchedule::try_new(hours, &self.operable(plant)?.commitment_spec())?;
         self.operable_mut(plant).set_commitment(schedule);
         Ok(Vec::new())
     }

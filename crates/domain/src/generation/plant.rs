@@ -179,6 +179,17 @@ impl Plant {
         spec.capacity = self.available_capacity();
         spec
     }
+    /// The spec a commitment pattern must fit. Geothermal uses its commissioned capacity, the
+    /// most makeup drilling can restore, so a later restore never outgrows an accepted pattern.
+    pub fn commitment_spec(&self) -> PlantSpec {
+        let mut spec = self.spec.clone();
+        spec.capacity = self.spec.capacity
+            * self
+                .geothermal
+                .as_ref()
+                .map_or(1.0, |g| g.initial_field.value());
+        spec
+    }
     pub fn min_output(&self) -> Megawatts {
         self.available_capacity() * self.spec.min_stable.value()
     }

@@ -314,7 +314,42 @@ fn plant_section(
                     ))),
                 );
             }
-            if let Some(exploration) = quote.as_ref().ok().and_then(|q| q.exploration) {
+            if let Some((q, exploration)) = quote
+                .as_ref()
+                .ok()
+                .and_then(|q| q.exploration.map(|e| (q, e)))
+            {
+                // Exploration pays its share first, then construction pays the rest: an even
+                // spread would understate the later, larger instalments.
+                if let Some(payment) = stats
+                    .iter_mut()
+                    .find(|s| s.label == l10n.text("build-monthly-payment"))
+                {
+                    payment.value = l10n.args(
+                        "geothermal-staged-payment",
+                        &[
+                            (
+                                "exploration",
+                                monthly_payment(
+                                    exploration.capital_at_risk,
+                                    exploration.months,
+                                    style,
+                                )
+                                .into(),
+                            ),
+                            ("months", exploration.months.into()),
+                            (
+                                "construction",
+                                monthly_payment(
+                                    q.capital - exploration.capital_at_risk,
+                                    q.months - exploration.months,
+                                    style,
+                                )
+                                .into(),
+                            ),
+                        ],
+                    );
+                }
                 stats.push(stat("geothermal-odds", format::percent(exploration.odds)));
                 stats.push(stat(
                     "geothermal-expected",
@@ -348,6 +383,10 @@ fn plant_section(
                     "plant-capacity-credit",
                     format::percent(spec.capacity_credit),
                 ));
+            }
+            // A game started before geothermal carries only a placeholder spec: quote nothing.
+            if kind == PlantKind::Geothermal && !game.session().geothermal_available() {
+                stats.clear();
             }
             PlantRow {
                 kind,
