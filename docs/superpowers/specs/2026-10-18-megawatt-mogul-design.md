@@ -4696,3 +4696,45 @@ Notices go where the game pauses, Planning and Review, and on the plant card, so
 - Hands-off starter service in every shipped region is unchanged.
 - The native launch smoke passes. A 32× playtest in the Western Interconnection covers a dry well, a
   successful build, at least two decline notices and one makeup round.
+
+## 34. Amendment A20: Automatic HVDC transfers (2026-10-29)
+
+New and inherited HVDC links default to **Automatic**. Each retains a separate manual signed
+24-hour schedule. Selecting Manual restores that schedule; applying a schedule selects Manual.
+Modes can be changed in Planning or Operating (in-service links only while Operating). A live
+MW target temporarily overrides either mode until cleared or the day ends. Clearing it resumes
+the selected mode. Mode changes clear the temporary override without erasing the manual profile.
+
+The automatic allocator reserves local load, covers reachable shortages with spare generation,
+then replaces more expensive AGC generation when delivered marginal cost, including every link's
+losses, is lower. Paths may span several links; each allocation consumes shared source headroom
+and corridor capacity before the next. Stable IDs break ties. This is a deterministic merit-order
+heuristic, not a guarantee of the globally cheapest mathematical dispatch.
+
+A pure hourly planner supplies effective transfers to forecasts, shortage/minimum-generation
+warnings, activation and prospective connection checks, and operating hydro/storage/outage
+planning. It reserves the worst local requirement within an hour and uses the existing water-
+and inventory-aware supply evaluator. During operation the remaining plan is refreshed hourly
+from remaining water and stored energy. The live allocator recomputes each minute from actual
+weather, customer load, reachable AGC output, physical minimums and shutdown tails. Battery
+nameplate capacity and hypothetical future charging are never offered as export generation;
+optional local charging uses capacity left after customer shortages and respects the local
+charge request. A grid restoring interrupted service cannot export spare capacity.
+
+Live automatic exchanges and AGC plants are positioned together within their one-minute ramps.
+At midnight both fleets and automatic transfers start in the same synthetic balanced boundary
+state, analogous to boundary plant dispatch. Later flow changes obey corridor ramps, including
+reversal through zero and unavoidable ramp-down tails. Manual schedules and overrides remain
+fixed inputs to the allocator. Terminal eligibility, blocking and latched under-frequency
+runback remain authoritative. An idle zero-target converter has no sending terminal and does
+not create a new runback latch merely because one grid is weak; an existing latch is retained.
+
+The Dispatch tab shows Automatic/Manual, the effective transfer profile and a description of the
+current exchange. Manual exposes the existing hourly range editor. Operating exposes the live
+target override and **Resume automatic** (or **Return to schedule** in Manual). Planning profiles
+are cached with the other forecast analysis until the session changes.
+
+Rules advance from 30 to 31 and portable state from schema 6 to 7. New state records each link's
+mode, automatic profile and live automatic target. Earlier snapshots migrate every existing link
+to Manual, retaining schedules, overrides, flow, protection and original-schema bytes. Players
+can opt those links into Automatic. Region schema and archived definitions are unchanged.

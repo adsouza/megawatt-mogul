@@ -287,11 +287,13 @@ impl GameSession {
     /// Pure: no live water, energy or RNG changes.
     pub fn supply_forecast(&self) -> crate::grid::SupplyForecast {
         if self.region.areas().is_some() && !self.power.island_nodes().is_empty() {
-            let mut forecasts = self
+            let planned = self
                 .power
+                .with_transfer_plan(&self.region, self.clock.month());
+            let mut forecasts = planned
                 .island_nodes()
                 .keys()
-                .filter_map(|id| self.power.scoped_island(*id, &self.region))
+                .filter_map(|id| planned.scoped_island(*id, &self.region))
                 .map(|p| p.supply_forecast(&self.region, self.clock.month()));
             if let Some(mut total) = forecasts.next() {
                 for next in forecasts {

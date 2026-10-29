@@ -664,9 +664,9 @@ hvdc-tab-costs = Costs
 hvdc-project-picker = Project
 hvdc-status-building = Under construction · { $months } months remaining
 hvdc-status-inactive = Service inactive
-hvdc-status-unavailable = Scheduled transfer unavailable
+hvdc-status-unavailable = Planned transfer unavailable
 hvdc-status-standby = Standby
-hvdc-status-ready = Ready for scheduled transfers
+hvdc-status-ready = Ready for transfers
 hvdc-status-blocked = Blocked
 hvdc-status-runback = Runback
 hvdc-status-transferring = Transferring power
@@ -753,3 +753,14 @@ geothermal-ordered = Makeup drilling ordered.
 geothermal-completed = Makeup drilling at { $plant } restored { $restored }.
 geothermal-potential = Geothermal potential
 geothermal-resource-help = Hydrothermal site quality sets exploration success and initial output. Exploration can fail; proven fields decline over time.
+
+# Automatic HVDC transfers; manual schedules remain stored while automatic is enabled.
+hvdc-mode-automatic = Automatic
+hvdc-mode-manual = Manual
+hvdc-resume-automatic = Resume automatic
+hvdc-automatic-profile = Automatic transfer plan
+hvdc-automatic-help = Transfers follow demand and available generation across connected grids, accounting for losses and ramp limits. A live target temporarily overrides automatic control for the rest of this day.
+hvdc-control-override = Temporary MW override active until resumed or the day ends.
+hvdc-control-standby = Automatic · waiting for a useful transfer
+hvdc-control-transfer = Automatic · { $mw } from { $from } to { $to } to balance supply and reduce generation cost
+hvdc-control-manual = Manual · following the stored hourly schedule

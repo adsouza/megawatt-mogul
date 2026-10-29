@@ -204,7 +204,7 @@ impl GameSession {
                 link.schedule = [0.0; 24];
             }
         }
-        power
+        power.with_transfer_plan(&self.region, month)
     }
 }
 

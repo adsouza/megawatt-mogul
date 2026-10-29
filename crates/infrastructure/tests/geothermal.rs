@@ -112,7 +112,7 @@ fn geothermal_prechange_schema5_saves_verify_original_bytes_and_remain_unavailab
         let rewritten = encode_save(&bundle).unwrap();
         let again = restore(&rewritten);
         assert!(!again.session().geothermal_available());
-        assert_eq!(again.checkpoint().snapshot.unwrap().schema, 6);
+        assert_eq!(again.checkpoint().snapshot.unwrap().schema, 7);
         assert_eq!(
             again.session().snapshot_state(),
             game.session().snapshot_state()

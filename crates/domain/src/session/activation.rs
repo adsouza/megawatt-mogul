@@ -56,6 +56,7 @@ impl GameSession {
         }
         let mut proposed = self.power.clone();
         proposed.activate_service(island);
+        proposed = proposed.with_transfer_plan(&self.region, self.clock.month());
         let local = proposed
             .scoped_island(island, &self.region)
             .expect("assessed island");
@@ -82,8 +83,8 @@ impl GameSession {
                 .link_planning_forecast(link.id)
                 .expect("existing link");
             let hours = std::array::from_fn(|h| {
-                let incoming = (plan.to_island == Some(island) && link.schedule[h] > 0.0)
-                    || (plan.from_island == Some(island) && link.schedule[h] < 0.0);
+                let incoming = (plan.to_island == Some(island) && link.planned_target(h) > 0.0)
+                    || (plan.from_island == Some(island) && link.planned_target(h) < 0.0);
                 incoming
                     && (!plan.available(h)
                         || !plan

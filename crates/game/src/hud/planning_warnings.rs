@@ -425,32 +425,47 @@ mod tests {
             })
             .unwrap();
         }
-        let model = warnings_model(&game, &l10n, &UiState::default());
-        assert!(
-            model
-                .rows
-                .iter()
-                .any(|row| row.kind == WarningKind::Shortfall && row.text.contains("Shanghai")),
-            "{:?}",
-            model.rows
-        );
-        assert!(
-            model
-                .rows
-                .iter()
-                .any(|row| row.kind == WarningKind::MinimumGeneration
-                    && row.text.contains("Beijing")),
-            "{:?}",
-            model.rows
-        );
-        assert!(
-            model
-                .rows
-                .iter()
-                .any(|row| row.text.contains("hourly transfers are zero")),
-            "{:?}",
-            model.rows
-        );
+        let links: Vec<_> = game
+            .session()
+            .power()
+            .network()
+            .links()
+            .map(|link| link.id)
+            .collect();
+        for automatic in [true, false] {
+            for &link in &links {
+                game.execute(Command::SetLinkAutoFollow {
+                    link,
+                    on: automatic,
+                })
+                .unwrap();
+            }
+            let model = warnings_model(&game, &l10n, &UiState::default());
+            assert!(
+                model
+                    .rows
+                    .iter()
+                    .any(|row| row.kind == WarningKind::Shortfall && row.text.contains("Shanghai")),
+                "{:?}",
+                model.rows
+            );
+            assert!(
+                model
+                    .rows
+                    .iter()
+                    .any(|row| row.kind == WarningKind::MinimumGeneration
+                        && row.text.contains("Beijing")),
+                "{:?}",
+                model.rows
+            );
+            assert_eq!(
+                model.rows.iter().any(|row| row.text.contains("Shanghai")
+                    && row.text.contains("hourly transfers are zero")),
+                !automatic,
+                "a zero stored schedule warns only in Manual mode: {:?}",
+                model.rows
+            );
+        }
         assert!(l10n.problems().is_empty());
     }
 

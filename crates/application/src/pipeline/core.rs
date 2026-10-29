@@ -25,6 +25,7 @@ impl CommandHandler for CoreHandler {
             } => session.activate_island(*island, *accept_shortfall, *expected_revision)?,
             Command::BuildLink { from, to } => session.build_link(*from, *to)?.1,
             Command::CancelLinkConstruction { link } => session.cancel_link_construction(*link)?,
+            Command::SetLinkAutoFollow { link, on } => session.set_link_auto_follow(*link, *on)?,
             Command::SetLinkSchedule { link, mw } => session.set_link_schedule(*link, **mw)?,
             Command::SetLinkTarget { link, mw } => session.set_link_target(*link, *mw)?,
             Command::ClearLinkOverride { link } => session.clear_link_override(*link)?,

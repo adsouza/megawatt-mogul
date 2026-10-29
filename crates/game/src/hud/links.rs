@@ -79,6 +79,9 @@ pub struct LinkCardModel {
     pub terminals: [HvdcTerminalModel; 2],
     pub notices: Vec<String>,
     pub schedule: [f64; 24],
+    pub auto_follow: bool,
+    pub modes: Vec<ToggleModel>,
+    pub control_status: String,
     pub rating: f64,
     pub target: f64,
     pub planning: bool,
@@ -105,6 +108,7 @@ pub struct LinksModel {
     pub apply_label: String,
     pub validation: String,
     pub direction: String,
+    pub automatic_help: String,
     pub read_only: String,
     pub close: ButtonModel,
 }
@@ -213,7 +217,7 @@ pub(super) fn link_planning_issues(
             );
         }
     }
-    if link.schedule.iter().all(|mw| *mw == 0.0) {
+    if !link.auto_follow && link.schedule.iter().all(|mw| *mw == 0.0) {
         issues.push(l10n.args("hvdc-planning-zero", &[("route", route.into())]));
     }
     issues
@@ -234,15 +238,18 @@ fn links_model_cached(
     game: &Game,
     l10n: &Localizer,
     style: &MoneyStyle,
-    cached: Option<&std::collections::BTreeMap<NodeId, super::ActivationCardModel>>,
+    cached: Option<&super::PlanningForecast>,
     ui: &UiState,
 ) -> Option<LinksModel> {
     let session = game.session();
     let spec = session.region().hvdc()?;
     let names = Names::new(l10n, session);
     let utilisation = session.link_utilisation(session.clock().month());
+    let schedules = cached
+        .map(|f| f.link_schedules.clone())
+        .unwrap_or_else(|| session.link_schedules());
     let activations: Vec<_> = cached
-        .map(|cards| cards.values().cloned().collect())
+        .map(|f| f.activations.values().cloned().collect())
         .unwrap_or_else(|| {
             session
                 .power()
@@ -261,12 +268,13 @@ fn links_model_cached(
                 .power()
                 .link_planning_forecast(link.id)
                 .expect("existing link");
+            let schedule = schedules[&link.id];
             let building = matches!(link.status, LineStatus::UnderConstruction { .. });
             let inactive = [plan.from_island, plan.to_island]
                 .iter()
                 .any(|id| id.is_none_or(|id| !session.power().island_active(id)));
-            let unsupported = (0..24).any(|h| link.schedule[h] != 0.0 && !plan.available(h));
-            let zero = link.schedule.iter().all(|mw| *mw == 0.0);
+            let unsupported = (0..24).any(|h| schedule[h] != 0.0 && !plan.available(h));
+            let zero = schedule.iter().all(|mw| *mw == 0.0);
             let (status, tone) = if let LineStatus::UnderConstruction { months_left } = link.status
             {
                 (
@@ -405,7 +413,7 @@ fn links_model_cached(
                 .expect("immutable link terms");
             let mut notices = Vec::new();
             if session.phase() == DayPhase::Planning {
-                if zero {
+                if zero && !link.auto_follow {
                     notices.push(l10n.text("hvdc-no-schedule"));
                 }
                 if inactive {
@@ -425,12 +433,8 @@ fn links_model_cached(
                 status,
                 tone,
                 stats: if session.phase() == DayPhase::Planning {
-                    let low = link.schedule.iter().copied().fold(f64::INFINITY, f64::min);
-                    let high = link
-                        .schedule
-                        .iter()
-                        .copied()
-                        .fold(f64::NEG_INFINITY, f64::max);
+                    let low = schedule.iter().copied().fold(f64::INFINITY, f64::min);
+                    let high = schedule.iter().copied().fold(f64::NEG_INFINITY, f64::max);
                     vec![
                         stat(
                             "hvdc-metric-rating",
@@ -460,7 +464,7 @@ fn links_model_cached(
                                 "hvdc-value-scheduled-hours",
                                 &[(
                                     "hours",
-                                    (link.schedule.iter().filter(|mw| **mw != 0.0).count() as u32)
+                                    (schedule.iter().filter(|mw| **mw != 0.0).count() as u32)
                                         .into(),
                                 )],
                             ),
@@ -509,15 +513,70 @@ fn links_model_cached(
                     terminal(link.to, plan.to_island, plan.to_ready),
                 ],
                 notices,
-                schedule: link.schedule,
+                schedule,
+                auto_follow: link.auto_follow,
+                modes: [(true, "hvdc-mode-automatic"), (false, "hvdc-mode-manual")]
+                    .into_iter()
+                    .map(|(on, key)| ToggleModel {
+                        button: ButtonModel::new(
+                            l10n.text(key),
+                            UiAction::Command(Command::SetLinkAutoFollow { link: link.id, on }),
+                        )
+                        .enabled_if(
+                            session.phase() == DayPhase::Planning
+                                || (session.phase() == DayPhase::Operating && !building),
+                        ),
+                        on: link.auto_follow == on,
+                    })
+                    .collect(),
+                control_status: if link.override_mw.is_some() {
+                    l10n.text("hvdc-control-override")
+                } else if link.auto_follow {
+                    let target = if session.phase() == DayPhase::Planning {
+                        schedule[0]
+                    } else {
+                        link.automatic_target
+                    };
+                    if target.abs() < 0.1 {
+                        l10n.text("hvdc-control-standby")
+                    } else {
+                        let (sender, receiver) = if target > 0.0 {
+                            (link.from_grid(), link.to_grid())
+                        } else {
+                            (link.to_grid(), link.from_grid())
+                        };
+                        l10n.args(
+                            "hvdc-control-transfer",
+                            &[
+                                (
+                                    "mw",
+                                    format::megawatts(domain::units::Megawatts::new(target.abs()))
+                                        .into(),
+                                ),
+                                ("from", names.node(sender).into()),
+                                ("to", names.node(receiver).into()),
+                            ],
+                        )
+                    }
+                } else {
+                    l10n.text("hvdc-control-manual")
+                },
                 rating: spec.rating_mw,
                 target: link.target((session.clock().tick() / 60).min(23) as usize),
                 planning: session.phase() == DayPhase::Planning,
                 operating: session.phase() == DayPhase::Operating && !building,
-                schedule_label: l10n.text("hvdc-schedule"),
+                schedule_label: l10n.text(if link.auto_follow {
+                    "hvdc-automatic-profile"
+                } else {
+                    "hvdc-schedule"
+                }),
                 target_label: l10n.text("hvdc-target"),
                 clear: ButtonModel::new(
-                    l10n.text("hvdc-clear-override"),
+                    l10n.text(if link.auto_follow {
+                        "hvdc-resume-automatic"
+                    } else {
+                        "hvdc-clear-override"
+                    }),
                     UiAction::Command(Command::ClearLinkOverride { link: link.id }),
                 )
                 .enabled_if(link.override_mw.is_some() && session.phase() == DayPhase::Operating),
@@ -568,6 +627,7 @@ fn links_model_cached(
         apply_label: l10n.text("hvdc-range-apply"),
         validation: l10n.text("hvdc-range-validation"),
         direction: l10n.text("hvdc-direction-help"),
+        automatic_help: l10n.text("hvdc-automatic-help"),
         read_only: l10n.text("hvdc-read-only"),
         close: ButtonModel::new(l10n.text("hvdc-close"), UiAction::ShowLinks(false)),
     })
@@ -716,9 +776,18 @@ fn draw_detail(
             }
         }
         HvdcTab::Dispatch => {
+            ui.horizontal_wrapped(|ui| {
+                for mode in &card.modes {
+                    super::toggle_button(ui, mode, actions);
+                }
+            });
+            ui.label(&card.control_status);
+            if card.auto_follow {
+                ui.weak(&model.automatic_help);
+            }
             ui.label(&model.direction);
             draw_profile(ui, card);
-            if card.planning {
+            if card.planning && !card.auto_follow {
                 draw_range(ui, model, card, actions);
             } else if card.operating {
                 ui.label(&card.target_label);
@@ -860,13 +929,9 @@ pub(super) fn links_panel(
     if !sink.ui_state().links_open || sink.open_prompt().0.is_some() {
         return Ok(());
     }
-    let Some(model) = links_model_cached(
-        &session.0,
-        &l10n,
-        &style,
-        forecast.get().map(|f| &f.activations),
-        sink.ui_state(),
-    ) else {
+    let Some(model) =
+        links_model_cached(&session.0, &l10n, &style, forecast.get(), sink.ui_state())
+    else {
         return Ok(());
     };
     let ctx = contexts.ctx_mut()?;

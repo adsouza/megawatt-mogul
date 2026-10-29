@@ -546,10 +546,15 @@ fn hvdc_commands_round_trip_through_logs_and_portable_command_tags() {
         },
         Command::SetLinkTarget { link, mw: 50.0 },
         Command::ClearLinkOverride { link },
+        Command::SetLinkAutoFollow { link, on: true },
+        Command::SetLinkAutoFollow { link, on: false },
     ] {
         let text = ron::ser::to_string(&CommandDto::from(&command)).unwrap();
         let decoded = Command::try_from(ron::from_str::<CommandDto>(&text).unwrap()).unwrap();
         assert_eq!(decoded, command);
+        if matches!(command, Command::SetLinkAutoFollow { .. }) {
+            assert!(Command::from_state_bytes_schema(&command.state_bytes(), 6).is_err());
+        }
         assert_eq!(
             Command::from_state_bytes(&command.state_bytes()).unwrap(),
             command

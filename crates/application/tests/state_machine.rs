@@ -89,7 +89,8 @@ fn allowed_phases(command: &Command) -> &'static [DayPhase] {
         | Command::CancelLineConstruction { .. }
         | Command::CommitPlant { .. }
         | Command::BeginOperating => &[Planning],
-        Command::SetDispatchTarget { .. }
+        Command::SetLinkAutoFollow { .. }
+        | Command::SetDispatchTarget { .. }
         | Command::SetAutoFollow { .. }
         | Command::SetBatteryEnabled { .. }
         | Command::StartPlant { .. }

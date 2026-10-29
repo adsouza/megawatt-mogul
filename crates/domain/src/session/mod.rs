@@ -864,7 +864,13 @@ impl GameSession {
                 || link
                     .override_mw
                     .is_some_and(|v| !v.is_finite() || v.abs() > spec.rating_mw)
-                || link.flow.value().abs() > spec.rating_mw
+                || link
+                    .automatic_schedule
+                    .iter()
+                    .any(|v| !v.is_finite() || v.abs() > spec.rating_mw + 1e-7)
+                || !link.automatic_target.is_finite()
+                || link.automatic_target.abs() > spec.rating_mw + 1e-7
+                || link.flow.value().abs() > spec.rating_mw + 1e-7
                 || link.sent.value() < 0.0
                 || link.loss.value() < 0.0
                 || link.runback != link.runback_terminal.is_some()

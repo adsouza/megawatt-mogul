@@ -29,6 +29,10 @@ pub enum Command {
     CancelLinkConstruction {
         link: LinkId,
     },
+    SetLinkAutoFollow {
+        link: LinkId,
+        on: bool,
+    },
     SetLinkSchedule {
         link: LinkId,
         mw: Box<[f64; 24]>,
@@ -107,6 +111,11 @@ impl<H: CommandHandler + ?Sized> CommandHandler for Box<H> {
 impl domain::state::State for Command {
     fn write(&self, out: &mut Vec<u8>) {
         match self {
+            Self::SetLinkAutoFollow { link, on } => {
+                domain::state::State::write(&20u8, out);
+                domain::state::State::write(link, out);
+                domain::state::State::write(on, out);
+            }
             Self::DrillMakeupWells { plant } => {
                 domain::state::State::write(&18u8, out);
                 domain::state::State::write(plant, out);
@@ -204,6 +213,10 @@ impl domain::state::State for Command {
     }
     fn read(input: &mut domain::state::StateReader<'_>) -> Result<Self, domain::state::StateError> {
         Ok(match <u8 as domain::state::State>::read(input)? {
+            20 if input.schema >= 7 => Self::SetLinkAutoFollow {
+                link: domain::state::State::read(input)?,
+                on: domain::state::State::read(input)?,
+            },
             18 if input.schema >= 6 => Self::DrillMakeupWells {
                 plant: domain::state::State::read(input)?,
             },

@@ -5,11 +5,11 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ops::RangeInclusive;
 
 /// Schema emitted by new portable state captures.
-pub const CURRENT_STATE_SCHEMA: u32 = 6;
+pub const CURRENT_STATE_SCHEMA: u32 = 7;
 /// Existing portable collection bound, also used for construction payment queues.
 pub const MAX_COLLECTION_LEN: usize = 1_000_000;
 /// Portable state schemas accepted by every reader.
-pub const SUPPORTED_STATE_SCHEMAS: RangeInclusive<u32> = 1..=6;
+pub const SUPPORTED_STATE_SCHEMAS: RangeInclusive<u32> = 1..=7;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum StateError {
@@ -368,12 +368,12 @@ mod tests {
 
     #[test]
     fn every_gate_accepts_exactly_the_supported_schemas() {
-        assert_eq!(CURRENT_STATE_SCHEMA, 6);
-        for schema in [1, 2, 3, 4, 5, 6] {
+        assert_eq!(CURRENT_STATE_SCHEMA, 7);
+        for schema in [1, 2, 3, 4, 5, 6, 7] {
             assert!(SUPPORTED_STATE_SCHEMAS.contains(&schema));
             assert_eq!(u8::from_state_bytes_schema(&[7], schema), Ok(7));
         }
-        for schema in [0, 7, u32::MAX] {
+        for schema in [0, 8, u32::MAX] {
             assert!(!SUPPORTED_STATE_SCHEMAS.contains(&schema));
             assert_eq!(
                 u8::from_state_bytes_schema(&[7], schema),
@@ -384,9 +384,9 @@ mod tests {
 
     proptest! {
         #[test]
-        fn state_schema_gate_accepts_only_one_through_four(schema in any::<u32>()) {
+        fn state_schema_gate_accepts_exactly_supported_versions(schema in any::<u32>()) {
             let expected = match schema {
-                1..=4 => Ok(7),
+                1..=7 => Ok(7),
                 _ => Err(StateError::Version),
             };
             prop_assert_eq!(u8::from_state_bytes_schema(&[7], schema), expected);

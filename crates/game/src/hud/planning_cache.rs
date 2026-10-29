@@ -11,6 +11,7 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct PlanningForecast {
+    pub(super) link_schedules: std::collections::BTreeMap<domain::ids::LinkId, [f64; 24]>,
     pub(super) activations:
         std::collections::BTreeMap<domain::ids::NodeId, super::ActivationCardModel>,
     pub(super) chart: ForecastModel,
@@ -23,6 +24,7 @@ impl PlanningForecast {
         let session = game.session();
         let supply = session.supply_forecast();
         Self {
+            link_schedules: session.link_schedules(),
             activations: session
                 .power()
                 .island_nodes()

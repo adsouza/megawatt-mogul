@@ -47,8 +47,8 @@ never as code constants. Shipped files declare `region_schema: 5`, including exp
 climate, calendar, currency, astronomical-sun and geothermal data. Legacy region schemas retain frozen
 defaults in `infrastructure::region::legacy`; old-source integrity is checked before any
 upcast. Unexpected new fields on legacy sources and unsupported schemas fail with typed errors.
-Region schema versions are independent of portable state schema 6, written by current saves;
-readers retain schemas 1–6.
+Region schema versions are independent of portable state schema 7, written by current saves;
+readers retain schemas 1–7.
 
 **Sidecars and the region bundle.** Spec §28.11.1 describes the format. Tool-generated blocks
 live in sidecars under `assets/regions/<id>/`, and the hand-authored main file references them:
@@ -99,13 +99,21 @@ connections and activation decisions.
 Existing portable endpoint bytes already specify those local bus attachments. The reader wraps
 them in station objects, deriving identities from the preserved link ID and orientation. No node
 IDs, source-schema bytes, construction payments, schedules, flows, runback latches or histories
-are rewritten. These station identities retain their schema-5 encoding under current schema 6.
-Station markers are drawn separately from the
-AC bus, with local attachment tethers; selection opens the HVDC project details.
+are rewritten. These station identities retain their schema-5 encoding; schema 7 appends
+automatic control state. Station markers are drawn separately from the AC bus, with local
+attachment tethers; selection opens the HVDC project details.
 
-`BuildLink`, `CancelLinkConstruction`, `SetLinkSchedule`, `SetLinkTarget` and `ClearLinkOverride`
-are ordinary journalled commands. DC ramps, blocking and runback read the previous terminal states
-before islands step. Runback persists the triggering converter terminal through zero flow and
+`BuildLink`, `CancelLinkConstruction`, `SetLinkAutoFollow`, `SetLinkSchedule`, `SetLinkTarget`
+and `ClearLinkOverride` are ordinary journalled commands. Rules 31 default new links to automatic control. A pure,
+loss-aware network merit-order planner shares source headroom and corridor capacities across
+paths, covers shortages before economic exchanges, and supplies the same hourly profiles to
+forecasts, activation and connection assessments. Live dispatch coordinates reachable plant
+output and transfers before stepping islands; curtailed renewables can be released into useful
+exchanges. Optional charging uses the resulting transfer-adjusted dispatch and inventory,
+retaining the existing taper. Manual profiles remain separate from automatic profiles and
+rest-of-day overrides. Schema 7 records mode, automatic profile and target; older snapshots
+migrate links to Manual without rewriting their existing schedules or overrides. DC ramps,
+blocking and runback read the previous terminal states before islands step. Runback persists the triggering converter terminal through zero flow and
 save/resume. Hydro AGC commands invalidate the owning island's cached plan as well as the scalar
 controller plan. Reports sum customer energy over islands, track received/sent/lost transfer
 energy separately, and weight each minute’s frequency performance by island demand. Transfers do

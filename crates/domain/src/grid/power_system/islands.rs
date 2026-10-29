@@ -65,6 +65,9 @@ crate::state_record!(IslandState {
     battery_tick
 });
 impl IslandState {
+    pub(super) fn release_curtailment(&mut self, mw: Megawatts) {
+        self.curtailment = (self.curtailment - mw).max(Megawatts::ZERO);
+    }
     fn capture(power: PowerSystem) -> Self {
         Self {
             noise: power.noise,
@@ -150,6 +153,52 @@ crate::state_record!(IslandTickSummary {
     by_kind,
     incidents
 });
+
+/// Shared protection/ramp calculation for the live allocator and physical settlement.
+pub(super) fn next_link_flow(
+    link: &mut super::super::DcLink,
+    region: &RegionDefinition,
+    intended: f64,
+    from: (bool, Hertz),
+    to: (bool, Hertz),
+) -> f64 {
+    let spec = region.hvdc().expect("HVDC catalog");
+    link.blocked = from.0 || to.0;
+    let old = link.flow.value();
+    let from_node = link.from_grid();
+    let terminal_state = |node| if node == from_node { from } else { to };
+    if link.runback_terminal.is_some_and(|terminal| {
+        terminal_state(terminal).1.value().abs() <= region.frequency().normal_band.value()
+    }) {
+        link.runback_terminal = None;
+    }
+    if link.runback_terminal.is_none() {
+        let next = old + (intended - old).clamp(-spec.ramp_mw_per_min, spec.ramp_mw_per_min);
+        for flow in [old, next] {
+            // Idle converters have no sending terminal. Do not latch a runback
+            // that would prevent the weak grid from receiving power next tick.
+            if flow == 0.0 && intended == 0.0 {
+                continue;
+            }
+            let terminal = if flow < 0.0 || (flow == 0.0 && intended < 0.0) {
+                link.to_grid()
+            } else {
+                link.from_grid()
+            };
+            if terminal_state(terminal).1 < region.frequency().shed_below {
+                link.runback_terminal = Some(terminal);
+                break;
+            }
+        }
+    }
+    link.runback = link.runback_terminal.is_some();
+    let target = if link.runback { 0.0 } else { intended };
+    if link.blocked {
+        0.0
+    } else {
+        old + (target - old).clamp(-spec.ramp_mw_per_min, spec.ramp_mw_per_min)
+    }
+}
 
 impl PowerSystem {
     /// Called only at a topology boundary. IDs are the smallest AC node IDs.
@@ -383,7 +432,7 @@ impl PowerSystem {
                 if !readiness.available(h) {
                     continue;
                 }
-                let flow = link.target(h);
+                let flow = link.planned_target(h);
                 if from == Some(id) {
                     *value += if flow >= 0.0 { -flow } else { -flow * factor };
                 }
@@ -471,6 +520,7 @@ impl PowerSystem {
                 link.review_year = month.year();
             }
         }
+        self.refresh_transfer_plan(region, month);
         let mut island_outages = BTreeMap::new();
         let mut boundary_starts = BTreeMap::new();
         let mut outage = Ratio::ZERO;
@@ -490,6 +540,17 @@ impl PowerSystem {
             }
             self.plants.extend(std::mem::take(&mut local.plants));
             self.island_states.insert(id, IslandState::capture(local));
+        }
+        // Midnight is a synthetic balanced boundary, just like plant boundary_dispatch.
+        // Initialise automatic exchanges to the same plan used to position both fleets;
+        // beginning at zero would strand imports while generators already carry exports.
+        for link in self
+            .network
+            .links_mut()
+            .filter(|l| l.auto_follow && l.status == super::super::LineStatus::InService)
+        {
+            link.automatic_target = link.automatic_schedule[0];
+            link.flow = Megawatts::new(link.automatic_target);
         }
         DayInitialisation {
             island_outages,
@@ -526,6 +587,10 @@ impl PowerSystem {
                 )
             })
             .collect();
+        if tick > 0 && tick.is_multiple_of(TICKS_PER_HOUR) {
+            self.refresh_live_transfer_plan(region, month, tick);
+        }
+        self.dispatch_transfers(region, month, tick, error, &terminals);
         let node_islands: BTreeMap<_, _> = self
             .island_nodes
             .iter()
@@ -544,43 +609,8 @@ impl PowerSystem {
                     link.blocked = true;
                     continue;
                 };
-                link.blocked = terminals[&from].0 || terminals[&to].0;
-                let old = link.flow.value();
                 let intended = link.target((tick / TICKS_PER_HOUR) as usize);
-                if link.runback_terminal.is_some_and(|terminal| {
-                    terminals[&node_islands[&terminal]].1.value().abs()
-                        <= region.frequency().normal_band.value()
-                }) {
-                    link.runback_terminal = None;
-                }
-                if link.runback_terminal.is_none() {
-                    let next =
-                        old + (intended - old).clamp(-spec.ramp_mw_per_min, spec.ramp_mw_per_min);
-                    // Check the present sender first, then any sender a signed ramp would
-                    // introduce. A reversal cannot start exporting from a weak terminal.
-                    for flow in [old, next] {
-                        let terminal = if flow < 0.0 || (flow == 0.0 && intended < 0.0) {
-                            link.to_grid()
-                        } else {
-                            link.from_grid()
-                        };
-                        if terminals[&node_islands[&terminal]].1 < region.frequency().shed_below {
-                            link.runback_terminal = Some(terminal);
-                            break;
-                        }
-                    }
-                }
-                link.runback = link.runback_terminal.is_some();
-                let target = if link.runback {
-                    0.0
-                } else {
-                    link.target((tick / TICKS_PER_HOUR) as usize)
-                };
-                let flow = if link.blocked {
-                    0.0
-                } else {
-                    old + (target - old).clamp(-spec.ramp_mw_per_min, spec.ramp_mw_per_min)
-                };
+                let flow = next_link_flow(link, region, intended, terminals[&from], terminals[&to]);
                 link.flow = Megawatts::new(flow);
                 let loss = flow.abs()
                     * (2.0 * spec.converter_loss
@@ -744,12 +774,55 @@ mod tests {
         .collect();
         let mut power =
             PowerSystem::new(network, plants, BTreeMap::new(), NetworkModel::CopperPlate);
+        power.network.link_mut(LinkId(10)).unwrap().auto_follow = false;
         power.network.link_mut(LinkId(10)).unwrap().schedule = [100.0; 24];
         let mut rng = SimRng::from_seed(7);
         power.recompute_islands();
         power.inherit_legacy_service();
         power.begin_day(&region, month, &mut rng);
         (power, region, rng)
+    }
+    #[test]
+    fn automatic_transfers_release_curtailed_renewables_to_cover_remote_load() {
+        let (mut p, r, _) = pair();
+        let month = r.start().month;
+        let tick = 12 * TICKS_PER_HOUR;
+        let solar = Plant::new_commissioned(
+            PlantId(30),
+            NodeId(0),
+            CellCoord { x: 6, y: 4 },
+            r.spec(PlantKind::Solar).clone(),
+            month,
+        );
+        let available = p.available(&r, &solar, month, tick);
+        assert!(available > Megawatts::ZERO);
+        p.plants.insert(solar.id(), solar);
+        p.island_states.get_mut(&NodeId(0)).unwrap().curtailment = available;
+        let mut city = r.cities()[2].clone();
+        city.base_load = Megawatts::new(200.0);
+        p.cities.insert(city.id, DemandCenter::new(city, NodeId(1)));
+        let dc = p.network.link_mut(LinkId(10)).unwrap();
+        dc.auto_follow = true;
+        dc.flow = Megawatts::new(100.0);
+        let terminals = BTreeMap::from([
+            (NodeId(0), (false, Hertz::ZERO)),
+            (NodeId(1), (false, Hertz::ZERO)),
+        ]);
+        p.dispatch_transfers(&r, month, tick, 0.0, &terminals);
+        assert!(p.network.link(LinkId(10)).unwrap().automatic_target > 100.0);
+        assert!(p.island_states[&NodeId(0)].curtailment < available);
+    }
+    #[test]
+    fn idle_automatic_link_can_import_into_its_weak_from_terminal() {
+        let (mut p, r, _) = pair();
+        let link = p.network.link_mut(LinkId(10)).unwrap();
+        link.flow = Megawatts::ZERO;
+        let weak = (false, r.frequency().shed_below - Hertz::new(0.1));
+        let normal = (false, Hertz::ZERO);
+        assert_eq!(next_link_flow(link, &r, 0.0, weak, normal), 0.0);
+        assert!(!link.runback);
+        assert!(next_link_flow(link, &r, -100.0, weak, normal) < 0.0);
+        assert!(!link.runback);
     }
     #[test]
     fn island_count_does_not_multiply_region_weather_or_demand_noise_draws() {

@@ -1,4 +1,4 @@
-//! Scheduled DC transfer. Direction is always the player's stored from/to order.
+//! Automatic or manually scheduled DC transfer. Direction is always the player's stored from/to order.
 use super::LineStatus;
 use crate::ids::{LinkId, NodeId};
 use crate::units::{MegawattHours, Megawatts};
@@ -30,7 +30,11 @@ pub struct DcLink {
     pub to: ConverterStation,
     pub status: LineStatus,
     pub length_cells: f64,
+    /// Retained manual schedule, independent of automatic control.
     pub schedule: [f64; 24],
+    pub auto_follow: bool,
+    pub automatic_schedule: [f64; 24],
+    pub automatic_target: f64,
     pub override_mw: Option<f64>,
     pub flow: Megawatts,
     pub blocked: bool,
@@ -68,6 +72,9 @@ impl DcLink {
             status,
             length_cells,
             schedule: [0.0; 24],
+            auto_follow: true,
+            automatic_schedule: [0.0; 24],
+            automatic_target: 0.0,
             override_mw: None,
             flow: Megawatts::ZERO,
             blocked: false,
@@ -88,7 +95,22 @@ impl DcLink {
         self.to.grid_node
     }
     pub fn target(&self, hour: usize) -> f64 {
-        self.override_mw.unwrap_or(self.schedule[hour.min(23)])
+        self.override_mw.unwrap_or_else(|| {
+            if self.auto_follow {
+                self.automatic_target
+            } else {
+                self.schedule[hour.min(23)]
+            }
+        })
+    }
+    pub fn planned_target(&self, hour: usize) -> f64 {
+        self.override_mw.unwrap_or_else(|| {
+            if self.auto_follow {
+                self.automatic_schedule[hour.min(23)]
+            } else {
+                self.schedule[hour.min(23)]
+            }
+        })
     }
 }
 // Retain the original portable contract: station identity is derived from (link, end),
@@ -113,6 +135,11 @@ impl crate::state::State for DcLink {
         self.loss.write_schema(out, schema);
         self.review_year.write_schema(out, schema);
         self.runback_terminal.write_schema(out, schema);
+        if schema >= 7 {
+            self.auto_follow.write_schema(out, schema);
+            self.automatic_schedule.write_schema(out, schema);
+            self.automatic_target.write_schema(out, schema);
+        }
     }
     fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
         use crate::state::State;
@@ -146,6 +173,21 @@ impl crate::state::State for DcLink {
             loss: State::read(input)?,
             review_year: State::read(input)?,
             runback_terminal: State::read(input)?,
+            auto_follow: if input.schema >= 7 {
+                State::read(input)?
+            } else {
+                false
+            },
+            automatic_schedule: if input.schema >= 7 {
+                State::read(input)?
+            } else {
+                [0.0; 24]
+            },
+            automatic_target: if input.schema >= 7 {
+                State::read(input)?
+            } else {
+                0.0
+            },
         })
     }
 }
@@ -154,6 +196,23 @@ impl crate::state::State for DcLink {
 mod tests {
     use super::*;
     use crate::state::State;
+
+    #[test]
+    fn new_links_follow_automatic_control_and_overrides_take_precedence() {
+        let mut link = DcLink::new(LinkId(9), NodeId(1), NodeId(2), LineStatus::InService, 10.0);
+        assert!(link.auto_follow);
+        link.schedule = [70.0; 24];
+        link.automatic_schedule = [120.0; 24];
+        link.automatic_target = 135.0;
+        assert_eq!(link.planned_target(3), 120.0);
+        assert_eq!(link.target(3), 135.0);
+        link.override_mw = Some(-25.0);
+        assert_eq!(link.target(3), -25.0);
+        link.override_mw = None;
+        link.auto_follow = false;
+        assert_eq!(link.target(3), 70.0);
+        assert_eq!(link.planned_target(3), 70.0);
+    }
 
     // Frozen pre-station field contract, deliberately independent of DcLink's writer.
     #[derive(Debug, Clone)]
@@ -210,6 +269,7 @@ mod tests {
                 proptest::prop_assert_eq!(new.to.id, ConverterStationId { link: old.id, end: ConverterEnd::To });
                 proptest::prop_assert_eq!((new.from.grid_node, new.to.grid_node), (old.from, old.to));
                 proptest::prop_assert_eq!(new.state_bytes_schema(schema), bytes);
+                proptest::prop_assert!(!new.auto_follow);
                 proptest::prop_assert_eq!(new.schedule, old.schedule);
                 proptest::prop_assert_eq!(new.runback_terminal, old.runback_terminal);
             }
@@ -228,7 +288,9 @@ mod tests {
         for schema in [4, 5] {
             let bytes = link.state_bytes_schema(schema);
             let restored = DcLink::from_state_bytes_schema(&bytes, schema).unwrap();
-            assert_eq!(restored, link);
+            let mut legacy = link.clone();
+            legacy.auto_follow = false;
+            assert_eq!(restored, legacy);
             assert_eq!(restored.state_bytes_schema(schema), bytes);
         }
     }

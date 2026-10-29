@@ -790,50 +790,70 @@ mod tests {
             .unwrap();
         }
         let l10n = shipped_l10n();
-        let model = forecast_model(&game, &l10n, &UiState::default());
-        assert_eq!(
-            model.islands.len(),
-            game.session().power().island_nodes().len()
-        );
-        for island in &model.islands {
-            let local = game.session().island_session(island.island).unwrap();
-            let shortage = local.capacity_shortfall_check();
-            let excess = local.minimum_generation_check();
-            let max = |points: &[[f64; 2]]| points.iter().map(|p| p[1]).fold(0.0, f64::max);
-            assert!(
-                (max(&island.shortfall) - shortage.map_or(0.0, |w| w.shortfall.value())).abs()
-                    < 1e-8
-            );
-            assert!((max(&island.excess) - excess.map_or(0.0, |w| w.excess.value())).abs() < 1e-8);
-            if !island.shortfall_label.contains("Shanghai") {
-                assert!(max(&island.excess) > 0.0);
-                assert_eq!(max(&island.shortfall), 0.0);
-            } else {
-                assert!(max(&island.shortfall) > 0.0);
-                assert_eq!(max(&island.excess), 0.0);
-                assert!(island.shortfall_label.contains("Shanghai"));
+        let links: Vec<_> = game
+            .session()
+            .power()
+            .network()
+            .links()
+            .map(|link| link.id)
+            .collect();
+        for automatic in [true, false] {
+            for &link in &links {
+                game.execute(Command::SetLinkAutoFollow {
+                    link,
+                    on: automatic,
+                })
+                .unwrap();
             }
-            let mut ui = UiState::default();
-            ui.apply(&island.inspect.action);
-            assert_eq!(ui.island, Some(island.island));
-            assert_eq!(ui.tab, super::super::PlanningTab::Forecast);
-            let chart = forecast_model(&game, &l10n, &ui);
-            assert!(chart.islands.is_empty());
-            assert!(chart.scope_label.is_some());
-            let worst = chart
-                .minimum
-                .iter()
-                .zip(&chart.minimum_demand)
-                .map(|(floor, demand)| (floor[1] - demand[1]).max(0.0))
-                .fold(0.0, f64::max);
-            assert!((worst - excess.map_or(0.0, |w| w.excess.value())).abs() < 1e-8);
+            let model = forecast_model(&game, &l10n, &UiState::default());
+            assert_eq!(
+                model.islands.len(),
+                game.session().power().island_nodes().len()
+            );
+            for island in &model.islands {
+                let local = game.session().island_session(island.island).unwrap();
+                let shortage = local.capacity_shortfall_check();
+                let excess = local.minimum_generation_check();
+                let max = |points: &[[f64; 2]]| points.iter().map(|p| p[1]).fold(0.0, f64::max);
+                assert!(
+                    (max(&island.shortfall) - shortage.map_or(0.0, |w| w.shortfall.value())).abs()
+                        < 1e-8
+                );
+                assert!(
+                    (max(&island.excess) - excess.map_or(0.0, |w| w.excess.value())).abs() < 1e-8
+                );
+                if !island.shortfall_label.contains("Shanghai") {
+                    assert!(max(&island.excess) > 0.0);
+                    assert_eq!(max(&island.shortfall), 0.0);
+                } else {
+                    assert!(max(&island.shortfall) > 0.0);
+                    assert_eq!(max(&island.excess), 0.0);
+                    assert!(island.shortfall_label.contains("Shanghai"));
+                }
+                let mut ui = UiState::default();
+                ui.apply(&island.inspect.action);
+                assert_eq!(ui.island, Some(island.island));
+                assert_eq!(ui.tab, super::super::PlanningTab::Forecast);
+                let chart = forecast_model(&game, &l10n, &ui);
+                assert!(chart.islands.is_empty());
+                assert!(chart.scope_label.is_some());
+                let worst = chart
+                    .minimum
+                    .iter()
+                    .zip(&chart.minimum_demand)
+                    .map(|(floor, demand)| (floor[1] - demand[1]).max(0.0))
+                    .fold(0.0, f64::max);
+                assert!((worst - excess.map_or(0.0, |w| w.excess.value())).abs() < 1e-8);
+            }
+            assert_eq!(
+                model
+                    .link_issues
+                    .iter()
+                    .any(|s| s.contains("Shanghai") && s.contains("hourly transfers are zero")),
+                !automatic,
+                "a zero stored schedule warns only in Manual mode"
+            );
         }
-        assert!(
-            model
-                .link_issues
-                .iter()
-                .any(|s| s.contains("Shanghai") && s.contains("hourly transfers are zero"))
-        );
         assert!(l10n.problems().is_empty());
     }
 

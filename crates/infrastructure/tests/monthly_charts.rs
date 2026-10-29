@@ -598,7 +598,7 @@ fn wind_and_overlapping_battery_policy_restore_through_flat_and_monthly_snapshot
             },
             checkpoint: game.checkpoint(),
         };
-        assert_eq!(saved.checkpoint.snapshot.as_ref().unwrap().schema, 6);
+        assert_eq!(saved.checkpoint.snapshot.as_ref().unwrap().schema, 7);
         store.write(&saved, &SaveTarget::Create, &|| false).unwrap();
         let (decoded, region) = store.read(&saved.metadata.slot).unwrap();
         let mut resumed = decoded

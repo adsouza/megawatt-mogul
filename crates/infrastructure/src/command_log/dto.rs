@@ -205,6 +205,10 @@ pub enum CommandDto {
     CancelLinkConstruction {
         link: u32,
     },
+    SetLinkAutoFollow {
+        link: u32,
+        on: bool,
+    },
     SetLinkSchedule {
         link: u32,
         mw: [f64; 24],
@@ -277,6 +281,7 @@ impl From<&Command> for CommandDto {
             Command::CancelLinkConstruction { link } => {
                 Self::CancelLinkConstruction { link: link.0 }
             }
+            Command::SetLinkAutoFollow { link, on } => Self::SetLinkAutoFollow { link: link.0, on },
             Command::SetLinkSchedule { link, ref mw } => Self::SetLinkSchedule {
                 link: link.0,
                 mw: **mw,
@@ -345,6 +350,10 @@ impl TryFrom<CommandDto> for Command {
             CommandDto::CancelLinkConstruction { link } => {
                 Self::CancelLinkConstruction { link: LinkId(link) }
             }
+            CommandDto::SetLinkAutoFollow { link, on } => Self::SetLinkAutoFollow {
+                link: LinkId(link),
+                on,
+            },
             CommandDto::SetLinkSchedule { link, mw } => {
                 if let Some(value) = mw.iter().find(|v| !v.is_finite()) {
                     return Err(LogDtoError::NonFiniteMegawatts(*value));

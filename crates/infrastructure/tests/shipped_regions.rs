@@ -3443,6 +3443,18 @@ mod sgcc {
     fn each_sgcc_starter_grid_covers_its_own_full_year_without_imports() {
         for seed in 0..8 {
             let mut game = new_game(&catalog(), SGCC, seed);
+            // This scenario still proves each inherited fleet can operate independently.
+            let links: Vec<_> = game
+                .session()
+                .power()
+                .network()
+                .links()
+                .map(|l| l.id)
+                .collect();
+            for link in links {
+                game.execute(Command::SetLinkAutoFollow { link, on: false })
+                    .unwrap();
+            }
             for month in 1..=12 {
                 assert!(
                     game.session()
@@ -3511,6 +3523,19 @@ mod sgcc {
     fn starter_service_survives_restore_and_a_shortage_in_beijing_stays_local() {
         let mut baseline = new_game(&catalog(), SGCC, 7);
         let mut changed = new_game(&catalog(), SGCC, 7);
+        for game in [&mut baseline, &mut changed] {
+            let links: Vec<_> = game
+                .session()
+                .power()
+                .network()
+                .links()
+                .map(|l| l.id)
+                .collect();
+            for link in links {
+                game.execute(Command::SetLinkAutoFollow { link, on: false })
+                    .unwrap();
+            }
+        }
         let home = changed.session().anchor_node();
         let plants: Vec<_> = changed
             .session()
@@ -3578,6 +3603,83 @@ mod sgcc {
         );
     }
 
+    fn automatic_hvdc_year(seed: u64) {
+        let mut game = new_game(&catalog(), SGCC, seed);
+        let mut transferred = 0.0;
+        for month in 1..=12 {
+            let before = game.checkpoint();
+            let schedules = game.session().link_schedules();
+            assert!(
+                schedules
+                    .values()
+                    .flatten()
+                    .all(|mw| mw.is_finite() && mw.abs() <= 1000.0 + 1e-7)
+            );
+            assert_eq!(before, game.checkpoint(), "planning must be pure");
+            let played = play_month(&mut game);
+            assert_eq!(
+                played.report.over_frequency_trips, 0,
+                "seed {seed}, month {month}"
+            );
+            for local in played.report.islands.values() {
+                assert!(
+                    f64::from(local.minutes_outside_band) / f64::from(TICKS_PER_DAY)
+                        <= game
+                            .session()
+                            .region()
+                            .regulator()
+                            .frequency_violation_share
+                            .value()
+                );
+            }
+            for tick in &played.ticks {
+                assert!(
+                    tick.unserved.value() < 1e-6,
+                    "month {month}, tick {}: {} MW unserved",
+                    tick.tick,
+                    tick.unserved.value()
+                );
+                assert!(
+                    tick.islands
+                        .values()
+                        .all(|i| i.mode == domain::grid::GridMode::Normal),
+                    "month {month}, tick {}",
+                    tick.tick
+                );
+                let imports: f64 = tick.islands.values().map(|i| i.imports.value()).sum();
+                let exports: f64 = tick.islands.values().map(|i| i.exports.value()).sum();
+                let losses: f64 = tick.islands.values().map(|i| i.losses.value()).sum();
+                assert!((exports - imports - losses).abs() < 1e-5);
+                transferred += exports;
+            }
+            assert_eq!(game.session().status(), SessionStatus::Active);
+            game.execute(Command::FinishReview).unwrap();
+        }
+        assert!(transferred > 0.0);
+        let checkpoint = game.checkpoint();
+        let replayed = application::replay(
+            catalog().load(&RegionId::new(SGCC)).unwrap(),
+            &checkpoint.header,
+            &checkpoint.commands,
+        )
+        .unwrap();
+        assert_eq!(replayed.snapshot_state(), game.session().snapshot_state());
+    }
+
+    #[test]
+    fn automatic_hvdc_balances_shipped_grids_for_a_year_and_replays() {
+        automatic_hvdc_year(7);
+    }
+    macro_rules! automatic_year_seeds {
+        ($($name:ident: $seed:literal),* $(,)?) => { $(#[test] fn $name() { automatic_hvdc_year($seed); })* };
+    }
+    automatic_year_seeds!(
+        automatic_hvdc_year_seed_0: 0, automatic_hvdc_year_seed_1: 1,
+        automatic_hvdc_year_seed_2: 2, automatic_hvdc_year_seed_3: 3,
+        automatic_hvdc_year_seed_4: 4, automatic_hvdc_year_seed_5: 5,
+        automatic_hvdc_year_seed_6: 6,
+    );
+
     #[test]
     fn new_sgcc_has_five_active_starter_grids_with_neighbouring_hvdc() {
         let game = new_game(&catalog(), "sgcc", 7);
@@ -3588,6 +3690,7 @@ mod sgcc {
         let pairs: std::collections::BTreeSet<_> = network
             .links()
             .map(|link| {
+                assert!(link.auto_follow);
                 assert_eq!(link.status, domain::grid::LineStatus::InService);
                 assert_eq!(link.schedule, [0.0; 24]);
                 assert_eq!(link.flow.value(), 0.0);

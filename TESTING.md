@@ -1142,3 +1142,29 @@ dialogs and restoration of the All-zones overview. Manual panning persists after
 plant inspection still works, and camera changes neither rebuild terrain nor mutate the session.
 `world::focus` verifies that local bounds stop at HVDC terminals and support inactive single-bus
 zones and stale IDs.
+
+## Automatic HVDC control (rules 31)
+
+`grid::power_system::transfer_control` checks loss-adjusted merit order, multi-link/reversed paths
+and shared source headroom. Its property test independently balances generated, served, unused
+and lost energy across a cyclic network, checks ratings and source bounds, and repeats dispatch
+for determinism. `islands` covers releasing curtailed renewables into useful exchanges and
+importing through an idle converter into its weak receiving grid without creating a runback latch.
+
+`session::links` runs an automatic two-grid day with independent plant/link ramp checks and no
+unserved load, retains battery charging with the transfer-adjusted inventory taper, and checks
+manual-profile preservation, temporary overrides, atomic refusal, snapshot continuation and
+schema-6 byte-preserving migration to Manual. Existing manual protection scenarios opt out
+explicitly instead of depending on the old default.
+
+The SGCC automatic-year scenarios run seeds 0–7 through twelve months each. Every minute checks
+served load, independent island protection and transfer/loss conservation; every month checks
+frequency performance and absence of over-frequency trips. Every seed replays its full journal
+and compares the complete session. The local-fleet independence scenarios explicitly select
+Manual so they continue to prove that each inherited fleet can stand alone.
+
+The existing game integration binary's `hvdc` module clicks Automatic/Manual and Resume automatic
+at minimum size and 125% zoom, checks preserved manual profiles and temporary overrides, and
+retains Enter/current-text validation and Escape coverage for the manual range editor. Planning
+profiles share the existing forecast cache. Command-log, portable transport, archive/restore,
+old golden-save and localization coverage exercise the new mode and schema 7 gates.

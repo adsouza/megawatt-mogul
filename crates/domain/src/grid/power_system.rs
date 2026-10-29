@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 
 mod islands;
+mod transfer_control;
 pub use islands::{IslandState, IslandTickSummary, LinkPlanningForecast};
 mod battery;
 pub use battery::{

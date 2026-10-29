@@ -12,7 +12,13 @@ use crate::{
 impl GameSession {
     /// A read-only controller view with the selected island's fleet, clocks and incidents.
     pub fn island_session(&self, id: NodeId) -> Option<Self> {
-        let power = self.power.scoped_island(id, &self.region)?;
+        let planned = if self.phase == DayPhase::Planning {
+            self.power
+                .with_transfer_plan(&self.region, self.clock.month())
+        } else {
+            self.power.clone()
+        };
+        let power = planned.scoped_island(id, &self.region)?;
         let day_ticks = self
             .day_ticks
             .last()
@@ -188,12 +194,51 @@ impl GameSession {
     ) -> Result<Vec<DomainEvent>, DomainError> {
         self.require_phase(&[DayPhase::Planning])?;
         self.check_link_values(link, &mw)?;
-        self.power
+        let current = self
+            .power
             .network_mut()
             .link_mut(link)
-            .expect("validated link")
-            .schedule = mw;
+            .expect("validated link");
+        current.schedule = mw;
+        current.auto_follow = false;
+        self.power.generators_changed();
         Ok(Vec::new())
+    }
+    /// Toggle persistent control without losing the stored manual schedule.
+    pub fn set_link_auto_follow(
+        &mut self,
+        link: LinkId,
+        on: bool,
+    ) -> Result<Vec<DomainEvent>, DomainError> {
+        self.require_phase(&[DayPhase::Planning, DayPhase::Operating])?;
+        self.check_link_values(link, &[])?;
+        let current = self.power.network().link(link).expect("validated link");
+        if self.phase == DayPhase::Operating && current.status != LineStatus::InService {
+            return Err(DomainError::LinkNotInService { link });
+        }
+        let current = self
+            .power
+            .network_mut()
+            .link_mut(link)
+            .expect("validated link");
+        current.auto_follow = on;
+        current.override_mw = None;
+        self.power.generators_changed();
+        Ok(Vec::new())
+    }
+    /// Effective profile used by the same planner as forecasts and warnings.
+    pub fn link_schedules(&self) -> std::collections::BTreeMap<LinkId, [f64; 24]> {
+        let planned = if self.phase == DayPhase::Planning {
+            self.power
+                .with_transfer_plan(&self.region, self.clock.month())
+        } else {
+            self.power.clone()
+        };
+        planned
+            .network()
+            .links()
+            .map(|l| (l.id, std::array::from_fn(|h| l.planned_target(h))))
+            .collect()
     }
     pub fn set_link_target(
         &mut self,
@@ -259,6 +304,166 @@ mod tests {
     }
     fn remote(s: &GameSession) -> NodeId {
         s.power.cities()[&CityId(3)].node()
+    }
+    fn automatic_parts() -> crate::region::RegionDefinitionParts {
+        let mut parts = fixtures::two_area_parts();
+        parts.start.island_homes = vec![CityId(1), CityId(3)];
+        parts.start.connected_cities.push(CityId(3));
+        parts.start.hvdc_links = vec![(CityId(1), CityId(3))];
+        parts.start.fleet.push(crate::region::StartPlantDef {
+            kind: PlantKind::Peaker,
+            cell: CellCoord { x: 4, y: 2 },
+        });
+        parts
+    }
+    fn automatic_game() -> GameSession {
+        GameSession::new(
+            Arc::new(RegionDefinition::try_from(automatic_parts()).unwrap()),
+            7,
+            GameSettings::default(),
+        )
+    }
+    #[test]
+    fn automatic_transfers_retain_local_battery_charging_and_physical_limits() {
+        let mut parts = automatic_parts();
+        parts.start.fleet.push(crate::region::StartPlantDef {
+            kind: PlantKind::Battery,
+            cell: CellCoord { x: 7, y: 4 },
+        });
+        let mut s = GameSession::new(
+            Arc::new(RegionDefinition::try_from(parts).unwrap()),
+            7,
+            GameSettings::default(),
+        );
+        s.begin_operating().unwrap();
+        let mut charge = 0.0;
+        for _ in 0..1440 {
+            let events = s.tick().unwrap();
+            for event in events {
+                if let DomainEvent::TickCompleted(t) = event {
+                    charge += t.battery_charge.value();
+                    assert!(t.unserved.value() < 1e-6, "tick {}: {t:?}", t.tick);
+                }
+            }
+            s.check_invariants().unwrap();
+        }
+        assert!(
+            charge > 0.0,
+            "automatic transfers must preserve scheduled charging"
+        );
+    }
+    #[test]
+    fn automatic_plan_covers_remote_shortage_is_pure_and_live_dispatch_preserves_balance() {
+        let mut s = automatic_game();
+        let link = s.power.network().links().next().unwrap().id;
+        let before = s.state_hash();
+        let profile = s.link_schedules()[&link];
+        assert!(profile.iter().all(|mw| *mw > 0.0));
+        assert!(
+            s.island_session(remote(&s))
+                .unwrap()
+                .capacity_shortfall_check()
+                .is_none()
+        );
+        assert_eq!(before, s.state_hash());
+        s.begin_operating().unwrap();
+        for tick in 0..1440 {
+            let old_flow = s.power.network().link(link).unwrap().flow.value();
+            let old_outputs: std::collections::BTreeMap<_, _> = s
+                .power
+                .plants()
+                .iter()
+                .map(|(id, p)| (*id, p.output()))
+                .collect();
+            let events = s.tick().unwrap();
+            let dc = s.power.network().link(link).unwrap();
+            assert!(
+                (dc.flow.value() - old_flow).abs()
+                    <= s.region.hvdc().unwrap().ramp_mw_per_min + 1e-7
+            );
+            for (id, p) in s.power.plants() {
+                assert!(
+                    (p.output().value() - old_outputs[id].value()).abs()
+                        <= p.spec().ramp.per_tick().value() + 1e-7,
+                    "tick {tick}, plant {id:?}"
+                );
+            }
+            let t = events
+                .iter()
+                .find_map(|e| {
+                    if let DomainEvent::TickCompleted(t) = e {
+                        Some(t)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+            assert!(t.unserved.value() < 1e-6, "tick {tick}: {t:?}");
+            assert!(
+                t.islands
+                    .values()
+                    .all(|i| i.mode == crate::grid::GridMode::Normal),
+                "tick {tick}"
+            );
+            s.check_invariants().unwrap();
+        }
+        assert!(s.power.network().link(link).unwrap().sent.value() > 0.0);
+    }
+    #[test]
+    fn modes_preserve_manual_schedule_overrides_resume_and_snapshots_continue() {
+        let mut a = automatic_game();
+        let link = a.power.network().links().next().unwrap().id;
+        a.set_link_schedule(link, [25.0; 24]).unwrap();
+        assert!(!a.power.network().link(link).unwrap().auto_follow);
+        a.set_link_auto_follow(link, true).unwrap();
+        assert_eq!(a.power.network().link(link).unwrap().schedule, [25.0; 24]);
+        a.begin_operating().unwrap();
+        for _ in 0..30 {
+            a.tick().unwrap();
+        }
+        a.set_link_target(link, 50.0).unwrap();
+        assert!(a.power.network().link(link).unwrap().auto_follow);
+        assert_eq!(a.power.network().link(link).unwrap().target(0), 50.0);
+        for _ in 0..5 {
+            a.tick().unwrap();
+        }
+        let mut b =
+            GameSession::from_snapshot_state(&a.snapshot_state(), a.region.clone()).unwrap();
+        for _ in 0..20 {
+            assert_eq!(a.tick(), b.tick());
+        }
+        a.clear_link_override(link).unwrap();
+        b.clear_link_override(link).unwrap();
+        for _ in 0..100 {
+            assert_eq!(a.tick(), b.tick());
+        }
+        assert_eq!(a.state_hash(), b.state_hash());
+        a.set_link_auto_follow(link, false).unwrap();
+        assert_eq!(a.power.network().link(link).unwrap().target(0), 25.0);
+        let hash = a.state_hash();
+        assert_eq!(
+            a.set_link_auto_follow(LinkId(u32::MAX), true),
+            Err(DomainError::UnknownLink {
+                link: LinkId(u32::MAX)
+            })
+        );
+        assert_eq!(hash, a.state_hash());
+    }
+    #[test]
+    fn schema_six_preserves_manual_schedules_and_overrides_on_migration() {
+        let mut a = automatic_game();
+        let link = a.power.network().links().next().unwrap().id;
+        a.set_link_schedule(link, [25.0; 24]).unwrap();
+        a.begin_operating().unwrap();
+        a.tick().unwrap();
+        a.set_link_target(link, -15.0).unwrap();
+        let bytes = a.snapshot_state_schema(6);
+        let b = GameSession::from_snapshot_state(&bytes, a.region.clone()).unwrap();
+        let restored = b.power.network().link(link).unwrap();
+        assert!(!restored.auto_follow);
+        assert_eq!(restored.schedule, [25.0; 24]);
+        assert_eq!(restored.override_mw, Some(-15.0));
+        assert_eq!(bytes, b.snapshot_state_schema(6));
     }
     #[test]
     fn cross_area_ac_and_same_area_dc_refusals_are_atomic() {

@@ -595,6 +595,11 @@ fn hvdc_range_enter_uses_current_text_once_and_escape_never_changes_the_plan() {
         .find(|link| link.to_grid() == far)
         .unwrap()
         .id;
+    app.world_mut()
+        .resource_mut::<Session>()
+        .0
+        .execute(Command::SetLinkAutoFollow { link, on: false })
+        .unwrap();
     dispatch_in(
         &mut app,
         vec![
@@ -933,7 +938,20 @@ fn hvdc_cross_area_picker_quotes_a_link_and_card_reports_its_original_terms() {
     for inherited in &model.cards[..5] {
         assert!(inherited.planning);
         assert_eq!(inherited.rating, 1000.0);
-        assert_eq!(inherited.schedule, [0.0; 24]);
+        assert!(inherited.auto_follow);
+        assert_eq!(
+            inherited.schedule,
+            game.session().link_schedules()[&inherited.id]
+        );
+        assert_eq!(
+            game.session()
+                .power()
+                .network()
+                .link(inherited.id)
+                .unwrap()
+                .schedule,
+            [0.0; 24]
+        );
         assert!(inherited.cancel.is_none());
     }
     assert!(l10n.problems().is_empty());
@@ -1280,4 +1298,103 @@ fn connection_proceed_refreshes_changed_capacity_before_ordering() {
             .command_count,
         count + 1
     );
+}
+
+#[test]
+fn automatic_hvdc_mode_widgets_preserve_manual_profiles_and_resume_overrides() {
+    use super::{
+        hud_smoke::dispatch_in,
+        support::{egui_pass::EguiPass, hud_app, request, update_n},
+    };
+    use game::{hud::HvdcTab, sim::Session};
+    let logs = tempfile::TempDir::new().unwrap();
+    let mut app = hud_app(logs.path());
+    request(&mut app, "sgcc");
+    let link = app
+        .world()
+        .resource::<Session>()
+        .0
+        .session()
+        .power()
+        .network()
+        .links()
+        .next()
+        .unwrap()
+        .id;
+    dispatch_in(
+        &mut app,
+        vec![
+            UiAction::InspectHvdc {
+                link,
+                station: None,
+            },
+            UiAction::SetHvdcTab(HvdcTab::Dispatch),
+        ],
+    );
+    let pass = EguiPass::attach(&mut app);
+    pass.ctx().set_zoom_factor(1.25);
+    let l10n = shipped_l10n();
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    let manual = super::support::egui_harness::button(&widgets, &l10n.text("hvdc-mode-manual"));
+    assert!(manual.rect.bottom() < 640.0 / 1.25);
+    pass.click_at(&mut app, 1024.0, 640.0, manual.rect.center());
+    update_n(&mut app, 2);
+    assert!(
+        !app.world()
+            .resource::<Session>()
+            .0
+            .session()
+            .power()
+            .network()
+            .link(link)
+            .unwrap()
+            .auto_follow
+    );
+    app.world_mut()
+        .resource_mut::<Session>()
+        .0
+        .execute(Command::SetLinkSchedule {
+            link,
+            mw: Box::new([25.0; 24]),
+        })
+        .unwrap();
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    let automatic =
+        super::support::egui_harness::button(&widgets, &l10n.text("hvdc-mode-automatic"));
+    pass.click_at(&mut app, 1024.0, 640.0, automatic.rect.center());
+    update_n(&mut app, 2);
+    {
+        let s = app.world().resource::<Session>().0.session();
+        let dc = s.power().network().link(link).unwrap();
+        assert!(dc.auto_follow);
+        assert_eq!(dc.schedule, [25.0; 24]);
+    }
+    app.world_mut()
+        .resource_mut::<Session>()
+        .0
+        .execute(Command::BeginOperating)
+        .unwrap();
+    app.world_mut()
+        .resource_mut::<Session>()
+        .0
+        .execute(Command::SetLinkTarget { link, mw: 50.0 })
+        .unwrap();
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    let resume =
+        super::support::egui_harness::button(&widgets, &l10n.text("hvdc-resume-automatic"));
+    assert!(!resume.disabled);
+    pass.click_at(&mut app, 1024.0, 640.0, resume.rect.center());
+    update_n(&mut app, 2);
+    let dc = app
+        .world()
+        .resource::<Session>()
+        .0
+        .session()
+        .power()
+        .network()
+        .link(link)
+        .unwrap();
+    assert!(dc.auto_follow);
+    assert!(dc.override_mw.is_none());
+    assert!(l10n.problems().is_empty());
 }
