@@ -283,15 +283,15 @@ pub fn construction_card_model(
         ]);
     }
     if let Some(g) = geothermal {
-        model.stats.push(Stat {
-            label: l10n.text("geothermal-odds"),
-            value: format::percent(g.odds),
-        });
-        model.stats.push(Stat {
-            label: l10n.text("geothermal-risk"),
-            value: format::money(g.exploration_capital, style),
-        });
         if g.exploration_left > 0 {
+            model.stats.push(Stat {
+                label: l10n.text("geothermal-odds"),
+                value: format::percent(g.odds),
+            });
+            model.stats.push(Stat {
+                label: l10n.text("geothermal-risk"),
+                value: format::money(g.exploration_capital, style),
+            });
             model.status = l10n.args(
                 "geothermal-exploring",
                 &[

@@ -14,7 +14,9 @@ HVDC link and two electrical areas. The schema-4 folder uses the baseline's sche
 encoder, without regenerating any earlier historical fixture.
 
 Do not regenerate these with the current engine. Tests verify their original bytes
-before upcasting and compare the baseline continuation receipts exactly.
+before upcasting. This schema-4 folder has no continuation receipts: its saves are
+continued with the same commands and re-saved, and the resumed game must match the
+continued one exactly. The schema-5 folders' tests also compare their receipts.
 
 | Save | SHA-256 |
 |---|---|

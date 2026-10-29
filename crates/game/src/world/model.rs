@@ -110,12 +110,18 @@ pub fn plant_parts(kind: PlantKind) -> Vec<Part> {
             }
         }
         PlantKind::Geothermal => {
+            // Plant materials are opaque, so the steam is a solid, tapering plume.
+            let steam = [0.85, 0.9, 0.92, 1.0];
             parts.push(block(-0.5, 0.3, 0.0, 1.1, 0.45, 1.2, color));
             for z in [-0.45, 0.45] {
                 parts.push(block(0.5, 0.6, z, 0.65, 1.0, 0.6, pale));
-                parts.push(block(0.5, 1.2, z, 0.45, 0.25, 0.4, [0.85, 0.9, 0.92, 0.8]));
+                parts.push(block(0.5, 1.22, z, 0.5, 0.24, 0.45, steam));
+                parts.push(block(0.5, 1.45, z, 0.32, 0.22, 0.3, steam));
             }
-            parts.push(block(-0.7, 0.6, 0.0, 0.15, 0.5, 0.15, pale));
+            // The well pad: wellheads in a row along the plant's front edge.
+            for z in [-0.6, 0.0, 0.6] {
+                parts.push(block(-0.95, 0.35, z, 0.14, 0.38, 0.14, pale));
+            }
         }
         PlantKind::Coal => {
             parts.push(block(-0.3, 0.6, 0.0, 1.5, 1.0, 1.3, color));

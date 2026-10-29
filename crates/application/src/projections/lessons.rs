@@ -213,6 +213,19 @@ pub fn lessons_for(report: &MonthlyReport, region: &RegionDefinition) -> Vec<Les
     lessons
 }
 
+/// Lessons that rank above geothermal ones: reliability, and expensive peaking, which already
+/// ranks above reliability. Geothermal lessons rank above curtailment, start-ups and the review.
+fn outranks_geothermal(lesson: &Lesson) -> bool {
+    matches!(
+        lesson,
+        Lesson::ExpensivePeaking { .. }
+            | Lesson::RotatingOutages { .. }
+            | Lesson::UnservedEnergy { .. }
+            | Lesson::Overgeneration { .. }
+            | Lesson::FrequencyPerformance { .. }
+    )
+}
+
 /// Report money is signed like the ledger (costs negative).
 fn magnitude(money: Money) -> Money {
     if money.is_negative() { -money } else { money }
@@ -249,32 +262,49 @@ impl Projection for LessonsProjection {
                 plant,
                 threshold,
                 first,
-            } => self.pending_geothermal.push(Lesson::GeothermalDecline {
-                plant: *plant,
-                threshold: *threshold,
-                first: *first,
-            }),
+            } => {
+                // A first-time explanation still waiting for room absorbs later crossings.
+                let waiting = self
+                    .pending_geothermal
+                    .iter_mut()
+                    .find_map(|lesson| match lesson {
+                        Lesson::GeothermalDecline {
+                            plant: p,
+                            threshold,
+                            first: true,
+                        } if p == plant => Some(threshold),
+                        _ => None,
+                    });
+                match waiting {
+                    Some(waiting) => *waiting = *threshold,
+                    None => self.pending_geothermal.push(Lesson::GeothermalDecline {
+                        plant: *plant,
+                        threshold: *threshold,
+                        first: *first,
+                    }),
+                }
+            }
             DomainEvent::MonthClosed(report) => {
                 self.latest = lessons_for(report, session.region());
                 if !self.pending_geothermal.is_empty() {
                     self.latest
                         .retain(|lesson| !matches!(lesson, Lesson::AllClear));
-                    let priority = self
+                    let at = self
                         .latest
                         .iter()
-                        .rposition(|lesson| {
-                            matches!(
-                                lesson,
-                                Lesson::UnservedEnergy { .. }
-                                    | Lesson::RotatingOutages { .. }
-                                    | Lesson::FrequencyPerformance { .. }
-                                    | Lesson::Overgeneration { .. }
-                            )
-                        })
+                        .rposition(outranks_geothermal)
                         .map_or(0, |i| i + 1);
-                    self.latest
-                        .splice(priority..priority, self.pending_geothermal.drain(..));
-                    self.latest.truncate(MAX_LESSONS);
+                    let pending = std::mem::take(&mut self.pending_geothermal);
+                    self.latest.splice(at..at, pending);
+                    // The domain sends each plant's first-time explanation once, so one the limit
+                    // cuts waits for next month. Every other cut lesson is dropped.
+                    let cut = self.latest.split_off(MAX_LESSONS.min(self.latest.len()));
+                    self.pending_geothermal = cut
+                        .into_iter()
+                        .filter(|lesson| {
+                            matches!(lesson, Lesson::GeothermalDecline { first: true, .. })
+                        })
+                        .collect();
                 }
             }
             _ => {}
@@ -805,6 +835,82 @@ mod tests {
         assert!(matches!(lessons[0], Lesson::RotatingOutages { .. }));
         assert!(matches!(lessons[1], Lesson::UnservedEnergy { .. }));
         assert!(matches!(lessons[2], Lesson::SolarCurtailed { .. }));
+    }
+
+    fn decline(plant: u32, threshold: u8, first: bool) -> DomainEvent {
+        DomainEvent::FieldDeclineThreshold {
+            plant: domain::ids::PlantId(plant),
+            threshold,
+            first,
+        }
+    }
+
+    fn closed(projection: &mut LessonsProjection, report: MonthlyReport) -> Vec<Lesson> {
+        projection.apply(&DomainEvent::MonthClosed(Box::new(report)), &session());
+        projection.latest().to_vec()
+    }
+
+    /// Geothermal lessons rank below reliability and expensive peaking (which already ranks above
+    /// reliability) and above curtailment, start-up costs and the rate review, whichever of those
+    /// the month happens to have.
+    #[test]
+    fn geothermal_lessons_rank_below_peaking_and_reliability_and_above_the_rest() {
+        let geothermal = Lesson::GeothermalDecline {
+            plant: domain::ids::PlantId(4),
+            threshold: 90,
+            first: true,
+        };
+        let mut peaking_only = clean_report();
+        peaking_only
+            .energy_by_kind
+            .insert(PlantKind::Peaker, mwh(10_000.0));
+        peaking_only.curtailed = mwh(2_000.0);
+        let mut projection = LessonsProjection::default();
+        projection.apply(&decline(4, 90, true), &session());
+        let lessons = closed(&mut projection, peaking_only);
+        assert!(matches!(lessons[0], Lesson::ExpensivePeaking { .. }));
+        assert_eq!(lessons[1], geothermal);
+        assert!(matches!(lessons[2], Lesson::SolarCurtailed { .. }));
+
+        projection.apply(&decline(4, 90, true), &session());
+        let lessons = closed(&mut projection, everything_report());
+        assert!(matches!(lessons[0], Lesson::ExpensivePeaking { .. }));
+        assert!(matches!(lessons[1], Lesson::UnservedEnergy { .. }));
+        assert_eq!(lessons[2], geothermal);
+
+        projection.apply(&decline(4, 90, true), &session());
+        assert_eq!(closed(&mut projection, clean_report()), [geothermal]);
+    }
+
+    /// The first-time explanation is sent once by the domain, so the three-lesson limit must not
+    /// lose it: a cut first-time lesson waits for the next month, absorbing later crossings of the
+    /// same plant. Later, shorter lessons may simply be cut.
+    #[test]
+    fn a_first_time_decline_lesson_cut_by_the_limit_is_shown_next_month() {
+        let mut crowded = everything_report();
+        crowded.rotating_outage = mwh(20.0);
+        crowded.peak_outage_share = Ratio::new(0.1).unwrap();
+        let mut projection = LessonsProjection::default();
+        projection.apply(&decline(4, 90, true), &session());
+        projection.apply(&decline(5, 80, false), &session());
+        let lessons = closed(&mut projection, crowded.clone());
+        assert_eq!(lessons.len(), 3);
+        assert!(
+            !lessons
+                .iter()
+                .any(|l| matches!(l, Lesson::GeothermalDecline { .. }))
+        );
+
+        projection.apply(&decline(4, 80, false), &session());
+        assert_eq!(
+            closed(&mut projection, clean_report()),
+            [Lesson::GeothermalDecline {
+                plant: domain::ids::PlantId(4),
+                threshold: 80,
+                first: true,
+            }]
+        );
+        assert_eq!(closed(&mut projection, clean_report()), [Lesson::AllClear]);
     }
 
     #[test]

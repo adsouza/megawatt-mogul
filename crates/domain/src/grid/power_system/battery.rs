@@ -197,8 +197,7 @@ impl<'a> BatteryPlanningInputs<'a> {
                 match p.status() {
                     PlantStatus::Online { output, target } => {
                         if p.auto_follow() {
-                            p.spec()
-                                .capacity
+                            p.available_capacity()
                                 .min(output + p.spec().ramp.over_ticks(tick.saturating_sub(from)))
                         } else {
                             target.min(output + p.spec().ramp.over_ticks(tick.saturating_sub(from)))

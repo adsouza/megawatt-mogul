@@ -5235,3 +5235,42 @@ fn outage_sizing_finds_a_peak_at_a_half_hour_bend() {
     assert!((sys.size_outage(&region, april(), 0).value() - 0.005).abs() < 1e-12);
     assert_eq!(sys, before);
 }
+
+/// A declined geothermal field caps every live forecast, not only dispatch: outage sizing and
+/// the battery charge budget credit an AGC plant with its available capacity, never nameplate.
+#[test]
+fn geothermal_agc_forecasts_credit_available_capacity_not_nameplate() {
+    use super::battery::BatteryPlanningInputs;
+    let region = tiny_region();
+    let mut sys = committed_auto_follow(&region, &[connected(PlantKind::Geothermal, cell(5, 1))]);
+    let p = sys.plant_mut(PlantId(1)).unwrap();
+    p.set_geothermal(crate::generation::GeothermalState {
+        exploration_left: 0,
+        odds: share(0.8),
+        exploration_capital: crate::units::Money::ZERO,
+        initial_field: share(0.8),
+        field: share(0.6),
+        rounds: 0,
+        makeup: None,
+        crossed: 0,
+        notice: None,
+        taught: false,
+    });
+    let available = p.available_capacity();
+    assert_eq!(available, Megawatts::new(90.0));
+    place(&mut sys, 1, 80.0, None);
+    let plant = sys.plant(PlantId(1)).unwrap();
+    for minute in [0, 10, 59] {
+        assert!(
+            sys.deliverable(plant, 0, minute) <= available,
+            "outage credit at {minute}"
+        );
+    }
+    let inputs = BatteryPlanningInputs::new(&sys, &region, april());
+    for tick in [0, 30, 120, 600] {
+        assert!(
+            inputs.thermal_for_charge(tick, 0, false) <= available,
+            "charge budget at {tick}"
+        );
+    }
+}

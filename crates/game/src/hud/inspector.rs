@@ -51,7 +51,8 @@ pub struct CellInspector {
     pub title: String,
     /// `Land` or `Water`.
     pub terrain: String,
-    /// Height, sunshine, wind potential, cooling water and hydro potential, each a percentage.
+    /// Height, sunshine, wind, geothermal (with a site's odds and expected output), cooling water
+    /// and hydro potential.
     pub readings: Vec<Stat>,
     /// The heading over the suitability rows.
     pub suitability_heading: String,
@@ -213,6 +214,24 @@ fn cell_inspector(game: &Game, l10n: &Localizer, at: CellCoord) -> Option<CellIn
         reading("inspector-cooling-water", cell.cooling_water),
         reading("inspector-hydro-potential", cell.hydro_potential),
     ];
+    if let Ok((odds, field)) = game.session().geothermal_site(at) {
+        let after = 1 + readings
+            .iter()
+            .position(|s| s.label == l10n.text("geothermal-potential"))
+            .expect("potential row");
+        readings.splice(
+            after..after,
+            [
+                reading("geothermal-odds", odds),
+                Stat {
+                    label: l10n.text("geothermal-expected"),
+                    value: format::megawatts(
+                        region.spec(PlantKind::Geothermal).capacity * field.value(),
+                    ),
+                },
+            ],
+        );
+    }
     if let Some(market) = market {
         readings.insert(
             0,

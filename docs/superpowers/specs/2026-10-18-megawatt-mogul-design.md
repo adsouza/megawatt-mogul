@@ -24,7 +24,7 @@
   (§29, 2026-10-26, rules 21). A16 standardizes solar calibration and counts annual clouds once
   (§30, 2026-10-26, rules 22). A17 rebalances Southern China’s starting economy
   (§31, 2026-10-26, rules 23). A19 adds the approved design for geothermal plants with exploration
-  risk and reservoir decline (§33, 2026-10-27, rules 29; implemented locally).
+  risk and reservoir decline (§33, 2026-10-27, rules 29; review fixes under rules 31).
 - **Engine:** Rust 1.98, Bevy 0.20, bevy_egui 0.43, bevy-inspector-egui 0.38
 
 ## 1. Vision and goals
@@ -4343,14 +4343,17 @@ is not promised. Current runtime evidence supports desktop Chromium; Firefox/Saf
 
 ## 33. Amendment A19: Geothermal plants with reservoir decline (2026-10-27)
 
-**Status:** Implemented locally on 2026-10-27 under rules **29**, portable state **6** and region
-schema **5**. Focused native/browser validation is recorded in the implementation plan; CI is pending.
+**Status:** Implemented on 2026-10-27 under rules **29**, portable state **6** and region
+schema **5**; review fixes under rules **31** (2026-10-28). Focused native/browser validation is recorded in the implementation plan; CI is pending.
 [Implementation plan](../plans/2026-10-27-amendment-a19-geothermal.md).
-It targets simulation rules **29**, portable state schema **6** and region schema **5**.
 The original rules-24/state-5 targets were overtaken by changes through rules 27/state schema 5;
 these allocations preserve the approved gameplay design against the current baseline.
 Initial A19 used rules 28; rules 29 incorporates the user’s correction that a dry geothermal
 result only excludes geothermal, leaving other plant kinds subject to their normal siting rules.
+Rules 30 is Plan 8's inherited HVDC (§28.9). Rules 31 (2026-10-28) applies the post-implementation
+review: outage sizing and battery charge budgets credit a declined plant's available capacity,
+commitment patterns are validated against commissioned capacity, and a makeup restore that lands
+exactly on a notice line neither re-arms nor fires it.
 
 ### 33.1 Why
 
@@ -4458,9 +4461,12 @@ verification. The implemented 3% annual decline is a gameplay choice, not a fiel
 
 6. A commissioned plant's **available capacity** is `nameplate × field`. The field is a ratio in
    (0, 1] that starts at the cell's **field quality** and declines at every month close by the
-   region's monthly decline rate. Available capacity bounds output, dispatch targets and the
-   commitment plan. Minimum stable output is `min_stable × available capacity`. Firm capacity at a
-   rate review is `capacity_credit × available capacity` at that review.
+   region's monthly decline rate. Available capacity bounds output, dispatch targets, the
+   commitment plan and every live forecast (rotating-outage sizing and battery charge budgets).
+   Minimum stable output is `min_stable × available capacity`. Firm capacity at a rate review is
+   `capacity_credit × available capacity` at that review. A commitment pattern must fit the
+   plant's **commissioned** capacity, the most makeup can restore, so a later restore never makes
+   an accepted pattern infeasible.
 7. Fixed O&M, marginal cost, ramp rate and start-up are unaffected by decline.
 
 **Makeup drilling**
@@ -4600,7 +4606,10 @@ Notices go where the game pauses, Planning and Review, and on the plant card, so
     started before this amendment (§33.8), the reason is "not available in games started before
     geothermal", so it doesn't claim the region has no resource.
   - A resource overlay with the same legend and contrast conventions as hydro and wind.
-  - Hovering or selecting a cell shows its potential, success odds and expected output.
+  - Selecting a cell shows its potential, success odds and expected output in the cell
+    inspector. The build quote shows the staged payments: the exploration share per month over
+    the exploration months, then the rest per month. In a game started before geothermal the
+    disabled row quotes no figures from the placeholder spec.
   - Explored-dry cells get a distinct map marker and tooltip.
   - The build list must fit at the minimum supported window size; adding a fourth region's card
     previously overflowed a fixed layout.
@@ -4611,10 +4620,14 @@ Notices go where the game pauses, Planning and Review, and on the plant card, so
 - **Decline notices.** A notice fires when available capacity first falls below 90%, 80%, 70% and so
   on of the plant's **commissioned** capacity. Notices are relative to the plant's own starting
   output, not nameplate, so marginal sites are not flagged at commissioning. Restoring capacity above
-  a threshold re-arms it. Each crossing produces:
+  a threshold re-arms it. A restore that lands on a line (within 1e-9 of commissioned output, as
+  round 2 does at 90% with the shipped 5% step) is not above it: it neither re-arms nor fires. Each
+  crossing produces:
   - a Review lesson, the first time per plant, explaining decline and makeup drilling, and a shorter
-    lesson for later crossings, within the existing three-lessons-per-month limit and its priority
-    order;
+    lesson for later crossings, within the existing three-lessons-per-month limit. Geothermal
+    lessons rank below reliability lessons and expensive peaking, and above curtailment, start-up
+    costs and the rate review. A first-time explanation the limit cuts waits for the next month,
+    absorbing later crossings of the same plant; other cut lessons are dropped;
   - a Planning warning row, "Field output falling at <plant>", with a **Show plant** button that
     selects the plant and opens its card. The row persists across Plannings until the player drills,
     the field is restored, or the player chooses **Not now** (`DismissFieldNotice`), which hides it
@@ -4632,7 +4645,8 @@ Notices go where the game pauses, Planning and Review, and on the plant card, so
 
 ### 33.8 Persistence and compatibility
 
-- Advance simulation rules **27 → 28**, portable state schema **5 → 6** and region schema **4 → 5**.
+- Advance portable state schema **5 → 6** and region schema **4 → 5**. Simulation rules went
+  27 → 28 → 29 for A19, then 30 (§28.9) and 31 for the review fixes (see the status note).
 - Keep the portable schema-5 and older readers and canonical encoders. Verify old bytes, hashes and
   archived regions with their source-schema semantics first; only then upcast in memory.
   A pre-geothermal game (portable schema ≤ 5) has no geothermal plants,

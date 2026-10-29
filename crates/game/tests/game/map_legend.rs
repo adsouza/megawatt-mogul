@@ -355,12 +355,13 @@ fn the_players_legend_choice_lasts_through_the_phases_of_a_game() {
 fn the_active_map_layer_is_shown_as_selected() {
     use crate::contrast::button_look;
     use game::hud::MapLayer;
-    const LAYERS: [&str; 5] = [
+    const LAYERS: [&str; 6] = [
         "Terrain",
         "Sunshine",
         "Cooling water",
         "Hydro potential",
         "Wind potential",
+        "Geothermal potential",
     ];
     let logs = TempDir::new().unwrap();
     let mut app = app_in(&logs, EASTERN, DayPhase::Planning);
@@ -376,7 +377,7 @@ fn the_active_map_layer_is_shown_as_selected() {
             (layer.selected, button_look(&painted, layer.rect))
         })
     };
-    let shows_on = |looks: &[(bool, crate::contrast::ButtonLook); 5], on: usize| {
+    let shows_on = |looks: &[(bool, crate::contrast::ButtonLook); 6], on: usize| {
         for (index, (selected, look)) in looks.iter().enumerate() {
             assert_eq!(*selected, index == on, "{}", LAYERS[index]);
             if index != on {
@@ -395,6 +396,7 @@ fn the_active_map_layer_is_shown_as_selected() {
     for (label, layer, index) in [
         ("Sunshine", MapLayer::Irradiance, 1),
         ("Wind potential", MapLayer::WindPotential, 4),
+        ("Geothermal potential", MapLayer::GeothermalPotential, 5),
     ] {
         for _ in 0..2 {
             click_button(&mut app, &pass, MEDIUM, label);

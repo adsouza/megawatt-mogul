@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 42c4a2b58a6b0d851476bbb0d8c8744fff589c0ac68fd01a7e6ef130cb4a05de # shrinks to bits = 1
+cc 9ff37cd9ba394d1e0a945644d49817ec0e1df84bfa03c5f131bbdba9a5a6e35b # shrinks to initial = 0.6509056938169542, round = 2

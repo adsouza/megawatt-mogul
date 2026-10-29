@@ -63,10 +63,15 @@ pub fn geothermal_model(
             reason: None,
         });
     }
-    if let Some(m) = &g.makeup {
+    let progress = g
+        .makeup
+        .as_ref()
+        .map(|m| l10n.args("geothermal-drilling", &[("months", m.months_left.into())]));
+    // Makeup is ordered in Planning; elsewhere the card only reports the field, read-only.
+    if s.phase() != DayPhase::Planning {
         return Some(GeothermalCard {
             field,
-            progress: Some(l10n.args("geothermal-drilling", &[("months", m.months_left.into())])),
+            progress,
             quote: None,
             action: None,
             reason: None,
@@ -75,7 +80,7 @@ pub fn geothermal_model(
     let quote = s.makeup_quote(id);
     Some(GeothermalCard {
         field,
-        progress: None,
+        progress,
         quote: quote.as_ref().ok().map(|q| {
             l10n.args(
                 "geothermal-makeup-quote",
@@ -92,15 +97,11 @@ pub fn geothermal_model(
                 l10n.text("geothermal-drill"),
                 UiAction::Command(Command::DrillMakeupWells { plant: id }),
             )
-            .enabled_if(quote.is_ok() && s.phase() == DayPhase::Planning),
+            .enabled_if(quote.is_ok()),
         ),
-        reason: if s.phase() != DayPhase::Planning {
-            Some(l10n.text("geothermal-planning-only"))
-        } else {
-            quote
-                .err()
-                .map(|e| e.localize_with(l10n, &Names::new(l10n, s)))
-        },
+        reason: quote
+            .err()
+            .map(|e| e.localize_with(l10n, &Names::new(l10n, s))),
     })
 }
 pub fn draw_geothermal(ui: &mut egui::Ui, model: &GeothermalCard, actions: &mut Vec<UiAction>) {

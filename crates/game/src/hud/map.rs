@@ -421,7 +421,7 @@ pub fn kind_color(kind: PlantKind) -> Rgb {
         PlantKind::Hydro => [80, 170, 235],
         PlantKind::Battery => [45, 225, 195],
         PlantKind::Wind => [120, 190, 245],
-        PlantKind::Geothermal => [225, 145, 90],
+        PlantKind::Geothermal => [150, 90, 40],
     }
 }
 
@@ -806,7 +806,7 @@ fn layer_label(layer: MapLayer, l10n: &Localizer) -> String {
         MapLayer::Terrain => l10n.text("map-layer-terrain"),
         MapLayer::Irradiance => l10n.text("map-layer-irradiance"),
         MapLayer::WindPotential => l10n.text("map-layer-wind"),
-        MapLayer::GeothermalPotential => l10n.text("geothermal-layer"),
+        MapLayer::GeothermalPotential => l10n.text("geothermal-potential"),
         MapLayer::CoolingWater => l10n.text("map-layer-cooling-water"),
         MapLayer::HydroPotential => l10n.text("map-layer-hydro-potential"),
         MapLayer::Suitability(kind) => l10n.args(
@@ -928,7 +928,8 @@ pub fn draw_map(ui: &mut egui::Ui, model: &MapModel, cache: &mut MapCache) -> Ve
     for (at, tooltip) in &model.dry_cells {
         let center = layout.cell_center(*at);
         let r = 4.0f32;
-        let stroke = egui::Stroke::new(2.0, Color32::from_rgb(225, 145, 90));
+        let [r_, g_, b_] = kind_color(PlantKind::Geothermal);
+        let stroke = egui::Stroke::new(2.0, Color32::from_rgb(r_, g_, b_));
         painter.line_segment([center - vec2(r, r), center + vec2(r, r)], stroke);
         painter.line_segment([center + vec2(-r, r), center + vec2(r, -r)], stroke);
         ui.interact(
@@ -1930,19 +1931,32 @@ mod tests {
 
     #[test]
     fn value_layers_brighten_with_their_value() {
-        let game = eastern_game(Box::new(InMemoryCommandLog::default()));
-        let region = game.session().region();
-        let terrain = region.terrain();
+        let eastern = eastern_game(Box::new(InMemoryCommandLog::default()));
+        // The Eastern Interconnection has no geothermal resource; the West's varies.
+        let western = crate::hud::test_support::shipped_game(
+            "western_interconnection",
+            Box::new(InMemoryCommandLog::default()),
+        );
         let brightness = |rgb: Rgb| rgb.iter().map(|c| u32::from(*c)).sum::<u32>();
-        for (layer, value) in [
+        for (game, layer, value) in [
             (
-                MapLayer::Irradiance,
-                (|c: &domain::region::Cell| c.irradiance.value()) as fn(&_) -> f64,
+                &western,
+                MapLayer::GeothermalPotential,
+                (|c: &domain::region::Cell| c.geothermal_potential.value()) as fn(&_) -> f64,
             ),
-            (MapLayer::WindPotential, |c| c.wind_potential.value()),
-            (MapLayer::CoolingWater, |c| c.cooling_water.value()),
-            (MapLayer::HydroPotential, |c| c.hydro_potential.value()),
+            (&eastern, MapLayer::Irradiance, |c| c.irradiance.value()),
+            (&eastern, MapLayer::WindPotential, |c| {
+                c.wind_potential.value()
+            }),
+            (&eastern, MapLayer::CoolingWater, |c| {
+                c.cooling_water.value()
+            }),
+            (&eastern, MapLayer::HydroPotential, |c| {
+                c.hydro_potential.value()
+            }),
         ] {
+            let region = game.session().region();
+            let terrain = region.terrain();
             let land: Vec<(CellCoord, f64)> = (0..terrain.height())
                 .flat_map(|y| (0..terrain.width()).map(move |x| cell(x, y)))
                 .filter(|at| terrain.get(*at).unwrap().land)
@@ -2014,7 +2028,7 @@ mod tests {
         assert_eq!(labels[0], l10n.text("map-layer-terrain"));
         assert_eq!(labels[1], "Sunshine");
         assert_eq!(labels[2], "Wind potential");
-        assert_eq!(labels[3], "Geothermal resource");
+        assert_eq!(labels[3], "Geothermal potential");
         assert_eq!(labels[4], "Cooling water");
         assert_eq!(labels[5], "Hydro potential");
         assert_eq!(labels[6], "Suitability: Nuclear plant");
@@ -2509,9 +2523,26 @@ mod tests {
 
     #[test]
     fn plant_kinds_read_apart_by_colour_alone() {
-        let mut colours: Vec<Rgb> = PlantKind::ALL.into_iter().map(kind_color).collect();
-        colours.sort_unstable();
-        colours.dedup();
-        assert_eq!(colours.len(), PlantKind::ALL.len());
+        let distance = |a: Rgb, b: Rgb| {
+            a.iter()
+                .zip(b)
+                .map(|(&x, y)| (f64::from(x) - f64::from(y)).powi(2))
+                .sum::<f64>()
+                .sqrt()
+        };
+        // Exact duplicates are not the only clash: geothermal first shipped 23 from CCGT.
+        for (i, a) in PlantKind::ALL.into_iter().enumerate() {
+            for b in PlantKind::ALL.into_iter().skip(i + 1) {
+                let d = distance(kind_color(a), kind_color(b));
+                assert!(d > 40.0, "{a:?} and {b:?} are only {d:.0} apart");
+            }
+        }
+        for kind in PlantKind::ALL
+            .into_iter()
+            .filter(|&k| k != PlantKind::Geothermal)
+        {
+            let d = distance(kind_color(PlantKind::Geothermal), kind_color(kind));
+            assert!(d > 80.0, "geothermal is only {d:.0} from {kind:?}");
+        }
     }
 }

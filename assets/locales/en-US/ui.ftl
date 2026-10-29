@@ -706,10 +706,22 @@ hvdc-metric-last-loss = Last losses
 # Amendment A19: geothermal
 plant-kind-geothermal = Geothermal plant
 plant-glyph-geothermal = T
-geothermal-field = Field: { $field } of commissioned output · falling about { $decline } a year · { $rounds } makeup rounds
-geothermal-exploring = Exploration: { $months } months left · success chance { $odds } · capital at risk { $capital }
-geothermal-drilling = Makeup drilling: { $months } months left. The plant continues operating.
-geothermal-makeup-quote = { $capital } over { $months } months · restore { $from } to { $to }
+geothermal-field = Field: { $field } of commissioned output · falling about { $decline } a year · { $rounds ->
+    [one] 1 makeup round
+   *[other] { $rounds } makeup rounds
+}
+geothermal-exploring = Exploration: { $months ->
+    [one] 1 month left
+   *[other] { $months } months left
+} · success chance { $odds } · capital at risk { $capital }
+geothermal-drilling = Makeup drilling: { $months ->
+    [one] 1 month left
+   *[other] { $months } months left
+}. The plant continues operating.
+geothermal-makeup-quote = { $capital } over { $months ->
+    [one] 1 month
+   *[other] { $months } months
+} · restore { $from } to { $to }
 geothermal-drill = Drill makeup wells
 geothermal-planning-only = Makeup drilling can be ordered in Planning.
 geothermal-warning = Field output falling at { $plant }
@@ -719,6 +731,10 @@ geothermal-odds = Exploration success
 geothermal-expected = Expected initial output
 geothermal-risk = Exploration capital at risk
 geothermal-exploration-months = Exploration months
+geothermal-staged-payment = { $exploration } for { $months ->
+    [one] 1 month
+   *[other] { $months } months
+}, then { $construction }
 geothermal-build-help = Exploration comes first. A dry result stops the project and loses only exploration spending; a successful field gradually declines. Makeup wells can restore output.
 geothermal-no-resource = No geothermal resource at this site.
 geothermal-no-region-resource = No geothermal resource in this region.
@@ -735,6 +751,5 @@ geothermal-decline-lesson = { $plant } fell below { $threshold }% of its commiss
 geothermal-decline-later = { $plant } fell below { $threshold }% of commissioned output. Inspect its field and makeup options in Planning.
 geothermal-ordered = Makeup drilling ordered.
 geothermal-completed = Makeup drilling at { $plant } restored { $restored }.
-geothermal-layer = Geothermal resource
 geothermal-potential = Geothermal potential
 geothermal-resource-help = Hydrothermal site quality sets exploration success and initial output. Exploration can fail; proven fields decline over time.

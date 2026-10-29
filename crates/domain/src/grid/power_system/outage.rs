@@ -375,8 +375,8 @@ impl PowerSystem {
                 let limit = Megawatts::new(left.max(0.0) * f64::from(TICKS_PER_HOUR));
                 target.min(limit).min(plant.available_capacity())
             }
-            (_, true) => spec
-                .capacity
+            (_, true) => plant
+                .available_capacity()
                 .min(output + spec.ramp.over_ticks(LAST_MINUTE)),
             (_, false) => target.min(output + spec.ramp.over_ticks(minute)),
         }
