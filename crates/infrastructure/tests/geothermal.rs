@@ -5,7 +5,7 @@ use domain::{
     ids::RegionId,
     region::{PlantKind, RegionError, SiteError},
     session::{DayPhase, GameSettings},
-    state::State,
+    state::{CURRENT_STATE_SCHEMA, State},
 };
 use infrastructure::{
     region::RonRegionCatalog,
@@ -112,7 +112,10 @@ fn geothermal_prechange_schema5_saves_verify_original_bytes_and_remain_unavailab
         let rewritten = encode_save(&bundle).unwrap();
         let again = restore(&rewritten);
         assert!(!again.session().geothermal_available());
-        assert_eq!(again.checkpoint().snapshot.unwrap().schema, 7);
+        assert_eq!(
+            again.checkpoint().snapshot.unwrap().schema,
+            CURRENT_STATE_SCHEMA
+        );
         assert_eq!(
             again.session().snapshot_state(),
             game.session().snapshot_state()
@@ -387,7 +390,10 @@ fn geothermal_frozen_schema4_planning_operating_and_review_boundaries_upcast_wit
         .unwrap();
         let again = restore(&rewritten);
         assert!(!again.session().geothermal_available());
-        assert_eq!(again.checkpoint().snapshot.unwrap().schema, 6);
+        assert_eq!(
+            again.checkpoint().snapshot.unwrap().schema,
+            CURRENT_STATE_SCHEMA
+        );
         assert_eq!(
             again.session().snapshot_state(),
             game.session().snapshot_state()
@@ -396,7 +402,7 @@ fn geothermal_frozen_schema4_planning_operating_and_review_boundaries_upcast_wit
 }
 
 /// A real pre-geothermal Western Interconnection game (an archived schema-3 save) never gains
-/// geothermal: no cell accepts it, before or after a schema-6 re-save and restore.
+/// geothermal: no cell accepts it, before or after a current-schema re-save and restore.
 #[test]
 fn geothermal_restored_western_interconnection_game_stays_without_geothermal() {
     use std::io::Read;
@@ -436,7 +442,10 @@ fn geothermal_restored_western_interconnection_game_stays_without_geothermal() {
     })
     .unwrap();
     let again = restore(&rewritten);
-    assert_eq!(again.checkpoint().snapshot.unwrap().schema, 6);
+    assert_eq!(
+        again.checkpoint().snapshot.unwrap().schema,
+        CURRENT_STATE_SCHEMA
+    );
     refuses_everywhere(&again);
     assert_eq!(
         again.session().snapshot_state(),
