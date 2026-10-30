@@ -69,17 +69,18 @@ rebuild before subsequent runs use their cached artifacts.
 The `build-tests` job uses the shared `native-test-build` action to check formatting and clippy,
 then compile the default-feature workspace tests once with
 `cargo nextest archive --workspace --locked --profile ci`. It uploads one
-zstd-compressed archive for three parallel Ubuntu 24.04 runners:
+zstd-compressed archive for six parallel Ubuntu 24.04 runners:
 
 | Shard | Tests |
 |---|---|
-| `shipped-regions` | Every test in `infrastructure::shipped_regions` |
+| `shipped-regions-1` through `shipped-regions-4` | Every test in `infrastructure::shipped_regions`, divided by nextest's `hash:1/4` through `hash:4/4` partitions |
 | `game-integration` | Every test in `game::game`, the game integration binary |
 | `remaining` | Everything else, including game unit tests and all other integration binaries |
 
-`tools/ci/test_shards.py` owns both the matrix and its filters. Before upload, it lists the real
-tests and requires the shards to be disjoint, nonempty and exhaustive. The remaining shard is
-the complement of the first two, so new binaries and tests are covered automatically. The
+`tools/ci/test_shards.py` owns the matrix, filters and optional partitions. Before upload, it lists
+the real tests using the same filters and partitions that the workers execute, and requires the
+shards to be disjoint, nonempty and exhaustive. The remaining shard excludes the shipped-region
+and game integration binaries, so new binaries and tests are covered automatically. The
 inventory check includes ignored tests; execution keeps the existing ignored-test policy,
 property case counts, seeds, scenarios, assertions and CI retry setting.
 
@@ -178,13 +179,16 @@ Card-body tests cover selection from the hidden hemisphere, midpoint alignment a
 hold before automatic rotation resumes; pure motion properties pin shortest arcs, frame partition
 independence and manual interruption. Rendering clips the far hemisphere before triangulation.
 
-The scenario checks in `infrastructure::shipped_regions` run one test per region and scenario,
-so nextest schedules them in parallel and names a failure. `year_one_hands_off_<id>`,
-`year_one_no_commands_<id>` each play eight seeds × twelve months.
+The scenario checks in `infrastructure::shipped_regions` run one test per region, scenario and
+seed, so nextest schedules them across workers and names a failure.
+`year_one_hands_off_<id>::seed_<n>`, `year_one_no_commands_<id>::seed_<n>`,
 `no_outages_<id>::seed_<n>` and `first_expansion_<id>::seed_<n>` retain all eight seeds as
-independently schedulable tests; every outage case still plays all twelve months. All four
-families use one shared region table, and one macro emits seeds 0–7 for both split families.
+independently schedulable tests; every year-long case still plays all twelve months. All four
+families use one shared region table, and one macro emits seeds 0–7 for every family.
 `scenario_cases_cover_every_shipped_region` fails if the table differs from the shipped list.
+The expansion property test runs four arbitrary seeds per region in separate region tests.
+SGCC's full-year local-fleet independence check and Southern China's thirteen-month profitability
+check also run seeds 0–7 as separate tests, retaining their full simulations and assertions.
 A12's three-review battery comparison covers the Eastern and Western regions only, with sixteen
 independent region/seed tests (seeds 0-7 each), each playing two companies for 36 months. They use
 `GameSession` through the real core command handler and invariant checks, without application

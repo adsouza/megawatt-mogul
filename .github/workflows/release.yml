@@ -118,6 +118,7 @@ jobs:
       - uses: ./.github/actions/native-test-run
         with:
           filter: ${{ matrix.filter }}
+          partition: ${{ matrix.partition }}
 
   tagged-source:
     name: Check tagged source

@@ -1,8 +1,9 @@
-"""Coverage checks for the three native CI shards, without running game tests."""
+"""Coverage checks for native CI shards, without running game tests."""
 
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 
 SPEC = importlib.util.spec_from_file_location(
@@ -24,6 +25,32 @@ def listing(*tests):
 
 
 class ShardCoverageTests(unittest.TestCase):
+    def test_region_shards_use_four_distinct_hash_partitions(self):
+        regions = [selection for name, selection in shards.SHARDS.items()
+                   if name.startswith("shipped-regions-")]
+        self.assertEqual(regions, [
+            {"filter": shards.SHIPPED, "partition": f"hash:{index}/4"}
+            for index in range(1, 5)
+        ])
+        self.assertEqual(shards.SHARDS["game-integration"],
+                         {"filter": shards.GAME, "partition": ""})
+        self.assertEqual(shards.SHARDS["remaining"],
+                         {"filter": f"not ({shards.SHIPPED} or {shards.GAME})",
+                          "partition": ""})
+
+    @patch.object(shards.subprocess, "check_output", return_value=b'{"rust-suites": {}}')
+    def test_inventory_passes_partition_to_nextest(self, check_output):
+        shards.list_tests(shards.SHIPPED, "hash:2/4")
+        command = check_output.call_args.args[0]
+        self.assertEqual(command[command.index("-E") + 1], shards.SHIPPED)
+        self.assertEqual(command[command.index("--partition") + 1], "hash:2/4")
+        self.assertEqual(command[command.index("--run-ignored") + 1], "all")
+
+    @patch.object(shards.subprocess, "check_output", return_value=b'{"rust-suites": {}}')
+    def test_unpartitioned_inventory_omits_partition(self, check_output):
+        shards.list_tests(shards.GAME, "")
+        self.assertNotIn("--partition", check_output.call_args.args[0])
+
     def setUp(self):
         self.groups = {
             "shipped-regions": {("infrastructure::shipped_regions", "year_one")},

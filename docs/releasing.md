@@ -142,10 +142,10 @@ local focused checks do not imply permission to run the full local suite.
 
 ### Tagged-source validation
 
-Tags run `tagged-source-build` and three `tagged-source-test` runners before packaging. These
+Tags run `tagged-source-build` and six `tagged-source-test` runners before packaging. These
 use the same `native-test-build` and `native-test-run` actions as ordinary CI: formatting,
-clippy, one locked workspace test archive, and the coverage-checked shipped-region, game
-integration and remaining-test shards. Every runnable test still runs, with the same seeds,
+clippy, one locked workspace test archive, four hash partitions of the shipped-region tests,
+and the game integration and remaining-test shards. Every runnable test still runs, with the same seeds,
 property case counts, assertions and ignored-test policy. All shards finish even if one fails.
 The `Check tagged source` gate rejects a failed, skipped or cancelled build or shard; tag
 packaging and draft creation cannot proceed without that gate succeeding.
@@ -154,7 +154,7 @@ Validation restores main's `check` dependency cache through `rust-setup`, separa
 release executable cache. Only main saves the shared native cache. Cargo still checks source
 freshness and builds the exact tagged revision; validation never skips because a cache exists.
 The test archive belongs to that workflow run, has one-day retention, and is shared among the
-three workers without rebuilding. Each worker checks out the same source revision and uses the
+six workers without rebuilding. Each worker checks out the same source revision and uses the
 same Ubuntu baseline and workspace path as the builder.
 
 Run the release workflow manually to exercise this validation path without creating a tag:
@@ -163,7 +163,7 @@ Run the release workflow manually to exercise this validation path without creat
 gh workflow run release.yml --ref main
 ```
 
-Manual runs validate source and version metadata, build the test archive, execute all three
+Manual runs validate source and version metadata, build the test archive, execute all six
 shards and require the aggregate gate to pass. They do not warm the release executable cache,
 package, create a draft or publish a release, including when dispatched on an existing tag.
 Pull requests retain their existing package checks and ordinary CI's Rust validation.

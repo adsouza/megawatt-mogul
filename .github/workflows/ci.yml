@@ -51,6 +51,7 @@ jobs:
       - uses: ./.github/actions/native-test-run
         with:
           filter: ${{ matrix.filter }}
+          partition: ${{ matrix.partition }}
 
   # Keep the existing required check name, and never report success when a shard was
   # failed, skipped or cancelled. Pages and branch protection can depend on this gate.

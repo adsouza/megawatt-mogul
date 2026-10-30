@@ -935,18 +935,21 @@ fn shipped_regions_start_without_a_shortfall() {
 /// The same eight seeds for each region, as independent tests so a large region does not leave
 /// one worker playing eight games while the other workers are idle.
 macro_rules! scenario_seeds {
-    ($scenario:ident, $id:expr) => {
-        scenario_seeds!(@cases $scenario, $id;
+    ($scenario:ident $(, $arg:expr)*) => {
+        scenario_seeds!(@cases $scenario ($($arg),*);
             (seed_0, 0), (seed_1, 1), (seed_2, 2), (seed_3, 3),
             (seed_4, 4), (seed_5, 5), (seed_6, 6), (seed_7, 7));
     };
-    (@cases $scenario:ident, $id:expr; $(($case:ident, $seed:expr)),+) => {
+    (@cases $scenario:ident $args:tt; $(($case:ident, $seed:expr)),+) => {
         $(
             #[test]
             fn $case() {
-                $scenario($id, $seed);
+                scenario_seeds!(@call $scenario $args, $seed);
             }
         )+
+    };
+    (@call $scenario:ident ($($arg:expr),*), $seed:expr) => {
+        $scenario($($arg,)* $seed)
     };
 }
 
@@ -958,19 +961,27 @@ macro_rules! scenario_seeds {
 macro_rules! shipped_scenario_cases {
     ($(($hands_off:ident, $no_commands:ident, $expansion:ident, $outages:ident, $id:expr)),+ $(,)?) => {
         $(
-            #[test]
-            fn $hands_off() {
-                assert_survives_year_one(hands_off_game, $id);
+            mod $hands_off {
+                use super::*;
+                scenario_seeds!(assert_survives_year_one, hands_off_game, $id);
             }
 
-            #[test]
-            fn $no_commands() {
-                assert_survives_year_one(new_game, $id);
+            mod $no_commands {
+                use super::*;
+                scenario_seeds!(assert_survives_year_one, new_game, $id);
             }
 
             mod $expansion {
                 use super::*;
                 scenario_seeds!(assert_first_expansion, $id);
+
+                proptest::proptest! {
+                    #![proptest_config(proptest::test_runner::Config { cases: 4, failure_persistence: None, ..Default::default() })]
+                    #[test]
+                    fn shipped_first_city_expansion_is_affordable_and_reliable(seed in proptest::prelude::any::<u64>()) {
+                        assert_first_expansion($id, seed);
+                    }
+                }
             }
 
             mod $outages {
@@ -1048,31 +1059,29 @@ fn scenario_cases_cover_every_shipped_region() {
     assert_eq!(SCENARIO_REGIONS, SHIPPED);
 }
 
-/// Plays twelve months on region `id` at seeds 0-7, each game started by `start` and given no
+/// Plays twelve months on region `id` at one seed, with the game started by `start` and given no
 /// commands beyond the phase changes, and asserts the game is still `Active` at every close.
 /// Before every month the forecast shows no shortfall, so a hands-off player never sees the
 /// shortfall prompt (spec §16.4).
-fn assert_survives_year_one(start: fn(&dyn RegionCatalog, &str, u64) -> Game, id: &str) {
-    for seed in 0..8 {
-        let mut game = start(&catalog(), id, seed);
-        for month in 1..=12 {
-            assert_eq!(
-                game.session().capacity_shortfall_check(),
-                None,
-                "{id} seed {seed} month {month}"
-            );
-            let played = play_month(&mut game);
-            assert_eq!(
-                game.session().status(),
-                SessionStatus::Active,
-                "{id} seed {seed}: game over at the close of month {month} ({:?}, \
-                 out of band {:.3}, reliability {:.4})",
-                played.report.month,
-                played.report.out_of_band_share.value(),
-                played.report.reliability.value(),
-            );
-            game.execute(Command::FinishReview).expect("finish review");
-        }
+fn assert_survives_year_one(start: fn(&dyn RegionCatalog, &str, u64) -> Game, id: &str, seed: u64) {
+    let mut game = start(&catalog(), id, seed);
+    for month in 1..=12 {
+        assert_eq!(
+            game.session().capacity_shortfall_check(),
+            None,
+            "{id} seed {seed} month {month}"
+        );
+        let played = play_month(&mut game);
+        assert_eq!(
+            game.session().status(),
+            SessionStatus::Active,
+            "{id} seed {seed}: game over at the close of month {month} ({:?}, \
+             out of band {:.3}, reliability {:.4})",
+            played.report.month,
+            played.report.out_of_band_share.value(),
+            played.report.reliability.value(),
+        );
+        game.execute(Command::FinishReview).expect("finish review");
     }
 }
 
@@ -1355,16 +1364,6 @@ fn assert_first_expansion(id: &str, seed: u64) {
             );
         }
         game.execute(Command::FinishReview).unwrap();
-    }
-}
-
-proptest::proptest! {
-    #![proptest_config(proptest::test_runner::Config { cases: 4, failure_persistence: None, ..Default::default() })]
-    #[test]
-    fn shipped_first_city_expansion_is_affordable_and_reliable(seed in proptest::prelude::any::<u64>()) {
-        for &id in SHIPPED {
-            assert_first_expansion(id, seed);
-        }
     }
 }
 
@@ -3439,9 +3438,12 @@ mod sgcc {
         }
     }
 
-    #[test]
-    fn each_sgcc_starter_grid_covers_its_own_full_year_without_imports() {
-        for seed in 0..8 {
+    mod each_sgcc_starter_grid_covers_its_own_full_year_without_imports {
+        use super::*;
+
+        scenario_seeds!(check);
+
+        fn check(seed: u64) {
             let mut game = new_game(&catalog(), SGCC, seed);
             // This scenario still proves each inherited fleet can operate independently.
             let links: Vec<_> = game
@@ -3942,9 +3944,12 @@ fn solar_clearness_matches_independent_nasa_anchor_energies() {
 }
 
 /// New-game economics must allow growth without financing several reactors from monthly sales.
-#[test]
-fn south_china_profitability_has_headroom_without_parallel_reactor_windfalls() {
-    for seed in 0..8 {
+mod south_china_profitability_has_headroom_without_parallel_reactor_windfalls {
+    use super::*;
+
+    scenario_seeds!(check);
+
+    fn check(seed: u64) {
         let mut game = hands_off_game(&catalog(), SOUTHERN_CHINA, seed);
         let nuclear = game.session().region().spec(PlantKind::Nuclear);
         let capital = nuclear.capital_cost.cents();
