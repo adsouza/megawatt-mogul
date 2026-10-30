@@ -69,12 +69,12 @@ rebuild before subsequent runs use their cached artifacts.
 The `build-tests` job uses the shared `native-test-build` action to check formatting and clippy,
 then compile the default-feature workspace tests once with
 `cargo nextest archive --workspace --locked --profile ci`. It uploads one
-zstd-compressed archive for six parallel Ubuntu 24.04 runners:
+zstd-compressed archive for nine parallel Ubuntu 24.04 runners:
 
 | Shard | Tests |
 |---|---|
 | `shipped-regions-1` through `shipped-regions-4` | Every test in `infrastructure::shipped_regions`, divided by nextest's `hash:1/4` through `hash:4/4` partitions |
-| `game-integration` | Every test in `game::game`, the game integration binary |
+| `game-integration-1` through `game-integration-4` | Every test in `game::game`, divided by nextest's `hash:1/4` through `hash:4/4` partitions |
 | `remaining` | Everything else, including game unit tests and all other integration binaries |
 
 `tools/ci/test_shards.py` owns the matrix, filters and optional partitions. Before upload, it lists
@@ -94,6 +94,15 @@ The `dev-tools` job retains its separate build and tests because that feature ch
 Tagged release validation uses the same build and run actions, dependency cache, matrix and
 coverage guard before allowing packaging. A manual dispatch of `release.yml` exercises that
 validation path without creating packages or a release; see [releasing](docs/releasing.md#tagged-source-validation).
+
+Game integration keeps one Bevy-linked binary and distributes its independently named tests,
+without adding compile/link steps. The mid-day save/resume round trip has one case per shipped
+region, with a coverage guard against the shared shipped-region list. Panel resizing has twelve
+Planning and eight Operating cases (region × window size × panel), each with its own app and
+temporary directory and the full drag sequence. The edited-seed and supply-key width properties
+still generate sixteen cases with shrinking, but build their immutable presenter/chart fixture
+once per test. Every generated case keeps a fresh form and egui context; fixtures are never
+cached across tests or processes.
 
 Run the fast coverage-checker regressions with:
 

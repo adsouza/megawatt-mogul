@@ -25,15 +25,19 @@ def listing(*tests):
 
 
 class ShardCoverageTests(unittest.TestCase):
-    def test_region_shards_use_four_distinct_hash_partitions(self):
+    def test_region_and_game_shards_use_four_distinct_hash_partitions_each(self):
         regions = [selection for name, selection in shards.SHARDS.items()
                    if name.startswith("shipped-regions-")]
         self.assertEqual(regions, [
             {"filter": shards.SHIPPED, "partition": f"hash:{index}/4"}
             for index in range(1, 5)
         ])
-        self.assertEqual(shards.SHARDS["game-integration"],
-                         {"filter": shards.GAME, "partition": ""})
+        games = [selection for name, selection in shards.SHARDS.items()
+                 if name.startswith("game-integration-")]
+        self.assertEqual(games, [
+            {"filter": shards.GAME, "partition": f"hash:{index}/4"}
+            for index in range(1, 5)
+        ])
         self.assertEqual(shards.SHARDS["remaining"],
                          {"filter": f"not ({shards.SHIPPED} or {shards.GAME})",
                           "partition": ""})

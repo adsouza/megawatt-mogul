@@ -58,16 +58,23 @@ fn invalid_seed_edits_disable_cards_and_map_without_using_the_previous_value() {
     assert!(harness.click_at(point(map, -83.0, 40.0), draw).is_empty());
 }
 
-proptest::proptest! {
-    #![proptest_config(proptest::test_runner::Config::with_cases(16))]
-    #[test]
-    fn region_selection_uses_the_edited_seed_instead_of_the_presenters_old_value(seed in proptest::prelude::any::<u64>()) {
-        let model = model(Some(42));
+#[test]
+fn region_selection_uses_the_edited_seed_instead_of_the_presenters_old_value() {
+    // The atlas and presenter are immutable; only the form and UI state vary between cases.
+    let model = model(Some(42));
+    let config = proptest::test_runner::Config {
+        test_name: Some(concat!(
+            module_path!(),
+            "::region_selection_uses_the_edited_seed_instead_of_the_presenters_old_value"
+        )),
+        ..proptest::test_runner::Config::with_cases(16)
+    };
+    proptest::proptest!(config, |(seed in proptest::prelude::any::<u64>())| {
         let form = RefCell::new(MenuForm::new(seed));
         let harness = Harness::new();
         let actions = harness.click("Eastern Interconnection", |ui| central(ui, |ui| draw_region_select(ui, &model, &mut form.borrow_mut())));
         proptest::prop_assert_eq!(actions, vec![UiAction::NewGame { region: RegionId::new("eastern_interconnection"), seed }]);
-    }
+    });
 }
 
 #[test]

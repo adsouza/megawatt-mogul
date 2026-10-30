@@ -2,7 +2,7 @@ name: Build and archive native tests
 description: Check the exact source, reuse native CI dependencies, and archive every workspace test once.
 outputs:
   matrix:
-    description: Coverage-checked matrix of the six execution shards.
+    description: Coverage-checked matrix of the nine execution shards.
     value: ${{ steps.shards.outputs.matrix }}
 runs:
   using: composite

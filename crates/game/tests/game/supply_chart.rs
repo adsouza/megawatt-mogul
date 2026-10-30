@@ -254,12 +254,20 @@ fn the_full_supply_key_fits_outside_the_daily_curve_at_narrow_and_wide_sizes() {
     }
 }
 
-proptest::proptest! {
-    #![proptest_config(proptest::test_runner::Config::with_cases(16))]
-    #[test]
-    fn supply_key_never_covers_the_curve_at_any_usable_width(width in 420.0_f32..2560.0) {
-        assert_key_fits(&full_key(), width);
-    }
+#[test]
+fn supply_key_never_covers_the_curve_at_any_usable_width() {
+    // Build the same read-only day once; assert_key_fits creates a fresh egui context per case.
+    let model = full_key();
+    let config = proptest::test_runner::Config {
+        test_name: Some(concat!(
+            module_path!(),
+            "::supply_key_never_covers_the_curve_at_any_usable_width"
+        )),
+        ..proptest::test_runner::Config::with_cases(16)
+    };
+    proptest::proptest!(config, |(width in 420.0_f32..2560.0)| {
+        assert_key_fits(&model, width);
+    });
 }
 
 #[test]

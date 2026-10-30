@@ -259,30 +259,52 @@ fn resize_each_way(screen: &mut Screen, panel: Resizable, side: Resizable, what:
     assert_map_usable(screen, what);
 }
 
-#[test]
-fn each_planning_panel_resizes_between_its_minimum_and_its_maximum() {
-    for region in [EASTERN, WESTERN] {
-        for size in [SMALL, LARGE] {
-            for panel in [INSPECTOR, BUILD, PLANNING] {
-                let mut screen = Screen::planning(region, size);
-                let what = format!("{region} at {size:?}: {}", panel.id);
-                resize_each_way(&mut screen, panel, INSPECTOR, &what);
+// Every case keeps its own app, temp directory and complete drag sequence.
+macro_rules! resize_cases {
+    ($phase:ident, $anchor:ident; $($case:ident: ($region:ident, $size:ident, $panel:ident)),+ $(,)?) => {
+        $(
+            #[test]
+            fn $case() {
+                let mut screen = Screen::$phase($region, $size);
+                let what = format!("{} at {:?}: {}", $region, $size, $panel.id);
+                resize_each_way(&mut screen, $panel, $anchor, &what);
             }
-        }
-    }
+        )+
+    };
 }
 
-#[test]
-fn each_operating_panel_resizes_between_its_minimum_and_its_maximum() {
-    for region in [EASTERN, WESTERN] {
-        for size in [SMALL, LARGE] {
-            for panel in [OPERATING_SIDE, OPERATING] {
-                let mut screen = Screen::operating(region, size);
-                let what = format!("{region} at {size:?}: {}", panel.id);
-                resize_each_way(&mut screen, panel, OPERATING_SIDE, &what);
-            }
-        }
-    }
+mod each_planning_panel_resizes_between_its_minimum_and_its_maximum {
+    use super::*;
+
+    resize_cases!(planning, INSPECTOR;
+        eastern_small_inspector: (EASTERN, SMALL, INSPECTOR),
+        eastern_small_build: (EASTERN, SMALL, BUILD),
+        eastern_small_planning: (EASTERN, SMALL, PLANNING),
+        eastern_large_inspector: (EASTERN, LARGE, INSPECTOR),
+        eastern_large_build: (EASTERN, LARGE, BUILD),
+        eastern_large_planning: (EASTERN, LARGE, PLANNING),
+        western_small_inspector: (WESTERN, SMALL, INSPECTOR),
+        western_small_build: (WESTERN, SMALL, BUILD),
+        western_small_planning: (WESTERN, SMALL, PLANNING),
+        western_large_inspector: (WESTERN, LARGE, INSPECTOR),
+        western_large_build: (WESTERN, LARGE, BUILD),
+        western_large_planning: (WESTERN, LARGE, PLANNING),
+    );
+}
+
+mod each_operating_panel_resizes_between_its_minimum_and_its_maximum {
+    use super::*;
+
+    resize_cases!(operating, OPERATING_SIDE;
+        eastern_small_side: (EASTERN, SMALL, OPERATING_SIDE),
+        eastern_small_bottom: (EASTERN, SMALL, OPERATING),
+        eastern_large_side: (EASTERN, LARGE, OPERATING_SIDE),
+        eastern_large_bottom: (EASTERN, LARGE, OPERATING),
+        western_small_side: (WESTERN, SMALL, OPERATING_SIDE),
+        western_small_bottom: (WESTERN, SMALL, OPERATING),
+        western_large_side: (WESTERN, LARGE, OPERATING_SIDE),
+        western_large_bottom: (WESTERN, LARGE, OPERATING),
+    );
 }
 
 /// Both Planning side panels and the bottom panel dragged as far as they go: the map keeps its

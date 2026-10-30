@@ -37,9 +37,38 @@ pub(crate) fn open_browser(app: &mut App) {
     }
     action(app, PersistAction::OpenBrowser);
 }
-#[test]
-fn save_resume_mid_day_restores_a_paused_runnable_game_with_all_projections() {
-    for &region in crate::support::SHIPPED_REGIONS {
+mod save_resume_mid_day_restores_a_paused_runnable_game_with_all_projections {
+    use super::*;
+
+    // Keep every shipped region, but let nextest distribute independent save directories/apps.
+    macro_rules! region_cases {
+        ($($region:ident),+ $(,)?) => {
+            $(
+                #[test]
+                fn $region() {
+                    check(stringify!($region));
+                }
+            )+
+
+            #[test]
+            fn cases_cover_every_shipped_region() {
+                assert_eq!(&[$(stringify!($region)),+], crate::support::SHIPPED_REGIONS);
+            }
+        };
+    }
+
+    region_cases!(
+        brazil_sin,
+        continental_europe_maghreb,
+        eastern_interconnection,
+        india_nepal_bhutan,
+        ips_ups,
+        sgcc,
+        southern_china,
+        western_interconnection,
+    );
+
+    fn check(region: &str) {
         let logs = TempDir::new().unwrap();
         let saves = TempDir::new().unwrap();
         let mut app = hud_app(logs.path());

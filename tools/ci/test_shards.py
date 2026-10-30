@@ -9,11 +9,12 @@ import subprocess
 SHIPPED = "binary_id(=infrastructure::shipped_regions)"
 GAME = "binary_id(=game::game)"
 SHARDS = {
-    # Hash partitioning spreads independently named region/seed cases over four runners.
+    # Hash partitioning spreads independently named cases over four runners per binary.
     # Use nextest itself for both the inventory proof and execution, never a second hash.
     **{f"shipped-regions-{index}": {"filter": SHIPPED, "partition": f"hash:{index}/4"}
        for index in range(1, 5)},
-    "game-integration": {"filter": GAME, "partition": ""},
+    **{f"game-integration-{index}": {"filter": GAME, "partition": f"hash:{index}/4"}
+       for index in range(1, 5)},
     "remaining": {"filter": f"not ({SHIPPED} or {GAME})", "partition": ""},
 }
 
