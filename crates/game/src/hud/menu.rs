@@ -116,7 +116,13 @@ pub struct MainMenuModel {
 }
 
 /// The opening menu offers navigation; new-game settings belong to the setup screen.
-pub fn main_menu_model(persistence: &Persistence, l10n: &Localizer) -> MainMenuModel {
+/// *Play tutorial* waits until the progress store has `progress_loaded`: loading may yet replace
+/// the flag it sets.
+pub fn main_menu_model(
+    persistence: &Persistence,
+    progress_loaded: bool,
+    l10n: &Localizer,
+) -> MainMenuModel {
     let entry = persistence.continue_entry();
     let available = !persistence.frozen();
     MainMenuModel {
@@ -161,7 +167,7 @@ pub fn main_menu_model(persistence: &Persistence, l10n: &Localizer) -> MainMenuM
         )
         .enabled_if(available),
         play_tutorial: ButtonModel::new(l10n.text("menu-play-tutorial"), UiAction::PlayTutorial)
-            .enabled_if(available),
+            .enabled_if(available && progress_loaded),
         load_game: ButtonModel::new(
             l10n.text("save-load"),
             UiAction::Persistence(PersistAction::OpenBrowser),
@@ -302,7 +308,7 @@ pub(super) fn main_menu_screen(
     l10n: Res<Localizer>,
     mut sink: ActionSink,
 ) -> Result {
-    let model = main_menu_model(sink.persistence(), &l10n);
+    let model = main_menu_model(sink.persistence(), sink.progress_loaded(), &l10n);
     let mut ui = area.root_ui(contexts.ctx_mut()?, "main_menu");
     let mut actions = egui::CentralPanel::default()
         .show(&mut ui, |ui| draw_main_menu(ui, &model))
@@ -858,7 +864,7 @@ mod tests {
 
     #[test]
     fn menu_always_opens_setup_before_starting_a_game() {
-        let model = main_menu_model(&Persistence::default(), &shipped_l10n());
+        let model = main_menu_model(&Persistence::default(), true, &shipped_l10n());
         assert_eq!(
             model.new_game.action,
             UiAction::Navigate(MenuScreen::RegionSelect)
@@ -1119,10 +1125,22 @@ mod tests {
     #[test]
     fn the_main_menu_offers_play_tutorial_after_new_game() {
         let l10n = shipped_l10n();
-        let model = main_menu_model(&Persistence::default(), &l10n);
+        let model = main_menu_model(&Persistence::default(), true, &l10n);
         assert_eq!(model.play_tutorial.label, "Play tutorial");
         assert_eq!(model.play_tutorial.action, UiAction::PlayTutorial);
         assert!(model.play_tutorial.enabled);
+    }
+
+    /// Before the progress store has loaded (the browser reads it asynchronously), arming the
+    /// tutorial could be overwritten by the stored value, so *Play tutorial* waits.
+    #[test]
+    fn play_tutorial_waits_for_progress_to_load() {
+        let l10n = shipped_l10n();
+        let loading = main_menu_model(&Persistence::default(), false, &l10n);
+        assert!(!loading.play_tutorial.enabled);
+        assert!(loading.new_game.enabled, "only the tutorial waits");
+        let loaded = main_menu_model(&Persistence::default(), true, &l10n);
+        assert!(loaded.play_tutorial.enabled);
     }
 
     #[test]

@@ -126,7 +126,7 @@ fn the_boot_error_screen_quits_even_without_translations() {
 fn assert_opening_controls_fit(width: f32, height: f32) {
     let l10n = shipped_l10n();
     for resume_available in [false, true] {
-        let mut model = main_menu_model(&Persistence::default(), &l10n);
+        let mut model = main_menu_model(&Persistence::default(), true, &l10n);
         if resume_available {
             model.continue_game = Some(ButtonModel::new(
                 "Resume game".into(),
@@ -193,7 +193,7 @@ proptest::proptest! {
 #[test]
 fn new_game_with_two_regions_opens_the_picker() {
     let l10n = shipped_l10n();
-    let model = main_menu_model(&Persistence::default(), &l10n);
+    let model = main_menu_model(&Persistence::default(), true, &l10n);
 
     let actions = Harness::new().click("New game", |ui| {
         central(ui, |ui| draw_main_menu(ui, &model))
@@ -244,7 +244,7 @@ fn new_game_with_one_region_opens_setup_to_edit_the_seed() {
 #[test]
 fn opening_menu_has_no_seed_field() {
     let l10n = shipped_l10n();
-    let model = main_menu_model(&Persistence::default(), &l10n);
+    let model = main_menu_model(&Persistence::default(), true, &l10n);
     let harness = Harness::new();
     let widgets = harness.draw(|ui| central(ui, |ui| draw_main_menu(ui, &model)));
     assert!(!widgets.iter().any(|w| w.text == "Seed"));

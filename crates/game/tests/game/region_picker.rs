@@ -1311,6 +1311,23 @@ mod glue {
         assert!(widget(&settled(&pass, &mut app), "Show tutorial").selected);
     }
 
+    /// The menu screen reads the store's loaded flag: until it has loaded, *Play tutorial*
+    /// can't be clicked.
+    #[test]
+    fn play_tutorial_waits_for_progress_to_load() {
+        let logs = TempDir::new().unwrap();
+        let (mut app, pass) = menu_app(&logs, false);
+        store(&mut app).loaded = false;
+        let widgets = settled(&pass, &mut app);
+        assert!(button(&widgets, "Play tutorial").disabled);
+        click(&pass, &mut app, &widgets, "Play tutorial");
+        assert_eq!(state(&app), AppState::MainMenu);
+
+        store(&mut app).loaded = true;
+        let widgets = settled(&pass, &mut app);
+        assert!(!button(&widgets, "Play tutorial").disabled);
+    }
+
     /// The picker screen reads played regions from the store and the developer flag.
     #[test]
     fn the_picker_screen_locks_sgcc_until_played_or_unlocked() {

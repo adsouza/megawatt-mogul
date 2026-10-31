@@ -2168,6 +2168,7 @@ fn opening_resume_defaults_to_the_newest_monthly_autosave_and_restores_it_with_e
         );
         let model = game::hud::main_menu_model(
             app.world().resource::<Persistence>(),
+            true,
             &crate::support::shipped_l10n(),
         );
         assert_eq!(
@@ -2278,6 +2279,7 @@ fn manual_snapshots_keep_the_menu_and_load_game_without_a_resume_shortcut() {
     );
     let model = game::hud::main_menu_model(
         app.world().resource::<Persistence>(),
+        true,
         &crate::support::shipped_l10n(),
     );
     assert!(model.continue_game.is_none());
