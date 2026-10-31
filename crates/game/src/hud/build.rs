@@ -115,7 +115,7 @@ pub struct BuildModel {
     /// tutorial's reveal, from [`UiState::reveal_anchor`](super::UiState::reveal_anchor).
     pub reveal_battery_build: bool,
     /// The tutorial's battery line button, as an index into the AC line section's buttons (its
-    /// starts, or its targets): from [`battery_line_button`].
+    /// starts, or its targets): from `battery_line_button`.
     pub battery_line: Option<usize>,
     /// Whether to scroll that button into view when it is drawn: the tutorial's reveal, from
     /// [`UiState::reveal_anchor`](super::UiState::reveal_anchor).
