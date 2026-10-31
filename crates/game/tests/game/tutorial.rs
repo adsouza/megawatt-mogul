@@ -1117,3 +1117,125 @@ fn cards_fit_minimum_window_at_max_zoom() {
             .count()
     );
 }
+
+// --- The tutorial leaves the simulation alone (spec §7) ---
+
+/// Runs the HUD's egui pass `passes` times in each app, a second of real time apart, as the same
+/// frames. Whatever crawl or spotlight the tutorial in `apps[0]` shows is drawn, then dismissed in
+/// both apps alike (without a run, tutorial actions do nothing), and recorded in `shown`.
+fn tutorial_frames(
+    apps: &mut [(App, EguiPass); 2],
+    passes: usize,
+    shown: &mut BTreeSet<TutorialStep>,
+) {
+    for _ in 0..passes {
+        for (app, pass) in apps.iter_mut() {
+            advance_real(app, 1.0);
+            pass.run(app, MIN.0, MIN.1);
+        }
+        let on = &apps[0].0;
+        let showing = run(on).and_then(|state| {
+            let game = &on.world().resource::<Session>().0;
+            game::hud::tutorial::active_step(state, game, *on.world().resource::<Selection>())
+                .filter(|def| matches!(def.kind, StepKind::Crawl | StepKind::Spotlight))
+                .map(|def| def.step)
+        });
+        if let Some(step) = showing {
+            shown.insert(step);
+            for (app, _) in apps.iter_mut() {
+                tutorial(app, [TutorialAction::Dismiss(step)]);
+            }
+        }
+        for (app, _) in apps.iter_mut() {
+            update_n(app, 1);
+        }
+    }
+}
+
+fn state_hash(app: &App) -> u64 {
+    app.world().resource::<Session>().0.session().state_hash()
+}
+
+/// The tutorial only steers the UI: a first game played with it and the same game played without
+/// it, command for command and frame for frame, end in the same simulation state.
+#[test]
+fn tutorial_on_and_off_give_identical_state() {
+    let (logs_on, logs_off) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+    let on = new_game(&logs_on, true, true);
+    let off = new_game(&logs_off, true, false);
+    assert!(run(&on).is_some() && run(&off).is_none());
+    assert_eq!(state_hash(&on), state_hash(&off));
+    let start = state_hash(&on);
+    let mut apps = [on, off].map(|mut app| {
+        let pass = EguiPass::attach(&mut app);
+        (app, pass)
+    });
+    let mut shown = BTreeSet::new();
+    let cell = battery_site(&apps[0].0);
+
+    tutorial_frames(&mut apps, 12, &mut shown);
+    for (app, _) in apps.iter_mut() {
+        dispatch_in(app, vec![UiAction::Select(Selection::Cell(cell))]);
+    }
+    tutorial_frames(&mut apps, 12, &mut shown);
+    for (app, _) in apps.iter_mut() {
+        execute(
+            app,
+            Command::BuildPlant {
+                kind: PlantKind::Battery,
+                cell,
+            },
+        );
+    }
+    tutorial_frames(&mut apps, 12, &mut shown);
+    for (app, _) in apps.iter_mut() {
+        let session = app.world().resource::<Session>().0.session();
+        let from = session.anchor_node();
+        let to = session
+            .plant_views()
+            .into_iter()
+            .find(|plant| plant.kind == PlantKind::Battery)
+            .expect("the battery was queued")
+            .node;
+        execute(app, Command::BuildLine { from, to });
+    }
+    tutorial_frames(&mut apps, 12, &mut shown);
+    for (app, _) in apps.iter_mut() {
+        execute(app, Command::BeginOperating);
+    }
+    tutorial_frames(&mut apps, 12, &mut shown);
+    for (app, _) in apps.iter_mut() {
+        execute(app, Command::AdvanceTicks { n: TICKS_PER_DAY });
+    }
+    tutorial_frames(&mut apps, 12, &mut shown);
+    assert_eq!(phase(&apps[0].0), DayPhase::Review);
+    // The tutorial ran the whole way: its moves played, and its crawl and spotlights were shown.
+    let played = played(&apps[0].0);
+    for step in [
+        TutorialStep::FrameGrid,
+        TutorialStep::ShowForecast,
+        TutorialStep::RevealBattery,
+    ] {
+        assert!(played.contains(&step), "{step:?} didn't play: {played:?}");
+    }
+    for step in [
+        TutorialStep::Crawl,
+        TutorialStep::Cash,
+        TutorialStep::BatterySpotlight,
+        TutorialStep::ConnectSpotlight,
+        TutorialStep::StartSpotlight,
+        TutorialStep::Speed,
+        TutorialStep::Construction,
+    ] {
+        assert!(shown.contains(&step), "{step:?} wasn't shown: {shown:?}");
+    }
+    for (app, _) in apps.iter_mut() {
+        execute(app, Command::FinishReview);
+    }
+    tutorial_frames(&mut apps, 4, &mut shown);
+    let [(on, _), (off, _)] = &apps;
+    assert!(run(on).is_none() && !pending(on), "the tutorial finished");
+    assert_eq!(phase(on), DayPhase::Planning);
+    assert_ne!(state_hash(on), start, "the script changed the game");
+    assert_eq!(state_hash(on), state_hash(off));
+}
