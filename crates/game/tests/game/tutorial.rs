@@ -1684,6 +1684,83 @@ fn crawl_ends_by_itself_or_on_escape() {
     assert!(played(&app).contains(&TutorialStep::Crawl));
 }
 
+// --- Escape and shortcuts under a spotlight or the crawl (only the active layer handles them) ---
+
+fn milestones_open(app: &App) -> bool {
+    app.world().resource::<game::hud::MilestonesOpen>().0
+}
+
+/// A spotlight covers the Milestones window: Escape ends the spotlight and leaves the window
+/// open, and the next Escape closes the window.
+#[test]
+fn escape_ends_a_spotlight_over_milestones_and_leaves_the_window_open() {
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    at_step(&mut app, TutorialStep::Cash);
+    dispatch_in(&mut app, vec![UiAction::ToggleMilestones]);
+    let pass = EguiPass::attach(&mut app);
+    let widgets = pass.settled(&mut app, MIN.0, MIN.1);
+    assert!(crate::support::egui_harness::has(&widgets, CASH_NOTE));
+    assert!(crate::support::egui_harness::has(&widgets, "Milestones"));
+    press_escape(&pass, &mut app, MIN);
+    assert!(played(&app).contains(&TutorialStep::Cash));
+    assert!(
+        milestones_open(&app),
+        "the window under the spotlight stays open"
+    );
+    // With the spotlight gone, Escape reaches the window.
+    pass.settled(&mut app, MIN.0, MIN.1);
+    press_escape(&pass, &mut app, MIN);
+    assert!(!milestones_open(&app));
+}
+
+/// The same for the crawl over Milestones.
+#[test]
+fn escape_ends_the_crawl_over_milestones_and_leaves_the_window_open() {
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    at_step(&mut app, TutorialStep::Crawl);
+    dispatch_in(&mut app, vec![UiAction::ToggleMilestones]);
+    let pass = EguiPass::attach(&mut app);
+    let widgets = pass.settled(&mut app, MIN.0, MIN.1);
+    assert!(crate::support::egui_harness::has(&widgets, "Milestones"));
+    press_escape(&pass, &mut app, MIN);
+    assert!(played(&app).contains(&TutorialStep::Crawl));
+    assert!(
+        milestones_open(&app),
+        "the window under the crawl stays open"
+    );
+}
+
+/// A tutorial run in SGCC, the shipped region with HVDC equipment, so the Links window opens.
+fn sgcc_tutorial_app(logs: &TempDir) -> App {
+    let mut app = hud_app(logs.path());
+    set_progress(&mut app, true, true);
+    request(&mut app, "sgcc");
+    assert!(run(&app).is_some());
+    app
+}
+
+/// The crawl and a spotlight each cover the Links window: Escape ends them, not the window.
+#[test]
+fn escape_ends_the_crawl_or_a_spotlight_over_links_and_leaves_the_window_open() {
+    for step in [TutorialStep::Crawl, TutorialStep::Cash] {
+        let logs = TempDir::new().unwrap();
+        let mut app = sgcc_tutorial_app(&logs);
+        at_step(&mut app, step);
+        dispatch_in(&mut app, vec![UiAction::ShowLinks(true)]);
+        let pass = EguiPass::attach(&mut app);
+        let widgets = pass.settled(&mut app, MIN.0, MIN.1);
+        assert!(
+            crate::support::egui_harness::has(&widgets, "HVDC equipment"),
+            "{step:?}"
+        );
+        press_escape(&pass, &mut app, MIN);
+        assert!(played(&app).contains(&step), "{step:?}");
+        assert!(ui_state(&app).links_open, "{step:?}: Links stays open");
+    }
+}
+
 /// Review Focus 2: at the smallest window and the largest UI zoom, every spotlight's note and
 /// every instruction is drawn, and inside the screen. Each instruction is an arrow callout beside
 /// its anchor, not over it, with its arrow on screen and touching the anchor; picking a site's

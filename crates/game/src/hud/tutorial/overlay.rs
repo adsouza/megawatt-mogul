@@ -367,7 +367,7 @@ fn draw_spotlight(
             });
             response.clicked()
         });
-    ctx.move_to_top(area.response.layer_id);
+    claim_top(ctx, area.response.layer_id);
     // Planning and Review sleep between events: keep the fades smooth and the clock running.
     ctx.request_repaint();
     let escaped = escape
@@ -377,6 +377,16 @@ fn draw_spotlight(
     } else {
         Vec::new()
     }
+}
+
+/// Makes `layer`, a spotlight's or the crawl's, the top layer and the active one: egui's top modal
+/// layer, so a window drawn under it (Milestones, Links) leaves Escape to it (`action::cancelled`
+/// defers to the top modal layer) and nothing under it takes input. egui reports the modal layer
+/// from the pass before, so this holds from the pass after the overlay first shows: a key pressed
+/// on that first pass was pressed before the player saw it.
+pub(super) fn claim_top(ctx: &egui::Context, layer: egui::LayerId) {
+    ctx.move_to_top(layer);
+    ctx.memory_mut(|memory| memory.set_modal_layer(layer));
 }
 
 /// Black at the spotlight's strength over all of `screen` but the rounded `cutout`: four bands

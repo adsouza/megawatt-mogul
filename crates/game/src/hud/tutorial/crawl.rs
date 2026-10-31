@@ -51,7 +51,7 @@ pub(super) fn draw_crawl(
                 .add(egui::Shape::mesh(mesh));
             response.clicked()
         });
-    ctx.move_to_top(area.response.layer_id);
+    super::overlay::claim_top(ctx, area.response.layer_id);
     // Planning and Review sleep between events: keep the text moving.
     ctx.request_repaint();
     let escaped = escape
