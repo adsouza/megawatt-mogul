@@ -47,8 +47,10 @@ never as code constants. Shipped files declare `region_schema: 5`, including exp
 climate, calendar, currency, astronomical-sun and geothermal data. Legacy region schemas retain frozen
 defaults in `infrastructure::region::legacy`; old-source integrity is checked before any
 upcast. Unexpected new fields on legacy sources and unsupported schemas fail with typed errors.
-Region schema versions are independent of portable state schema 7, written by current saves;
-readers retain schemas 1–7.
+Region schema versions are independent of portable state schema 8, written by current saves;
+readers retain schemas 1–8. Schema 8 appends the expansion projection (month closes since the
+first non-starter city connected); older snapshots seed it from the restored session, so an
+already-expanded game starts counting at the restore.
 
 **Sidecars and the region bundle.** Spec §28.11.1 describes the format. Tool-generated blocks
 live in sidecars under `assets/regions/<id>/`, and the hand-authored main file references them:

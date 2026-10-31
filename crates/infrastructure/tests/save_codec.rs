@@ -717,7 +717,10 @@ fn format1_ticks_reencode_to_rle_and_replay_with_identical_projections_and_conti
 fn current_schema_save_round_trips_on_disk_and_restores() {
     let dir = tempfile::TempDir::new().unwrap();
     let saved = bundle();
-    assert_eq!(saved.checkpoint.snapshot.as_ref().unwrap().schema, 7);
+    assert_eq!(
+        saved.checkpoint.snapshot.as_ref().unwrap().schema,
+        domain::state::CURRENT_STATE_SCHEMA
+    );
     let path = dir.path().join("current.mgsave");
     std::fs::write(&path, encode_save(&saved).unwrap()).unwrap();
     let (decoded, region) = decode_save(&std::fs::read(path).unwrap(), &identity()).unwrap();
@@ -737,7 +740,7 @@ fn every_save_gate_accepts_supported_schemas_and_rejects_unknown_versions() {
     use application::{RestoreError, SaveStore};
     use domain::state::State;
     use infrastructure::save::FileSaveStore;
-    for schema in [0, 1, 2, 3, 4, 5, 6, 7, 8] {
+    for schema in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] {
         let dir = tempfile::TempDir::new().unwrap();
         let mut saved = bundle();
         let (_, region) = decode_save(&encode_save(&saved).unwrap(), &identity()).unwrap();
@@ -768,7 +771,7 @@ fn every_save_gate_accepts_supported_schemas_and_rejects_unknown_versions() {
             Box::new(InMemoryCommandLog::default()),
             &|| false,
         );
-        if matches!(schema, 1..=7) {
+        if matches!(schema, 1..=8) {
             assert!(rows[0].entry.is_ok(), "listing schema {schema}");
             let (read, region) = decoded.unwrap();
             assert_eq!(read, saved);

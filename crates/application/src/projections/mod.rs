@@ -5,6 +5,7 @@
 //! facts an event only hints at), so they are deterministic and rebuildable.
 
 mod chart_archive;
+mod expansion;
 mod lessons;
 mod milestones;
 mod monthly_report;
@@ -18,6 +19,7 @@ use domain::events::DomainEvent;
 use domain::session::GameSession;
 
 pub use chart_archive::ArchivedChartMonth;
+pub use expansion::{ExpansionProjection, PLAYED_MONTHS};
 pub use lessons::{Lesson, LessonsProjection, lessons_for};
 pub use milestones::{
     MILESTONES, MilestoneKind, MilestoneProgress, MilestoneProjection, MilestoneStatus,
@@ -49,6 +51,7 @@ pub struct Projections {
     pub rate_review: RateReviewProjection,
     pub lessons: LessonsProjection,
     pub regulatory: RegulatoryProjection,
+    pub expansion: ExpansionProjection,
 }
 
 impl Projections {
@@ -63,12 +66,13 @@ impl Projections {
             rate_review: RateReviewProjection::new(session),
             lessons: LessonsProjection::default(),
             regulatory: RegulatoryProjection::default(),
+            expansion: ExpansionProjection::new(session),
         }
     }
 
     /// Applies each event, in order, to each projection in a fixed order:
     /// timeline, monthly reports, plant history, milestones, ramp warnings,
-    /// rate review, lessons, regulatory.
+    /// rate review, lessons, regulatory, expansion.
     pub fn apply_all(&mut self, events: &[DomainEvent], session: &GameSession) {
         for event in events {
             self.timeline.apply(event, session);
@@ -79,6 +83,7 @@ impl Projections {
             self.rate_review.apply(event, session);
             self.lessons.apply(event, session);
             self.regulatory.apply(event, session);
+            self.expansion.apply(event, session);
         }
     }
 }
@@ -156,7 +161,8 @@ pub(crate) mod test_support {
     }
 }
 
-// Portable state schema 1: explicit field order and enum tags.
+// Portable state schema 1: explicit field order and enum tags. Schema 8 appends the
+// expansion count; older saves are seeded from their session in `Game::restore`.
 domain::state_record!(Projections {
     timeline,
     monthly_reports,
@@ -165,5 +171,6 @@ domain::state_record!(Projections {
     ramp_warnings,
     rate_review,
     lessons,
-    regulatory
+    regulatory;
+    since8 { expansion: ExpansionProjection::default() }
 });
