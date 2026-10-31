@@ -71,9 +71,13 @@ region-locked = Play { $needed } other regions to unlock — { $played } of { $n
 
 ## First-game tutorial
 
+# A blank line separates paragraphs; a single line break stays a line break.
 tutorial-crawl = You run a power company.
+
     Connect more cities to sell more electricity and make more money.
+
     But every customer you connect needs power, every minute of every day.
+
     Keep supply equal to demand,
     or the lights go out.
 tutorial-cash = This is your money. Grow it by selling power, without blacking out your customers.

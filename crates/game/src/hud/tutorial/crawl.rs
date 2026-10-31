@@ -69,16 +69,7 @@ fn horizon_y(screen: egui::Rect) -> f32 {
 
 /// The crawl's glyphs, laid out flat, tessellated, and projected onto the receding plane.
 fn crawl_mesh(ui: &egui::Ui, screen: egui::Rect, text: &str, progress: f32) -> egui::Mesh {
-    let size = (screen.height() * 0.05).clamp(18.0, 36.0);
-    let mut job = egui::text::LayoutJob::simple(
-        // A blank line between sentences, so each reads as its own paragraph.
-        text.replace('\n', "\n\n"),
-        egui::FontId::proportional(size),
-        CRAWL_TEXT,
-        (screen.width() * 0.6).min(size * 22.0),
-    );
-    job.halign = egui::Align::Center;
-    let galley = ui.painter().layout_job(job);
+    let galley = crawl_galley(ui, screen, text);
     let mut flat = egui::Mesh::default();
     let mut tessellator = epaint::Tessellator::new(
         ui.ctx().pixels_per_point(),
@@ -100,6 +91,20 @@ fn crawl_mesh(ui: &egui::Ui, screen: egui::Rect, text: &str, progress: f32) -> e
         vertex.pos = plane.project(vertex.pos.x - centre, ground);
     }
     flat
+}
+
+/// The crawl's text laid out flat and centred, one row per line of `text`: its blank lines are the
+/// gaps between paragraphs.
+fn crawl_galley(ui: &egui::Ui, screen: egui::Rect, text: &str) -> std::sync::Arc<egui::Galley> {
+    let size = (screen.height() * 0.05).clamp(18.0, 36.0);
+    let mut job = egui::text::LayoutJob::simple(
+        text.to_owned(),
+        egui::FontId::proportional(size),
+        CRAWL_TEXT,
+        (screen.width() * 0.6).min(size * 22.0),
+    );
+    job.halign = egui::Align::Center;
+    ui.painter().layout_job(job)
 }
 
 /// The receding plane the text lies on, as seen on `screen`.
@@ -187,6 +192,66 @@ mod tests {
             output.drop_without_applying_deltas();
         }
         assert_eq!(delay, Some(std::time::Duration::ZERO));
+    }
+
+    /// The shipped crawl's rows as laid out, each row's text (blank rows are paragraph gaps).
+    fn shipped_rows() -> Vec<String> {
+        let text = crate::hud::test_support::shipped_l10n().text("tutorial-crawl");
+        let ctx = egui::Context::default();
+        let mut rows = Vec::new();
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(screen()),
+                ..Default::default()
+            },
+            |ui| {
+                rows = crawl_galley(ui, screen(), &text)
+                    .rows
+                    .iter()
+                    .map(|row| row.glyphs.iter().map(|g| g.chr).collect::<String>())
+                    .map(|row| row.trim().to_owned())
+                    .collect();
+            },
+        );
+        output.drop_without_applying_deltas();
+        rows
+    }
+
+    /// A single newline breaks the line; a blank line separates sentences into paragraphs.
+    #[test]
+    fn the_crawl_breaks_lines_and_spaces_paragraphs() {
+        let rows = shipped_rows();
+        let at = |line: &str| {
+            rows.iter()
+                .position(|row| row == line)
+                .unwrap_or_else(|| panic!("no row {line:?} in {rows:?}"))
+        };
+        let warning = at("Keep supply equal to demand,");
+        assert_eq!(rows[warning + 1], "or the lights go out.", "{rows:?}");
+        assert_eq!(rows[warning - 1], "", "a gap before the warning: {rows:?}");
+        let first = at("You run a power company.");
+        assert_eq!(first, 0, "{rows:?}");
+        assert_eq!(rows[1], "", "a gap after the first sentence: {rows:?}");
+        let connect = rows
+            .iter()
+            .position(|row| row.starts_with("Connect more cities"))
+            .unwrap();
+        let customers = rows
+            .iter()
+            .position(|row| row.starts_with("But every customer"))
+            .unwrap();
+        assert_eq!(rows[customers - 1], "", "a gap before the third: {rows:?}");
+        assert!(connect < customers && customers < warning, "{rows:?}");
+        // Four paragraphs, three gaps, and no doubled gap anywhere.
+        assert_eq!(
+            rows.iter().filter(|row| row.is_empty()).count(),
+            3,
+            "{rows:?}"
+        );
+        assert_eq!(
+            rows.last().map(String::as_str),
+            Some("or the lights go out.")
+        );
     }
 
     #[test]
