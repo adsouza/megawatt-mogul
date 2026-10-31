@@ -18,6 +18,7 @@ pub mod hud;
 pub mod l10n;
 pub mod paths;
 pub mod preferences;
+pub mod progress;
 pub mod sim;
 pub mod state;
 pub mod window;
@@ -57,7 +58,9 @@ impl PluginGroup for GamePlugins {
             .add(audio::DailyAudioPlugin)
             .add(world::WorldViewPlugin)
             .add(world::CameraPlugin);
-        let plugins = plugins.add(preferences::PreferencesPlugin);
+        let plugins = plugins
+            .add(preferences::PreferencesPlugin)
+            .add(progress::ProgressPlugin);
         #[cfg(not(target_arch = "wasm32"))]
         let plugins = plugins.add(window::IdleRedrawPlugin);
         #[cfg(feature = "dev")]

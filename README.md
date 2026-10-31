@@ -62,11 +62,13 @@ cargo run -p game -- --assets <dir> --log-dir <dir> --save-dir <dir>
   records its own log there, named for the time, region and seed. A crash writes
   `crash-<time>.txt` there too, with the panic message, a backtrace and the path of the running
   game's log, which replays the game up to the crash.
-- `--save-dir` holds game saves and `preferences.ron` (default `./saves`). Storage errors do not
+- `--save-dir` holds game saves, `preferences.ron` and `progress.ron` (default `./saves`). Storage errors do not
   prevent a new game from starting.
 - `--exit-after-frames <n>` (for developers) closes the game after `n` frames: a quick check that
   the window opens and the menu draws.
 - `--crash` (for developers) panics at startup, to check that a build writes a readable crash report.
+- `--unlock-all-regions` (for developers) unlocks every region in the new-game picker for that run,
+  without recording any region as played.
 - On Linux, install Bevy's build dependencies first; see
   [Bevy's Linux dependencies](https://github.com/bevyengine/bevy/blob/v0.20.0/docs/linux_dependencies.md)
   or the list in `.github/workflows/ci.yml`. The first build compiles Bevy and takes a few minutes.

@@ -41,8 +41,9 @@ pub fn resolve_asset_root(arg: Option<PathBuf>) -> PathBuf {
 }
 
 /// The command-line flags: `--version`, `--assets <dir>`, `--log-dir <dir>`, `--save-dir <dir>`,
-/// plus the hidden developer flags `--exit-after-frames <n>` (see [`ExitAfterFrames`]) and
-/// `--crash` (see [`crate::crash::requested_crash`]).
+/// plus the hidden developer flags `--exit-after-frames <n>` (see [`ExitAfterFrames`]),
+/// `--crash` (see [`crate::crash::requested_crash`]) and `--unlock-all-regions` (see
+/// [`crate::progress::UnlockAllRegions`]).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CliArgs {
     pub version: bool,
@@ -51,6 +52,7 @@ pub struct CliArgs {
     pub save_dir: Option<PathBuf>,
     pub exit_after_frames: Option<NonZeroU32>,
     pub crash: bool,
+    pub unlock_all_regions: bool,
 }
 
 impl CliArgs {
@@ -65,6 +67,10 @@ impl CliArgs {
             }
             if arg == "--crash" {
                 parsed.crash = true;
+                continue;
+            }
+            if arg == "--unlock-all-regions" {
+                parsed.unlock_all_regions = true;
                 continue;
             }
             let flag = match arg.to_str() {

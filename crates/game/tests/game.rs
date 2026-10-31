@@ -43,6 +43,8 @@ mod planning_performance;
 mod player_workflows;
 #[path = "game/preferences.rs"]
 mod preferences;
+#[path = "game/progress.rs"]
+mod progress;
 #[path = "game/region_picker.rs"]
 mod region_picker;
 #[path = "game/review_smoke.rs"]

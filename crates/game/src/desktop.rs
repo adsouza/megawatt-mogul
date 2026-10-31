@@ -56,5 +56,8 @@ pub fn run() -> AppExit {
     if let Some(frames) = exit_after_frames {
         app.add_plugins(ExitAfterFrames(frames));
     }
+    if args.unlock_all_regions {
+        app.insert_resource(crate::progress::UnlockAllRegions);
+    }
     app.run()
 }

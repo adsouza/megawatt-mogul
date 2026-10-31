@@ -229,6 +229,7 @@ impl Plugin for HudPlugin {
             .init_resource::<HudArea>()
             .init_resource::<SaveForm>()
             .init_resource::<saves::PersistenceShown>()
+            .init_resource::<crate::progress::ClientProgressStore>()
             .add_systems(
                 EguiPrimaryContextPass,
                 saves::snapshot.in_set(HudSet::Begin),
@@ -314,6 +315,9 @@ impl Plugin for HudPlugin {
                         .after(SimSet::Apply)
                         .run_if(in_game.clone()),
                     ui_state::settle_commit
+                        .after(SimSet::Apply)
+                        .run_if(in_game.clone()),
+                    crate::progress::record_played_region
                         .after(SimSet::Apply)
                         .run_if(in_game.clone()),
                     // The driver reads the speed at the next fixed step.
