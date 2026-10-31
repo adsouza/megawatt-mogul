@@ -13,7 +13,8 @@
 //! one hidden part-way (or under the save screen, when the overlay doesn't run) pauses and picks
 //! up where it left off. A spotlight whose anchor sits in a
 //! scroll area (the battery card, the line section, the Review's Construction row) first asks for
-//! it to be scrolled into view, so it never waits on the player to find it.
+//! it to be scrolled into view, so it never waits on the player to find it, and asks once more
+//! (for each selection) if it is scrolled away part-way.
 //!
 //! While the crawl or a spotlight is up it is the active layer: it takes every click, Escape
 //! goes to it rather than to a window under it (it is egui's top modal layer), and the keyboard
@@ -139,8 +140,9 @@ pub(crate) struct Shown {
     shown_for: f64,
     /// When, and on which frame, it was last drawn, if it was on the pass before.
     last: Option<(f64, u32)>,
-    /// The selection under which the step's anchor was last asked to scroll into view, if it was.
-    revealed: Option<Selection>,
+    /// The selection under which the step's anchor was last asked to scroll into view, if it was,
+    /// and whether the step had been shown by then (a spotlight asks again once paused).
+    revealed: Option<(Selection, bool)>,
 }
 
 impl Shown {
@@ -213,19 +215,19 @@ pub(crate) fn tutorial_overlay(
         };
     let mut actions = Vec::new();
     // An anchor in a scroll area is brought into view once for each selection (which changes what
-    // the build menu shows): before its spotlight starts, or when an instruction's anchor isn't in
-    // view.
+    // the build menu shows): before its spotlight starts, once more when it is paused part-way with
+    // its anchor out of view, or when an instruction's anchor isn't in view.
     let reveal = match def.kind {
-        StepKind::Spotlight => !clock.started(),
+        StepKind::Spotlight => !clock.started() || anchor.is_none(),
         StepKind::Instruction => anchor.is_none(),
         StepKind::Move | StepKind::Crawl => false,
     };
-    let selection = sink.selection();
-    if reveal && clock.revealed != Some(selection) {
+    let asked = (sink.selection(), clock.started());
+    if reveal && clock.revealed != Some(asked) {
         if let Some(anchor) = def.anchor.filter(|anchor| scrolls(*anchor)) {
             actions.push(UiAction::Tutorial(TutorialAction::Reveal(anchor)));
         }
-        clock.revealed = Some(selection);
+        clock.revealed = Some(asked);
     }
     clock.tick(now, frame.0, ready);
     let shown_for = clock.shown_for as f32;

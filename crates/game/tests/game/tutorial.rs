@@ -1638,12 +1638,15 @@ fn a_spotlight_clock_pauses_while_its_anchor_is_hidden() {
     advance_real(&mut app, 2.0);
     assert!(showing(&pass, &mut app));
     // Scrolling the battery card to the middle of the build menu takes the section out of view.
-    tutorial(
-        &mut app,
-        [TutorialAction::Reveal(TutorialAnchor::BatteryCard)],
-    );
-    for _ in 0..60 {
-        pass.run(&mut app, width, height);
+    // The first time, the paused spotlight asks for it back; the second, it waits.
+    for _ in 0..2 {
+        tutorial(
+            &mut app,
+            [TutorialAction::Reveal(TutorialAnchor::BatteryCard)],
+        );
+        for _ in 0..60 {
+            pass.run(&mut app, width, height);
+        }
     }
     assert!(
         !anchors(&app).contains_key(&TutorialAnchor::LineSection),
@@ -1671,6 +1674,53 @@ fn a_spotlight_clock_pauses_while_its_anchor_is_hidden() {
     advance_real(&mut app, 0.7);
     pass.run(&mut app, width, height);
     assert!(played(&app).contains(&TutorialStep::ConnectSpotlight));
+}
+
+/// A spotlight paused part-way because its anchor was scrolled away asks once (for each
+/// selection) for it to be scrolled back, as it did before it started: hidden again under the same
+/// selection it waits for the player; under another selection it asks again.
+#[test]
+fn a_paused_spotlight_asks_for_its_anchor_once_per_selection() {
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    let cell = battery_site(&app);
+    dispatch_in(&mut app, vec![UiAction::Select(Selection::Cell(cell))]);
+    at_step(&mut app, TutorialStep::ConnectSpotlight);
+    let pass = with_anchor_probe(&mut app);
+    let (width, height) = MIN;
+    let showing = |pass: &EguiPass, app: &mut App| {
+        crate::support::egui_harness::has(&pass.run(app, width, height), CONNECT_NOTE)
+    };
+    let shows_within =
+        |pass: &EguiPass, app: &mut App, passes: usize| (0..passes).any(|_| showing(pass, app));
+    let hide = |pass: &EguiPass, app: &mut App| {
+        tutorial(app, [TutorialAction::Reveal(TutorialAnchor::BatteryCard)]);
+        // The card's reveal scrolls the section away; the overlay sees it gone the pass after.
+        for _ in 0..3 {
+            pass.run(app, width, height);
+        }
+    };
+    assert!(shows_within(&pass, &mut app, 60));
+    advance_real(&mut app, 1.0);
+    assert!(showing(&pass, &mut app));
+    // Hidden: it asks for the section back, and shows again.
+    hide(&pass, &mut app);
+    assert!(shows_within(&pass, &mut app, 60), "asked for its anchor");
+    // Hidden again under the same selection: it has asked once, so it waits.
+    hide(&pass, &mut app);
+    assert!(!shows_within(&pass, &mut app, 60), "asked twice");
+    assert_eq!(ui_state(&app).reveal_anchor, None);
+    // Another selection: it asks again.
+    let other = CellCoord {
+        x: cell.x + 1,
+        y: cell.y,
+    };
+    dispatch_in(&mut app, vec![UiAction::Select(Selection::Cell(other))]);
+    assert!(
+        shows_within(&pass, &mut app, 60),
+        "asked under the new selection"
+    );
+    assert!(!played(&app).contains(&TutorialStep::ConnectSpotlight));
 }
 
 /// The same for a prompt opened mid-hold: the spotlight steps aside and its clock waits.
