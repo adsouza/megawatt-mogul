@@ -155,6 +155,7 @@ fn returning_to_menu_clears_the_run() {
     let logs = TempDir::new().unwrap();
     let mut app = new_game(&logs, true, true);
     assert!(run(&app).is_some());
+    set_reveals(&mut app);
     app.world_mut().write_message(ReturnToMenu);
     update_n(&mut app, 3);
     assert_eq!(
@@ -162,6 +163,7 @@ fn returning_to_menu_clears_the_run() {
         AppState::MainMenu
     );
     assert!(run(&app).is_none());
+    assert_no_reveals(&app);
     assert!(pending(&app), "leaving part-way keeps the tutorial owed");
 }
 
@@ -172,9 +174,16 @@ fn a_new_session_generation_clears_the_run() {
     assert!(run(&app).is_some());
     update_n(&mut app, 2);
     assert!(run(&app).is_some(), "the run lasts while its game does");
+    set_reveals(&mut app);
+    update_n(&mut app, 1);
+    assert!(
+        ui_state(&app).reveal_plant_card.is_some() && ui_state(&app).reveal_anchor.is_some(),
+        "a running tutorial keeps its reveals"
+    );
     app.world_mut().resource_mut::<SessionGeneration>().0 += 1;
     update_n(&mut app, 1);
     assert!(run(&app).is_none());
+    assert_no_reveals(&app);
     assert!(pending(&app));
 }
 
@@ -195,6 +204,7 @@ fn leaving_first_review_finishes() {
     assert!(run(&app).expect("the run reaches Review").seen_review);
     assert!(pending(&app), "the tutorial isn't finished in Review");
 
+    set_reveals(&mut app);
     execute(&mut app, Command::FinishReview);
     assert_eq!(
         app.world().resource::<Session>().0.session().phase(),
@@ -202,6 +212,21 @@ fn leaving_first_review_finishes() {
     );
     assert!(run(&app).is_none());
     assert!(!pending(&app), "leaving the first Review finishes it");
+    assert_no_reveals(&app);
+}
+
+/// Asks the build menu and Review for a reveal, as the tutorial does, that nothing has finished.
+fn set_reveals(app: &mut App) {
+    let mut ui = app.world_mut().resource_mut::<UiState>();
+    ui.reveal_plant_card = Some(PlantKind::Battery);
+    ui.reveal_anchor = Some(TutorialAnchor::LineSection);
+}
+
+/// A run that ends takes its pending reveals with it.
+fn assert_no_reveals(app: &App) {
+    let ui = app.world().resource::<UiState>();
+    assert_eq!(ui.reveal_plant_card, None);
+    assert_eq!(ui.reveal_anchor, None);
 }
 
 // --- Tutorial actions through `dispatch`, anchors and the battery-card reveal (spec §4.1) ---

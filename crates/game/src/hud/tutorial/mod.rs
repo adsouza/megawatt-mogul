@@ -23,7 +23,7 @@ pub use self::steps::{
     Done, StepDef, StepKind, TUTORIAL_STEPS, TutorialAnchor, TutorialState, TutorialStep,
     active_step, construction_key,
 };
-use crate::hud::HudSet;
+use crate::hud::{HudSet, UiState};
 use crate::l10n::Localizer;
 use crate::progress::ClientProgressStore;
 use crate::sim::{NewGameStarted, Session, SessionGeneration, SimSet};
@@ -88,30 +88,62 @@ fn start_run(
 }
 
 /// Ends a run whose game is gone (a load or another new game changes the session generation),
-/// notes the first Review, and finishes the tutorial when the player leaves it.
+/// notes the first Review, and finishes the tutorial when the player leaves it. A run that ends
+/// takes the reveals it asked for with it.
 fn track_run(
     session: Option<Res<Session>>,
     generation: Res<SessionGeneration>,
     mut progress: ResMut<ClientProgressStore>,
     mut run: ResMut<TutorialRun>,
+    mut ui: ResMut<UiState>,
 ) {
     let Some(state) = run.0.as_mut() else {
         return;
     };
     let Some(session) = session.filter(|_| state.generation == generation.0) else {
-        run.0 = None;
+        end_run(&mut run, &mut ui);
         return;
     };
     match session.0.session().phase() {
         DayPhase::Review => state.seen_review = true,
         DayPhase::Planning if state.seen_review => {
             progress.value.tutorial_pending = false;
-            run.0 = None;
+            end_run(&mut run, &mut ui);
         }
         _ => {}
     }
 }
 
-fn clear_run(mut run: ResMut<TutorialRun>) {
+fn clear_run(mut run: ResMut<TutorialRun>, mut ui: ResMut<UiState>) {
+    end_run(&mut run, &mut ui);
+}
+
+/// Drops the run and any reveal it asked for that the build menu or Review hasn't finished.
+fn end_run(run: &mut TutorialRun, ui: &mut UiState) {
     run.0 = None;
+    ui.reveal_plant_card = None;
+    ui.reveal_anchor = None;
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy::ecs::system::RunSystemOnce;
+
+    use super::*;
+
+    /// Clearing the run, on its own, drops the reveals it asked for.
+    #[test]
+    fn clearing_the_run_drops_its_pending_reveals() {
+        let mut world = World::new();
+        world.init_resource::<TutorialRun>();
+        world.insert_resource(UiState {
+            reveal_plant_card: Some(domain::region::PlantKind::Battery),
+            reveal_anchor: Some(TutorialAnchor::ReviewConstruction),
+            ..Default::default()
+        });
+        world.run_system_once(clear_run).unwrap();
+        let ui = world.resource::<UiState>();
+        assert_eq!(ui.reveal_plant_card, None);
+        assert_eq!(ui.reveal_anchor, None);
+    }
 }
