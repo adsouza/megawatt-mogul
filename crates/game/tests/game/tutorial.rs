@@ -921,7 +921,7 @@ fn escape_goes_to_open_prompt_not_tutorial() {
     let pass = EguiPass::attach(&mut app);
     dispatch_in(&mut app, vec![UiAction::Prompt(Some(Prompt::LeaveGame))]);
     let widgets = pass.settled(&mut app, MIN.0, MIN.1);
-    assert!(crate::support::egui_harness::has(&widgets, PICK_SITE));
+    assert!(!crate::support::egui_harness::has(&widgets, PICK_SITE));
     let before = run(&app).cloned();
     press_escape(&pass, &mut app, MIN);
     assert_eq!(open_prompt(&app), None);
@@ -942,8 +942,19 @@ fn escape_goes_to_open_prompt_not_tutorial() {
     assert!(!played(&app).contains(&TutorialStep::Cash));
 }
 
-/// An instruction never stands between the player and a prompt: its card lets clicks through to
-/// the prompt's backdrop, and the prompt's buttons work.
+/// Whether a pass paints `text`: its glyphs, not only an accessible name.
+fn paints(pass: &EguiPass, app: &mut App, (width, height): (f32, f32), text: &str) -> bool {
+    let output = pass.paint_with(app, width, height, Vec::new());
+    let painted = output
+        .shapes
+        .iter()
+        .any(|clipped| matches!(&clipped.shape, egui::Shape::Text(t) if t.galley.text() == text));
+    output.drop_without_applying_deltas();
+    painted
+}
+
+/// An instruction never stands between the player and a prompt: while one is open its card isn't
+/// drawn at all, so clicks where it was reach the prompt's backdrop, and the prompt's buttons work.
 #[test]
 fn prompt_stays_clickable_under_instruction() {
     use game::hud::Prompt;
@@ -952,20 +963,29 @@ fn prompt_stays_clickable_under_instruction() {
     at_step(&mut app, TutorialStep::PickSite);
     let pass = EguiPass::attach(&mut app);
     let (width, height) = MIN;
-    dispatch_in(&mut app, vec![UiAction::Prompt(Some(Prompt::LeaveGame))]);
     let widgets = pass.settled(&mut app, width, height);
     let note = widget(&widgets, PICK_SITE).rect;
-    // A click on the card reaches the prompt's backdrop, which closes it.
+    assert!(paints(&pass, &mut app, MIN, PICK_SITE));
+
+    dispatch_in(&mut app, vec![UiAction::Prompt(Some(Prompt::LeaveGame))]);
+    let widgets = pass.settled(&mut app, width, height);
+    assert!(!paints(&pass, &mut app, MIN, PICK_SITE));
+    assert!(!crate::support::egui_harness::has(&widgets, PICK_SITE));
+    assert!(end_link(&widgets).is_none());
+    // A click where the card was reaches the prompt's backdrop, which closes it.
     pass.click_at(&mut app, width, height, note.center());
     assert_eq!(open_prompt(&app), None);
 
     dispatch_in(&mut app, vec![UiAction::Prompt(Some(Prompt::LeaveGame))]);
     let widgets = pass.settled(&mut app, width, height);
-    assert!(crate::support::egui_harness::has(&widgets, PICK_SITE));
+    assert!(!crate::support::egui_harness::has(&widgets, PICK_SITE));
     let stay = find_button(&widgets, "Stay").rect;
     pass.click_at(&mut app, width, height, stay.center());
     assert_eq!(open_prompt(&app), None);
     assert!(run(&app).is_some());
+    // With the prompt closed, the card is back.
+    let widgets = pass.settled(&mut app, width, height);
+    assert!(crate::support::egui_harness::has(&widgets, PICK_SITE));
 }
 
 /// The instruction's End link ends the tutorial; elsewhere the map still takes clicks.

@@ -12,8 +12,8 @@
 //! first) or, for a spotlight, while its anchor isn't drawn. A spotlight whose anchor sits in a
 //! scroll area (the battery card, the line section, the Review's Construction row) first asks for
 //! it to be scrolled into view, so it never waits on the player to find it. An instruction never
-//! waits and never blocks input outside its own card; while a prompt is open it lets every click
-//! through.
+//! waits and never blocks input outside its own card; while a prompt is open it isn't drawn, so
+//! it never covers the prompt.
 
 use application::Game;
 use bevy::prelude::*;
@@ -199,6 +199,8 @@ pub(crate) fn tutorial_overlay(
                 actions.extend(draw_spotlight(&ctx, step, anchor, &text, opacity, escape));
             }
         }
+        // Prompts come first: an instruction steps aside while one is open.
+        TutorialView::Instruction { .. } if prompt_open => {}
         TutorialView::Instruction { anchor, text, end } => {
             let target = anchor_rect(&ctx, anchor);
             let map = anchor_rect(&ctx, TutorialAnchor::Map);
@@ -206,12 +208,7 @@ pub(crate) fn tutorial_overlay(
                 (TutorialAnchor::Map, _) | (_, None) => Placement::TopOf(map),
                 (_, Some(target)) => Placement::Beside(target),
             };
-            actions.extend(draw_instruction(
-                &ctx,
-                placement,
-                &text,
-                (!prompt_open).then_some(&end),
-            ));
+            actions.extend(draw_instruction(&ctx, placement, &text, Some(&end)));
         }
     }
     *shown = Some(clock);
