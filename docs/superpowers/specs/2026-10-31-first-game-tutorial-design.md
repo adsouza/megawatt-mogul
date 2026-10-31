@@ -91,9 +91,9 @@ Four kinds of presentation, all drawn by the `game` crate in `HudSet::Overlays`:
 **Anchors.** Panels that own a target widget record its screen rect in a per-frame
 `TutorialAnchors` resource when they draw it (cash field, battery card, the build panel's line
 section, *Start the day*, the speed controls, the Review Construction row). The overlay pass runs
-after the panels in the same frame and reads those rects. A spotlight or instruction whose anchor
-was not drawn this frame doesn't show (and a spotlight keeps its timer paused) until the anchor
-appears.
+after the panels in the same frame and reads those rects. A spotlight whose anchor was not drawn this frame doesn't show, and its timer doesn't start,
+until the anchor appears. An instruction whose anchor is absent sits at the top centre of the map
+instead, so guidance never disappears.
 
 ### 4.2 Step model
 
