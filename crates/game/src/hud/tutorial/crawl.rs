@@ -52,6 +52,8 @@ pub(super) fn draw_crawl(
             response.clicked()
         });
     ctx.move_to_top(area.response.layer_id);
+    // Planning and Review sleep between events: keep the text moving.
+    ctx.request_repaint();
     let escaped = escape
         && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
     if area.inner || escaped {
@@ -161,6 +163,30 @@ mod tests {
         let beyond = plane.project(100.0, plane.ground_to_horizon() * 2.0);
         assert!(beyond.y < at_horizon.y && beyond.x < at_horizon.x);
         assert!(plane.project(0.0, -1000.0).y > 640.0);
+    }
+
+    /// Planning sleeps between events, so the crawl asks for the next frame itself: every pass,
+    /// not only while egui is settling a new area.
+    #[test]
+    fn the_crawl_keeps_asking_for_frames() {
+        let ctx = egui::Context::default();
+        let mut delay = None;
+        // A second a pass, so egui's own fade-in of a new area finishes.
+        for second in 0..5 {
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen()),
+                    time: Some(f64::from(second)),
+                    ..Default::default()
+                },
+                |ui| {
+                    draw_crawl(ui.ctx(), TutorialStep::Crawl, "One.\nTwo.", 0.3, true);
+                },
+            );
+            delay = Some(output.viewport_output[&egui::ViewportId::ROOT].repaint_delay);
+            output.drop_without_applying_deltas();
+        }
+        assert_eq!(delay, Some(std::time::Duration::ZERO));
     }
 
     #[test]

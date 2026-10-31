@@ -350,6 +350,8 @@ fn draw_spotlight(
             response.clicked()
         });
     ctx.move_to_top(area.response.layer_id);
+    // Planning and Review sleep between events: keep the fades smooth and the clock running.
+    ctx.request_repaint();
     let escaped = escape
         && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
     if area.inner || escaped {
@@ -490,6 +492,41 @@ mod tests {
         assert!((spotlight_opacity(4.45) - 0.5).abs() < 1e-4);
         assert_eq!(spotlight_opacity(SPOTLIGHT_SECONDS), 0.0);
         assert_eq!(spotlight_opacity(10.0), 0.0);
+    }
+
+    /// Planning sleeps between events, so a spotlight, whose clock runs while it is drawn, asks
+    /// for the next frame itself: fading or holding, every pass, not only while egui is settling
+    /// a new area.
+    #[test]
+    fn a_spotlight_keeps_asking_for_frames() {
+        let anchor = egui::Rect::from_min_size(egui::pos2(300.0, 10.0), egui::vec2(80.0, 20.0));
+        for opacity in [0.5, 1.0] {
+            let ctx = egui::Context::default();
+            let mut delay = None;
+            // A second a pass, so egui's own fade-in of a new area finishes.
+            for second in 0..5 {
+                let output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(screen()),
+                        time: Some(f64::from(second)),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        draw_spotlight(
+                            ui.ctx(),
+                            TutorialStep::Cash,
+                            anchor,
+                            "Your money.",
+                            opacity,
+                            true,
+                        );
+                    },
+                );
+                delay = Some(output.viewport_output[&egui::ViewportId::ROOT].repaint_delay);
+                output.drop_without_applying_deltas();
+            }
+            assert_eq!(delay, Some(std::time::Duration::ZERO), "at {opacity}");
+        }
     }
 
     #[test]
