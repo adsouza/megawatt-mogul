@@ -359,6 +359,7 @@ fn lists_regions_sorted_by_file_name() {
         Ok(RegionSummary {
             id: RegionId::new("a"),
             name_key: "region-a".to_owned(),
+            unlock_after_regions: None,
         })
     );
 }
@@ -412,6 +413,7 @@ fn listing_does_not_rasterise() {
         Ok(RegionSummary {
             id: RegionId::new("minimal"),
             name_key: "region-minimal".to_owned(),
+            unlock_after_regions: None,
         })
     );
     // Only loading, which validates in full, finds the problem.
@@ -1579,6 +1581,73 @@ fn calibrated_solar_rejects_monthly_means_outside_the_weather_draw_bounds() {
             RegionError::InvalidShape {
                 field: "solar.clearness_mean"
             }
+        );
+    }
+}
+
+fn v4_with_unlock(unlock: &str) -> String {
+    let text = V4.replace(
+        "atlas: (colour: \"#123456\"),",
+        &format!("atlas: (colour: \"#123456\"),\n    unlock: {unlock},"),
+    );
+    assert_ne!(text, V4);
+    text
+}
+
+fn listed_unlock(text: &str) -> Result<Option<u32>, RegionLoadError> {
+    let dir = dir_with(&[("minimal.ron", text)]);
+    let listed = catalog(dir.path()).list().unwrap();
+    listed[0]
+        .entry
+        .clone()
+        .map(|summary| summary.unlock_after_regions)
+}
+
+#[test]
+fn a_region_lists_the_played_regions_it_requires() {
+    assert_eq!(listed_unlock(V4), Ok(None));
+    assert_eq!(
+        listed_unlock(&v4_with_unlock("(regions_played: 4)")),
+        Ok(Some(4))
+    );
+    // Loading accepts the same file, and the bundle bytes stay exactly the source.
+    let text = v4_with_unlock("(regions_played: 64)");
+    let dir = dir_with(&[("minimal.ron", &text)]);
+    let loaded = catalog(dir.path()).load(&RegionId::new("minimal")).unwrap();
+    assert_eq!(loaded.source_bytes, text.as_bytes());
+}
+
+#[test]
+fn unlock_rejects_zero_and_unknown_fields() {
+    for bad in ["(regions_played: 0)", "(regions_played: 65)"] {
+        let text = v4_with_unlock(bad);
+        let dir = dir_with(&[("minimal.ron", &text)]);
+        let invalid = RegionLoadError::Invalid {
+            region: RegionId::new("minimal"),
+            error: RegionError::InvalidShape {
+                field: "unlock.regions_played",
+            },
+        };
+        assert_eq!(listed_unlock(&text), Err(invalid.clone()), "{bad}");
+        assert_eq!(
+            catalog(dir.path())
+                .load(&RegionId::new("minimal"))
+                .map(|_| ()),
+            Err(invalid),
+            "{bad}"
+        );
+    }
+    for bad in [
+        "(regions_played: 4, extra: 1)",
+        "(regions_played: -1)",
+        "()",
+    ] {
+        assert!(
+            matches!(
+                listed_unlock(&v4_with_unlock(bad)),
+                Err(RegionLoadError::Parse { .. } | RegionLoadError::Invalid { .. })
+            ),
+            "{bad}"
         );
     }
 }

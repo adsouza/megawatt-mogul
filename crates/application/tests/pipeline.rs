@@ -340,6 +340,7 @@ fn auto_select_requires_exactly_one_available_entry() {
         entry: Ok(RegionSummary {
             id: RegionId::new(id),
             name_key: format!("region-{id}"),
+            unlock_after_regions: None,
         }),
     };
     let broken = |id: &str| RegionListing {

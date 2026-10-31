@@ -720,6 +720,7 @@ mod tests {
             entry: Ok(RegionSummary {
                 id: RegionId::new(id),
                 name_key: name_key.to_owned(),
+                unlock_after_regions: None,
             }),
         }
     }
