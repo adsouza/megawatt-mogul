@@ -1,11 +1,17 @@
 import {test,expect} from '@playwright/test';
 async function settled(page){await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))));}
+// A fresh profile owes the first-game tutorial, whose overlays take clicks; untick it like a returning player.
+async function skipTutorial(page){
+ await expect(page.locator('body')).toHaveAttribute('data-tutorial-pending','true');await settled(page);
+ await page.mouse.click(296,130);await expect(page.locator('body')).toHaveAttribute('data-tutorial-pending','false');
+}
 
 
 test('manual save submits with Enter, survives reload, and resumes through the library',async({page})=>{
  const errors=[];page.on('pageerror',error=>errors.push(error.message));
  await page.goto('./');
  await expect(page.locator('body')).toHaveAttribute('data-app-state','RegionSelect',{timeout:150000});
+ await skipTutorial(page);
  await page.mouse.click(860,420);
  await expect(page.locator('body')).toHaveAttribute('data-app-state','InGame');
  // Codec workers retain their boot-time code and compiled module across a deployment.
@@ -43,7 +49,7 @@ test('manual save submits with Enter, survives reload, and resumes through the l
 
 test('monthly autosave retains Review and browser speed preferences across reload',async({page})=>{
  await page.goto('./');await expect(page.locator('body')).toHaveAttribute('data-app-state','RegionSelect',{timeout:150000});
- await page.mouse.click(860,420);await expect(page.locator('body')).toHaveAttribute('data-app-state','InGame');await settled(page);
+ await skipTutorial(page);await page.mouse.click(860,420);await expect(page.locator('body')).toHaveAttribute('data-app-state','InGame');await settled(page);
  await page.mouse.click(1390,672);await expect(page.locator('body')).toHaveAttribute('data-speed','1');await settled(page);
  await page.mouse.click(234,64);await expect(page.locator('body')).toHaveAttribute('data-speed','32');
  await expect(page.locator('body')).toHaveAttribute('data-sim-tick','1440',{timeout:45000});
@@ -51,7 +57,7 @@ test('monthly autosave retains Review and browser speed preferences across reloa
  await expect(page.locator('body')).toHaveAttribute('data-save-screen','Closed');
  await expect(page.locator('body')).toHaveAttribute('data-save-error','false');
  await page.reload();await expect(page.locator('body')).toHaveAttribute('data-app-state','MainMenu',{timeout:150000});
- await expect(page.locator('body')).toHaveAttribute('data-save-count','1');await settled(page);
+ await expect(page.locator('body')).toHaveAttribute('data-save-count','1');await expect(page.locator('body')).toHaveAttribute('data-tutorial-pending','false');await settled(page);
  await page.keyboard.press('Enter');
  await expect(page.locator('body')).toHaveAttribute('data-app-state','InGame',{timeout:30000});
  await expect(page.locator('body')).toHaveAttribute('data-sim-tick','1440');await expect(page.locator('body')).toHaveAttribute('data-speed','0');
@@ -64,7 +70,7 @@ test('monthly autosave retains Review and browser speed preferences across reloa
 
 test('a hidden-page visibility signal pauses play and returning stays paused',async({page})=>{
  await page.goto('./');await expect(page.locator('body')).toHaveAttribute('data-app-state','RegionSelect',{timeout:150000});
- await page.mouse.click(860,420);await expect(page.locator('body')).toHaveAttribute('data-app-state','InGame');await settled(page);
+ await skipTutorial(page);await page.mouse.click(860,420);await expect(page.locator('body')).toHaveAttribute('data-app-state','InGame');await settled(page);
  await page.mouse.click(1390,672);await expect(page.locator('body')).toHaveAttribute('data-speed','1');
  const before=Number(await page.locator('body').getAttribute('data-sim-tick'));
  // Headless Chromium reports every tab visible; inject the browser signal into the real game.
@@ -82,7 +88,7 @@ test('unavailable storage reports a save error and keeps an unsaved session play
  });
  await page.goto('./');await expect(page.locator('body')).toHaveAttribute('data-app-state','MainMenu',{timeout:150000});await settled(page);
  await page.mouse.click(230,412);await expect(page.locator('body')).toHaveAttribute('data-app-state','RegionSelect');await settled(page);
- await page.mouse.click(860,420);await expect(page.locator('body')).toHaveAttribute('data-app-state','InGame');await settled(page);
+ await skipTutorial(page);await page.mouse.click(860,420);await expect(page.locator('body')).toHaveAttribute('data-app-state','InGame');await settled(page);
  await page.mouse.click(1345,40);await expect(page.locator('body')).toHaveAttribute('data-save-screen','Save');await expect(page.locator('body')).toHaveAttribute('data-save-busy','false');
  await expect(page.locator('body')).toHaveAttribute('data-save-error','true');
  await page.keyboard.press('Escape');await expect(page.locator('body')).toHaveAttribute('data-save-screen','Closed');
