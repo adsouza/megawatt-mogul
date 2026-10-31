@@ -39,6 +39,7 @@ use super::planning_cache::{PlanningForecast, PlanningForecastCache};
 use super::planning_warnings::{WarningsModel, draw_warnings};
 use super::tariff::{TariffModel, draw_tariff, tariff_model};
 use super::theme::TextTone;
+use super::tutorial::{TutorialAnchor, mark_anchor};
 use super::ui_state::{CommitmentForm, PlanningTab, UiState};
 use super::{SupplyHistoryModel, draw_supply_history};
 use crate::l10n::Localizer;
@@ -228,7 +229,8 @@ pub fn draw_planning(
             toggle_button(ui, tab, &mut actions);
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            button(ui, &model.begin, &mut actions);
+            let begin = button(ui, &model.begin, &mut actions);
+            mark_anchor(ui.ctx(), TutorialAnchor::StartDay, begin.rect);
             if let Some(hint) = &model.begin_hint {
                 ui.colored_label(TextTone::Caution.color(), hint);
             }

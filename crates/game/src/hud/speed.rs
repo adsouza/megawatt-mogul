@@ -13,6 +13,7 @@ use domain::session::SessionStatus;
 
 use super::action::{ActionSink, ButtonModel, ToggleModel, UiAction, dispatch, toggle_button};
 use super::layout::HudArea;
+use super::tutorial::{TutorialAnchor, mark_anchor};
 use crate::l10n::Localizer;
 use crate::sim::{Session, SimSpeed};
 
@@ -77,11 +78,12 @@ pub fn space_action(current: SimSpeed, last: LastSpeed, blocked: bool) -> Option
 
 pub fn draw_speed(ui: &mut egui::Ui, model: &SpeedModel) -> Vec<UiAction> {
     let mut actions = Vec::new();
-    ui.horizontal(|ui| {
+    let row = ui.horizontal(|ui| {
         for speed in &model.speeds {
             toggle_button(ui, speed, &mut actions);
         }
     });
+    mark_anchor(ui.ctx(), TutorialAnchor::SpeedControls, row.response.rect);
     actions
 }
 

@@ -51,12 +51,11 @@ mod model;
 pub use lighting::{SunPosition, sun_position};
 pub(crate) use model::line_breaks;
 mod overlay;
-pub(crate) use overlay::CameraFocus;
 mod picking;
 pub use model::{
     Part, WorldCity, WorldLine, WorldModel, WorldPlant, city_parts, plant_parts, selection_parts,
 };
-pub use overlay::{TuningConfig, WorldAction, WorldControls, supply_fraction};
+pub use overlay::{CameraFocus, TuningConfig, WorldAction, WorldControls, supply_fraction};
 pub use picking::{WorldHit, hit_world, pick_world, presented_hit, terrain_grid_hit, terrain_hit};
 
 mod plugins;

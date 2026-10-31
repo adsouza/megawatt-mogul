@@ -1,8 +1,9 @@
 //! The Planning panel's own state: which tab is open, which hour the grid highlights, and the
 //! commitment pattern being edited.
 //!
-//! [`UiState`] is written in exactly one place, [`UiState::apply`], which [`dispatch`] calls for
-//! every action. Nothing here is game state: the domain never sees a draft until the player
+//! [`UiState`] is written through [`dispatch`]: by [`UiState::apply`], which it calls for every
+//! action, and by `dispatch` itself for the tutorial's reveal, which depends on whether a tutorial
+//! is running. Nothing here is game state: the domain never sees a draft until the player
 //! applies it, and the model for the grid is rebuilt from the domain's commitments every frame.
 //!
 //! [`dispatch`]: super::dispatch
@@ -93,6 +94,8 @@ pub struct UiState {
     pub draft: Option<CommitDraft>,
     /// The commit sent and not yet answered.
     pub pending: Option<PendingCommit>,
+    /// A plant card the tutorial asked the build menu to scroll into view, until it has.
+    pub reveal_plant_card: Option<domain::region::PlantKind>,
 }
 
 impl UiState {
@@ -103,7 +106,8 @@ impl UiState {
             .map(|draft| draft.hours)
     }
 
-    /// Takes in one action. The only writer of this state.
+    /// Takes in one action. The only writer of this state but for the tutorial's reveal, which
+    /// `dispatch` writes.
     pub fn apply(&mut self, action: &UiAction) {
         match action {
             UiAction::Select(super::Selection::HvdcStart | super::Selection::HvdcFrom(_)) => {

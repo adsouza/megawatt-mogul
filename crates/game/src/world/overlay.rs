@@ -26,8 +26,9 @@ impl Default for WorldControls {
         }
     }
 }
+/// Where the camera is asked to frame next: a plant, a zone (an island), or the whole region.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CameraFocus {
+pub enum CameraFocus {
     Plant(PlantId),
     Zone(NodeId),
     Region,
@@ -91,6 +92,10 @@ impl WorldControls {
                 self.overlay = true;
             }
         }
+    }
+    /// The framing asked for and not yet applied, if any.
+    pub fn focus(&self) -> Option<CameraFocus> {
+        self.focus
     }
     pub fn hologram(&self) -> bool {
         self.overlay && !self.resource_mode && self.phase == Some(DayPhase::Operating)

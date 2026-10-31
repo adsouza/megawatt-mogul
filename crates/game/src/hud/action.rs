@@ -19,6 +19,7 @@ use super::operating::OperatingTab;
 use super::selection::Selection;
 use super::speed::LastSpeed;
 use super::theme;
+use super::tutorial::{StepKind, TUTORIAL_STEPS, TutorialRun, TutorialState, TutorialStep};
 use super::ui_state::{PlanningTab, UiState};
 use crate::sim::{
     NewGameRequest, PersistAction, Persistence, PlayerCommand, ReturnToMenu, Session,
@@ -109,6 +110,23 @@ pub enum UiAction {
     Prompt(Option<Prompt>),
     /// Close the game.
     Quit,
+    /// The first-game tutorial moving on: a step played or dismissed, the battery card in view,
+    /// or the tutorial ended.
+    Tutorial(TutorialAction),
+}
+
+/// What the first-game tutorial asks for (spec §4.1). Its automatic UI moves go through
+/// [`dispatch`] like a click, so they write only HUD state: never a `PlayerCommand`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TutorialAction {
+    /// The step has played: a move makes its UI change, and the step joins `played`.
+    Play(TutorialStep),
+    /// The player ended the step early (a click or Escape): it joins `played`.
+    Dismiss(TutorialStep),
+    /// The build panel has scrolled the revealed plant card into view.
+    RevealDone,
+    /// Stop the tutorial for good.
+    End,
 }
 
 /// The screens outside a game that the HUD can move between by itself.
@@ -293,6 +311,7 @@ pub struct ActionSink<'w> {
     ui: ResMut<'w, UiState>,
     next_state: ResMut<'w, NextState<AppState>>,
     progress: ResMut<'w, crate::progress::ClientProgressStore>,
+    tutorial: ResMut<'w, TutorialRun>,
 }
 
 impl ActionSink<'_> {
@@ -362,6 +381,11 @@ impl ActionSink<'_> {
     /// defaults that loading may replace.
     pub fn progress_loaded(&self) -> bool {
         self.progress.loaded
+    }
+
+    /// The running first-game tutorial, if any.
+    pub fn tutorial(&self) -> Option<&TutorialState> {
+        self.tutorial.0.as_ref()
     }
 }
 
@@ -622,6 +646,7 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
                 sink.persistence.discard_preload();
                 sink.exit.write(AppExit::Success);
             }
+            UiAction::Tutorial(action) => tutorial(sink, action),
         }
         if (explicit_zone || sink.ui.island != previous_zone)
             && let Some(game) = sink.session.as_ref()
@@ -634,6 +659,54 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
                 _ => {}
             }
         }
+    }
+}
+
+/// The tutorial's moves: HUD state only, and nothing at all without a running tutorial (but a
+/// finished reveal is always cleared). An instruction never joins `played`: it shows until its
+/// step is done, and again if that is undone.
+fn tutorial(sink: &mut ActionSink, action: TutorialAction) {
+    if action == TutorialAction::RevealDone {
+        sink.ui.reveal_plant_card = None;
+        return;
+    }
+    let Some(state) = sink.tutorial.0.as_mut() else {
+        return;
+    };
+    let step = match action {
+        TutorialAction::Play(step) | TutorialAction::Dismiss(step) => step,
+        TutorialAction::RevealDone => return,
+        TutorialAction::End => {
+            sink.tutorial.0 = None;
+            sink.progress.value.tutorial_pending = false;
+            return;
+        }
+    };
+    let instruction = TUTORIAL_STEPS
+        .iter()
+        .any(|def| def.step == step && def.kind == StepKind::Instruction);
+    if instruction {
+        return;
+    }
+    state.played.insert(step);
+    if matches!(action, TutorialAction::Dismiss(_)) {
+        return;
+    }
+    match step {
+        TutorialStep::FrameGrid => {
+            if let Some(session) = sink.session.as_ref() {
+                sink.world.focus = Some(crate::world::CameraFocus::Zone(
+                    session.0.session().anchor_node(),
+                ));
+            }
+        }
+        TutorialStep::ShowForecast => sink
+            .ui
+            .apply(&UiAction::SetPlanningTab(PlanningTab::Forecast)),
+        TutorialStep::RevealBattery => {
+            sink.ui.reveal_plant_card = Some(domain::region::PlantKind::Battery);
+        }
+        _ => {}
     }
 }
 

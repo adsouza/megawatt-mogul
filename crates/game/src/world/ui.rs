@@ -165,6 +165,11 @@ pub fn draw_surface(
         egui::Sense::click_and_drag(),
     );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, &model.label));
+    crate::hud::tutorial::mark_anchor(
+        ui.ctx(),
+        crate::hud::tutorial::TutorialAnchor::Map,
+        response.rect,
+    );
     surface.rect = Some(response.rect);
     surface.scale = ui.ctx().pixels_per_point();
     surface.response = Some(response.clone());

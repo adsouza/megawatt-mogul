@@ -26,6 +26,7 @@ use super::incidents::incident_tone;
 use super::layout::HudArea;
 pub use super::theme::TextTone as ReviewTone;
 use super::theme::{marginal_cost_fraction, severity_color as marginal_cost_color};
+use super::tutorial::{TutorialAnchor, mark_anchor};
 use super::{SupplyHistoryModel, UiState, draw_supply_history};
 use crate::l10n::{LessonMoneyText, Localize, LocalizeWith, Localizer, Names, Toast, format};
 use crate::sim::Session;
@@ -44,11 +45,18 @@ pub struct ReviewStat {
     pub label: String,
     pub value: String,
     pub tone: ReviewTone,
+    /// The tutorial anchor the row marks when it is drawn, if any.
+    pub anchor: Option<TutorialAnchor>,
 }
 
 impl ReviewStat {
     fn with_tone(mut self, tone: ReviewTone) -> Self {
         self.tone = tone;
+        self
+    }
+
+    fn anchored(mut self, anchor: TutorialAnchor) -> Self {
+        self.anchor = Some(anchor);
         self
     }
 }
@@ -224,6 +232,7 @@ pub fn review_model_for(
         label: l10n.text(key),
         value,
         tone: ReviewTone::Information,
+        anchor: None,
     };
     let cash = |key: &str, amount: domain::units::Money| {
         stat(key, format::money(amount, style)).with_tone(ReviewTone::cash(amount.cents()))
@@ -305,7 +314,8 @@ pub fn review_model_for(
             cash("review-fuel", report.fuel),
             cash("review-start-up", report.start_up),
             cash("review-fixed-om", report.fixed_om),
-            cash("review-construction", report.construction),
+            cash("review-construction", report.construction)
+                .anchored(TutorialAnchor::ReviewConstruction),
             cash("review-net", report.net),
         ],
         merit_heading: l10n.text("review-merit-order"),
@@ -366,6 +376,7 @@ pub fn review_model_for(
                         &[("kind", kind.localize(l10n).into())],
                     ),
                     value: format::megawatt_hours(*energy),
+                    anchor: None,
                     tone: if energy.value() > 0.0 {
                         ReviewTone::Caution
                     } else {
@@ -590,8 +601,11 @@ fn draw_stats(ui: &mut egui::Ui, id: &str, stats: &[ReviewStat]) {
         .max_col_width((ui.available_width() - ui.spacing().item_spacing.x) / 2.0)
         .show(ui, |ui| {
             for stat in stats {
-                ui.colored_label(ReviewTone::Neutral.color(), &stat.label);
-                ui.colored_label(stat.tone.color(), &stat.value);
+                let label = ui.colored_label(ReviewTone::Neutral.color(), &stat.label);
+                let value = ui.colored_label(stat.tone.color(), &stat.value);
+                if let Some(anchor) = stat.anchor {
+                    mark_anchor(ui.ctx(), anchor, label.rect.union(value.rect));
+                }
                 ui.end_row();
             }
         });
@@ -755,6 +769,7 @@ fn storage_review_rows(
         .map(|(index, (key, energy))| ReviewStat {
             label: l10n.text(key),
             value: format::megawatt_hours(energy),
+            anchor: None,
             tone: if energy.value() == 0.0 {
                 ReviewTone::Neutral
             } else {

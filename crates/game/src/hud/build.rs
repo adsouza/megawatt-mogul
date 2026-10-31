@@ -12,11 +12,12 @@ use domain::region::{PlantKind, RegionDefinition};
 use domain::session::DayPhase;
 use domain::units::Money;
 
-use super::action::{ActionSink, ButtonModel, UiAction, button, dispatch};
+use super::action::{ActionSink, ButtonModel, TutorialAction, UiAction, button, dispatch};
 use super::layout::{Edge, HudArea, OuterPanel};
 use super::plant_panel::PlantStat;
 use super::selection::Selection;
 use super::theme::{TextTone, ValueColor, heading_color, marginal_cost_fraction};
+use super::tutorial::{TutorialAnchor, mark_anchor};
 use crate::l10n::{Localize, LocalizeWith, Localizer, Names, format};
 use crate::sim::Session;
 
@@ -101,6 +102,9 @@ pub struct BuildModel {
     pub hvdc: Option<LineSection>,
     pub hvdc_active: bool,
     pub transport_modes: Vec<super::ToggleModel>,
+    /// The plant card to scroll into view when it is drawn: the tutorial's reveal, from
+    /// [`UiState::reveal_plant_card`](super::UiState::reveal_plant_card).
+    pub reveal: Option<PlantKind>,
 }
 
 /// A node of the network a line can start or end at, with its name and place.
@@ -164,6 +168,7 @@ fn build_model_for_tool(
     Some(BuildModel {
         title: l10n.text("build-title"),
         hvdc_active,
+        reveal: None,
         transport_modes: if session.region().hvdc().is_some() {
             vec![
                 super::ToggleModel {
@@ -665,7 +670,7 @@ pub fn draw_build(ui: &mut egui::Ui, model: &BuildModel) -> Vec<UiAction> {
     egui::ScrollArea::vertical()
         .id_salt((stage, model.hvdc_active))
         .show(ui, |ui| {
-            draw_plant_section(ui, &model.plant, &mut actions);
+            draw_plant_section(ui, &model.plant, model.reveal, &mut actions);
             ui.separator();
             ui.horizontal_wrapped(|ui| {
                 for mode in &model.transport_modes {
@@ -679,7 +684,14 @@ pub fn draw_build(ui: &mut egui::Ui, model: &BuildModel) -> Vec<UiAction> {
     actions
 }
 
-fn draw_plant_section(ui: &mut egui::Ui, section: &PlantSection, actions: &mut Vec<UiAction>) {
+/// The plant rows. The battery's row is the tutorial's battery card; the row of `reveal`, when it
+/// is drawn, is scrolled into view once and reported done.
+fn draw_plant_section(
+    ui: &mut egui::Ui,
+    section: &PlantSection,
+    reveal: Option<PlantKind>,
+    actions: &mut Vec<UiAction>,
+) {
     match section {
         PlantSection::PickCell { hint } => {
             ui.weak(hint.as_str());
@@ -687,7 +699,7 @@ fn draw_plant_section(ui: &mut egui::Ui, section: &PlantSection, actions: &mut V
         PlantSection::Kinds { heading, rows, .. } => {
             ui.label(egui::RichText::new(heading).strong().color(heading_color()));
             for row in rows {
-                ui.group(|ui| {
+                let card = ui.group(|ui| {
                     ui.colored_label(heading_color(), &row.name);
                     egui::Grid::new(("plant_stats", row.kind as u8)).show(ui, |ui| {
                         for stat in &row.stats {
@@ -704,12 +716,25 @@ fn draw_plant_section(ui: &mut egui::Ui, section: &PlantSection, actions: &mut V
                     }
                     button(ui, &row.build, actions);
                 });
+                if row.kind == PlantKind::Battery {
+                    mark_anchor(ui.ctx(), TutorialAnchor::BatteryCard, card.response.rect);
+                }
+                if reveal == Some(row.kind) {
+                    card.response.scroll_to_me(Some(egui::Align::Center));
+                    actions.push(UiAction::Tutorial(TutorialAction::RevealDone));
+                }
             }
         }
     }
 }
 
+/// The line section, marked as the tutorial's line-section anchor.
 fn draw_line_section(ui: &mut egui::Ui, section: &LineSection, actions: &mut Vec<UiAction>) {
+    let drawn = ui.scope(|ui| draw_line_stage(ui, section, actions));
+    mark_anchor(ui.ctx(), TutorialAnchor::LineSection, drawn.response.rect);
+}
+
+fn draw_line_stage(ui: &mut egui::Ui, section: &LineSection, actions: &mut Vec<UiAction>) {
     match section {
         LineSection::Start {
             heading,
@@ -768,7 +793,7 @@ pub(super) fn build_panel(
     mut sink: ActionSink,
     style: Res<MoneyStyle>,
 ) -> Result {
-    let Some(model) = build_model_for_tool(
+    let Some(mut model) = build_model_for_tool(
         &session.0,
         &l10n,
         sink.selection(),
@@ -777,6 +802,7 @@ pub(super) fn build_panel(
     ) else {
         return Ok(());
     };
+    model.reveal = sink.ui_state().reveal_plant_card;
     let actions = area.show_panel(contexts.ctx_mut()?, BUILD_PANEL, 0.0, |ui| {
         draw_build(ui, &model)
     });

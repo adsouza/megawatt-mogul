@@ -2796,7 +2796,8 @@ fn dispatch_is_the_one_mapping_from_actions_to_messages() {
         .init_resource::<UiState>()
         .init_resource::<LastSpeed>()
         .init_resource::<OperatingTab>()
-        .init_resource::<game::progress::ClientProgressStore>();
+        .init_resource::<game::progress::ClientProgressStore>()
+        .init_resource::<game::hud::tutorial::TutorialRun>();
     update_n(&mut app, 3);
     let region = RegionId::new(EASTERN);
     let cell = CellCoord { x: 1, y: 2 };
@@ -2897,7 +2898,8 @@ fn navigating_moves_between_the_menu_screens() {
         .init_resource::<UiState>()
         .init_resource::<LastSpeed>()
         .init_resource::<OperatingTab>()
-        .init_resource::<game::progress::ClientProgressStore>();
+        .init_resource::<game::progress::ClientProgressStore>()
+        .init_resource::<game::hud::tutorial::TutorialRun>();
     update_n(&mut app, 3);
     let state = |app: &App| *app.world().resource::<State<AppState>>().get();
     assert_eq!(state(&app), AppState::MainMenu);
