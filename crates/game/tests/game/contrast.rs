@@ -1001,8 +1001,8 @@ fn crawl_text_meets_contrast_over_white() {
     assert!(above_horizon > 0, "the test needs text past the horizon");
 }
 
-/// Spotlight notes and instructions sit on opaque cards: their text, and the End link, meet the
-/// floor against what is painted under them.
+/// Spotlight notes sit on opaque cards, and instructions on their callouts' opaque backings: their
+/// text, and the End link, meet the floor against what is painted under them.
 #[test]
 fn tutorial_notes_meet_contrast_on_their_cards() {
     use crate::tutorial::{advance_real, at_step, tutorial_app};
@@ -1040,29 +1040,16 @@ fn tutorial_notes_meet_contrast_on_their_cards() {
     }
 }
 
-/// The battery instruction is an arrow callout, not a card (the user found the card looked like a
-/// button): its text sits on an opaque backing of its own, with no outline, and meets the floor
-/// against it.
-#[test]
-fn battery_callout_meets_contrast_on_its_backing() {
-    use crate::tutorial::{at_battery_instruction, tutorial_app};
-    let text = "Build a battery here.";
-    let logs = TempDir::new().unwrap();
-    let mut app = tutorial_app(&logs);
-    let pass = EguiPass::attach(&mut app);
-    let (width, height) = (1280.0, 640.0);
-    at_battery_instruction(&mut app, &pass, (width, height));
-    let output = pass.paint_with(&mut app, width, height, vec![]);
-    let painted = output.shapes.clone();
-    assert!(check_paint(output) > 0);
-    let note = painted_texts(&painted)
+/// The text of the callout `text`, painted in `painted`, meets the floor against what is directly
+/// under it: the callout's own backing, opaque and unoutlined (never the map or panel beneath).
+fn check_callout_backing(painted: &[egui::epaint::ClippedShape], text: &str) {
+    let note = painted_texts(painted)
         .into_iter()
         .find(|painted| painted.text == text)
         .unwrap_or_else(|| panic!("{text:?} isn't painted"));
     let ratio = contrast(over(note.color, note.background), note.background);
     assert!(ratio >= MINIMUM, "{ratio:.2}:1 for {text:?}");
-    // What is directly under the text is the callout's own backing: opaque and unoutlined.
-    let shapes = shapes_of(&painted);
+    let shapes = shapes_of(painted);
     let at = shapes
         .iter()
         .position(|(_, shape)| matches!(shape, egui::Shape::Text(t) if t.galley.text() == text))
@@ -1075,7 +1062,79 @@ fn battery_callout_meets_contrast_on_its_backing() {
             _ => None,
         })
         .expect("a backing under the text");
-    assert_eq!(backing.fill.a(), 255, "{backing:?}");
-    assert_eq!(backing.fill, note.background, "{backing:?}");
-    assert_eq!(backing.stroke.width, 0.0, "{backing:?}");
+    assert_eq!(backing.fill.a(), 255, "{text:?}: {backing:?}");
+    assert_eq!(backing.fill, note.background, "{text:?}: {backing:?}");
+    assert_eq!(backing.stroke.width, 0.0, "{text:?}: {backing:?}");
+}
+
+/// The battery instruction is an arrow callout, not a card (the user found the card looked like a
+/// button): its text sits on an opaque backing of its own, with no outline, and meets the floor
+/// against it.
+#[test]
+fn battery_callout_meets_contrast_on_its_backing() {
+    use crate::tutorial::{at_battery_instruction, tutorial_app};
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    let pass = EguiPass::attach(&mut app);
+    let (width, height) = (1280.0, 640.0);
+    at_battery_instruction(&mut app, &pass, (width, height));
+    let output = pass.paint_with(&mut app, width, height, vec![]);
+    let painted = output.shapes.clone();
+    assert!(check_paint(output) > 0);
+    check_callout_backing(&painted, "Build a battery here.");
+}
+
+/// The callouts over the map (picking a site, pointing down into it; and an instruction whose
+/// control isn't in view, with no arrow) put their text on its own opaque, unoutlined backing, not
+/// on the map, so it meets the floor whatever the map shows; at the smallest window too.
+#[test]
+fn map_top_callouts_meet_contrast_on_their_backing() {
+    use crate::tutorial::{at_step, tutorial_app};
+    use game::hud::tutorial::TutorialStep;
+    use game::hud::{Selection, UiAction};
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    let pass = EguiPass::attach(&mut app);
+    let cell = {
+        let session = app.world().resource::<game::sim::Session>().0.session();
+        let terrain = session.region().terrain();
+        (0..terrain.height())
+            .flat_map(|y| (0..terrain.width()).map(move |x| domain::ids::CellCoord { x, y }))
+            .find(|cell| {
+                session
+                    .plant_site_check(domain::region::PlantKind::Battery, *cell)
+                    .is_ok()
+            })
+            .expect("a battery can go somewhere")
+    };
+    let min = (
+        game::window::MIN_WINDOW_SIZE.x,
+        game::window::MIN_WINDOW_SIZE.y,
+    );
+    for (width, height) in [(1280.0, 640.0), min] {
+        for (step, selection, text) in [
+            (
+                TutorialStep::PickSite,
+                Selection::None,
+                "Click a square on the map to see what you can build there.",
+            ),
+            // No battery of the player's: nothing to point at.
+            (
+                TutorialStep::ConnectBattery,
+                Selection::Cell(cell),
+                "Build a line from your battery to your grid.",
+            ),
+        ] {
+            crate::hud_smoke::dispatch_in(&mut app, vec![UiAction::Select(selection)]);
+            at_step(&mut app, step);
+            for _ in 0..60 {
+                pass.run(&mut app, width, height);
+            }
+            pass.settled(&mut app, width, height);
+            let output = pass.paint_with(&mut app, width, height, vec![]);
+            let painted = output.shapes.clone();
+            assert!(check_paint(output) > 0);
+            check_callout_backing(&painted, text);
+        }
+    }
 }

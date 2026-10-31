@@ -76,33 +76,38 @@ Four kinds of presentation, all drawn by the `game` crate in `HudSet::Overlays`:
   rect). A short note sits beside the cut-out on an opaque card. It fades in, holds for about
   4 seconds and fades out. **Any click or Escape ends it early.** The click that ends a spotlight
   is consumed, so it never also acts on the game underneath. A spotlight never waits for an
-  action.
-- **Instruction.** An undimmed callout: one sentence on an opaque card pointing at an anchor
-  (or, for the map, near the map's top edge). It stays while its step is active and does not
-  block input, not even on its own card. A step can instead draw its instruction as an **arrow
-  callout**, which doesn't look like a button: the sentence as plain text on an unoutlined,
-  opaque backing in the panel fill (so it still meets §4.4's contrast floor), placed just right
-  of its anchor and vertically centred on it, with an accent-coloured arrow (about 2 px wide,
-  8 px head) running from the text's left edge to the anchor's right edge, its head on the
-  anchor. The text wraps to the room between the arrow's 28 px gap and the window's margin;
-  with less than about 96 px there it goes below the anchor (above, if below doesn't fit), the
-  arrow pointing up (down) at it. It never covers its anchor and takes no clicks. If its anchor
-  sits in a scroll area and isn't in view, it asks once for the anchor to be scrolled in, as a
-  spotlight does; until then, or if the player scrolls it away again, it falls back to the
-  card at the map's top. Step 6's *"Build a battery here."* is an arrow callout; the other
-  instructions are cards.
+  action. Its clock counts only the time it is actually drawn: if its anchor disappears part-way
+  (scrolled out of view, say) or a prompt opens, it pauses and resumes when it is shown again, so
+  it never runs out unseen. The crawl's clock works the same way.
+- **Instruction.** An undimmed **arrow callout**, which doesn't look like a button: one sentence
+  as plain text on an unoutlined, opaque backing in the panel fill (so it still meets §4.4's
+  contrast floor), with an accent-coloured arrow (about 2 px wide, 8 px head) from the text to
+  the exact control the step asks for, its head on the control. It stays while its step is
+  active, never covers its control and takes no clicks, not even on its own text. Placement:
+  just right of the control and vertically centred on it, the arrow running from the text's
+  left edge to the control's right edge; the text wraps to the room between the arrow's 28 px
+  gap and the window's margin, and with less than about 96 px there it goes below the control
+  (above, if below doesn't fit), the arrow pointing up (down) at it. An instruction about the
+  map, which has no single control, sits inside the map's top edge, centred on it, its arrow
+  pointing down into the map; on a map too short for that (the smallest window at the largest
+  UI zoom) it goes just below the map, pointing up at it. If its control sits in a scroll area
+  and isn't in view, it asks for it to be scrolled in, once for each selection (a new selection
+  changes what the build panel shows), as a spotlight does. Until the control is in view, or if
+  the player scrolls it away again, the sentence stays on screen without an arrow, on the same
+  plain backing at the top centre of the map. While a prompt is open an instruction isn't drawn
+  at all.
 - **Automatic UI moves.** Switching the Planning tab, scrolling the build panel to a card, and
   framing the camera. Tab switches go through `dispatch` as `UiAction`s like any click (AGENTS.md:
   `dispatch` is the only place a click becomes a resource write); the camera and scroll moves are
   requests the owning systems honour.
 
 **Anchors.** Panels that own a target widget record its screen rect in a per-frame
-`TutorialAnchors` resource when they draw it (cash field, battery card and its *Build plant*
-button, the build panel's line
-section, *Start the day*, the speed controls, the Review Construction row). The overlay pass runs
+`TutorialAnchors` resource when they draw it (cash field, the map, battery card and its *Build
+plant* button, the build panel's line section and its button that takes a line on from the
+player's battery, *Start the day*, the speed controls, the Review Construction row). The overlay pass runs
 after the panels in the same frame and reads those rects. A spotlight whose anchor was not drawn this frame doesn't show, and its timer doesn't start,
-until the anchor appears. An instruction whose anchor is absent sits at the top centre of the map
-instead, so guidance never disappears.
+until the anchor appears. An instruction whose anchor is absent shows its sentence, without an
+arrow, at the top centre of the map instead, so guidance never disappears.
 
 ### 4.2 Step model
 
@@ -147,7 +152,8 @@ to `dispatch`.
 4. **Spotlight cash.** The top bar's cash field. Note: *"This is your money. Grow it by selling
    power, without blacking out your customers."* Doesn't wait.
 5. **Instruction: pick a site.** After the screen undims: *"Click a square on the map to see what
-   you can build there."* Done when a map cell is selected, or a battery has been queued.
+   you can build there."*, inside the map's top edge with its arrow pointing down into the map
+   (§4.1). Done when a map cell is selected, or a battery has been queued.
 6. **Battery card.** The build panel scrolls the battery card into view, a spotlight highlights
    it with *"Batteries store power when it's cheap and release it when demand spikes."*, then an
    instruction stays: *"Build a battery here."*, as an arrow callout (§4.1) to the right of the
@@ -160,10 +166,14 @@ to `dispatch`.
    instruction shows again, because step 5 is no longer done.
 7. **Connect it.** A spotlight on the build panel's line section with *"A power plant only helps
    once a line connects it to your grid."*, then an instruction: *"Build a line from your battery
-   to your grid."* Done when some player-built battery has a line in service or under
-   construction that touches its node.
+   to your grid."*, its arrow pointing at the first *Line from* button that starts at a battery
+   the player ordered (ordering the battery selects it, so its button is first). Once the line
+   starts at that battery, the arrow moves to the first target's *Build line* button. Each is
+   scrolled into view if needed. If the player starts the line somewhere else, there is no
+   button to point at and the sentence shows at the map's top. Done when some player-built
+   battery has a line in service or under construction that touches its node.
 8. **Start the day.** A spotlight on *Start the day*, then an instruction: *"Ready? Start the
-   day."* Done when the phase leaves Planning.
+   day."*, its arrow pointing at *Start the day*. Done when the phase leaves Planning.
 
 **Operating, first day**
 
@@ -187,8 +197,8 @@ to `dispatch`.
 
 The main spec's 4.5:1 contrast floor (§8.4) applies to every tutorial text, including the crawl:
 
-- Spotlight notes and instructions sit on opaque cards using the shared palette; an arrow
-  callout's text sits on an opaque, unoutlined backing in the panel fill.
+- Spotlight notes sit on opaque cards using the shared palette; an instruction's text sits on an
+  opaque, unoutlined backing in the panel fill, including over the map.
 - The crawl's backdrop is translucent, as the user asked, but dark enough that its text meets
   4.5:1 against the backdrop composited over **white**, the worst case for the 3D map beneath.
 - The crawl text **clips** at a horizon line rather than fading out, because the main spec

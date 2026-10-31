@@ -27,6 +27,10 @@ pub enum TutorialAnchor {
     /// The battery card's *Build plant* button.
     BatteryBuildButton,
     LineSection,
+    /// The build menu's button that takes a line on from a tutorial battery: the first *Line
+    /// from* button that starts at one, or, once a line starts at one, the first target's *Build
+    /// line* button.
+    BatteryLineButton,
     StartDay,
     SpeedControls,
     ReviewConstruction,
@@ -62,16 +66,6 @@ pub enum StepKind {
     Instruction,
 }
 
-/// How an instruction points at its anchor (spec §4.1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum InstructionStyle {
-    /// Its sentence on an opaque, outlined card beside the anchor.
-    Card,
-    /// Its sentence as plain text beside the anchor, on a backing that isn't outlined, with an
-    /// arrow pointing from the text at the anchor.
-    Arrow,
-}
-
 /// When a step no longer applies, whatever has played.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Done {
@@ -95,8 +89,6 @@ pub struct StepDef {
     /// The note's `ui.ftl` key. The Construction step's key is chosen by [`construction_key`].
     pub text_key: Option<&'static str>,
     pub done: Done,
-    /// How an instruction points at its anchor; other kinds ignore it.
-    pub style: InstructionStyle,
 }
 
 const fn def(
@@ -114,17 +106,6 @@ const fn def(
         anchor,
         text_key,
         done,
-        style: InstructionStyle::Card,
-    }
-}
-
-impl StepDef {
-    /// This step, its instruction drawn as an arrow callout.
-    const fn with_arrow(self) -> Self {
-        Self {
-            style: InstructionStyle::Arrow,
-            ..self
-        }
     }
 }
 
@@ -184,8 +165,7 @@ pub const TUTORIAL_STEPS: [StepDef; 14] = {
             Some(A::BatteryBuildButton),
             Some("tutorial-battery-build"),
             Done::BatteryQueued,
-        )
-        .with_arrow(),
+        ),
         def(
             S::ConnectSpotlight,
             Planning,
@@ -198,7 +178,7 @@ pub const TUTORIAL_STEPS: [StepDef; 14] = {
             S::ConnectBattery,
             Planning,
             Instruction,
-            Some(A::LineSection),
+            Some(A::BatteryLineButton),
             Some("tutorial-connect-build"),
             Done::BatteryLinked,
         ),
@@ -320,6 +300,13 @@ pub fn construction_key(state: &TutorialState, game: &Game) -> &'static str {
     } else {
         "tutorial-construction-paid"
     }
+}
+
+/// The nodes of the tutorial's batteries: those the player ordered, built or not.
+pub fn tutorial_battery_nodes(state: &TutorialState, game: &Game) -> BTreeSet<NodeId> {
+    tutorial_batteries(state, &game.session().plant_views())
+        .map(|battery| battery.node)
+        .collect()
 }
 
 /// The batteries in `plants` that weren't in the starter fleet: the player's, built or not.

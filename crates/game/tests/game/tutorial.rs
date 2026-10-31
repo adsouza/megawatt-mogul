@@ -17,8 +17,7 @@ use domain::region::PlantKind;
 use domain::session::DayPhase;
 use domain::time::TICKS_PER_DAY;
 use game::hud::tutorial::{
-    InstructionStyle, StepKind, TUTORIAL_STEPS, TutorialAnchor, TutorialRun, TutorialState,
-    TutorialStep, anchor_rect,
+    StepKind, TUTORIAL_STEPS, TutorialAnchor, TutorialRun, TutorialState, TutorialStep, anchor_rect,
 };
 use game::hud::{HudSet, PlanningTab, Selection, TutorialAction, UiAction, UiState};
 use game::paths::SaveDir;
@@ -483,12 +482,13 @@ fn tutorial_actions_never_send_player_commands() {
 #[derive(Resource, Default)]
 struct SeenAnchors(BTreeMap<TutorialAnchor, egui::Rect>);
 
-const ANCHORS: [TutorialAnchor; 8] = [
+const ANCHORS: [TutorialAnchor; 9] = [
     TutorialAnchor::Cash,
     TutorialAnchor::Map,
     TutorialAnchor::BatteryCard,
     TutorialAnchor::BatteryBuildButton,
     TutorialAnchor::LineSection,
+    TutorialAnchor::BatteryLineButton,
     TutorialAnchor::StartDay,
     TutorialAnchor::SpeedControls,
     TutorialAnchor::ReviewConstruction,
@@ -765,6 +765,8 @@ const CASH_NOTE: &str =
 const PICK_SITE: &str = "Click a square on the map to see what you can build there.";
 const START_NOTE: &str = "Ready? Start the day.";
 const BUILD_BATTERY: &str = "Build a battery here.";
+const CONNECT: &str = "Build a line from your battery to your grid.";
+const CONNECT_NOTE: &str = "A power plant only helps once a line connects it to your grid.";
 
 #[test]
 fn tutorial_view_opacity_curve() {
@@ -810,34 +812,36 @@ fn tutorial_view_opacity_curve() {
         }
         other => panic!("{other:?}"),
     }
-    match tutorial_view(def(TutorialStep::PickSite), state, game, &l10n, 0.0) {
-        TutorialView::Instruction {
-            anchor,
-            text,
-            style,
-        } => {
-            assert_eq!(anchor, TutorialAnchor::Map);
-            assert_eq!(text, PICK_SITE);
-            assert_eq!(style, InstructionStyle::Card);
-        }
-        other => panic!("{other:?}"),
+    // Each instruction points at the control it asks for (picking a site, at the map).
+    for (step, anchor, text) in [
+        (TutorialStep::PickSite, TutorialAnchor::Map, PICK_SITE),
+        (
+            TutorialStep::BuildBattery,
+            TutorialAnchor::BatteryBuildButton,
+            BUILD_BATTERY,
+        ),
+        (
+            TutorialStep::ConnectBattery,
+            TutorialAnchor::BatteryLineButton,
+            CONNECT,
+        ),
+        (TutorialStep::StartDay, TutorialAnchor::StartDay, START_NOTE),
+    ] {
+        assert_eq!(
+            tutorial_view(def(step), state, game, &l10n, 0.0),
+            TutorialView::Instruction {
+                anchor,
+                text: text.into(),
+            }
+        );
     }
-    // Building the battery points an arrow at the card's Build plant button.
     assert_eq!(
-        tutorial_view(def(TutorialStep::BuildBattery), state, game, &l10n, 0.0),
-        TutorialView::Instruction {
-            anchor: TutorialAnchor::BatteryBuildButton,
-            text: BUILD_BATTERY.into(),
-            style: InstructionStyle::Arrow,
-        }
+        TUTORIAL_STEPS
+            .iter()
+            .filter(|def| def.kind == StepKind::Instruction)
+            .count(),
+        4
     );
-    // Every other instruction keeps its card.
-    for def in TUTORIAL_STEPS
-        .iter()
-        .filter(|def| def.kind == StepKind::Instruction && def.step != TutorialStep::BuildBattery)
-    {
-        assert_eq!(def.style, InstructionStyle::Card, "{:?}", def.step);
-    }
     assert_eq!(
         def(TutorialStep::BatterySpotlight).anchor,
         Some(TutorialAnchor::BatteryCard)
@@ -1001,8 +1005,8 @@ fn paints(pass: &EguiPass, app: &mut App, (width, height): (f32, f32), text: &st
     painted
 }
 
-/// An instruction never stands between the player and a prompt: while one is open its card isn't
-/// drawn at all, so clicks where it was reach the prompt's backdrop, and the prompt's buttons work.
+/// An instruction never stands between the player and a prompt: while one is open its callout
+/// isn't drawn at all, so clicks where it was reach the prompt's backdrop, and the prompt's buttons work.
 #[test]
 fn prompt_stays_clickable_under_instruction() {
     use game::hud::Prompt;
@@ -1019,7 +1023,7 @@ fn prompt_stays_clickable_under_instruction() {
     let widgets = pass.settled(&mut app, width, height);
     assert!(!paints(&pass, &mut app, MIN, PICK_SITE));
     assert!(!crate::support::egui_harness::has(&widgets, PICK_SITE));
-    // A click where the card was reaches the prompt's backdrop, which closes it.
+    // A click where the callout was reaches the prompt's backdrop, which closes it.
     pass.click_at(&mut app, width, height, note.center());
     assert_eq!(open_prompt(&app), None);
 
@@ -1030,13 +1034,13 @@ fn prompt_stays_clickable_under_instruction() {
     pass.click_at(&mut app, width, height, stay.center());
     assert_eq!(open_prompt(&app), None);
     assert!(run(&app).is_some());
-    // With the prompt closed, the card is back.
+    // With the prompt closed, the callout is back.
     let widgets = pass.settled(&mut app, width, height);
     assert!(crate::support::egui_harness::has(&widgets, PICK_SITE));
 }
 
 /// An instruction about the map sits near the map's top, has no buttons, and lets a click on
-/// its own card through to the map.
+/// its own text through to the map.
 #[test]
 fn instruction_sits_on_the_map_and_takes_no_clicks() {
     let logs = TempDir::new().unwrap();
@@ -1055,7 +1059,7 @@ fn instruction_sits_on_the_map_and_takes_no_clicks() {
         !widgets
             .iter()
             .any(|w| w.role == egui::accesskit::Role::Button && note.contains_rect(w.rect)),
-        "the card has no buttons"
+        "the callout has no buttons"
     );
     pass.click_at(&mut app, width, height, note.center());
     assert!(
@@ -1288,6 +1292,350 @@ fn queueing_the_battery_selects_it_and_the_line_section_starts_from_it() {
     );
 }
 
+/// What a pass paints.
+fn painted(
+    pass: &EguiPass,
+    app: &mut App,
+    (width, height): (f32, f32),
+) -> Vec<egui::epaint::ClippedShape> {
+    let output = pass.paint_with(app, width, height, Vec::new());
+    let painted = output.shapes.clone();
+    output.drop_without_applying_deltas();
+    painted
+}
+
+/// Whether anything painted is outlined in the accent, as the old instruction card was.
+fn outlined_card(painted: &[egui::epaint::ClippedShape]) -> bool {
+    painted.iter().any(|clipped| {
+        matches!(&clipped.shape,
+            egui::Shape::Rect(rect) if rect.stroke.color == game::hud::theme::ACCENT_YELLOW
+                && rect.stroke.width > 0.0)
+    })
+}
+
+/// The arrowhead's tip touches `target`'s edge, and the head points at it: its other two points
+/// lie a head's length (8 points) away from the target.
+fn assert_points_at(head: &[egui::Pos2], target: egui::Rect, what: &str) {
+    assert_eq!(head.len(), 3, "{what}: {head:?}");
+    let tip = head
+        .iter()
+        .copied()
+        .min_by(|a, b| {
+            target
+                .distance_to_pos(*a)
+                .total_cmp(&target.distance_to_pos(*b))
+        })
+        .unwrap();
+    assert!(
+        target.expand(0.5).contains(tip) && !target.shrink(0.5).contains(tip),
+        "{what}: the tip {tip:?} is on {target:?}'s edge"
+    );
+    assert!(
+        head.iter()
+            .filter(|p| **p != tip)
+            .all(|p| target.distance_to_pos(*p) >= 7.0),
+        "{what}: {head:?} points at {target:?}"
+    );
+}
+
+/// The user's request, for picking a site: there is no one control to point at, so the callout
+/// sits inside the map's top edge, centred on it, its arrow pointing down into the map, and the
+/// map still takes clicks, even at the arrow's tip.
+#[test]
+fn pick_site_instruction_points_down_into_the_map() {
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    at_step(&mut app, TutorialStep::PickSite);
+    let pass = with_anchor_probe(&mut app);
+    let (width, height) = MIN;
+    let widgets = pass.settled(&mut app, width, height);
+    let map = anchors(&app)[&TutorialAnchor::Map];
+    let note = widget(&widgets, PICK_SITE).rect;
+    assert!(map.contains_rect(note), "{note:?} in {map:?}");
+    assert!(
+        (note.center().x - map.center().x).abs() <= 1.0,
+        "{note:?} is centred on {map:?}"
+    );
+    // Its backing 10 points below the map's top, the text 4 inside that.
+    assert!(
+        (note.top() - map.top() - 14.0).abs() <= 1.0,
+        "{note:?} is at {map:?}'s top"
+    );
+    let painted = painted(&pass, &mut app, MIN);
+    assert!(!outlined_card(&painted), "an outlined card was painted");
+    let head = arrowhead(&painted).expect("an arrow");
+    let tip = head
+        .iter()
+        .copied()
+        .max_by(|a, b| a.y.total_cmp(&b.y))
+        .unwrap();
+    assert!(map.contains(tip), "{tip:?} is in {map:?}");
+    assert!((tip.x - map.center().x).abs() <= 1.0, "{tip:?}");
+    // The arrow runs 28 points down from the backing, 4 below the text.
+    assert!(
+        (tip.y - (note.bottom() + 4.0 + 28.0)).abs() <= 1.0,
+        "{tip:?} / {note:?}"
+    );
+    assert!(
+        head.iter()
+            .filter(|p| **p != tip)
+            .all(|p| p.y <= tip.y - 7.5),
+        "{head:?} points down"
+    );
+    pass.click_at(&mut app, width, height, tip);
+    assert!(
+        matches!(*app.world().resource::<Selection>(), Selection::Cell(_)),
+        "the click by the tip reached the map"
+    );
+}
+
+/// The run at the connect instruction as the player meets it: the battery ordered from its card
+/// (which selects it) and the connect spotlight dismissed. The battery's node.
+fn at_connect_instruction(app: &mut App, pass: &EguiPass, size: (f32, f32)) -> domain::ids::NodeId {
+    at_battery_instruction(app, pass, size);
+    let cell = battery_site(app);
+    let button = anchors(app)[&TutorialAnchor::BatteryBuildButton];
+    pass.click_at(app, size.0, size.1, button.center());
+    update_n(app, 1);
+    let battery = app
+        .world()
+        .resource::<Session>()
+        .0
+        .session()
+        .plant_views()
+        .into_iter()
+        .find(|plant| plant.kind == PlantKind::Battery && plant.cell == cell)
+        .expect("the battery was queued");
+    assert_eq!(
+        *app.world().resource::<Selection>(),
+        Selection::Plant(battery.id)
+    );
+    tutorial(
+        app,
+        [TutorialAction::Dismiss(TutorialStep::ConnectSpotlight)],
+    );
+    battery.node
+}
+
+/// The connect instruction's arrow points at the button that takes the line on from the battery:
+/// *Line from* the battery, then, once the line starts there, the first target's *Build line*.
+/// Each is scrolled into view, the callout doesn't cover it, and it still works.
+#[test]
+fn connect_instruction_points_at_the_line_from_the_battery_then_its_first_target() {
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    let pass = with_anchor_probe(&mut app);
+    let (width, height) = MIN;
+    let node = at_connect_instruction(&mut app, &pass, MIN);
+    for (stage, label) in ["Line from ", "Build line"].into_iter().enumerate() {
+        // Let a reveal scroll the button in.
+        for _ in 0..60 {
+            pass.run(&mut app, width, height);
+        }
+        let widgets = pass.settled(&mut app, width, height);
+        let target = *anchors(&app)
+            .get(&TutorialAnchor::BatteryLineButton)
+            .unwrap_or_else(|| panic!("stage {stage}: the button is in view"));
+        let button = widgets
+            .iter()
+            .find(|w| w.role == egui::accesskit::Role::Button && w.rect == target)
+            .unwrap_or_else(|| panic!("stage {stage}: {target:?} is a button"));
+        assert!(button.text.starts_with(label), "stage {stage}: {button:?}");
+        let note = widget(&widgets, CONNECT).rect;
+        assert!(!note.intersects(target), "{note:?} covers {target:?}");
+        let painted = painted(&pass, &mut app, MIN);
+        assert!(!outlined_card(&painted), "stage {stage}: an outlined card");
+        let head = arrowhead(&painted).unwrap_or_else(|| panic!("stage {stage}: an arrow"));
+        assert_points_at(&head, target, &format!("stage {stage}"));
+        pass.click_at(&mut app, width, height, target.center());
+        if stage == 0 {
+            assert_eq!(
+                *app.world().resource::<Selection>(),
+                Selection::LineFrom(node),
+                "Line from the battery was clicked"
+            );
+        } else {
+            // The battery's order is still in the message buffer.
+            let sent: Vec<Command> = sent::<PlayerCommand>(&app)
+                .into_iter()
+                .map(|command| command.0)
+                .collect();
+            assert!(
+                matches!(sent.last(), Some(Command::BuildLine { from, .. }) if *from == node),
+                "{sent:?}"
+            );
+        }
+    }
+}
+
+/// Starting the day: the arrow points at *Start the day*, which still starts it.
+#[test]
+fn start_instruction_points_at_start_the_day() {
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    at_step(&mut app, TutorialStep::StartDay);
+    let pass = with_anchor_probe(&mut app);
+    let (width, height) = MIN;
+    let widgets = pass.settled(&mut app, width, height);
+    let target = anchors(&app)[&TutorialAnchor::StartDay];
+    assert_eq!(find_button(&widgets, "Start the day").rect, target);
+    let note = widget(&widgets, START_NOTE).rect;
+    assert!(!note.intersects(target), "{note:?} covers {target:?}");
+    let painted = painted(&pass, &mut app, MIN);
+    assert!(!outlined_card(&painted), "an outlined card was painted");
+    assert_points_at(&arrowhead(&painted).expect("an arrow"), target, "start");
+    pass.click_at(&mut app, width, height, target.center());
+    assert!(
+        !sent::<PlayerCommand>(&app).is_empty() || open_prompt(&app).is_some(),
+        "Start the day was clicked"
+    );
+}
+
+/// With nothing to point at (no battery of the player's to connect), the instruction is still
+/// shown: plain text on its backing at the map's top centre, with no arrow and no outline.
+#[test]
+fn an_instruction_without_its_anchor_is_a_plain_callout_at_the_map_top() {
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    let cell = battery_site(&app);
+    dispatch_in(&mut app, vec![UiAction::Select(Selection::Cell(cell))]);
+    at_step(&mut app, TutorialStep::ConnectBattery);
+    let pass = with_anchor_probe(&mut app);
+    let (width, height) = MIN;
+    for _ in 0..60 {
+        pass.run(&mut app, width, height);
+    }
+    let widgets = pass.settled(&mut app, width, height);
+    let seen = anchors(&app);
+    assert!(
+        !seen.contains_key(&TutorialAnchor::BatteryLineButton),
+        "{seen:?}"
+    );
+    let map = seen[&TutorialAnchor::Map];
+    let note = widget(&widgets, CONNECT).rect;
+    assert!(map.contains_rect(note), "{note:?} in {map:?}");
+    assert!((note.center().x - map.center().x).abs() <= 1.0, "{note:?}");
+    assert!((note.top() - map.top() - 14.0).abs() <= 1.0, "{note:?}");
+    let painted = painted(&pass, &mut app, MIN);
+    assert!(!outlined_card(&painted), "an outlined card was painted");
+    assert_eq!(arrowhead(&painted), None, "nothing to point at");
+}
+
+/// Prompts come first: while one is open an arrow callout isn't painted at all, text or arrow,
+/// and it comes back when the prompt closes.
+#[test]
+fn an_arrow_callout_steps_aside_for_a_prompt() {
+    use game::hud::Prompt;
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    let pass = with_anchor_probe(&mut app);
+    let (width, height) = MIN;
+    at_battery_instruction(&mut app, &pass, MIN);
+    let shows = |pass: &EguiPass, app: &mut App| {
+        let painted = painted(pass, app, MIN);
+        let text = painted.iter().any(|clipped| {
+            matches!(&clipped.shape, egui::Shape::Text(t) if t.galley.text() == BUILD_BATTERY)
+        });
+        (text, arrowhead(&painted).is_some())
+    };
+    assert_eq!(shows(&pass, &mut app), (true, true));
+    dispatch_in(&mut app, vec![UiAction::Prompt(Some(Prompt::LeaveGame))]);
+    pass.settled(&mut app, width, height);
+    assert_eq!(shows(&pass, &mut app), (false, false));
+    dispatch_in(&mut app, vec![UiAction::Prompt(None)]);
+    pass.settled(&mut app, width, height);
+    assert_eq!(shows(&pass, &mut app), (true, true));
+}
+
+/// A spotlight's clock counts only the passes it is drawn on: hidden mid-hold (its anchor
+/// scrolled away), it pauses, and shown again it is still showing and runs out its remaining time.
+#[test]
+fn a_spotlight_clock_pauses_while_its_anchor_is_hidden() {
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    let cell = battery_site(&app);
+    dispatch_in(&mut app, vec![UiAction::Select(Selection::Cell(cell))]);
+    at_step(&mut app, TutorialStep::ConnectSpotlight);
+    let pass = with_anchor_probe(&mut app);
+    let (width, height) = MIN;
+    let showing = |pass: &EguiPass, app: &mut App| {
+        crate::support::egui_harness::has(&pass.run(app, width, height), CONNECT_NOTE)
+    };
+    // Its reveal scrolls the line section in, and it shows.
+    let mut shown = false;
+    for _ in 0..60 {
+        shown = showing(&pass, &mut app);
+    }
+    assert!(shown);
+    advance_real(&mut app, 2.0);
+    assert!(showing(&pass, &mut app));
+    // Scrolling the battery card to the middle of the build menu takes the section out of view.
+    tutorial(
+        &mut app,
+        [TutorialAction::Reveal(TutorialAnchor::BatteryCard)],
+    );
+    for _ in 0..60 {
+        pass.run(&mut app, width, height);
+    }
+    assert!(
+        !anchors(&app).contains_key(&TutorialAnchor::LineSection),
+        "the test needs the section out of view"
+    );
+    for _ in 0..10 {
+        advance_real(&mut app, 1.0);
+        assert!(!showing(&pass, &mut app));
+    }
+    assert!(!played(&app).contains(&TutorialStep::ConnectSpotlight));
+    // Back in view: it is still showing, with the rest of its time to run.
+    tutorial(
+        &mut app,
+        [TutorialAction::Reveal(TutorialAnchor::LineSection)],
+    );
+    let mut shown = false;
+    for _ in 0..60 {
+        shown = showing(&pass, &mut app);
+    }
+    assert!(shown, "shown again");
+    assert!(!played(&app).contains(&TutorialStep::ConnectSpotlight));
+    advance_real(&mut app, 2.0);
+    assert!(showing(&pass, &mut app));
+    assert!(!played(&app).contains(&TutorialStep::ConnectSpotlight));
+    advance_real(&mut app, 0.7);
+    pass.run(&mut app, width, height);
+    assert!(played(&app).contains(&TutorialStep::ConnectSpotlight));
+}
+
+/// The same for a prompt opened mid-hold: the spotlight steps aside and its clock waits.
+#[test]
+fn a_spotlight_clock_pauses_while_a_prompt_is_open() {
+    use game::hud::Prompt;
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    at_step(&mut app, TutorialStep::Cash);
+    let pass = EguiPass::attach(&mut app);
+    let (width, height) = MIN;
+    pass.settled(&mut app, width, height);
+    advance_real(&mut app, 2.0);
+    let widgets = pass.run(&mut app, width, height);
+    assert!(crate::support::egui_harness::has(&widgets, CASH_NOTE));
+    dispatch_in(&mut app, vec![UiAction::Prompt(Some(Prompt::LeaveGame))]);
+    for _ in 0..10 {
+        advance_real(&mut app, 1.0);
+        let widgets = pass.run(&mut app, width, height);
+        assert!(!crate::support::egui_harness::has(&widgets, CASH_NOTE));
+    }
+    dispatch_in(&mut app, vec![UiAction::Prompt(None)]);
+    let widgets = pass.run(&mut app, width, height);
+    assert!(crate::support::egui_harness::has(&widgets, CASH_NOTE));
+    assert!(!played(&app).contains(&TutorialStep::Cash));
+    advance_real(&mut app, 2.0);
+    pass.run(&mut app, width, height);
+    assert!(!played(&app).contains(&TutorialStep::Cash));
+    advance_real(&mut app, 0.7);
+    pass.run(&mut app, width, height);
+    assert!(played(&app).contains(&TutorialStep::Cash));
+}
+
 #[test]
 fn crawl_has_full_accessible_name_and_ends_on_click() {
     let logs = TempDir::new().unwrap();
@@ -1337,8 +1685,10 @@ fn crawl_ends_by_itself_or_on_escape() {
 }
 
 /// Review Focus 2: at the smallest window and the largest UI zoom, every spotlight's note and
-/// every instruction's card is drawn, and inside the screen. An arrow callout sits beside its
-/// anchor, not over it, with its arrow on screen and touching the anchor.
+/// every instruction is drawn, and inside the screen. Each instruction is an arrow callout beside
+/// its anchor, not over it, with its arrow on screen and touching the anchor; picking a site's
+/// sits inside the map's top, its arrow pointing down into the map. The connect instruction is
+/// checked at both its stages: choosing where the line starts, and where it ends.
 #[test]
 fn cards_fit_minimum_window_at_max_zoom() {
     const MAX_ZOOM: f32 = 1.5;
@@ -1349,6 +1699,7 @@ fn cards_fit_minimum_window_at_max_zoom() {
     let mut app = tutorial_app(&logs);
     let pass = with_anchor_probe(&mut app);
     let cell = battery_site(&app);
+    let mut battery = None;
     let mut checked = Vec::new();
     for phase_now in [DayPhase::Planning, DayPhase::Operating, DayPhase::Review] {
         match phase_now {
@@ -1361,18 +1712,38 @@ fn cards_fit_minimum_window_at_max_zoom() {
             def.phase == phase_now
                 && matches!(def.kind, StepKind::Spotlight | StepKind::Instruction)
         }) {
+            // From connecting on, the player has ordered a battery, which ordering selects.
+            if def.step == TutorialStep::ConnectSpotlight {
+                execute(
+                    &mut app,
+                    Command::BuildPlant {
+                        kind: PlantKind::Battery,
+                        cell,
+                    },
+                );
+                battery = app
+                    .world()
+                    .resource::<Session>()
+                    .0
+                    .session()
+                    .plant_views()
+                    .into_iter()
+                    .find(|plant| plant.kind == PlantKind::Battery && plant.cell == cell);
+            }
             at_step(&mut app, def.step);
             // Picking a site is done once a cell is selected; the later steps need one.
-            let selection = if def.step == TutorialStep::PickSite {
-                Selection::None
-            } else {
-                Selection::Cell(cell)
+            let selection = match (def.step, &battery) {
+                (TutorialStep::PickSite, _) => Selection::None,
+                (TutorialStep::ConnectSpotlight | TutorialStep::ConnectBattery, Some(battery)) => {
+                    Selection::Plant(battery.id)
+                }
+                _ => Selection::Cell(cell),
             };
             dispatch_in(&mut app, vec![UiAction::Select(selection)]);
-            let text = def
-                .text_key
-                .map(|key| l10n.text(key))
-                .unwrap_or_else(|| l10n.text("tutorial-construction-general"));
+            let text = l10n.text(def.text_key.unwrap_or_else(|| {
+                let game = &app.world().resource::<Session>().0;
+                game::hud::tutorial::construction_key(run(&app).unwrap(), game)
+            }));
             // Let a reveal scroll its anchor in.
             let mut found = None;
             for _ in 0..60 {
@@ -1384,7 +1755,12 @@ fn cards_fit_minimum_window_at_max_zoom() {
             }
             let note = found.unwrap_or_else(|| panic!("{:?} drew no note", def.step));
             assert!(screen.contains_rect(note), "{:?}: {note:?}", def.step);
-            if def.kind == StepKind::Instruction && def.style == InstructionStyle::Arrow {
+            if def.kind == StepKind::Instruction {
+                check_arrow_callout(&pass, &mut app, (width, height), def, &text);
+            }
+            if def.step == TutorialStep::ConnectBattery {
+                let node = battery.as_ref().expect("the battery was ordered").node;
+                dispatch_in(&mut app, vec![UiAction::Select(Selection::LineFrom(node))]);
                 check_arrow_callout(&pass, &mut app, (width, height), def, &text);
             }
             checked.push(def.step);
@@ -1400,7 +1776,8 @@ fn cards_fit_minimum_window_at_max_zoom() {
 }
 
 /// An arrow callout's text beside its anchor, clear of it, and its arrow on screen with its tip
-/// on the anchor's edge.
+/// on the anchor's edge, its head pointing at it; or, for the map, the text inside the map's top
+/// and the arrow pointing down into the map. Never an outlined card.
 fn check_arrow_callout(
     pass: &EguiPass,
     app: &mut App,
@@ -1409,7 +1786,7 @@ fn check_arrow_callout(
     text: &str,
 ) {
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, height));
-    // Until a reveal has scrolled its anchor in, it is a card at the map's top.
+    // Until a reveal has scrolled its anchor in, it is the text alone at the map's top.
     for _ in 0..60 {
         pass.run(app, width, height);
     }
@@ -1420,6 +1797,28 @@ fn check_arrow_callout(
         .get(&anchor)
         .unwrap_or_else(|| panic!("{:?}: {anchor:?} isn't in view", def.step));
     assert!(screen.contains_rect(note), "{:?}: {note:?}", def.step);
+    let painted = painted(pass, app, (width, height));
+    assert!(!outlined_card(&painted), "{:?}: an outlined card", def.step);
+    let head = arrowhead(&painted)
+        .unwrap_or_else(|| panic!("{:?} drew no arrow: {note:?} / {target:?}", def.step));
+    assert!(head.iter().all(|p| screen.contains(*p)), "{head:?}");
+    // Picking a site's callout sits inside the map's top, pointing down into it; on a map too
+    // short for that, it points at the map from below, as other callouts do.
+    if anchor == TutorialAnchor::Map && target.contains_rect(note) {
+        let tip = head
+            .iter()
+            .copied()
+            .max_by(|a, b| a.y.total_cmp(&b.y))
+            .unwrap();
+        assert!(target.contains(tip), "{tip:?} in the map {target:?}");
+        assert!(
+            head.iter()
+                .filter(|p| **p != tip)
+                .all(|p| p.y <= tip.y - 7.5),
+            "{head:?} points down"
+        );
+        return;
+    }
     assert!(
         !note.intersects(target),
         "{:?}: {note:?} covers {target:?}",
@@ -1429,17 +1828,7 @@ fn check_arrow_callout(
         || note.top() >= target.bottom() + 28.0
         || note.bottom() <= target.top() - 28.0;
     assert!(beside, "{:?}: {note:?} beside {target:?}", def.step);
-    let output = pass.paint_with(app, width, height, Vec::new());
-    let head = arrowhead(&output.shapes);
-    output.drop_without_applying_deltas();
-    let head = head.unwrap_or_else(|| panic!("{:?} drew no arrow", def.step));
-    assert!(head.iter().all(|p| screen.contains(*p)), "{head:?}");
-    assert!(
-        head.iter()
-            .any(|p| target.expand(0.5).contains(*p) && !target.shrink(0.5).contains(*p)),
-        "{:?}: {head:?} touches {target:?}",
-        def.step
-    );
+    assert_points_at(&head, target, &format!("{:?}", def.step));
 }
 
 // --- The tutorial leaves the simulation alone (spec §7) ---

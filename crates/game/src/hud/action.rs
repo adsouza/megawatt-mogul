@@ -688,6 +688,7 @@ fn tutorial(sink: &mut ActionSink, action: TutorialAction) {
                 // The button on its own: the card can be taller than the build menu's view.
                 TutorialAnchor::BatteryBuildButton
                 | TutorialAnchor::LineSection
+                | TutorialAnchor::BatteryLineButton
                 | TutorialAnchor::ReviewConstruction => {
                     sink.ui.reveal_anchor = Some(anchor);
                 }

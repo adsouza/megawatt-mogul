@@ -20,8 +20,8 @@ pub use self::overlay::{
     CRAWL_SECONDS, SPOTLIGHT_SECONDS, TutorialView, spotlight_opacity, tutorial_view,
 };
 pub use self::steps::{
-    Done, InstructionStyle, StepDef, StepKind, TUTORIAL_STEPS, TutorialAnchor, TutorialState,
-    TutorialStep, active_step, construction_key,
+    Done, StepDef, StepKind, TUTORIAL_STEPS, TutorialAnchor, TutorialState, TutorialStep,
+    active_step, construction_key, tutorial_battery_nodes,
 };
 use crate::hud::{HudSet, UiState};
 use crate::l10n::Localizer;

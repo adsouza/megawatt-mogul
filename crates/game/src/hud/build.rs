@@ -2,6 +2,8 @@
 //! between two network nodes. It asks for nothing by itself: a button sends the build command, and
 //! the domain checks it again.
 
+use std::collections::BTreeSet;
+
 use crate::l10n::format::MoneyStyle;
 use application::{Command, Game};
 use bevy::prelude::*;
@@ -18,7 +20,7 @@ use super::layout::{Edge, HudArea, OuterPanel};
 use super::plant_panel::PlantStat;
 use super::selection::Selection;
 use super::theme::{TextTone, ValueColor, heading_color, marginal_cost_fraction};
-use super::tutorial::{TutorialAnchor, mark_visible_anchor};
+use super::tutorial::{TutorialAnchor, mark_visible_anchor, tutorial_battery_nodes};
 use crate::l10n::{Localize, LocalizeWith, Localizer, Names, format};
 use crate::sim::{DomainEventMessage, Session};
 
@@ -112,6 +114,34 @@ pub struct BuildModel {
     /// Whether to scroll the battery card's Build plant button into view when it is drawn: the
     /// tutorial's reveal, from [`UiState::reveal_anchor`](super::UiState::reveal_anchor).
     pub reveal_battery_build: bool,
+    /// The tutorial's battery line button, as an index into the AC line section's buttons (its
+    /// starts, or its targets): from [`battery_line_button`].
+    pub battery_line: Option<usize>,
+    /// Whether to scroll that button into view when it is drawn: the tutorial's reveal, from
+    /// [`UiState::reveal_anchor`](super::UiState::reveal_anchor).
+    pub reveal_battery_line: bool,
+}
+
+/// Which of `line`'s buttons takes a line on from one of `batteries` (the tutorial's): the first
+/// start at a battery's node; or, once `selection` starts the line at one, the first target. The
+/// tutorial's connect instruction points at it.
+pub fn battery_line_button(
+    line: &LineSection,
+    selection: Selection,
+    batteries: &BTreeSet<NodeId>,
+) -> Option<usize> {
+    match line {
+        LineSection::Start { from, .. } => from.iter().position(|choice| {
+            matches!(choice.action, UiAction::Select(Selection::LineFrom(node))
+                if batteries.contains(&node))
+        }),
+        LineSection::End { targets, .. } => match selection {
+            Selection::LineFrom(node) if batteries.contains(&node) && !targets.is_empty() => {
+                Some(0)
+            }
+            _ => None,
+        },
+    }
 }
 
 /// A node of the network a line can start or end at, with its name and place.
@@ -178,6 +208,8 @@ fn build_model_for_tool(
         reveal: None,
         reveal_line: false,
         reveal_battery_build: false,
+        battery_line: None,
+        reveal_battery_line: false,
         transport_modes: if session.region().hvdc().is_some() {
             vec![
                 super::ToggleModel {
@@ -692,8 +724,23 @@ pub fn draw_build(ui: &mut egui::Ui, model: &BuildModel) -> Vec<UiAction> {
                     super::toggle_button(ui, mode, &mut actions);
                 }
             });
+            // The tutorial's battery line button is in the AC section.
+            let battery_line = if model.hvdc_active {
+                None
+            } else {
+                model.battery_line
+            };
             ui.push_id(model.hvdc_active, |ui| {
-                draw_line_section(ui, active, model.reveal_line, &mut actions)
+                draw_line_section(
+                    ui,
+                    active,
+                    LineReveals {
+                        section: model.reveal_line,
+                        battery_line,
+                        reveal_battery_line: model.reveal_battery_line,
+                    },
+                    &mut actions,
+                )
             });
         });
     actions
@@ -752,23 +799,49 @@ fn draw_plant_section(
     }
 }
 
-/// The line section, marked as the tutorial's line-section anchor where it shows. When `reveal`,
-/// its top is scrolled into view once and the reveal reported done.
+/// What the tutorial asks of the line section.
+#[derive(Debug, Clone, Copy)]
+struct LineReveals {
+    /// Scroll the section's top into view.
+    section: bool,
+    /// The tutorial's battery line button, by index (see [`BuildModel::battery_line`]).
+    battery_line: Option<usize>,
+    /// Scroll that button into view.
+    reveal_battery_line: bool,
+}
+
+/// The line section, marked as the tutorial's line-section anchor where it shows, and its battery
+/// line button as that anchor. A reveal scrolls its target into view once and is reported done.
 fn draw_line_section(
     ui: &mut egui::Ui,
     section: &LineSection,
-    reveal: bool,
+    reveals: LineReveals,
     actions: &mut Vec<UiAction>,
 ) {
-    let drawn = ui.scope(|ui| draw_line_stage(ui, section, actions));
+    let drawn = ui.scope(|ui| {
+        let battery_line = draw_line_stage(ui, section, reveals.battery_line, actions)?;
+        mark_visible_anchor(ui, TutorialAnchor::BatteryLineButton, battery_line.rect);
+        if reveals.reveal_battery_line {
+            battery_line.scroll_to_me(Some(egui::Align::Center));
+            actions.push(UiAction::Tutorial(TutorialAction::RevealDone));
+        }
+        Some(())
+    });
     mark_visible_anchor(ui, TutorialAnchor::LineSection, drawn.response.rect);
-    if reveal {
+    if reveals.section {
         drawn.response.scroll_to_me(Some(egui::Align::Min));
         actions.push(UiAction::Tutorial(TutorialAction::RevealDone));
     }
 }
 
-fn draw_line_stage(ui: &mut egui::Ui, section: &LineSection, actions: &mut Vec<UiAction>) {
+/// The section's stage; the response of its button at `battery_line`, if drawn.
+fn draw_line_stage(
+    ui: &mut egui::Ui,
+    section: &LineSection,
+    battery_line: Option<usize>,
+    actions: &mut Vec<UiAction>,
+) -> Option<egui::Response> {
+    let mut marked = None;
     match section {
         LineSection::Start {
             heading,
@@ -777,8 +850,11 @@ fn draw_line_stage(ui: &mut egui::Ui, section: &LineSection, actions: &mut Vec<U
         } => {
             ui.label(egui::RichText::new(heading).strong().color(heading_color()));
             ui.weak(hint.as_str());
-            for choice in from {
-                button(ui, choice, actions);
+            for (index, choice) in from.iter().enumerate() {
+                let response = button(ui, choice, actions);
+                if battery_line == Some(index) {
+                    marked = Some(response);
+                }
             }
         }
         LineSection::End {
@@ -790,7 +866,7 @@ fn draw_line_stage(ui: &mut egui::Ui, section: &LineSection, actions: &mut Vec<U
             ui.label(egui::RichText::new(heading).strong().color(heading_color()));
             ui.weak(hint.as_str());
             button(ui, cancel, actions);
-            for target in targets {
+            for (index, target) in targets.iter().enumerate() {
                 ui.group(|ui| {
                     ui.colored_label(heading_color(), &target.name);
                     match &target.preview {
@@ -812,11 +888,15 @@ fn draw_line_stage(ui: &mut egui::Ui, section: &LineSection, actions: &mut Vec<U
                             ui.colored_label(TextTone::Caution.color(), reason);
                         }
                     }
-                    button(ui, &target.build, actions);
+                    let response = button(ui, &target.build, actions);
+                    if battery_line == Some(index) {
+                        marked = Some(response);
+                    }
                 });
             }
         }
     }
+    marked
 }
 
 /// Selects the plant the player just ordered, so the build menu's line section offers a line from
@@ -868,6 +948,12 @@ pub(super) fn build_panel(
     model.reveal_line = sink.ui_state().reveal_anchor == Some(TutorialAnchor::LineSection);
     model.reveal_battery_build =
         sink.ui_state().reveal_anchor == Some(TutorialAnchor::BatteryBuildButton);
+    if let Some(state) = sink.tutorial() {
+        let batteries = tutorial_battery_nodes(state, &session.0);
+        model.battery_line = battery_line_button(&model.line, sink.selection(), &batteries);
+    }
+    model.reveal_battery_line =
+        sink.ui_state().reveal_anchor == Some(TutorialAnchor::BatteryLineButton);
     let actions = area.show_panel(contexts.ctx_mut()?, BUILD_PANEL, 0.0, |ui| {
         draw_build(ui, &model)
     });
@@ -1051,6 +1137,56 @@ mod tests {
             LineSection::End { targets, .. } => targets,
             LineSection::Start { .. } => panic!("no line is started: {model:?}"),
         }
+    }
+
+    /// The tutorial's connect instruction points at the first start at one of its batteries'
+    /// nodes, or, once the line starts at one, the first target; at nothing otherwise.
+    #[test]
+    fn the_battery_line_button_takes_the_line_on_from_a_tutorial_battery() {
+        let l10n = shipped_l10n();
+        let game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let plants = game.session().plant_views();
+        let (battery, other) = (plants[1].node, plants[0].node);
+        let batteries = BTreeSet::from([battery]);
+        let model = build_model(&game, &l10n, Selection::None, &usd_style()).unwrap();
+        let LineSection::Start { from, .. } = &model.line else {
+            panic!("choosing a start");
+        };
+        let index = battery_line_button(&model.line, Selection::None, &batteries)
+            .expect("the battery's start");
+        assert_eq!(
+            from[index].action,
+            UiAction::Select(Selection::LineFrom(battery))
+        );
+        assert!(
+            index > 0,
+            "the test needs the battery's start not to be first"
+        );
+        assert_eq!(
+            battery_line_button(&model.line, Selection::None, &BTreeSet::new()),
+            None
+        );
+        // With the battery selected, its start comes first.
+        let selected = Selection::Plant(plants[1].id);
+        let model = build_model(&game, &l10n, selected, &usd_style()).unwrap();
+        assert_eq!(
+            battery_line_button(&model.line, selected, &batteries),
+            Some(0)
+        );
+        // Choosing the other end: the first target, only for a line from the battery.
+        let from_battery = Selection::LineFrom(battery);
+        let model = build_model(&game, &l10n, from_battery, &usd_style()).unwrap();
+        assert!(!targets(&model).is_empty());
+        assert_eq!(
+            battery_line_button(&model.line, from_battery, &batteries),
+            Some(0)
+        );
+        let from_other = Selection::LineFrom(other);
+        let model = build_model(&game, &l10n, from_other, &usd_style()).unwrap();
+        assert_eq!(
+            battery_line_button(&model.line, from_other, &batteries),
+            None
+        );
     }
 
     #[test]
