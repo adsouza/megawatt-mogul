@@ -121,6 +121,10 @@ export async function preferenceRead(){return (await requestValue(await open(),'
 export async function preferenceWrite(bytes){
   return transaction(await open(),['preferences'],'readwrite',tx=>{tx.objectStore('preferences').put(bytes,'client');});
 }
+export async function progressRead(){return (await requestValue(await open(),'preferences','progress'))||null;}
+export async function progressWrite(bytes){
+  return transaction(await open(),['preferences'],'readwrite',tx=>{tx.objectStore('preferences').put(bytes,'progress');});
+}
 export async function requestPersistence(){return navigator.storage?.persist?await navigator.storage.persist():false;}
 export function randomId(){return crypto.randomUUID().replaceAll('-','');}
 

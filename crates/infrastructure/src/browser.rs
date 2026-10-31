@@ -46,6 +46,10 @@ extern "C" {
     fn pref_read() -> js_sys::Promise;
     #[wasm_bindgen(js_name=preferenceWrite)]
     fn pref_write(bytes: &[u8]) -> js_sys::Promise;
+    #[wasm_bindgen(js_name=progressRead)]
+    fn progress_read() -> js_sys::Promise;
+    #[wasm_bindgen(js_name=progressWrite)]
+    fn progress_write(bytes: &[u8]) -> js_sys::Promise;
     #[wasm_bindgen(js_name=requestPersistence)]
     pub fn request_persistence() -> js_sys::Promise;
 }
@@ -759,6 +763,25 @@ pub async fn write_preferences(
     value: &crate::client_preferences::ClientPreferences,
 ) -> Result<(), SaveError> {
     wait(pref_write(&crate::client_preferences::encode_preferences(
+        value,
+    )?))
+    .await?;
+    Ok(())
+}
+/// Player progress lives under its own key so an unreadable record is an error to the caller,
+/// never silently the default.
+pub async fn read_progress() -> Result<crate::client_progress::ClientProgress, SaveError> {
+    let value = wait(progress_read()).await?;
+    if value.is_null() {
+        Ok(Default::default())
+    } else {
+        crate::client_progress::decode_progress(&bytes(value)?)
+    }
+}
+pub async fn write_progress(
+    value: &crate::client_progress::ClientProgress,
+) -> Result<(), SaveError> {
+    wait(progress_write(&crate::client_progress::encode_progress(
         value,
     )?))
     .await?;
