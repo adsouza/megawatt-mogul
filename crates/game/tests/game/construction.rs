@@ -701,3 +701,39 @@ fn an_order_for_a_plant_the_game_does_not_hold_selects_nothing() {
 
     assert_eq!(selection(&app), Selection::Cell(cell));
 }
+
+/// A load's frame clears the outgoing game's events (`poll_persistence`) before the ordered plant
+/// is selected from them, so a load never selects a plant in the game it replaces: the two run in
+/// a fixed order, not one Bevy is free to pick.
+#[test]
+fn a_load_frame_clears_the_events_before_an_ordered_plant_is_selected() {
+    const POLL: &str = "::poll_persistence";
+    const SELECT: &str = "::select_ordered_plant";
+    let logs = TempDir::new().unwrap();
+    let app = hud_app(logs.path());
+    let update = app
+        .world()
+        .resource::<Schedules>()
+        .get(Update)
+        .expect("the Update schedule");
+    // In the order the executor runs them.
+    let systems: Vec<_> = update
+        .systems()
+        .expect("the schedule has run")
+        .map(|(key, system)| (key, system.name().to_string()))
+        .collect();
+    let at = |name: &str| {
+        systems
+            .iter()
+            .position(|(_, system)| system.contains(name))
+            .unwrap_or_else(|| panic!("{name} runs in Update"))
+    };
+    assert!(at(POLL) < at(SELECT));
+    let is = |key, name: &str| systems.iter().any(|(k, s)| *k == key && s.contains(name));
+    let unordered = update
+        .graph()
+        .conflicting_systems()
+        .iter()
+        .any(|&(a, b, _)| (is(a, POLL) && is(b, SELECT)) || (is(a, SELECT) && is(b, POLL)));
+    assert!(!unordered, "Bevy may run them in either order");
+}

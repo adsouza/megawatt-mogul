@@ -99,10 +99,14 @@ impl SimSpeed {
     }
 }
 
-/// The systems that run player commands through the game.
+/// The systems that run player commands through the game, and the save worker's poll.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SimSet {
     Apply,
+    /// After `Apply`: takes the save worker's results. A finished load replaces the session and
+    /// clears the outgoing game's messages, so a system that reads them (and could act on the old
+    /// game) orders after this.
+    Persist,
 }
 
 impl From<DayPhase> for PhaseState {
@@ -144,7 +148,7 @@ impl Plugin for SimulationPlugin {
             .add_systems(
                 Update,
                 (
-                    persistence::poll_persistence,
+                    persistence::poll_persistence.in_set(SimSet::Persist),
                     persistence::resume_cancel_speed,
                 )
                     .chain()
