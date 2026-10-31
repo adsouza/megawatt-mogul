@@ -1704,6 +1704,41 @@ fn a_spotlight_clock_pauses_while_a_prompt_is_open() {
     assert!(played(&app).contains(&TutorialStep::Cash));
 }
 
+/// The same while the save screen is open over it (the automatic save-failure screen among them):
+/// the overlay doesn't run then, and the time it was away doesn't count when it is back.
+#[test]
+fn a_spotlight_clock_pauses_while_the_save_screen_is_open() {
+    use game::sim::SaveScreen;
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    at_step(&mut app, TutorialStep::Cash);
+    let pass = EguiPass::attach(&mut app);
+    let (width, height) = MIN;
+    pass.settled(&mut app, width, height);
+    advance_real(&mut app, 2.0);
+    let widgets = pass.run(&mut app, width, height);
+    assert!(crate::support::egui_harness::has(&widgets, CASH_NOTE));
+    app.world_mut().resource_mut::<Persistence>().screen = SaveScreen::Automatic;
+    for _ in 0..10 {
+        advance_real(&mut app, 1.0);
+        pass.run(&mut app, width, height);
+    }
+    assert!(!played(&app).contains(&TutorialStep::Cash));
+    app.world_mut().resource_mut::<Persistence>().screen = SaveScreen::Closed;
+    let widgets = pass.run(&mut app, width, height);
+    assert!(
+        crate::support::egui_harness::has(&widgets, CASH_NOTE),
+        "still showing"
+    );
+    assert!(!played(&app).contains(&TutorialStep::Cash));
+    advance_real(&mut app, 2.0);
+    pass.run(&mut app, width, height);
+    assert!(!played(&app).contains(&TutorialStep::Cash));
+    advance_real(&mut app, 0.7);
+    pass.run(&mut app, width, height);
+    assert!(played(&app).contains(&TutorialStep::Cash));
+}
+
 #[test]
 fn crawl_has_full_accessible_name_and_ends_on_click() {
     let logs = TempDir::new().unwrap();

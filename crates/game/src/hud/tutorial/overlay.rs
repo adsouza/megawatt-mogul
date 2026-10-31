@@ -10,7 +10,8 @@
 //!
 //! A spotlight or the crawl waits while a prompt is open (prompts come first) or, for a
 //! spotlight, while its anchor isn't drawn; its clock counts only the passes it is drawn on, so
-//! one hidden part-way pauses and picks up where it left off. A spotlight whose anchor sits in a
+//! one hidden part-way (or under the save screen, when the overlay doesn't run) pauses and picks
+//! up where it left off. A spotlight whose anchor sits in a
 //! scroll area (the battery card, the line section, the Review's Construction row) first asks for
 //! it to be scrolled into view, so it never waits on the player to find it.
 //!
@@ -28,6 +29,7 @@
 //! map's top.
 
 use application::Game;
+use bevy::diagnostic::FrameCount;
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 
@@ -126,15 +128,17 @@ pub fn spotlight_opacity(shown_for: f32) -> f32 {
     }
 }
 
-/// How long the active step's crawl or spotlight has been shown, by the real clock: only the
-/// passes it was drawn on count, so while it waits (for its anchor or a prompt) its clock stands.
+/// How long the active step's crawl or spotlight has been shown, by the real clock: only the time
+/// between two passes it was drawn on, one frame apart, counts. So while it waits (for its anchor
+/// or a prompt) its clock stands, and so it does while the overlay doesn't run at all (the save
+/// screen is open over it).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Shown {
     step: TutorialStep,
     /// Seconds shown so far.
     shown_for: f64,
-    /// When it was drawn on the pass before, if it was.
-    last: Option<f64>,
+    /// When, and on which frame, it was last drawn, if it was on the pass before.
+    last: Option<(f64, u32)>,
     /// The selection under which the step's anchor was last asked to scroll into view, if it was.
     revealed: Option<Selection>,
 }
@@ -149,17 +153,20 @@ impl Shown {
         }
     }
 
-    /// Moves the clock to `now`, a pass on which the step is `showing` or not: the time since the
-    /// pass before counts only if both showed it.
-    fn tick(&mut self, now: f64, showing: bool) {
+    /// Moves the clock to `now`, a pass in `frame` on which the step is `showing` or not: the time
+    /// since the pass before counts only if both showed it and that pass was in this frame or the
+    /// one before (frames the overlay was skipped in don't count).
+    fn tick(&mut self, now: f64, frame: u32, showing: bool) {
         if !showing {
             self.last = None;
             return;
         }
-        if let Some(last) = self.last {
+        if let Some((last, last_frame)) = self.last
+            && frame.wrapping_sub(last_frame) <= 1
+        {
             self.shown_for += (now - last).max(0.0);
         }
-        self.last = Some(now);
+        self.last = Some((now, frame));
     }
 
     /// Whether it has been shown at all.
@@ -173,6 +180,7 @@ impl Shown {
 pub(crate) fn tutorial_overlay(
     mut contexts: EguiContexts,
     time: Res<Time<Real>>,
+    frame: Res<FrameCount>,
     l10n: Res<Localizer>,
     mut shown: Local<Option<Shown>>,
     mut sink: ActionSink,
@@ -219,7 +227,7 @@ pub(crate) fn tutorial_overlay(
         }
         clock.revealed = Some(selection);
     }
-    clock.tick(now, ready);
+    clock.tick(now, frame.0, ready);
     let shown_for = clock.shown_for as f32;
     let view = tutorial_view(def, state, game, &l10n, shown_for);
     let escape = !prompt_open && !egui::Popup::is_any_open(&ctx);
@@ -737,29 +745,52 @@ mod tests {
     fn the_clock_counts_only_passes_that_show_the_step() {
         let mut clock = Shown::new(TutorialStep::Cash);
         // Waiting to be shown: no time passes, however long.
-        clock.tick(0.0, false);
-        clock.tick(5.0, false);
+        clock.tick(0.0, 0, false);
+        clock.tick(5.0, 1, false);
         assert!(!clock.started());
         assert_eq!(clock.shown_for, 0.0);
-        clock.tick(10.0, true);
+        clock.tick(10.0, 2, true);
         assert!(clock.started());
         assert_eq!(clock.shown_for, 0.0);
-        clock.tick(12.0, true);
+        clock.tick(12.0, 3, true);
         assert_eq!(clock.shown_for, 2.0);
         // Hidden for ten seconds of passes.
         for second in 13..=22 {
-            clock.tick(f64::from(second), false);
+            clock.tick(f64::from(second), second - 9, false);
         }
         assert_eq!(clock.shown_for, 2.0);
         assert!(clock.started());
         // Shown again: the gap doesn't count, the passes after it do.
-        clock.tick(23.0, true);
+        clock.tick(23.0, 14, true);
         assert_eq!(clock.shown_for, 2.0);
-        clock.tick(25.5, true);
+        clock.tick(25.5, 15, true);
         assert_eq!(clock.shown_for, 4.5);
         assert!(spotlight_opacity(clock.shown_for as f32) > 0.0);
-        clock.tick(25.7, true);
+        clock.tick(25.7, 16, true);
         assert!(clock.shown_for as f32 >= SPOTLIGHT_SECONDS);
+    }
+
+    /// Frames the overlay didn't run in (the save screen open over it) don't count either: only
+    /// the time from a pass one frame after the last shown one does, across the frame counter's
+    /// wrap too; and two passes in one frame count the time between them.
+    #[test]
+    fn the_clock_skips_frames_the_overlay_did_not_run_in() {
+        let mut clock = Shown::new(TutorialStep::Cash);
+        clock.tick(0.0, 10, true);
+        clock.tick(1.0, 11, true);
+        assert_eq!(clock.shown_for, 1.0);
+        // Skipped for frames 12..=20 and ten seconds.
+        clock.tick(11.0, 21, true);
+        assert_eq!(clock.shown_for, 1.0);
+        assert!(clock.started());
+        clock.tick(11.5, 22, true);
+        assert_eq!(clock.shown_for, 1.5);
+        clock.tick(11.75, 22, true);
+        assert_eq!(clock.shown_for, 1.75);
+        let mut clock = Shown::new(TutorialStep::Cash);
+        clock.tick(0.0, u32::MAX, true);
+        clock.tick(0.5, 0, true);
+        assert_eq!(clock.shown_for, 0.5);
     }
 
     #[test]
