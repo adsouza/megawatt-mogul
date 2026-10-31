@@ -70,7 +70,7 @@ pub use self::action::{
 };
 pub use self::build::{
     BUILD_PANEL_WIDTH, BuildModel, LinePreview, LineSection, LineTarget, PlantRow, PlantSection,
-    battery_line_button, build_model, draw_build,
+    build_model, draw_build,
 };
 pub use self::city_card::{CityCardModel, MOST_CITY_STATS, city_card_model, draw_city_card};
 pub use self::commitment::{
