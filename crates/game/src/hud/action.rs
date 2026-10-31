@@ -411,7 +411,11 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             action,
             UiAction::SelectIsland(_) | UiAction::InspectForecast { .. }
         );
-        sink.ui.apply(&action);
+        // The tutorial's actions write `UiState` themselves, and only when they change it: the
+        // overlay sends one on every pass, which mustn't mark the state changed when idle.
+        if !matches!(action, UiAction::Tutorial(_)) {
+            sink.ui.apply(&action);
+        }
         match action {
             UiAction::ApplyHvdcRange(link) => {
                 if !sink.persistence.frozen()
@@ -691,7 +695,8 @@ fn tutorial(sink: &mut ActionSink, action: TutorialAction) {
         return;
     }
     if let TutorialAction::Cover(cover) = action {
-        // Written only when it changes: the overlay says it on every pass.
+        // Written only when it changes: the overlay says it on every pass, and `dispatch` leaves
+        // `UiState` untouched for a tutorial action, so an idle pass changes nothing.
         if sink.ui.tutorial_cover != cover {
             sink.ui.tutorial_cover = cover;
         }

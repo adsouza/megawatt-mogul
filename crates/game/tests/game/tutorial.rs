@@ -498,6 +498,29 @@ fn the_overlay_covers_the_screen_only_while_the_crawl_or_a_spotlight_is_up() {
     assert!(!ui_state(&app).tutorial_cover);
 }
 
+/// The overlay says whether it covers the screen on every pass, but an idle pass (nothing shown
+/// changes, with or without a run) leaves `UiState` unchanged for Bevy's change detection.
+#[test]
+fn idle_passes_leave_the_ui_state_unchanged() {
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    let pass = EguiPass::attach(&mut app);
+    let changed = |app: &App| app.world().resource_ref::<UiState>().last_changed();
+    for run in [true, false] {
+        if run {
+            at_step(&mut app, TutorialStep::PickSite);
+        } else {
+            app.world_mut().resource_mut::<TutorialRun>().0 = None;
+        }
+        pass.settled(&mut app, MIN.0, MIN.1);
+        let before = changed(&app);
+        for _ in 0..5 {
+            pass.run(&mut app, MIN.0, MIN.1);
+        }
+        assert_eq!(changed(&app), before, "run: {run}");
+    }
+}
+
 /// Without a run the tutorial's actions change nothing; only `RevealDone` (and `StepChanged`)
 /// still clear a reveal.
 #[test]
