@@ -28,8 +28,8 @@ pub enum TutorialAnchor {
     BatteryBuildButton,
     LineSection,
     /// The build menu's button that takes a line on from a tutorial battery: the first *Line
-    /// from* button that starts at one, or, once a line starts at one, the first target's *Build
-    /// line* button.
+    /// from* button that starts at one, or, once a line starts at one, the first enabled *Build
+    /// line* button among its targets.
     BatteryLineButton,
     StartDay,
     SpeedControls,

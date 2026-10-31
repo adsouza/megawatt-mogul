@@ -123,8 +123,9 @@ pub struct BuildModel {
 }
 
 /// Which of `line`'s buttons takes a line on from one of `batteries` (the tutorial's): the first
-/// start at a battery's node; or, once `selection` starts the line at one, the first target. The
-/// tutorial's connect instruction points at it.
+/// start at a battery's node; or, once `selection` starts the line at one, the first target whose
+/// *Build line* is enabled (none if no target's is). The tutorial's connect instruction points at
+/// it.
 pub fn battery_line_button(
     line: &LineSection,
     selection: Selection,
@@ -136,8 +137,8 @@ pub fn battery_line_button(
                 if batteries.contains(&node))
         }),
         LineSection::End { targets, .. } => match selection {
-            Selection::LineFrom(node) if batteries.contains(&node) && !targets.is_empty() => {
-                Some(0)
+            Selection::LineFrom(node) if batteries.contains(&node) => {
+                targets.iter().position(|target| target.build.enabled)
             }
             _ => None,
         },
@@ -1185,6 +1186,39 @@ mod tests {
         let model = build_model(&game, &l10n, from_other, &usd_style()).unwrap();
         assert_eq!(
             battery_line_button(&model.line, from_other, &batteries),
+            None
+        );
+    }
+
+    /// Choosing the other end, the instruction points at the first target whose *Build line*
+    /// can be clicked, and at nothing when none can.
+    #[test]
+    fn the_battery_line_button_skips_disabled_targets() {
+        let l10n = shipped_l10n();
+        let game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let battery = game.session().plant_views()[1].node;
+        let batteries = BTreeSet::from([battery]);
+        let from_battery = Selection::LineFrom(battery);
+        let mut model = build_model(&game, &l10n, from_battery, &usd_style()).unwrap();
+        let LineSection::End { targets, .. } = &mut model.line else {
+            panic!("choosing the other end");
+        };
+        assert!(targets.len() >= 3, "the test needs three targets");
+        targets[0].build.enabled = false;
+        targets[1].build.enabled = false;
+        targets[2].build.enabled = true;
+        assert_eq!(
+            battery_line_button(&model.line, from_battery, &batteries),
+            Some(2)
+        );
+        let LineSection::End { targets, .. } = &mut model.line else {
+            unreachable!();
+        };
+        for target in targets.iter_mut() {
+            target.build.enabled = false;
+        }
+        assert_eq!(
+            battery_line_button(&model.line, from_battery, &batteries),
             None
         );
     }
