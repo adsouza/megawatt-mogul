@@ -3,7 +3,8 @@
 //!
 //! Space switches between `Paused` and the last speed the day ran at, [`LastSpeed`], which
 //! [`dispatch`] records whenever it sets a running speed. It is ignored while egui is taking the
-//! keyboard (a focused text field, an open popup) and while a prompt or the game-over modal is up.
+//! keyboard (a focused text field, an open popup), while a prompt or the game-over modal is up,
+//! and while the tutorial's crawl or a spotlight covers the screen.
 
 use application::Game;
 use bevy::prelude::*;
@@ -117,6 +118,7 @@ pub(super) fn pause_on_space(
     }
     let blocked = egui.is_some_and(|egui| egui.wants_any_keyboard_input())
         || sink.open_prompt().0.is_some()
+        || sink.ui_state().tutorial_cover
         || session.0.session().status() != SessionStatus::Active;
     if let Some(action) = space_action(sink.speed(), sink.last_speed(), blocked) {
         dispatch([action], &mut sink);

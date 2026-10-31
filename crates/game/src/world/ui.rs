@@ -348,7 +348,9 @@ pub fn finish_surface(
             });
             actions.push(UiAction::World(action));
         }
-        if !ctx.egui_wants_keyboard_input() {
+        // The tutorial's crawl or a spotlight covers the map (and owns the pointer), so these
+        // wait for it as well; the explicit check keeps that true whatever the overlay's shape.
+        if !ctx.egui_wants_keyboard_input() && !sink.ui_state().tutorial_cover {
             if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::R)) {
                 actions.push(UiAction::World(WorldAction::Reset));
             }

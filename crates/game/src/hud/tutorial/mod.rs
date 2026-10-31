@@ -118,11 +118,13 @@ fn clear_run(mut run: ResMut<TutorialRun>, mut ui: ResMut<UiState>) {
     end_run(&mut run, &mut ui);
 }
 
-/// Drops the run and any reveal it asked for that the build menu or Review hasn't finished.
+/// Drops the run, any reveal it asked for that the build menu or Review hasn't finished, and its
+/// cover over the keyboard shortcuts.
 fn end_run(run: &mut TutorialRun, ui: &mut UiState) {
     run.0 = None;
     ui.reveal_plant_card = None;
     ui.reveal_anchor = None;
+    ui.tutorial_cover = false;
 }
 
 #[cfg(test)]
@@ -131,19 +133,21 @@ mod tests {
 
     use super::*;
 
-    /// Clearing the run, on its own, drops the reveals it asked for.
+    /// Clearing the run, on its own, drops the reveals it asked for and its cover.
     #[test]
-    fn clearing_the_run_drops_its_pending_reveals() {
+    fn clearing_the_run_drops_its_pending_reveals_and_cover() {
         let mut world = World::new();
         world.init_resource::<TutorialRun>();
         world.insert_resource(UiState {
             reveal_plant_card: Some(domain::region::PlantKind::Battery),
             reveal_anchor: Some(TutorialAnchor::ReviewConstruction),
+            tutorial_cover: true,
             ..Default::default()
         });
         world.run_system_once(clear_run).unwrap();
         let ui = world.resource::<UiState>();
         assert_eq!(ui.reveal_plant_card, None);
         assert_eq!(ui.reveal_anchor, None);
+        assert!(!ui.tutorial_cover);
     }
 }

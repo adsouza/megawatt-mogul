@@ -99,6 +99,9 @@ pub struct UiState {
     /// Another anchor in a scroll area (the build menu's line section, the Review's Construction
     /// row) that the tutorial asked its panel to scroll into view, until it has.
     pub reveal_anchor: Option<super::tutorial::TutorialAnchor>,
+    /// Whether the tutorial's crawl or a spotlight covered the screen on the last egui pass. It
+    /// takes every click there, so the keyboard shortcuts (Space, the map's R and O) wait too.
+    pub tutorial_cover: bool,
 }
 
 impl UiState {
@@ -109,8 +112,8 @@ impl UiState {
             .map(|draft| draft.hours)
     }
 
-    /// Takes in one action. The only writer of this state but for the tutorial's reveal, which
-    /// `dispatch` writes.
+    /// Takes in one action. The only writer of this state but for the tutorial's reveal and
+    /// cover, which `dispatch` writes.
     pub fn apply(&mut self, action: &UiAction) {
         match action {
             UiAction::Select(super::Selection::HvdcStart | super::Selection::HvdcFrom(_)) => {

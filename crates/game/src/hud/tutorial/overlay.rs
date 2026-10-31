@@ -14,6 +14,12 @@
 //! scroll area (the battery card, the line section, the Review's Construction row) first asks for
 //! it to be scrolled into view, so it never waits on the player to find it.
 //!
+//! While the crawl or a spotlight is up it is the active layer: it takes every click, Escape
+//! goes to it rather than to a window under it (it is egui's top modal layer), and the keyboard
+//! shortcuts wait (each pass it tells `dispatch` whether it covers the screen,
+//! [`UiState::tutorial_cover`](crate::hud::UiState::tutorial_cover), which Space and the map's R
+//! and O read through the `ActionSink`).
+//!
 //! An instruction is an arrow callout: its text on a plain backing, with an arrow from the text at
 //! the control it asks for (or, for the map, down into the map from inside its top edge). It never
 //! waits and never blocks input, not even on its own text; while a prompt is open it isn't drawn,
@@ -162,7 +168,8 @@ impl Shown {
     }
 }
 
-/// Draws the active tutorial step over the HUD and hands what it asks for to [`dispatch`].
+/// Draws the active tutorial step over the HUD and hands what it asks for to [`dispatch`], with
+/// whether the crawl or a spotlight now covers the screen.
 pub(crate) fn tutorial_overlay(
     mut contexts: EguiContexts,
     time: Res<Time<Real>>,
@@ -172,12 +179,15 @@ pub(crate) fn tutorial_overlay(
 ) -> Result {
     let ctx = contexts.ctx_mut()?.clone();
     let now = time.elapsed_secs_f64();
+    let uncover = [UiAction::Tutorial(TutorialAction::Cover(false))];
     let (Some(state), Some(game)) = (sink.tutorial(), sink.game()) else {
         *shown = None;
+        dispatch(uncover, &mut sink);
         return Ok(());
     };
     let Some(def) = active_step(state, game, sink.selection()) else {
         *shown = None;
+        dispatch(uncover, &mut sink);
         return Ok(());
     };
     let mut clock = match *shown {
@@ -213,6 +223,9 @@ pub(crate) fn tutorial_overlay(
     let shown_for = clock.shown_for as f32;
     let view = tutorial_view(def, state, game, &l10n, shown_for);
     let escape = !prompt_open && !egui::Popup::is_any_open(&ctx);
+    // Whether the crawl or a spotlight is drawn and stays up: it takes every click, so the
+    // keyboard shortcuts wait while it does.
+    let mut cover = false;
     match view {
         TutorialView::Move(step) => actions.push(UiAction::Tutorial(TutorialAction::Play(step))),
         TutorialView::Crawl { .. } | TutorialView::Spotlight { .. } if !ready => {}
@@ -220,7 +233,9 @@ pub(crate) fn tutorial_overlay(
             if progress >= 1.0 {
                 actions.push(UiAction::Tutorial(TutorialAction::Dismiss(def.step)));
             } else {
-                actions.extend(draw_crawl(&ctx, def.step, &text, progress, escape));
+                let ended = draw_crawl(&ctx, def.step, &text, progress, escape);
+                cover = ended.is_empty();
+                actions.extend(ended);
             }
         }
         TutorialView::Spotlight {
@@ -232,7 +247,9 @@ pub(crate) fn tutorial_overlay(
             if shown_for >= SPOTLIGHT_SECONDS {
                 actions.push(UiAction::Tutorial(TutorialAction::Dismiss(step)));
             } else if let Some(anchor) = anchor {
-                actions.extend(draw_spotlight(&ctx, step, anchor, &text, opacity, escape));
+                let ended = draw_spotlight(&ctx, step, anchor, &text, opacity, escape);
+                cover = ended.is_empty();
+                actions.extend(ended);
             }
         }
         // Prompts come first: an instruction steps aside while one is open.
@@ -256,6 +273,7 @@ pub(crate) fn tutorial_overlay(
         }
     }
     *shown = Some(clock);
+    actions.push(UiAction::Tutorial(TutorialAction::Cover(cover)));
     dispatch(actions, &mut sink);
     Ok(())
 }

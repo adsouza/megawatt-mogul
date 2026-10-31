@@ -134,6 +134,9 @@ pub enum TutorialAction {
     Reveal(TutorialAnchor),
     /// A panel has scrolled the revealed anchor into view.
     RevealDone,
+    /// Whether the crawl or a spotlight covers the screen this pass, which the overlay says on
+    /// every pass it runs: while one does, the keyboard shortcuts wait.
+    Cover(bool),
 }
 
 /// The screens outside a game that the HUD can move between by itself.
@@ -675,6 +678,13 @@ fn tutorial(sink: &mut ActionSink, action: TutorialAction) {
         sink.ui.reveal_anchor = None;
         return;
     }
+    if let TutorialAction::Cover(cover) = action {
+        // Written only when it changes: the overlay says it on every pass.
+        if sink.ui.tutorial_cover != cover {
+            sink.ui.tutorial_cover = cover;
+        }
+        return;
+    }
     let Some(state) = sink.tutorial.0.as_mut() else {
         return;
     };
@@ -696,7 +706,7 @@ fn tutorial(sink: &mut ActionSink, action: TutorialAction) {
             }
             return;
         }
-        TutorialAction::RevealDone => return,
+        TutorialAction::RevealDone | TutorialAction::Cover(_) => return,
     };
     let instruction = TUTORIAL_STEPS
         .iter()

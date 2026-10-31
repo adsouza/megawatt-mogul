@@ -413,6 +413,65 @@ fn reveal_asks_the_build_menu_for_a_scrolling_anchor() {
     assert_eq!(ui_state(&app).reveal_anchor, None);
 }
 
+/// `Cover` sets whether the crawl or a spotlight covers the screen, with or without a run (the
+/// overlay clears it on a pass with nothing to show), and plays nothing.
+#[test]
+fn cover_sets_the_tutorial_cover_and_plays_nothing() {
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    assert!(!ui_state(&app).tutorial_cover);
+    tutorial(&mut app, [TutorialAction::Cover(true)]);
+    assert!(ui_state(&app).tutorial_cover);
+    assert!(played(&app).is_empty());
+    tutorial(&mut app, [TutorialAction::Cover(false)]);
+    assert!(!ui_state(&app).tutorial_cover);
+
+    tutorial(&mut app, [TutorialAction::Cover(true)]);
+    app.world_mut().resource_mut::<TutorialRun>().0 = None;
+    tutorial(&mut app, [TutorialAction::Cover(false)]);
+    assert!(!ui_state(&app).tutorial_cover);
+}
+
+/// The overlay says on each pass whether it covers the screen: while the crawl or a spotlight is
+/// up, not under an instruction, and not once the run has ended.
+#[test]
+fn the_overlay_covers_the_screen_only_while_the_crawl_or_a_spotlight_is_up() {
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    let pass = EguiPass::attach(&mut app);
+    for (step, cover) in [
+        (TutorialStep::Crawl, true),
+        (TutorialStep::Cash, true),
+        (TutorialStep::PickSite, false),
+    ] {
+        at_step(&mut app, step);
+        pass.settled(&mut app, MIN.0, MIN.1);
+        assert_eq!(ui_state(&app).tutorial_cover, cover, "{step:?}");
+    }
+    // Dismissed: the pass that ends it no longer covers.
+    at_step(&mut app, TutorialStep::Cash);
+    pass.settled(&mut app, MIN.0, MIN.1);
+    press_escape(&pass, &mut app, MIN);
+    assert!(played(&app).contains(&TutorialStep::Cash));
+    assert!(!ui_state(&app).tutorial_cover);
+    // A spotlight waiting behind a prompt doesn't cover.
+    at_step(&mut app, TutorialStep::Cash);
+    dispatch_in(
+        &mut app,
+        vec![UiAction::Prompt(Some(game::hud::Prompt::LeaveGame))],
+    );
+    pass.settled(&mut app, MIN.0, MIN.1);
+    assert!(!ui_state(&app).tutorial_cover);
+    dispatch_in(&mut app, vec![UiAction::Prompt(None)]);
+    pass.settled(&mut app, MIN.0, MIN.1);
+    assert!(ui_state(&app).tutorial_cover);
+    // The run ends with the cover up: ending it clears the cover.
+    app.world_mut().resource_mut::<SessionGeneration>().0 += 1;
+    update_n(&mut app, 1);
+    assert!(run(&app).is_none());
+    assert!(!ui_state(&app).tutorial_cover);
+}
+
 /// Without a run the tutorial's actions change nothing; only `RevealDone` still clears a reveal.
 #[test]
 fn without_a_run_tutorial_actions_do_nothing() {
@@ -443,12 +502,13 @@ fn without_a_run_tutorial_actions_do_nothing() {
 
 fn any_tutorial_action() -> impl proptest::strategy::Strategy<Value = TutorialAction> {
     use proptest::strategy::Strategy;
-    (0..TUTORIAL_STEPS.len(), 0u8..4).prop_map(|(index, which)| {
+    (0..TUTORIAL_STEPS.len(), 0u8..5).prop_map(|(index, which)| {
         let step = TUTORIAL_STEPS[index].step;
         match which {
             0 => TutorialAction::Play(step),
             1 => TutorialAction::Dismiss(step),
             2 => TutorialAction::RevealDone,
+            3 => TutorialAction::Cover(index % 2 == 0),
             _ => TutorialAction::Reveal(ANCHORS[index % ANCHORS.len()]),
         }
     })
@@ -2138,4 +2198,120 @@ fn frame_grid_zooms_in_on_single_area_starter_grids() {
             "{region}: {ndc:?}"
         );
     }
+}
+
+/// The orbit's zoom and whether the map overlay is on.
+fn camera_keys_state(app: &App) -> (f32, bool) {
+    let controls = app.world().resource::<WorldControls>();
+    (controls.orbit.zoom, controls.overlay)
+}
+
+/// R and O pressed with the pointer over the map's centre, then released: two real frames.
+fn press_map_keys(app: &mut App, pass: &EguiPass) {
+    let centre = app
+        .world()
+        .resource::<game::world::MapSurface>()
+        .rect
+        .expect("the map is drawn")
+        .center();
+    app.update();
+    pass.run_with(
+        app,
+        1280.0,
+        720.0,
+        vec![
+            egui::Event::PointerMoved(centre),
+            key(egui::Key::R, true),
+            key(egui::Key::O, true),
+        ],
+    );
+    app.update();
+    pass.run_with(
+        app,
+        1280.0,
+        720.0,
+        vec![key(egui::Key::R, false), key(egui::Key::O, false)],
+    );
+}
+
+/// The map's camera keys, R (reset the view) and O (the overlay), wait while the crawl or a
+/// spotlight covers the screen, and work again once it has gone.
+#[test]
+fn map_keys_wait_under_the_crawl_or_a_spotlight() {
+    for (step, note) in [
+        (TutorialStep::Crawl, None),
+        (TutorialStep::Cash, Some(CASH_NOTE)),
+    ] {
+        let logs = TempDir::new().unwrap();
+        let (mut app, pass) = world_view_app(&logs);
+        for _ in 0..2 {
+            frame(&mut app, &pass);
+        }
+        app.world_mut().write_message(game::sim::NewGameRequest {
+            region: domain::ids::RegionId::new("western_interconnection"),
+            seed: 7,
+        });
+        for _ in 0..6 {
+            frame(&mut app, &pass);
+        }
+        at_step(&mut app, step);
+        // A view R would visibly reset.
+        app.world_mut().resource_mut::<WorldControls>().orbit.zoom = 0.5;
+        app.update();
+        let widgets = pass.settled(&mut app, 1280.0, 720.0);
+        if let Some(note) = note {
+            assert!(
+                crate::support::egui_harness::has(&widgets, note),
+                "{step:?}"
+            );
+        }
+        let before = camera_keys_state(&app);
+        press_map_keys(&mut app, &pass);
+        assert!(!played(&app).contains(&step), "{step:?} is still showing");
+        assert_eq!(camera_keys_state(&app), before, "{step:?}");
+
+        // With an instruction instead, which never blocks input, both keys act.
+        at_step(&mut app, TutorialStep::PickSite);
+        frame(&mut app, &pass);
+        frame(&mut app, &pass);
+        press_map_keys(&mut app, &pass);
+        assert_eq!(camera_keys_state(&app), (1.0, !before.1), "{step:?}");
+    }
+}
+
+/// Space waits while the Operating spotlight covers the speed controls, and works once it has
+/// gone. (The crawl shows only in Planning, where Space does nothing.)
+#[test]
+fn space_waits_under_the_speed_spotlight() {
+    use game::sim::SimSpeed;
+    let speed = |app: &App| *app.world().resource::<SimSpeed>();
+    let press_space = |app: &mut App| {
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Space);
+        app.update();
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.release(KeyCode::Space);
+        keys.clear();
+    };
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    app.init_resource::<ButtonInput<KeyCode>>();
+    at_step(&mut app, TutorialStep::Speed);
+    execute(&mut app, Command::BeginOperating);
+    assert_eq!(phase(&app), DayPhase::Operating);
+    let pass = EguiPass::attach(&mut app);
+    let widgets = pass.settled(&mut app, MIN.0, MIN.1);
+    let note = crate::support::shipped_l10n().text("tutorial-speed");
+    assert!(crate::support::egui_harness::has(&widgets, &note));
+    let before = speed(&app);
+    press_space(&mut app);
+    pass.run(&mut app, MIN.0, MIN.1);
+    assert_eq!(speed(&app), before, "Space under the spotlight");
+    assert!(!played(&app).contains(&TutorialStep::Speed));
+
+    tutorial(&mut app, [TutorialAction::Dismiss(TutorialStep::Speed)]);
+    pass.settled(&mut app, MIN.0, MIN.1);
+    press_space(&mut app);
+    assert_ne!(speed(&app), before, "Space once the spotlight has gone");
 }
