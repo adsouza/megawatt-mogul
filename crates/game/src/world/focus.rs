@@ -9,7 +9,22 @@ pub(super) fn zone_bounds(
     zone: NodeId,
     scale: f32,
 ) -> Option<(Vec3, Vec3)> {
-    let nodes = session.power().island_nodes().get(&zone)?;
+    let computed;
+    let nodes = match session.power().island_nodes().get(&zone) {
+        Some(nodes) => nodes,
+        // A single-area region has no island map until its first topology recompute (at month
+        // close), so a new game's grid is the energised AC component that holds `zone`.
+        None if session.power().island_nodes().is_empty() => {
+            computed = session
+                .power()
+                .network()
+                .islands()
+                .into_values()
+                .find(|nodes| nodes.contains(&zone))?;
+            &computed
+        }
+        None => return None,
+    };
     let mut min = Vec3::splat(f32::INFINITY);
     let mut max = Vec3::splat(f32::NEG_INFINITY);
     let mut include = |low: Vec3, high: Vec3| {
@@ -77,5 +92,39 @@ mod tests {
             "the dormant zone is one local bus"
         );
         assert!(zone_bounds(&model, session, NodeId(u32::MAX), 1.0).is_none());
+    }
+
+    /// A single-area region has no island map until its first topology recompute (month close),
+    /// so a new game's home grid comes from the network's energised AC components.
+    #[test]
+    fn a_new_single_area_game_frames_the_starter_grid() {
+        for region in ["western_interconnection", "eastern_interconnection"] {
+            let game = crate::hud::test_support::shipped_game(
+                region,
+                Box::new(application::InMemoryCommandLog::default()),
+            );
+            let session = game.session();
+            assert!(session.power().island_nodes().is_empty(), "{region}");
+            let model = WorldModel::of(&game);
+            let anchor = session.anchor_node();
+            let (low, high) = zone_bounds(&model, session, anchor, 1.0)
+                .unwrap_or_else(|| panic!("{region}: the starter grid has bounds"));
+            let home = session
+                .power()
+                .network()
+                .islands()
+                .into_values()
+                .find(|nodes| nodes.contains(&anchor))
+                .unwrap();
+            assert!(home.len() > 1, "{region}");
+            for node in home {
+                let at = model.nodes[&node];
+                assert!(
+                    at.cmpge(low).all() && at.cmple(high).all(),
+                    "{region}: {node:?}"
+                );
+            }
+            assert!(zone_bounds(&model, session, NodeId(u32::MAX), 1.0).is_none());
+        }
     }
 }

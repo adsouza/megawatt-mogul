@@ -123,8 +123,10 @@ to `dispatch`.
 **Planning, first day**
 
 1. **Frame the starter grid.** On entering Planning, the camera frames the home zone's starter
-   grid (its cities, plants and lines; `world/focus.rs` `zone_bounds` already computes this for
-   the home zone).
+   grid (its cities, plants and lines; `world/focus.rs` `zone_bounds` computes it). Multi-area
+   regions have the domain's island map from the start, but single-area regions (Western,
+   Eastern, Brazil SIN, …) get it only at the first month close, so `zone_bounds` falls back to
+   the network's energised AC component that holds the anchor node.
 2. **Crawl.** The goal, in four or five short lines, roughly: *"You run a power company. Connect
    more cities to sell more electricity and make more money. But every customer you connect needs
    power, every minute. Keep supply equal to demand, or the lights go out."* Click or Escape

@@ -1209,3 +1209,113 @@ fn tutorial_on_and_off_give_identical_state() {
     assert_ne!(state_hash(on), start, "the script changed the game");
     assert_eq!(state_hash(on), state_hash(off));
 }
+
+// --- FrameGrid moves the camera (spec §4.3 step 1) ---
+
+/// A HUD app with the world view and a 1280×720 primary window, on the menus with the tutorial
+/// owed, and its egui pass. `CameraPlugin` is left out: it spawns a second primary egui context,
+/// and resolving a camera focus needs only `finish_surface`.
+fn world_view_app(logs: &TempDir) -> (App, EguiPass) {
+    let mut app = crate::support::headless_app(&crate::support::shipped_assets(), logs.path());
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+        std::time::Duration::ZERO,
+    ));
+    app.init_resource::<bevy_egui::EguiGlobalSettings>()
+        .add_plugins((game::hud::HudPlugin, game::world::WorldViewPlugin));
+    update_n(&mut app, 3);
+    app.world_mut().spawn((
+        Window {
+            resolution: (1280, 720).into(),
+            ..default()
+        },
+        bevy::window::PrimaryWindow,
+    ));
+    let pass = EguiPass::attach(&mut app);
+    set_progress(&mut app, true, true);
+    (app, pass)
+}
+
+/// A real frame: `Update`, then the egui pass, as the game runs them.
+fn frame(app: &mut App, pass: &EguiPass) {
+    app.update();
+    pass.run(app, 1280.0, 720.0);
+}
+
+/// The orbit, and where the anchor node lands on the map in normalised device coordinates.
+fn anchor_on_map(app: &App) -> (game::world::OrbitCamera, Vec3) {
+    let orbit = app.world().resource::<WorldControls>().orbit;
+    let model = app
+        .world()
+        .resource::<game::world::WorldScene>()
+        .model
+        .clone()
+        .expect("the scene is built");
+    let rect = app
+        .world()
+        .resource::<game::world::MapSurface>()
+        .rect
+        .expect("the map is drawn");
+    let anchor = app.world().resource::<Session>().0.session().anchor_node();
+    let ndc = orbit
+        .pose(model.size(), rect.aspect_ratio())
+        .project(model.nodes[&anchor])
+        .expect("the anchor is in front of the camera");
+    (orbit, ndc)
+}
+
+/// Single-area regions have no island map at game start: FrameGrid must still move the camera
+/// in to the starter grid, not only ask to, and the view must hold through the crawl and
+/// ShowForecast.
+#[test]
+fn frame_grid_zooms_in_on_single_area_starter_grids() {
+    for region in ["western_interconnection", "eastern_interconnection"] {
+        let logs = TempDir::new().unwrap();
+        let (mut app, pass) = world_view_app(&logs);
+        for _ in 0..2 {
+            frame(&mut app, &pass);
+        }
+        app.world_mut().write_message(game::sim::NewGameRequest {
+            region: domain::ids::RegionId::new(region),
+            seed: 7,
+        });
+        for _ in 0..6 {
+            frame(&mut app, &pass);
+        }
+        assert!(
+            app.world()
+                .resource::<Session>()
+                .0
+                .session()
+                .power()
+                .island_nodes()
+                .is_empty(),
+            "{region} starts without an island map"
+        );
+        assert!(played(&app).contains(&TutorialStep::FrameGrid), "{region}");
+        assert_eq!(focus(&app), None, "{region}: the focus was resolved");
+        let (framed, ndc) = anchor_on_map(&app);
+        assert!(
+            framed.zoom < 1.0,
+            "{region}: the camera moved in, {framed:?}"
+        );
+        assert!(
+            ndc.x.abs() <= 1.0 && ndc.y.abs() <= 1.0,
+            "{region}: the anchor is on the map, {ndc:?}"
+        );
+
+        tutorial(&mut app, [TutorialAction::Dismiss(TutorialStep::Crawl)]);
+        for _ in 0..4 {
+            frame(&mut app, &pass);
+        }
+        assert!(
+            played(&app).contains(&TutorialStep::ShowForecast),
+            "{region}"
+        );
+        let (after, ndc) = anchor_on_map(&app);
+        assert_eq!(after, framed, "{region}: the framing held");
+        assert!(
+            ndc.x.abs() <= 1.0 && ndc.y.abs() <= 1.0,
+            "{region}: {ndc:?}"
+        );
+    }
+}
