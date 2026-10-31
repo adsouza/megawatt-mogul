@@ -112,8 +112,9 @@ impl UiState {
             .map(|draft| draft.hours)
     }
 
-    /// Takes in one action. The only writer of this state but for the tutorial's reveal and
-    /// cover, which `dispatch` writes.
+    /// Takes in one action. The only writer of this state but for the tutorial's reveals and
+    /// cover: `dispatch` writes those for the tutorial's actions (never through `apply`), and
+    /// ending a run (`tutorial::end_run`) clears them.
     pub fn apply(&mut self, action: &UiAction) {
         match action {
             UiAction::Select(super::Selection::HvdcStart | super::Selection::HvdcFrom(_)) => {
