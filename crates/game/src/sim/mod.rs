@@ -138,6 +138,7 @@ impl Plugin for SimulationPlugin {
             .init_resource::<SessionGeneration>()
             // `main.rs` inserts the context its panic hook reads; tests get an unconnected one.
             .init_resource::<CrashContext>()
+            .configure_sets(Update, SimSet::Persist.after(SimSet::Apply))
             .add_systems(
                 Update,
                 persistence::initialise_store

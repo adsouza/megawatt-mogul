@@ -312,7 +312,12 @@ impl Plugin for HudPlugin {
                         .after(crate::l10n::load_localizer)
                         .before(toasts::collect_toasts)
                         .run_if(has_l10n),
-                    toasts::collect_toasts.after(SimSet::Apply).run_if(has_l10n),
+                    // After a load's poll, which clears the outgoing game's events and refusals:
+                    // they never become toasts over the loaded game.
+                    toasts::collect_toasts
+                        .after(SimSet::Apply)
+                        .after(SimSet::Persist)
+                        .run_if(has_l10n),
                     prompt::close_stale_prompt
                         .after(SimSet::Apply)
                         .run_if(in_game.clone()),

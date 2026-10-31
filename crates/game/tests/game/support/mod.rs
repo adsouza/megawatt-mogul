@@ -142,3 +142,37 @@ pub fn empty_start_in(app: &mut App) {
         .unwrap();
     update_n(app, 1);
 }
+
+/// `first` runs before `then` in `app`'s `Update` schedule, in a fixed order rather than one Bevy
+/// is free to pick: each is matched by a part of its system name (say `::poll_persistence`), and
+/// the schedule must have run.
+pub fn assert_runs_before(app: &App, first: &str, then: &str) {
+    let update = app
+        .world()
+        .resource::<bevy::ecs::schedule::Schedules>()
+        .get(Update)
+        .expect("the Update schedule");
+    // In the order the executor runs them.
+    let systems: Vec<_> = update
+        .systems()
+        .expect("the schedule has run")
+        .map(|(key, system)| (key, system.name().to_string()))
+        .collect();
+    let at = |name: &str| {
+        systems
+            .iter()
+            .position(|(_, system)| system.contains(name))
+            .unwrap_or_else(|| panic!("{name} runs in Update"))
+    };
+    assert!(at(first) < at(then), "{first} runs after {then}");
+    let is = |key, name: &str| systems.iter().any(|(k, s)| *k == key && s.contains(name));
+    let unordered = update
+        .graph()
+        .conflicting_systems()
+        .iter()
+        .any(|&(a, b, _)| (is(a, first) && is(b, then)) || (is(a, then) && is(b, first)));
+    assert!(
+        !unordered,
+        "Bevy may run {first} and {then} in either order"
+    );
+}

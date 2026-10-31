@@ -48,6 +48,16 @@ fn state(app: &App) -> AppState {
     *app.world().resource::<State<AppState>>().get()
 }
 
+/// A load's frame clears the outgoing game's events and refusals before they become toasts, and
+/// the save worker's poll comes after the frame's commands: fixed orders, not ones Bevy picks.
+#[test]
+fn toasts_are_collected_after_a_load_poll_which_follows_the_commands() {
+    let logs = TempDir::new().unwrap();
+    let app = hud_app(&logs);
+    crate::support::assert_runs_before(&app, "::poll_persistence", "::collect_toasts");
+    crate::support::assert_runs_before(&app, "::apply_player_commands", "::poll_persistence");
+}
+
 /// The toasts on screen now, as the overlay would draw them.
 fn toasts(app: &App) -> Vec<String> {
     let world = app.world();
