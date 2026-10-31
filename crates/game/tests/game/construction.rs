@@ -2,6 +2,7 @@
 //! and a line ordered in Planning show on the Construction tab, whose label counts them, and a
 //! click on the plant's faded marker shows its construction card, in Planning's inspector and in
 //! Operating's selected-object block, which keeps its height so the plant list doesn't move.
+//! Ordering a plant selects it, so the build menu's line section starts from the new plant.
 
 use crate::support::usd_style;
 use application::Command;
@@ -10,15 +11,16 @@ use bevy_egui::egui;
 use domain::ids::{CellCoord, LineId, NodeId, PlantId};
 use domain::region::PlantKind;
 use game::hud::{
-    ConstructionCardModel, ConstructionModel, MapLayout, PlanningTab, Selection, UiAction, UiState,
-    construction_card_model, construction_model, hit_test,
+    ConstructionCardModel, ConstructionModel, LineSection, MapLayout, PlanningTab, PlantSection,
+    Selection, UiAction, UiState, build_model, construction_card_model, construction_model,
+    hit_test,
 };
 use game::sim::Session;
 use tempfile::TempDir;
 
 use crate::hud_smoke::{EASTERN, WESTERN, dispatch_in};
 use crate::operating_side::{HINT, region, side_panel};
-use crate::support::egui_harness::{Widget, button, widget};
+use crate::support::egui_harness::{Widget, button, nth_button, widget};
 use crate::support::egui_pass::EguiPass;
 use crate::support::{hud_app, request, shipped_l10n, update_n};
 
@@ -427,4 +429,275 @@ fn in_operating_a_clicked_plant_under_construction_shows_its_card_in_the_details
         }
         assert!(side_panel(&pass).contains_rect(details), "{region_id}");
     }
+}
+
+// --- Ordering a plant selects it (user report: "the now under-construction plant should be
+// automatically selected so the 'Local AC transmission line' section offers to build a power line
+// connecting it to the grid") ---
+
+/// A window tall enough for the whole build menu, plant cards and line section, to be in view.
+const TALL: (f32, f32) = (1024.0, 3000.0);
+
+/// A free cell a `kind` plant can be ordered on; the `nth` such in row order.
+fn site(app: &App, kind: PlantKind, nth: usize) -> CellCoord {
+    let session = session(app);
+    let terrain = session.region().terrain();
+    (0..terrain.height())
+        .flat_map(|y| (0..terrain.width()).map(move |x| CellCoord { x, y }))
+        .filter(|cell| session.plant_site_check(kind, *cell).is_ok())
+        .nth(nth)
+        .unwrap_or_else(|| panic!("a site for {kind:?}"))
+}
+
+/// The plant of `kind` on `cell`.
+fn plant_at(app: &App, kind: PlantKind, cell: CellCoord) -> domain::session::PlantView {
+    session(app)
+        .plant_views()
+        .into_iter()
+        .find(|p| p.cell == cell && p.kind == kind)
+        .unwrap_or_else(|| panic!("a {kind:?} on {cell:?}"))
+}
+
+/// Clicks the Build plant button of the `kind` card for the selected `cell`, through the real egui
+/// pass and `dispatch`, then runs the frame that applies the order.
+fn click_build_plant(app: &mut App, pass: &EguiPass, kind: PlantKind, cell: CellCoord) {
+    assert_eq!(
+        selection(app),
+        Selection::Cell(cell),
+        "the cell is selected"
+    );
+    let widgets = pass.settled(app, TALL.0, TALL.1);
+    let model = build_model(
+        &app.world().resource::<Session>().0,
+        &shipped_l10n(),
+        Selection::Cell(cell),
+        &usd_style(),
+    )
+    .expect("the build menu is open in Planning");
+    let PlantSection::Kinds { rows, .. } = model.plant else {
+        panic!("the selected cell has plant cards");
+    };
+    let nth = rows
+        .iter()
+        .position(|row| row.kind == kind)
+        .expect("a card for the kind");
+    let target = nth_button(&widgets, "Build plant", nth);
+    assert!(!target.disabled, "{kind:?} can be built on {cell:?}");
+    assert!(
+        egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(TALL.0, TALL.1))
+            .contains_rect(target.rect),
+        "the button is in view"
+    );
+    pass.click_at(app, TALL.0, TALL.1, target.rect.center());
+    assert_eq!(
+        crate::hud_smoke::sent::<game::sim::PlayerCommand>(app)
+            .into_iter()
+            .map(|command| command.0)
+            .collect::<Vec<_>>(),
+        [Command::BuildPlant { kind, cell }],
+        "the click orders the plant"
+    );
+    update_n(app, 1);
+}
+
+/// The line starts the build menu offers for the current selection, from its model.
+fn line_starts(app: &App) -> Vec<game::hud::ButtonModel> {
+    let model = build_model(
+        &app.world().resource::<Session>().0,
+        &shipped_l10n(),
+        selection(app),
+        &usd_style(),
+    )
+    .expect("the build menu is open in Planning");
+    match model.line {
+        LineSection::Start { from, .. } => from,
+        other => panic!("the line section asks where the line starts: {other:?}"),
+    }
+}
+
+#[test]
+fn clicking_build_plant_selects_the_new_plant_and_offers_a_line_from_it() {
+    for region_id in [EASTERN, WESTERN] {
+        let logs = TempDir::new().unwrap();
+        let mut app = hud_app(logs.path());
+        request(&mut app, region_id);
+        let pass = EguiPass::attach(&mut app);
+        let cell = site(&app, PlantKind::Peaker, 0);
+        dispatch_in(&mut app, vec![UiAction::Select(Selection::Cell(cell))]);
+
+        click_build_plant(&mut app, &pass, PlantKind::Peaker, cell);
+
+        let plant = plant_at(&app, PlantKind::Peaker, cell);
+        assert_eq!(selection(&app), Selection::Plant(plant.id), "{region_id}");
+        // The line section starts from the new plant: its node is the first start offered...
+        let from = line_starts(&app);
+        assert_eq!(
+            from[0].action,
+            UiAction::Select(Selection::LineFrom(plant.node)),
+            "{region_id}"
+        );
+        let name = card(&app, plant.id).name;
+        assert_eq!(from[0].label, format!("Line from {name}"), "{region_id}");
+        // ...and the first drawn, while the inspector shows the plant's construction card.
+        let widgets = pass.settled(&mut app, TALL.0, TALL.1);
+        let build = panel(&pass, "build");
+        let mut drawn: Vec<&Widget> = widgets
+            .iter()
+            .filter(|w| {
+                w.role == egui::accesskit::Role::Button
+                    && w.text.starts_with("Line from ")
+                    && build.contains_rect(w.rect)
+            })
+            .collect();
+        drawn.sort_by(|a, b| a.rect.top().total_cmp(&b.rect.top()));
+        assert_eq!(drawn[0].text, from[0].label, "{region_id}");
+        let inspector = panel(&pass, "inspector");
+        label_in(&widgets, &name, inspector);
+        label_in(&widgets, "Under construction", inspector);
+    }
+}
+
+/// The selection is the game's doing, not a click on the map: a camera framing the player asked
+/// for that the map hasn't applied yet still happens.
+#[test]
+fn selecting_the_ordered_plant_leaves_a_pending_camera_framing_alone() {
+    use game::world::WorldControls;
+
+    let logs = TempDir::new().unwrap();
+    let mut app = hud_app(logs.path());
+    request(&mut app, EASTERN);
+    let pass = EguiPass::attach(&mut app);
+    let cell = site(&app, PlantKind::Peaker, 0);
+    // Choosing a zone asks the camera to frame it; the HUD app has no map to apply that, so the
+    // request stays pending.
+    dispatch_in(
+        &mut app,
+        vec![
+            UiAction::Select(Selection::Cell(cell)),
+            UiAction::SelectIsland(None),
+        ],
+    );
+    let framing = app.world().resource::<WorldControls>().focus();
+    assert!(framing.is_some(), "the test needs a pending framing");
+
+    click_build_plant(&mut app, &pass, PlantKind::Peaker, cell);
+
+    let plant = plant_at(&app, PlantKind::Peaker, cell);
+    assert_eq!(selection(&app), Selection::Plant(plant.id));
+    assert_eq!(app.world().resource::<WorldControls>().focus(), framing);
+}
+
+#[test]
+fn a_refused_order_leaves_the_cell_selected() {
+    for region_id in [EASTERN, WESTERN] {
+        let logs = TempDir::new().unwrap();
+        let mut app = hud_app(logs.path());
+        request(&mut app, region_id);
+        let cell = site(&app, PlantKind::Peaker, 0);
+        let refused = session(&app)
+            .plant_site_check(PlantKind::Hydro, cell)
+            .is_err();
+        assert!(
+            refused,
+            "{region_id}: the test needs a cell hydro can't use"
+        );
+        dispatch_in(
+            &mut app,
+            vec![
+                UiAction::Select(Selection::Cell(cell)),
+                UiAction::Command(Command::BuildPlant {
+                    kind: PlantKind::Hydro,
+                    cell,
+                }),
+            ],
+        );
+        let plants = session(&app).plant_views().len();
+        update_n(&mut app, 1);
+
+        assert_eq!(
+            crate::hud_smoke::sent::<game::sim::CommandFailed>(&app).len(),
+            1,
+            "{region_id}: the order is refused"
+        );
+        assert_eq!(session(&app).plant_views().len(), plants, "{region_id}");
+        assert_eq!(selection(&app), Selection::Cell(cell), "{region_id}");
+    }
+}
+
+#[test]
+fn ordering_several_plants_at_once_selects_the_last() {
+    let logs = TempDir::new().unwrap();
+    let mut app = hud_app(logs.path());
+    request(&mut app, EASTERN);
+    let (first, last) = (
+        site(&app, PlantKind::Peaker, 0),
+        site(&app, PlantKind::Peaker, 1),
+    );
+    dispatch_in(
+        &mut app,
+        vec![
+            UiAction::Select(Selection::Cell(first)),
+            UiAction::Command(Command::BuildPlant {
+                kind: PlantKind::Peaker,
+                cell: first,
+            }),
+            UiAction::Command(Command::BuildPlant {
+                kind: PlantKind::Peaker,
+                cell: last,
+            }),
+        ],
+    );
+    update_n(&mut app, 1);
+
+    plant_at(&app, PlantKind::Peaker, first);
+    let last = plant_at(&app, PlantKind::Peaker, last);
+    assert_eq!(selection(&app), Selection::Plant(last.id));
+}
+
+/// Only Planning has the build menu: an order whose batch also starts the day selects nothing.
+#[test]
+fn an_order_followed_by_the_start_of_the_day_selects_nothing() {
+    let logs = TempDir::new().unwrap();
+    let mut app = hud_app(logs.path());
+    request(&mut app, EASTERN);
+    let cell = site(&app, PlantKind::Peaker, 0);
+    dispatch_in(
+        &mut app,
+        vec![
+            UiAction::Select(Selection::Cell(cell)),
+            UiAction::Command(Command::BuildPlant {
+                kind: PlantKind::Peaker,
+                cell,
+            }),
+            UiAction::Command(Command::BeginOperating),
+        ],
+    );
+    update_n(&mut app, 1);
+
+    plant_at(&app, PlantKind::Peaker, cell);
+    assert_eq!(session(&app).phase(), domain::session::DayPhase::Operating);
+    assert_eq!(selection(&app), Selection::Cell(cell));
+}
+
+/// An order the game doesn't hold the plant of, like one left over from a game the player has
+/// since left, selects nothing.
+#[test]
+fn an_order_for_a_plant_the_game_does_not_hold_selects_nothing() {
+    let logs = TempDir::new().unwrap();
+    let mut app = hud_app(logs.path());
+    request(&mut app, EASTERN);
+    let cell = site(&app, PlantKind::Peaker, 0);
+    dispatch_in(&mut app, vec![UiAction::Select(Selection::Cell(cell))]);
+    let stranger = PlantId(u32::MAX);
+    assert!(session(&app).power().plant(stranger).is_none());
+    app.world_mut().write_message(game::sim::DomainEventMessage(
+        domain::events::DomainEvent::PlantConstructionStarted {
+            plant: stranger,
+            kind: PlantKind::Peaker,
+            cell,
+        },
+    ));
+    update_n(&mut app, 1);
+
+    assert_eq!(selection(&app), Selection::Cell(cell));
 }

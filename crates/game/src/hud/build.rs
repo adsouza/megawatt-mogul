@@ -6,6 +6,7 @@ use crate::l10n::format::MoneyStyle;
 use application::{Command, Game};
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
+use domain::events::DomainEvent;
 use domain::grid::distance_cells;
 use domain::ids::{CellCoord, NodeId};
 use domain::region::{PlantKind, RegionDefinition};
@@ -19,7 +20,7 @@ use super::selection::Selection;
 use super::theme::{TextTone, ValueColor, heading_color, marginal_cost_fraction};
 use super::tutorial::{TutorialAnchor, mark_visible_anchor};
 use crate::l10n::{Localize, LocalizeWith, Localizer, Names, format};
-use crate::sim::Session;
+use crate::sim::{DomainEventMessage, Session};
 
 /// The build menu's width, fixed so the map beside it never moves.
 pub const BUILD_PANEL_WIDTH: f32 = 300.0;
@@ -815,6 +816,34 @@ fn draw_line_stage(ui: &mut egui::Ui, section: &LineSection, actions: &mut Vec<U
                 });
             }
         }
+    }
+}
+
+/// Selects the plant the player just ordered, so the build menu's line section offers a line from
+/// it: the last one when a batch ordered several. A refused order sends no event, so the
+/// selection stays. It runs in every state to keep its reader drained (a load clears the events,
+/// and a new game passes through the menus), so an order never outlives its game; it selects only
+/// in Planning, where the build menu is, and only a plant the game holds.
+pub(super) fn select_ordered_plant(
+    mut events: MessageReader<DomainEventMessage>,
+    mut sink: ActionSink,
+) {
+    let Some(plant) = events
+        .read()
+        .filter_map(|DomainEventMessage(event)| match event {
+            DomainEvent::PlantConstructionStarted { plant, .. } => Some(*plant),
+            _ => None,
+        })
+        .last()
+    else {
+        return;
+    };
+    let ordered = sink.game().is_some_and(|game| {
+        game.session().phase() == DayPhase::Planning
+            && game.session().power().plant(plant).is_some()
+    });
+    if ordered {
+        dispatch([UiAction::SelectOrderedPlant(plant)], &mut sink);
     }
 }
 

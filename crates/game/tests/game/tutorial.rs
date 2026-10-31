@@ -1237,6 +1237,57 @@ fn battery_instruction_is_an_arrow_callout_beside_build_plant() {
     );
 }
 
+/// Queueing the battery selects it, so the connect steps point at a line section that starts
+/// from the battery: its node is the first start offered. The steps before stay done.
+#[test]
+fn queueing_the_battery_selects_it_and_the_line_section_starts_from_it() {
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    let pass = with_anchor_probe(&mut app);
+    let (width, height) = MIN;
+    at_battery_instruction(&mut app, &pass, MIN);
+    let cell = battery_site(&app);
+    let button = *anchors(&app)
+        .get(&TutorialAnchor::BatteryBuildButton)
+        .expect("the battery's Build plant button is in view");
+
+    pass.click_at(&mut app, width, height, button.center());
+    update_n(&mut app, 1);
+
+    let battery = app
+        .world()
+        .resource::<Session>()
+        .0
+        .session()
+        .plant_views()
+        .into_iter()
+        .find(|plant| plant.kind == PlantKind::Battery && plant.cell == cell)
+        .expect("the battery was queued");
+    let selection = *app.world().resource::<Selection>();
+    assert_eq!(selection, Selection::Plant(battery.id));
+    let game = &app.world().resource::<Session>().0;
+    let model = game::hud::build_model(
+        game,
+        &crate::support::shipped_l10n(),
+        selection,
+        &crate::support::usd_style(),
+    )
+    .expect("the build menu is open in Planning");
+    let game::hud::LineSection::Start { from, .. } = model.line else {
+        panic!("the line section asks where the line starts");
+    };
+    assert_eq!(
+        from[0].action,
+        UiAction::Select(Selection::LineFrom(battery.node))
+    );
+    let state = run(&app).expect("the tutorial runs");
+    assert_eq!(
+        game::hud::tutorial::active_step(state, game, selection).map(|def| def.step),
+        Some(TutorialStep::ConnectSpotlight),
+        "PickSite and BuildBattery stay done"
+    );
+}
+
 #[test]
 fn crawl_has_full_accessible_name_and_ends_on_click() {
     let logs = TempDir::new().unwrap();

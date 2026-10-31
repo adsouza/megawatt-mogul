@@ -319,6 +319,8 @@ impl Plugin for HudPlugin {
                     geothermal::clean_dry_selection
                         .after(SimSet::Apply)
                         .run_if(in_game.clone()),
+                    // In every state, so its reader is drained between games.
+                    build::select_ordered_plant.after(SimSet::Apply),
                     ui_state::settle_commit
                         .after(SimSet::Apply)
                         .run_if(in_game.clone()),

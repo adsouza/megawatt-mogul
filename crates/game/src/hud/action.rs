@@ -70,6 +70,11 @@ pub enum UiAction {
     ReturnToMenu,
     SetSpeed(SimSpeed),
     Select(Selection),
+    /// Select the plant the player just ordered, so the build menu's line section starts from it.
+    /// Unlike [`UiAction::Select`], which is a click on the map, it leaves the camera alone: a
+    /// framing the player asked for that the map hasn't applied yet (it waits while the map is
+    /// blocked or not drawn) still happens.
+    SelectOrderedPlant(PlantId),
     /// Select a plant from a list and bring it into view on the map.
     InspectPlant(PlantId),
     /// Colour the map by another layer.
@@ -603,6 +608,7 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
                 *sink.selection = selection;
                 sink.world.focus = None;
             }
+            UiAction::SelectOrderedPlant(plant) => *sink.selection = Selection::Plant(plant),
             UiAction::InspectPlant(plant) => {
                 *sink.selection = Selection::Plant(plant);
                 sink.world.focus = Some(crate::world::CameraFocus::Plant(plant));
