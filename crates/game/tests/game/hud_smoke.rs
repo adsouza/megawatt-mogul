@@ -142,6 +142,7 @@ fn assert_opening_controls_fit(width: f32, height: f32) {
         let harness = Harness::with_screen(width, height);
         let widgets = harness.draw(|ui| central(ui, |ui| draw_main_menu(ui, &model)));
         let new_game = find_button(&widgets, "New game").rect;
+        let tutorial = find_button(&widgets, "Play tutorial").rect;
         let load = find_button(&widgets, "Load game").rect;
         let quit = find_button(&widgets, "Quit").rect;
         let primary = if resume_available {
@@ -153,13 +154,19 @@ fn assert_opening_controls_fit(width: f32, height: f32) {
             primary.height() >= 40.0,
             "the primary action needs a generous target"
         );
-        for rect in [primary, new_game, load, quit] {
+        for rect in [primary, new_game, tutorial, load, quit] {
             assert!(
                 harness.screen_rect().contains_rect(rect),
                 "{width}×{height}, resume={resume_available}: {rect:?}"
             );
         }
-        assert!(!new_game.intersects(load) && !load.intersects(quit));
+        assert!(
+            !new_game.intersects(tutorial)
+                && !tutorial.intersects(load)
+                && !load.intersects(quit)
+                && tutorial.top() > new_game.bottom()
+                && load.top() > tutorial.bottom()
+        );
     }
 }
 
@@ -247,7 +254,12 @@ fn opening_menu_has_no_seed_field() {
 #[test]
 fn the_picker_starts_the_region_clicked_with_the_setup_seed() {
     let l10n = shipped_l10n();
-    let model = region_select_model(&shipped_listings(), Some(42), &l10n);
+    let model = region_select_model(
+        &shipped_listings(),
+        Some(42),
+        &game::hud::RegionAccess::default(),
+        &l10n,
+    );
     let form = RefCell::new(MenuForm::new(42));
 
     let actions = Harness::new().click("Eastern Interconnection", |ui| {
@@ -269,7 +281,12 @@ fn the_picker_starts_the_region_clicked_with_the_setup_seed() {
 fn a_broken_region_is_listed_disabled_next_to_a_good_one() {
     let l10n = shipped_l10n();
     let regions = regions_with_eastern(&[("broken.ron", "this is not RON (")]);
-    let model = region_select_model(&listings_in(regions.path()), Some(3), &l10n);
+    let model = region_select_model(
+        &listings_in(regions.path()),
+        Some(3),
+        &game::hud::RegionAccess::default(),
+        &l10n,
+    );
     let form = RefCell::new(MenuForm::new(3));
     let harness = Harness::new();
     let draw = |ui: &mut egui::Ui| {
@@ -301,7 +318,12 @@ fn an_empty_or_missing_regions_folder_offers_back() {
         listings_in(empty.path()),
         listings_in(&empty.path().join("missing")),
     ] {
-        let model = region_select_model(&listings, Some(1), &l10n);
+        let model = region_select_model(
+            &listings,
+            Some(1),
+            &game::hud::RegionAccess::default(),
+            &l10n,
+        );
         let form = RefCell::new(MenuForm::new(1));
         let harness = Harness::new();
         let draw = |ui: &mut egui::Ui| {
@@ -2773,7 +2795,8 @@ fn dispatch_is_the_one_mapping_from_actions_to_messages() {
         .init_resource::<GameOverView>()
         .init_resource::<UiState>()
         .init_resource::<LastSpeed>()
-        .init_resource::<OperatingTab>();
+        .init_resource::<OperatingTab>()
+        .init_resource::<game::progress::ClientProgressStore>();
     update_n(&mut app, 3);
     let region = RegionId::new(EASTERN);
     let cell = CellCoord { x: 1, y: 2 };
@@ -2873,7 +2896,8 @@ fn navigating_moves_between_the_menu_screens() {
         .init_resource::<GameOverView>()
         .init_resource::<UiState>()
         .init_resource::<LastSpeed>()
-        .init_resource::<OperatingTab>();
+        .init_resource::<OperatingTab>()
+        .init_resource::<game::progress::ClientProgressStore>();
     update_n(&mut app, 3);
     let state = |app: &App| *app.world().resource::<State<AppState>>().get();
     assert_eq!(state(&app), AppState::MainMenu);
@@ -2885,6 +2909,20 @@ fn navigating_moves_between_the_menu_screens() {
     dispatch_in(&mut app, vec![UiAction::Navigate(MenuScreen::MainMenu)]);
     app.update();
     assert_eq!(state(&app), AppState::MainMenu);
+
+    // *Play tutorial* arms the tutorial on the way to the same setup screen.
+    let pending = |app: &App| {
+        app.world()
+            .resource::<game::progress::ClientProgressStore>()
+            .value
+            .tutorial_pending
+    };
+    dispatch_in(&mut app, vec![UiAction::SetTutorialPending(false)]);
+    assert!(!pending(&app));
+    dispatch_in(&mut app, vec![UiAction::PlayTutorial]);
+    app.update();
+    assert_eq!(state(&app), AppState::RegionSelect);
+    assert!(pending(&app));
 }
 
 #[test]

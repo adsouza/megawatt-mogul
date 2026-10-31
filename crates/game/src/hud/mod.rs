@@ -116,9 +116,9 @@ pub use self::map::{
     months_left_labels, pick, pickable_marks, plant_half_size, terrain_image,
 };
 pub use self::menu::{
-    BootErrorModel, MainMenuModel, MenuForm, RegionChoice, RegionListings, RegionProblem,
-    RegionSelectModel, boot_error_model, draw_boot_error, draw_main_menu, draw_region_select,
-    main_menu_model, region_select_model,
+    BootErrorModel, MainMenuModel, MenuForm, RegionAccess, RegionChoice, RegionListings,
+    RegionProblem, RegionSelectModel, TutorialToggle, boot_error_model, draw_boot_error,
+    draw_main_menu, draw_region_select, main_menu_model, region_select_model,
 };
 pub use self::milestones::{
     MILESTONES_WIDTH, MilestoneRow, MilestonesModel, MilestonesOpen, draw_milestones,

@@ -2,7 +2,8 @@ use application::RegionCatalog;
 use bevy_egui::egui::{self, Pos2, Rect};
 use domain::ids::RegionId;
 use game::hud::{
-    MenuForm, RegionAtlas, RegionListings, UiAction, draw_region_select, region_select_model,
+    MenuForm, RegionAccess, RegionAtlas, RegionListings, UiAction, draw_region_select,
+    region_select_model,
 };
 use infrastructure::region::RonRegionCatalog;
 use std::cell::RefCell;
@@ -12,10 +13,26 @@ use super::support::{
     shipped_assets, shipped_l10n,
 };
 
+/// Every region open, as `--unlock-all-regions` leaves them: these tests pick SGCC too.
+const UNLOCKED: RegionAccess<'static> = RegionAccess {
+    played: &std::collections::BTreeSet::new(),
+    unlock_all: true,
+};
+
+/// A first run: nothing played, so SGCC is locked.
+const FIRST_RUN: RegionAccess<'static> = RegionAccess {
+    played: &std::collections::BTreeSet::new(),
+    unlock_all: false,
+};
+
 fn model(seed: Option<u64>) -> game::hud::RegionSelectModel {
+    model_with(seed, &UNLOCKED)
+}
+
+fn model_with(seed: Option<u64>, access: &RegionAccess) -> game::hud::RegionSelectModel {
     let catalog = RonRegionCatalog::new(shipped_assets().join("regions"));
     let listings = RegionListings(catalog.list());
-    region_select_model(&listings, seed, &shipped_l10n())
+    region_select_model(&listings, seed, access, &shipped_l10n())
         .with_atlas(&RegionAtlas::load(&catalog, &listings), &shipped_l10n())
 }
 
@@ -456,12 +473,17 @@ fn card_shown(
 /// view, and each card's title and description fit its column without being cut sideways.
 #[test]
 fn map_cards_and_descriptions_fit_the_smallest_and_large_windows() {
-    let model = model(Some(42));
-    for (width, height) in [(1024.0, 640.0), (1280.0, 800.0), (3072.0, 1728.0)] {
-        let mut picker = Picker::new(&model, width, height);
+    // Unlocked, and on a first run, where SGCC's card also carries its lock line.
+    for (model, (width, height)) in [model(Some(42)), model_with(Some(42), &FIRST_RUN)]
+        .iter()
+        .flat_map(|model| {
+            [(1024.0, 640.0), (1280.0, 800.0), (3072.0, 1728.0)].map(|size| (model, size))
+        })
+    {
+        let mut picker = Picker::new(model, width, height);
         let (_, widgets, _) = picker.frame(vec![]);
         let screen = picker.screen;
-        for name in ["World power grids", "Back"] {
+        for name in ["World power grids", "Back", "Show tutorial"] {
             assert!(
                 screen.contains_rect(widget(&widgets, name).rect),
                 "{width}x{height}: {name}"
@@ -471,17 +493,21 @@ fn map_cards_and_descriptions_fit_the_smallest_and_large_windows() {
         let first = widget(&widgets, &model.regions[0].button.label).rect;
         for choice in &model.regions {
             let label = &choice.button.label;
-            // Every shipped card has its description, its "home city · N cities" detail line
-            // and its metadata line, in that order; the metadata line is the card's last.
-            let lines = [
-                ("description", &choice.description),
-                ("detail", &choice.detail),
-                ("metadata", &choice.metadata),
-            ]
-            .map(|(name, line)| {
+            // Every shipped card has its description, then its lock line if it is locked, its
+            // "home city · N cities" detail line and its metadata line, in that order; the
+            // metadata line is the card's last.
+            fn required<'a>(label: &str, name: &str, line: &'a Option<String>) -> &'a str {
                 line.as_deref()
                     .unwrap_or_else(|| panic!("{label} has no {name} line"))
-            });
+            }
+            let lines: Vec<&str> = [required(label, "description", &choice.description)]
+                .into_iter()
+                .chain(choice.locked.as_deref())
+                .chain([
+                    required(label, "detail", &choice.detail),
+                    required(label, "metadata", &choice.metadata),
+                ])
+                .collect();
             picker.scroll_to(label);
             // Keep wheeling in short steps until the whole card, title to last line, is painted
             // unclipped inside the screen and the card panel's viewport.
@@ -524,7 +550,7 @@ fn map_cards_and_descriptions_fit_the_smallest_and_large_windows() {
         }
         // Where the cards overflow the panel, the panel itself scrolls: wheeling to the last
         // card moves the first one up while the globe stays put.
-        let mut fresh = Picker::new(&model, width, height);
+        let mut fresh = Picker::new(model, width, height);
         let (shapes, widgets, _) = fresh.frame(vec![]);
         let last = &model.regions.last().unwrap().button.label;
         if !crate::contrast::painted_texts(&shapes)
@@ -559,7 +585,7 @@ fn scrolling_reaches_the_last_of_eight_cards_at_the_smallest_window() {
     }
     let catalog = RonRegionCatalog::new(dir.path());
     let listings = RegionListings(catalog.list());
-    let model = region_select_model(&listings, Some(42), &shipped_l10n())
+    let model = region_select_model(&listings, Some(42), &UNLOCKED, &shipped_l10n())
         .with_atlas(&RegionAtlas::load(&catalog, &listings), &shipped_l10n());
     assert_eq!(model.regions.len(), 8);
     assert!(model.regions.iter().all(|choice| choice.button.enabled));
@@ -612,7 +638,7 @@ fn metadata_model_from(source: &str) -> game::hud::RegionSelectModel {
     std::fs::write(dir.path().join("minimal.ron"), source).unwrap();
     let catalog = RonRegionCatalog::new(dir.path());
     let listings = RegionListings(catalog.list());
-    region_select_model(&listings, Some(42), &shipped_l10n())
+    region_select_model(&listings, Some(42), &UNLOCKED, &shipped_l10n())
         .with_atlas(&RegionAtlas::load(&catalog, &listings), &shipped_l10n())
 }
 
@@ -1110,5 +1136,203 @@ fn card_body_brings_a_hidden_region_forward_then_resumes_after_two_seconds() {
                 "disabled cards cannot interrupt the normal rotation"
             );
         }
+    }
+}
+
+// ---- the SGCC lock and the tutorial toggles (first-game tutorial spec §3, §6) ----------------
+
+const SGCC: &str = "SGCC system group";
+const SGCC_LOCK: &str = "Play 4 other regions to unlock — 0 of 4 so far";
+
+/// `draw_region_select` re-binds each card's `enabled` to this pass's seed; a locked card must
+/// stay disabled through that, and so must its globe area.
+#[test]
+fn locked_card_stays_disabled_after_seed_rebind() {
+    let model = model_with(Some(42), &FIRST_RUN);
+    let sgcc = model
+        .regions
+        .iter()
+        .find(|choice| choice.button.label == SGCC)
+        .expect("SGCC is listed");
+    assert!(!sgcc.button.enabled);
+    assert_eq!(sgcc.locked.as_deref(), Some(SGCC_LOCK));
+    // A different, valid seed typed this pass.
+    let form = RefCell::new(MenuForm::new(7));
+    let harness = Harness::new();
+    let draw = |ui: &mut egui::Ui| {
+        central(ui, |ui| {
+            draw_region_select(ui, &model, &mut form.borrow_mut())
+        })
+    };
+    let widgets = harness.draw(draw);
+    assert!(widget(&widgets, SGCC).disabled);
+    assert!(widget(&widgets, SGCC_LOCK).rect.is_positive());
+    assert!(!widget(&widgets, "Eastern Interconnection").disabled);
+    assert!(harness.click(SGCC, draw).is_empty());
+    // Beijing, on the globe once it has turned a quarter (as in the rotation test), never
+    // starts the locked region either.
+    let mut form = MenuForm::new(42);
+    let ctx = egui::Context::default();
+    let screen = Rect::from_min_size(Pos2::ZERO, egui::vec2(1280.0, 800.0));
+    let mut at_time = |time, events| {
+        let mut actions = Vec::new();
+        let output = ctx.run_ui(
+            egui::RawInput {
+                time: Some(time),
+                screen_rect: Some(screen),
+                events,
+                ..Default::default()
+            },
+            |ui| actions = central(ui, |ui| draw_region_select(ui, &model, &mut form)),
+        );
+        output.drop_without_applying_deltas();
+        actions
+    };
+    at_time(0.0, vec![]);
+    at_time(6.0, vec![]);
+    let globe = {
+        let harness = Harness::new();
+        widget(
+            &harness.draw(|ui| {
+                central(ui, |ui| {
+                    draw_region_select(ui, &model, &mut MenuForm::new(42))
+                })
+            }),
+            "World power grids",
+        )
+        .rect
+    };
+    let target = point_at(globe, 116.4, 39.9, 90.0);
+    let button = |pressed| egui::Event::PointerButton {
+        pos: target,
+        pressed,
+        button: egui::PointerButton::Primary,
+        modifiers: egui::Modifiers::NONE,
+    };
+    assert!(at_time(6.0, vec![egui::Event::PointerMoved(target), button(true)]).is_empty());
+    assert!(at_time(6.0, vec![button(false)]).is_empty());
+}
+
+mod glue {
+    use bevy::prelude::*;
+    use game::progress::{ClientProgressStore, UnlockAllRegions};
+    use game::state::AppState;
+    use tempfile::TempDir;
+
+    use crate::support::egui_harness::{Widget, button, widget};
+    use crate::support::egui_pass::EguiPass;
+    use crate::support::{hud_app, update_n};
+
+    const SIZE: (f32, f32) = (1280.0, 800.0);
+
+    fn store(app: &mut App) -> Mut<'_, ClientProgressStore> {
+        app.world_mut().resource_mut::<ClientProgressStore>()
+    }
+
+    fn state(app: &App) -> AppState {
+        *app.world().resource::<State<AppState>>().get()
+    }
+
+    fn settled(pass: &EguiPass, app: &mut App) -> Vec<Widget> {
+        pass.settled(app, SIZE.0, SIZE.1)
+    }
+
+    fn click(pass: &EguiPass, app: &mut App, widgets: &[Widget], text: &str) {
+        let at = widget(widgets, text).rect.center();
+        pass.click_at(app, SIZE.0, SIZE.1, at);
+        update_n(app, 2);
+    }
+
+    /// A HUD app on the main menu whose progress store has loaded `pending`.
+    fn menu_app(logs: &TempDir, pending: bool) -> (App, EguiPass) {
+        let mut app = hud_app(logs.path());
+        let pass = EguiPass::attach(&mut app);
+        let mut progress = store(&mut app);
+        progress.value.tutorial_pending = pending;
+        progress.loaded = true;
+        (app, pass)
+    }
+
+    fn open_setup(app: &mut App, pass: &EguiPass) -> Vec<Widget> {
+        let widgets = settled(pass, app);
+        click(pass, app, &widgets, "New game");
+        assert_eq!(state(app), AppState::RegionSelect);
+        settled(pass, app)
+    }
+
+    #[test]
+    fn checkbox_reflects_and_toggles_pending() {
+        let logs = TempDir::new().unwrap();
+        let (mut app, pass) = menu_app(&logs, true);
+        let widgets = open_setup(&mut app, &pass);
+        let toggle = widget(&widgets, "Show tutorial");
+        assert!(toggle.selected && !toggle.disabled);
+
+        click(&pass, &mut app, &widgets, "Show tutorial");
+        assert!(!store(&mut app).value.tutorial_pending);
+        let widgets = settled(&pass, &mut app);
+        assert!(!widget(&widgets, "Show tutorial").selected);
+
+        click(&pass, &mut app, &widgets, "Show tutorial");
+        assert!(store(&mut app).value.tutorial_pending);
+        assert!(widget(&settled(&pass, &mut app), "Show tutorial").selected);
+        assert_eq!(state(&app), AppState::RegionSelect);
+    }
+
+    /// Before the store has loaded (the browser reads it asynchronously), the box shows the
+    /// defaults that may be about to be replaced, so it can't be changed.
+    #[test]
+    fn checkbox_waits_for_progress_to_load() {
+        let logs = TempDir::new().unwrap();
+        let (mut app, pass) = menu_app(&logs, true);
+        store(&mut app).loaded = false;
+        let widgets = open_setup(&mut app, &pass);
+        assert!(widget(&widgets, "Show tutorial").disabled);
+        click(&pass, &mut app, &widgets, "Show tutorial");
+        assert!(store(&mut app).value.tutorial_pending);
+
+        store(&mut app).loaded = true;
+        let widgets = settled(&pass, &mut app);
+        assert!(!widget(&widgets, "Show tutorial").disabled);
+    }
+
+    #[test]
+    fn play_tutorial_arms_and_opens_setup() {
+        let logs = TempDir::new().unwrap();
+        let (mut app, pass) = menu_app(&logs, false);
+        let widgets = settled(&pass, &mut app);
+        let play = button(&widgets, "Play tutorial").rect;
+        assert!(play.top() > button(&widgets, "New game").rect.bottom());
+
+        click(&pass, &mut app, &widgets, "Play tutorial");
+
+        assert_eq!(state(&app), AppState::RegionSelect);
+        assert!(store(&mut app).value.tutorial_pending);
+        assert!(widget(&settled(&pass, &mut app), "Show tutorial").selected);
+    }
+
+    /// The picker screen reads played regions from the store and the developer flag.
+    #[test]
+    fn the_picker_screen_locks_sgcc_until_played_or_unlocked() {
+        let logs = TempDir::new().unwrap();
+        let (mut app, pass) = menu_app(&logs, false);
+        let widgets = open_setup(&mut app, &pass);
+        assert!(button(&widgets, super::SGCC).disabled);
+        assert!(widget(&widgets, super::SGCC_LOCK).rect.is_positive());
+
+        store(&mut app).value.played_regions = [
+            "eastern_interconnection",
+            "western_interconnection",
+            "brazil_sin",
+            "india_nepal_bhutan",
+        ]
+        .map(String::from)
+        .into();
+        assert!(!button(&settled(&pass, &mut app), super::SGCC).disabled);
+
+        store(&mut app).value.played_regions.clear();
+        assert!(button(&settled(&pass, &mut app), super::SGCC).disabled);
+        app.insert_resource(UnlockAllRegions);
+        assert!(!button(&settled(&pass, &mut app), super::SGCC).disabled);
     }
 }

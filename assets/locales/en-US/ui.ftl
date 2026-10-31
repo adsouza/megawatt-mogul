@@ -61,11 +61,14 @@ menu-subtitle = Build your grid. Keep the lights on.
 menu-continue = Resume game
 menu-continue-details = { $name } · { $region } · { $month } · { $phase } · { $time }
 menu-new-game = New game
+menu-play-tutorial = Play tutorial
 menu-seed = Seed
 menu-seed-invalid = The seed must be a whole number, such as 42.
+tutorial-show = Show tutorial
 region-select-title = Choose your region
 region-select-empty = No regions were found. Check that the game's assets folder is complete.
 region-select-unavailable = Unavailable
+region-locked = Play { $needed } other regions to unlock — { $played } of { $needed } so far
 
 ## Shell: top bar, toasts and game over
 

@@ -100,6 +100,10 @@ pub enum UiAction {
     DiscardCommitmentDraft,
     /// Move between the menu screens. Entering the game is only ever [`UiAction::NewGame`].
     Navigate(MenuScreen),
+    /// Tick or untick *Show tutorial*: whether the next new game runs the first-game tutorial.
+    SetTutorialPending(bool),
+    /// From the main menu: arm the tutorial, then open the new-game setup.
+    PlayTutorial,
     /// Open a confirmation prompt, or close it with `None`. The prompt's own buttons say what
     /// confirming does.
     Prompt(Option<Prompt>),
@@ -288,6 +292,7 @@ pub struct ActionSink<'w> {
     game_over_view: ResMut<'w, GameOverView>,
     ui: ResMut<'w, UiState>,
     next_state: ResMut<'w, NextState<AppState>>,
+    progress: ResMut<'w, crate::progress::ClientProgressStore>,
 }
 
 impl ActionSink<'_> {
@@ -346,6 +351,17 @@ impl ActionSink<'_> {
     /// The Planning panel's state: the tab, the highlighted hour and the commitment draft.
     pub fn ui_state(&self) -> &UiState {
         &self.ui
+    }
+
+    /// The player's progress: whether the tutorial is owed and the regions played.
+    pub fn progress(&self) -> &infrastructure::client_progress::ClientProgress {
+        &self.progress.value
+    }
+
+    /// Whether the stored progress has finished loading; until then [`Self::progress`] holds
+    /// defaults that loading may replace.
+    pub fn progress_loaded(&self) -> bool {
+        self.progress.loaded
     }
 }
 
@@ -584,9 +600,11 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             | UiAction::EditCommitment { .. }
             | UiAction::ToggleWarnings
             | UiAction::DiscardCommitmentDraft => {}
-            UiAction::Navigate(screen) => {
-                sink.persistence.discard_preload();
-                sink.next_state.set(screen.into());
+            UiAction::Navigate(screen) => navigate(sink, screen),
+            UiAction::SetTutorialPending(on) => sink.progress.value.tutorial_pending = on,
+            UiAction::PlayTutorial => {
+                sink.progress.value.tutorial_pending = true;
+                navigate(sink, MenuScreen::RegionSelect);
             }
             UiAction::Prompt(Some(Prompt::LeaveGame)) if sink.persistence.enabled() => {
                 sink.persistence.request(
@@ -617,6 +635,11 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             }
         }
     }
+}
+
+fn navigate(sink: &mut ActionSink, screen: MenuScreen) {
+    sink.persistence.discard_preload();
+    sink.next_state.set(screen.into());
 }
 
 fn connection_command(
