@@ -19,7 +19,9 @@ use super::operating::OperatingTab;
 use super::selection::Selection;
 use super::speed::LastSpeed;
 use super::theme;
-use super::tutorial::{StepKind, TUTORIAL_STEPS, TutorialRun, TutorialState, TutorialStep};
+use super::tutorial::{
+    StepKind, TUTORIAL_STEPS, TutorialAnchor, TutorialRun, TutorialState, TutorialStep,
+};
 use super::ui_state::{PlanningTab, UiState};
 use crate::sim::{
     NewGameRequest, PersistAction, Persistence, PlayerCommand, ReturnToMenu, Session,
@@ -123,7 +125,11 @@ pub enum TutorialAction {
     Play(TutorialStep),
     /// The player ended the step early (a click or Escape): it joins `played`.
     Dismiss(TutorialStep),
-    /// The build panel has scrolled the revealed plant card into view.
+    /// Ask the panel that draws `anchor` inside a scroll area to scroll it into view: the build
+    /// menu's battery card or line section, or the Review's Construction row. Other anchors don't
+    /// scroll.
+    Reveal(TutorialAnchor),
+    /// A panel has scrolled the revealed anchor into view.
     RevealDone,
     /// Stop the tutorial for good.
     End,
@@ -668,6 +674,7 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
 fn tutorial(sink: &mut ActionSink, action: TutorialAction) {
     if action == TutorialAction::RevealDone {
         sink.ui.reveal_plant_card = None;
+        sink.ui.reveal_anchor = None;
         return;
     }
     let Some(state) = sink.tutorial.0.as_mut() else {
@@ -675,10 +682,25 @@ fn tutorial(sink: &mut ActionSink, action: TutorialAction) {
     };
     let step = match action {
         TutorialAction::Play(step) | TutorialAction::Dismiss(step) => step,
+        TutorialAction::Reveal(anchor) => {
+            match anchor {
+                TutorialAnchor::BatteryCard => {
+                    sink.ui.reveal_plant_card = Some(domain::region::PlantKind::Battery);
+                }
+                TutorialAnchor::LineSection | TutorialAnchor::ReviewConstruction => {
+                    sink.ui.reveal_anchor = Some(anchor);
+                }
+                _ => {}
+            }
+            return;
+        }
         TutorialAction::RevealDone => return,
         TutorialAction::End => {
             sink.tutorial.0 = None;
             sink.progress.value.tutorial_pending = false;
+            // A reveal still pending would scroll the build menu after the tutorial is gone.
+            sink.ui.reveal_plant_card = None;
+            sink.ui.reveal_anchor = None;
             return;
         }
     };

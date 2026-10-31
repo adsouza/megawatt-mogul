@@ -17,7 +17,7 @@ use super::layout::{Edge, HudArea, OuterPanel};
 use super::plant_panel::PlantStat;
 use super::selection::Selection;
 use super::theme::{TextTone, ValueColor, heading_color, marginal_cost_fraction};
-use super::tutorial::{TutorialAnchor, mark_anchor};
+use super::tutorial::{TutorialAnchor, mark_visible_anchor};
 use crate::l10n::{Localize, LocalizeWith, Localizer, Names, format};
 use crate::sim::Session;
 
@@ -105,6 +105,9 @@ pub struct BuildModel {
     /// The plant card to scroll into view when it is drawn: the tutorial's reveal, from
     /// [`UiState::reveal_plant_card`](super::UiState::reveal_plant_card).
     pub reveal: Option<PlantKind>,
+    /// Whether to scroll the line section into view when it is drawn: the tutorial's reveal, from
+    /// [`UiState::reveal_anchor`](super::UiState::reveal_anchor).
+    pub reveal_line: bool,
 }
 
 /// A node of the network a line can start or end at, with its name and place.
@@ -169,6 +172,7 @@ fn build_model_for_tool(
         title: l10n.text("build-title"),
         hvdc_active,
         reveal: None,
+        reveal_line: false,
         transport_modes: if session.region().hvdc().is_some() {
             vec![
                 super::ToggleModel {
@@ -678,7 +682,7 @@ pub fn draw_build(ui: &mut egui::Ui, model: &BuildModel) -> Vec<UiAction> {
                 }
             });
             ui.push_id(model.hvdc_active, |ui| {
-                draw_line_section(ui, active, &mut actions)
+                draw_line_section(ui, active, model.reveal_line, &mut actions)
             });
         });
     actions
@@ -717,7 +721,7 @@ fn draw_plant_section(
                     button(ui, &row.build, actions);
                 });
                 if row.kind == PlantKind::Battery {
-                    mark_anchor(ui.ctx(), TutorialAnchor::BatteryCard, card.response.rect);
+                    mark_visible_anchor(ui, TutorialAnchor::BatteryCard, card.response.rect);
                 }
                 if reveal == Some(row.kind) {
                     card.response.scroll_to_me(Some(egui::Align::Center));
@@ -728,10 +732,20 @@ fn draw_plant_section(
     }
 }
 
-/// The line section, marked as the tutorial's line-section anchor.
-fn draw_line_section(ui: &mut egui::Ui, section: &LineSection, actions: &mut Vec<UiAction>) {
+/// The line section, marked as the tutorial's line-section anchor where it shows. When `reveal`,
+/// its top is scrolled into view once and the reveal reported done.
+fn draw_line_section(
+    ui: &mut egui::Ui,
+    section: &LineSection,
+    reveal: bool,
+    actions: &mut Vec<UiAction>,
+) {
     let drawn = ui.scope(|ui| draw_line_stage(ui, section, actions));
-    mark_anchor(ui.ctx(), TutorialAnchor::LineSection, drawn.response.rect);
+    mark_visible_anchor(ui, TutorialAnchor::LineSection, drawn.response.rect);
+    if reveal {
+        drawn.response.scroll_to_me(Some(egui::Align::Min));
+        actions.push(UiAction::Tutorial(TutorialAction::RevealDone));
+    }
 }
 
 fn draw_line_stage(ui: &mut egui::Ui, section: &LineSection, actions: &mut Vec<UiAction>) {
@@ -803,6 +817,7 @@ pub(super) fn build_panel(
         return Ok(());
     };
     model.reveal = sink.ui_state().reveal_plant_card;
+    model.reveal_line = sink.ui_state().reveal_anchor == Some(TutorialAnchor::LineSection);
     let actions = area.show_panel(contexts.ctx_mut()?, BUILD_PANEL, 0.0, |ui| {
         draw_build(ui, &model)
     });

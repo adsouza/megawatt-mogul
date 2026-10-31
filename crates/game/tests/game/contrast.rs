@@ -940,3 +940,105 @@ fn a_disabled_selected_toggle_paints_differently_from_an_enabled_selected_one() 
         "the label sits on the dimmed fill"
     );
 }
+
+/// The crawl's text (spec §4.4) against its translucent backdrop composited over white, the worst
+/// case for the map beneath: every glyph vertex as painted. It is clipped at the horizon a
+/// quarter of the way down, never faded.
+#[test]
+fn crawl_text_meets_contrast_over_white() {
+    use crate::tutorial::{advance_real, at_step, tutorial_app};
+    use game::hud::tutorial::TutorialStep;
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    at_step(&mut app, TutorialStep::Crawl);
+    let pass = EguiPass::attach(&mut app);
+    let (width, height) = (1280.0, 640.0);
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, height));
+    pass.settled(&mut app, width, height);
+    // Far enough in that the first lines have reached the horizon.
+    advance_real(&mut app, 30.0);
+    let output = pass.paint_with(&mut app, width, height, vec![]);
+    let painted = output.shapes.clone();
+    output.drop_without_applying_deltas();
+    let backdrop_at = painted
+        .iter()
+        .rposition(|clipped| {
+            matches!(&clipped.shape, egui::Shape::Rect(rect)
+                if rect.rect == screen && rect.fill.a() > 0 && rect.fill.a() < 255)
+        })
+        .expect("the crawl's backdrop");
+    let egui::Shape::Rect(backdrop) = &painted[backdrop_at].shape else {
+        unreachable!()
+    };
+    let behind = over(backdrop.fill, Color32::WHITE);
+    let horizon = height * 0.25;
+    let mut vertices = 0;
+    let mut above_horizon = 0;
+    for clipped in &painted[backdrop_at + 1..] {
+        let egui::Shape::Mesh(mesh) = &clipped.shape else {
+            continue;
+        };
+        assert!(
+            (clipped.clip_rect.top() - horizon).abs() < 0.5,
+            "the crawl clips at the horizon: {:?}",
+            clipped.clip_rect
+        );
+        for vertex in &mesh.vertices {
+            vertices += 1;
+            if vertex.pos.y < horizon {
+                above_horizon += 1;
+            }
+            assert_eq!(vertex.color.a(), 255, "never faded");
+            let ratio = contrast(vertex.color, behind);
+            assert!(
+                ratio >= MINIMUM,
+                "{ratio:.2}:1 for {:?} on {behind:?}",
+                vertex.color
+            );
+        }
+    }
+    assert!(vertices > 100, "{vertices} glyph vertices");
+    assert!(above_horizon > 0, "the test needs text past the horizon");
+}
+
+/// Spotlight notes and instructions sit on opaque cards: their text, and the End link, meet the
+/// floor against what is painted under them.
+#[test]
+fn tutorial_notes_meet_contrast_on_their_cards() {
+    use crate::tutorial::{advance_real, at_step, tutorial_app};
+    use game::hud::tutorial::TutorialStep;
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    let pass = EguiPass::attach(&mut app);
+    let (width, height) = (1280.0, 640.0);
+    for (step, texts) in [
+        (
+            TutorialStep::Cash,
+            &["This is your money. Grow it by selling power, without blacking out your customers."]
+                [..],
+        ),
+        (
+            TutorialStep::PickSite,
+            &[
+                "Click a square on the map to see what you can build there.",
+                "End tutorial",
+            ][..],
+        ),
+    ] {
+        at_step(&mut app, step);
+        pass.settled(&mut app, width, height);
+        // Past the fade-in.
+        advance_real(&mut app, 1.0);
+        let output = pass.paint_with(&mut app, width, height, vec![]);
+        let painted = painted_texts(&output.shapes);
+        assert!(check_paint(output) > 0);
+        for text in texts {
+            let note = painted
+                .iter()
+                .find(|painted| painted.text == *text)
+                .unwrap_or_else(|| panic!("{text:?} isn't painted"));
+            let ratio = contrast(over(note.color, note.background), note.background);
+            assert!(ratio >= MINIMUM, "{ratio:.2}:1 for {text:?}");
+        }
+    }
+}

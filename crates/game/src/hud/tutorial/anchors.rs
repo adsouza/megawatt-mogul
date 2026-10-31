@@ -18,6 +18,16 @@ pub fn mark_anchor(ctx: &egui::Context, anchor: TutorialAnchor, rect: egui::Rect
     ctx.data_mut(|data| data.insert_temp(id(anchor), (pass, rect)));
 }
 
+/// Records the part of `rect` that `ui` shows: for a widget inside a scroll area, the part in
+/// the area's view. A widget scrolled wholly out of view is not marked, so a spotlight never
+/// frames space the player can't see.
+pub fn mark_visible_anchor(ui: &egui::Ui, anchor: TutorialAnchor, rect: egui::Rect) {
+    let visible = rect.intersect(ui.clip_rect());
+    if visible.is_positive() {
+        mark_anchor(ui.ctx(), anchor, visible);
+    }
+}
+
 /// The rect `anchor`'s widget was drawn at, if it was marked in the current pass.
 pub fn anchor_rect(ctx: &egui::Context, anchor: TutorialAnchor) -> Option<egui::Rect> {
     let pass = ctx.cumulative_pass_nr();
@@ -72,5 +82,30 @@ mod tests {
         })
         .drop_without_applying_deltas();
         assert_eq!(seen, Some((Some(rect()), Some(other))));
+    }
+
+    #[test]
+    fn a_visible_anchor_is_marked_only_where_it_shows() {
+        let ctx = egui::Context::default();
+        let mut seen = None;
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            let clip = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(100.0, 50.0));
+            ui.set_clip_rect(clip);
+            // Half in view, then wholly below it, then touching its edge only.
+            let half = egui::Rect::from_min_size(egui::pos2(10.0, 30.0), egui::vec2(20.0, 40.0));
+            mark_visible_anchor(ui, TutorialAnchor::BatteryCard, half);
+            let below = egui::Rect::from_min_size(egui::pos2(10.0, 60.0), egui::vec2(20.0, 40.0));
+            mark_visible_anchor(ui, TutorialAnchor::LineSection, below);
+            let edge = egui::Rect::from_min_size(egui::pos2(10.0, 50.0), egui::vec2(20.0, 40.0));
+            mark_visible_anchor(ui, TutorialAnchor::ReviewConstruction, edge);
+            seen = Some((
+                anchor_rect(ui.ctx(), TutorialAnchor::BatteryCard),
+                anchor_rect(ui.ctx(), TutorialAnchor::LineSection),
+                anchor_rect(ui.ctx(), TutorialAnchor::ReviewConstruction),
+            ));
+        })
+        .drop_without_applying_deltas();
+        let shown = egui::Rect::from_min_max(egui::pos2(10.0, 30.0), egui::pos2(30.0, 50.0));
+        assert_eq!(seen, Some((Some(shown), None, None)));
     }
 }

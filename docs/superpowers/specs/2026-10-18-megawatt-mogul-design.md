@@ -883,6 +883,7 @@ Actual per-line loading still requires a power-flow `NetworkModel`.
   fully legible or are omitted for spacing; opacity fades never make visible labels unreadable.
   Palette/state checks, property tests over arbitrary colour pairs and tests of actual paint
   output guard the requirement. See [WCAG 2.2 contrast guidance](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum).
+- **First-game tutorial:** see `2026-10-31-first-game-tutorial-design.md`.
 
 ### 8.5 Daily audio cues
 
@@ -3997,6 +3998,10 @@ old reports stay as recorded.
 - **Text.** Hover labels and the map note sit on opaque backings at the 4.5:1 contrast floor (§8.4).
   Paint geographic fills first, then home markers, and the active hover title last so neighbouring
   regions cannot cover it.
+- **Locked regions.** A region file may require a number of other regions to have been played
+  before it can start a new game (SGCC requires four). Its card stays visible but disabled, its
+  globe fill muted, with a note of the progress so far; loading its saves is unaffected. See
+  `2026-10-31-first-game-tutorial-design.md` §6.
 - **Region cards.** Each card adds frequency, currency, time-zone span and hemisphere to the
   existing description and home city. The panel to the globe's right uses two columns when both
   cards remain comfortably readable, and one column at narrower widths. When the cards don't fit the panel's

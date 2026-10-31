@@ -96,6 +96,9 @@ pub struct UiState {
     pub pending: Option<PendingCommit>,
     /// A plant card the tutorial asked the build menu to scroll into view, until it has.
     pub reveal_plant_card: Option<domain::region::PlantKind>,
+    /// Another anchor in a scroll area (the build menu's line section, the Review's Construction
+    /// row) that the tutorial asked its panel to scroll into view, until it has.
+    pub reveal_anchor: Option<super::tutorial::TutorialAnchor>,
 }
 
 impl UiState {

@@ -20,13 +20,13 @@ use domain::region::RegionDefinition;
 use domain::session::{DayPhase, MonthlyReport, SessionStatus};
 use domain::units::MegawattHours;
 
-use super::action::{ActionSink, ButtonModel, UiAction, button, dispatch};
+use super::action::{ActionSink, ButtonModel, TutorialAction, UiAction, button, dispatch};
 use super::game_over::{GameOverView, GameOverViewShown};
 use super::incidents::incident_tone;
 use super::layout::HudArea;
 pub use super::theme::TextTone as ReviewTone;
 use super::theme::{marginal_cost_fraction, severity_color as marginal_cost_color};
-use super::tutorial::{TutorialAnchor, mark_anchor};
+use super::tutorial::{TutorialAnchor, mark_visible_anchor};
 use super::{SupplyHistoryModel, UiState, draw_supply_history};
 use crate::l10n::{LessonMoneyText, Localize, LocalizeWith, Localizer, Names, Toast, format};
 use crate::sim::Session;
@@ -125,6 +125,9 @@ pub struct ReviewModel {
     pub footer_button: ButtonModel,
     pub supply_button: ButtonModel,
     pub supply: Option<SupplyHistoryModel>,
+    /// The row the tutorial asked to scroll into view, from
+    /// [`UiState::reveal_anchor`](super::UiState::reveal_anchor).
+    pub reveal: Option<TutorialAnchor>,
 }
 
 /// The modal while the month is in review; `None` otherwise. Once the game is over, its own modal
@@ -161,6 +164,7 @@ fn review_model_with_history(
         (l10n, style),
     );
     model.satisfaction_adjustment = current_satisfaction_adjustment(session, report, l10n);
+    model.reveal = ui.reveal_anchor;
     if ui.review_supply {
         model.supply = Some(
             super::supply_history::supply_history_model_scoped(
@@ -427,6 +431,7 @@ pub fn review_model_for(
             UiAction::ShowReviewSupply(true),
         ),
         supply: None,
+        reveal: None,
     }
 }
 
@@ -513,7 +518,9 @@ pub fn draw_review(ui: &mut egui::Ui, model: &ReviewModel) -> Vec<UiAction> {
                     .id_salt("review_sections")
                     .auto_shrink([false, false])
                     .max_height(content_height)
-                    .show(&mut columns[0], |ui| draw_summary(ui, model));
+                    .show(&mut columns[0], |ui| {
+                        actions.extend(draw_summary(ui, model))
+                    });
                 egui::ScrollArea::vertical()
                     .id_salt("review_merit_rows")
                     .auto_shrink([false, false])
@@ -534,7 +541,7 @@ pub fn draw_review(ui: &mut egui::Ui, model: &ReviewModel) -> Vec<UiAction> {
                 .auto_shrink([false, false])
                 .max_height(content_height)
                 .show(ui, |ui| {
-                    draw_summary(ui, model);
+                    actions.extend(draw_summary(ui, model));
                     draw_merit(ui, model);
                     draw_storage(ui, model);
                 });
@@ -557,7 +564,10 @@ fn review_heading_with_color(ui: &mut egui::Ui, text: &str, color: egui::Color32
     ui.heading(egui::RichText::new(text).strong().color(color));
 }
 
-fn draw_summary(ui: &mut egui::Ui, model: &ReviewModel) {
+/// The summary column. The row the tutorial asked to reveal is scrolled into view, and reported
+/// done.
+fn draw_summary(ui: &mut egui::Ui, model: &ReviewModel) -> Vec<UiAction> {
+    let mut actions = Vec::new();
     review_heading(ui, &model.regulatory_heading);
     if let Some(empty) = &model.regulatory_empty {
         ui.colored_label(ReviewTone::Positive.color(), empty);
@@ -582,9 +592,11 @@ fn draw_summary(ui: &mut egui::Ui, model: &ReviewModel) {
     ui.separator();
     review_heading(ui, &model.pnl_heading);
     ui.weak(model.days_note.as_str());
-    draw_stats(ui, "review_pnl", &model.pnl);
+    if draw_stats(ui, "review_pnl", &model.pnl, model.reveal) {
+        actions.push(UiAction::Tutorial(TutorialAction::RevealDone));
+    }
     review_heading(ui, &model.reliability_heading);
-    draw_stats(ui, "review_reliability", &model.reliability);
+    draw_stats(ui, "review_reliability", &model.reliability, None);
 
     review_heading(ui, &model.incidents_heading);
     if let Some(empty) = &model.incidents_empty {
@@ -593,9 +605,18 @@ fn draw_summary(ui: &mut egui::Ui, model: &ReviewModel) {
     for (incident, tone) in model.incidents.iter().zip(&model.incident_tones) {
         ui.colored_label(tone.color(), incident);
     }
+    actions
 }
 
-fn draw_stats(ui: &mut egui::Ui, id: &str, stats: &[ReviewStat]) {
+/// The rows of `stats`, marking each row's tutorial anchor where it shows. The row anchored at
+/// `reveal` is scrolled into view: whether there was one.
+fn draw_stats(
+    ui: &mut egui::Ui,
+    id: &str,
+    stats: &[ReviewStat],
+    reveal: Option<TutorialAnchor>,
+) -> bool {
+    let mut revealed = false;
     egui::Grid::new(id)
         .num_columns(2)
         .max_col_width((ui.available_width() - ui.spacing().item_spacing.x) / 2.0)
@@ -604,11 +625,17 @@ fn draw_stats(ui: &mut egui::Ui, id: &str, stats: &[ReviewStat]) {
                 let label = ui.colored_label(ReviewTone::Neutral.color(), &stat.label);
                 let value = ui.colored_label(stat.tone.color(), &stat.value);
                 if let Some(anchor) = stat.anchor {
-                    mark_anchor(ui.ctx(), anchor, label.rect.union(value.rect));
+                    let row = label.rect.union(value.rect);
+                    mark_visible_anchor(ui, anchor, row);
+                    if reveal == Some(anchor) {
+                        ui.scroll_to_rect(row, Some(egui::Align::Center));
+                        revealed = true;
+                    }
                 }
                 ui.end_row();
             }
         });
+    revealed
 }
 
 fn draw_storage(ui: &mut egui::Ui, model: &ReviewModel) {
@@ -622,7 +649,7 @@ fn draw_storage(ui: &mut egui::Ui, model: &ReviewModel) {
             ui.separator();
         }
         review_heading_with_color(ui, name, ReviewTone::Information.color());
-        draw_stats(ui, &format!("storage_review_{index}"), rows);
+        draw_stats(ui, &format!("storage_review_{index}"), rows, None);
     }
 }
 
@@ -1116,7 +1143,9 @@ mod tests {
                 )),
                 ..Default::default()
             },
-            |ui| draw_summary(ui, &model),
+            |ui| {
+                draw_summary(ui, &model);
+            },
         );
         let shapes = output.shapes.clone();
         output.drop_without_applying_deltas();

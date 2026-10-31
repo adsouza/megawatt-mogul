@@ -1,21 +1,30 @@
 //! The first-game tutorial (first-game tutorial spec §3, §4): the step table and pure model
-//! ([`steps`]), the anchors panels mark for it ([`anchors`]) and the run's lifecycle.
+//! ([`steps`]), the anchors panels mark for it ([`anchors`]), the overlay that draws it
+//! ([`overlay`], [`crawl`]) and the run's lifecycle.
 //!
 //! A run starts with a new game when the player's progress says the tutorial is owed, belongs to
 //! that one game, and finishes when the player leaves the first Review. Loading a save never
 //! starts one, and leaving the game part-way drops it without clearing `tutorial_pending`.
 
 mod anchors;
+mod crawl;
+mod overlay;
 mod steps;
 
 use bevy::prelude::*;
+use bevy_egui::EguiPrimaryContextPass;
 use domain::session::DayPhase;
 
-pub use self::anchors::{anchor_rect, mark_anchor};
+pub use self::anchors::{anchor_rect, mark_anchor, mark_visible_anchor};
+pub use self::overlay::{
+    CRAWL_SECONDS, SPOTLIGHT_SECONDS, TutorialView, spotlight_opacity, tutorial_view,
+};
 pub use self::steps::{
     Done, StepDef, StepKind, TUTORIAL_STEPS, TutorialAnchor, TutorialState, TutorialStep,
     active_step, construction_key,
 };
+use crate::hud::HudSet;
+use crate::l10n::Localizer;
 use crate::progress::ClientProgressStore;
 use crate::sim::{NewGameStarted, Session, SessionGeneration, SimSet};
 use crate::state::AppState;
@@ -24,10 +33,12 @@ use crate::state::AppState;
 #[derive(Resource, Debug, Default)]
 pub struct TutorialRun(pub Option<TutorialState>);
 
-/// The tutorial run's lifecycle. `HudPlugin` adds it.
+/// The tutorial run's lifecycle, and its overlay over the HUD. `HudPlugin` adds it.
 ///
-/// These systems run in `Update`: they are bookkeeping on the game's state, not clicks, so they
-/// write [`TutorialRun`] and [`ClientProgressStore`] directly rather than through `dispatch`.
+/// The lifecycle systems run in `Update`: they are bookkeeping on the game's state, not clicks, so
+/// they write [`TutorialRun`] and [`ClientProgressStore`] directly rather than through `dispatch`.
+/// The overlay runs in the egui pass, after every other panel, and changes things only through
+/// `dispatch`.
 pub struct TutorialPlugin;
 
 impl Plugin for TutorialPlugin {
@@ -43,7 +54,18 @@ impl Plugin for TutorialPlugin {
                 )
                     .chain(),
             )
-            .add_systems(OnExit(AppState::InGame), clear_run);
+            .add_systems(OnExit(AppState::InGame), clear_run)
+            .add_systems(
+                EguiPrimaryContextPass,
+                overlay::tutorial_overlay
+                    .in_set(HudSet::Tutorial)
+                    .run_if(super::saves::other_overlays)
+                    .run_if(
+                        in_state(AppState::InGame)
+                            .and_then(resource_exists::<Session>)
+                            .and_then(resource_exists::<Localizer>),
+                    ),
+            );
     }
 }
 

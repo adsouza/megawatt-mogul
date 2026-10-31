@@ -207,7 +207,7 @@ fn leaving_first_review_finishes() {
 // --- Tutorial actions through `dispatch`, anchors and the battery-card reveal (spec §4.1) ---
 
 /// A new western game in a HUD app, with the tutorial running.
-fn tutorial_app(logs: &TempDir) -> App {
+pub(crate) fn tutorial_app(logs: &TempDir) -> App {
     let app = new_game(logs, true, true);
     assert!(run(&app).is_some());
     app
@@ -338,9 +338,66 @@ fn reveal_done_clears_the_reveal() {
 fn end_finishes_the_tutorial() {
     let logs = TempDir::new().unwrap();
     let mut app = tutorial_app(&logs);
+    // A reveal still pending when the tutorial ends must not scroll the build menu later.
+    tutorial(
+        &mut app,
+        [
+            TutorialAction::Play(TutorialStep::RevealBattery),
+            TutorialAction::Reveal(TutorialAnchor::LineSection),
+        ],
+    );
+    assert_eq!(ui_state(&app).reveal_plant_card, Some(PlantKind::Battery));
+    assert_eq!(
+        ui_state(&app).reveal_anchor,
+        Some(TutorialAnchor::LineSection)
+    );
     tutorial(&mut app, [TutorialAction::End]);
     assert!(run(&app).is_none());
     assert!(!pending(&app));
+    assert_eq!(ui_state(&app).reveal_plant_card, None);
+    assert_eq!(ui_state(&app).reveal_anchor, None);
+}
+
+#[test]
+fn reveal_asks_the_build_menu_for_a_scrolling_anchor() {
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    tutorial(
+        &mut app,
+        [TutorialAction::Reveal(TutorialAnchor::BatteryCard)],
+    );
+    assert_eq!(ui_state(&app).reveal_plant_card, Some(PlantKind::Battery));
+    assert_eq!(ui_state(&app).reveal_anchor, None);
+    tutorial(
+        &mut app,
+        [TutorialAction::Reveal(TutorialAnchor::LineSection)],
+    );
+    assert_eq!(
+        ui_state(&app).reveal_anchor,
+        Some(TutorialAnchor::LineSection)
+    );
+    tutorial(
+        &mut app,
+        [TutorialAction::Reveal(TutorialAnchor::ReviewConstruction)],
+    );
+    assert_eq!(
+        ui_state(&app).reveal_anchor,
+        Some(TutorialAnchor::ReviewConstruction)
+    );
+    // Anchors that don't scroll have nothing to reveal; and nothing joins `played`.
+    let before = ui_state(&app).clone();
+    tutorial(
+        &mut app,
+        [
+            TutorialAction::Reveal(TutorialAnchor::Cash),
+            TutorialAction::Reveal(TutorialAnchor::StartDay),
+        ],
+    );
+    assert_eq!(ui_state(&app).clone(), before);
+    assert!(played(&app).is_empty());
+    tutorial(&mut app, [TutorialAction::RevealDone]);
+    assert_eq!(ui_state(&app).reveal_plant_card, None);
+    assert_eq!(ui_state(&app).reveal_anchor, None);
 }
 
 /// Without a run the tutorial's actions change nothing; only `RevealDone` still clears a reveal.
@@ -360,6 +417,7 @@ fn without_a_run_tutorial_actions_do_nothing() {
             TutorialAction::Dismiss(def.step),
         ]
     });
+    let every_play = every_play.chain(ANCHORS.map(TutorialAction::Reveal));
     tutorial(&mut app, every_play.chain([TutorialAction::End]));
     assert_eq!((ui_state(&app).clone(), focus(&app)), before);
     assert!(run(&app).is_none());
@@ -372,12 +430,13 @@ fn without_a_run_tutorial_actions_do_nothing() {
 
 fn any_tutorial_action() -> impl proptest::strategy::Strategy<Value = TutorialAction> {
     use proptest::strategy::Strategy;
-    (0..TUTORIAL_STEPS.len(), 0u8..4).prop_map(|(index, which)| {
+    (0..TUTORIAL_STEPS.len(), 0u8..5).prop_map(|(index, which)| {
         let step = TUTORIAL_STEPS[index].step;
         match which {
             0 => TutorialAction::Play(step),
             1 => TutorialAction::Dismiss(step),
             2 => TutorialAction::RevealDone,
+            3 => TutorialAction::Reveal(ANCHORS[index % ANCHORS.len()]),
             _ => TutorialAction::End,
         }
     })
@@ -464,7 +523,8 @@ fn anchors_are_marked_in_planning() {
     let pass = with_anchor_probe(&mut app);
     let cell = battery_site(&app);
     dispatch_in(&mut app, vec![UiAction::Select(Selection::Cell(cell))]);
-    let (width, height) = MIN;
+    // A tall window shows the whole build menu, battery card and line section included.
+    let (width, height) = (MIN.0, 3000.0);
     pass.settled(&mut app, width, height);
     let seen = anchors(&app);
     for anchor in [
@@ -484,6 +544,118 @@ fn anchors_are_marked_in_planning() {
     dispatch_in(&mut app, vec![UiAction::Select(Selection::None)]);
     pass.settled(&mut app, width, height);
     assert!(!anchors(&app).contains_key(&TutorialAnchor::BatteryCard));
+}
+
+/// The build menu's scrolling part at the smallest window: right of the map, below its title and
+/// above the Planning panel's tab row.
+fn build_menu_view(widgets: &[crate::support::egui_harness::Widget]) -> egui::Rect {
+    let map = widget(widgets, "Map").rect;
+    let title = widgets
+        .iter()
+        .find(|w| w.text == "Build" && w.rect.left() >= map.right())
+        .expect("the build menu's title")
+        .rect;
+    egui::Rect::from_min_max(
+        egui::pos2(map.right(), title.bottom()),
+        egui::pos2(MIN.0, find_button(widgets, "Start the day").rect.top()),
+    )
+}
+
+/// A card scrolled out of the build menu's view has no anchor, so a spotlight never frames
+/// space the player can't see; a card partly in view is marked only where it shows.
+#[test]
+fn a_scrolled_away_battery_card_has_no_anchor() {
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    let pass = with_anchor_probe(&mut app);
+    let cell = battery_site(&app);
+    dispatch_in(&mut app, vec![UiAction::Select(Selection::Cell(cell))]);
+    let (width, height) = MIN;
+    pass.settled(&mut app, width, height);
+    let seen = anchors(&app);
+    assert!(
+        !seen.contains_key(&TutorialAnchor::BatteryCard),
+        "the card starts below the fold: {seen:?}"
+    );
+    assert!(!seen.contains_key(&TutorialAnchor::LineSection), "{seen:?}");
+    // Every anchor marked is on screen.
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, height));
+    for (anchor, rect) in &seen {
+        assert!(screen.contains_rect(*rect), "{anchor:?}: {rect:?}");
+    }
+}
+
+/// At the smallest window the battery card starts below the build menu's fold; the reveal scrolls
+/// it into the menu's view once and then says so, so the player can scroll away again.
+#[test]
+fn reveal_scrolls_battery_card_into_view() {
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    let pass = with_anchor_probe(&mut app);
+    let cell = battery_site(&app);
+    dispatch_in(&mut app, vec![UiAction::Select(Selection::Cell(cell))]);
+    let (width, height) = MIN;
+    let widgets = pass.settled(&mut app, width, height);
+    let view = build_menu_view(&widgets);
+    assert!(
+        !anchors(&app).contains_key(&TutorialAnchor::BatteryCard),
+        "the test needs the card out of view first"
+    );
+
+    tutorial(
+        &mut app,
+        [TutorialAction::Play(TutorialStep::RevealBattery)],
+    );
+    pass.run(&mut app, width, height);
+    assert_eq!(
+        ui_state(&app).reveal_plant_card,
+        None,
+        "the build menu reports the reveal done on the pass it scrolls"
+    );
+    // Let the scroll animation finish.
+    for _ in 0..60 {
+        pass.run(&mut app, width, height);
+    }
+    let card = anchors(&app)[&TutorialAnchor::BatteryCard];
+    assert!(card.is_positive());
+    assert!(
+        view.expand(1.0).contains_rect(card),
+        "{card:?} is not in {view:?}"
+    );
+}
+
+#[test]
+fn reveal_scrolls_line_section_into_view() {
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    let pass = with_anchor_probe(&mut app);
+    let cell = battery_site(&app);
+    dispatch_in(&mut app, vec![UiAction::Select(Selection::Cell(cell))]);
+    let (width, height) = MIN;
+    let widgets = pass.settled(&mut app, width, height);
+    let view = build_menu_view(&widgets);
+    assert!(!anchors(&app).contains_key(&TutorialAnchor::LineSection));
+
+    tutorial(
+        &mut app,
+        [TutorialAction::Reveal(TutorialAnchor::LineSection)],
+    );
+    pass.run(&mut app, width, height);
+    assert!(
+        ui_state(&app).reveal_anchor.is_none(),
+        "the build menu reports the reveal done on the pass it scrolls"
+    );
+    for _ in 0..60 {
+        pass.run(&mut app, width, height);
+    }
+    let section = anchors(&app)[&TutorialAnchor::LineSection];
+    assert!(section.is_positive());
+    // Taller than the view, so its top is brought in and it fills the view below that.
+    assert!(
+        view.expand(1.0).contains_rect(section),
+        "{section:?} is not in {view:?}"
+    );
+    assert!(section.height() > view.height() / 2.0, "{section:?}");
 }
 
 #[test]
@@ -511,49 +683,417 @@ fn speed_and_review_anchors_are_marked() {
     assert!(!seen.contains_key(&TutorialAnchor::SpeedControls));
 }
 
-/// At the smallest window the battery card starts below the build menu's fold; the reveal scrolls
-/// it into the menu's view once and then says so, so the player can scroll away again.
+// --- The overlay: crawl, spotlights and instructions (spec §4.1) ---
+
+/// Puts the run at `step`: every step before it in the table counts as played (instructions
+/// too, which only the test can do), so `step` is the active one in its phase.
+pub(crate) fn at_step(app: &mut App, step: TutorialStep) {
+    let mut run = app.world_mut().resource_mut::<TutorialRun>();
+    let state = run.0.as_mut().expect("the tutorial runs");
+    state.played = TUTORIAL_STEPS
+        .iter()
+        .map(|def| def.step)
+        .take_while(|before| *before != step)
+        .collect();
+}
+
+/// Moves the real clock, which the overlay times spotlights and the crawl by, on `seconds`.
+pub(crate) fn advance_real(app: &mut App, seconds: f32) {
+    app.world_mut()
+        .resource_mut::<Time<Real>>()
+        .update_with_duration(std::time::Duration::from_secs_f32(seconds));
+}
+
+fn key(key: egui::Key, pressed: bool) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    }
+}
+
+fn press_escape(pass: &EguiPass, app: &mut App, (width, height): (f32, f32)) {
+    pass.run_with(app, width, height, vec![key(egui::Key::Escape, true)]);
+    pass.run_with(app, width, height, vec![key(egui::Key::Escape, false)]);
+}
+
+/// The instruction's End tutorial link.
+fn end_link(
+    widgets: &[crate::support::egui_harness::Widget],
+) -> Option<&crate::support::egui_harness::Widget> {
+    widgets
+        .iter()
+        .find(|w| w.role == egui::accesskit::Role::Button && w.text == "End tutorial")
+}
+
+fn open_prompt(app: &App) -> Option<game::hud::Prompt> {
+    app.world().resource::<game::hud::OpenPrompt>().0
+}
+
+fn phase(app: &App) -> DayPhase {
+    app.world().resource::<Session>().0.session().phase()
+}
+
+const CASH_NOTE: &str =
+    "This is your money. Grow it by selling power, without blacking out your customers.";
+const PICK_SITE: &str = "Click a square on the map to see what you can build there.";
+const START_NOTE: &str = "Ready? Start the day.";
+
 #[test]
-fn reveal_scrolls_battery_card_into_view() {
+fn tutorial_view_opacity_curve() {
+    use game::hud::tutorial::{TutorialView, tutorial_view};
+    let logs = TempDir::new().unwrap();
+    let app = tutorial_app(&logs);
+    let state = run(&app).unwrap();
+    let game = &app.world().resource::<Session>().0;
+    let l10n = crate::support::shipped_l10n();
+    let cash = TUTORIAL_STEPS
+        .iter()
+        .find(|def| def.step == TutorialStep::Cash)
+        .unwrap();
+    for (at, expected) in [(0.0, 0.0), (0.15, 0.5), (2.0, 1.0), (4.45, 0.5), (4.7, 0.0)] {
+        match tutorial_view(cash, state, game, &l10n, at) {
+            TutorialView::Spotlight {
+                step,
+                anchor,
+                text,
+                opacity,
+            } => {
+                assert_eq!(step, TutorialStep::Cash);
+                assert_eq!(anchor, TutorialAnchor::Cash);
+                assert_eq!(text, CASH_NOTE);
+                assert!(
+                    (opacity - expected).abs() < 1e-4,
+                    "at {at} s: {opacity}, not {expected}"
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+    // The other kinds, for completeness.
+    let def = |step| TUTORIAL_STEPS.iter().find(|def| def.step == step).unwrap();
+    assert_eq!(
+        tutorial_view(def(TutorialStep::FrameGrid), state, game, &l10n, 0.0),
+        TutorialView::Move(TutorialStep::FrameGrid)
+    );
+    match tutorial_view(def(TutorialStep::Crawl), state, game, &l10n, 9.0) {
+        TutorialView::Crawl { text, progress } => {
+            assert!(text.starts_with("You run a power company."), "{text}");
+            assert!((progress - 0.2).abs() < 1e-6, "{progress}");
+        }
+        other => panic!("{other:?}"),
+    }
+    match tutorial_view(def(TutorialStep::PickSite), state, game, &l10n, 0.0) {
+        TutorialView::Instruction { anchor, text, end } => {
+            assert_eq!(anchor, TutorialAnchor::Map);
+            assert_eq!(text, PICK_SITE);
+            assert_eq!(end.label, "End tutorial");
+            assert_eq!(end.action, UiAction::Tutorial(TutorialAction::End));
+        }
+        other => panic!("{other:?}"),
+    }
+    // The Construction note is chosen from what was ordered: nothing, here.
+    match tutorial_view(def(TutorialStep::Construction), state, game, &l10n, 1.0) {
+        TutorialView::Spotlight { text, .. } => assert_eq!(
+            text,
+            "Construction is what you pay each month for things you've ordered."
+        ),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// The overlay plays moves through `dispatch` as soon as they are the active step.
+#[test]
+fn moves_play_by_themselves() {
     let logs = TempDir::new().unwrap();
     let mut app = tutorial_app(&logs);
-    let pass = with_anchor_probe(&mut app);
-    let cell = battery_site(&app);
-    dispatch_in(&mut app, vec![UiAction::Select(Selection::Cell(cell))]);
+    let pass = EguiPass::attach(&mut app);
+    let anchor = app.world().resource::<Session>().0.session().anchor_node();
+    pass.run(&mut app, MIN.0, MIN.1);
+    assert_eq!(played(&app), BTreeSet::from([TutorialStep::FrameGrid]));
+    assert_eq!(focus(&app), Some(CameraFocus::Zone(anchor)));
+}
+
+#[test]
+fn spotlight_click_is_consumed() {
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    at_step(&mut app, TutorialStep::StartSpotlight);
+    let pass = EguiPass::attach(&mut app);
     let (width, height) = MIN;
     let widgets = pass.settled(&mut app, width, height);
-    // The build menu's scrolling part: right of the map, below its title and above the Planning
-    // panel's tab row.
-    let map = widget(&widgets, "Map").rect;
-    let title = widgets
-        .iter()
-        .find(|w| w.text == "Build" && w.rect.left() >= map.right())
-        .expect("the build menu's title")
-        .rect;
-    let view = egui::Rect::from_min_max(
-        egui::pos2(map.right(), title.bottom()),
-        egui::pos2(width, find_button(&widgets, "Start the day").rect.top()),
-    );
-    let card = anchors(&app)[&TutorialAnchor::BatteryCard];
+    assert!(crate::support::egui_harness::has(&widgets, START_NOTE));
+    assert!(!played(&app).contains(&TutorialStep::StartSpotlight));
+    let start = find_button(&widgets, "Start the day").rect;
+    pass.click_at(&mut app, width, height, start.center());
+    assert!(sent::<PlayerCommand>(&app).is_empty());
+    assert_eq!(open_prompt(&app), None);
+    update_n(&mut app, 2);
+    assert_eq!(phase(&app), DayPhase::Planning);
+    assert!(played(&app).contains(&TutorialStep::StartSpotlight));
+    // The instruction follows, and it doesn't block the button.
+    let widgets = pass.settled(&mut app, width, height);
+    assert!(crate::support::egui_harness::has(&widgets, START_NOTE));
+    let start = find_button(&widgets, "Start the day").rect;
+    pass.click_at(&mut app, width, height, start.center());
     assert!(
-        !view.contains_rect(card),
-        "the test needs the card out of view first: {card:?} in {view:?}"
+        !sent::<PlayerCommand>(&app).is_empty() || open_prompt(&app).is_some(),
+        "Start the day was clicked"
     );
+}
 
-    tutorial(
-        &mut app,
-        [TutorialAction::Play(TutorialStep::RevealBattery)],
-    );
+#[test]
+fn escape_ends_a_spotlight() {
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    at_step(&mut app, TutorialStep::Cash);
+    let pass = EguiPass::attach(&mut app);
+    pass.settled(&mut app, MIN.0, MIN.1);
+    assert!(!played(&app).contains(&TutorialStep::Cash));
+    press_escape(&pass, &mut app, MIN);
+    assert!(played(&app).contains(&TutorialStep::Cash));
+}
+
+#[test]
+fn spotlight_ends_by_itself_after_hold() {
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    at_step(&mut app, TutorialStep::Cash);
+    let pass = EguiPass::attach(&mut app);
+    let (width, height) = MIN;
+    let widgets = pass.settled(&mut app, width, height);
+    assert!(crate::support::egui_harness::has(&widgets, CASH_NOTE));
+    advance_real(&mut app, 2.0);
+    let widgets = pass.run(&mut app, width, height);
+    assert!(crate::support::egui_harness::has(&widgets, CASH_NOTE));
+    assert!(!played(&app).contains(&TutorialStep::Cash));
+    advance_real(&mut app, 2.7);
     pass.run(&mut app, width, height);
+    assert!(played(&app).contains(&TutorialStep::Cash));
+    let widgets = pass.run(&mut app, width, height);
+    assert!(!crate::support::egui_harness::has(&widgets, CASH_NOTE));
+    assert!(crate::support::egui_harness::has(&widgets, PICK_SITE));
+}
+
+/// A spotlight whose anchor is scrolled out of the build menu asks for it, and its clock starts
+/// only once the anchor is drawn.
+#[test]
+fn spotlight_waits_for_its_anchor() {
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    let cell = battery_site(&app);
+    dispatch_in(&mut app, vec![UiAction::Select(Selection::Cell(cell))]);
+    at_step(&mut app, TutorialStep::ConnectSpotlight);
+    let pass = with_anchor_probe(&mut app);
+    let (width, height) = MIN;
+    let note = "A power plant only helps once a line connects it to your grid.";
+    let widgets = pass.run(&mut app, width, height);
+    assert!(!crate::support::egui_harness::has(&widgets, note));
     assert_eq!(
-        ui_state(&app).reveal_plant_card,
-        None,
-        "the build menu reports the reveal done on the pass it scrolls"
+        ui_state(&app).reveal_anchor,
+        Some(TutorialAnchor::LineSection)
     );
-    // Let the scroll animation finish.
+    // However long the wait, the clock hasn't started.
+    advance_real(&mut app, 10.0);
+    let mut shown = false;
     for _ in 0..60 {
-        pass.run(&mut app, width, height);
+        let widgets = pass.run(&mut app, width, height);
+        shown |= crate::support::egui_harness::has(&widgets, note);
     }
-    let card = anchors(&app)[&TutorialAnchor::BatteryCard];
-    assert!(view.contains_rect(card), "{card:?} is not in {view:?}");
+    assert!(shown);
+    assert!(anchors(&app).contains_key(&TutorialAnchor::LineSection));
+    assert!(!played(&app).contains(&TutorialStep::ConnectSpotlight));
+    advance_real(&mut app, 4.7);
+    pass.run(&mut app, width, height);
+    assert!(played(&app).contains(&TutorialStep::ConnectSpotlight));
+}
+
+/// Review Focus 3: only the active dialog handles Escape. An open prompt takes it, a spotlight
+/// waits for the prompt to close, and the run is unchanged.
+#[test]
+fn escape_goes_to_open_prompt_not_tutorial() {
+    use game::hud::Prompt;
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    at_step(&mut app, TutorialStep::PickSite);
+    let pass = EguiPass::attach(&mut app);
+    dispatch_in(&mut app, vec![UiAction::Prompt(Some(Prompt::LeaveGame))]);
+    let widgets = pass.settled(&mut app, MIN.0, MIN.1);
+    assert!(crate::support::egui_harness::has(&widgets, PICK_SITE));
+    let before = run(&app).cloned();
+    press_escape(&pass, &mut app, MIN);
+    assert_eq!(open_prompt(&app), None);
+    assert_eq!(run(&app).cloned(), before);
+
+    // A spotlight doesn't start while a prompt is open.
+    at_step(&mut app, TutorialStep::Cash);
+    dispatch_in(&mut app, vec![UiAction::Prompt(Some(Prompt::LeaveGame))]);
+    let widgets = pass.settled(&mut app, MIN.0, MIN.1);
+    assert!(!crate::support::egui_harness::has(&widgets, CASH_NOTE));
+    let before = run(&app).cloned();
+    advance_real(&mut app, 5.0);
+    press_escape(&pass, &mut app, MIN);
+    assert_eq!(open_prompt(&app), None);
+    assert_eq!(run(&app).cloned(), before);
+    let widgets = pass.settled(&mut app, MIN.0, MIN.1);
+    assert!(crate::support::egui_harness::has(&widgets, CASH_NOTE));
+    assert!(!played(&app).contains(&TutorialStep::Cash));
+}
+
+/// An instruction never stands between the player and a prompt: its card lets clicks through to
+/// the prompt's backdrop, and the prompt's buttons work.
+#[test]
+fn prompt_stays_clickable_under_instruction() {
+    use game::hud::Prompt;
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    at_step(&mut app, TutorialStep::PickSite);
+    let pass = EguiPass::attach(&mut app);
+    let (width, height) = MIN;
+    dispatch_in(&mut app, vec![UiAction::Prompt(Some(Prompt::LeaveGame))]);
+    let widgets = pass.settled(&mut app, width, height);
+    let note = widget(&widgets, PICK_SITE).rect;
+    // A click on the card reaches the prompt's backdrop, which closes it.
+    pass.click_at(&mut app, width, height, note.center());
+    assert_eq!(open_prompt(&app), None);
+
+    dispatch_in(&mut app, vec![UiAction::Prompt(Some(Prompt::LeaveGame))]);
+    let widgets = pass.settled(&mut app, width, height);
+    assert!(crate::support::egui_harness::has(&widgets, PICK_SITE));
+    let stay = find_button(&widgets, "Stay").rect;
+    pass.click_at(&mut app, width, height, stay.center());
+    assert_eq!(open_prompt(&app), None);
+    assert!(run(&app).is_some());
+}
+
+/// The instruction's End link ends the tutorial; elsewhere the map still takes clicks.
+#[test]
+fn instruction_end_link_ends_the_tutorial() {
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    at_step(&mut app, TutorialStep::PickSite);
+    let pass = EguiPass::attach(&mut app);
+    let (width, height) = MIN;
+    let widgets = pass.settled(&mut app, width, height);
+    let end = end_link(&widgets).expect("the End tutorial link").rect;
+    let note = widget(&widgets, PICK_SITE).rect;
+    let map = widget(&widgets, "Map").rect;
+    assert!(
+        map.contains(note.center()),
+        "{note:?} sits near the map's top: {map:?}"
+    );
+    pass.click_at(&mut app, width, height, end.center());
+    assert!(run(&app).is_none());
+    assert!(!pending(&app));
+    let widgets = pass.settled(&mut app, width, height);
+    assert!(!crate::support::egui_harness::has(&widgets, PICK_SITE));
+}
+
+#[test]
+fn crawl_has_full_accessible_name_and_ends_on_click() {
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    at_step(&mut app, TutorialStep::Crawl);
+    let pass = EguiPass::attach(&mut app);
+    let (width, height) = MIN;
+    let widgets = pass.settled(&mut app, width, height);
+    let l10n = crate::support::shipped_l10n();
+    let text = l10n.text("tutorial-crawl");
+    assert!(text.lines().count() >= 4, "{text}");
+    let crawl = widget(&widgets, &text);
+    assert_eq!(
+        crawl.rect,
+        egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, height))
+    );
+    // A click anywhere ends it, and doesn't reach the map.
+    let map = widget(&widgets, "Map").rect;
+    pass.click_at(&mut app, width, height, map.center());
+    assert!(played(&app).contains(&TutorialStep::Crawl));
+    assert_eq!(*app.world().resource::<Selection>(), Selection::None);
+}
+
+#[test]
+fn crawl_ends_by_itself_or_on_escape() {
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    at_step(&mut app, TutorialStep::Crawl);
+    let pass = EguiPass::attach(&mut app);
+    pass.settled(&mut app, MIN.0, MIN.1);
+    advance_real(&mut app, 44.0);
+    pass.run(&mut app, MIN.0, MIN.1);
+    assert!(!played(&app).contains(&TutorialStep::Crawl));
+    advance_real(&mut app, 1.5);
+    pass.run(&mut app, MIN.0, MIN.1);
+    assert!(played(&app).contains(&TutorialStep::Crawl));
+
+    at_step(&mut app, TutorialStep::Crawl);
+    pass.settled(&mut app, MIN.0, MIN.1);
+    press_escape(&pass, &mut app, MIN);
+    assert!(played(&app).contains(&TutorialStep::Crawl));
+}
+
+/// Review Focus 2: at the smallest window and the largest UI zoom, every spotlight's note and
+/// every instruction's card is drawn, and inside the screen.
+#[test]
+fn cards_fit_minimum_window_at_max_zoom() {
+    const MAX_ZOOM: f32 = 1.5;
+    let (width, height) = (MIN.0 / MAX_ZOOM, MIN.1 / MAX_ZOOM);
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, height));
+    let l10n = crate::support::shipped_l10n();
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    let pass = EguiPass::attach(&mut app);
+    let cell = battery_site(&app);
+    let mut checked = Vec::new();
+    for phase_now in [DayPhase::Planning, DayPhase::Operating, DayPhase::Review] {
+        match phase_now {
+            DayPhase::Planning => {}
+            DayPhase::Operating => execute(&mut app, Command::BeginOperating),
+            DayPhase::Review => execute(&mut app, Command::AdvanceTicks { n: TICKS_PER_DAY }),
+        }
+        assert_eq!(phase(&app), phase_now);
+        for def in TUTORIAL_STEPS.iter().filter(|def| {
+            def.phase == phase_now
+                && matches!(def.kind, StepKind::Spotlight | StepKind::Instruction)
+        }) {
+            at_step(&mut app, def.step);
+            // Picking a site is done once a cell is selected; the later steps need one.
+            let selection = if def.step == TutorialStep::PickSite {
+                Selection::None
+            } else {
+                Selection::Cell(cell)
+            };
+            dispatch_in(&mut app, vec![UiAction::Select(selection)]);
+            let text = def
+                .text_key
+                .map(|key| l10n.text(key))
+                .unwrap_or_else(|| l10n.text("tutorial-construction-general"));
+            // Let a reveal scroll its anchor in.
+            let mut found = None;
+            for _ in 0..60 {
+                let widgets = pass.run(&mut app, width, height);
+                if let Some(note) = widgets.iter().find(|w| w.text == text) {
+                    let end = end_link(&widgets).map(|w| w.rect);
+                    found = Some((note.rect, end));
+                    break;
+                }
+            }
+            let (note, end) = found.unwrap_or_else(|| panic!("{:?} drew no note", def.step));
+            assert!(screen.contains_rect(note), "{:?}: {note:?}", def.step);
+            if def.kind == StepKind::Instruction {
+                let end = end.unwrap_or_else(|| panic!("{:?} has no End link", def.step));
+                assert!(screen.contains_rect(end), "{:?}: {end:?}", def.step);
+            }
+            checked.push(def.step);
+        }
+    }
+    assert_eq!(
+        checked.len(),
+        TUTORIAL_STEPS
+            .iter()
+            .filter(|def| matches!(def.kind, StepKind::Spotlight | StepKind::Instruction))
+            .count()
+    );
 }
