@@ -1019,10 +1019,7 @@ fn tutorial_notes_meet_contrast_on_their_cards() {
         ),
         (
             TutorialStep::PickSite,
-            &[
-                "Click a square on the map to see what you can build there.",
-                "End tutorial",
-            ][..],
+            &["Click a square on the map to see what you can build there."][..],
         ),
     ] {
         at_step(&mut app, step);

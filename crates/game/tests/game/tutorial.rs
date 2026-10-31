@@ -335,30 +335,6 @@ fn reveal_done_clears_the_reveal() {
 }
 
 #[test]
-fn end_finishes_the_tutorial() {
-    let logs = TempDir::new().unwrap();
-    let mut app = tutorial_app(&logs);
-    // A reveal still pending when the tutorial ends must not scroll the build menu later.
-    tutorial(
-        &mut app,
-        [
-            TutorialAction::Play(TutorialStep::RevealBattery),
-            TutorialAction::Reveal(TutorialAnchor::LineSection),
-        ],
-    );
-    assert_eq!(ui_state(&app).reveal_plant_card, Some(PlantKind::Battery));
-    assert_eq!(
-        ui_state(&app).reveal_anchor,
-        Some(TutorialAnchor::LineSection)
-    );
-    tutorial(&mut app, [TutorialAction::End]);
-    assert!(run(&app).is_none());
-    assert!(!pending(&app));
-    assert_eq!(ui_state(&app).reveal_plant_card, None);
-    assert_eq!(ui_state(&app).reveal_anchor, None);
-}
-
-#[test]
 fn reveal_asks_the_build_menu_for_a_scrolling_anchor() {
     let logs = TempDir::new().unwrap();
     let mut app = tutorial_app(&logs);
@@ -418,10 +394,10 @@ fn without_a_run_tutorial_actions_do_nothing() {
         ]
     });
     let every_play = every_play.chain(ANCHORS.map(TutorialAction::Reveal));
-    tutorial(&mut app, every_play.chain([TutorialAction::End]));
+    tutorial(&mut app, every_play);
     assert_eq!((ui_state(&app).clone(), focus(&app)), before);
     assert!(run(&app).is_none());
-    assert!(pending(&app), "End without a run leaves the tutorial owed");
+    assert!(pending(&app), "the tutorial is still owed");
 
     app.world_mut().resource_mut::<UiState>().reveal_plant_card = Some(PlantKind::Battery);
     tutorial(&mut app, [TutorialAction::RevealDone]);
@@ -430,14 +406,13 @@ fn without_a_run_tutorial_actions_do_nothing() {
 
 fn any_tutorial_action() -> impl proptest::strategy::Strategy<Value = TutorialAction> {
     use proptest::strategy::Strategy;
-    (0..TUTORIAL_STEPS.len(), 0u8..5).prop_map(|(index, which)| {
+    (0..TUTORIAL_STEPS.len(), 0u8..4).prop_map(|(index, which)| {
         let step = TUTORIAL_STEPS[index].step;
         match which {
             0 => TutorialAction::Play(step),
             1 => TutorialAction::Dismiss(step),
             2 => TutorialAction::RevealDone,
-            3 => TutorialAction::Reveal(ANCHORS[index % ANCHORS.len()]),
-            _ => TutorialAction::End,
+            _ => TutorialAction::Reveal(ANCHORS[index % ANCHORS.len()]),
         }
     })
 }
@@ -719,15 +694,6 @@ fn press_escape(pass: &EguiPass, app: &mut App, (width, height): (f32, f32)) {
     pass.run_with(app, width, height, vec![key(egui::Key::Escape, false)]);
 }
 
-/// The instruction's End tutorial link.
-fn end_link(
-    widgets: &[crate::support::egui_harness::Widget],
-) -> Option<&crate::support::egui_harness::Widget> {
-    widgets
-        .iter()
-        .find(|w| w.role == egui::accesskit::Role::Button && w.text == "End tutorial")
-}
-
 fn open_prompt(app: &App) -> Option<game::hud::Prompt> {
     app.world().resource::<game::hud::OpenPrompt>().0
 }
@@ -786,11 +752,9 @@ fn tutorial_view_opacity_curve() {
         other => panic!("{other:?}"),
     }
     match tutorial_view(def(TutorialStep::PickSite), state, game, &l10n, 0.0) {
-        TutorialView::Instruction { anchor, text, end } => {
+        TutorialView::Instruction { anchor, text } => {
             assert_eq!(anchor, TutorialAnchor::Map);
             assert_eq!(text, PICK_SITE);
-            assert_eq!(end.label, "End tutorial");
-            assert_eq!(end.action, UiAction::Tutorial(TutorialAction::End));
         }
         other => panic!("{other:?}"),
     }
@@ -971,7 +935,6 @@ fn prompt_stays_clickable_under_instruction() {
     let widgets = pass.settled(&mut app, width, height);
     assert!(!paints(&pass, &mut app, MIN, PICK_SITE));
     assert!(!crate::support::egui_harness::has(&widgets, PICK_SITE));
-    assert!(end_link(&widgets).is_none());
     // A click where the card was reaches the prompt's backdrop, which closes it.
     pass.click_at(&mut app, width, height, note.center());
     assert_eq!(open_prompt(&app), None);
@@ -988,27 +951,34 @@ fn prompt_stays_clickable_under_instruction() {
     assert!(crate::support::egui_harness::has(&widgets, PICK_SITE));
 }
 
-/// The instruction's End link ends the tutorial; elsewhere the map still takes clicks.
+/// An instruction about the map sits near the map's top, has no buttons, and lets a click on
+/// its own card through to the map.
 #[test]
-fn instruction_end_link_ends_the_tutorial() {
+fn instruction_sits_on_the_map_and_takes_no_clicks() {
     let logs = TempDir::new().unwrap();
     let mut app = tutorial_app(&logs);
     at_step(&mut app, TutorialStep::PickSite);
     let pass = EguiPass::attach(&mut app);
     let (width, height) = MIN;
     let widgets = pass.settled(&mut app, width, height);
-    let end = end_link(&widgets).expect("the End tutorial link").rect;
     let note = widget(&widgets, PICK_SITE).rect;
     let map = widget(&widgets, "Map").rect;
     assert!(
         map.contains(note.center()),
         "{note:?} sits near the map's top: {map:?}"
     );
-    pass.click_at(&mut app, width, height, end.center());
-    assert!(run(&app).is_none());
-    assert!(!pending(&app));
-    let widgets = pass.settled(&mut app, width, height);
-    assert!(!crate::support::egui_harness::has(&widgets, PICK_SITE));
+    assert!(
+        !widgets
+            .iter()
+            .any(|w| w.role == egui::accesskit::Role::Button && note.contains_rect(w.rect)),
+        "the card has no buttons"
+    );
+    pass.click_at(&mut app, width, height, note.center());
+    assert!(
+        matches!(*app.world().resource::<Selection>(), Selection::Cell(_)),
+        "the click reached the map"
+    );
+    assert!(run(&app).is_some());
 }
 
 #[test]
@@ -1100,17 +1070,12 @@ fn cards_fit_minimum_window_at_max_zoom() {
             for _ in 0..60 {
                 let widgets = pass.run(&mut app, width, height);
                 if let Some(note) = widgets.iter().find(|w| w.text == text) {
-                    let end = end_link(&widgets).map(|w| w.rect);
-                    found = Some((note.rect, end));
+                    found = Some(note.rect);
                     break;
                 }
             }
-            let (note, end) = found.unwrap_or_else(|| panic!("{:?} drew no note", def.step));
+            let note = found.unwrap_or_else(|| panic!("{:?} drew no note", def.step));
             assert!(screen.contains_rect(note), "{:?}: {note:?}", def.step);
-            if def.kind == StepKind::Instruction {
-                let end = end.unwrap_or_else(|| panic!("{:?} has no End link", def.step));
-                assert!(screen.contains_rect(end), "{:?}: {end:?}", def.step);
-            }
             checked.push(def.step);
         }
     }

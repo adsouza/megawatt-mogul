@@ -131,8 +131,6 @@ pub enum TutorialAction {
     Reveal(TutorialAnchor),
     /// A panel has scrolled the revealed anchor into view.
     RevealDone,
-    /// Stop the tutorial for good.
-    End,
 }
 
 /// The screens outside a game that the HUD can move between by itself.
@@ -695,14 +693,6 @@ fn tutorial(sink: &mut ActionSink, action: TutorialAction) {
             return;
         }
         TutorialAction::RevealDone => return,
-        TutorialAction::End => {
-            sink.tutorial.0 = None;
-            sink.progress.value.tutorial_pending = false;
-            // A reveal still pending would scroll the build menu after the tutorial is gone.
-            sink.ui.reveal_plant_card = None;
-            sink.ui.reveal_anchor = None;
-            return;
-        }
     };
     let instruction = TUTORIAL_STEPS
         .iter()

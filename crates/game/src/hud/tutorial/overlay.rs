@@ -3,8 +3,8 @@
 //!
 //! - [`tutorial_view`] is the pure presenter: what the active step shows, `shown_for` seconds after
 //!   it first appeared.
-//! - [`draw_spotlight`] and [`draw_instruction`] (and [`super::crawl::draw_crawl`]) lay it out and
-//!   return what was asked for.
+//! - [`draw_spotlight`] and [`draw_instruction`] (and [`super::crawl::draw_crawl`]) lay it out;
+//!   the spotlight and the crawl return what was asked for.
 //! - [`tutorial_overlay`] picks the active step each pass, keeps its clock, and hands the actions
 //!   to [`dispatch`].
 //!
@@ -12,8 +12,8 @@
 //! first) or, for a spotlight, while its anchor isn't drawn. A spotlight whose anchor sits in a
 //! scroll area (the battery card, the line section, the Review's Construction row) first asks for
 //! it to be scrolled into view, so it never waits on the player to find it. An instruction never
-//! waits and never blocks input outside its own card; while a prompt is open it isn't drawn, so
-//! it never covers the prompt.
+//! waits and never blocks input, not even on its own card; while a prompt is open it isn't drawn,
+//! so it never covers the prompt.
 
 use application::Game;
 use bevy::prelude::*;
@@ -24,7 +24,7 @@ use super::{
     StepDef, StepKind, TutorialAnchor, TutorialState, TutorialStep, active_step, anchor_rect,
     construction_key,
 };
-use crate::hud::action::{ActionSink, ButtonModel, TutorialAction, UiAction, dispatch};
+use crate::hud::action::{ActionSink, TutorialAction, UiAction, dispatch};
 use crate::hud::theme::ACCENT_YELLOW;
 use crate::l10n::Localizer;
 
@@ -62,11 +62,10 @@ pub enum TutorialView {
         text: String,
         opacity: f32,
     },
-    /// A callout that stays until its step is done, with a link that ends the tutorial.
+    /// A callout that stays until its step is done.
     Instruction {
         anchor: TutorialAnchor,
         text: String,
-        end: ButtonModel,
     },
 }
 
@@ -100,10 +99,6 @@ pub fn tutorial_view(
         StepKind::Instruction => TutorialView::Instruction {
             anchor,
             text: text(),
-            end: ButtonModel::new(
-                l10n.text("tutorial-end"),
-                UiAction::Tutorial(TutorialAction::End),
-            ),
         },
     }
 }
@@ -201,14 +196,14 @@ pub(crate) fn tutorial_overlay(
         }
         // Prompts come first: an instruction steps aside while one is open.
         TutorialView::Instruction { .. } if prompt_open => {}
-        TutorialView::Instruction { anchor, text, end } => {
+        TutorialView::Instruction { anchor, text } => {
             let target = anchor_rect(&ctx, anchor);
             let map = anchor_rect(&ctx, TutorialAnchor::Map);
             let placement = match (anchor, target) {
                 (TutorialAnchor::Map, _) | (_, None) => Placement::TopOf(map),
                 (_, Some(target)) => Placement::Beside(target),
             };
-            actions.extend(draw_instruction(&ctx, placement, &text, Some(&end)));
+            draw_instruction(&ctx, placement, &text);
         }
     }
     *shown = Some(clock);
@@ -408,67 +403,30 @@ fn paint_dim(painter: &egui::Painter, screen: egui::Rect, cutout: egui::Rect, op
     painter.add(egui::Shape::mesh(mesh));
 }
 
-/// The size of an instruction's card: its text and, below, the End link if there is one.
-fn instruction_size(
-    ctx: &egui::Context,
-    galley: &egui::Galley,
-    end: Option<&ButtonModel>,
-) -> egui::Vec2 {
-    let style = ctx.global_style();
-    let frame = card_frame(&style);
-    let mut size = galley.size() + frame.total_margin().sum();
-    if let Some(end) = end {
-        // The link is a frameless button: its text, padded, at least the interaction height.
-        let font = egui::TextStyle::Body.resolve(&style);
-        let text = ctx.fonts_mut(|fonts| {
-            fonts.layout_no_wrap(end.label.clone(), font, style.visuals.hyperlink_color)
-        });
-        let link = (text.size() + 2.0 * style.spacing.button_padding)
-            .max(egui::vec2(0.0, style.spacing.interact_size.y));
-        size.y += style.spacing.item_spacing.y + link.y;
-        size.x = size.x.max(link.x + frame.total_margin().sum().x);
-    }
-    size
+/// The size of an instruction's card: its text in the card's frame.
+fn instruction_size(ctx: &egui::Context, galley: &egui::Galley) -> egui::Vec2 {
+    galley.size() + card_frame(&ctx.global_style()).total_margin().sum()
 }
 
-/// An instruction: its text and, when `end` is given, the End tutorial link, on a card placed by
-/// `placement`. The card takes only clicks on itself; without `end` it takes none.
-fn draw_instruction(
-    ctx: &egui::Context,
-    placement: Placement,
-    text: &str,
-    end: Option<&ButtonModel>,
-) -> Vec<UiAction> {
+/// An instruction: its text on a card placed by `placement`. The card takes no clicks.
+fn draw_instruction(ctx: &egui::Context, placement: Placement, text: &str) {
     let screen = ctx.content_rect();
     let galley = card_galley(ctx, screen, text);
     let frame = card_frame(&ctx.global_style());
-    let size = instruction_size(ctx, &galley, end);
+    let size = instruction_size(ctx, &galley);
     let card = card_rect(screen, placement, size);
     egui::Area::new(egui::Id::new("tutorial-instruction"))
         .order(egui::Order::Tooltip)
         .fixed_pos(card.min)
         // Should the measure above ever fall short, egui keeps the card on screen.
         .constrain_to(screen.shrink(SCREEN_MARGIN))
-        .interactable(end.is_some())
+        .interactable(false)
         .show(ctx, |ui| {
-            let mut actions = Vec::new();
             frame.show(ui, |ui| {
                 ui.set_width(size.x - frame.total_margin().sum().x);
                 ui.add(egui::Label::new(galley).selectable(false));
-                if let Some(end) = end {
-                    // A link's look, but a button to assistive technology (egui's own link
-                    // reports itself as a label).
-                    let text = egui::RichText::new(end.label.as_str())
-                        .color(ui.visuals().hyperlink_color)
-                        .underline();
-                    if ui.add(egui::Button::new(text).frame(false)).clicked() {
-                        actions.push(end.action.clone());
-                    }
-                }
             });
-            actions
-        })
-        .inner
+        });
 }
 
 #[cfg(test)]
@@ -556,36 +514,29 @@ mod tests {
         let ctx = egui::Context::default();
         ctx.set_visuals(crate::hud::theme::visuals());
         let text = "Click a square on the map to see what you can build there.";
-        let end = ButtonModel::new(
-            "End tutorial".into(),
-            UiAction::Tutorial(TutorialAction::End),
-        );
-        for link in [Some(&end), None] {
-            let mut measured = None;
-            for _ in 0..2 {
-                ctx.run_ui(
-                    egui::RawInput {
-                        screen_rect: Some(screen()),
-                        ..Default::default()
-                    },
-                    |ui| {
-                        let galley = card_galley(ui.ctx(), screen(), text);
-                        measured = Some(instruction_size(ui.ctx(), &galley, link));
-                        draw_instruction(ui.ctx(), Placement::TopOf(None), text, link);
-                    },
-                )
-                .drop_without_applying_deltas();
-            }
-            let drawn = ctx
-                .memory(|memory| memory.area_rect(egui::Id::new("tutorial-instruction")))
-                .expect("the card was drawn");
-            let measured = measured.unwrap();
-            assert!(
-                (drawn.size() - measured).length() < 0.5,
-                "{:?}: drawn {drawn:?}, measured {measured:?}",
-                link.map(|_| "with the link")
-            );
+        let mut measured = None;
+        for _ in 0..2 {
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen()),
+                    ..Default::default()
+                },
+                |ui| {
+                    let galley = card_galley(ui.ctx(), screen(), text);
+                    measured = Some(instruction_size(ui.ctx(), &galley));
+                    draw_instruction(ui.ctx(), Placement::TopOf(None), text);
+                },
+            )
+            .drop_without_applying_deltas();
         }
+        let drawn = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("tutorial-instruction")))
+            .expect("the card was drawn");
+        let measured = measured.unwrap();
+        assert!(
+            (drawn.size() - measured).length() < 0.5,
+            "drawn {drawn:?}, measured {measured:?}"
+        );
     }
 
     #[test]

@@ -44,7 +44,7 @@ genuinely played four other regions.
   writes simulation state, so replays, saves and digests are identical with it on or off. It
   changes only client UI state (tabs, scroll, camera) and client preferences.
 - Blocking the player. Spotlights end on any click, Escape or after a few seconds; instructions
-  never stop the player from doing something else; "End tutorial" is always one click away.
+  never stop the player from doing something else.
 - A tutorial that gets stuck because the player went off-script. It must re-evaluate from state
   every frame (§4.2) rather than assume the previous step happened.
 - Patronising walls of text. Each note is one or two short sentences.
@@ -63,8 +63,8 @@ genuinely played four other regions.
   opens the leave prompt, so the main menu is the natural home.)*
 - Starting a new game with `tutorial_pending` true starts the tutorial in that game. Loading or
   continuing a save never starts it.
-- The tutorial **finishes** when the player leaves the first Review (§4.4), or presses "End
-  tutorial". Either sets `tutorial_pending = false` and writes preferences. Leaving the game or
+- The tutorial **finishes** when the player leaves the first Review (§4.4). That sets
+  `tutorial_pending = false` and writes preferences. Leaving the game or
   quitting part-way leaves the flag `true`, so the next new game runs it again.
 
 ## 4. The tutorial
@@ -82,7 +82,7 @@ Four kinds of presentation, all drawn by the `game` crate in `HudSet::Overlays`:
   action.
 - **Instruction.** An undimmed callout: one sentence on an opaque card pointing at an anchor
   (or, for the map, near the map's top edge). It stays while its step is active and does not
-  block input. It carries a small **"End tutorial"** link.
+  block input, not even on its own card.
 - **Automatic UI moves.** Switching the Planning tab, scrolling the build panel to a card, and
   framing the camera. Tab switches go through `dispatch` as `UiAction`s like any click (AGENTS.md:
   `dispatch` is the only place a click becomes a resource write); the camera and scroll moves are

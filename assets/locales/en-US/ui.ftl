@@ -90,7 +90,6 @@ tutorial-construction-paid = This is your payment for the battery and its power 
 tutorial-construction-battery-paying = This is your first payment for your battery. You'll pay a share every month until it's built. It can't help until a line connects it to your grid.
 tutorial-construction-battery-paid = This is your payment for your battery. It's paid off, but it can't help until a line connects it to your grid.
 tutorial-construction-general = Construction is what you pay each month for things you've ordered.
-tutorial-end = End tutorial
 
 ## Shell: top bar, toasts and game over
 
