@@ -102,7 +102,7 @@ The tutorial is an ordered table of steps in the `game` crate, `TUTORIAL_STEPS`.
 - the **phase** it belongs to (Planning, Operating, Review);
 - its **presentation**: crawl, automatic move, spotlight, instruction, or a spotlight followed by
   an instruction;
-- its **anchor** and **text key** (`assets/locales/en-US/tutorial.ftl`, keys also in
+- its **anchor** and **text key** (`assets/locales/en-US/ui.ftl`, keys also in
   `l10n/keys.rs`);
 - for instructions, a **done** predicate over the game state and client UI state.
 
@@ -204,21 +204,20 @@ The main spec's 4.5:1 contrast floor (§8.4) applies to every tutorial text, inc
 ## 6. "Played" regions and the SGCC lock
 
 **Definition.** A region counts as **played** when, in a game in that region, the player has
-connected a city beyond the starting service territory and then played **twelve months**,
-counting the month in which the first extra city connected. Concretely: let *M* be the first month
-in which the connected-city count exceeds the session's initial count; the region is played at
-the close of month *M + 11*. A game that ends (game over) or is abandoned before then doesn't
-count. Disconnecting the city later doesn't undo it.
+connected a city beyond the starting service territory (a city not in the region's
+`start.connected_cities`) and then **twelve months have closed** since that connection. A game that
+ends (game over) or is abandoned before then doesn't count. Disconnecting the city later doesn't undo
+it.
 
-**Tracking.** A new application projection, `ExpansionProjection`, seeds the initial connected
-count, records *M*, and reports `played()` from the month closes. A `game` system adds the
+**Tracking.** A new application projection, `ExpansionProjection`, counts the month closes since
+the first extra city connected (saturating at 12) and reports `played()`. A `game` system adds the
 session's region id to `played_regions` the first time `played()` becomes true, and writes
 `progress.ron`. Recording is idempotent and survives deleting saves.
 
-**Saves made before this feature** (schema ≤ 7) have no record of *M*. *(Builder's call:)* on
+**Saves made before this feature** (schema ≤ 7) have no record of the connection month. *(Builder's call:)* on
 restore, seed the projection from the session as it stands. If an extra city is already
-connected, *M* is the month being loaded, so the count starts then. It can come late but never
-early. Otherwise *M* is unset and recorded normally later.
+connected, the count of month closes starts at zero from the loaded month. It can come late but
+never early. Otherwise the count starts normally at the first connection.
 
 **The lock.** A region's file may carry optional presentation metadata, mirroring `atlas`:
 `unlock: (regions_played: 4)`. It is optional in the strict region-file parser (as `atlas` is),
@@ -235,8 +234,8 @@ including people who already play SGCC. Their SGCC saves still load.
 `--exit-after-frames` in `paths.rs`. It inserts an `UnlockAllRegions` resource that makes the
 picker ignore every `unlock` threshold for that run. It never writes `played_regions`, so it
 leaves no trace once the game is launched without it. Game tests that start SGCC through the
-picker (`tests/game/hvdc.rs`, `region_picker.rs`, `player_workflows.rs`) insert the same
-resource. Desktop only: the browser build has no command line.
+picker insert the same resource. The lock is a picker lock only. A `NewGameRequest` written
+directly, as most game tests do, is not gated. Desktop only: the browser build has no command line.
 
 ## 7. Testing
 
@@ -250,8 +249,9 @@ resource. Desktop only: the browser build has no command line.
 - **Fit:** spotlight cards and instructions fit the minimum window at maximum UI zoom.
 - **Contrast:** the crawl's text against its backdrop over white; the notes against their cards.
 - **Preferences:** round-trip, defaults when keys are absent, validation bounds.
-- **Projection:** `ExpansionProjection` property tests: played exactly at the close of *M + 11*,
-  never before, never without an extra city; rebuilt identically by replay.
+- **Projection:** `ExpansionProjection` property tests: played exactly at the twelfth month close
+  after the first extra connection, never before, never without an extra city; snapshot bytes
+  round-trip at schema 8, and a schema-7 snapshot restores with a seeded projection.
 - **Picker:** SGCC disabled at 3 other played regions, enabled at 4; its own id never counts.
 - **Launch smoke:** `cargo run -p game -- --exit-after-frames 120` after adding the plugin.
 
