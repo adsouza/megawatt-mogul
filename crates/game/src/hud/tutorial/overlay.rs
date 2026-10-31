@@ -14,7 +14,8 @@
 //! up where it left off. A spotlight whose anchor sits in a
 //! scroll area (the battery card, the line section, the Review's Construction row) first asks for
 //! it to be scrolled into view, so it never waits on the player to find it, and asks once more
-//! (for each selection) if it is scrolled away part-way.
+//! (for each selection) if it is scrolled away part-way. A reveal no panel finished goes with its
+//! step: when the active step changes the overlay drops it, so a later step's panel never jumps.
 //!
 //! While the crawl or a spotlight is up it is the active layer: it takes every click, Escape
 //! goes to it rather than to a window under it (it is egui's top modal layer), and the keyboard
@@ -185,19 +186,32 @@ pub(crate) fn tutorial_overlay(
     frame: Res<FrameCount>,
     l10n: Res<Localizer>,
     mut shown: Local<Option<Shown>>,
+    mut active: Local<Option<TutorialStep>>,
     mut sink: ActionSink,
 ) -> Result {
     let ctx = contexts.ctx_mut()?.clone();
     let now = time.elapsed_secs_f64();
-    let uncover = [UiAction::Tutorial(TutorialAction::Cover(false))];
+    let uncover = UiAction::Tutorial(TutorialAction::Cover(false));
     let (Some(state), Some(game)) = (sink.tutorial(), sink.game()) else {
+        // Ending the run dropped its reveals.
         *shown = None;
-        dispatch(uncover, &mut sink);
+        *active = None;
+        dispatch([uncover], &mut sink);
         return Ok(());
     };
-    let Some(def) = active_step(state, game, sink.selection()) else {
+    let def = active_step(state, game, sink.selection());
+    let mut actions = Vec::new();
+    // A reveal the step before asked for and no panel finished goes with it: the next step's
+    // own asks come after.
+    let step = def.map(|def| def.step);
+    if *active != step {
+        actions.push(UiAction::Tutorial(TutorialAction::StepChanged));
+        *active = step;
+    }
+    let Some(def) = def else {
         *shown = None;
-        dispatch(uncover, &mut sink);
+        actions.push(uncover);
+        dispatch(actions, &mut sink);
         return Ok(());
     };
     let mut clock = match *shown {
@@ -213,7 +227,6 @@ pub(crate) fn tutorial_overlay(
             StepKind::Spotlight => anchor.is_some(),
             StepKind::Move | StepKind::Instruction => false,
         };
-    let mut actions = Vec::new();
     // An anchor in a scroll area is brought into view once for each selection (which changes what
     // the build menu shows): before its spotlight starts, once more when it is paused part-way with
     // its anchor out of view, or when an instruction's anchor isn't in view.

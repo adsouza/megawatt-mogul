@@ -134,6 +134,9 @@ pub enum TutorialAction {
     Reveal(TutorialAnchor),
     /// A panel has scrolled the revealed anchor into view.
     RevealDone,
+    /// The active step has changed (or there is none now): a reveal asked for under the step
+    /// before that no panel has finished is dropped, so it never scrolls a panel in a later step.
+    StepChanged,
     /// Whether the crawl or a spotlight covers the screen this pass, which the overlay says on
     /// every pass it runs: while one does, the keyboard shortcuts wait.
     Cover(bool),
@@ -670,12 +673,21 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
 }
 
 /// The tutorial's moves: HUD state only, and nothing at all without a running tutorial (but a
-/// finished reveal is always cleared). An instruction never joins `played`: it shows until its
+/// finished or abandoned reveal is always cleared). An instruction never joins `played`: it shows until its
 /// step is done, and again if that is undone.
 fn tutorial(sink: &mut ActionSink, action: TutorialAction) {
-    if action == TutorialAction::RevealDone {
-        sink.ui.reveal_plant_card = None;
-        sink.ui.reveal_anchor = None;
+    if matches!(
+        action,
+        TutorialAction::RevealDone | TutorialAction::StepChanged
+    ) {
+        // Written only when there is a reveal to drop: the overlay says the step changed whether
+        // one was asked for or not.
+        if sink.ui.reveal_plant_card.is_some() {
+            sink.ui.reveal_plant_card = None;
+        }
+        if sink.ui.reveal_anchor.is_some() {
+            sink.ui.reveal_anchor = None;
+        }
         return;
     }
     if let TutorialAction::Cover(cover) = action {
@@ -706,7 +718,9 @@ fn tutorial(sink: &mut ActionSink, action: TutorialAction) {
             }
             return;
         }
-        TutorialAction::RevealDone | TutorialAction::Cover(_) => return,
+        TutorialAction::RevealDone | TutorialAction::StepChanged | TutorialAction::Cover(_) => {
+            return;
+        }
     };
     let instruction = TUTORIAL_STEPS
         .iter()

@@ -359,6 +359,32 @@ fn reveal_done_clears_the_reveal() {
     assert_eq!(played(&app), BTreeSet::from([TutorialStep::RevealBattery]));
 }
 
+/// A step change drops the reveals asked for before it, with or without a run, and leaves the
+/// cover and what has played alone.
+#[test]
+fn step_changed_drops_pending_reveals_only() {
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    tutorial(
+        &mut app,
+        [
+            TutorialAction::Play(TutorialStep::RevealBattery),
+            TutorialAction::Reveal(TutorialAnchor::LineSection),
+            TutorialAction::Cover(true),
+        ],
+    );
+    tutorial(&mut app, [TutorialAction::StepChanged]);
+    let ui = ui_state(&app);
+    assert_eq!((ui.reveal_plant_card, ui.reveal_anchor), (None, None));
+    assert!(ui.tutorial_cover);
+    assert_eq!(played(&app), BTreeSet::from([TutorialStep::RevealBattery]));
+
+    app.world_mut().resource_mut::<TutorialRun>().0 = None;
+    set_reveals(&mut app);
+    tutorial(&mut app, [TutorialAction::StepChanged]);
+    assert_no_reveals(&app);
+}
+
 #[test]
 fn reveal_asks_the_build_menu_for_a_scrolling_anchor() {
     let logs = TempDir::new().unwrap();
@@ -472,7 +498,8 @@ fn the_overlay_covers_the_screen_only_while_the_crawl_or_a_spotlight_is_up() {
     assert!(!ui_state(&app).tutorial_cover);
 }
 
-/// Without a run the tutorial's actions change nothing; only `RevealDone` still clears a reveal.
+/// Without a run the tutorial's actions change nothing; only `RevealDone` (and `StepChanged`)
+/// still clear a reveal.
 #[test]
 fn without_a_run_tutorial_actions_do_nothing() {
     let logs = TempDir::new().unwrap();
@@ -502,13 +529,14 @@ fn without_a_run_tutorial_actions_do_nothing() {
 
 fn any_tutorial_action() -> impl proptest::strategy::Strategy<Value = TutorialAction> {
     use proptest::strategy::Strategy;
-    (0..TUTORIAL_STEPS.len(), 0u8..5).prop_map(|(index, which)| {
+    (0..TUTORIAL_STEPS.len(), 0u8..6).prop_map(|(index, which)| {
         let step = TUTORIAL_STEPS[index].step;
         match which {
             0 => TutorialAction::Play(step),
             1 => TutorialAction::Dismiss(step),
             2 => TutorialAction::RevealDone,
             3 => TutorialAction::Cover(index % 2 == 0),
+            4 => TutorialAction::StepChanged,
             _ => TutorialAction::Reveal(ANCHORS[index % ANCHORS.len()]),
         }
     })
@@ -1526,6 +1554,49 @@ fn connect_instruction_points_at_the_line_from_the_battery_then_its_first_target
             );
         }
     }
+}
+
+/// A reveal its step asked for but no panel could finish (here the connect instruction's, with a
+/// line started somewhere else) goes with its step: the next step doesn't inherit it, so the
+/// build menu doesn't jump when the anchor is drawn later.
+#[test]
+fn a_reveal_its_step_never_finished_goes_with_the_step() {
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    let pass = with_anchor_probe(&mut app);
+    let (width, height) = MIN;
+    let node = at_connect_instruction(&mut app, &pass, MIN);
+    let home = app.world().resource::<Session>().0.session().anchor_node();
+    assert_ne!(home, node);
+    dispatch_in(&mut app, vec![UiAction::Select(Selection::LineFrom(home))]);
+    for _ in 0..10 {
+        pass.run(&mut app, width, height);
+    }
+    assert_eq!(
+        ui_state(&app).reveal_anchor,
+        Some(TutorialAnchor::BatteryLineButton),
+        "the test needs a reveal no panel can finish"
+    );
+    at_step(&mut app, TutorialStep::StartSpotlight);
+    pass.run(&mut app, width, height);
+    assert_eq!(ui_state(&app).reveal_anchor, None);
+    assert_eq!(ui_state(&app).reveal_plant_card, None);
+    // The button it asked for is drawn again: nothing scrolls to it.
+    dispatch_in(&mut app, vec![UiAction::Select(Selection::LineFrom(node))]);
+    let button = |app: &App| {
+        anchors(app)
+            .get(&TutorialAnchor::BatteryLineButton)
+            .copied()
+    };
+    for _ in 0..2 {
+        pass.run(&mut app, width, height);
+    }
+    let drawn = button(&app);
+    assert!(drawn.is_some(), "the test needs the button drawn");
+    for _ in 0..60 {
+        pass.run(&mut app, width, height);
+    }
+    assert_eq!(button(&app), drawn, "the build menu scrolled");
 }
 
 /// Starting the day: the arrow points at *Start the day*, which still starts it.
