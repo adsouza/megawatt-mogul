@@ -381,6 +381,8 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "tutorial-speed",
     "tutorial-construction-paying",
     "tutorial-construction-paid",
+    "tutorial-construction-battery-paying",
+    "tutorial-construction-battery-paid",
     "tutorial-construction-general",
     "tutorial-end",
     "region-locked",

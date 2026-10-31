@@ -268,6 +268,20 @@ pub fn construction_key(state: &TutorialState, game: &Game) -> &'static str {
         // Nothing the tutorial asked for was ordered, so neither was a line to it.
         return "tutorial-construction-general";
     }
+    let linked = batteries
+        .iter()
+        .any(|battery| lines.iter().any(|line| touches(line, battery.node)));
+    if !linked {
+        // No line to mention, and the battery can't help until one is built.
+        let building = batteries
+            .iter()
+            .any(|battery| matches!(battery.status, PlantStatus::UnderConstruction { .. }));
+        return if building {
+            "tutorial-construction-battery-paying"
+        } else {
+            "tutorial-construction-battery-paid"
+        };
+    }
     let paying = batteries.iter().any(|battery| {
         matches!(battery.status, PlantStatus::UnderConstruction { .. })
             || lines.iter().any(|line| {
@@ -600,8 +614,10 @@ mod tests {
         );
     }
 
+    /// With no line to it, the note doesn't mention one, and says the battery can't help yet:
+    /// while it is building, and once it is built.
     #[test]
-    fn construction_key_is_paying_while_the_battery_or_its_line_is_building() {
+    fn construction_key_without_a_line_is_about_the_battery_alone() {
         let mut game = game("western_interconnection");
         let state = TutorialState::new(1, &game);
         let (cell, anchor) = battery_site(&game);
@@ -609,7 +625,7 @@ mod tests {
         // The battery alone is building.
         assert_eq!(
             construction_key(&state, &game),
-            "tutorial-construction-paying"
+            "tutorial-construction-battery-paying"
         );
         play_month(&mut game);
         let mut months = 1;
@@ -621,9 +637,9 @@ mod tests {
         }
         assert_eq!(
             construction_key(&state, &game),
-            "tutorial-construction-paid"
+            "tutorial-construction-battery-paid"
         );
-        // Its line alone is building.
+        // Its line alone is building: now there is one to mention.
         game.execute(Command::FinishReview).unwrap();
         game.execute(Command::BuildLine {
             from: anchor,
