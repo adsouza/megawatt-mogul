@@ -1545,9 +1545,17 @@ fn start_instruction_points_at_start_the_day() {
     assert!(!outlined_card(&painted), "an outlined card was painted");
     assert_points_at(&arrowhead(&painted).expect("an arrow"), target, "start");
     pass.click_at(&mut app, width, height, target.center());
+    // Start the day was clicked: the day begins, or the forecast's shortfall is put to the player.
+    let sent: Vec<Command> = sent::<PlayerCommand>(&app)
+        .into_iter()
+        .map(|command| command.0)
+        .collect();
+    let prompt = open_prompt(&app);
     assert!(
-        !sent::<PlayerCommand>(&app).is_empty() || open_prompt(&app).is_some(),
-        "Start the day was clicked"
+        matches!(sent.as_slice(), [Command::BeginOperating])
+            || (sent.is_empty()
+                && matches!(prompt, Some(game::hud::Prompt::ShortfallStart { .. }))),
+        "{sent:?}, {prompt:?}"
     );
 }
 
