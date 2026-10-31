@@ -1039,3 +1039,43 @@ fn tutorial_notes_meet_contrast_on_their_cards() {
         }
     }
 }
+
+/// The battery instruction is an arrow callout, not a card (the user found the card looked like a
+/// button): its text sits on an opaque backing of its own, with no outline, and meets the floor
+/// against it.
+#[test]
+fn battery_callout_meets_contrast_on_its_backing() {
+    use crate::tutorial::{at_battery_instruction, tutorial_app};
+    let text = "Build a battery here.";
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    let pass = EguiPass::attach(&mut app);
+    let (width, height) = (1280.0, 640.0);
+    at_battery_instruction(&mut app, &pass, (width, height));
+    let output = pass.paint_with(&mut app, width, height, vec![]);
+    let painted = output.shapes.clone();
+    assert!(check_paint(output) > 0);
+    let note = painted_texts(&painted)
+        .into_iter()
+        .find(|painted| painted.text == text)
+        .unwrap_or_else(|| panic!("{text:?} isn't painted"));
+    let ratio = contrast(over(note.color, note.background), note.background);
+    assert!(ratio >= MINIMUM, "{ratio:.2}:1 for {text:?}");
+    // What is directly under the text is the callout's own backing: opaque and unoutlined.
+    let shapes = shapes_of(&painted);
+    let at = shapes
+        .iter()
+        .position(|(_, shape)| matches!(shape, egui::Shape::Text(t) if t.galley.text() == text))
+        .expect("the callout's text");
+    let backing = shapes[..at]
+        .iter()
+        .rev()
+        .find_map(|(clip, shape)| match shape {
+            egui::Shape::Rect(rect) if rect.rect.intersect(*clip).contains(note.at) => Some(rect),
+            _ => None,
+        })
+        .expect("a backing under the text");
+    assert_eq!(backing.fill.a(), 255, "{backing:?}");
+    assert_eq!(backing.fill, note.background, "{backing:?}");
+    assert_eq!(backing.stroke.width, 0.0, "{backing:?}");
+}

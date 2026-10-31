@@ -24,6 +24,8 @@ pub enum TutorialAnchor {
     Cash,
     Map,
     BatteryCard,
+    /// The battery card's *Build plant* button.
+    BatteryBuildButton,
     LineSection,
     StartDay,
     SpeedControls,
@@ -60,6 +62,16 @@ pub enum StepKind {
     Instruction,
 }
 
+/// How an instruction points at its anchor (spec §4.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum InstructionStyle {
+    /// Its sentence on an opaque, outlined card beside the anchor.
+    Card,
+    /// Its sentence as plain text beside the anchor, on a backing that isn't outlined, with an
+    /// arrow pointing from the text at the anchor.
+    Arrow,
+}
+
 /// When a step no longer applies, whatever has played.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Done {
@@ -83,6 +95,8 @@ pub struct StepDef {
     /// The note's `ui.ftl` key. The Construction step's key is chosen by [`construction_key`].
     pub text_key: Option<&'static str>,
     pub done: Done,
+    /// How an instruction points at its anchor; other kinds ignore it.
+    pub style: InstructionStyle,
 }
 
 const fn def(
@@ -100,6 +114,17 @@ const fn def(
         anchor,
         text_key,
         done,
+        style: InstructionStyle::Card,
+    }
+}
+
+impl StepDef {
+    /// This step, its instruction drawn as an arrow callout.
+    const fn with_arrow(self) -> Self {
+        Self {
+            style: InstructionStyle::Arrow,
+            ..self
+        }
     }
 }
 
@@ -156,10 +181,11 @@ pub const TUTORIAL_STEPS: [StepDef; 14] = {
             S::BuildBattery,
             Planning,
             Instruction,
-            Some(A::BatteryCard),
+            Some(A::BatteryBuildButton),
             Some("tutorial-battery-build"),
             Done::BatteryQueued,
-        ),
+        )
+        .with_arrow(),
         def(
             S::ConnectSpotlight,
             Planning,

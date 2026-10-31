@@ -679,7 +679,10 @@ fn tutorial(sink: &mut ActionSink, action: TutorialAction) {
                 TutorialAnchor::BatteryCard => {
                     sink.ui.reveal_plant_card = Some(domain::region::PlantKind::Battery);
                 }
-                TutorialAnchor::LineSection | TutorialAnchor::ReviewConstruction => {
+                // The button on its own: the card can be taller than the build menu's view.
+                TutorialAnchor::BatteryBuildButton
+                | TutorialAnchor::LineSection
+                | TutorialAnchor::ReviewConstruction => {
                     sink.ui.reveal_anchor = Some(anchor);
                 }
                 _ => {}

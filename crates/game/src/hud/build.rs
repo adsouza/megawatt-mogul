@@ -108,6 +108,9 @@ pub struct BuildModel {
     /// Whether to scroll the line section into view when it is drawn: the tutorial's reveal, from
     /// [`UiState::reveal_anchor`](super::UiState::reveal_anchor).
     pub reveal_line: bool,
+    /// Whether to scroll the battery card's Build plant button into view when it is drawn: the
+    /// tutorial's reveal, from [`UiState::reveal_anchor`](super::UiState::reveal_anchor).
+    pub reveal_battery_build: bool,
 }
 
 /// A node of the network a line can start or end at, with its name and place.
@@ -173,6 +176,7 @@ fn build_model_for_tool(
         hvdc_active,
         reveal: None,
         reveal_line: false,
+        reveal_battery_build: false,
         transport_modes: if session.region().hvdc().is_some() {
             vec![
                 super::ToggleModel {
@@ -674,7 +678,13 @@ pub fn draw_build(ui: &mut egui::Ui, model: &BuildModel) -> Vec<UiAction> {
     egui::ScrollArea::vertical()
         .id_salt((stage, model.hvdc_active))
         .show(ui, |ui| {
-            draw_plant_section(ui, &model.plant, model.reveal, &mut actions);
+            draw_plant_section(
+                ui,
+                &model.plant,
+                model.reveal,
+                model.reveal_battery_build,
+                &mut actions,
+            );
             ui.separator();
             ui.horizontal_wrapped(|ui| {
                 for mode in &model.transport_modes {
@@ -688,12 +698,14 @@ pub fn draw_build(ui: &mut egui::Ui, model: &BuildModel) -> Vec<UiAction> {
     actions
 }
 
-/// The plant rows. The battery's row is the tutorial's battery card; the row of `reveal`, when it
-/// is drawn, is scrolled into view once and reported done.
+/// The plant rows. The battery's row is the tutorial's battery card, and its Build plant button the
+/// tutorial's battery build button. The row of `reveal`, or with `reveal_battery_build` the
+/// battery's Build plant button, when it is drawn, is scrolled into view once and reported done.
 fn draw_plant_section(
     ui: &mut egui::Ui,
     section: &PlantSection,
     reveal: Option<PlantKind>,
+    reveal_battery_build: bool,
     actions: &mut Vec<UiAction>,
 ) {
     match section {
@@ -718,7 +730,14 @@ fn draw_plant_section(
                     if let Some(reason) = &row.blocked {
                         ui.colored_label(TextTone::Caution.color(), reason);
                     }
-                    button(ui, &row.build, actions);
+                    let build = button(ui, &row.build, actions);
+                    if row.kind == PlantKind::Battery {
+                        mark_visible_anchor(ui, TutorialAnchor::BatteryBuildButton, build.rect);
+                        if reveal_battery_build {
+                            build.scroll_to_me(Some(egui::Align::Center));
+                            actions.push(UiAction::Tutorial(TutorialAction::RevealDone));
+                        }
+                    }
                 });
                 if row.kind == PlantKind::Battery {
                     mark_visible_anchor(ui, TutorialAnchor::BatteryCard, card.response.rect);
@@ -818,6 +837,8 @@ pub(super) fn build_panel(
     };
     model.reveal = sink.ui_state().reveal_plant_card;
     model.reveal_line = sink.ui_state().reveal_anchor == Some(TutorialAnchor::LineSection);
+    model.reveal_battery_build =
+        sink.ui_state().reveal_anchor == Some(TutorialAnchor::BatteryBuildButton);
     let actions = area.show_panel(contexts.ctx_mut()?, BUILD_PANEL, 0.0, |ui| {
         draw_build(ui, &model)
     });

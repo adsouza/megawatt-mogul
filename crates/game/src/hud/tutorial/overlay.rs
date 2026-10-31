@@ -12,8 +12,10 @@
 //! first) or, for a spotlight, while its anchor isn't drawn. A spotlight whose anchor sits in a
 //! scroll area (the battery card, the line section, the Review's Construction row) first asks for
 //! it to be scrolled into view, so it never waits on the player to find it. An instruction never
-//! waits and never blocks input, not even on its own card; while a prompt is open it isn't drawn,
-//! so it never covers the prompt.
+//! waits and never blocks input, not even on its own text; while a prompt is open it isn't drawn,
+//! so it never covers the prompt. Most instructions sit on a card; one drawn as an arrow callout
+//! (building the battery) points an arrow from its text at its anchor, and asks once for that
+//! anchor to be scrolled into view if it isn't.
 
 use application::Game;
 use bevy::prelude::*;
@@ -21,8 +23,8 @@ use bevy_egui::{EguiContexts, egui};
 
 use super::crawl::draw_crawl;
 use super::{
-    StepDef, StepKind, TutorialAnchor, TutorialState, TutorialStep, active_step, anchor_rect,
-    construction_key,
+    InstructionStyle, StepDef, StepKind, TutorialAnchor, TutorialState, TutorialStep, active_step,
+    anchor_rect, construction_key,
 };
 use crate::hud::action::{ActionSink, TutorialAction, UiAction, dispatch};
 use crate::hud::theme::ACCENT_YELLOW;
@@ -62,10 +64,11 @@ pub enum TutorialView {
         text: String,
         opacity: f32,
     },
-    /// A callout that stays until its step is done.
+    /// A callout that stays until its step is done, drawn in `style`.
     Instruction {
         anchor: TutorialAnchor,
         text: String,
+        style: InstructionStyle,
     },
 }
 
@@ -99,6 +102,7 @@ pub fn tutorial_view(
         StepKind::Instruction => TutorialView::Instruction {
             anchor,
             text: text(),
+            style: step.style,
         },
     }
 }
@@ -159,8 +163,14 @@ pub(crate) fn tutorial_overlay(
             StepKind::Move | StepKind::Instruction => false,
         };
     let mut actions = Vec::new();
-    if def.kind == StepKind::Spotlight && clock.since.is_none() && !clock.revealed {
-        // An anchor in a scroll area is brought into view before its spotlight starts.
+    // An anchor in a scroll area is brought into view once: before its spotlight starts, or when
+    // an arrow callout's anchor isn't in view (a card needs none: it falls back to the map's top).
+    let reveal = match def.kind {
+        StepKind::Spotlight => clock.since.is_none(),
+        StepKind::Instruction => def.style == InstructionStyle::Arrow && anchor.is_none(),
+        StepKind::Move | StepKind::Crawl => false,
+    };
+    if reveal && !clock.revealed {
         if let Some(anchor) = def.anchor.filter(|anchor| scrolls(*anchor)) {
             actions.push(UiAction::Tutorial(TutorialAction::Reveal(anchor)));
         }
@@ -196,15 +206,22 @@ pub(crate) fn tutorial_overlay(
         }
         // Prompts come first: an instruction steps aside while one is open.
         TutorialView::Instruction { .. } if prompt_open => {}
-        TutorialView::Instruction { anchor, text } => {
-            let target = anchor_rect(&ctx, anchor);
-            let map = anchor_rect(&ctx, TutorialAnchor::Map);
-            let placement = match (anchor, target) {
-                (TutorialAnchor::Map, _) | (_, None) => Placement::TopOf(map),
-                (_, Some(target)) => Placement::Beside(target),
-            };
-            draw_instruction(&ctx, placement, &text);
-        }
+        TutorialView::Instruction {
+            anchor,
+            text,
+            style,
+        } => match (style, anchor_rect(&ctx, anchor)) {
+            (InstructionStyle::Arrow, Some(target)) => draw_callout(&ctx, target, &text),
+            // A card; or, when an arrow's anchor isn't drawn, the card at the map's top.
+            (_, target) => {
+                let map = anchor_rect(&ctx, TutorialAnchor::Map);
+                let placement = match (anchor, target) {
+                    (TutorialAnchor::Map, _) | (_, None) => Placement::TopOf(map),
+                    (_, Some(target)) => Placement::Beside(target),
+                };
+                draw_instruction(&ctx, placement, &text);
+            }
+        },
     }
     *shown = Some(clock);
     dispatch(actions, &mut sink);
@@ -216,6 +233,7 @@ fn scrolls(anchor: TutorialAnchor) -> bool {
     matches!(
         anchor,
         TutorialAnchor::BatteryCard
+            | TutorialAnchor::BatteryBuildButton
             | TutorialAnchor::LineSection
             | TutorialAnchor::ReviewConstruction
     )
@@ -429,6 +447,147 @@ fn draw_instruction(ctx: &egui::Context, placement: Placement, text: &str) {
         });
 }
 
+/// The space between an arrow callout's text and what it points at: the arrow's length.
+const ARROW_GAP: f32 = 28.0;
+/// An arrow's line width, and its head's length and half its width.
+const ARROW_WIDTH: f32 = 2.0;
+const ARROW_HEAD: f32 = 8.0;
+const ARROW_HEAD_HALF_WIDTH: f32 = 5.0;
+/// The narrowest line an arrow callout beside its target wraps to; with less room it goes below.
+const CALLOUT_MIN_TEXT_WIDTH: f32 = 96.0;
+/// The margin of an arrow callout's backing around its text.
+const CALLOUT_PADDING: i8 = 4;
+
+/// Where an arrow callout goes: its text's backing, and its arrow from `tail`, on the backing's
+/// edge, to `tip`, on its target's.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct CalloutLayout {
+    backing: egui::Rect,
+    /// The width its text wraps at.
+    wrap: f32,
+    tail: egui::Pos2,
+    tip: egui::Pos2,
+}
+
+/// Where an arrow callout pointing at `target` goes on `screen`, given `measure`, its text's size
+/// wrapped at a width: to the target's right, past the arrow and centred on it, wrapping to the
+/// room left before the screen's margin. With less room than a readable line there, it goes below
+/// the target (above, if below doesn't fit), the arrow pointing up (down) at it. Always inside the
+/// screen, never over the target.
+fn callout_layout(
+    screen: egui::Rect,
+    target: egui::Rect,
+    measure: impl Fn(f32) -> egui::Vec2,
+) -> CalloutLayout {
+    let bounds = screen.shrink(SCREEN_MARGIN);
+    let padding = egui::Vec2::splat(2.0 * f32::from(CALLOUT_PADDING));
+    let left = target.right() + ARROW_GAP;
+    let room = bounds.right() - left - padding.x;
+    if room >= CALLOUT_MIN_TEXT_WIDTH {
+        let wrap = room.min(CARD_TEXT_WIDTH);
+        let size = measure(wrap) + padding;
+        // A word too long to wrap could still overflow; then it goes below.
+        if left + size.x <= bounds.right() {
+            let at = egui::pos2(left, target.center().y - size.y / 2.0);
+            let backing = clamp_into(egui::Rect::from_min_size(at, size), bounds);
+            // On the backing's edge and the target's (min/max, which can't panic as clamp can).
+            let y = target
+                .center()
+                .y
+                .max(backing.top())
+                .min(backing.bottom())
+                .max(target.top())
+                .min(target.bottom());
+            return CalloutLayout {
+                backing,
+                wrap,
+                tail: egui::pos2(backing.left(), y),
+                tip: egui::pos2(target.right(), y),
+            };
+        }
+    }
+    let wrap = (bounds.width() - padding.x).clamp(40.0, CARD_TEXT_WIDTH);
+    let size = measure(wrap) + padding;
+    let x = target.center().x - size.x / 2.0;
+    let below = target.bottom() + ARROW_GAP;
+    let above = below + size.y > bounds.bottom();
+    let y = if above {
+        target.top() - ARROW_GAP - size.y
+    } else {
+        below
+    };
+    let backing = clamp_into(egui::Rect::from_min_size(egui::pos2(x, y), size), bounds);
+    let x = target
+        .center()
+        .x
+        .max(backing.left())
+        .min(backing.right())
+        .max(target.left())
+        .min(target.right());
+    let (tail, tip) = if above {
+        (backing.bottom(), target.top())
+    } else {
+        (backing.top(), target.bottom())
+    };
+    CalloutLayout {
+        backing,
+        wrap,
+        tail: egui::pos2(x, tail),
+        tip: egui::pos2(x, tip),
+    }
+}
+
+/// An arrow callout's backing: the panels' own fill, opaque so its text meets the contrast floor
+/// over anything, with no outline and no hover look, so it doesn't read as a control.
+fn callout_frame(style: &egui::Style) -> egui::Frame {
+    egui::Frame::NONE
+        .fill(style.visuals.panel_fill)
+        .inner_margin(CALLOUT_PADDING)
+        .corner_radius(4)
+}
+
+/// An instruction as an arrow callout: its text beside `target` with an arrow, in the accent,
+/// pointing at the target. Like the card, it takes no clicks.
+fn draw_callout(ctx: &egui::Context, target: egui::Rect, text: &str) {
+    let screen = ctx.content_rect();
+    let style = ctx.global_style();
+    let font = egui::TextStyle::Body.resolve(&style);
+    let color = style.visuals.text_color();
+    let galley =
+        |wrap: f32| ctx.fonts_mut(|fonts| fonts.layout(text.to_owned(), font.clone(), color, wrap));
+    let layout = callout_layout(screen, target, |wrap| galley(wrap).size());
+    let galley = galley(layout.wrap);
+    let frame = callout_frame(&style);
+    egui::Area::new(egui::Id::new("tutorial-callout"))
+        .order(egui::Order::Tooltip)
+        .fixed_pos(layout.backing.min)
+        .constrain_to(screen.shrink(SCREEN_MARGIN))
+        .interactable(false)
+        .show(ctx, |ui| {
+            paint_arrow(
+                &ui.painter().with_clip_rect(screen),
+                layout.tail,
+                layout.tip,
+            );
+            frame.show(ui, |ui| {
+                ui.add(egui::Label::new(galley).selectable(false));
+            });
+        });
+}
+
+/// An arrow from `tail` to `tip`: a line, and a filled head whose point is `tip`.
+fn paint_arrow(painter: &egui::Painter, tail: egui::Pos2, tip: egui::Pos2) {
+    let along = (tip - tail).normalized();
+    let base = tip - along * ARROW_HEAD;
+    let across = along.rot90() * ARROW_HEAD_HALF_WIDTH;
+    painter.line_segment([tail, base], egui::Stroke::new(ARROW_WIDTH, ACCENT_YELLOW));
+    painter.add(egui::Shape::convex_polygon(
+        vec![tip, base + across, base - across],
+        ACCENT_YELLOW,
+        egui::Stroke::NONE,
+    ));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -558,5 +717,210 @@ mod tests {
         let card = card_rect(screen(), Placement::TopOf(None), size);
         assert_eq!(card.top(), CARD_GAP.max(SCREEN_MARGIN));
         assert_eq!(card.center().x, screen().center().x);
+    }
+
+    /// A 150-point sentence, 18 points a line, wrapped at `width`.
+    fn sentence(width: f32) -> egui::Vec2 {
+        egui::vec2(150.0_f32.min(width), 18.0 * (150.0 / width).ceil())
+    }
+
+    fn padding() -> f32 {
+        f32::from(CALLOUT_PADDING)
+    }
+
+    #[test]
+    fn a_callout_goes_right_of_its_target_centred_on_it() {
+        let target = egui::Rect::from_min_size(egui::pos2(600.0, 200.0), egui::vec2(80.0, 20.0));
+        let layout = callout_layout(screen(), target, sentence);
+        let y = target.center().y;
+        assert_eq!(layout.backing.left(), target.right() + ARROW_GAP);
+        assert_eq!(layout.backing.center().y, y);
+        assert_eq!(layout.tip, egui::pos2(target.right(), y));
+        assert_eq!(layout.tail, egui::pos2(layout.backing.left(), y));
+        // It wraps to the room between the arrow and the screen's margin.
+        let bounds = screen().shrink(SCREEN_MARGIN);
+        assert!(layout.wrap >= CALLOUT_MIN_TEXT_WIDTH, "{layout:?}");
+        assert_eq!(
+            layout.wrap,
+            bounds.right() - layout.backing.left() - 2.0 * padding()
+        );
+        assert_eq!(
+            layout.backing.size(),
+            sentence(layout.wrap) + egui::Vec2::splat(2.0 * padding())
+        );
+        assert!(bounds.contains_rect(layout.backing), "{layout:?}");
+        // With room to spare it keeps to a card's width.
+        let left = egui::Rect::from_min_size(egui::pos2(20.0, 200.0), egui::vec2(80.0, 20.0));
+        assert_eq!(
+            callout_layout(screen(), left, sentence).wrap,
+            CARD_TEXT_WIDTH
+        );
+    }
+
+    #[test]
+    fn a_callout_without_room_on_the_right_goes_below_or_above() {
+        let bounds = screen().shrink(SCREEN_MARGIN);
+        // Less than the narrowest line between the arrow and the margin.
+        let right = bounds.right() - ARROW_GAP - 2.0 * padding() - CALLOUT_MIN_TEXT_WIDTH + 1.0;
+        let target =
+            egui::Rect::from_min_max(egui::pos2(right - 80.0, 200.0), egui::pos2(right, 220.0));
+        let layout = callout_layout(screen(), target, sentence);
+        assert_eq!(layout.backing.top(), target.bottom() + ARROW_GAP);
+        assert_eq!(
+            layout.tail,
+            egui::pos2(target.center().x, layout.backing.top())
+        );
+        assert_eq!(layout.tip, egui::pos2(target.center().x, target.bottom()));
+        assert!(bounds.contains_rect(layout.backing), "{layout:?}");
+        // Near the bottom, it goes above instead.
+        let low = target.translate(egui::vec2(0.0, 380.0 - target.top()));
+        let layout = callout_layout(screen(), low, sentence);
+        assert_eq!(layout.backing.bottom(), low.top() - ARROW_GAP);
+        assert_eq!(layout.tip, egui::pos2(low.center().x, low.top()));
+        assert_eq!(
+            layout.tail,
+            egui::pos2(low.center().x, layout.backing.bottom())
+        );
+        assert!(bounds.contains_rect(layout.backing), "{layout:?}");
+    }
+
+    #[test]
+    fn a_callout_is_on_screen_and_never_covers_its_target() {
+        let bounds = screen().shrink(SCREEN_MARGIN);
+        for target in [
+            egui::Rect::from_min_size(egui::pos2(600.0, 0.0), egui::vec2(80.0, 20.0)),
+            egui::Rect::from_min_size(egui::pos2(600.0, 410.0), egui::vec2(80.0, 17.0)),
+            egui::Rect::from_min_size(egui::pos2(770.0, 10.0), egui::vec2(80.0, 20.0)),
+            egui::Rect::from_min_size(egui::pos2(0.0, 200.0), egui::vec2(840.0, 20.0)),
+            egui::Rect::from_min_size(egui::pos2(-40.0, 200.0), egui::vec2(80.0, 20.0)),
+        ] {
+            let layout = callout_layout(screen(), target, sentence);
+            assert!(
+                bounds.contains_rect(layout.backing),
+                "{target:?}: {layout:?}"
+            );
+            assert!(!layout.backing.intersects(target), "{target:?}: {layout:?}");
+            assert!(
+                layout.backing.expand(0.01).contains(layout.tail),
+                "{layout:?}"
+            );
+            assert!(
+                target.expand(0.01).contains(layout.tip),
+                "{target:?}: {layout:?}"
+            );
+        }
+    }
+
+    /// What one pass of `draw_callout` paints, after egui has settled the new area.
+    fn paint_callout(target: egui::Rect) -> (egui::Context, Vec<egui::epaint::ClippedShape>) {
+        let ctx = egui::Context::default();
+        ctx.set_visuals(crate::hud::theme::visuals());
+        let mut shapes = Vec::new();
+        for second in 0..4 {
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen()),
+                    time: Some(f64::from(second)),
+                    ..Default::default()
+                },
+                |ui| draw_callout(ui.ctx(), target, "Build a battery here."),
+            );
+            shapes = output.shapes.clone();
+            output.drop_without_applying_deltas();
+        }
+        (ctx, shapes)
+    }
+
+    /// The arrowhead's points, and the shaft's ends, in the accent.
+    fn arrow(shapes: &[egui::epaint::ClippedShape]) -> (Vec<egui::Pos2>, [egui::Pos2; 2]) {
+        let head = shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                egui::Shape::Path(path) if path.closed && path.fill == ACCENT_YELLOW => {
+                    Some(path.points.clone())
+                }
+                _ => None,
+            })
+            .expect("an arrowhead");
+        let shaft = shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                egui::Shape::LineSegment { points, stroke } if stroke.color == ACCENT_YELLOW => {
+                    assert_eq!(stroke.width, 2.0);
+                    Some(*points)
+                }
+                _ => None,
+            })
+            .expect("an arrow's shaft");
+        (head, shaft)
+    }
+
+    #[test]
+    fn a_callout_points_its_arrow_at_its_target_and_takes_no_clicks() {
+        let target = egui::Rect::from_min_size(egui::pos2(600.0, 200.0), egui::vec2(80.0, 20.0));
+        let (ctx, shapes) = paint_callout(target);
+        let (head, shaft) = arrow(&shapes);
+        assert_eq!(head.len(), 3);
+        // The head's tip touches the target's right edge, level with its centre, and points left.
+        let tip = head
+            .iter()
+            .copied()
+            .min_by(|a, b| a.x.total_cmp(&b.x))
+            .unwrap();
+        assert_eq!(tip, egui::pos2(target.right(), target.center().y));
+        assert!(
+            head.iter()
+                .filter(|p| **p != tip)
+                .all(|p| p.x - tip.x >= 7.5)
+        );
+        let note = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("tutorial-callout")))
+            .expect("the callout was drawn");
+        // The shaft runs from the text's backing to the head.
+        let ends = [shaft[0].x.min(shaft[1].x), shaft[0].x.max(shaft[1].x)];
+        assert_eq!(ends[1], note.left(), "{shaft:?} / {note:?}");
+        assert!(ends[0] > tip.x && ends[0] < tip.x + 8.5, "{shaft:?}");
+        // No outline: the backing is the panel's fill, with no stroke.
+        let fill = crate::hud::theme::visuals().panel_fill;
+        let backing: Vec<_> = shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Rect(rect) => Some(rect),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(backing.len(), 1, "{backing:?}");
+        assert_eq!(backing[0].rect, note);
+        assert_eq!(backing[0].fill, fill);
+        assert_eq!(backing[0].stroke.width, 0.0);
+        // A click on it goes through to whatever is under it.
+        let callout = egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("tutorial-callout"));
+        assert_ne!(ctx.layer_id_at(note.center()), Some(callout));
+        assert!(
+            ctx.layer_id_at(note.center()).is_some(),
+            "the layer under it"
+        );
+    }
+
+    #[test]
+    fn a_callout_below_its_target_points_up_at_it() {
+        let target = egui::Rect::from_min_size(egui::pos2(760.0, 200.0), egui::vec2(80.0, 20.0));
+        let (ctx, shapes) = paint_callout(target);
+        let note = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("tutorial-callout")))
+            .expect("the callout was drawn");
+        assert_eq!(note.top(), target.bottom() + ARROW_GAP);
+        let (head, _) = arrow(&shapes);
+        let tip = head
+            .iter()
+            .copied()
+            .min_by(|a, b| a.y.total_cmp(&b.y))
+            .unwrap();
+        assert_eq!(tip, egui::pos2(target.center().x, target.bottom()));
+        assert!(
+            head.iter()
+                .filter(|p| **p != tip)
+                .all(|p| p.y - tip.y >= 7.5)
+        );
     }
 }

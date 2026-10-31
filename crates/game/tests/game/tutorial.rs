@@ -17,7 +17,8 @@ use domain::region::PlantKind;
 use domain::session::DayPhase;
 use domain::time::TICKS_PER_DAY;
 use game::hud::tutorial::{
-    StepKind, TUTORIAL_STEPS, TutorialAnchor, TutorialRun, TutorialState, TutorialStep, anchor_rect,
+    InstructionStyle, StepKind, TUTORIAL_STEPS, TutorialAnchor, TutorialRun, TutorialState,
+    TutorialStep, anchor_rect,
 };
 use game::hud::{HudSet, PlanningTab, Selection, TutorialAction, UiAction, UiState};
 use game::paths::SaveDir;
@@ -369,6 +370,18 @@ fn reveal_asks_the_build_menu_for_a_scrolling_anchor() {
     );
     assert_eq!(ui_state(&app).reveal_plant_card, Some(PlantKind::Battery));
     assert_eq!(ui_state(&app).reveal_anchor, None);
+    // The card's Build plant button is revealed on its own: the card can be taller than the
+    // build menu's view.
+    tutorial(&mut app, [TutorialAction::RevealDone]);
+    tutorial(
+        &mut app,
+        [TutorialAction::Reveal(TutorialAnchor::BatteryBuildButton)],
+    );
+    assert_eq!(ui_state(&app).reveal_plant_card, None);
+    assert_eq!(
+        ui_state(&app).reveal_anchor,
+        Some(TutorialAnchor::BatteryBuildButton)
+    );
     tutorial(
         &mut app,
         [TutorialAction::Reveal(TutorialAnchor::LineSection)],
@@ -470,10 +483,11 @@ fn tutorial_actions_never_send_player_commands() {
 #[derive(Resource, Default)]
 struct SeenAnchors(BTreeMap<TutorialAnchor, egui::Rect>);
 
-const ANCHORS: [TutorialAnchor; 7] = [
+const ANCHORS: [TutorialAnchor; 8] = [
     TutorialAnchor::Cash,
     TutorialAnchor::Map,
     TutorialAnchor::BatteryCard,
+    TutorialAnchor::BatteryBuildButton,
     TutorialAnchor::LineSection,
     TutorialAnchor::StartDay,
     TutorialAnchor::SpeedControls,
@@ -531,12 +545,26 @@ fn anchors_are_marked_in_planning() {
         TutorialAnchor::Cash,
         TutorialAnchor::Map,
         TutorialAnchor::BatteryCard,
+        TutorialAnchor::BatteryBuildButton,
         TutorialAnchor::LineSection,
         TutorialAnchor::StartDay,
     ] {
         let rect = seen.get(&anchor).unwrap_or_else(|| panic!("{anchor:?}"));
         assert!(rect.is_positive(), "{anchor:?}: {rect:?}");
     }
+    // The battery's Build plant button, inside its card.
+    let card = seen[&TutorialAnchor::BatteryCard];
+    let build = seen[&TutorialAnchor::BatteryBuildButton];
+    assert!(card.contains_rect(build), "{build:?} in {card:?}");
+    let widgets = pass.settled(&mut app, width, height);
+    assert!(
+        widgets
+            .iter()
+            .any(|w| w.role == egui::accesskit::Role::Button
+                && w.text == "Build plant"
+                && w.rect == build),
+        "{build:?} is a Build plant button"
+    );
     assert!(!seen.contains_key(&TutorialAnchor::SpeedControls));
     assert!(!seen.contains_key(&TutorialAnchor::ReviewConstruction));
 
@@ -544,6 +572,7 @@ fn anchors_are_marked_in_planning() {
     dispatch_in(&mut app, vec![UiAction::Select(Selection::None)]);
     pass.settled(&mut app, width, height);
     assert!(!anchors(&app).contains_key(&TutorialAnchor::BatteryCard));
+    assert!(!anchors(&app).contains_key(&TutorialAnchor::BatteryBuildButton));
 }
 
 /// The build menu's scrolling part at the smallest window: right of the map, below its title and
@@ -576,6 +605,10 @@ fn a_scrolled_away_battery_card_has_no_anchor() {
     assert!(
         !seen.contains_key(&TutorialAnchor::BatteryCard),
         "the card starts below the fold: {seen:?}"
+    );
+    assert!(
+        !seen.contains_key(&TutorialAnchor::BatteryBuildButton),
+        "{seen:?}"
     );
     assert!(!seen.contains_key(&TutorialAnchor::LineSection), "{seen:?}");
     // Every anchor marked is on screen.
@@ -731,6 +764,7 @@ const CASH_NOTE: &str =
     "This is your money. Grow it by selling power, without blacking out your customers.";
 const PICK_SITE: &str = "Click a square on the map to see what you can build there.";
 const START_NOTE: &str = "Ready? Start the day.";
+const BUILD_BATTERY: &str = "Build a battery here.";
 
 #[test]
 fn tutorial_view_opacity_curve() {
@@ -777,12 +811,37 @@ fn tutorial_view_opacity_curve() {
         other => panic!("{other:?}"),
     }
     match tutorial_view(def(TutorialStep::PickSite), state, game, &l10n, 0.0) {
-        TutorialView::Instruction { anchor, text } => {
+        TutorialView::Instruction {
+            anchor,
+            text,
+            style,
+        } => {
             assert_eq!(anchor, TutorialAnchor::Map);
             assert_eq!(text, PICK_SITE);
+            assert_eq!(style, InstructionStyle::Card);
         }
         other => panic!("{other:?}"),
     }
+    // Building the battery points an arrow at the card's Build plant button.
+    assert_eq!(
+        tutorial_view(def(TutorialStep::BuildBattery), state, game, &l10n, 0.0),
+        TutorialView::Instruction {
+            anchor: TutorialAnchor::BatteryBuildButton,
+            text: BUILD_BATTERY.into(),
+            style: InstructionStyle::Arrow,
+        }
+    );
+    // Every other instruction keeps its card.
+    for def in TUTORIAL_STEPS
+        .iter()
+        .filter(|def| def.kind == StepKind::Instruction && def.step != TutorialStep::BuildBattery)
+    {
+        assert_eq!(def.style, InstructionStyle::Card, "{:?}", def.step);
+    }
+    assert_eq!(
+        def(TutorialStep::BatterySpotlight).anchor,
+        Some(TutorialAnchor::BatteryCard)
+    );
     // The Construction note is chosen from what was ordered: nothing, here.
     match tutorial_view(def(TutorialStep::Construction), state, game, &l10n, 1.0) {
         TutorialView::Spotlight { text, .. } => assert_eq!(
@@ -1006,6 +1065,178 @@ fn instruction_sits_on_the_map_and_takes_no_clicks() {
     assert!(run(&app).is_some());
 }
 
+/// The run at the battery instruction as the player meets it: a site picked, the battery card
+/// scrolled into view by the move before its spotlight, and the spotlight dismissed.
+pub(crate) fn at_battery_instruction(app: &mut App, pass: &EguiPass, (width, height): (f32, f32)) {
+    let cell = battery_site(app);
+    dispatch_in(app, vec![UiAction::Select(Selection::Cell(cell))]);
+    at_step(app, TutorialStep::RevealBattery);
+    // The reveal plays, and its scroll animation finishes.
+    for _ in 0..60 {
+        pass.run(app, width, height);
+    }
+    assert!(played(app).contains(&TutorialStep::RevealBattery));
+    tutorial(
+        app,
+        [TutorialAction::Dismiss(TutorialStep::BatterySpotlight)],
+    );
+    pass.settled(app, width, height);
+}
+
+/// The arrowhead painted in the accent, as its points.
+pub(crate) fn arrowhead(painted: &[egui::epaint::ClippedShape]) -> Option<Vec<egui::Pos2>> {
+    painted.iter().find_map(|clipped| match &clipped.shape {
+        egui::Shape::Path(path) if path.closed && path.fill == game::hud::theme::ACCENT_YELLOW => {
+            Some(path.points.clone())
+        }
+        _ => None,
+    })
+}
+
+/// At the largest UI zoom the battery card is taller than the build menu's view, so revealing it
+/// for its spotlight leaves its Build plant button out of view. The battery instruction then asks
+/// for the button once, and its arrow points at it; scrolled away again, it isn't asked for twice.
+#[test]
+fn battery_instruction_reveals_its_button_once() {
+    const MAX_ZOOM: f32 = 1.5;
+    let (width, height) = (MIN.0 / MAX_ZOOM, MIN.1 / MAX_ZOOM);
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    let pass = with_anchor_probe(&mut app);
+    let cell = battery_site(&app);
+    dispatch_in(&mut app, vec![UiAction::Select(Selection::Cell(cell))]);
+    at_step(&mut app, TutorialStep::BatterySpotlight);
+    for _ in 0..60 {
+        pass.run(&mut app, width, height);
+    }
+    let seen = anchors(&app);
+    assert!(seen.contains_key(&TutorialAnchor::BatteryCard), "{seen:?}");
+    assert!(
+        !seen.contains_key(&TutorialAnchor::BatteryBuildButton),
+        "the test needs the button out of view: {seen:?}"
+    );
+    tutorial(
+        &mut app,
+        [TutorialAction::Dismiss(TutorialStep::BatterySpotlight)],
+    );
+    pass.run(&mut app, width, height);
+    assert_eq!(
+        ui_state(&app).reveal_anchor,
+        Some(TutorialAnchor::BatteryBuildButton)
+    );
+    // Let the scroll animation finish.
+    for _ in 0..60 {
+        pass.run(&mut app, width, height);
+    }
+    let widgets = pass.settled(&mut app, width, height);
+    let button = *anchors(&app)
+        .get(&TutorialAnchor::BatteryBuildButton)
+        .expect("the reveal brought the button into view");
+    assert_eq!(ui_state(&app).reveal_anchor, None);
+    let note = widget(&widgets, BUILD_BATTERY).rect;
+    assert!(
+        note.left() >= button.right() + 28.0,
+        "{note:?} / {button:?}"
+    );
+    // Asked once: with the button scrolled away again, the instruction doesn't scroll it back.
+    let at = button.center();
+    for _ in 0..30 {
+        pass.run_with(
+            &mut app,
+            width,
+            height,
+            vec![
+                egui::Event::PointerMoved(at),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, 400.0),
+                    modifiers: egui::Modifiers::NONE,
+                    phase: egui::TouchPhase::Move,
+                },
+            ],
+        );
+    }
+    pass.settled(&mut app, width, height);
+    assert!(
+        !anchors(&app).contains_key(&TutorialAnchor::BatteryBuildButton),
+        "scrolled away"
+    );
+    assert_eq!(ui_state(&app).reveal_anchor, None);
+}
+
+/// The user's request: "Build a battery here." isn't a button-like card but text to the right of
+/// the battery card's Build plant button, vertically centred on it, with an arrow from the text
+/// pointing at the button; and the button still builds, even clicked right by the arrow's tip.
+#[test]
+fn battery_instruction_is_an_arrow_callout_beside_build_plant() {
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    let pass = with_anchor_probe(&mut app);
+    let (width, height) = MIN;
+    at_battery_instruction(&mut app, &pass, MIN);
+    let widgets = pass.settled(&mut app, width, height);
+    let button = *anchors(&app)
+        .get(&TutorialAnchor::BatteryBuildButton)
+        .expect("the battery's Build plant button is in view");
+    let note = widget(&widgets, BUILD_BATTERY).rect;
+    // To the right, past the arrow (28 points) and the backing's margin (4), centred on it.
+    let gap = note.left() - button.right();
+    assert!(
+        (28.0..=33.0).contains(&gap),
+        "gap {gap}: {note:?} / {button:?}"
+    );
+    assert!(
+        (note.center().y - button.center().y).abs() <= 1.0,
+        "{note:?} is centred on {button:?}"
+    );
+    assert!(note.right() <= width - 8.0, "{note:?}");
+    let output = pass.paint_with(&mut app, width, height, Vec::new());
+    let painted = output.shapes.clone();
+    output.drop_without_applying_deltas();
+    // The arrow's tip touches the button's right edge, and its head points left, at the button.
+    let head = arrowhead(&painted).expect("an arrow");
+    let tip = head
+        .iter()
+        .copied()
+        .min_by(|a, b| a.x.total_cmp(&b.x))
+        .unwrap();
+    assert!(
+        (tip.x - button.right()).abs() <= 0.5 && (tip.y - button.center().y).abs() <= 1.0,
+        "{tip:?} touches {button:?}"
+    );
+    assert!(
+        head.iter()
+            .filter(|p| **p != tip)
+            .all(|p| p.x > tip.x + 7.0),
+        "{head:?}"
+    );
+    // No card: nothing is outlined in the accent.
+    assert!(
+        !painted.iter().any(|clipped| matches!(&clipped.shape,
+            egui::Shape::Rect(rect) if rect.stroke.color == game::hud::theme::ACCENT_YELLOW
+                && rect.stroke.width > 0.0)),
+        "an outlined card was painted"
+    );
+    // The callout doesn't cover the button: a click by the arrow's tip builds the battery.
+    let cell = battery_site(&app);
+    pass.click_at(
+        &mut app,
+        width,
+        height,
+        egui::pos2(button.right() - 2.0, button.center().y),
+    );
+    assert_eq!(
+        sent::<PlayerCommand>(&app)
+            .into_iter()
+            .map(|command| command.0)
+            .collect::<Vec<_>>(),
+        [Command::BuildPlant {
+            kind: PlantKind::Battery,
+            cell
+        }]
+    );
+}
+
 #[test]
 fn crawl_has_full_accessible_name_and_ends_on_click() {
     let logs = TempDir::new().unwrap();
@@ -1055,7 +1286,8 @@ fn crawl_ends_by_itself_or_on_escape() {
 }
 
 /// Review Focus 2: at the smallest window and the largest UI zoom, every spotlight's note and
-/// every instruction's card is drawn, and inside the screen.
+/// every instruction's card is drawn, and inside the screen. An arrow callout sits beside its
+/// anchor, not over it, with its arrow on screen and touching the anchor.
 #[test]
 fn cards_fit_minimum_window_at_max_zoom() {
     const MAX_ZOOM: f32 = 1.5;
@@ -1064,7 +1296,7 @@ fn cards_fit_minimum_window_at_max_zoom() {
     let l10n = crate::support::shipped_l10n();
     let logs = TempDir::new().unwrap();
     let mut app = tutorial_app(&logs);
-    let pass = EguiPass::attach(&mut app);
+    let pass = with_anchor_probe(&mut app);
     let cell = battery_site(&app);
     let mut checked = Vec::new();
     for phase_now in [DayPhase::Planning, DayPhase::Operating, DayPhase::Review] {
@@ -1101,6 +1333,9 @@ fn cards_fit_minimum_window_at_max_zoom() {
             }
             let note = found.unwrap_or_else(|| panic!("{:?} drew no note", def.step));
             assert!(screen.contains_rect(note), "{:?}: {note:?}", def.step);
+            if def.kind == StepKind::Instruction && def.style == InstructionStyle::Arrow {
+                check_arrow_callout(&pass, &mut app, (width, height), def, &text);
+            }
             checked.push(def.step);
         }
     }
@@ -1110,6 +1345,49 @@ fn cards_fit_minimum_window_at_max_zoom() {
             .iter()
             .filter(|def| matches!(def.kind, StepKind::Spotlight | StepKind::Instruction))
             .count()
+    );
+}
+
+/// An arrow callout's text beside its anchor, clear of it, and its arrow on screen with its tip
+/// on the anchor's edge.
+fn check_arrow_callout(
+    pass: &EguiPass,
+    app: &mut App,
+    (width, height): (f32, f32),
+    def: &game::hud::tutorial::StepDef,
+    text: &str,
+) {
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, height));
+    // Until a reveal has scrolled its anchor in, it is a card at the map's top.
+    for _ in 0..60 {
+        pass.run(app, width, height);
+    }
+    let widgets = pass.settled(app, width, height);
+    let note = widget(&widgets, text).rect;
+    let anchor = def.anchor.expect("an arrow points at an anchor");
+    let target = *anchors(app)
+        .get(&anchor)
+        .unwrap_or_else(|| panic!("{:?}: {anchor:?} isn't in view", def.step));
+    assert!(screen.contains_rect(note), "{:?}: {note:?}", def.step);
+    assert!(
+        !note.intersects(target),
+        "{:?}: {note:?} covers {target:?}",
+        def.step
+    );
+    let beside = note.left() >= target.right() + 28.0
+        || note.top() >= target.bottom() + 28.0
+        || note.bottom() <= target.top() - 28.0;
+    assert!(beside, "{:?}: {note:?} beside {target:?}", def.step);
+    let output = pass.paint_with(app, width, height, Vec::new());
+    let head = arrowhead(&output.shapes);
+    output.drop_without_applying_deltas();
+    let head = head.unwrap_or_else(|| panic!("{:?} drew no arrow", def.step));
+    assert!(head.iter().all(|p| screen.contains(*p)), "{head:?}");
+    assert!(
+        head.iter()
+            .any(|p| target.expand(0.5).contains(*p) && !target.shrink(0.5).contains(*p)),
+        "{:?}: {head:?} touches {target:?}",
+        def.step
     );
 }
 

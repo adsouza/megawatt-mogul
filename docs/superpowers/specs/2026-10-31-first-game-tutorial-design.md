@@ -79,14 +79,26 @@ Four kinds of presentation, all drawn by the `game` crate in `HudSet::Overlays`:
   action.
 - **Instruction.** An undimmed callout: one sentence on an opaque card pointing at an anchor
   (or, for the map, near the map's top edge). It stays while its step is active and does not
-  block input, not even on its own card.
+  block input, not even on its own card. A step can instead draw its instruction as an **arrow
+  callout**, which doesn't look like a button: the sentence as plain text on an unoutlined,
+  opaque backing in the panel fill (so it still meets §4.4's contrast floor), placed just right
+  of its anchor and vertically centred on it, with an accent-coloured arrow (about 2 px wide,
+  8 px head) running from the text's left edge to the anchor's right edge, its head on the
+  anchor. The text wraps to the room between the arrow's 28 px gap and the window's margin;
+  with less than about 96 px there it goes below the anchor (above, if below doesn't fit), the
+  arrow pointing up (down) at it. It never covers its anchor and takes no clicks. If its anchor
+  sits in a scroll area and isn't in view, it asks once for the anchor to be scrolled in, as a
+  spotlight does; until then, or if the player scrolls it away again, it falls back to the
+  card at the map's top. Step 6's *"Build a battery here."* is an arrow callout; the other
+  instructions are cards.
 - **Automatic UI moves.** Switching the Planning tab, scrolling the build panel to a card, and
   framing the camera. Tab switches go through `dispatch` as `UiAction`s like any click (AGENTS.md:
   `dispatch` is the only place a click becomes a resource write); the camera and scroll moves are
   requests the owning systems honour.
 
 **Anchors.** Panels that own a target widget record its screen rect in a per-frame
-`TutorialAnchors` resource when they draw it (cash field, battery card, the build panel's line
+`TutorialAnchors` resource when they draw it (cash field, battery card and its *Build plant*
+button, the build panel's line
 section, *Start the day*, the speed controls, the Review Construction row). The overlay pass runs
 after the panels in the same frame and reads those rects. A spotlight whose anchor was not drawn this frame doesn't show, and its timer doesn't start,
 until the anchor appears. An instruction whose anchor is absent sits at the top centre of the map
@@ -138,7 +150,10 @@ to `dispatch`.
    you can build there."* Done when a map cell is selected, or a battery has been queued.
 6. **Battery card.** The build panel scrolls the battery card into view, a spotlight highlights
    it with *"Batteries store power when it's cheap and release it when demand spikes."*, then an
-   instruction stays: *"Build a battery here."* Done when the player has queued (or owns) a
+   instruction stays: *"Build a battery here."*, as an arrow callout (§4.1) to the right of the
+   battery card's *Build plant* button, its arrow pointing at that button (the card can be
+   taller than the build panel's view at large UI zoom, so the button, not the card, is what it
+   scrolls into view if needed). Done when the player has queued (or owns) a
    battery that wasn't in the starter fleet (Southern China's starter fleet already has one).
    A plant under construction already has a network node, so it can be a line's endpoint, as
    step 7 needs. If the player deselects the cell, step 5's
@@ -172,7 +187,8 @@ to `dispatch`.
 
 The main spec's 4.5:1 contrast floor (§8.4) applies to every tutorial text, including the crawl:
 
-- Spotlight notes and instructions sit on opaque cards using the shared palette.
+- Spotlight notes and instructions sit on opaque cards using the shared palette; an arrow
+  callout's text sits on an opaque, unoutlined backing in the panel fill.
 - The crawl's backdrop is translucent, as the user asked, but dark enough that its text meets
   4.5:1 against the backdrop composited over **white**, the worst case for the 3D map beneath.
 - The crawl text **clips** at a horizon line rather than fading out, because the main spec
