@@ -1022,6 +1022,11 @@ fn crawl_has_full_accessible_name_and_ends_on_click() {
     let l10n = crate::support::shipped_l10n();
     let text = l10n.text("tutorial-crawl");
     assert!(text.lines().count() >= 4, "{text}");
+    // Fluent keeps the warning's own line break, and so does the accessible name.
+    assert!(
+        text.ends_with("Keep supply equal to demand,\nor the lights go out."),
+        "{text:?}"
+    );
     let crawl = widget(&widgets, &text);
     assert_eq!(
         crawl.rect,

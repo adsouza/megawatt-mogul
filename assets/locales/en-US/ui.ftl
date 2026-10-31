@@ -75,7 +75,8 @@ region-locked = Play { $needed } other regions to unlock — { $played } of { $n
 tutorial-crawl = You run a power company.
     Connect more cities to sell more electricity and make more money.
     But every customer you connect needs power, every minute of every day.
-    Keep supply equal to demand, or the lights go out.
+    Keep supply equal to demand,
+    or the lights go out.
 tutorial-cash = This is your money. Grow it by selling power, without blacking out your customers.
 tutorial-pick-site = Click a square on the map to see what you can build there.
 tutorial-battery-spotlight = Batteries store power when it's cheap and release it when demand spikes.
