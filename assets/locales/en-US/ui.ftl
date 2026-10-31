@@ -61,7 +61,6 @@ menu-subtitle = Build your grid. Keep the lights on.
 menu-continue = Resume game
 menu-continue-details = { $name } · { $region } · { $month } · { $phase } · { $time }
 menu-new-game = New game
-menu-play-tutorial = Play tutorial
 menu-seed = Seed
 menu-seed-invalid = The seed must be a whole number, such as 42.
 tutorial-show = Show tutorial

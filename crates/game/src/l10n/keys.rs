@@ -364,7 +364,6 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "menu-continue",
     "menu-continue-details",
     "menu-new-game",
-    "menu-play-tutorial",
     "menu-eyebrow",
     "menu-subtitle",
     "menu-seed",

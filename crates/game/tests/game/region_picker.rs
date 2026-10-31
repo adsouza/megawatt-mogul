@@ -1296,38 +1296,6 @@ mod glue {
         assert!(!widget(&widgets, "Show tutorial").disabled);
     }
 
-    #[test]
-    fn play_tutorial_arms_and_opens_setup() {
-        let logs = TempDir::new().unwrap();
-        let (mut app, pass) = menu_app(&logs, false);
-        let widgets = settled(&pass, &mut app);
-        let play = button(&widgets, "Play tutorial").rect;
-        assert!(play.top() > button(&widgets, "New game").rect.bottom());
-
-        click(&pass, &mut app, &widgets, "Play tutorial");
-
-        assert_eq!(state(&app), AppState::RegionSelect);
-        assert!(store(&mut app).value.tutorial_pending);
-        assert!(widget(&settled(&pass, &mut app), "Show tutorial").selected);
-    }
-
-    /// The menu screen reads the store's loaded flag: until it has loaded, *Play tutorial*
-    /// can't be clicked.
-    #[test]
-    fn play_tutorial_waits_for_progress_to_load() {
-        let logs = TempDir::new().unwrap();
-        let (mut app, pass) = menu_app(&logs, false);
-        store(&mut app).loaded = false;
-        let widgets = settled(&pass, &mut app);
-        assert!(button(&widgets, "Play tutorial").disabled);
-        click(&pass, &mut app, &widgets, "Play tutorial");
-        assert_eq!(state(&app), AppState::MainMenu);
-
-        store(&mut app).loaded = true;
-        let widgets = settled(&pass, &mut app);
-        assert!(!button(&widgets, "Play tutorial").disabled);
-    }
-
     /// The picker screen reads played regions from the store and the developer flag.
     #[test]
     fn the_picker_screen_locks_sgcc_until_played_or_unlocked() {

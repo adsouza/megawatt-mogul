@@ -56,11 +56,8 @@ genuinely played four other regions.
   game. That is intended.
 - The **new-game screen** (region select, `AppState::RegionSelect`) gets a **"Show tutorial"**
   checkbox beside the seed field, bound to `tutorial_pending`. It reflects the stored value, so
-  it is ticked on a first game.
-- The **main menu** gets a **"Play tutorial"** button. It sets `tutorial_pending = true` and
-  navigates to the new-game screen, where the box is now ticked. *(Builder's call recorded here:
-  the user asked for "a simple affordance via the menu"; the in-game top-bar Menu button only
-  opens the leave prompt, so the main menu is the natural home.)*
+  it is ticked on a first game. It is the only way to turn the tutorial back on once it has
+  finished: the main menu has no tutorial button.
 - Starting a new game with `tutorial_pending` true starts the tutorial in that game. Loading or
   continuing a save never starts it.
 - The tutorial **finishes** when the player leaves the first Review (§4.4). That sets

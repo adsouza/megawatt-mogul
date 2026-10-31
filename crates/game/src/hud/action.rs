@@ -105,8 +105,6 @@ pub enum UiAction {
     Navigate(MenuScreen),
     /// Tick or untick *Show tutorial*: whether the next new game runs the first-game tutorial.
     SetTutorialPending(bool),
-    /// From the main menu: arm the tutorial, then open the new-game setup.
-    PlayTutorial,
     /// Open a confirmation prompt, or close it with `None`. The prompt's own buttons say what
     /// confirming does.
     Prompt(Option<Prompt>),
@@ -630,10 +628,6 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             | UiAction::DiscardCommitmentDraft => {}
             UiAction::Navigate(screen) => navigate(sink, screen),
             UiAction::SetTutorialPending(on) => sink.progress.value.tutorial_pending = on,
-            UiAction::PlayTutorial => {
-                sink.progress.value.tutorial_pending = true;
-                navigate(sink, MenuScreen::RegionSelect);
-            }
             UiAction::Prompt(Some(Prompt::LeaveGame)) if sink.persistence.enabled() => {
                 sink.persistence.request(
                     PersistAction::OpenLeave,

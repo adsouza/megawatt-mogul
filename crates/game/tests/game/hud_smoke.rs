@@ -126,7 +126,7 @@ fn the_boot_error_screen_quits_even_without_translations() {
 fn assert_opening_controls_fit(width: f32, height: f32) {
     let l10n = shipped_l10n();
     for resume_available in [false, true] {
-        let mut model = main_menu_model(&Persistence::default(), true, &l10n);
+        let mut model = main_menu_model(&Persistence::default(), &l10n);
         if resume_available {
             model.continue_game = Some(ButtonModel::new(
                 "Resume game".into(),
@@ -142,7 +142,6 @@ fn assert_opening_controls_fit(width: f32, height: f32) {
         let harness = Harness::with_screen(width, height);
         let widgets = harness.draw(|ui| central(ui, |ui| draw_main_menu(ui, &model)));
         let new_game = find_button(&widgets, "New game").rect;
-        let tutorial = find_button(&widgets, "Play tutorial").rect;
         let load = find_button(&widgets, "Load game").rect;
         let quit = find_button(&widgets, "Quit").rect;
         let primary = if resume_available {
@@ -154,19 +153,13 @@ fn assert_opening_controls_fit(width: f32, height: f32) {
             primary.height() >= 40.0,
             "the primary action needs a generous target"
         );
-        for rect in [primary, new_game, tutorial, load, quit] {
+        for rect in [primary, new_game, load, quit] {
             assert!(
                 harness.screen_rect().contains_rect(rect),
                 "{width}×{height}, resume={resume_available}: {rect:?}"
             );
         }
-        assert!(
-            !new_game.intersects(tutorial)
-                && !tutorial.intersects(load)
-                && !load.intersects(quit)
-                && tutorial.top() > new_game.bottom()
-                && load.top() > tutorial.bottom()
-        );
+        assert!(!new_game.intersects(load) && !load.intersects(quit));
     }
 }
 
@@ -193,7 +186,7 @@ proptest::proptest! {
 #[test]
 fn new_game_with_two_regions_opens_the_picker() {
     let l10n = shipped_l10n();
-    let model = main_menu_model(&Persistence::default(), true, &l10n);
+    let model = main_menu_model(&Persistence::default(), &l10n);
 
     let actions = Harness::new().click("New game", |ui| {
         central(ui, |ui| draw_main_menu(ui, &model))
@@ -244,7 +237,7 @@ fn new_game_with_one_region_opens_setup_to_edit_the_seed() {
 #[test]
 fn opening_menu_has_no_seed_field() {
     let l10n = shipped_l10n();
-    let model = main_menu_model(&Persistence::default(), true, &l10n);
+    let model = main_menu_model(&Persistence::default(), &l10n);
     let harness = Harness::new();
     let widgets = harness.draw(|ui| central(ui, |ui| draw_main_menu(ui, &model)));
     assert!(!widgets.iter().any(|w| w.text == "Seed"));
@@ -2911,20 +2904,6 @@ fn navigating_moves_between_the_menu_screens() {
     dispatch_in(&mut app, vec![UiAction::Navigate(MenuScreen::MainMenu)]);
     app.update();
     assert_eq!(state(&app), AppState::MainMenu);
-
-    // *Play tutorial* arms the tutorial on the way to the same setup screen.
-    let pending = |app: &App| {
-        app.world()
-            .resource::<game::progress::ClientProgressStore>()
-            .value
-            .tutorial_pending
-    };
-    dispatch_in(&mut app, vec![UiAction::SetTutorialPending(false)]);
-    assert!(!pending(&app));
-    dispatch_in(&mut app, vec![UiAction::PlayTutorial]);
-    app.update();
-    assert_eq!(state(&app), AppState::RegionSelect);
-    assert!(pending(&app));
 }
 
 #[test]
