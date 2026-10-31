@@ -202,3 +202,45 @@ fn played_region_is_recorded_once() {
     update_n(&mut app, 3);
     assert_eq!(recorded(&app), ["western_interconnection"]);
 }
+
+/// A new game in every shipped region starts unexpanded: every city it starts out serving is one
+/// of its region's `start.connected_cities`, so no region counts towards "played" (spec §6)
+/// before the player has connected a city of their own.
+#[test]
+fn every_shipped_region_starts_unexpanded() {
+    use application::{InMemoryCommandLog, projections::ExpansionProjection};
+    use domain::{ids::RegionId, session::GameSettings};
+    use infrastructure::region::RonRegionCatalog;
+
+    let catalog = RonRegionCatalog::new(crate::support::shipped_assets().join("regions"));
+    for &region in crate::support::SHIPPED_REGIONS {
+        let game = Game::start_new(
+            &catalog,
+            &RegionId::new(region),
+            7,
+            GameSettings::default(),
+            Box::new(InMemoryCommandLog::default()),
+        )
+        .unwrap_or_else(|error| panic!("{region}: {error:?}"));
+        let session = game.session();
+        let starters = &session.region().start().connected_cities;
+        let extra: Vec<_> = session
+            .city_views()
+            .into_iter()
+            .filter(|city| city.connected && !starters.contains(&city.id))
+            .map(|city| city.id)
+            .collect();
+        assert_eq!(
+            extra,
+            [],
+            "{region}: connected at the start but not a starter city"
+        );
+        let expansion = &game.projections().expansion;
+        assert!(!expansion.played(), "{region}");
+        assert_eq!(
+            *expansion,
+            ExpansionProjection::default(),
+            "{region}: no count"
+        );
+    }
+}
