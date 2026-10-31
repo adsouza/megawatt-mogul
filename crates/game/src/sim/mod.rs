@@ -24,7 +24,7 @@ use infrastructure::region::RonRegionCatalog;
 
 use self::driver::TicksInFlight;
 pub use self::driver::{FIXED_STEP_HZ, drive_ticks};
-use self::new_game::start_new_game;
+pub(crate) use self::new_game::start_new_game;
 pub use self::new_game::{default_seed, utc_date_time, utc_stamp};
 use crate::crash::CrashContext;
 use crate::paths::AssetRoot;
@@ -58,6 +58,13 @@ pub struct DomainEventMessage(pub DomainEvent);
 pub struct NewGameRequest {
     pub region: RegionId,
     pub seed: u64,
+}
+
+/// A new game started: written by the new-game system right after it enters `generation`, the
+/// [`SessionGeneration`] of the new session. Loading a save never writes it.
+#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NewGameStarted {
+    pub generation: u64,
 }
 
 /// Leave the game for the main menu, dropping the session.
@@ -119,6 +126,7 @@ impl Plugin for SimulationPlugin {
             .add_message::<CommandFailed>()
             .add_message::<DomainEventMessage>()
             .add_message::<NewGameRequest>()
+            .add_message::<NewGameStarted>()
             .add_message::<ReturnToMenu>()
             .init_resource::<SimSpeed>()
             .init_resource::<TicksInFlight>()

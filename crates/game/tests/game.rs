@@ -63,6 +63,8 @@ mod states;
 mod supply_chart;
 #[path = "game/support/mod.rs"]
 mod support;
+#[path = "game/tutorial.rs"]
+mod tutorial;
 
 #[path = "game/world.rs"]
 mod world;

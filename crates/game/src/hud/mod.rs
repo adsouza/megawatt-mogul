@@ -58,6 +58,7 @@ mod tariff;
 pub mod theme;
 mod toasts;
 mod top_bar;
+pub mod tutorial;
 mod ui_state;
 
 use bevy::prelude::*;
@@ -187,6 +188,8 @@ pub enum HudSet {
     Panels,
     /// Floating windows, toasts and modals.
     Overlays,
+    /// The first-game tutorial, over everything else.
+    Tutorial,
 }
 
 /// The egui panels: the shell screens, the top bar, toasts, prompts, the Milestones panel and the
@@ -210,6 +213,7 @@ impl Plugin for HudPlugin {
             .clone()
             .and_then(has_l10n)
             .and_then(not(in_phase(DayPhase::Review)));
+        app.add_plugins(tutorial::TutorialPlugin);
         app.init_resource::<crate::world::WorldControls>()
             .init_resource::<Selection>()
             .init_resource::<MapLayer>()
@@ -249,6 +253,7 @@ impl Plugin for HudPlugin {
                     HudSet::Bars,
                     HudSet::Panels,
                     HudSet::Overlays,
+                    HudSet::Tutorial,
                 )
                     .chain(),
             )

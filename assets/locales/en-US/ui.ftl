@@ -70,6 +70,25 @@ region-select-empty = No regions were found. Check that the game's assets folder
 region-select-unavailable = Unavailable
 region-locked = Play { $needed } other regions to unlock — { $played } of { $needed } so far
 
+## First-game tutorial
+
+tutorial-crawl = You run a power company.
+    Connect more cities to sell more electricity and make more money.
+    But every customer you connect needs power, every minute of every day.
+    Keep supply equal to demand, or the lights go out.
+tutorial-cash = This is your money. Grow it by selling power, without blacking out your customers.
+tutorial-pick-site = Click a square on the map to see what you can build there.
+tutorial-battery-spotlight = Batteries store power when it's cheap and release it when demand spikes.
+tutorial-battery-build = Build a battery here.
+tutorial-connect-spotlight = A power plant only helps once a line connects it to your grid.
+tutorial-connect-build = Build a line from your battery to your grid.
+tutorial-start = Ready? Start the day.
+tutorial-speed = Things move slowly at first. Speed up the day here if you like.
+tutorial-construction-paying = This is your first payment for the battery and its power line. You'll pay a share every month until they're built.
+tutorial-construction-paid = This is your payment for the battery and its power line. They're paid off.
+tutorial-construction-general = Construction is what you pay each month for things you've ordered.
+tutorial-end = End tutorial
+
 ## Shell: top bar, toasts and game over
 
 topbar-cash = Cash
