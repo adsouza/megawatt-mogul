@@ -274,38 +274,56 @@ impl GameSession {
                 }
             }
         } else {
-            trial.judge_grid(trial.anchor, &mut evaluation);
+            let anchor = trial.anchor;
+            trial.judge_grid(anchor, &mut evaluation);
         }
         evaluation
     }
 
-    /// Adds this local grid's samples, overgeneration and fuel to `evaluation`.
-    fn judge_grid(&self, id: NodeId, evaluation: &mut Evaluation) {
+    /// Adds this local grid's overgeneration and fuel (under the forecast weather), then its
+    /// samples (under the forecast's dull, calm edge), to `evaluation`. Takes the grid by value
+    /// and switches its weather in place: one copy per grid instead of two.
+    fn judge_grid(mut self, id: NodeId, evaluation: &mut Evaluation) {
+        let views = self.plant_views();
+        evaluation.excess += self
+            .minimum_generation_forecast()
+            .iter()
+            .map(|point| (point.committed_minimum - point.net_load).value().max(0.0))
+            .sum::<f64>();
+        evaluation.cost += self.forecast_fuel_cost(&views);
+
         let factor = 1.0 + 2.0 * self.region.demand_noise().forecast_error.value();
-        let mut dull = self.clone();
-        dull.power
-            .set_weather_forecast(self.power.weather_forecast().low_edge(&self.region));
         let discharge_from = self
             .region
             .spec(PlantKind::Battery)
             .battery
             .map(|battery| u32::from(battery.discharge_start_hour) * TICKS_PER_HOUR);
-        let views = self.plant_views();
-        let restarting: Vec<&Plant> = views
+        // (pattern, minimum, capacity, ramp per tick) of each trimmable plant that restarts.
+        let restarting: Vec<([bool; 24], f64, f64, f64)> = views
             .iter()
             .filter_map(|view| {
                 let plant = self.power.plant(view.id)?;
-                (trimmable(plant, view.connected) && plant.commitment().hours() != [true; 24])
-                    .then_some(plant)
+                let hours = plant.commitment().hours();
+                (trimmable(plant, view.connected) && hours != [true; 24]).then(|| {
+                    (
+                        hours,
+                        plant.min_output().value(),
+                        plant.available_capacity().value(),
+                        plant.spec().ramp.per_tick().value(),
+                    )
+                })
             })
             .collect();
-        let samples = dull
+        let dull = self.power.weather_forecast().low_edge(&self.region);
+        self.power.set_weather_forecast(dull);
+        let samples = self
             .supply_forecast()
             .assessed_minutes()
             .map(|(tick, point)| {
                 let battery = match discharge_from {
                     Some(from) if tick >= from => {
-                        let hours_left = f64::from(TICKS_PER_DAY - tick) / 60.0;
+                        let hours_left =
+                            f64::from(TICKS_PER_DAY - tick) / f64::from(TICKS_PER_HOUR);
                         (point.battery_power - point.battery_discharge)
                             .value()
                             .max(0.0)
@@ -315,16 +333,8 @@ impl GameSession {
                 };
                 let restart_deficit: f64 = restarting
                     .iter()
-                    .map(|plant| {
-                        let capacity = plant.available_capacity().value();
-                        capacity
-                            - restart_credit(
-                                plant.commitment().hours(),
-                                plant.min_output().value(),
-                                capacity,
-                                plant.spec().ramp.per_tick().value(),
-                                tick,
-                            )
+                    .map(|&(hours, minimum, capacity, ramp)| {
+                        capacity - restart_credit(hours, minimum, capacity, ramp, tick)
                     })
                     .sum();
                 let supply = point.gross_supply.value() + battery - restart_deficit;
@@ -332,12 +342,6 @@ impl GameSession {
             })
             .collect();
         evaluation.samples.insert(id, samples);
-        evaluation.excess += self
-            .minimum_generation_forecast()
-            .iter()
-            .map(|point| (point.committed_minimum - point.net_load).value().max(0.0))
-            .sum::<f64>();
-        evaluation.cost += self.forecast_fuel_cost(&views);
     }
 
     /// Fuel on the forecast day: each hour's net load, less manual targets and scheduled hydro,
