@@ -519,6 +519,7 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "forecast-title",
     "forecast-band",
     "forecast-solar",
+    "forecast-solar-range",
     "forecast-net-supply",
     "forecast-axis-hour",
     "forecast-axis-power",

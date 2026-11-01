@@ -265,6 +265,7 @@ commitment-unsaved = Apply or revert your changes before starting the day.
 forecast-title = Forecast
 forecast-band = Forecast range
 forecast-solar = Expected solar
+forecast-solar-range = Solar forecast range
 forecast-net-supply = Available net supply
 forecast-island-name = { $area } ({ $node })
 forecast-island-shortfall = { $island } — short { $amount } ({ $time })
