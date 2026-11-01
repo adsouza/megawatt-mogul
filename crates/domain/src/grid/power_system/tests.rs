@@ -23,7 +23,7 @@ fn cell(x: u16, y: u16) -> CellCoord {
 }
 
 /// A plant to place in a test system, and whether a line joins it to the root.
-struct PlantDef {
+pub(super) struct PlantDef {
     kind: PlantKind,
     cell: CellCoord,
     connected: bool,
@@ -48,7 +48,7 @@ fn start_fleet(region: &RegionDefinition) -> Vec<PlantDef> {
 
 /// The tiny region's cities on their own nodes (the start's connected cities
 /// joined to the root, the rest isolated), plus `defs` as plants 1, 2, ...
-fn system_with(region: &RegionDefinition, defs: &[PlantDef]) -> PowerSystem {
+pub(super) fn system_with(region: &RegionDefinition, defs: &[PlantDef]) -> PowerSystem {
     let home = region
         .cities()
         .iter()

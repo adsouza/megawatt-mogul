@@ -839,7 +839,12 @@ mod physical_contracts {
             let _ = s.supply_forecast();
         }
         assert_eq!(before, s.snapshot_state());
-        close(&mut baseline);
+        // Exploration draws at the month close, before `finish_review` draws the next forecast,
+        // so the reference is the baseline's generator at its close.
+        baseline.begin_operating().unwrap();
+        for _ in 0..1440 {
+            baseline.tick().unwrap();
+        }
         let events = close(&mut s);
         let mut expected = baseline.rng.clone();
         for id in ids {
@@ -849,6 +854,10 @@ mod physical_contracts {
             } else {
                 matches!(e,DomainEvent::ExplorationDry{plant,..} if *plant==id)
             }));
+        }
+        // `close` ends in `finish_review`, which then draws the next day-ahead forecast.
+        for _ in 0..=crate::time::TICKS_PER_DAY {
+            expected.standard_normal();
         }
         assert_eq!(s.rng, expected);
     }

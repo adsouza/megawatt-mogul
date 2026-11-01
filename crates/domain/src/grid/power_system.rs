@@ -18,6 +18,8 @@ mod hydro_plan;
 mod outage;
 #[cfg(test)]
 use outage::HourEnd;
+mod weather;
+pub use weather::WeatherForecast;
 mod wind;
 
 use hydro_plan::{HydroOverride, PlantHydroPlan};
@@ -117,6 +119,8 @@ pub struct PowerSystem {
     wind_month: Option<SimMonth>,
     battery_bus_surplus: Option<bool>,
     wind_needs_replan: bool,
+    /// The coming day's forecast weather, drawn when Planning begins.
+    weather_forecast: WeatherForecast,
     deviation: Hertz,
     /// The band last reported, so `FrequencyDeviated` fires only on a change.
     band: FrequencyBand,
@@ -205,6 +209,7 @@ impl PowerSystem {
             wind_month: None,
             battery_bus_surplus: None,
             wind_needs_replan: false,
+            weather_forecast: WeatherForecast::default(),
             deviation: Hertz::ZERO,
             band: FrequencyBand::Normal,
             protection: ProtectionState::default(),
@@ -1501,6 +1506,9 @@ impl crate::state::State for PowerSystem {
         if schema >= 5 {
             self.activated_service.write_schema(out, schema);
         }
+        if schema >= 9 {
+            self.weather_forecast.write_schema(out, schema);
+        }
     }
     fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
         let mut power = Self {
@@ -1573,6 +1581,11 @@ impl crate::state::State for PowerSystem {
                 crate::state::State::read(input)?
             } else {
                 Default::default()
+            },
+            weather_forecast: if input.schema >= 9 {
+                crate::state::State::read(input)?
+            } else {
+                WeatherForecast::default()
             },
         };
         if input.schema < 5 {

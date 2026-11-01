@@ -490,6 +490,8 @@ impl PowerSystem {
         if let Some(state) = self.island_states.get(&id) {
             state.clone().apply(&mut power);
         }
+        // The forecast is regional: every island copy plans and operates against it.
+        power.weather_forecast = self.weather_forecast.clone();
         power.injections = self.transfer_schedule(id, region);
         Some(power)
     }

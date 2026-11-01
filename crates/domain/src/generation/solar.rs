@@ -5,8 +5,8 @@ use crate::rng::SimRng;
 use crate::time::{SimMonth, TICKS_PER_HOUR};
 use crate::units::{Megawatts, Ratio};
 
-const MIN_CLEARNESS: f64 = 0.2;
-const MAX_CLEARNESS: f64 = 1.0;
+pub(crate) const MIN_CLEARNESS: f64 = 0.2;
+pub(crate) const MAX_CLEARNESS: f64 = 1.0;
 
 /// How high the sun is, `0.0..=1.0`: a half sine between sunrise and sunset,
 /// zero at night. Time of day is the start of the tick's minute, `tick / 60`

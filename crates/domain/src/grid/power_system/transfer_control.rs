@@ -253,6 +253,7 @@ impl PowerSystem {
         let mut hours: Vec<BTreeMap<NodeId, Bus>> = (0..24).map(|_| BTreeMap::new()).collect();
         for &id in self.island_nodes.keys() {
             let mut local = self.scoped_island(id, region).expect("island");
+            local.clearness = self.clearness;
             local.wind_factor = self.wind_factor;
             local.wind_tick = self.wind_tick;
             local.wind_month = self.wind_month;

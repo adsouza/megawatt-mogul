@@ -325,6 +325,10 @@ impl GameSession {
         }
 
         let regulator = Regulator::new(region.regulator());
+        // The first Planning phase begins now, so its day-ahead forecast is drawn now.
+        let mut rng = SimRng::from_seed(seed);
+        let mut power = power;
+        power.draw_weather_forecast(&region, month, &mut rng);
         Self {
             geothermal_available: region.geothermal().is_some(),
             dry_cells: BTreeMap::new(),
@@ -332,7 +336,7 @@ impl GameSession {
             clock: SimClock::new(month),
             phase: DayPhase::Planning,
             status: SessionStatus::Active,
-            rng: SimRng::from_seed(seed),
+            rng,
             ids,
             anchor,
             power,
@@ -413,6 +417,8 @@ impl GameSession {
         self.require_phase(&[DayPhase::Review])?;
         self.clock.next_month();
         self.power.clear_hydro_plan();
+        self.power
+            .draw_weather_forecast(&self.region, self.clock.month(), &mut self.rng);
         Ok(vec![self.change_phase(DayPhase::Planning)])
     }
 

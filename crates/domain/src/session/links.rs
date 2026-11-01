@@ -324,6 +324,25 @@ mod tests {
         )
     }
     #[test]
+    fn island_copies_carry_the_forecast() {
+        let mut s = automatic_game();
+        for phase in ["planning", "operating"] {
+            assert!(s.power.island_nodes().len() > 1);
+            for id in s.power.island_nodes().keys() {
+                let island = s.island_session(*id).unwrap();
+                assert_eq!(
+                    island.power.weather_forecast(),
+                    s.power.weather_forecast(),
+                    "{phase}"
+                );
+            }
+            if phase == "planning" {
+                s.begin_operating().unwrap();
+            }
+        }
+    }
+
+    #[test]
     fn automatic_transfers_retain_local_battery_charging_and_physical_limits() {
         let mut parts = automatic_parts();
         parts.start.fleet.push(crate::region::StartPlantDef {
