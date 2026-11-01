@@ -1,13 +1,16 @@
 //! The screens outside a game: the boot error, the main menu and the region picker.
 
-use application::{RegionCatalog, RegionListing, RegionLoadError};
+use std::collections::BTreeSet;
+
+use application::{RegionCatalog, RegionListing, RegionLoadError, RegionSummary};
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 
 use super::action::{ActionSink, ButtonModel, MenuScreen, UiAction, add_enabled, button, dispatch};
 use super::layout::HudArea;
 use super::region_atlas::{self, RegionAtlas};
-use crate::l10n::{Localize, Localizer};
+use crate::l10n::{FluentArg, Localize, Localizer};
+use crate::progress::UnlockAllRegions;
 use crate::sim::{Catalog, PersistAction, Persistence, default_seed};
 use crate::state::BootError;
 
@@ -332,6 +335,38 @@ pub struct RegionChoice {
     pub(super) artwork: Option<std::sync::Arc<region_atlas::Artwork>>,
     /// Why the region can't be played, when it can't: a status word and the localised error.
     pub problem: Option<RegionProblem>,
+    /// What unlocks the region, while it is locked behind other played regions (tutorial spec
+    /// §6). A locked card keeps its name, description and globe fill but can't be started.
+    pub locked: Option<String>,
+}
+
+/// What the player has unlocked: the regions they have played and whether the developer flag
+/// `--unlock-all-regions` opened everything for this run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RegionAccess<'a> {
+    pub played: &'a BTreeSet<String>,
+    pub unlock_all: bool,
+}
+
+impl Default for RegionAccess<'_> {
+    /// A first run: nothing played and no flag.
+    fn default() -> Self {
+        static NOTHING: BTreeSet<String> = BTreeSet::new();
+        Self {
+            played: &NOTHING,
+            unlock_all: false,
+        }
+    }
+}
+
+/// The new-game setup's *Show tutorial* box, bound to `tutorial_pending`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TutorialToggle {
+    pub label: String,
+    pub on: bool,
+    /// False until the stored progress has loaded: until then `on` is a default that loading
+    /// may replace, so a change would be lost.
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -350,6 +385,7 @@ pub struct RegionSelectModel {
     pub land_note: String,
     pub seed_label: String,
     pub seed_invalid: String,
+    pub show_tutorial: TutorialToggle,
     pub regions: Vec<RegionChoice>,
     /// Shown instead of the list when there is nothing to pick from.
     pub empty: Option<String>,
@@ -360,17 +396,20 @@ pub struct RegionSelectModel {
 
 /// The region picker. Every listing is a button; a broken one is disabled, named by its file and
 /// shows its error, and the good ones stay playable (Review Focus 3). `seed` is `None` when the
-/// setup's seed field holds no valid seed, which disables every region.
+/// setup's seed field holds no valid seed, which disables every region. A region whose file asks
+/// for other played regions first is disabled until `access` has them. The tutorial box starts
+/// off and disabled; [`RegionSelectModel::with_tutorial`] gives it the stored value.
 pub fn region_select_model(
     listings: &RegionListings,
     seed: Option<u64>,
+    access: &RegionAccess,
     l10n: &Localizer,
 ) -> RegionSelectModel {
     let (regions, folder_error) = match &listings.0 {
         Ok(listings) => (
             listings
                 .iter()
-                .map(|listing| region_choice(listing, seed, l10n))
+                .map(|listing| region_choice(listing, seed, access, l10n))
                 .collect(),
             None,
         ),
@@ -385,6 +424,11 @@ pub fn region_select_model(
         land_note: l10n.text("region-select-land-note"),
         seed_label: l10n.text("menu-seed"),
         seed_invalid: l10n.text("menu-seed-invalid"),
+        show_tutorial: TutorialToggle {
+            label: l10n.text("tutorial-show"),
+            on: false,
+            enabled: false,
+        },
         regions,
         empty,
         folder_error,
@@ -395,29 +439,72 @@ pub fn region_select_model(
     }
 }
 
-fn region_choice(listing: &RegionListing, seed: Option<u64>, l10n: &Localizer) -> RegionChoice {
+impl RegionSelectModel {
+    /// The tutorial box shows `pending`, and can be changed once the progress store has `loaded`.
+    #[must_use]
+    pub fn with_tutorial(mut self, pending: bool, loaded: bool) -> Self {
+        self.show_tutorial.on = pending;
+        self.show_tutorial.enabled = loaded;
+        self
+    }
+}
+
+/// Why `summary` can't be started yet, if it is locked behind other played regions. Only other
+/// regions count, and the count shown never passes the threshold.
+fn lock_text(summary: &RegionSummary, access: &RegionAccess, l10n: &Localizer) -> Option<String> {
+    let needed = summary.unlock_after_regions?;
+    if access.unlock_all {
+        return None;
+    }
+    let others = access
+        .played
+        .iter()
+        .filter(|id| id.as_str() != summary.id.as_str())
+        .count();
+    let needed_count = usize::try_from(needed).unwrap_or(usize::MAX);
+    (others < needed_count).then(|| {
+        l10n.args(
+            "region-locked",
+            &[
+                ("needed", FluentArg::Number(f64::from(needed))),
+                ("played", FluentArg::Number(others as f64)),
+            ],
+        )
+    })
+}
+
+fn region_choice(
+    listing: &RegionListing,
+    seed: Option<u64>,
+    access: &RegionAccess,
+    l10n: &Localizer,
+) -> RegionChoice {
     match &listing.entry {
-        Ok(summary) => RegionChoice {
-            area_names: Default::default(),
-            description: {
-                // Each region's copy sits in `regions.ftl` beside its name; a region without
-                // any shows none.
-                let key = format!("{}-description", summary.name_key);
-                l10n.has(&key).then(|| l10n.text(&key))
-            },
-            detail: None,
-            metadata: None,
-            artwork: None,
-            button: ButtonModel::new(
-                l10n.text(&summary.name_key),
-                UiAction::NewGame {
-                    region: summary.id.clone(),
-                    seed: seed.unwrap_or_default(),
+        Ok(summary) => {
+            let locked = lock_text(summary, access, l10n);
+            RegionChoice {
+                area_names: Default::default(),
+                description: {
+                    // Each region's copy sits in `regions.ftl` beside its name; a region without
+                    // any shows none.
+                    let key = format!("{}-description", summary.name_key);
+                    l10n.has(&key).then(|| l10n.text(&key))
                 },
-            )
-            .enabled_if(seed.is_some()),
-            problem: None,
-        },
+                detail: None,
+                metadata: None,
+                artwork: None,
+                button: ButtonModel::new(
+                    l10n.text(&summary.name_key),
+                    UiAction::NewGame {
+                        region: summary.id.clone(),
+                        seed: seed.unwrap_or_default(),
+                    },
+                )
+                .enabled_if(seed.is_some() && locked.is_none()),
+                problem: None,
+                locked,
+            }
+        }
         Err(error) => RegionChoice {
             area_names: Default::default(),
             description: None,
@@ -437,6 +524,7 @@ fn region_choice(listing: &RegionListing, seed: Option<u64>, l10n: &Localizer) -
                 status: l10n.text("region-select-unavailable"),
                 detail: error.localize(l10n),
             }),
+            locked: None,
         },
     }
 }
@@ -458,6 +546,17 @@ pub fn draw_region_select(
                 .desired_width(220.0)
                 .font(egui::TextStyle::Monospace),
         );
+        ui.add_space(16.0);
+        let toggle = &model.show_tutorial;
+        let mut on = toggle.on;
+        let response = add_enabled(
+            ui,
+            toggle.enabled,
+            egui::Checkbox::new(&mut on, toggle.label.as_str()),
+        );
+        if response.clicked() {
+            actions.push(UiAction::SetTutorialPending(!toggle.on));
+        }
     });
     let seed = form.parsed_seed();
     if seed.is_none() {
@@ -466,7 +565,8 @@ pub fn draw_region_select(
     // Bind clicks to this pass's edited value, never to the seed from the previous frame.
     let mut model = model.clone();
     for choice in &mut model.regions {
-        choice.button.enabled = choice.problem.is_none() && seed.is_some();
+        choice.button.enabled =
+            choice.problem.is_none() && choice.locked.is_none() && seed.is_some();
         if let UiAction::NewGame { seed: current, .. } = &mut choice.button.action {
             *current = seed.unwrap_or_default();
         }
@@ -545,6 +645,10 @@ pub fn draw_region_select(
                                             if let Some(description) = &choice.description {
                                                 ui.add_space(10.0);
                                                 ui.label(description);
+                                            }
+                                            if let Some(locked) = &choice.locked {
+                                                ui.add_space(6.0);
+                                                ui.label(locked.as_str());
                                             }
                                             if let Some(detail) = &choice.detail {
                                                 ui.add_space(10.0);
@@ -685,6 +789,7 @@ pub fn draw_region_select(
     actions
 }
 
+#[allow(clippy::too_many_arguments)] // Independent ECS resources.
 pub(super) fn region_select_screen(
     mut contexts: EguiContexts,
     area: Res<HudArea>,
@@ -692,9 +797,17 @@ pub(super) fn region_select_screen(
     listings: Res<RegionListings>,
     atlas: Option<Res<RegionAtlas>>,
     mut form: ResMut<MenuForm>,
+    unlock_all: Option<Res<UnlockAllRegions>>,
     mut sink: ActionSink,
 ) -> Result {
-    let mut model = region_select_model(&listings, form.parsed_seed(), &l10n);
+    // Progress is read through the sink, which writes it: a second `Res` would conflict (B0002).
+    let progress = sink.progress();
+    let access = RegionAccess {
+        played: &progress.played_regions,
+        unlock_all: unlock_all.is_some(),
+    };
+    let mut model = region_select_model(&listings, form.parsed_seed(), &access, &l10n)
+        .with_tutorial(progress.tutorial_pending, sink.progress_loaded());
     if let Some(atlas) = atlas {
         model = model.with_atlas(&atlas, &l10n);
     }
@@ -720,6 +833,7 @@ mod tests {
             entry: Ok(RegionSummary {
                 id: RegionId::new(id),
                 name_key: name_key.to_owned(),
+                unlock_after_regions: None,
             }),
         }
     }
@@ -755,7 +869,7 @@ mod tests {
             seed: "not a number".to_owned(),
         };
 
-        let model = region_select_model(&one, form.parsed_seed(), &l10n);
+        let model = region_select_model(&one, form.parsed_seed(), &RegionAccess::default(), &l10n);
 
         assert!(model.regions.iter().all(|r| !r.button.enabled));
         assert_eq!(model.seed_invalid, l10n.text("menu-seed-invalid"));
@@ -778,7 +892,7 @@ mod tests {
             available("nowhere", "city-columbus"),
         ]));
 
-        let model = region_select_model(&listings, Some(1), &l10n);
+        let model = region_select_model(&listings, Some(1), &RegionAccess::default(), &l10n);
 
         let descriptions: Vec<_> = model
             .regions
@@ -817,7 +931,7 @@ mod tests {
         let l10n = shipped_l10n();
         let listings = RegionListings(Ok(vec![available(EAST.0, EAST.1), broken(WEST.0)]));
 
-        let model = region_select_model(&listings, Some(9), &l10n);
+        let model = region_select_model(&listings, Some(9), &RegionAccess::default(), &l10n);
 
         let [good, bad] = model.regions.as_slice() else {
             panic!("expected two choices: {:?}", model.regions);
@@ -851,7 +965,12 @@ mod tests {
         let l10n = shipped_l10n();
         let back = UiAction::Navigate(MenuScreen::MainMenu);
 
-        let empty = region_select_model(&RegionListings(Ok(vec![])), Some(1), &l10n);
+        let empty = region_select_model(
+            &RegionListings(Ok(vec![])),
+            Some(1),
+            &RegionAccess::default(),
+            &l10n,
+        );
         assert!(empty.regions.is_empty());
         assert_eq!(empty.empty, Some(l10n.text("region-select-empty")));
         assert_eq!(empty.folder_error, None);
@@ -861,7 +980,7 @@ mod tests {
             region: RegionId::new("assets/regions"),
             message: "no such directory".to_owned(),
         }));
-        let missing = region_select_model(&unreadable, Some(1), &l10n);
+        let missing = region_select_model(&unreadable, Some(1), &RegionAccess::default(), &l10n);
         assert!(missing.regions.is_empty());
         assert_eq!(missing.empty, Some(l10n.text("region-select-empty")));
         let detail = missing.folder_error.expect("the folder error is shown");
@@ -875,10 +994,143 @@ mod tests {
         let l10n = shipped_l10n();
         let listings = RegionListings(Ok(vec![available(EAST.0, EAST.1)]));
 
-        let model = region_select_model(&listings, None, &l10n);
+        let model = region_select_model(&listings, None, &RegionAccess::default(), &l10n);
 
         assert!(model.regions.iter().all(|choice| !choice.button.enabled));
         assert!(model.back.enabled);
+    }
+
+    fn gated(id: &str, name_key: &str, needed: u32) -> RegionListing {
+        RegionListing {
+            id: RegionId::new(id),
+            entry: Ok(RegionSummary {
+                id: RegionId::new(id),
+                name_key: name_key.to_owned(),
+                unlock_after_regions: Some(needed),
+            }),
+        }
+    }
+
+    fn played(ids: &[&str]) -> std::collections::BTreeSet<String> {
+        ids.iter().map(|id| (*id).to_owned()).collect()
+    }
+
+    fn sgcc_choice(played: &std::collections::BTreeSet<String>, unlock_all: bool) -> RegionChoice {
+        let listings = RegionListings(Ok(vec![
+            available(EAST.0, EAST.1),
+            gated("sgcc", "region-sgcc", 4),
+        ]));
+        let access = RegionAccess { played, unlock_all };
+        let model = region_select_model(&listings, Some(5), &access, &shipped_l10n());
+        model.regions[1].clone()
+    }
+
+    #[test]
+    fn sgcc_locked_until_four_other_regions() {
+        let l10n = shipped_l10n();
+        let three = played(&[EAST.0, WEST.0, "brazil_sin"]);
+
+        let locked = sgcc_choice(&three, false);
+
+        assert!(!locked.button.enabled);
+        assert_eq!(locked.button.label, l10n.text("region-sgcc"));
+        assert_eq!(
+            locked.locked.as_deref(),
+            Some("Play 4 other regions to unlock — 3 of 4 so far")
+        );
+        assert_eq!(locked.problem, None);
+
+        let mut four = three.clone();
+        four.insert("india_nepal_bhutan".to_owned());
+        let open = sgcc_choice(&four, false);
+        assert!(open.button.enabled);
+        assert_eq!(open.locked, None);
+        assert_eq!(
+            open.button.action,
+            UiAction::NewGame {
+                region: RegionId::new("sgcc"),
+                seed: 5
+            }
+        );
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    #[test]
+    fn own_id_never_counts() {
+        let with_self = played(&["sgcc", EAST.0, WEST.0, "brazil_sin"]);
+
+        let choice = sgcc_choice(&with_self, false);
+
+        assert!(!choice.button.enabled);
+        assert_eq!(
+            choice.locked.as_deref(),
+            Some("Play 4 other regions to unlock — 3 of 4 so far")
+        );
+        // Ungated regions never lock, whatever has been played.
+        let listings = RegionListings(Ok(vec![available(EAST.0, EAST.1)]));
+        let none = played(&[]);
+        let access = RegionAccess {
+            played: &none,
+            unlock_all: false,
+        };
+        let model = region_select_model(&listings, Some(5), &access, &shipped_l10n());
+        assert!(model.regions[0].button.enabled);
+        assert_eq!(model.regions[0].locked, None);
+    }
+
+    #[test]
+    fn the_played_count_is_capped_at_the_threshold() {
+        let many = played(&["a", "b", "c", "d", "e", "f"]);
+        let listings = RegionListings(Ok(vec![gated("sgcc", "region-sgcc", 7)]));
+        let access = RegionAccess {
+            played: &many,
+            unlock_all: false,
+        };
+        let model = region_select_model(&listings, Some(5), &access, &shipped_l10n());
+        assert_eq!(
+            model.regions[0].locked.as_deref(),
+            Some("Play 7 other regions to unlock — 6 of 7 so far")
+        );
+    }
+
+    #[test]
+    fn unlock_all_ignores_threshold() {
+        let nothing = played(&[]);
+
+        let choice = sgcc_choice(&nothing, true);
+
+        assert!(choice.button.enabled);
+        assert_eq!(choice.locked, None);
+        // An invalid seed still disables it.
+        let listings = RegionListings(Ok(vec![gated("sgcc", "region-sgcc", 4)]));
+        let access = RegionAccess {
+            played: &nothing,
+            unlock_all: true,
+        };
+        let model = region_select_model(&listings, None, &access, &shipped_l10n());
+        assert!(!model.regions[0].button.enabled);
+    }
+
+    #[test]
+    fn the_tutorial_toggle_shows_the_stored_value_once_loaded() {
+        let l10n = shipped_l10n();
+        let listings = RegionListings(Ok(vec![available(EAST.0, EAST.1)]));
+        let none = played(&[]);
+        let access = RegionAccess {
+            played: &none,
+            unlock_all: false,
+        };
+        let base = region_select_model(&listings, Some(1), &access, &l10n);
+        assert_eq!(base.show_tutorial.label, "Show tutorial");
+        // Before the store has loaded, the box can't be trusted, so it can't be changed.
+        assert!(!base.show_tutorial.enabled);
+
+        let on = base.clone().with_tutorial(true, true);
+        assert!(on.show_tutorial.on && on.show_tutorial.enabled);
+        let off = base.clone().with_tutorial(false, true);
+        assert!(!off.show_tutorial.on && off.show_tutorial.enabled);
+        let loading = base.with_tutorial(true, false);
+        assert!(loading.show_tutorial.on && !loading.show_tutorial.enabled);
     }
 
     #[test]

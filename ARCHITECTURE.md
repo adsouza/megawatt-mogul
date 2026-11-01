@@ -47,8 +47,10 @@ never as code constants. Shipped files declare `region_schema: 5`, including exp
 climate, calendar, currency, astronomical-sun and geothermal data. Legacy region schemas retain frozen
 defaults in `infrastructure::region::legacy`; old-source integrity is checked before any
 upcast. Unexpected new fields on legacy sources and unsupported schemas fail with typed errors.
-Region schema versions are independent of portable state schema 7, written by current saves;
-readers retain schemas 1–7.
+Region schema versions are independent of portable state schema 8, written by current saves;
+readers retain schemas 1–8. Schema 8 appends the expansion projection (month closes since the
+first non-starter city connected); older snapshots seed it from the restored session, so an
+already-expanded game starts counting at the restore.
 
 **Sidecars and the region bundle.** Spec §28.11.1 describes the format. Tool-generated blocks
 live in sidecars under `assets/regions/<id>/`, and the hand-authored main file references them:
@@ -554,11 +556,12 @@ layer shown, is a selected toggle, not a disabled button.
 | `LocalizationPlugin` | Loads the en-US Fluent files into the `Localizer` resource. |
 | `SimulationPlugin` | The bridge: the `Session(Game)` resource, the region `Catalog`, new games, the command funnel, the phase mirror and the fixed-step driver. |
 | `PreferencesPlugin` | Retained window geometry, zoom, running speed and panel/tool layout; separate from game checkpoints. |
+| `ProgressPlugin` | Loads and writes player progress (`progress.ron`: tutorial owed, played regions). A file that exists but can't be read is never overwritten. `HudPlugin` owns the in-memory `ClientProgressStore` and records a region once `ExpansionProjection::played()`. |
 | `DailyAudioPlugin` | Presentation-only daily time signals at 1×: rooster at sunrise, metro at 08:30/17:00, gong followed by children laughing at noon, and doorbell at 17:30. Clips finish naturally if the player changes speed. |
 | `HudPlugin` | Every egui panel, toast, prompt and modal, plus its non-egui glue (listing regions, collecting toasts, resetting HUD state between games). |
 
 `CorePlugins` groups the first three. They need no window or renderer, so the tests run them on
-`MinimalPlugins` plus `StatesPlugin`. `GamePlugins` adds `EguiPlugin`, `HudPlugin` and `PreferencesPlugin`, and
+`MinimalPlugins` plus `StatesPlugin`. `GamePlugins` adds `EguiPlugin`, `HudPlugin`, `PreferencesPlugin` and `ProgressPlugin`, and
 `main.rs` puts it on `DefaultPlugins` with a 1280×640 minimum client area, targeting 1280×720
 logical displays with room for desktop chrome, plus `WindowSizingPlugin`
 (`window.rs`). Bevy 0.20 spawns the `Monitor` entities only once the winit event loop runs, so

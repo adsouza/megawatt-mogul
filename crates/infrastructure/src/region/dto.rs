@@ -421,6 +421,12 @@ pub struct RegionFileV4 {
         with = "present_option",
         skip_serializing_if = "Option::is_none"
     )]
+    pub unlock: Option<UnlockDto>,
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub economic_zones: Option<EconomicZonesDto>,
     pub solar: SolarDtoV4,
     pub hydro: HydroDto,
@@ -585,6 +591,17 @@ pub enum CurrencyDto {
     #[serde(other)]
     Unknown,
 }
+/// Presentation-only gate: the new-game picker offers the region once the player has played
+/// this many regions. The domain never sees it; `ParsedRegionFile::validate_unlock` checks it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnlockDto {
+    pub regions_played: u32,
+}
+
+/// Largest `unlock.regions_played` a region file may ask for.
+const MAX_UNLOCK_REGIONS_PLAYED: u32 = 64;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AtlasDto {
     pub colour: String,
@@ -623,6 +640,25 @@ impl ParsedRegionFile {
         match self {
             Self::Legacy(f) => &f.name_key,
             Self::V4(f) => &f.name_key,
+        }
+    }
+    /// Regions the player must have played before the picker offers this one. Legacy files
+    /// predate the gate and are never locked.
+    pub fn unlock_after_regions(&self) -> Option<u32> {
+        match self {
+            Self::Legacy(_) => None,
+            Self::V4(f) => f.unlock.map(|unlock| unlock.regions_played),
+        }
+    }
+    /// `unlock.regions_played` must be in `1..=64`.
+    pub fn validate_unlock(&self) -> Result<(), domain::region::RegionError> {
+        match self.unlock_after_regions() {
+            Some(n) if !(1..=MAX_UNLOCK_REGIONS_PLAYED).contains(&n) => {
+                Err(domain::region::RegionError::InvalidShape {
+                    field: "unlock.regions_played",
+                })
+            }
+            _ => Ok(()),
         }
     }
 }

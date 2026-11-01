@@ -607,6 +607,16 @@ fn ships_exactly_the_listed_regions() {
 }
 
 #[test]
+fn shipped_sgcc_unlocks_after_four_regions() {
+    let listed = catalog().list().expect("shipped regions list");
+    for listing in listed {
+        let summary = listing.entry.expect("shipped region lists");
+        let expected = (listing.id.as_str() == "sgcc").then_some(4);
+        assert_eq!(summary.unlock_after_regions, expected, "{:?}", listing.id);
+    }
+}
+
+#[test]
 fn shipped_home_cities_anchor_the_existing_city_nodes() {
     for &id in SHIPPED {
         let name_key = table_value(HOME_CITY, id);
@@ -780,6 +790,7 @@ impl RegionCatalog for StartMonthOverride {
             entry: Ok(RegionSummary {
                 id: self.0.definition.id().clone(),
                 name_key: self.0.definition.name_key().to_owned(),
+                unlock_after_regions: None,
             }),
         }])
     }

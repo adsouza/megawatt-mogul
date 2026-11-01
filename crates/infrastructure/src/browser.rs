@@ -44,8 +44,14 @@ extern "C" {
     fn random_id() -> String;
     #[wasm_bindgen(js_name=preferenceRead)]
     fn pref_read() -> js_sys::Promise;
+    // Writers that await before using their bytes take a JS-owned copy: a `&[u8]` arrives as a
+    // view of wasm memory, which growing the heap during that await detaches.
     #[wasm_bindgen(js_name=preferenceWrite)]
-    fn pref_write(bytes: &[u8]) -> js_sys::Promise;
+    fn pref_write(bytes: &Uint8Array) -> js_sys::Promise;
+    #[wasm_bindgen(js_name=progressRead)]
+    fn progress_read() -> js_sys::Promise;
+    #[wasm_bindgen(js_name=progressWrite)]
+    fn progress_write(bytes: &Uint8Array) -> js_sys::Promise;
     #[wasm_bindgen(js_name=requestPersistence)]
     pub fn request_persistence() -> js_sys::Promise;
 }
@@ -758,9 +764,24 @@ pub async fn read_preferences() -> Result<crate::client_preferences::ClientPrefe
 pub async fn write_preferences(
     value: &crate::client_preferences::ClientPreferences,
 ) -> Result<(), SaveError> {
-    wait(pref_write(&crate::client_preferences::encode_preferences(
-        value,
-    )?))
-    .await?;
+    let bytes = crate::client_preferences::encode_preferences(value)?;
+    wait(pref_write(&Uint8Array::from(bytes.as_slice()))).await?;
+    Ok(())
+}
+/// Player progress lives under its own key so an unreadable record is an error to the caller,
+/// never silently the default.
+pub async fn read_progress() -> Result<crate::client_progress::ClientProgress, SaveError> {
+    let value = wait(progress_read()).await?;
+    if value.is_null() {
+        Ok(Default::default())
+    } else {
+        crate::client_progress::decode_progress(&bytes(value)?)
+    }
+}
+pub async fn write_progress(
+    value: &crate::client_progress::ClientProgress,
+) -> Result<(), SaveError> {
+    let bytes = crate::client_progress::encode_progress(value)?;
+    wait(progress_write(&Uint8Array::from(bytes.as_slice()))).await?;
     Ok(())
 }

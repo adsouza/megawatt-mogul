@@ -9,6 +9,8 @@ pub mod save;
 
 pub mod client_preferences;
 
+pub mod client_progress;
+
 pub mod web_assets;
 
 #[cfg(target_arch = "wasm32")]

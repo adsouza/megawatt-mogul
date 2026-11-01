@@ -940,3 +940,201 @@ fn a_disabled_selected_toggle_paints_differently_from_an_enabled_selected_one() 
         "the label sits on the dimmed fill"
     );
 }
+
+/// The crawl's text (spec §4.4) against its translucent backdrop composited over white, the worst
+/// case for the map beneath: every glyph vertex as painted. It is clipped at the horizon a
+/// quarter of the way down, never faded.
+#[test]
+fn crawl_text_meets_contrast_over_white() {
+    use crate::tutorial::{advance_real, at_step, tutorial_app};
+    use game::hud::tutorial::TutorialStep;
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    at_step(&mut app, TutorialStep::Crawl);
+    let pass = EguiPass::attach(&mut app);
+    let (width, height) = (1280.0, 640.0);
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, height));
+    pass.settled(&mut app, width, height);
+    // Far enough in that the first lines have reached the horizon.
+    advance_real(&mut app, 30.0);
+    let output = pass.paint_with(&mut app, width, height, vec![]);
+    let painted = output.shapes.clone();
+    output.drop_without_applying_deltas();
+    let backdrop_at = painted
+        .iter()
+        .rposition(|clipped| {
+            matches!(&clipped.shape, egui::Shape::Rect(rect)
+                if rect.rect == screen && rect.fill.a() > 0 && rect.fill.a() < 255)
+        })
+        .expect("the crawl's backdrop");
+    let egui::Shape::Rect(backdrop) = &painted[backdrop_at].shape else {
+        unreachable!()
+    };
+    let behind = over(backdrop.fill, Color32::WHITE);
+    let horizon = height * 0.25;
+    let mut vertices = 0;
+    let mut above_horizon = 0;
+    for clipped in &painted[backdrop_at + 1..] {
+        let egui::Shape::Mesh(mesh) = &clipped.shape else {
+            continue;
+        };
+        assert!(
+            (clipped.clip_rect.top() - horizon).abs() < 0.5,
+            "the crawl clips at the horizon: {:?}",
+            clipped.clip_rect
+        );
+        for vertex in &mesh.vertices {
+            vertices += 1;
+            if vertex.pos.y < horizon {
+                above_horizon += 1;
+            }
+            assert_eq!(vertex.color.a(), 255, "never faded");
+            let ratio = contrast(vertex.color, behind);
+            assert!(
+                ratio >= MINIMUM,
+                "{ratio:.2}:1 for {:?} on {behind:?}",
+                vertex.color
+            );
+        }
+    }
+    assert!(vertices > 100, "{vertices} glyph vertices");
+    assert!(above_horizon > 0, "the test needs text past the horizon");
+}
+
+/// Spotlight notes sit on opaque cards, and instructions on their callouts' opaque backings: their
+/// text, and the End link, meet the floor against what is painted under them.
+#[test]
+fn tutorial_notes_meet_contrast_on_their_cards() {
+    use crate::tutorial::{advance_real, at_step, tutorial_app};
+    use game::hud::tutorial::TutorialStep;
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    let pass = EguiPass::attach(&mut app);
+    let (width, height) = (1280.0, 640.0);
+    for (step, texts) in [
+        (
+            TutorialStep::Cash,
+            &["This is your money. Grow it by selling power, without blacking out your customers."]
+                [..],
+        ),
+        (
+            TutorialStep::PickSite,
+            &["Click a square on the map to see what you can build there."][..],
+        ),
+    ] {
+        at_step(&mut app, step);
+        pass.settled(&mut app, width, height);
+        // Past the fade-in.
+        advance_real(&mut app, 1.0);
+        let output = pass.paint_with(&mut app, width, height, vec![]);
+        let painted = painted_texts(&output.shapes);
+        assert!(check_paint(output) > 0);
+        for text in texts {
+            let note = painted
+                .iter()
+                .find(|painted| painted.text == *text)
+                .unwrap_or_else(|| panic!("{text:?} isn't painted"));
+            let ratio = contrast(over(note.color, note.background), note.background);
+            assert!(ratio >= MINIMUM, "{ratio:.2}:1 for {text:?}");
+        }
+    }
+}
+
+/// The text of the callout `text`, painted in `painted`, meets the floor against what is directly
+/// under it: the callout's own backing, opaque and unoutlined (never the map or panel beneath).
+fn check_callout_backing(painted: &[egui::epaint::ClippedShape], text: &str) {
+    let note = painted_texts(painted)
+        .into_iter()
+        .find(|painted| painted.text == text)
+        .unwrap_or_else(|| panic!("{text:?} isn't painted"));
+    let ratio = contrast(over(note.color, note.background), note.background);
+    assert!(ratio >= MINIMUM, "{ratio:.2}:1 for {text:?}");
+    let shapes = shapes_of(painted);
+    let at = shapes
+        .iter()
+        .position(|(_, shape)| matches!(shape, egui::Shape::Text(t) if t.galley.text() == text))
+        .expect("the callout's text");
+    let backing = shapes[..at]
+        .iter()
+        .rev()
+        .find_map(|(clip, shape)| match shape {
+            egui::Shape::Rect(rect) if rect.rect.intersect(*clip).contains(note.at) => Some(rect),
+            _ => None,
+        })
+        .expect("a backing under the text");
+    assert_eq!(backing.fill.a(), 255, "{text:?}: {backing:?}");
+    assert_eq!(backing.fill, note.background, "{text:?}: {backing:?}");
+    assert_eq!(backing.stroke.width, 0.0, "{text:?}: {backing:?}");
+}
+
+/// The battery instruction is an arrow callout, not a card (the user found the card looked like a
+/// button): its text sits on an opaque backing of its own, with no outline, and meets the floor
+/// against it.
+#[test]
+fn battery_callout_meets_contrast_on_its_backing() {
+    use crate::tutorial::{at_battery_instruction, tutorial_app};
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    let pass = EguiPass::attach(&mut app);
+    let (width, height) = (1280.0, 640.0);
+    at_battery_instruction(&mut app, &pass, (width, height));
+    let output = pass.paint_with(&mut app, width, height, vec![]);
+    let painted = output.shapes.clone();
+    assert!(check_paint(output) > 0);
+    check_callout_backing(&painted, "Build a battery here.");
+}
+
+/// The callouts over the map (picking a site, pointing down into it; and an instruction whose
+/// control isn't in view, with no arrow) put their text on its own opaque, unoutlined backing, not
+/// on the map, so it meets the floor whatever the map shows; at the smallest window too.
+#[test]
+fn map_top_callouts_meet_contrast_on_their_backing() {
+    use crate::tutorial::{at_step, tutorial_app};
+    use game::hud::tutorial::TutorialStep;
+    use game::hud::{Selection, UiAction};
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    let pass = EguiPass::attach(&mut app);
+    let cell = {
+        let session = app.world().resource::<game::sim::Session>().0.session();
+        let terrain = session.region().terrain();
+        (0..terrain.height())
+            .flat_map(|y| (0..terrain.width()).map(move |x| domain::ids::CellCoord { x, y }))
+            .find(|cell| {
+                session
+                    .plant_site_check(domain::region::PlantKind::Battery, *cell)
+                    .is_ok()
+            })
+            .expect("a battery can go somewhere")
+    };
+    let min = (
+        game::window::MIN_WINDOW_SIZE.x,
+        game::window::MIN_WINDOW_SIZE.y,
+    );
+    for (width, height) in [(1280.0, 640.0), min] {
+        for (step, selection, text) in [
+            (
+                TutorialStep::PickSite,
+                Selection::None,
+                "Click a square on the map to see what you can build there.",
+            ),
+            // No battery of the player's: nothing to point at.
+            (
+                TutorialStep::ConnectBattery,
+                Selection::Cell(cell),
+                "Build a line from your battery to your grid.",
+            ),
+        ] {
+            crate::hud_smoke::dispatch_in(&mut app, vec![UiAction::Select(selection)]);
+            at_step(&mut app, step);
+            for _ in 0..60 {
+                pass.run(&mut app, width, height);
+            }
+            pass.settled(&mut app, width, height);
+            let output = pass.paint_with(&mut app, width, height, vec![]);
+            let painted = output.shapes.clone();
+            assert!(check_paint(output) > 0);
+            check_callout_backing(&painted, text);
+        }
+    }
+}

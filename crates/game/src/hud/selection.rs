@@ -5,9 +5,11 @@ use bevy::prelude::*;
 use domain::ids::{CellCoord, CityId, LineId, NodeId, PlantId};
 
 /// The current selection. The diorama's bounds/terrain picking writes it through
-/// [`UiAction::Select`], as does the headless 2D reference adapter. It is reset to `None` whenever a game starts.
+/// [`UiAction::Select`], as does the headless 2D reference adapter; a plant the player orders is
+/// selected through [`UiAction::SelectOrderedPlant`]. It is reset to `None` whenever a game starts.
 ///
 /// [`UiAction::Select`]: super::UiAction::Select
+/// [`UiAction::SelectOrderedPlant`]: super::UiAction::SelectOrderedPlant
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Selection {
     #[default]

@@ -9,6 +9,7 @@
     grid: (width: 196, height: 128),
     currency: CNY,
     atlas: (colour: "#CF414C"),
+    unlock: (regions_played: 4),
     system_zone: 1,
     time_zones: [(id: 1, name_key: "zone-cst", standard_offset_minutes: 480, dst_months: [false,false,false,false,false,false,false,false,false,false,false,false])],
     calendar: (seasons: [Winter,Winter,Spring,Spring,Spring,Summer,Summer,Summer,Autumn,Autumn,Autumn,Winter]),

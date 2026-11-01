@@ -34,6 +34,7 @@ impl RegionCatalog for StaticCatalog {
                 entry: Ok(RegionSummary {
                     id: loaded.definition.id().clone(),
                     name_key: loaded.definition.name_key().to_owned(),
+                    unlock_after_regions: None,
                 }),
             })
             .collect())

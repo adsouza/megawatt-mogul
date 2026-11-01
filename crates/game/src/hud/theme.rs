@@ -7,6 +7,9 @@ pub const MIN_TEXT_CONTRAST: f64 = 4.5;
 pub const TEXT: Color32 = Color32::from_gray(230);
 pub const LABEL_TEXT: Color32 = Color32::WHITE;
 pub const LABEL_BACKING: Color32 = Color32::from_gray(24);
+/// The accent yellow of the tutorial's crawl and spotlight outline. Over the crawl's backdrop it
+/// keeps 4.5:1 even where the map beneath is white.
+pub const ACCENT_YELLOW: Color32 = Color32::from_rgb(255, 214, 64);
 /// The brightest text-bearing surface in the HUD palette, including hovered widgets.
 const LIGHTEST_SURFACE: Color32 = Color32::from_gray(70);
 

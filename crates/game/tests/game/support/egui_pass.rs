@@ -72,6 +72,13 @@ impl EguiPass {
             ..egui::RawInput::default()
         });
         app.world_mut().run_schedule(EguiPrimaryContextPass);
+        // Each pass is a frame of its own, as in the app, where `Last` counts the frame after it.
+        if let Some(mut frame) = app
+            .world_mut()
+            .get_resource_mut::<bevy::diagnostic::FrameCount>()
+        {
+            frame.0 = frame.0.wrapping_add(1);
+        }
         self.ctx.end_pass()
     }
 

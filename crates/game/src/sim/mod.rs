@@ -24,7 +24,7 @@ use infrastructure::region::RonRegionCatalog;
 
 use self::driver::TicksInFlight;
 pub use self::driver::{FIXED_STEP_HZ, drive_ticks};
-use self::new_game::start_new_game;
+pub(crate) use self::new_game::start_new_game;
 pub use self::new_game::{default_seed, utc_date_time, utc_stamp};
 use crate::crash::CrashContext;
 use crate::paths::AssetRoot;
@@ -60,6 +60,13 @@ pub struct NewGameRequest {
     pub seed: u64,
 }
 
+/// A new game started: written by the new-game system right after it enters `generation`, the
+/// [`SessionGeneration`] of the new session. Loading a save never writes it.
+#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NewGameStarted {
+    pub generation: u64,
+}
+
 /// Leave the game for the main menu, dropping the session.
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ReturnToMenu;
@@ -92,10 +99,14 @@ impl SimSpeed {
     }
 }
 
-/// The systems that run player commands through the game.
+/// The systems that run player commands through the game, and the save worker's poll.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SimSet {
     Apply,
+    /// After `Apply`: takes the save worker's results. A finished load replaces the session and
+    /// clears the outgoing game's messages, so a system that reads them (and could act on the old
+    /// game) orders after this.
+    Persist,
 }
 
 impl From<DayPhase> for PhaseState {
@@ -119,6 +130,7 @@ impl Plugin for SimulationPlugin {
             .add_message::<CommandFailed>()
             .add_message::<DomainEventMessage>()
             .add_message::<NewGameRequest>()
+            .add_message::<NewGameStarted>()
             .add_message::<ReturnToMenu>()
             .init_resource::<SimSpeed>()
             .init_resource::<TicksInFlight>()
@@ -126,6 +138,7 @@ impl Plugin for SimulationPlugin {
             .init_resource::<SessionGeneration>()
             // `main.rs` inserts the context its panic hook reads; tests get an unconnected one.
             .init_resource::<CrashContext>()
+            .configure_sets(Update, SimSet::Persist.after(SimSet::Apply))
             .add_systems(
                 Update,
                 persistence::initialise_store
@@ -136,7 +149,7 @@ impl Plugin for SimulationPlugin {
             .add_systems(
                 Update,
                 (
-                    persistence::poll_persistence,
+                    persistence::poll_persistence.in_set(SimSet::Persist),
                     persistence::resume_cancel_speed,
                 )
                     .chain()

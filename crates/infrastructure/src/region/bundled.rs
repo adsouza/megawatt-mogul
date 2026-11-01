@@ -21,6 +21,7 @@ impl RegionCatalog for BundleRegionCatalog {
                 entry: parse_region_bundle(bytes, id).map(|file| RegionSummary {
                     id: id.clone(),
                     name_key: file.name_key().into(),
+                    unlock_after_regions: file.unlock_after_regions(),
                 }),
             })
             .collect())

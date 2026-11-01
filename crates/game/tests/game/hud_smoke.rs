@@ -247,7 +247,12 @@ fn opening_menu_has_no_seed_field() {
 #[test]
 fn the_picker_starts_the_region_clicked_with_the_setup_seed() {
     let l10n = shipped_l10n();
-    let model = region_select_model(&shipped_listings(), Some(42), &l10n);
+    let model = region_select_model(
+        &shipped_listings(),
+        Some(42),
+        &game::hud::RegionAccess::default(),
+        &l10n,
+    );
     let form = RefCell::new(MenuForm::new(42));
 
     let actions = Harness::new().click("Eastern Interconnection", |ui| {
@@ -269,7 +274,12 @@ fn the_picker_starts_the_region_clicked_with_the_setup_seed() {
 fn a_broken_region_is_listed_disabled_next_to_a_good_one() {
     let l10n = shipped_l10n();
     let regions = regions_with_eastern(&[("broken.ron", "this is not RON (")]);
-    let model = region_select_model(&listings_in(regions.path()), Some(3), &l10n);
+    let model = region_select_model(
+        &listings_in(regions.path()),
+        Some(3),
+        &game::hud::RegionAccess::default(),
+        &l10n,
+    );
     let form = RefCell::new(MenuForm::new(3));
     let harness = Harness::new();
     let draw = |ui: &mut egui::Ui| {
@@ -301,7 +311,12 @@ fn an_empty_or_missing_regions_folder_offers_back() {
         listings_in(empty.path()),
         listings_in(&empty.path().join("missing")),
     ] {
-        let model = region_select_model(&listings, Some(1), &l10n);
+        let model = region_select_model(
+            &listings,
+            Some(1),
+            &game::hud::RegionAccess::default(),
+            &l10n,
+        );
         let form = RefCell::new(MenuForm::new(1));
         let harness = Harness::new();
         let draw = |ui: &mut egui::Ui| {
@@ -2773,7 +2788,9 @@ fn dispatch_is_the_one_mapping_from_actions_to_messages() {
         .init_resource::<GameOverView>()
         .init_resource::<UiState>()
         .init_resource::<LastSpeed>()
-        .init_resource::<OperatingTab>();
+        .init_resource::<OperatingTab>()
+        .init_resource::<game::progress::ClientProgressStore>()
+        .init_resource::<game::hud::tutorial::TutorialRun>();
     update_n(&mut app, 3);
     let region = RegionId::new(EASTERN);
     let cell = CellCoord { x: 1, y: 2 };
@@ -2873,7 +2890,9 @@ fn navigating_moves_between_the_menu_screens() {
         .init_resource::<GameOverView>()
         .init_resource::<UiState>()
         .init_resource::<LastSpeed>()
-        .init_resource::<OperatingTab>();
+        .init_resource::<OperatingTab>()
+        .init_resource::<game::progress::ClientProgressStore>()
+        .init_resource::<game::hud::tutorial::TutorialRun>();
     update_n(&mut app, 3);
     let state = |app: &App| *app.world().resource::<State<AppState>>().get();
     assert_eq!(state(&app), AppState::MainMenu);

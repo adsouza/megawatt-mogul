@@ -822,3 +822,69 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn schema_7_snapshot_restores_with_seeded_expansion() {
+    use application::projections::ExpansionProjection;
+    use domain::state::State;
+    let mut parts = tiny_region_parts();
+    parts.lines.cells_per_month = 100;
+    let (mut game, _) = game_on(parts.clone(), 8);
+    let extra = game
+        .session()
+        .city_views()
+        .into_iter()
+        .find(|city| !city.connected)
+        .unwrap();
+    assert!(
+        !game
+            .session()
+            .region()
+            .start()
+            .connected_cities
+            .contains(&extra.id)
+    );
+    game.execute(Command::BuildLine {
+        from: game.session().anchor_node(),
+        to: extra.node,
+    })
+    .unwrap();
+    game.execute(Command::BeginOperating).unwrap();
+    game.execute(Command::AdvanceTicks { n: TICKS_PER_DAY })
+        .unwrap();
+    game.execute(Command::FinishReview).unwrap();
+    assert!(
+        game.session()
+            .city_views()
+            .iter()
+            .any(|city| city.id == extra.id && city.connected)
+    );
+    let mut checkpoint = game.checkpoint();
+    let snapshot = checkpoint.snapshot.as_mut().unwrap();
+    snapshot.schema = 7;
+    snapshot.session = game.session().snapshot_state_schema(7);
+    snapshot.projections = game.projections().state_bytes_schema(7);
+    checkpoint.state_hash = snapshot.state_hash();
+    let restored = Game::restore(
+        support::loaded_region(parts.clone()),
+        checkpoint,
+        Box::new(InMemoryCommandLog::default()),
+        &|| false,
+    )
+    .unwrap();
+    // Schema 7 carried no count: the restored game has expanded, with no closes counted yet.
+    let seeded = ExpansionProjection::new(restored.session());
+    assert_ne!(seeded, ExpansionProjection::default());
+    assert_eq!(restored.projections().expansion, seeded);
+    assert!(!restored.projections().expansion.played());
+    // A current-schema checkpoint keeps the live count instead.
+    let current = Game::restore(
+        support::loaded_region(parts),
+        game.checkpoint(),
+        Box::new(InMemoryCommandLog::default()),
+        &|| false,
+    )
+    .unwrap();
+    assert_ne!(game.projections().expansion, seeded);
+    assert_eq!(current.projections(), game.projections());
+}

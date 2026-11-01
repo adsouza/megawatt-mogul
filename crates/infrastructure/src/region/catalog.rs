@@ -176,11 +176,18 @@ pub(super) fn parse_region_file(
     check_id(file, region)
 }
 
-/// The parsed file, unless its `id` differs from the one requested.
+/// The parsed file, unless its `id` differs from the one requested or its presentation-only
+/// `unlock` gate is out of range. Listing and loading both stop here, so a bad gate is an
+/// `Err` listing entry as well as a refused load.
 fn check_id(
     file: ParsedRegionFile,
     region: &RegionId,
 ) -> Result<ParsedRegionFile, RegionLoadError> {
+    file.validate_unlock()
+        .map_err(|error| RegionLoadError::Invalid {
+            region: region.clone(),
+            error,
+        })?;
     let found = RegionId::new(file.id());
     if found != *region {
         return Err(RegionLoadError::IdMismatch {
@@ -264,6 +271,7 @@ impl RegionCatalog for RonRegionCatalog {
                     .map(|file| RegionSummary {
                         id: RegionId::new(file.id()),
                         name_key: file.name_key().to_owned(),
+                        unlock_after_regions: file.unlock_after_regions(),
                     });
                 RegionListing { id, entry }
             })

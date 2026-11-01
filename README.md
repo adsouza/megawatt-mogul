@@ -18,32 +18,54 @@ These goals carry equal weight:
 
 ## Regions
 
-You choose a region when you start a new game. Milestone 1 ships two, each modelled as a single
-balancing area:
+You choose a region on a rotating globe when you start a new game. Eight regions ship, each a
+real synchronous grid with its own time zones, seasons, demand climate, sun, local currency and
+construction costs:
 
 - **Eastern Interconnection (North America):** the US east of the Rockies plus central and eastern
   Canada, excluding Quebec and ERCOT.
 - **Western Interconnection (North America):** the western US, British Columbia, Alberta and Baja
   California.
+- **Continental Europe–Maghreb:** Portugal to Türkiye, with Morocco, northern Algeria and Tunisia
+  joined through the Spain–Morocco link. Construction costs and build times vary by country.
+- **IPS/UPS:** the synchronous core of Russia's Unified Power System with Belarus, Kazakhstan and
+  the Central Asian and Caucasus systems that run in parallel with it.
+- **India–Nepal–Bhutan:** mainland India with synchronously connected Nepal and Bhutan.
+- **Southern China:** China Southern Power Grid's main area: Guangdong, Guangxi, Guizhou and
+  Hainan, with Hong Kong and Macau.
+- **Brazil:** the main 60 Hz area of the Sistema Interligado Nacional.
+- **SGCC system group:** five asynchronous grid zones run by one company and joined only by HVDC
+  links. Each zone balances on its own; you schedule transfers between them or leave the links on
+  automatic control.
+
+The first seven are single balancing areas. SGCC unlocks once you have played four other regions:
+a region counts as played after you connect a city beyond your starting territory and run the
+game for twelve more month closes.
 
 ## Status
 
-Plans 1, 2, 2b, 3, 4 and 5 are implemented: the simulation core, playable client, save/resume,
-interactive 3D tabletop, daily-cycle battery storage and onshore wind farms. Pick a region and
-seed, plan the day's commitments, operate the grid at
-up to 8× and read the month's review. The diorama shows terrain, resource layers, cities, plants
-and transmission construction. The [playtest checklist](docs/superpowers/plans/2026-10-19-plan-2-playtest.md)
-covers the original shell; [Plan 3](docs/superpowers/plans/2026-10-20-plan-3-diorama.md) records the 3D checks.
-[Plan 4](docs/superpowers/plans/2026-10-23-plan-4-battery-storage.md) records battery storage;
-[Plan 5](docs/superpowers/plans/2026-10-23-plan-5-wind-farms.md) adds wind farms. Current new-game
-batteries can charge from 00:00 until 22:00 and support generation gaps from 06:00 until midnight.
+The simulation core, playable client, save/resume, 3D diorama, battery storage, wind farms,
+geothermal plants, the eight regions above, HVDC links, the browser client and a first-game
+tutorial are implemented. Pick a region and seed, plan the day's commitments, operate the grid at
+up to 32× and read the month's review. The diorama shows terrain, resource layers, cities, plants
+and transmission construction. Implementation plans, with their playtest notes, are in
+[`docs/superpowers/plans/`](docs/superpowers/plans/). Current new-game batteries can charge from
+00:00 until 22:00 and support generation gaps from 06:00 until midnight.
+
+## First game
+
+Your first new game runs a short tutorial over the live game: it sets out the goal, then walks you
+through building a battery, connecting it to your grid and starting the day. Loading a save never
+starts it. To see it again, tick **Show tutorial** beside the seed on the new-game screen.
 
 ## Browser client
+
+Play in the browser at <https://adsouza.github.io/megawatt-mogul/>.
 
 The browser client shares the Rust game and stores saves/preferences in IndexedDB. Portable
 `.mgsave.zip` backups transfer saves between browser and native play. See [browser builds,
 backups and deployment](docs/web.md). The GitHub Actions workflow builds and checks the web
-app on pull requests and deploys passing changes on `main` to GitHub Pages once Pages is enabled.
+app on pull requests and deploys passing changes on `main` to GitHub Pages.
 Desktop Chromium with WebGL2 is the tested browser target; Firefox and Safari await validation.
 
 ## Run
@@ -62,11 +84,14 @@ cargo run -p game -- --assets <dir> --log-dir <dir> --save-dir <dir>
   records its own log there, named for the time, region and seed. A crash writes
   `crash-<time>.txt` there too, with the panic message, a backtrace and the path of the running
   game's log, which replays the game up to the crash.
-- `--save-dir` holds game saves and `preferences.ron` (default `./saves`). Storage errors do not
+- `--save-dir` holds game saves, `preferences.ron` and `progress.ron` (default `./saves`). Storage errors do not
   prevent a new game from starting.
+- `--version` prints the game's version and exits.
 - `--exit-after-frames <n>` (for developers) closes the game after `n` frames: a quick check that
   the window opens and the menu draws.
 - `--crash` (for developers) panics at startup, to check that a build writes a readable crash report.
+- `--unlock-all-regions` (for developers) unlocks every region in the new-game picker for that run,
+  without recording any region as played.
 - On Linux, install Bevy's build dependencies first; see
   [Bevy's Linux dependencies](https://github.com/bevyengine/bevy/blob/v0.20.0/docs/linux_dependencies.md)
   or the list in `.github/workflows/ci.yml`. The first build compiles Bevy and takes a few minutes.
@@ -86,8 +111,10 @@ energised: they show no direction, congestion or MW flow. Choosing a resource la
 returns to resource colours; **Control room** restores the supply indicators. Each phase starts
 with its default overlay. **Legend** opens the compact key; it starts collapsed so it cannot hide objects.
 Narrow maps use a compact layer dropdown. Build transmission lines through the existing endpoint menu.
+In SGCC, choosing a grid zone in the top bar, commitment planner or forecast frames that zone on
+the map; **All zones** returns to the whole region.
 
-**Effects off** disables bloom and depth of field while preserving the world and input. Bevy skips
+**Disable effects** turns off bloom and depth of field while preserving the world and input. Bevy skips
 depth of field on platforms without supported depth textures. Labels and HUD render in a separate
 unblurred pass, with opaque text backing. Labels flip/clamp at edges and skip occluded objects.
 
@@ -97,9 +124,10 @@ in region RON and applies to a new game; the inspector cannot edit the session o
 
 ## Expansion pacing
 
-Cities and starting fleets are scaled for growth in a few plant-sized steps. Peakers and solar take
-2 played months to build, combined-cycle gas 4, coal 8, hydro 12 and nuclear 18. Transmission builds
-at 4 cells per month. Build quotes show approximate monthly payments alongside total capital cost;
+Cities and starting fleets are scaled for growth in a few plant-sized steps. In North America,
+peakers, solar and batteries take 2 played months to build, wind 3, combined-cycle gas 4, coal 8,
+hydro and geothermal 12, and nuclear 18; transmission builds at 4 cells per month. Other regions use their own local build times and
+transmission build rates, and Continental Europe–Maghreb varies them by country. Build quotes show approximate monthly payments alongside total capital cost;
 construction is paid at month close, not upfront. First-city acceptance tests cover generation and
 lines together, a full year of seasonal demand and a retained cash buffer.
 

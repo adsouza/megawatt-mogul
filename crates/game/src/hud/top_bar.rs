@@ -11,6 +11,7 @@ use domain::time::SimMonth;
 use super::action::{ActionSink, ButtonModel, Prompt, UiAction, button, dispatch};
 use super::layout::HudArea;
 use super::theme::{TextTone, heading_color};
+use super::tutorial::{TutorialAnchor, mark_anchor};
 use crate::l10n::{Localize, Localizer, format};
 use crate::sim::{PersistAction, Persistence, Session};
 
@@ -327,12 +328,15 @@ fn draw_scores(ui: &mut egui::Ui, model: &TopBarModel) {
     .zip(model.score_tones)
     {
         ui.separator();
-        ui.colored_label(TextTone::Neutral.color(), &stat.label);
-        ui.label(
+        let label = ui.colored_label(TextTone::Neutral.color(), &stat.label);
+        let value = ui.label(
             egui::RichText::new(&stat.value)
                 .strong()
                 .color(tone.color()),
         );
+        if std::ptr::eq(stat, &model.cash) {
+            mark_anchor(ui.ctx(), TutorialAnchor::Cash, label.rect.union(value.rect));
+        }
     }
 }
 

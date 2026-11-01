@@ -72,7 +72,7 @@ impl ClientPreferences {
         Ok(())
     }
 }
-fn io(stage: &'static str, error: impl std::fmt::Display) -> SaveError {
+pub(crate) fn io(stage: &'static str, error: impl std::fmt::Display) -> SaveError {
     SaveError::Io {
         stage,
         message: error.to_string(),
@@ -118,23 +118,37 @@ pub fn write_preferences_with(
     sync: &dyn Fn(&Path) -> std::io::Result<()>,
 ) -> Result<(), SaveError> {
     let bytes = encode_preferences(preferences)?;
+    publish_atomic(root, "preferences.ron", &bytes, "preferences", sync)
+}
+
+/// Atomically replace `root/file_name` with `bytes`: create `root` if needed, write a temporary
+/// file in it, fsync, rename over the target, then sync the file's directory and each directory
+/// this call created. A failure leaves any previous file intact. `stage` names the record in
+/// errors; `sync` is injectable so tests can see what is synchronised. Shared by the client
+/// preferences and the client progress record.
+pub(crate) fn publish_atomic(
+    root: &Path,
+    file_name: &str,
+    bytes: &[u8],
+    stage: &'static str,
+    sync: &dyn Fn(&Path) -> std::io::Result<()>,
+) -> Result<(), SaveError> {
+    let step = |what: &str, error: &dyn std::fmt::Display| io(stage, format!("{what}: {error}"));
     let mut gained = BTreeSet::new();
     make_directory(root, &mut gained)?;
-    let mut file =
-        tempfile::NamedTempFile::new_in(root).map_err(|e| io("preferences temporary file", e))?;
-    file.write_all(&bytes)
-        .map_err(|e| io("preferences write", e))?;
+    let mut file = tempfile::NamedTempFile::new_in(root).map_err(|e| step("temporary file", &e))?;
+    file.write_all(bytes).map_err(|e| step("write", &e))?;
     file.flush()
         .and_then(|()| file.as_file().sync_all())
-        .map_err(|e| io("preferences sync", e))?;
-    file.persist(root.join("preferences.ron"))
-        .map_err(|e| io("preferences publish", e))?;
+        .map_err(|e| step("sync", &e))?;
+    file.persist(root.join(file_name))
+        .map_err(|e| step("publish", &e))?;
     // The file's own directory, then each directory that gained an entry because this call
     // created a directory in it.
     std::iter::once(root)
         .chain(gained.iter().rev().map(PathBuf::as_path))
         .try_for_each(sync)
-        .map_err(|e| io("preferences directory sync", e))?;
+        .map_err(|e| step("directory sync", &e))?;
     Ok(())
 }
 

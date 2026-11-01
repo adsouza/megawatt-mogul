@@ -3,7 +3,8 @@
 //!
 //! Space switches between `Paused` and the last speed the day ran at, [`LastSpeed`], which
 //! [`dispatch`] records whenever it sets a running speed. It is ignored while egui is taking the
-//! keyboard (a focused text field, an open popup) and while a prompt or the game-over modal is up.
+//! keyboard (a focused text field, an open popup), while a prompt or the game-over modal is up,
+//! and while the tutorial's crawl or a spotlight covers the screen.
 
 use application::Game;
 use bevy::prelude::*;
@@ -13,6 +14,7 @@ use domain::session::SessionStatus;
 
 use super::action::{ActionSink, ButtonModel, ToggleModel, UiAction, dispatch, toggle_button};
 use super::layout::HudArea;
+use super::tutorial::{TutorialAnchor, mark_anchor};
 use crate::l10n::Localizer;
 use crate::sim::{Session, SimSpeed};
 
@@ -77,11 +79,12 @@ pub fn space_action(current: SimSpeed, last: LastSpeed, blocked: bool) -> Option
 
 pub fn draw_speed(ui: &mut egui::Ui, model: &SpeedModel) -> Vec<UiAction> {
     let mut actions = Vec::new();
-    ui.horizontal(|ui| {
+    let row = ui.horizontal(|ui| {
         for speed in &model.speeds {
             toggle_button(ui, speed, &mut actions);
         }
     });
+    mark_anchor(ui.ctx(), TutorialAnchor::SpeedControls, row.response.rect);
     actions
 }
 
@@ -115,6 +118,7 @@ pub(super) fn pause_on_space(
     }
     let blocked = egui.is_some_and(|egui| egui.wants_any_keyboard_input())
         || sink.open_prompt().0.is_some()
+        || sink.ui_state().tutorial_cover
         || session.0.session().status() != SessionStatus::Active;
     if let Some(action) = space_action(sink.speed(), sink.last_speed(), blocked) {
         dispatch([action], &mut sink);

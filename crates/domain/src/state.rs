@@ -5,11 +5,11 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ops::RangeInclusive;
 
 /// Schema emitted by new portable state captures.
-pub const CURRENT_STATE_SCHEMA: u32 = 7;
+pub const CURRENT_STATE_SCHEMA: u32 = 8;
 /// Existing portable collection bound, also used for construction payment queues.
 pub const MAX_COLLECTION_LEN: usize = 1_000_000;
 /// Portable state schemas accepted by every reader.
-pub const SUPPORTED_STATE_SCHEMAS: RangeInclusive<u32> = 1..=7;
+pub const SUPPORTED_STATE_SCHEMAS: RangeInclusive<u32> = 1..=8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum StateError {
@@ -296,6 +296,19 @@ impl State for String {
 /// Explicit schema-1 field order; adding a Rust field must require an explicit default/migration.
 #[macro_export]
 macro_rules! state_record {
+    ($ty:ty { $($field:ident),* ; since8 { $($added:ident : $default:expr),* $(,)? } }) => {
+        impl $crate::state::State for $ty {
+            fn write(&self, out: &mut Vec<u8>) { self.write_schema(out, $crate::state::CURRENT_STATE_SCHEMA); }
+            fn write_schema(&self, out: &mut Vec<u8>, schema: u32) {
+                $( $crate::state::State::write_schema(&self.$field, out, schema); )*
+                if schema >= 8 { $( $crate::state::State::write_schema(&self.$added, out, schema); )* }
+            }
+            fn read(input: &mut $crate::state::StateReader<'_>) -> Result<Self, $crate::state::StateError> {
+                Ok(Self { $( $field: $crate::state::State::read(input)?, )*
+                    $( $added: if input.schema >= 8 { $crate::state::State::read(input)? } else { $default }, )* })
+            }
+        }
+    };
     ($ty:ty { $($field:ident),* ; since6 { $($added:ident : $default:expr),* $(,)? } }) => {
         impl $crate::state::State for $ty {
             fn write(&self, out: &mut Vec<u8>) { self.write_schema(out, $crate::state::CURRENT_STATE_SCHEMA); }
@@ -368,12 +381,12 @@ mod tests {
 
     #[test]
     fn every_gate_accepts_exactly_the_supported_schemas() {
-        assert_eq!(CURRENT_STATE_SCHEMA, 7);
-        for schema in [1, 2, 3, 4, 5, 6, 7] {
+        assert_eq!(CURRENT_STATE_SCHEMA, 8);
+        for schema in [1, 2, 3, 4, 5, 6, 7, 8] {
             assert!(SUPPORTED_STATE_SCHEMAS.contains(&schema));
             assert_eq!(u8::from_state_bytes_schema(&[7], schema), Ok(7));
         }
-        for schema in [0, 8, u32::MAX] {
+        for schema in [0, 9, u32::MAX] {
             assert!(!SUPPORTED_STATE_SCHEMAS.contains(&schema));
             assert_eq!(
                 u8::from_state_bytes_schema(&[7], schema),
@@ -386,7 +399,7 @@ mod tests {
         #[test]
         fn state_schema_gate_accepts_exactly_supported_versions(schema in any::<u32>()) {
             let expected = match schema {
-                1..=7 => Ok(7),
+                1..=8 => Ok(7),
                 _ => Err(StateError::Version),
             };
             prop_assert_eq!(u8::from_state_bytes_schema(&[7], schema), expected);

@@ -705,3 +705,73 @@ fn calibrated_solar_regions_resume_identically_with_their_archived_calibration()
         );
     }
 }
+
+/// Saves made before expansion tracking, by the schema-7 baseline engine
+/// (`tests/support/pre-expansion-schema7`), restore with `ExpansionProjection` seeded from the
+/// session (first-game tutorial spec §6): a game with an extra city already connected counts
+/// month closes from zero at the loaded month, so it is played at the twelfth close after the
+/// load, never earlier; a game without one stays unset, however many months close.
+#[test]
+fn schema7_saves_restore_with_expansion_seeded_from_the_session() {
+    use application::projections::ExpansionProjection;
+    for (name, expanded) in [("expanded.mgsave", true), ("starter.mgsave", false)] {
+        let bytes = std::fs::read(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/support/pre-expansion-schema7")
+                .join(name),
+        )
+        .unwrap();
+        let (original, _) = decode_save(&bytes, &replay_compatibility()).unwrap();
+        let source = original.checkpoint.snapshot.as_ref().unwrap();
+        assert_eq!(source.schema, 7, "{name}");
+        let mut game = restored(&bytes);
+        assert_eq!(game.session().phase(), DayPhase::Planning, "{name}");
+        assert_eq!(
+            game.session().snapshot_state_schema(7),
+            source.session,
+            "{name}: the schema-7 session is kept"
+        );
+        assert_eq!(
+            game.projections().state_bytes_schema(7),
+            source.projections,
+            "{name}: the schema-7 projections are kept"
+        );
+        let starters = game.session().region().start().connected_cities.clone();
+        let extra = game
+            .session()
+            .city_views()
+            .iter()
+            .any(|city| city.connected && !starters.contains(&city.id));
+        assert_eq!(extra, expanded, "{name}: an extra city is connected");
+
+        let expansion = &game.projections().expansion;
+        assert_eq!(
+            *expansion,
+            ExpansionProjection::new(game.session()),
+            "{name}"
+        );
+        assert_eq!(
+            *expansion != ExpansionProjection::default(),
+            expanded,
+            "{name}: counting only with an extra city"
+        );
+        assert!(!expansion.played(), "{name}");
+        // One real month close after the load; the minimal region's licence is revoked within a
+        // few, so the remaining closes are folded into a copy of the projection.
+        let events = close_current_month(&mut game);
+        let closed = events
+            .iter()
+            .find(|event| matches!(event, domain::events::DomainEvent::MonthClosed(_)))
+            .expect("the day closes its month");
+        let mut expansion = game.projections().expansion.clone();
+        assert!(!expansion.played(), "{name}: after 1 month close");
+        for close in 2..=12 {
+            projections::Projection::apply(&mut expansion, closed, game.session());
+            assert_eq!(
+                expansion.played(),
+                expanded && close == 12,
+                "{name}: after {close} month closes"
+            );
+        }
+    }
+}

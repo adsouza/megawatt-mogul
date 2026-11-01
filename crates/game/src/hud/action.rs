@@ -19,6 +19,9 @@ use super::operating::OperatingTab;
 use super::selection::Selection;
 use super::speed::LastSpeed;
 use super::theme;
+use super::tutorial::{
+    StepKind, TUTORIAL_STEPS, TutorialAnchor, TutorialRun, TutorialState, TutorialStep,
+};
 use super::ui_state::{PlanningTab, UiState};
 use crate::sim::{
     NewGameRequest, PersistAction, Persistence, PlayerCommand, ReturnToMenu, Session,
@@ -67,6 +70,11 @@ pub enum UiAction {
     ReturnToMenu,
     SetSpeed(SimSpeed),
     Select(Selection),
+    /// Select the plant the player just ordered, so the build menu's line section starts from it.
+    /// Unlike [`UiAction::Select`], which is a click on the map, it leaves the camera alone: a
+    /// framing the player asked for that the map hasn't applied yet (it waits while the map is
+    /// blocked or not drawn) still happens.
+    SelectOrderedPlant(PlantId),
     /// Select a plant from a list and bring it into view on the map.
     InspectPlant(PlantId),
     /// Colour the map by another layer.
@@ -100,11 +108,38 @@ pub enum UiAction {
     DiscardCommitmentDraft,
     /// Move between the menu screens. Entering the game is only ever [`UiAction::NewGame`].
     Navigate(MenuScreen),
+    /// Tick or untick *Show tutorial*: whether the next new game runs the first-game tutorial.
+    SetTutorialPending(bool),
     /// Open a confirmation prompt, or close it with `None`. The prompt's own buttons say what
     /// confirming does.
     Prompt(Option<Prompt>),
     /// Close the game.
     Quit,
+    /// The first-game tutorial moving on: a step played or dismissed, the battery card in view,
+    /// or the tutorial ended.
+    Tutorial(TutorialAction),
+}
+
+/// What the first-game tutorial asks for (spec §4.1). Its automatic UI moves go through
+/// [`dispatch`] like a click, so they write only HUD state: never a `PlayerCommand`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TutorialAction {
+    /// The step has played: a move makes its UI change, and the step joins `played`.
+    Play(TutorialStep),
+    /// The player ended the step early (a click or Escape): it joins `played`.
+    Dismiss(TutorialStep),
+    /// Ask the panel that draws `anchor` inside a scroll area to scroll it into view: the build
+    /// menu's battery card or line section, or the Review's Construction row. Other anchors don't
+    /// scroll.
+    Reveal(TutorialAnchor),
+    /// A panel has scrolled the revealed anchor into view.
+    RevealDone,
+    /// The active step has changed (or there is none now): a reveal asked for under the step
+    /// before that no panel has finished is dropped, so it never scrolls a panel in a later step.
+    StepChanged,
+    /// Whether the crawl or a spotlight covers the screen this pass, which the overlay says on
+    /// every pass it runs: while one does, the keyboard shortcuts wait.
+    Cover(bool),
 }
 
 /// The screens outside a game that the HUD can move between by itself.
@@ -288,6 +323,8 @@ pub struct ActionSink<'w> {
     game_over_view: ResMut<'w, GameOverView>,
     ui: ResMut<'w, UiState>,
     next_state: ResMut<'w, NextState<AppState>>,
+    progress: ResMut<'w, crate::progress::ClientProgressStore>,
+    tutorial: ResMut<'w, TutorialRun>,
 }
 
 impl ActionSink<'_> {
@@ -347,6 +384,22 @@ impl ActionSink<'_> {
     pub fn ui_state(&self) -> &UiState {
         &self.ui
     }
+
+    /// The player's progress: whether the tutorial is owed and the regions played.
+    pub fn progress(&self) -> &infrastructure::client_progress::ClientProgress {
+        &self.progress.value
+    }
+
+    /// Whether the stored progress has finished loading; until then [`Self::progress`] holds
+    /// defaults that loading may replace.
+    pub fn progress_loaded(&self) -> bool {
+        self.progress.loaded
+    }
+
+    /// The running first-game tutorial, if any.
+    pub fn tutorial(&self) -> Option<&TutorialState> {
+        self.tutorial.0.as_ref()
+    }
 }
 
 /// Turns the HUD's actions into messages and state changes, in order: the single mapping from a
@@ -358,7 +411,11 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             action,
             UiAction::SelectIsland(_) | UiAction::InspectForecast { .. }
         );
-        sink.ui.apply(&action);
+        // The tutorial's actions write `UiState` themselves, and only when they change it: the
+        // overlay sends one on every pass, which mustn't mark the state changed when idle.
+        if !matches!(action, UiAction::Tutorial(_)) {
+            sink.ui.apply(&action);
+        }
         match action {
             UiAction::ApplyHvdcRange(link) => {
                 if !sink.persistence.frozen()
@@ -561,6 +618,7 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
                 *sink.selection = selection;
                 sink.world.focus = None;
             }
+            UiAction::SelectOrderedPlant(plant) => *sink.selection = Selection::Plant(plant),
             UiAction::InspectPlant(plant) => {
                 *sink.selection = Selection::Plant(plant);
                 sink.world.focus = Some(crate::world::CameraFocus::Plant(plant));
@@ -584,10 +642,8 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             | UiAction::EditCommitment { .. }
             | UiAction::ToggleWarnings
             | UiAction::DiscardCommitmentDraft => {}
-            UiAction::Navigate(screen) => {
-                sink.persistence.discard_preload();
-                sink.next_state.set(screen.into());
-            }
+            UiAction::Navigate(screen) => navigate(sink, screen),
+            UiAction::SetTutorialPending(on) => sink.progress.value.tutorial_pending = on,
             UiAction::Prompt(Some(Prompt::LeaveGame)) if sink.persistence.enabled() => {
                 sink.persistence.request(
                     PersistAction::OpenLeave,
@@ -604,6 +660,7 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
                 sink.persistence.discard_preload();
                 sink.exit.write(AppExit::Success);
             }
+            UiAction::Tutorial(action) => tutorial(sink, action),
         }
         if (explicit_zone || sink.ui.island != previous_zone)
             && let Some(game) = sink.session.as_ref()
@@ -617,6 +674,90 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             }
         }
     }
+}
+
+/// The tutorial's moves: HUD state only, and nothing at all without a running tutorial (but a
+/// finished or abandoned reveal is always cleared). An instruction never joins `played`: it shows until its
+/// step is done, and again if that is undone.
+fn tutorial(sink: &mut ActionSink, action: TutorialAction) {
+    if matches!(
+        action,
+        TutorialAction::RevealDone | TutorialAction::StepChanged
+    ) {
+        // Written only when there is a reveal to drop: the overlay says the step changed whether
+        // one was asked for or not.
+        if sink.ui.reveal_plant_card.is_some() {
+            sink.ui.reveal_plant_card = None;
+        }
+        if sink.ui.reveal_anchor.is_some() {
+            sink.ui.reveal_anchor = None;
+        }
+        return;
+    }
+    if let TutorialAction::Cover(cover) = action {
+        // Written only when it changes: the overlay says it on every pass, and `dispatch` leaves
+        // `UiState` untouched for a tutorial action, so an idle pass changes nothing.
+        if sink.ui.tutorial_cover != cover {
+            sink.ui.tutorial_cover = cover;
+        }
+        return;
+    }
+    let Some(state) = sink.tutorial.0.as_mut() else {
+        return;
+    };
+    let step = match action {
+        TutorialAction::Play(step) | TutorialAction::Dismiss(step) => step,
+        TutorialAction::Reveal(anchor) => {
+            match anchor {
+                TutorialAnchor::BatteryCard => {
+                    sink.ui.reveal_plant_card = Some(domain::region::PlantKind::Battery);
+                }
+                // The button on its own: the card can be taller than the build menu's view.
+                TutorialAnchor::BatteryBuildButton
+                | TutorialAnchor::LineSection
+                | TutorialAnchor::BatteryLineButton
+                | TutorialAnchor::ReviewConstruction => {
+                    sink.ui.reveal_anchor = Some(anchor);
+                }
+                _ => {}
+            }
+            return;
+        }
+        TutorialAction::RevealDone | TutorialAction::StepChanged | TutorialAction::Cover(_) => {
+            return;
+        }
+    };
+    let instruction = TUTORIAL_STEPS
+        .iter()
+        .any(|def| def.step == step && def.kind == StepKind::Instruction);
+    if instruction {
+        return;
+    }
+    state.played.insert(step);
+    if matches!(action, TutorialAction::Dismiss(_)) {
+        return;
+    }
+    match step {
+        TutorialStep::FrameGrid => {
+            if let Some(session) = sink.session.as_ref() {
+                sink.world.focus = Some(crate::world::CameraFocus::Zone(
+                    session.0.session().anchor_node(),
+                ));
+            }
+        }
+        TutorialStep::ShowForecast => sink
+            .ui
+            .apply(&UiAction::SetPlanningTab(PlanningTab::Forecast)),
+        TutorialStep::RevealBattery => {
+            sink.ui.reveal_plant_card = Some(domain::region::PlantKind::Battery);
+        }
+        _ => {}
+    }
+}
+
+fn navigate(sink: &mut ActionSink, screen: MenuScreen) {
+    sink.persistence.discard_preload();
+    sink.next_state.set(screen.into());
 }
 
 fn connection_command(

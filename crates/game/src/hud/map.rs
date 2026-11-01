@@ -20,6 +20,7 @@ use egui::{Color32, Pos2, Rect, Stroke, StrokeKind, vec2};
 use super::action::{ActionSink, ButtonModel, ToggleModel, UiAction, dispatch, toggle_button};
 use super::layout::HudArea;
 use super::selection::Selection;
+use super::tutorial::{TutorialAnchor, mark_anchor};
 use crate::l10n::{Localize, Localizer};
 use crate::sim::Session;
 
@@ -915,6 +916,7 @@ pub fn draw_map(ui: &mut egui::Ui, model: &MapModel, cache: &mut MapCache) -> Ve
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Other, true, model.label.as_str())
     });
+    mark_anchor(ui.ctx(), TutorialAnchor::Map, response.rect);
     let terrain = model.region.terrain();
     let layout = MapLayout::fit(response.rect, terrain.width(), terrain.height());
     let texture = cache.texture(ui.ctx(), &model.region, model.layer);

@@ -58,14 +58,15 @@ mod tariff;
 pub mod theme;
 mod toasts;
 mod top_bar;
+pub mod tutorial;
 mod ui_state;
 
 use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
 
 pub use self::action::{
-    ActionSink, ButtonModel, MenuScreen, OpenPrompt, Prompt, ToggleModel, UiAction, add_enabled,
-    button, dispatch, toggle_button,
+    ActionSink, ButtonModel, MenuScreen, OpenPrompt, Prompt, ToggleModel, TutorialAction, UiAction,
+    add_enabled, button, dispatch, toggle_button,
 };
 pub use self::build::{
     BUILD_PANEL_WIDTH, BuildModel, LinePreview, LineSection, LineTarget, PlantRow, PlantSection,
@@ -116,9 +117,9 @@ pub use self::map::{
     months_left_labels, pick, pickable_marks, plant_half_size, terrain_image,
 };
 pub use self::menu::{
-    BootErrorModel, MainMenuModel, MenuForm, RegionChoice, RegionListings, RegionProblem,
-    RegionSelectModel, boot_error_model, draw_boot_error, draw_main_menu, draw_region_select,
-    main_menu_model, region_select_model,
+    BootErrorModel, MainMenuModel, MenuForm, RegionAccess, RegionChoice, RegionListings,
+    RegionProblem, RegionSelectModel, TutorialToggle, boot_error_model, draw_boot_error,
+    draw_main_menu, draw_region_select, main_menu_model, region_select_model,
 };
 pub use self::milestones::{
     MILESTONES_WIDTH, MilestoneRow, MilestonesModel, MilestonesOpen, draw_milestones,
@@ -187,6 +188,8 @@ pub enum HudSet {
     Panels,
     /// Floating windows, toasts and modals.
     Overlays,
+    /// The first-game tutorial, over everything else.
+    Tutorial,
 }
 
 /// The egui panels: the shell screens, the top bar, toasts, prompts, the Milestones panel and the
@@ -210,6 +213,7 @@ impl Plugin for HudPlugin {
             .clone()
             .and_then(has_l10n)
             .and_then(not(in_phase(DayPhase::Review)));
+        app.add_plugins(tutorial::TutorialPlugin);
         app.init_resource::<crate::world::WorldControls>()
             .init_resource::<Selection>()
             .init_resource::<MapLayer>()
@@ -229,6 +233,7 @@ impl Plugin for HudPlugin {
             .init_resource::<HudArea>()
             .init_resource::<SaveForm>()
             .init_resource::<saves::PersistenceShown>()
+            .init_resource::<crate::progress::ClientProgressStore>()
             .add_systems(
                 EguiPrimaryContextPass,
                 saves::snapshot.in_set(HudSet::Begin),
@@ -248,6 +253,7 @@ impl Plugin for HudPlugin {
                     HudSet::Bars,
                     HudSet::Panels,
                     HudSet::Overlays,
+                    HudSet::Tutorial,
                 )
                     .chain(),
             )
@@ -306,14 +312,27 @@ impl Plugin for HudPlugin {
                         .after(crate::l10n::load_localizer)
                         .before(toasts::collect_toasts)
                         .run_if(has_l10n),
-                    toasts::collect_toasts.after(SimSet::Apply).run_if(has_l10n),
+                    // After a load's poll, which clears the outgoing game's events and refusals:
+                    // they never become toasts over the loaded game.
+                    toasts::collect_toasts
+                        .after(SimSet::Apply)
+                        .after(SimSet::Persist)
+                        .run_if(has_l10n),
                     prompt::close_stale_prompt
                         .after(SimSet::Apply)
                         .run_if(in_game.clone()),
                     geothermal::clean_dry_selection
                         .after(SimSet::Apply)
                         .run_if(in_game.clone()),
+                    // In every state, so its reader is drained between games. After a load's
+                    // poll, which clears the outgoing game's events: a load frame selects nothing.
+                    build::select_ordered_plant
+                        .after(SimSet::Apply)
+                        .after(SimSet::Persist),
                     ui_state::settle_commit
+                        .after(SimSet::Apply)
+                        .run_if(in_game.clone()),
+                    crate::progress::record_played_region
                         .after(SimSet::Apply)
                         .run_if(in_game.clone()),
                     // The driver reads the speed at the next fixed step.

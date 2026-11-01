@@ -14,7 +14,7 @@ use crate::ports::{
     CommandLogError, CommandLogSink, LOG_FORMAT_VERSION, LoadedRegion, LogHeader, RegionCatalog,
     RegionListing,
 };
-use crate::projections::Projections;
+use crate::projections::{ExpansionProjection, Projections};
 use crate::{CheckpointSummary, GameCheckpoint, RestoreError};
 
 /// One running game: the session and the pipeline every command goes through.
@@ -138,7 +138,7 @@ impl Game {
             let mut session =
                 GameSession::from_snapshot_state(&snapshot.session, region.definition.clone())
                     .map_err(|_| RestoreError::InvalidSnapshot)?;
-            let projections =
+            let mut projections =
                 Projections::from_state_bytes_schema(&snapshot.projections, snapshot.schema)
                     .map_err(|_| RestoreError::InvalidSnapshot)?;
             if session.snapshot_state_schema(snapshot.schema) != snapshot.session
@@ -148,6 +148,10 @@ impl Game {
             }
             if snapshot.schema == 1 {
                 session.upgrade_schema1();
+            }
+            if snapshot.schema < 8 {
+                // Older saves never counted closes since the first expansion: start from now.
+                projections.expansion = ExpansionProjection::new(&session);
             }
             (session, projections)
         } else {

@@ -33,6 +33,8 @@ impl RegionFingerprint {
 pub struct RegionSummary {
     pub id: RegionId,
     pub name_key: String,
+    /// Regions the player must have played before this one is offered, if it is gated.
+    pub unlock_after_regions: Option<u32>,
 }
 
 /// One region file as the picker sees it: the file is always listed, and a

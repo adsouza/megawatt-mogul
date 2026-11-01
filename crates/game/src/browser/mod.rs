@@ -162,6 +162,7 @@ fn readiness(
     persistence: Res<crate::sim::Persistence>,
     session: Option<Res<crate::sim::Session>>,
     speed: Res<SimSpeed>,
+    progress: Res<crate::progress::ClientProgressStore>,
 ) {
     let Some(document) = web_sys::window().and_then(|w| w.document()) else {
         return;
@@ -177,6 +178,13 @@ fn readiness(
             .ok();
         body.set_attribute("data-speed", &speed.ticks().to_string())
             .ok();
+        if progress.loaded {
+            body.set_attribute(
+                "data-tutorial-pending",
+                &progress.value.tutorial_pending.to_string(),
+            )
+            .ok();
+        }
         if let Some(session) = session {
             body.set_attribute(
                 "data-sim-tick",

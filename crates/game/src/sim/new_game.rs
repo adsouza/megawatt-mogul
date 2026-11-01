@@ -23,7 +23,7 @@ use domain::session::GameSettings;
 #[cfg(not(target_arch = "wasm32"))]
 use infrastructure::command_log::{FileCommandLog, region_archive_path};
 
-use super::{Catalog, CommandFailed, NewGameRequest, Session};
+use super::{Catalog, CommandFailed, NewGameRequest, NewGameStarted, Session};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::crash::CrashContext;
 #[cfg(not(target_arch = "wasm32"))]
@@ -53,7 +53,7 @@ fn since_epoch() -> Duration {
 /// becomes a `CommandFailed`, and the app stays in the menu. Requests after a success are dropped.
 #[allow(clippy::too_many_arguments)] // Independent ECS resources and message channels.
 #[cfg(not(target_arch = "wasm32"))]
-pub(super) fn start_new_game(
+pub(crate) fn start_new_game(
     mut requests: MessageReader<NewGameRequest>,
     catalog: Res<Catalog>,
     log_dir: Res<LogDir>,
@@ -62,6 +62,7 @@ pub(super) fn start_new_game(
     mut persistence: ResMut<super::Persistence>,
     mut next: ResMut<NextState<AppState>>,
     mut failures: MessageWriter<CommandFailed>,
+    mut started: MessageWriter<NewGameStarted>,
     crash: Res<CrashContext>,
 ) {
     for request in requests.read() {
@@ -71,6 +72,9 @@ pub(super) fn start_new_game(
                 generation.0 = generation.0.wrapping_add(1);
                 persistence.abandon();
                 persistence.enter(generation.0);
+                started.write(NewGameStarted {
+                    generation: generation.0,
+                });
                 commands.insert_resource(Session(game));
                 next.set(AppState::InGame);
                 break;
@@ -308,7 +312,8 @@ fn since_epoch() -> Duration {
     Duration::from_millis(js_sys::Date::now().max(0.0) as u64)
 }
 #[cfg(target_arch = "wasm32")]
-pub(super) fn start_new_game(
+#[allow(clippy::too_many_arguments)] // Independent ECS resources and message channels.
+pub(crate) fn start_new_game(
     mut requests: MessageReader<NewGameRequest>,
     catalog: Res<Catalog>,
     mut commands: Commands,
@@ -316,6 +321,7 @@ pub(super) fn start_new_game(
     mut persistence: ResMut<super::Persistence>,
     mut next: ResMut<NextState<AppState>>,
     mut failures: MessageWriter<CommandFailed>,
+    mut started: MessageWriter<NewGameStarted>,
 ) {
     for request in requests.read() {
         match Game::start_new(
@@ -329,6 +335,9 @@ pub(super) fn start_new_game(
                 generation.0 = generation.0.wrapping_add(1);
                 persistence.abandon();
                 persistence.enter(generation.0);
+                started.write(NewGameStarted {
+                    generation: generation.0,
+                });
                 commands.insert_resource(Session(game));
                 next.set(AppState::InGame);
                 break;

@@ -1,5 +1,5 @@
-//! Command-line flags (`--assets`, `--log-dir`, `--exit-after-frames`), parsed from an argument
-//! list, and the launch smoke's frame limit.
+//! Command-line flags (`--assets`, `--log-dir`, `--exit-after-frames`, `--unlock-all-regions`),
+//! parsed from an argument list, and the launch smoke's frame limit.
 
 use std::ffi::OsString;
 use std::num::NonZeroU32;
@@ -102,4 +102,14 @@ fn the_frame_limit_exits_cleanly_on_its_last_frame() {
     app.update();
 
     assert_eq!(app.should_exit(), Some(AppExit::Success));
+}
+
+#[test]
+fn cli_parses_unlock_all_regions() {
+    let args = parse(&["--unlock-all-regions", "--log-dir", "/l"]).unwrap();
+
+    assert!(args.unlock_all_regions);
+    assert_eq!(args.log_dir, Some(PathBuf::from("/l")));
+    assert!(!CliArgs::default().unlock_all_regions);
+    assert!(!CliError::USAGE.contains("--unlock-all-regions"));
 }

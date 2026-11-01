@@ -3016,8 +3016,13 @@ mod max_grid {
         );
         let listings = RegionListings(catalog.list());
         let l10n = crate::support::shipped_l10n();
-        let model = region_select_model(&listings, Some(42), &l10n)
-            .with_atlas(&RegionAtlas::load(&catalog, &listings), &l10n);
+        let model = region_select_model(
+            &listings,
+            Some(42),
+            &game::hud::RegionAccess::default(),
+            &l10n,
+        )
+        .with_atlas(&RegionAtlas::load(&catalog, &listings), &l10n);
         assert_eq!(
             model.regions.len(),
             crate::support::SHIPPED_REGIONS.len(),

@@ -10,7 +10,7 @@ use game::{
 };
 use tempfile::TempDir;
 
-fn settle(app: &mut App) {
+pub(crate) fn settle(app: &mut App) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while std::time::Instant::now() < deadline {
         app.update();
