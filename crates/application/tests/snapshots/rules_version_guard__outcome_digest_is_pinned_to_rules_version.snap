@@ -2,143 +2,143 @@
 source: crates/application/tests/rules_version_guard.rs
 expression: "format!(\"SIM_RULES_VERSION={}\\n{}{}\", domain::SIM_RULES_VERSION,\noutcome_digest(), battery_outcome_digest())"
 ---
-SIM_RULES_VERSION=31
-month 2027-04 days=30 revenue=5122032993 fuel=-2182165733 start_up=0 fixed_om=-277000000 construction=-2000000000 net=662867260
-  mwh demand=539161.368 served=539161.368 unserved=0.000 curtailed=0.000 imbalance=5.990 peak_mw=890.463 reliability=1.000000
-  energy Coal=364324.918
-  energy Ccgt=146042.440
+SIM_RULES_VERSION=32
+month 2027-04 days=30 revenue=5221538362 fuel=-2224521318 start_up=0 fixed_om=-277000000 construction=-2000000000 net=720017044
+  mwh demand=549635.617 served=549635.617 unserved=0.000 curtailed=0.000 imbalance=4.412 peak_mw=925.641 reliability=1.000000
+  energy Coal=367505.876
+  energy Ccgt=153334.154
   energy Peaker=28800.000
   outage rotating_outage=0.000 peak_outage_share=0.000000
   regulatory none
-month 2027-05 days=31 revenue=5733888260 fuel=-2434644898 start_up=0 fixed_om=-277000000 construction=-2000000000 net=1022243362
-  mwh demand=603567.185 served=603567.185 unserved=0.000 curtailed=0.000 imbalance=-2.864 peak_mw=986.471 reliability=1.000000
-  energy Coal=395916.364
-  energy Ccgt=177887.957
+month 2027-05 days=31 revenue=5720227886 fuel=-2423480706 start_up=0 fixed_om=-277000000 construction=-2000000000 net=1019747180
+  mwh demand=602129.251 served=602129.251 unserved=0.000 curtailed=0.000 imbalance=-8.826 peak_mw=940.005 reliability=1.000000
+  energy Coal=399027.473
+  energy Ccgt=173332.953
   energy Peaker=29760.000
   outage rotating_outage=0.000 peak_outage_share=0.000000
   regulatory none
-month 2027-06 days=30 revenue=6564466348 fuel=-2899668072 start_up=0 fixed_om=-277000000 construction=-2000000000 net=1387798276
-  mwh demand=690996.458 served=690996.458 unserved=0.000 curtailed=0.000 imbalance=-6.635 peak_mw=1248.669 reliability=1.000000
-  energy Coal=401938.955
-  energy Ccgt=251610.648
-  energy Peaker=37440.219
+month 2027-06 days=30 revenue=6704869112 fuel=-3077908175 start_up=0 fixed_om=-277000000 construction=-2000000000 net=1349960937
+  mwh demand=705775.696 served=705775.696 unserved=0.000 curtailed=0.000 imbalance=7.040 peak_mw=1298.310 reliability=1.000000
+  energy Coal=404034.827
+  energy Ccgt=253372.851
+  energy Peaker=48375.057
   outage rotating_outage=0.000 peak_outage_share=0.000000
   regulatory none
-month 2027-07 days=31 revenue=7433739692 fuel=-3589209021 start_up=0 fixed_om=-277000000 construction=-2000000000 net=1567530671
-  mwh demand=787565.437 served=782498.915 unserved=5066.522 curtailed=0.000 imbalance=-1372.639 peak_mw=1409.669 reliability=0.993567
-  energy Coal=431679.007
-  energy Ccgt=280717.813
-  energy Peaker=68729.456
-  outage rotating_outage=1776.008 peak_outage_share=0.017013
-  regulatory StrikeIssued strikes=1 reason=UnservedEnergy
-month 2027-08 days=31 revenue=7392945842 fuel=-3574634167 start_up=0 fixed_om=-277000000 construction=-2000000000 net=1541311675
-  mwh demand=783434.258 served=778204.825 unserved=5229.432 curtailed=0.000 imbalance=-1368.542 peak_mw=1392.213 reliability=0.993325
-  energy Coal=432015.242
-  energy Ccgt=275593.065
-  energy Peaker=69227.977
-  outage rotating_outage=1894.470 peak_outage_share=0.017013
-  regulatory StrikeIssued strikes=2 reason=UnservedEnergy
-month 2027-09 days=30 revenue=5810195033 fuel=-2462602079 start_up=0 fixed_om=-277000000 construction=-2000000000 net=1070592954
-  mwh demand=611599.477 served=611599.477 unserved=0.000 curtailed=0.000 imbalance=10.093 peak_mw=993.265 reliability=1.000000
-  energy Coal=394693.991
-  energy Ccgt=188115.579
+month 2027-07 days=31 revenue=7374921505 fuel=-3528041216 start_up=0 fixed_om=-277000000 construction=-2000000000 net=1569880289
+  mwh demand=777906.223 served=776307.527 unserved=1598.696 curtailed=0.000 imbalance=-60.526 peak_mw=1313.374 reliability=0.997945
+  energy Coal=433851.160
+  energy Ccgt=277090.465
+  energy Peaker=65305.376
+  outage rotating_outage=1598.696 peak_outage_share=0.017013
+  regulatory none
+month 2027-08 days=31 revenue=7330307892 fuel=-3498805755 start_up=0 fixed_om=-277000000 construction=-2000000000 net=1554502137
+  mwh demand=774997.470 served=771611.357 unserved=3386.113 curtailed=0.000 imbalance=-1386.121 peak_mw=1360.269 reliability=0.995631
+  energy Coal=436014.709
+  energy Ccgt=268799.645
+  energy Peaker=65410.882
+  outage rotating_outage=1728.339 peak_outage_share=0.017013
+  regulatory FrequencyNoticeIssued month=2027-08
+month 2027-09 days=30 revenue=5734006426 fuel=-2426276515 start_up=0 fixed_om=-277000000 construction=-2000000000 net=1030729911
+  mwh demand=603579.624 served=603579.624 unserved=0.000 curtailed=0.000 imbalance=-15.593 peak_mw=991.684 reliability=1.000000
+  energy Coal=394774.416
+  energy Ccgt=179989.615
   energy Peaker=28800.000
   outage rotating_outage=0.000 peak_outage_share=0.000000
   regulatory none
-month 2027-10 days=31 revenue=5533619626 fuel=-2353961385 start_up=0 fixed_om=-277000000 construction=-2000000000 net=902658241
-  mwh demand=582486.276 served=582486.276 unserved=0.000 curtailed=0.000 imbalance=-5.827 peak_mw=949.355 reliability=1.000000
-  energy Coal=386453.758
-  energy Ccgt=166266.692
+month 2027-10 days=31 revenue=5430174685 fuel=-2312603653 start_up=0 fixed_om=-277000000 construction=-2000000000 net=840571032
+  mwh demand=571597.335 served=571597.335 unserved=0.000 curtailed=0.000 imbalance=-2.302 peak_mw=940.502 reliability=1.000000
+  energy Coal=381369.332
+  energy Ccgt=160465.701
   energy Peaker=29760.000
   outage rotating_outage=0.000 peak_outage_share=0.000000
   regulatory none
-month 2027-11 days=30 revenue=5674601404 fuel=-2402913056 start_up=0 fixed_om=-277000000 construction=-2000000000 net=994688348
-  mwh demand=597326.464 served=597326.464 unserved=0.000 curtailed=0.000 imbalance=-9.779 peak_mw=983.424 reliability=1.000000
-  energy Coal=391608.017
-  energy Ccgt=176908.668
+month 2027-11 days=30 revenue=5635995016 fuel=-2391289158 start_up=0 fixed_om=-277000000 construction=-2000000000 net=967705858
+  mwh demand=593262.633 served=593262.633 unserved=0.000 curtailed=0.000 imbalance=-4.451 peak_mw=1014.206 reliability=1.000000
+  energy Coal=387181.775
+  energy Ccgt=177276.407
   energy Peaker=28800.000
   outage rotating_outage=0.000 peak_outage_share=0.000000
-  regulatory StrikeExpired strikes=1
-month 2027-12 days=31 revenue=6544886021 fuel=-2803242098 start_up=0 fixed_om=-277000000 construction=-2000000000 net=1464643923
-  mwh demand=688935.371 served=688935.371 unserved=0.000 curtailed=0.000 imbalance=24.211 peak_mw=1191.341 reliability=1.000000
-  energy Coal=415083.071
-  energy Ccgt=242871.883
-  energy Peaker=31004.627
-  rate_review tariff=92.2219 allowed_return=0.090492 revenue_requirement=54178293755 cost_per_mwh=46.2929
+  regulatory none
+month 2027-12 days=31 revenue=6574846423 fuel=-2809737787 start_up=0 fixed_om=-277000000 construction=-2000000000 net=1488108636
+  mwh demand=692089.097 served=692089.097 unserved=0.000 curtailed=0.000 imbalance=-0.662 peak_mw=1190.423 reliability=1.000000
+  energy Coal=419973.456
+  energy Ccgt=241134.026
+  energy Peaker=30980.954
+  rate_review tariff=93.3051 allowed_return=0.092955 revenue_requirement=54732689045 cost_per_mwh=46.3446
   outage rotating_outage=0.000 peak_outage_share=0.000000
   regulatory none
 ledger
-  2027-04 Revenue - 5122032993
-  2027-04 Fuel plant 4 -1092974755
-  2027-04 Fuel plant 7 -657190978
+  2027-04 Revenue - 5221538362
+  2027-04 Fuel plant 4 -1102517627
+  2027-04 Fuel plant 7 -690003691
   2027-04 Fuel plant 10 -432000000
   2027-04 FixedOm plant 4 -200000000
   2027-04 FixedOm plant 7 -60000000
   2027-04 FixedOm plant 10 -17000000
   2027-04 Construction plant 13 -2000000000
-  2027-05 Revenue - 5733888260
-  2027-05 Fuel plant 4 -1187749093
-  2027-05 Fuel plant 7 -800495805
+  2027-05 Revenue - 5720227886
+  2027-05 Fuel plant 4 -1197082419
+  2027-05 Fuel plant 7 -779998287
   2027-05 Fuel plant 10 -446400000
   2027-05 FixedOm plant 4 -200000000
   2027-05 FixedOm plant 7 -60000000
   2027-05 FixedOm plant 10 -17000000
   2027-05 Construction plant 13 -2000000000
-  2027-06 Revenue - 6564466348
-  2027-06 Fuel plant 4 -1205816866
-  2027-06 Fuel plant 7 -1132247915
-  2027-06 Fuel plant 10 -561603291
+  2027-06 Revenue - 6704869112
+  2027-06 Fuel plant 4 -1212104482
+  2027-06 Fuel plant 7 -1140177831
+  2027-06 Fuel plant 10 -725625862
   2027-06 FixedOm plant 4 -200000000
   2027-06 FixedOm plant 7 -60000000
   2027-06 FixedOm plant 10 -17000000
   2027-06 Construction plant 13 -2000000000
-  2027-07 Revenue - 7433739692
-  2027-07 Fuel plant 4 -1295037021
-  2027-07 Fuel plant 7 -1263230157
-  2027-07 Fuel plant 10 -1030941843
+  2027-07 Revenue - 7374921505
+  2027-07 Fuel plant 4 -1301553479
+  2027-07 Fuel plant 7 -1246907092
+  2027-07 Fuel plant 10 -979580645
   2027-07 FixedOm plant 4 -200000000
   2027-07 FixedOm plant 7 -60000000
   2027-07 FixedOm plant 10 -17000000
   2027-07 Construction plant 13 -2000000000
-  2027-08 Revenue - 7392945842
-  2027-08 Fuel plant 4 -1296045726
-  2027-08 Fuel plant 7 -1240168792
-  2027-08 Fuel plant 10 -1038419649
+  2027-08 Revenue - 7330307892
+  2027-08 Fuel plant 4 -1308044127
+  2027-08 Fuel plant 7 -1209598403
+  2027-08 Fuel plant 10 -981163225
   2027-08 FixedOm plant 4 -200000000
   2027-08 FixedOm plant 7 -60000000
   2027-08 FixedOm plant 10 -17000000
   2027-08 Construction plant 13 -2000000000
-  2027-09 Revenue - 5810195033
-  2027-09 Fuel plant 4 -1184081973
-  2027-09 Fuel plant 7 -846520106
+  2027-09 Revenue - 5734006426
+  2027-09 Fuel plant 4 -1184323248
+  2027-09 Fuel plant 7 -809953267
   2027-09 Fuel plant 10 -432000000
   2027-09 FixedOm plant 4 -200000000
   2027-09 FixedOm plant 7 -60000000
   2027-09 FixedOm plant 10 -17000000
   2027-09 Construction plant 13 -2000000000
-  2027-10 Revenue - 5533619626
-  2027-10 Fuel plant 4 -1159361273
-  2027-10 Fuel plant 7 -748200112
+  2027-10 Revenue - 5430174685
+  2027-10 Fuel plant 4 -1144107997
+  2027-10 Fuel plant 7 -722095656
   2027-10 Fuel plant 10 -446400000
   2027-10 FixedOm plant 4 -200000000
   2027-10 FixedOm plant 7 -60000000
   2027-10 FixedOm plant 10 -17000000
   2027-10 Construction plant 13 -2000000000
-  2027-11 Revenue - 5674601404
-  2027-11 Fuel plant 4 -1174824050
-  2027-11 Fuel plant 7 -796089006
+  2027-11 Revenue - 5635995016
+  2027-11 Fuel plant 4 -1161545326
+  2027-11 Fuel plant 7 -797743832
   2027-11 Fuel plant 10 -432000000
   2027-11 FixedOm plant 4 -200000000
   2027-11 FixedOm plant 7 -60000000
   2027-11 FixedOm plant 10 -17000000
   2027-11 Construction plant 13 -2000000000
-  2027-12 Revenue - 6544886021
-  2027-12 Fuel plant 4 -1245249213
-  2027-12 Fuel plant 7 -1092923475
-  2027-12 Fuel plant 10 -465069410
+  2027-12 Revenue - 6574846423
+  2027-12 Fuel plant 4 -1259920367
+  2027-12 Fuel plant 7 -1085103117
+  2027-12 Fuel plant 10 -464714303
   2027-12 FixedOm plant 4 -200000000
   2027-12 FixedOm plant 7 -60000000
   2027-12 FixedOm plant 10 -17000000
   2027-12 Construction plant 13 -2000000000
-company cash=210614334710 reliability=1.000000 satisfaction=93.9816 tariff=92.2219 strikes=1
-battery month_mwh input=27185.580 delivered=496.223 charge_loss=2718.558 discharge_loss=0.000 unused=23970.799 served=539161.368 fuel_cents=-2262636805
+company cash=210541223024 reliability=1.000000 satisfaction=95.3053 tariff=93.3051 strikes=0
+battery month_mwh input=27194.498 delivered=504.472 charge_loss=2719.450 discharge_loss=0.000 unused=23970.576 served=549635.617 fuel_cents=-2304885272

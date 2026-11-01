@@ -9,6 +9,8 @@
 //! a command that returns `Err` leaves [`GameSession::state_hash`] unchanged.
 
 mod activation;
+mod auto_commit;
+pub use auto_commit::CommitmentPlan;
 #[cfg(test)]
 mod battery_tests;
 mod commands;
@@ -325,6 +327,9 @@ impl GameSession {
         }
 
         let regulator = Regulator::new(region.regulator());
+        // The first Planning phase begins now, so its day-ahead forecast is drawn now.
+        let mut rng = SimRng::from_seed(seed);
+        power.draw_weather_forecast(&region, month, &mut rng);
         Self {
             geothermal_available: region.geothermal().is_some(),
             dry_cells: BTreeMap::new(),
@@ -332,7 +337,7 @@ impl GameSession {
             clock: SimClock::new(month),
             phase: DayPhase::Planning,
             status: SessionStatus::Active,
-            rng: SimRng::from_seed(seed),
+            rng,
             ids,
             anchor,
             power,
@@ -413,6 +418,8 @@ impl GameSession {
         self.require_phase(&[DayPhase::Review])?;
         self.clock.next_month();
         self.power.clear_hydro_plan();
+        self.power
+            .draw_weather_forecast(&self.region, self.clock.month(), &mut self.rng);
         Ok(vec![self.change_phase(DayPhase::Planning)])
     }
 
@@ -611,6 +618,16 @@ impl GameSession {
         out
     }
     /// Invoked only after verifying the original schema-1 canonical boundary.
+    /// Saves from before the day-ahead forecast (state schema < 9) get the month's mean as
+    /// their forecast: what a region that knows nothing ahead forecasts (spec 2026-10-31 §3.2).
+    pub fn upgrade_weather_forecast(&mut self) {
+        self.power
+            .set_weather_forecast(crate::grid::WeatherForecast::neutral(
+                &self.region,
+                self.clock.month(),
+            ));
+    }
+
     pub fn upgrade_schema1(&mut self) {
         let tick =
             (self.phase == DayPhase::Operating).then_some(self.clock.tick().saturating_sub(1));

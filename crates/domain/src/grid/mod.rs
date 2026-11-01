@@ -16,7 +16,7 @@ pub use network::{Line, LineStatus, Network, Node, NodeKind, distance_cells};
 pub use power_system::{
     BatteryScheduleView, DayInitialisation, HydroScheduleView, NetworkModel,
     PlantBatteryScheduleView, PlantHydroScheduleView, PowerSystem, SupplyForecast,
-    SupplyForecastPoint,
+    SupplyForecastPoint, WeatherForecast,
 };
 pub use protection::{GridMode, ProtectionOutcome, ProtectionState, evaluate, restoration_step};
 pub use summary::TickSummary;

@@ -18,6 +18,8 @@ mod hydro_plan;
 mod outage;
 #[cfg(test)]
 use outage::HourEnd;
+mod weather;
+pub use weather::WeatherForecast;
 mod wind;
 
 use hydro_plan::{HydroOverride, PlantHydroPlan};
@@ -31,9 +33,7 @@ use super::summary::TickSummary;
 use crate::demand::{DemandCenter, DemandNoise, forecast_demand, hourly_forecast};
 use crate::error::DomainError;
 use crate::events::DomainEvent;
-use crate::generation::{
-    BoundaryStart, CommitmentAction, Plant, PlantStatus, commitment_actions, draw_clearness,
-};
+use crate::generation::{BoundaryStart, CommitmentAction, Plant, PlantStatus, commitment_actions};
 use crate::ids::{CellCoord, CityId, NodeId, PlantId};
 use crate::region::{Cell, FrequencyParams, PlantKind, RegionDefinition};
 use crate::rng::SimRng;
@@ -117,6 +117,8 @@ pub struct PowerSystem {
     wind_month: Option<SimMonth>,
     battery_bus_surplus: Option<bool>,
     wind_needs_replan: bool,
+    /// The coming day's forecast weather, drawn when Planning begins.
+    weather_forecast: WeatherForecast,
     deviation: Hertz,
     /// The band last reported, so `FrequencyDeviated` fires only on a change.
     band: FrequencyBand,
@@ -205,6 +207,7 @@ impl PowerSystem {
             wind_month: None,
             battery_bus_surplus: None,
             wind_needs_replan: false,
+            weather_forecast: WeatherForecast::default(),
             deviation: Hertz::ZERO,
             band: FrequencyBand::Normal,
             protection: ProtectionState::default(),
@@ -358,11 +361,7 @@ impl PowerSystem {
             }
         }
         if self.shared_error.is_none() {
-            self.clearness = draw_clearness(region.solar(), month, rng);
-            let wind = region.wind();
-            self.wind_factor = (wind.monthly[month.index0()]
-                + wind.initial_sd * rng.standard_normal())
-            .clamp(0.0, 1.0);
+            self.draw_day_weather(region, month, rng);
         }
         self.wind_tick = Some(0);
         self.wind_month = Some(month);
@@ -569,14 +568,7 @@ impl PowerSystem {
     ) -> f64 {
         let error = self.noise.step(region.demand_noise(), rng);
         if tick > 0 {
-            let w = region.wind();
-            self.wind_factor = crate::generation::wind_step(
-                self.wind_factor,
-                w.monthly[month.index0()],
-                w.persistence,
-                w.innovation_sd,
-                rng.standard_normal(),
-            );
+            self.step_day_wind(region, month, tick, rng);
         }
         self.wind_tick = Some(tick);
         self.wind_month = Some(month);
@@ -1378,7 +1370,22 @@ impl PowerSystem {
         month: SimMonth,
         tick: u32,
     ) -> Megawatts {
-        let clearness = region.expected_clearness(month);
+        self.solar_at_clearness(
+            region,
+            month,
+            tick,
+            self.weather_forecast.expected_clearness,
+        )
+    }
+
+    /// Connected solar's output at `tick` under a given regional `clearness`.
+    pub(crate) fn solar_at_clearness(
+        &self,
+        region: &RegionDefinition,
+        month: SimMonth,
+        tick: u32,
+        clearness: f64,
+    ) -> Megawatts {
         self.connected_plants()
             .filter(|p| p.kind() == PlantKind::Solar)
             .map(|p| {
@@ -1501,6 +1508,9 @@ impl crate::state::State for PowerSystem {
         if schema >= 5 {
             self.activated_service.write_schema(out, schema);
         }
+        if schema >= 9 {
+            self.weather_forecast.write_schema(out, schema);
+        }
     }
     fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
         let mut power = Self {
@@ -1573,6 +1583,11 @@ impl crate::state::State for PowerSystem {
                 crate::state::State::read(input)?
             } else {
                 Default::default()
+            },
+            weather_forecast: if input.schema >= 9 {
+                crate::state::State::read(input)?
+            } else {
+                WeatherForecast::default()
             },
         };
         if input.schema < 5 {

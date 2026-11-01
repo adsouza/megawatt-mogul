@@ -176,6 +176,8 @@ impl GameSession {
             self.power.cities().clone(),
             self.power.model(),
         );
+        // A future month has no day-ahead forecast yet: judge it at the month's mean weather.
+        power.set_weather_forecast(crate::grid::WeatherForecast::neutral(&self.region, month));
         power.recompute_islands();
         power.prospective_service();
         let synchronous: BTreeSet<_> = power
@@ -319,6 +321,17 @@ mod tests {
             .unwrap();
         assert_eq!(warning.cities, 1);
         assert_eq!(warning.shortage.deliverable, Megawatts::ZERO);
+    }
+
+    #[test]
+    fn connection_previews_judge_a_future_month_at_its_mean_weather() {
+        let s = game(|_| {});
+        let month = s.clock.month().next();
+        let power = s.connection_power(s.power.network().projected_after(1), 1, month);
+        assert_eq!(
+            power.weather_forecast(),
+            &crate::grid::WeatherForecast::neutral(&s.region, month)
+        );
     }
 
     #[test]

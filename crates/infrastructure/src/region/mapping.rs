@@ -8,8 +8,8 @@ use domain::region::{
     Calendar, CityDef, CityLocale, Climate, ClimateId, DemandNoiseParams, FrequencyParams,
     GeoBounds, HydroParams, LineParams, PlantKind, PlantSpec, RegionClock, RegionDefinition,
     RegionDefinitionParts, RegionError, RegulatorParams, SatisfactionParams, SitingRule,
-    SolarModel, SolarParams, StartDef, StartPlantDef, StorageAccreditation, TimeZone, WindParams,
-    ZoneId,
+    SolarModel, SolarParams, StartDef, StartPlantDef, StorageAccreditation, TimeZone,
+    WeatherParams, WindParams, ZoneId,
 };
 use domain::time::{SimDuration, SimMonth, TICKS_PER_HOUR};
 use domain::units::{Hertz, Megawatts, Money, Price, RampRate, Ratio};
@@ -84,6 +84,9 @@ pub fn map_region(mut file: RegionFile) -> Result<RegionDefinition> {
             innovation_sd: wind.innovation_sd,
             initial_sd: wind.initial_sd,
             band: ratio(wind.band, "wind.band")?,
+        },
+        weather: WeatherParams {
+            surprise_share: 1.0,
         },
         geothermal: None,
         hydro: HydroParams {
@@ -596,14 +599,21 @@ fn map_regulator_v4(r: &RegulatorDtoV4) -> Result<RegulatorParams> {
 
 /// The schema-4 checks that make `rasterize_geometry(file.geography())` safe to call.
 pub(super) fn check_v4_geography(file: &RegionFileV4) -> Result<()> {
-    if !matches!(file.region_schema, 4 | 5) {
+    if !matches!(file.region_schema, 4..=6) {
         return Err(RegionError::UnsupportedRegionSchema(file.region_schema));
+    }
+    if file.region_schema >= 6 {
+        if file.weather.is_none() {
+            return Err(RegionError::MissingField { field: "weather" });
+        }
+    } else if file.weather.is_some() {
+        return Err(invalid("region_schema"));
     }
     if file.grid.width > 256 || file.grid.height > 128 {
         return Err(invalid("grid"));
     }
     check_geometry(file.geography())?;
-    if file.region_schema == 5 {
+    if file.region_schema >= 5 {
         check_field(
             file.geothermal_potential
                 .as_ref()
@@ -779,6 +789,13 @@ pub fn map_region_v4(file: RegionFileV4) -> Result<RegionDefinition> {
             innovation_sd: file.wind.innovation_sd,
             initial_sd: file.wind.initial_sd,
             band: ratio(file.wind.band, "wind.band")?,
+        },
+        // Schema 6 requires the field (checked above); older sources know nothing ahead.
+        weather: WeatherParams {
+            surprise_share: file
+                .weather
+                .as_ref()
+                .map_or(1.0, |weather| weather.surprise_share),
         },
         geothermal: None,
         hydro: HydroParams {

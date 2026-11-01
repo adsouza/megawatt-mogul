@@ -305,6 +305,11 @@ impl GameSession {
                         a.gross_supply += b.gross_supply;
                         a.battery_charge += b.battery_charge;
                         a.battery_discharge += b.battery_discharge;
+                        a.battery_power += b.battery_power;
+                        a.battery_deliverable_energy = MegawattHours::new(
+                            a.battery_deliverable_energy.value()
+                                + b.battery_deliverable_energy.value(),
+                        );
                         for (k, v) in b.generation {
                             *a.generation.entry(k).or_insert(Megawatts::ZERO) += v;
                         }

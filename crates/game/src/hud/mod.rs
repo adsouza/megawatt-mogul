@@ -166,7 +166,8 @@ pub use self::toasts::{
 };
 pub use self::top_bar::{Stat, TopBarModel, WarningsBanner, draw_top_bar, top_bar_model};
 pub use self::ui_state::{
-    CommitDraft, CommitmentForm, PendingCommit, PlanningTab, SupplyChartLayout, UiState,
+    AutoCommitments, CommitDraft, CommitmentForm, PendingCommit, PlanningTab, SupplyChartLayout,
+    UiState,
 };
 use domain::session::DayPhase;
 
@@ -304,6 +305,7 @@ impl Plugin for HudPlugin {
             )
             // A highlighted hour or an unapplied edit belongs to the month being planned.
             .add_systems(OnExit(PhaseState::Planning), ui_state::reset_planning_state)
+            .add_systems(OnEnter(PhaseState::Planning), action::open_planning_tab)
             .add_systems(
                 Update,
                 (
@@ -320,6 +322,11 @@ impl Plugin for HudPlugin {
                         .run_if(has_l10n),
                     prompt::close_stale_prompt
                         .after(SimSet::Apply)
+                        .run_if(in_game.clone()),
+                    // After a load's poll, which clears the outgoing game's events.
+                    action::auto_commit_on_planning
+                        .after(SimSet::Apply)
+                        .after(SimSet::Persist)
                         .run_if(in_game.clone()),
                     geothermal::clean_dry_selection
                         .after(SimSet::Apply)

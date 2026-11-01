@@ -2,7 +2,7 @@
 // Authoring decisions, source reuse and illustrative tuning:
 // docs/research/2026-10-26-plan-8-sgcc.md. No corporate generating-fleet claim.
 (
-    region_schema: 5,
+    region_schema: 6,
     id: "sgcc",
     name_key: "region-sgcc",
     bounds: (west: 73.0, east: 135.0, south: 23.0, north: 54.0),
@@ -35,6 +35,7 @@
     // A19 balance tuning; amounts below are local major currency units, not cents.
     geothermal: (success_min: 0.45, success_max: 0.80, quality_min: 0.15, quality_max: 1.0, exploration_months: 3, exploration_share: 0.12, monthly_decline: 0.002535048613836126, makeup_capital: 15000000, makeup_months: 3, ceiling_step: 0.05, minimum_gain: 0.03),
     wind: (monthly:[0.6,0.6,0.65,0.7,0.65,0.5,0.4,0.4,0.5,0.6,0.65,0.65],persistence:0.995,innovation_sd:0.015,initial_sd:0.06,band:0.12),
+    weather: (surprise_share: 0.5),
     // A16: NASA POWER annual all-sky / clear-sky energy; receipts in docs/research/2026-10-26-solar-calibration-anchors.json.
     solar: (calibration: ClearSkyFraction,clearness_mean:[0.65,0.65,0.65,0.65,0.65,0.6,0.55,0.55,0.6,0.65,0.65,0.65],clearness_sd:0.1),
     hydro: (monthly_flow:[0.6,0.55,0.6,0.75,1.0,1.4,1.7,1.7,1.4,1.1,0.8,0.65]),

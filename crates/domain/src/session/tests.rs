@@ -2013,3 +2013,70 @@ fn hourly_samples_include_only_connected_cities_half_hour_bends() {
     assert_eq!(forecast.assessed_minutes().count(), 72);
     assert_eq!(session().supply_forecast().assessed_minutes().count(), 48);
 }
+
+#[test]
+fn a_new_game_draws_a_forecast_for_its_first_month() {
+    let s = session();
+    let forecast = s.power.weather_forecast();
+    assert_eq!(forecast.month, Some(s.clock.month()));
+    assert_eq!(forecast.wind_path.len(), TICKS_PER_DAY as usize);
+}
+
+#[test]
+fn finish_review_draws_a_new_forecast_for_the_next_month() {
+    let mut s = session();
+    s.begin_operating().unwrap();
+    run_ticks(&mut s, TICKS_PER_DAY);
+    assert_eq!(s.phase(), DayPhase::Review);
+    let before = s.power.weather_forecast().clone();
+    s.finish_review().unwrap();
+    let after = s.power.weather_forecast();
+    assert_eq!(after.month, Some(s.clock.month()));
+    assert_ne!(after.month, before.month);
+    assert_ne!(after.wind_path, before.wind_path);
+}
+
+#[test]
+fn forecast_round_trips_at_schema_9_and_is_absent_at_8() {
+    let s = session();
+    let mut without = s.clone();
+    without
+        .power
+        .set_weather_forecast(crate::grid::WeatherForecast::default());
+    assert_eq!(s.snapshot_state_schema(8), without.snapshot_state_schema(8));
+    assert_ne!(s.snapshot_state_schema(9), without.snapshot_state_schema(9));
+    let restored = GameSession::from_snapshot_state(&s.snapshot_state(), s.region.clone()).unwrap();
+    assert_eq!(
+        restored.power.weather_forecast(),
+        s.power.weather_forecast()
+    );
+}
+
+/// Spec 2026-10-31 §6 "No leak": two sessions that differ only in the generator after the
+/// forecast was drawn show identical Planning views, and their days then differ, so the surprise
+/// is drawn when the day begins, not before.
+#[test]
+fn planning_views_never_depend_on_the_coming_surprise() {
+    let mut s = session();
+    let mut t = s.clone();
+    t.rng = crate::rng::SimRng::from_seed(999);
+    assert_eq!(s.supply_forecast(), t.supply_forecast());
+    assert_eq!(s.hourly_forecast(), t.hourly_forecast());
+    assert_eq!(s.capacity_shortfall_check(), t.capacity_shortfall_check());
+    assert_eq!(s.minimum_generation_check(), t.minimum_generation_check());
+    assert_eq!(s.automatic_commitment_plan(), t.automatic_commitment_plan());
+    for tick in [0, 720, 1080] {
+        let (month, region) = (s.clock.month(), s.region.clone());
+        assert_eq!(
+            s.power.wind_forecast(&region, month, tick),
+            t.power.wind_forecast(&region, month, tick)
+        );
+        assert_eq!(
+            s.power.solar_forecast(&region, month, tick),
+            t.power.solar_forecast(&region, month, tick)
+        );
+    }
+    s.begin_operating().unwrap();
+    t.begin_operating().unwrap();
+    assert_ne!(s.power.wind_factor(), t.power.wind_factor());
+}

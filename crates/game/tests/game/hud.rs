@@ -341,7 +341,14 @@ fn leaving_a_game_resets_the_planning_panel_state() {
     update_n(&mut app, 2);
 
     assert_eq!(state(&app), AppState::MainMenu);
-    assert_eq!(*app.world().resource::<UiState>(), UiState::default());
+    assert_eq!(
+        *app.world().resource::<UiState>(),
+        UiState {
+            // The harness's choice survives the reset, as a player's preference does.
+            auto_commitments: game::hud::AutoCommitments(false),
+            ..UiState::default()
+        }
+    );
     assert_eq!(
         *app.world().resource::<CommitmentForm>(),
         CommitmentForm::default()
@@ -432,7 +439,7 @@ fn dispatch_opens_the_construction_tab() {
 }
 
 #[test]
-fn a_new_game_starts_on_the_commitments_tab() {
+fn a_new_game_with_manual_commitments_starts_on_the_commitments_tab() {
     let logs = TempDir::new().unwrap();
     let mut app = hud_app(&logs);
     dispatch_in(
@@ -537,7 +544,14 @@ fn beginning_the_day_resets_the_planning_panel_state() {
         .resource::<State<game::state::PhaseState>>()
         .get();
     assert_eq!(phase, game::state::PhaseState::Operating);
-    assert_eq!(*app.world().resource::<UiState>(), UiState::default());
+    assert_eq!(
+        *app.world().resource::<UiState>(),
+        UiState {
+            // The harness's choice survives the reset, as a player's preference does.
+            auto_commitments: game::hud::AutoCommitments(false),
+            ..UiState::default()
+        }
+    );
     assert_eq!(
         *app.world().resource::<CommitmentForm>(),
         CommitmentForm::default()

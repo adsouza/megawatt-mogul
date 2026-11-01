@@ -172,7 +172,8 @@ pub struct Persistence {
     job: Option<Job>,
     token: u64,
     run: Option<Run>,
-    pub(super) pending: VecDeque<PlayerCommand>,
+    /// Commands waiting for the game, each with whether the automatic planner sent it.
+    pub(super) pending: VecDeque<(PlayerCommand, bool)>,
     pub(super) draining: bool,
     capture: Option<GameCheckpoint>,
     manual: Option<ManualIntent>,

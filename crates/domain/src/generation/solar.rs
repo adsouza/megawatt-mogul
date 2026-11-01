@@ -5,8 +5,9 @@ use crate::rng::SimRng;
 use crate::time::{SimMonth, TICKS_PER_HOUR};
 use crate::units::{Megawatts, Ratio};
 
-const MIN_CLEARNESS: f64 = 0.2;
-const MAX_CLEARNESS: f64 = 1.0;
+/// The bounds of a day's clearness draw.
+pub const MIN_CLEARNESS: f64 = 0.2;
+pub const MAX_CLEARNESS: f64 = 1.0;
 
 /// How high the sun is, `0.0..=1.0`: a half sine between sunrise and sunset,
 /// zero at night. Time of day is the start of the tick's minute, `tick / 60`
@@ -91,7 +92,7 @@ pub(crate) fn annual_sun_integral_with_clearness(lat: f64, clearness: &[f64; 12]
 /// Mean of the bounded daily draw, integrated once when a region loads.
 /// Midpoint quadrature on ±8 standard deviations leaves less than 2e-15 tail mass.
 /// This cache consumes no simulation randomness and includes both clipping bounds.
-pub(crate) fn mean_clearness(mean: f64, sd: f64) -> f64 {
+pub fn mean_clearness(mean: f64, sd: f64) -> f64 {
     if sd == 0.0 {
         return mean.clamp(MIN_CLEARNESS, MAX_CLEARNESS);
     }
@@ -208,6 +209,33 @@ mod tests {
             (forecast - sampled).abs() < 0.002,
             "forecast {forecast}, sample {sampled}"
         );
+    }
+
+    #[test]
+    fn the_forecast_conditioned_expectation_is_unbiased() {
+        let mut parts = crate::region::fixtures::tiny_region_parts();
+        parts.solar.model = crate::region::SolarModel::Astronomical;
+        parts.solar.annual_site_clearness = true;
+        parts.solar.clearness_mean = [0.92; 12];
+        parts.solar.clearness_sd = 0.13;
+        let r = crate::region::RegionDefinition::try_from(parts).unwrap();
+        let (weather, solar) = (r.weather(), r.solar());
+        let (mean, sd) = (solar.clearness_mean[6], solar.clearness_sd);
+        let mut rng = SimRng::from_seed(74);
+        let draws = 100_000;
+        let (mut expected, mut actual) = (0.0, 0.0);
+        for _ in 0..draws {
+            let forecast = mean + weather.forecast_sd(sd) * rng.standard_normal();
+            expected += mean_clearness(forecast, weather.surprise_sd(sd));
+            actual += (forecast + weather.surprise_sd(sd) * rng.standard_normal())
+                .clamp(MIN_CLEARNESS, MAX_CLEARNESS);
+        }
+        let (expected, actual) = (expected / draws as f64, actual / draws as f64);
+        assert!(
+            (expected - actual).abs() < 0.002,
+            "forecast {expected}, actual {actual}"
+        );
+        assert!((expected - mean_clearness(mean, sd)).abs() < 0.002);
     }
 
     #[test]

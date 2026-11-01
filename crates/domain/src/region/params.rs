@@ -41,6 +41,29 @@ pub struct WindParams {
     pub band: Ratio,
 }
 
+/// How much of each day's weather is known when Planning begins (the day-ahead forecast). The
+/// actual day is the forecast plus a surprise whose standard deviation is `surprise_share` of the
+/// authored one; the forecast carries the rest of the variance, so the total is unchanged.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WeatherParams {
+    pub surprise_share: f64,
+}
+
+impl WeatherParams {
+    /// The surprise part of an authored standard deviation `sd`.
+    pub fn surprise_sd(&self, sd: f64) -> f64 {
+        self.surprise_share * sd
+    }
+
+    /// The forecast part of an authored standard deviation `sd`: what is left of its variance.
+    pub fn forecast_sd(&self, sd: f64) -> f64 {
+        (1.0 - self.surprise_share * self.surprise_share)
+            .max(0.0)
+            .sqrt()
+            * sd
+    }
+}
+
 /// Hydro resource parameters.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HydroParams {

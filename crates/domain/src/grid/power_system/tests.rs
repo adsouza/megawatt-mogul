@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::generation::{CommitmentSchedule, PlantStatus, water_fill};
+use crate::generation::{CommitmentSchedule, PlantStatus, draw_clearness, water_fill};
 use crate::grid::network::{LineStatus, Node, NodeKind};
 use crate::ids::{CellCoord, LineId};
 use crate::region::fixtures::tiny_region;
@@ -23,13 +23,13 @@ fn cell(x: u16, y: u16) -> CellCoord {
 }
 
 /// A plant to place in a test system, and whether a line joins it to the root.
-struct PlantDef {
+pub(super) struct PlantDef {
     kind: PlantKind,
     cell: CellCoord,
     connected: bool,
 }
 
-fn connected(kind: PlantKind, cell: CellCoord) -> PlantDef {
+pub(super) fn connected(kind: PlantKind, cell: CellCoord) -> PlantDef {
     PlantDef {
         kind,
         cell,
@@ -48,7 +48,7 @@ fn start_fleet(region: &RegionDefinition) -> Vec<PlantDef> {
 
 /// The tiny region's cities on their own nodes (the start's connected cities
 /// joined to the root, the rest isolated), plus `defs` as plants 1, 2, ...
-fn system_with(region: &RegionDefinition, defs: &[PlantDef]) -> PowerSystem {
+pub(super) fn system_with(region: &RegionDefinition, defs: &[PlantDef]) -> PowerSystem {
     let home = region
         .cities()
         .iter()
@@ -877,11 +877,19 @@ fn begin_day_draws_clearness_then_wind_once_and_reports_boundary_starts() {
     let schedule = CommitmentSchedule::try_new(hours, p.spec()).unwrap();
     p.set_commitment(schedule);
     let (mut rng, mut reference) = (SimRng::from_seed(8), SimRng::from_seed(8));
+    sys.draw_weather_forecast(&region, april(), &mut rng);
+    sys.draw_weather_forecast(&region, april(), &mut reference);
+    let forecast = sys.weather_forecast().clone();
     let init = sys.begin_day(&region, april(), &mut rng);
-    let clearness = draw_clearness(region.solar(), april(), &mut reference);
-    let wind = region.wind();
-    let factor = (wind.monthly[april().index0()] + wind.initial_sd * reference.standard_normal())
-        .clamp(0.0, 1.0);
+    // The day is the forecast plus the surprise: clearness first, then the initial wind.
+    let (weather, wind) = (region.weather(), region.wind());
+    let clearness = (forecast.clearness
+        + weather.surprise_sd(region.solar().clearness_sd) * reference.standard_normal())
+    .clamp(0.2, 1.0);
+    let factor = (wind.monthly[april().index0()]
+        + forecast.wind_deviation(0)
+        + weather.surprise_sd(wind.initial_sd) * reference.standard_normal())
+    .clamp(0.0, 1.0);
     assert_eq!(sys.clearness, clearness);
     assert_eq!(sys.wind_factor(), factor);
     assert_eq!(rng, reference);
@@ -898,7 +906,9 @@ fn each_tick_draws_demand_then_wind_except_minute_zero_reuses_initial_wind() {
     let region = tiny_region();
     for mut sys in [auto_follow_fleet(&region), system_with(&region, &[])] {
         let mut rng = SimRng::from_seed(6);
+        sys.draw_weather_forecast(&region, april(), &mut rng);
         sys.begin_day(&region, april(), &mut rng);
+        let forecast = sys.weather_forecast().clone();
         for t in 0..5 {
             let mut reference = rng.clone();
             reference.standard_normal(); // Demand, including at minute zero.
@@ -906,10 +916,15 @@ fn each_tick_draws_demand_then_wind_except_minute_zero_reuses_initial_wind() {
             let factor = if t == 0 {
                 sys.wind_factor()
             } else {
-                (wind.monthly[april().index0()]
-                    + wind.persistence * (sys.wind_factor() - wind.monthly[april().index0()])
-                    + wind.innovation_sd * reference.standard_normal())
-                .clamp(0.0, 1.0)
+                crate::generation::wind_step_with_forecast(
+                    sys.wind_factor(),
+                    wind.monthly[april().index0()],
+                    forecast.wind_deviation(t - 1),
+                    forecast.wind_deviation(t),
+                    wind.persistence,
+                    region.weather().surprise_sd(wind.innovation_sd),
+                    reference.standard_normal(),
+                )
             };
             sys.tick(&region, april(), t, &mut rng);
             assert_eq!(rng, reference, "minute {t}");
@@ -939,19 +954,22 @@ fn connected_demand_forecast_counts_connected_cities_only() {
 }
 
 #[test]
-fn expected_solar_uses_mean_clearness_for_connected_plants() {
+fn expected_solar_uses_the_forecast_clearness() {
     let region = tiny_region();
     let isolated = PlantDef {
         kind: PlantKind::Solar,
         cell: cell(4, 4),
         connected: false,
     };
-    let sys = system_with(
+    let mut sys = system_with(
         &region,
         &[connected(PlantKind::Solar, cell(5, 5)), isolated],
     );
+    sys.draw_weather_forecast(&region, april(), &mut SimRng::from_seed(12));
+    let clearness = sys.weather_forecast().expected_clearness;
+    assert_ne!(clearness, region.expected_clearness(april()));
     let sun = region.sun(cell(5, 5), april(), 762);
-    let expected = 300.0 * 0.8 * sun * 0.75;
+    let expected = 300.0 * 0.8 * sun * clearness;
     let got = sys.expected_solar(&region, april(), 762);
     assert!((got.value() - expected).abs() < 1e-9);
     assert_eq!(sys.expected_solar(&region, april(), 0), Megawatts::ZERO);
@@ -5172,6 +5190,8 @@ fn astronomical_solar_actual_forecast_and_curtailment_use_each_plant_cell() {
                 connected(PlantKind::Wind, cell(7, 3)),
             ],
         );
+        // The month's mean forecast, so expected solar is the authored mean clearness.
+        sys.set_weather_forecast(WeatherForecast::neutral(&region, april()));
         sys.begin_day(&region, april(), &mut SimRng::from_seed(1));
         // At 05:00 MSK (02:00 UTC) the eastern site is lit while the western site is dark.
         let tick = 300;

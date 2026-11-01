@@ -42,8 +42,14 @@ const MAX_FIXED_STEPS: usize = 1_440 / 8 + 20;
 /// Everything the app did, as seen at the end of each frame.
 #[derive(Resource, Default)]
 struct Record {
-    /// Every command that reached the game, from the HUD or the driver.
+    /// Every command that reached the game: the planner's, then the HUD's or the driver's.
     commands: Vec<Command>,
+    /// The commands the player (the HUD or the driver) sent.
+    player: Vec<Command>,
+    /// The commands the automatic commitment planner sent.
+    planned: Vec<Command>,
+    /// The planner's commands sent this frame: the game applies them at the next frame's start.
+    planned_next: Vec<Command>,
     failures: Vec<CommandError>,
     /// The phase after each change, starting with the first one seen in a game.
     phases: Vec<PhaseState>,
@@ -60,6 +66,7 @@ struct Record {
 /// The messages `record` reads.
 #[derive(SystemParam)]
 struct Seen<'w, 's> {
+    planned: MessageReader<'w, 's, game::sim::PlannerCommand>,
     commands: MessageReader<'w, 's, PlayerCommand>,
     failures: MessageReader<'w, 's, CommandFailed>,
     events: MessageReader<'w, 's, DomainEventMessage>,
@@ -82,9 +89,18 @@ fn record(
     log_dir: Res<LogDir>,
     mut record: ResMut<Record>,
 ) {
+    // The planner writes after the frame's commands were applied, so its commands reach the
+    // game (and the log) in the next frame, ahead of that frame's player commands.
+    let planned = std::mem::replace(
+        &mut record.planned_next,
+        messages.planned.read().map(|c| c.0.clone()).collect(),
+    );
+    let player: Vec<Command> = messages.commands.read().map(|c| c.0.clone()).collect();
     record
         .commands
-        .extend(messages.commands.read().map(|command| command.0.clone()));
+        .extend(planned.iter().chain(&player).cloned());
+    record.planned.extend(planned);
+    record.player.extend(player);
     record
         .failures
         .extend(messages.failures.read().map(|failed| failed.0.clone()));
@@ -219,6 +235,8 @@ fn continue_from_review(app: &App) -> UiAction {
 /// A headless HUD app in the main menu, recording into [`Record`], with logs under `logs`.
 fn recorded_app(logs: &TempDir) -> App {
     let mut app = hud_app(logs.path());
+    // A fresh player's defaults: commitments are planned automatically.
+    crate::support::auto_commitments_on(&mut app);
     app.init_resource::<Record>().add_systems(Last, record);
     app
 }
@@ -258,15 +276,16 @@ fn play_a_hands_off_month(region: &str) {
     assert_eq!(phase(&app), PhaseState::Planning);
     let month = game(&app).session().clock().month();
 
-    // 2. No planning commands: a new game inherits the hands-off plan (spec §16.3), every
-    // dispatchable plant committed all day, with AGC on.
+    // 2. No planning commands from the player: the new game's inherited schedule (spec §16.3)
+    // is trimmed by the automatic planner (spec 2026-10-31 §5), every plant still on AGC.
+    update_n(&mut app, 2);
     let plants = game(&app).session().plant_views();
     let commitable: Vec<_> = plants.iter().filter(|plant| is_commitable(plant)).collect();
     assert!(!commitable.is_empty());
     for plant in commitable {
-        assert_eq!(plant.commitment, [true; 24], "{:?}", plant.id);
         assert!(plant.auto_follow, "{:?}", plant.id);
     }
+    assert!(application::automatic_commitment_commands(game(&app)).is_empty());
 
     // 3–5. Start the day, which begins it directly, 8×, and the driver runs it to the close.
     start_the_day_directly(&mut app);
@@ -289,9 +308,16 @@ fn play_a_hands_off_month(region: &str) {
         ]
     );
 
-    // Nothing was refused, and the first command was the day's: no planning command was sent.
+    // Nothing was refused, and the player's first command was the day's: only the planner
+    // planned, as each Planning phase began.
     assert_eq!(record.failures, []);
-    assert_eq!(record.commands.first(), Some(&Command::BeginOperating));
+    assert_eq!(record.player.first(), Some(&Command::BeginOperating));
+    assert!(
+        record
+            .planned
+            .iter()
+            .all(|command| matches!(command, Command::CommitPlant { .. }))
+    );
 
     // The driver sent the day in batches of eight, and the log grew by one line per command.
     let advances: Vec<u32> = record
@@ -304,7 +330,7 @@ fn play_a_hands_off_month(region: &str) {
         .collect();
     assert_eq!(advances, [8; 1_440 / 8]);
     assert!(record.commands.contains(&Command::BeginOperating));
-    assert_eq!(record.commands.last(), Some(&Command::FinishReview));
+    assert_eq!(record.player.last(), Some(&Command::FinishReview));
     let (first_commands, first_lines) = record.log_lines[0];
     let header = first_lines - first_commands;
     assert!(header >= 1, "the log starts with its header");

@@ -250,21 +250,11 @@ impl PowerSystem {
                 self.wind_factor_forecast(region, month, tick),
             );
         };
-        let w = region.wind();
-        let mean = w.monthly[month.index0()];
-        let factor = if state.wind_month == Some(month) {
-            let horizon = tick.saturating_sub(state.wind_tick.unwrap_or(0));
-            mean + w.persistence.powf(f64::from(horizon)) * (state.wind_factor - mean)
-        } else {
-            mean
-        };
+        let actual = (state.wind_month == Some(month))
+            .then(|| (state.wind_factor, state.wind_tick.unwrap_or(0)));
         (
             state.wind_factor,
-            (
-                factor,
-                (factor - w.band.value()).max(0.0),
-                (factor + w.band.value()).min(1.0),
-            ),
+            super::wind::wind_forecast_from(&self.weather_forecast, region, month, tick, actual),
         )
     }
     pub(crate) fn mode_at(&self, node: NodeId) -> GridMode {
@@ -490,6 +480,8 @@ impl PowerSystem {
         if let Some(state) = self.island_states.get(&id) {
             state.clone().apply(&mut power);
         }
+        // The forecast is regional: every island copy plans and operates against it.
+        power.weather_forecast = self.weather_forecast.clone();
         power.injections = self.transfer_schedule(id, region);
         Some(power)
     }
@@ -500,10 +492,7 @@ impl PowerSystem {
         rng: &mut SimRng,
     ) -> DayInitialisation {
         self.recompute_islands();
-        self.clearness = draw_clearness(region.solar(), month, rng);
-        let wind = region.wind();
-        self.wind_factor = (wind.monthly[month.index0()] + wind.initial_sd * rng.standard_normal())
-            .clamp(0.0, 1.0);
+        self.draw_day_weather(region, month, rng);
         self.wind_tick = Some(0);
         self.wind_month = Some(month);
         self.noise = DemandNoise::default();

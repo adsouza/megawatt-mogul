@@ -96,6 +96,10 @@ pub struct ForecastModel {
     pub high: [f64; 24],
     /// Expected solar output at each hour's midpoint, also included in the supply stack.
     pub solar: [f64; 24],
+    /// Solar under the day-ahead forecast's dull and bright edges (the surprise's ±2σ).
+    pub solar_low: [f64; 24],
+    pub solar_high: [f64; 24],
+    pub solar_range_label: String,
     /// Net supply: signed storage first, then generation in merit order.
     pub stacks: Vec<StackModel>,
     /// The hour a warning pointed at, if any.
@@ -210,6 +214,13 @@ pub(super) fn forecast_model_for_session(
         .iter()
         .find(|stack| stack.kind == PlantKind::Solar)
         .map_or([0.0; 24], |stack| stack.mw);
+    let solar_band: [(Megawatts, Megawatts, Megawatts); 24] = std::array::from_fn(|h| {
+        session.power().solar_forecast(
+            session.region(),
+            session.clock().month(),
+            (h as u32 * 60) + 30,
+        )
+    });
     let storage_series = |charge: bool| {
         storage
             .iter()
@@ -389,6 +400,9 @@ pub(super) fn forecast_model_for_session(
         forecast_label: l10n.text("commitment-forecast"),
         band_label: l10n.text("forecast-band"),
         solar_label: l10n.text("forecast-solar"),
+        solar_range_label: l10n.text("forecast-solar-range"),
+        solar_low: solar_band.map(|band| band.1.value()),
+        solar_high: solar_band.map(|band| band.2.value()),
         x: std::array::from_fn(|hour| hour as f64 + 0.5),
         mean,
         low: at(|point| point.low),
@@ -510,6 +524,10 @@ pub fn draw_forecast_chart(ui: &mut egui::Ui, model: &ForecastModel) -> Vec<UiAc
             (wind.range_label.as_str(), color, KeyMark::Band),
         ]);
     }
+    let has_solar_band = model.solar_high.iter().any(|mw| *mw > 0.0);
+    if has_solar_band {
+        entries.push((model.solar_range_label.as_str(), solar_color, KeyMark::Band));
+    }
     let hovered = super::chart_style::draw_key(ui, id, entries);
     Plot::new("planning_forecast")
         .id(id)
@@ -578,6 +596,18 @@ pub fn draw_forecast_chart(ui: &mut egui::Ui, model: &ForecastModel) -> Vec<UiAc
                 .color(line_color)
                 .width(2.0),
             );
+            if has_solar_band {
+                plot.add(
+                    FilledArea::new(
+                        &model.solar_range_label,
+                        &model.x,
+                        &model.solar_low,
+                        &model.solar_high,
+                    )
+                    .fill_color(solar_color.gamma_multiply(0.2))
+                    .highlight(hovered == Some(egui::Id::new(&model.solar_range_label))),
+                );
+            }
             plot.line(
                 Line::new(model.solar_label.as_str(), points(&model.solar))
                     .highlight(hovered == Some(egui::Id::new(&model.solar_label)))
@@ -1373,6 +1403,34 @@ mod tests {
         );
         assert!(model.storage_charge.iter().any(|p| p[1] > 0.0));
         assert_eq!(l10n.problems(), vec![]);
+    }
+
+    #[test]
+    fn solar_band_brackets_the_solar_line() {
+        let l10n = shipped_l10n();
+        let mut game = edited_western_game(|text| {
+            text.replacen("fleet: [", "fleet: [(Solar, -117.0, 34.5),", 1)
+        });
+        empty_start(&mut game);
+        let model = forecast_model(&game, &l10n, &UiState::default());
+        for hour in 0..24 {
+            assert!(
+                model.solar_low[hour] <= model.solar[hour] + 1e-9
+                    && model.solar[hour] <= model.solar_high[hour] + 1e-9,
+                "hour {hour}: {} {} {}",
+                model.solar_low[hour],
+                model.solar[hour],
+                model.solar_high[hour]
+            );
+        }
+        assert!(model.solar_high[12] > model.solar_low[12]);
+        assert_eq!(model.solar_range_label, l10n.text("forecast-solar-range"));
+
+        let mut without = edited_western_game(|text| text.to_owned());
+        empty_start(&mut without);
+        let model = forecast_model(&without, &l10n, &UiState::default());
+        assert_eq!(model.solar_low, [0.0; 24]);
+        assert_eq!(model.solar_high, [0.0; 24]);
     }
 
     #[test]

@@ -10,10 +10,10 @@ MonthlyReport {
     },
     days: 31,
     revenue: Money(
-        6929954529,
+        6935075159,
     ),
     fuel: Money(
-        -3031977219,
+        -3063689027,
     ),
     start_up: Money(
         0,
@@ -25,18 +25,18 @@ MonthlyReport {
         0,
     ),
     net: Money(
-        3620977310,
+        3594386132,
     ),
     storage: {},
     energy_by_kind: {
         Coal: MegawattHours(
-            426209.520794,
+            427075.467158,
         ),
         Ccgt: MegawattHours(
-            266233.271997,
+            263025.047787,
         ),
         Peaker: MegawattHours(
-            37019.9288636,
+            39923.32739,
         ),
     },
     merit_order: [
@@ -49,7 +49,7 @@ MonthlyReport {
                 30.0,
             ),
             energy: MegawattHours(
-                426209.520794,
+                427075.467158,
             ),
         },
         MeritOrderEntry {
@@ -61,7 +61,7 @@ MonthlyReport {
                 45.0,
             ),
             energy: MegawattHours(
-                266233.271997,
+                263025.047787,
             ),
         },
         MeritOrderEntry {
@@ -73,15 +73,15 @@ MonthlyReport {
                 150.0,
             ),
             energy: MegawattHours(
-                37019.9288636,
+                39923.32739,
             ),
         },
     ],
     demand: MegawattHours(
-        729468.897831,
+        730007.911477,
     ),
     served: MegawattHours(
-        729468.897831,
+        730007.911477,
     ),
     unserved: MegawattHours(
         0.0,
@@ -90,10 +90,10 @@ MonthlyReport {
         0.0,
     ),
     imbalance: MegawattHours(
-        -6.17617686741,
+        15.930857435,
     ),
     overgeneration: MegawattHours(
-        928.459872192,
+        956.066082215,
     ),
     rotating_outage: MegawattHours(
         0.0,
@@ -102,7 +102,7 @@ MonthlyReport {
         0.0,
     ),
     peak_demand: Megawatts(
-        1266.93351814,
+        1290.24655908,
     ),
     reliability: Ratio(
         1.0,

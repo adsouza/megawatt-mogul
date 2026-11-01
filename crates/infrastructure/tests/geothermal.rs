@@ -179,9 +179,11 @@ fn geothermal_region_schema5_requires_fields_and_keeps_six_regions_resource_free
             "{field}: {error}"
         );
     }
-    // A schema-4 source may not declare geothermal at all.
-    let error = load_edited(text.replacen("region_schema: 5", "region_schema: 4", 1))
-        .expect_err("schema 4 with geothermal fields must be refused");
+    // A schema-4 source may not declare geothermal at all. It also predates `weather` (schema 6),
+    // so drop that first: only the geothermal fields may cause this refusal.
+    let schema4 =
+        without_field(&text, "weather").replacen("region_schema: 6", "region_schema: 4", 1);
+    let error = load_edited(schema4).expect_err("schema 4 with geothermal fields must be refused");
     assert!(
         matches!(
             &error,

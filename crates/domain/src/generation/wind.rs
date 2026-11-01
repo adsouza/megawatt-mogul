@@ -12,6 +12,26 @@ pub fn wind_step(
     (mean + persistence * (previous - mean) + innovation_sd * innovation).clamp(0.0, 1.0)
 }
 
+/// One minute of the actual wind factor around the day-ahead forecast path (spec 2026-10-31
+/// §3.1). The surprise is carried as the post-clamp residual `previous − mean − forecast_previous`,
+/// so the state is clamped every step exactly as [`wind_step`] clamps it; with a zero forecast
+/// this is [`wind_step`] bit for bit.
+pub fn wind_step_with_forecast(
+    previous: f64,
+    mean: f64,
+    forecast_previous: f64,
+    forecast_now: f64,
+    persistence: f64,
+    surprise_sd: f64,
+    innovation: f64,
+) -> f64 {
+    (mean
+        + forecast_now
+        + persistence * (previous - mean - forecast_previous)
+        + surprise_sd * innovation)
+        .clamp(0.0, 1.0)
+}
+
 pub fn wind_available(capacity: Megawatts, potential: Ratio, factor: f64) -> Megawatts {
     capacity * (potential.value() * factor.clamp(0.0, 1.0))
 }
@@ -34,6 +54,35 @@ mod tests {
     }
 
     proptest::proptest! {
+        #[test]
+        fn with_a_zero_forecast_the_step_equals_todays_wind_step(
+            previous in 0.0..=1.0f64,
+            mean in 0.0..=1.0f64,
+            innovation in -5.0..5.0f64,
+        ) {
+            proptest::prop_assert_eq!(
+                wind_step_with_forecast(previous, mean, 0.0, 0.0, 0.995, 0.015, innovation)
+                    .to_bits(),
+                wind_step(previous, mean, 0.995, 0.015, innovation).to_bits()
+            );
+        }
+
+        #[test]
+        fn the_surprise_is_carried_as_the_post_clamp_residual(
+            previous in 0.0..=1.0f64,
+            forecast_previous in -0.3..0.3f64,
+            forecast_now in -0.3..0.3f64,
+            innovation in -5.0..5.0f64,
+        ) {
+            let next = wind_step_with_forecast(
+                previous, 0.6, forecast_previous, forecast_now, 0.995, 0.0075, innovation,
+            );
+            let residual = previous - 0.6 - forecast_previous;
+            let expected =
+                (0.6 + forecast_now + 0.995 * residual + 0.0075 * innovation).clamp(0.0, 1.0);
+            proptest::prop_assert!((next - expected).abs() < 1e-12);
+        }
+
         #[test]
         fn wind_transition_is_bounded(previous in 0.0..=1.0f64, innovation in -100.0..100.0f64) {
             let next = wind_step(previous, 0.6, 0.995, 0.015, innovation);

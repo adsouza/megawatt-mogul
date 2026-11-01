@@ -10,10 +10,10 @@ MonthlyReport {
     },
     days: 31,
     revenue: Money(
-        8933875670,
+        8812207823,
     ),
     fuel: Money(
-        -4822006083,
+        -4662871618,
     ),
     start_up: Money(
         0,
@@ -25,18 +25,18 @@ MonthlyReport {
         0,
     ),
     net: Money(
-        3834869587,
+        3872336205,
     ),
     storage: {},
     energy_by_kind: {
         Coal: MegawattHours(
-            446319.703438,
+            446361.583784,
         ),
         Ccgt: MegawattHours(
-            370352.633734,
+            368426.065737,
         ),
         Peaker: MegawattHours(
-            121097.341423,
+            111057.971382,
         ),
     },
     merit_order: [
@@ -49,7 +49,7 @@ MonthlyReport {
                 30.0,
             ),
             energy: MegawattHours(
-                446319.703438,
+                446361.583784,
             ),
         },
         MeritOrderEntry {
@@ -61,7 +61,7 @@ MonthlyReport {
                 45.0,
             ),
             energy: MegawattHours(
-                370352.633734,
+                368426.065737,
             ),
         },
         MeritOrderEntry {
@@ -73,39 +73,39 @@ MonthlyReport {
                 150.0,
             ),
             energy: MegawattHours(
-                121097.341423,
+                111057.971382,
             ),
         },
     ],
     demand: MegawattHours(
-        2707802.12696,
+        2656852.48145,
     ),
     served: MegawattHours(
-        940407.965273,
+        927600.823524,
     ),
     unserved: MegawattHours(
-        1767394.16168,
+        1729251.65793,
     ),
     curtailed: MegawattHours(
         0.0,
     ),
     imbalance: MegawattHours(
-        -2638.28667839,
+        -1755.20261991,
     ),
     overgeneration: MegawattHours(
-        1340.66525003,
+        1517.20812022,
     ),
     rotating_outage: MegawattHours(
-        1764166.1719,
+        1726825.38604,
     ),
     peak_outage_share: Ratio(
         0.719146637861,
     ),
     peak_demand: Megawatts(
-        4874.02228303,
+        4519.60126443,
     ),
     reliability: Ratio(
-        0.347295674197,
+        0.349135238031,
     ),
     incidents: [
         Incident {
@@ -149,6 +149,14 @@ MonthlyReport {
             },
         },
         Incident {
+            tick: 299,
+            kind: LoadShed {
+                mw: Megawatts(
+                    66.8157057218,
+                ),
+            },
+        },
+        Incident {
             tick: 300,
             kind: RotatingOutage {
                 share: Ratio(
@@ -181,6 +189,22 @@ MonthlyReport {
             },
         },
         Incident {
+            tick: 514,
+            kind: LoadShed {
+                mw: Megawatts(
+                    66.8361744989,
+                ),
+            },
+        },
+        Incident {
+            tick: 532,
+            kind: LoadShed {
+                mw: Megawatts(
+                    66.5399048194,
+                ),
+            },
+        },
+        Incident {
             tick: 540,
             kind: RotatingOutage {
                 share: Ratio(
@@ -197,18 +221,42 @@ MonthlyReport {
             },
         },
         Incident {
-            tick: 660,
-            kind: RotatingOutage {
-                share: Ratio(
-                    0.701219827512,
+            tick: 610,
+            kind: LoadShed {
+                mw: Megawatts(
+                    66.5065639609,
                 ),
             },
         },
         Incident {
-            tick: 765,
+            tick: 626,
             kind: LoadShed {
                 mw: Megawatts(
-                    66.5082195253,
+                    67.070716601,
+                ),
+            },
+        },
+        Incident {
+            tick: 641,
+            kind: LoadShed {
+                mw: Megawatts(
+                    67.2781027068,
+                ),
+            },
+        },
+        Incident {
+            tick: 658,
+            kind: LoadShed {
+                mw: Megawatts(
+                    66.6952350249,
+                ),
+            },
+        },
+        Incident {
+            tick: 660,
+            kind: RotatingOutage {
+                share: Ratio(
+                    0.701219827512,
                 ),
             },
         },
@@ -221,34 +269,10 @@ MonthlyReport {
             },
         },
         Incident {
-            tick: 805,
-            kind: LoadShed {
-                mw: Megawatts(
-                    66.6516470018,
-                ),
-            },
-        },
-        Incident {
             tick: 840,
             kind: RotatingOutage {
                 share: Ratio(
                     0.707393614719,
-                ),
-            },
-        },
-        Incident {
-            tick: 846,
-            kind: LoadShed {
-                mw: Megawatts(
-                    66.9168222539,
-                ),
-            },
-        },
-        Incident {
-            tick: 898,
-            kind: LoadShed {
-                mw: Megawatts(
-                    66.819870313,
                 ),
             },
         },
@@ -277,42 +301,10 @@ MonthlyReport {
             },
         },
         Incident {
-            tick: 1056,
-            kind: LoadShed {
-                mw: Megawatts(
-                    66.8834162753,
-                ),
-            },
-        },
-        Incident {
-            tick: 1072,
-            kind: LoadShed {
-                mw: Megawatts(
-                    67.4259906017,
-                ),
-            },
-        },
-        Incident {
             tick: 1080,
             kind: RotatingOutage {
                 share: Ratio(
                     0.716309735213,
-                ),
-            },
-        },
-        Incident {
-            tick: 1102,
-            kind: LoadShed {
-                mw: Megawatts(
-                    67.5832225634,
-                ),
-            },
-        },
-        Incident {
-            tick: 1115,
-            kind: LoadShed {
-                mw: Megawatts(
-                    67.0911226503,
                 ),
             },
         },
@@ -359,7 +351,7 @@ MonthlyReport {
     ],
     over_frequency_trips: 0,
     out_of_band_share: Ratio(
-        0.161111111111,
+        0.0958333333333,
     ),
     frequency_failed: true,
     frequency_notice: false,

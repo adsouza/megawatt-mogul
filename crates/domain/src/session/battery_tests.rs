@@ -450,3 +450,43 @@ fn no_op_generator_commands_change_nothing_and_real_ones_replan_storage() {
         "a real generator change re-plans storage on the next tick"
     );
 }
+
+#[test]
+fn supply_forecast_reports_battery_power_and_deliverable_energy() {
+    let (mut s, id) = storage_session();
+    // Take the evening thermal capacity away, so the battery discharges after 17:00.
+    for p in s.plant_views() {
+        if matches!(p.kind, PlantKind::Ccgt | PlantKind::Peaker) {
+            let mut hours = [true; 24];
+            hours[17..].fill(false);
+            s.commit_plant(p.id, hours).unwrap();
+        }
+    }
+    let spec = s.region.spec(PlantKind::Battery).battery.unwrap();
+    let capacity = s.region.spec(PlantKind::Battery).capacity;
+    let ceiling = spec.energy_capacity.value() * spec.discharge_efficiency.value();
+    let forecast = s.supply_forecast();
+    assert_eq!(forecast.minutes[18 * 60].battery_power, capacity);
+    let mut previous = f64::INFINITY;
+    let mut discharged = false;
+    for point in &forecast.minutes[17 * 60..] {
+        let energy = point.battery_deliverable_energy.value();
+        assert!(energy <= ceiling + 1e-9, "{energy} > {ceiling}");
+        if point.battery_discharge > Megawatts::ZERO {
+            discharged = true;
+            assert!(energy <= previous + 1e-9);
+        }
+        previous = energy;
+    }
+    assert!(discharged, "the evening gap is covered from storage");
+
+    s.set_battery_enabled(id, false).unwrap();
+    let forecast = s.supply_forecast();
+    assert_eq!(forecast.minutes[18 * 60].battery_power, Megawatts::ZERO);
+    assert!(
+        forecast
+            .minutes
+            .iter()
+            .all(|p| p.battery_deliverable_energy == MegawattHours::ZERO)
+    );
+}

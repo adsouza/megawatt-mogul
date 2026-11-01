@@ -28,6 +28,8 @@ pub struct ClientPreferences {
     pub effects: bool,
     /// Overlay stored MWh on the supply chart rather than using a separate pane.
     pub combined_supply_chart: bool,
+    /// Plan commitments automatically at the start of each Planning phase.
+    pub auto_commitments: bool,
     /// egui panel IDs mapped to outer sizes in logical points.
     pub panels: BTreeMap<String, [f32; 2]>,
     /// Movable tool IDs mapped to position and size in logical points.
@@ -42,6 +44,7 @@ impl Default for ClientPreferences {
             speed: 1,
             effects: true,
             combined_supply_chart: false,
+            auto_commitments: true,
             panels: BTreeMap::new(),
             tools: BTreeMap::new(),
         }

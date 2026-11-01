@@ -133,14 +133,18 @@ proptest! {
             let (rise, set) = table[month as usize - 1];
             let solar_capacity = s.region.spec(PlantKind::Solar).capacity.value();
             let irradiance = s.region.terrain().get(CellCoord { x: 6, y: 1 }).unwrap().irradiance.value();
-            let clearness = s.region.solar().clearness_mean[month as usize - 1];
+            // Planning reads the day-ahead forecast (spec 2026-10-31 §3.3).
+            let forecast = s.power.weather_forecast().clone();
+            let clearness = forecast.expected_clearness;
             for (tick, point) in preview.minutes.iter().enumerate() {
                 let hour = tick as f64 / 60.0;
                 let sun = if hour <= rise || hour >= set { 0.0 } else { (std::f64::consts::PI * (hour - rise) / (set - rise)).sin() };
                 prop_assert!((point.generation[&PlantKind::Solar].value() - solar_capacity * irradiance * sun * clearness).abs() < 1e-6);
                 let expected_wind = s.region.spec(PlantKind::Wind).capacity.value()
                     * s.region.terrain().get(CellCoord { x: 7, y: 1 }).unwrap().wind_potential.value()
-                    * s.region.wind().monthly[month as usize - 1];
+                    * (s.region.wind().monthly[month as usize - 1]
+                        + forecast.wind_deviation(tick as u32))
+                    .clamp(0.0, 1.0);
                 prop_assert!((point.generation[&PlantKind::Wind].value() - expected_wind).abs() < 1e-6);
                 if tick >= usize::from(limits.charge_end_hour) * 60 { prop_assert_eq!(point.battery_charge, Megawatts::ZERO); }
                 let water_mw = point.generation.get(&PlantKind::Hydro).copied().unwrap_or(Megawatts::ZERO).value();

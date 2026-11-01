@@ -138,6 +138,7 @@ fn load(
         } else {
             SupplyChartLayout::Separate
         };
+        ui.auto_commitments = crate::hud::AutoCommitments(settings.value.auto_commitments);
     }
     if let Some(mut controls) = controls {
         controls.effects = settings.value.effects;
@@ -175,6 +176,7 @@ fn observe_egui(
     if let Some(ui) = ui {
         settings.value.combined_supply_chart =
             ui.supply_chart_layout == SupplyChartLayout::Combined;
+        settings.value.auto_commitments = ui.auto_commitments.0;
     }
     if let Some(controls) = controls {
         settings.value.effects = controls.effects;

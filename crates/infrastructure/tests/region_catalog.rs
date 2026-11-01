@@ -1651,3 +1651,96 @@ fn unlock_rejects_zero_and_unknown_fields() {
         );
     }
 }
+
+/// Loads `source` as Western Interconnection beside copies of the shipped sidecars, so only the
+/// edit to the source can fail.
+fn load_edited_western(source: String) -> Result<application::LoadedRegion, RegionLoadError> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/regions");
+    let dir = TempDir::new().unwrap();
+    let sidecars = dir.path().join("western_interconnection");
+    fs::create_dir(&sidecars).unwrap();
+    for entry in fs::read_dir(root.join("western_interconnection")).unwrap() {
+        let entry = entry.unwrap();
+        fs::copy(entry.path(), sidecars.join(entry.file_name())).unwrap();
+    }
+    fs::write(dir.path().join("western_interconnection.ron"), source).unwrap();
+    RonRegionCatalog::new(dir.path()).load(&RegionId::new("western_interconnection"))
+}
+
+#[test]
+fn region_schema6_requires_weather_and_schema5_defaults_to_one() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/regions");
+    let shipped = RonRegionCatalog::new(&root);
+    for id in [
+        "brazil_sin",
+        "continental_europe_maghreb",
+        "eastern_interconnection",
+        "india_nepal_bhutan",
+        "ips_ups",
+        "sgcc",
+        "southern_china",
+        "western_interconnection",
+    ] {
+        let loaded = shipped.load(&RegionId::new(id)).unwrap();
+        assert_eq!(loaded.definition.weather().surprise_share, 0.5, "{id}");
+    }
+    let text = fs::read_to_string(root.join("western_interconnection.ron")).unwrap();
+    assert!(
+        load_edited_western(text.clone()).is_ok(),
+        "unedited source loads"
+    );
+    // Delete the field outright: renaming the key would fail on `deny_unknown_fields` anyway.
+    let error = load_edited_western(without_top_level_field(&text, "weather")).unwrap_err();
+    assert!(
+        matches!(
+            &error,
+            RegionLoadError::Invalid {
+                error: RegionError::MissingField { field: "weather" },
+                ..
+            }
+        ),
+        "{error}"
+    );
+    let schema5 = text.replacen("region_schema: 6", "region_schema: 5", 1);
+    let error = load_edited_western(schema5.clone()).unwrap_err();
+    assert!(
+        matches!(
+            &error,
+            RegionLoadError::Invalid {
+                error: RegionError::InvalidShape {
+                    field: "region_schema"
+                },
+                ..
+            }
+        ),
+        "{error}"
+    );
+    let loaded = load_edited_western(without_top_level_field(&schema5, "weather")).unwrap();
+    assert_eq!(loaded.definition.weather().surprise_share, 1.0);
+}
+
+/// `text` without the top-level `field: (...)` entry, its trailing comma and line.
+fn without_top_level_field(text: &str, field: &str) -> String {
+    let key = format!("\n    {field}: (");
+    let start = text
+        .find(&key)
+        .unwrap_or_else(|| panic!("{field} in source"))
+        + 1;
+    let mut depth = 0;
+    let mut end = start;
+    for (i, c) in text[start..].char_indices() {
+        match c {
+            '(' | '[' => depth += 1,
+            ')' | ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = start + i + 1;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let end = end + text[end..].find('\n').expect("line end") + 1;
+    format!("{}{}", &text[..start], &text[end..])
+}

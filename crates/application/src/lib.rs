@@ -4,6 +4,7 @@
 //! and the `Game` service), the read-side projections, and the ports that
 //! adapters implement.
 
+mod auto_commit;
 pub mod checkpoint;
 pub mod command;
 pub mod error;
@@ -14,6 +15,7 @@ pub mod projections;
 pub mod save;
 pub use save::*;
 
+pub use auto_commit::automatic_commitment_commands;
 pub use checkpoint::{
     CheckpointSummary, GameCheckpoint, MigrationOrigin, PortableState, RestoreError, portable_hash,
 };
