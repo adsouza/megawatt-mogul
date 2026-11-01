@@ -213,6 +213,32 @@ fn linked_islands_stay_covered() {
     for (id, pattern) in &plan {
         s.commit_plant(*id, pattern.hours()).unwrap();
     }
+    assert!(
+        plan.values()
+            .any(|pattern| *pattern != CommitmentSchedule::all_day()),
+        "the planner trimmed something: {plan:?}"
+    );
+    // Power crosses the link under the plan: an island imports in some hour while another
+    // exports, so trimming one island really changes what the other can count on.
+    let flows: Vec<Vec<f64>> = s
+        .power
+        .island_nodes()
+        .keys()
+        .map(|id| {
+            let island = s.island_session(*id).unwrap();
+            (0..24)
+                .map(|hour| island.power.scheduled_injection(hour * 60 + 30).value())
+                .collect()
+        })
+        .collect();
+    assert!(
+        flows.iter().any(|hours| hours.iter().any(|mw| *mw > 1.0)),
+        "an island imports: {flows:?}"
+    );
+    assert!(
+        flows.iter().any(|hours| hours.iter().any(|mw| *mw < -1.0)),
+        "an island exports: {flows:?}"
+    );
     // Re-planned transfers included: every island still clears its floor.
     let after = s.evaluate(&BTreeMap::new());
     assert!(after.covers(&floor));
