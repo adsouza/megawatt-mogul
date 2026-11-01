@@ -327,7 +327,6 @@ impl GameSession {
         let regulator = Regulator::new(region.regulator());
         // The first Planning phase begins now, so its day-ahead forecast is drawn now.
         let mut rng = SimRng::from_seed(seed);
-        let mut power = power;
         power.draw_weather_forecast(&region, month, &mut rng);
         Self {
             geothermal_available: region.geothermal().is_some(),

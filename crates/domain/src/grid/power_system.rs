@@ -33,9 +33,7 @@ use super::summary::TickSummary;
 use crate::demand::{DemandCenter, DemandNoise, forecast_demand, hourly_forecast};
 use crate::error::DomainError;
 use crate::events::DomainEvent;
-use crate::generation::{
-    BoundaryStart, CommitmentAction, Plant, PlantStatus, commitment_actions, draw_clearness,
-};
+use crate::generation::{BoundaryStart, CommitmentAction, Plant, PlantStatus, commitment_actions};
 use crate::ids::{CellCoord, CityId, NodeId, PlantId};
 use crate::region::{Cell, FrequencyParams, PlantKind, RegionDefinition};
 use crate::rng::SimRng;
@@ -363,11 +361,7 @@ impl PowerSystem {
             }
         }
         if self.shared_error.is_none() {
-            self.clearness = draw_clearness(region.solar(), month, rng);
-            let wind = region.wind();
-            self.wind_factor = (wind.monthly[month.index0()]
-                + wind.initial_sd * rng.standard_normal())
-            .clamp(0.0, 1.0);
+            self.draw_day_weather(region, month, rng);
         }
         self.wind_tick = Some(0);
         self.wind_month = Some(month);
@@ -574,14 +568,7 @@ impl PowerSystem {
     ) -> f64 {
         let error = self.noise.step(region.demand_noise(), rng);
         if tick > 0 {
-            let w = region.wind();
-            self.wind_factor = crate::generation::wind_step(
-                self.wind_factor,
-                w.monthly[month.index0()],
-                w.persistence,
-                w.innovation_sd,
-                rng.standard_normal(),
-            );
+            self.step_day_wind(region, month, tick, rng);
         }
         self.wind_tick = Some(tick);
         self.wind_month = Some(month);

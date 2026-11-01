@@ -5,7 +5,7 @@ use domain::{
 };
 #[test]
 fn geothermal_wire_contract_is_schema6_and_kind8() {
-    assert!(CURRENT_STATE_SCHEMA >= 8);
+    const { assert!(CURRENT_STATE_SCHEMA >= 8) };
     let kind = PlantKind::from_state_bytes_schema(&[8], 6).unwrap();
     assert!(kind.is_dispatchable());
     assert!(!kind.is_variable());

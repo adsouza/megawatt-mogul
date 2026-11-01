@@ -62,10 +62,49 @@ crate::state_record!(WeatherForecast {
 });
 
 impl PowerSystem {
+    /// The day's actual weather at the start of the day: the forecast plus the surprise. Draws
+    /// one normal for clearness, then one for the initial wind.
+    pub(super) fn draw_day_weather(
+        &mut self,
+        region: &RegionDefinition,
+        month: SimMonth,
+        rng: &mut SimRng,
+    ) {
+        let (weather, solar, wind) = (region.weather(), region.solar(), region.wind());
+        self.clearness = (self.weather_forecast.clearness
+            + weather.surprise_sd(solar.clearness_sd) * rng.standard_normal())
+        .clamp(MIN_CLEARNESS, MAX_CLEARNESS);
+        self.wind_factor = (wind.monthly[month.index0()]
+            + self.weather_forecast.wind_deviation(0)
+            + weather.surprise_sd(wind.initial_sd) * rng.standard_normal())
+        .clamp(0.0, 1.0);
+    }
+
+    /// One minute's actual wind factor around the forecast path. Draws one normal.
+    pub(super) fn step_day_wind(
+        &mut self,
+        region: &RegionDefinition,
+        month: SimMonth,
+        tick: u32,
+        rng: &mut SimRng,
+    ) {
+        let (weather, wind) = (region.weather(), region.wind());
+        self.wind_factor = crate::generation::wind_step_with_forecast(
+            self.wind_factor,
+            wind.monthly[month.index0()],
+            self.weather_forecast.wind_deviation(tick - 1),
+            self.weather_forecast.wind_deviation(tick),
+            wind.persistence,
+            weather.surprise_sd(wind.innovation_sd),
+            rng.standard_normal(),
+        );
+    }
+
     pub fn weather_forecast(&self) -> &WeatherForecast {
         &self.weather_forecast
     }
 
+    #[cfg(test)]
     pub(crate) fn set_weather_forecast(&mut self, forecast: WeatherForecast) {
         self.weather_forecast = forecast;
     }
@@ -179,5 +218,87 @@ mod tests {
                 crate::generation::MAX_CLEARNESS
             )
         );
+    }
+}
+
+#[cfg(test)]
+mod day_tests {
+    use crate::generation::{draw_clearness, wind_step};
+    use crate::region::RegionDefinition;
+    use crate::region::fixtures::tiny_region_parts;
+    use crate::rng::SimRng;
+    use crate::time::{SimMonth, TICKS_PER_DAY};
+
+    fn april() -> SimMonth {
+        SimMonth::new(2027, 4).unwrap()
+    }
+
+    fn region_with_share(share: f64) -> RegionDefinition {
+        let mut parts = tiny_region_parts();
+        parts.weather.surprise_share = share;
+        RegionDefinition::try_from(parts).unwrap()
+    }
+
+    /// A Planning forecast, then the day's weather: clearness and every minute's wind factor.
+    fn played_day(region: &RegionDefinition, seed: u64) -> (super::WeatherForecast, f64, Vec<f64>) {
+        let mut sys = super::super::tests::system_with(region, &[]);
+        let mut rng = SimRng::from_seed(seed);
+        sys.draw_weather_forecast(region, april(), &mut rng);
+        sys.begin_day(region, april(), &mut rng);
+        let mut winds = vec![sys.wind_factor()];
+        for tick in 1..TICKS_PER_DAY {
+            sys.tick(region, april(), tick, &mut rng);
+            winds.push(sys.wind_factor());
+        }
+        (sys.weather_forecast().clone(), sys.clearness, winds)
+    }
+
+    #[test]
+    fn share_one_reproduces_todays_day_bit_for_bit() {
+        let region = region_with_share(1.0);
+        let (_, clearness, winds) = played_day(&region, 21);
+        // Today's day, on a generator advanced past the 1 + 1440 forecast normals.
+        let mut reference = SimRng::from_seed(21);
+        for _ in 0..=TICKS_PER_DAY {
+            reference.standard_normal();
+        }
+        let expected_clearness = draw_clearness(region.solar(), april(), &mut reference);
+        let w = region.wind();
+        let m = w.monthly[april().index0()];
+        let mut expected = vec![(m + w.initial_sd * reference.standard_normal()).clamp(0.0, 1.0)];
+        for _ in 1..TICKS_PER_DAY {
+            reference.standard_normal(); // the minute's demand noise draw
+            let previous = *expected.last().unwrap();
+            expected.push(wind_step(
+                previous,
+                m,
+                w.persistence,
+                w.innovation_sd,
+                reference.standard_normal(),
+            ));
+        }
+        assert_eq!(clearness.to_bits(), expected_clearness.to_bits());
+        assert_eq!(winds, expected);
+    }
+
+    #[test]
+    fn share_zero_makes_the_day_the_forecast() {
+        let region = region_with_share(0.0);
+        let (forecast, clearness, winds) = played_day(&region, 22);
+        assert_eq!(
+            clearness,
+            forecast.clearness.clamp(
+                crate::generation::MIN_CLEARNESS,
+                crate::generation::MAX_CLEARNESS
+            )
+        );
+        let m = region.wind().monthly[april().index0()];
+        for (tick, wind) in winds.iter().enumerate() {
+            let expected = (m + forecast.wind_deviation(tick as u32)).clamp(0.0, 1.0);
+            assert!(
+                (wind - expected).abs() < 1e-12,
+                "tick {tick}: {wind} vs {expected}"
+            );
+        }
     }
 }

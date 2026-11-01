@@ -23,4 +23,4 @@ pub use solar::{
     SunAngles, declination_deg, draw_clearness, solar_available, sun_angles, sun_factor,
 };
 
-pub use wind::{wind_available, wind_step};
+pub use wind::{wind_available, wind_step, wind_step_with_forecast};

@@ -502,10 +502,7 @@ impl PowerSystem {
         rng: &mut SimRng,
     ) -> DayInitialisation {
         self.recompute_islands();
-        self.clearness = draw_clearness(region.solar(), month, rng);
-        let wind = region.wind();
-        self.wind_factor = (wind.monthly[month.index0()] + wind.initial_sd * rng.standard_normal())
-            .clamp(0.0, 1.0);
+        self.draw_day_weather(region, month, rng);
         self.wind_tick = Some(0);
         self.wind_month = Some(month);
         self.noise = DemandNoise::default();
