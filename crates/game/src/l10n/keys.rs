@@ -364,6 +364,7 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "ui-quit",
     "ui-back",
     "ui-continue",
+    "commitment-updating",
     "ui-close",
     "menu-continue",
     "menu-continue-details",

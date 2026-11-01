@@ -84,6 +84,10 @@ cargo run -p game -- --assets <dir> --log-dir <dir> --save-dir <dir>
   records its own log there, named for the time, region and seed. A crash writes
   `crash-<time>.txt` there too, with the panic message, a backtrace and the path of the running
   game's log, which replays the game up to the crash.
+  Automatic commitment also writes `<session>.log.diagnostics.log` beside the command log,
+  including candidate costs, coverage margins, screening/search limits and reasons for keeping
+  plants online at equal estimated cost. Every run is recorded, including runs that change no
+  commitments. These diagnostics are separate from snapshots and are not required for replay.
 - `--save-dir` holds game saves, `preferences.ron` and `progress.ron` (default `./saves`). Storage errors do not
   prevent a new game from starting.
 - `--version` prints the game's version and exits.
@@ -134,6 +138,12 @@ lines together, a full year of seasonal demand and a retained cash buffer.
 This balance applies to new games. Existing saves retain their original region tuning and build times.
 
 ## Saving and resuming
+
+Automatic commitment prepares next month's plan in the background while the monthly review is
+open. **Continue** opens the forecast immediately. If the plan is still being calculated, the
+forecast shows **Updating commitments…** and **Start the day** waits for it. Editing a commitment
+or making an applied Planning change discards a late automatic result so it cannot replace your
+choices.
 
 Use **Save game** in any phase, including the final review. Give a new slot a name or confirm an
 existing manual slot to overwrite it. Saving pauses play and includes applied changes; schedule

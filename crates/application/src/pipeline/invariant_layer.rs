@@ -17,6 +17,10 @@ impl<H> InvariantCheckLayer<H> {
 }
 
 impl<H: CommandHandler> CommandHandler for InvariantCheckLayer<H> {
+    fn record_diagnostic(&mut self, text: &str) -> Result<(), crate::CommandLogError> {
+        self.inner.record_diagnostic(text)
+    }
+
     fn handle(
         &mut self,
         session: &mut GameSession,

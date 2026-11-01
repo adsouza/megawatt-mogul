@@ -15,7 +15,10 @@ pub mod projections;
 pub mod save;
 pub use save::*;
 
-pub use auto_commit::automatic_commitment_commands;
+pub use auto_commit::{
+    AutomaticCommitmentRun, PreparedReviewCommitments, ReviewCommitmentWork,
+    automatic_commitment_commands, automatic_commitment_run,
+};
 pub use checkpoint::{
     CheckpointSummary, GameCheckpoint, MigrationOrigin, PortableState, RestoreError, portable_hash,
 };

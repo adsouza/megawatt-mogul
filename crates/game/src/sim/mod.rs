@@ -8,9 +8,12 @@
 //! - [`drive_ticks`] sends `AdvanceTicks { n: speed }` from `FixedUpdate`, at 4 Hz.
 
 mod driver;
+mod executor;
 mod new_game;
 mod persistence;
+pub(crate) mod review_commitments;
 pub use persistence::{PersistAction, Persistence, SaveScreen, SessionGeneration};
+pub use review_commitments::ReviewCommitmentCache;
 
 use application::{Command, CommandError, Game};
 use bevy::prelude::*;
@@ -48,6 +51,10 @@ pub struct PlayerCommand(pub Command, pub u64);
 /// recorded the same way, but a refusal is a planner bug: it is logged, never shown as a toast.
 #[derive(Message, Debug, Clone, PartialEq)]
 pub struct PlannerCommand(pub Command, pub u64);
+
+/// Evidence from the same computation as the queued planner commands, including no-op runs.
+#[derive(Message, Debug, Clone, PartialEq)]
+pub struct PlannerDiagnostic(pub String, pub u64);
 
 /// A command (or a new game) that was refused. The session is unchanged.
 #[derive(Message, Debug, Clone, PartialEq)]
@@ -133,6 +140,7 @@ impl Plugin for SimulationPlugin {
         let in_menus = in_state(AppState::MainMenu).or_else(in_state(AppState::RegionSelect));
         app.add_message::<PlayerCommand>()
             .add_message::<PlannerCommand>()
+            .add_message::<PlannerDiagnostic>()
             .add_message::<CommandFailed>()
             .add_message::<DomainEventMessage>()
             .add_message::<NewGameRequest>()
@@ -142,6 +150,7 @@ impl Plugin for SimulationPlugin {
             .init_resource::<TicksInFlight>()
             .init_resource::<Persistence>()
             .init_resource::<SessionGeneration>()
+            .init_resource::<ReviewCommitmentCache>()
             // `main.rs` inserts the context its panic hook reads; tests get an unconnected one.
             .init_resource::<CrashContext>()
             .configure_sets(Update, SimSet::Persist.after(SimSet::Apply))
@@ -204,6 +213,7 @@ fn insert_catalog(mut commands: Commands, root: Res<AssetRoot>) {
 /// month closed) is refused by the domain like any other: one `CommandFailed`, nothing applied.
 #[allow(clippy::too_many_arguments)] // Independent ECS resources and message channels.
 pub fn apply_player_commands(
+    mut diagnostics: MessageReader<PlannerDiagnostic>,
     mut planned: MessageReader<PlannerCommand>,
     mut commands: MessageReader<PlayerCommand>,
     mut session: ResMut<Session>,
@@ -213,6 +223,9 @@ pub fn apply_player_commands(
     mut persistence: ResMut<Persistence>,
     generation: Res<SessionGeneration>,
 ) {
+    for diagnostic in diagnostics.read().filter(|m| m.1 == generation.0) {
+        session.0.record_planner_diagnostic(&diagnostic.0);
+    }
     // The planner's commands go first: they were sent as Planning began, before any click.
     persistence.pending.extend(
         planned
@@ -299,6 +312,7 @@ fn enter_game(
     in_flight.0 = false;
 }
 
+#[allow(clippy::too_many_arguments)] // Independent ECS resources cleaned up at game exit.
 fn leave_game(
     mut commands: Commands,
     mut persistence: ResMut<Persistence>,
@@ -307,7 +321,9 @@ fn leave_game(
     mut speed: ResMut<SimSpeed>,
     mut in_flight: ResMut<TicksInFlight>,
     crash: Res<CrashContext>,
+    mut review_commitments: ResMut<ReviewCommitmentCache>,
 ) {
+    review_commitments.clear();
     commands.remove_resource::<Session>();
     crash.set_game_log(None);
     persistence.abandon();

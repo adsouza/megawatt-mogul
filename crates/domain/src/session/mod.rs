@@ -10,7 +10,10 @@
 
 mod activation;
 mod auto_commit;
-pub use auto_commit::CommitmentPlan;
+pub use auto_commit::{
+    AutomaticCommitmentSearch, CommitmentCandidate, CommitmentComparison, CommitmentDecision,
+    CommitmentPlan, CommitmentReport, CommitmentScore,
+};
 #[cfg(test)]
 mod battery_tests;
 mod commands;

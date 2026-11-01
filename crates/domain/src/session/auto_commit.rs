@@ -3,7 +3,7 @@
 //! the session, so transfers, hydro and storage previews are re-planned exactly as the Planning
 //! checks would re-plan them.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 use super::GameSession;
 use crate::generation::{CommitmentSchedule, Plant, PlantStatus};
@@ -14,7 +14,67 @@ use crate::time::{TICKS_PER_DAY, TICKS_PER_HOUR};
 /// Commitment patterns by plant.
 pub type CommitmentPlan = BTreeMap<PlantId, CommitmentSchedule>;
 
-/// Megawatts and dollars below this are float noise, not a difference between plans.
+/// Pure diagnostic data; formatting and recording belong to the outer layers.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CommitmentReport {
+    pub plan: CommitmentPlan,
+    pub demand_cushion_factor: f64,
+    pub score_tolerance: f64,
+    pub evaluation_limit_per_plant: usize,
+    pub reference_score: CommitmentScore,
+    pub selected_score: CommitmentScore,
+    /// In the planner's actual evaluation order, most expensive first.
+    pub decisions: Vec<CommitmentDecision>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CommitmentScore {
+    /// Forecast-day fuel plus recurring starts, in the region's currency units.
+    pub estimated_cost: f64,
+    /// Sum of sampled minimum-generation surplus (MW), not energy.
+    pub excess: f64,
+    /// Tightest assessed supply margin above the preserved all-day coverage floor.
+    pub minimum_floor_margin_mw: Option<f64>,
+    /// Tightest margin against the full cushioned demand, even if the fleet is inadequate.
+    pub minimum_demand_margin_mw: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CommitmentDecision {
+    pub plant: PlantId,
+    pub kind: PlantKind,
+    pub grid: NodeId,
+    pub before: CommitmentScore,
+    pub selected: CommitmentSchedule,
+    pub selected_score: CommitmentScore,
+    pub valid_candidates: usize,
+    pub capacity_screened: usize,
+    pub evaluation_limited: usize,
+    /// Conservative hourly capacity screen margin for switching this plant off all day.
+    pub all_off_screen_margin_mw: f64,
+    pub candidates: Vec<CommitmentCandidate>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CommitmentCandidate {
+    pub hours: [bool; 24],
+    pub score: CommitmentScore,
+    /// The incumbent at this point in the search, including any earlier accepted candidate.
+    pub compared_to: CommitmentScore,
+    pub covers_floor: bool,
+    pub comparison: CommitmentComparison,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommitmentComparison {
+    LowerExcess,
+    HigherExcess,
+    LowerCost,
+    HigherCost,
+    EqualScore,
+}
+
+/// Megawatts and currency units below this are float noise, not a difference between plans.
 const TOLERANCE: f64 = 1e-6;
 /// Candidates fully evaluated per plant, best estimates first.
 const FULL_EVALUATIONS: usize = 8;
@@ -26,7 +86,7 @@ struct Evaluation {
     samples: BTreeMap<NodeId, BTreeMap<u32, (f64, f64)>>,
     /// Committed minimum generation above the net load, summed over the samples (MW).
     excess: f64,
-    /// Fuel and start-ups on the forecast day, in dollars.
+    /// Fuel and start-ups on the forecast day, in the region's currency units.
     cost: f64,
 }
 
@@ -34,6 +94,42 @@ struct Evaluation {
 struct Floor(BTreeMap<NodeId, BTreeMap<u32, f64>>);
 
 impl Evaluation {
+    fn score(&self, floor: &Floor) -> CommitmentScore {
+        CommitmentScore {
+            estimated_cost: self.cost,
+            excess: self.excess,
+            minimum_floor_margin_mw: floor
+                .0
+                .iter()
+                .flat_map(|(id, ticks)| {
+                    ticks
+                        .iter()
+                        .map(|(tick, required)| self.samples[id][tick].1 - required)
+                })
+                .reduce(f64::min),
+            minimum_demand_margin_mw: self
+                .samples
+                .values()
+                .flat_map(|ticks| ticks.values().map(|(required, supply)| supply - required))
+                .reduce(f64::min),
+        }
+    }
+
+    fn comparison(&self, other: &Evaluation) -> CommitmentComparison {
+        if (self.excess - other.excess).abs() > TOLERANCE {
+            if self.excess < other.excess {
+                CommitmentComparison::LowerExcess
+            } else {
+                CommitmentComparison::HigherExcess
+            }
+        } else if self.cost < other.cost - TOLERANCE {
+            CommitmentComparison::LowerCost
+        } else if other.cost < self.cost - TOLERANCE {
+            CommitmentComparison::HigherCost
+        } else {
+            CommitmentComparison::EqualScore
+        }
+    }
     fn floor(&self) -> Floor {
         Floor(
             self.samples
@@ -141,69 +237,203 @@ fn trimmable(plant: &Plant, connected: bool) -> bool {
         )
 }
 
-impl GameSession {
-    /// The commitment patterns that cover the coming day's forecast plus its cushion while
-    /// burning the least expensive fuel (spec 2026-10-31 §4). Only connected, commissioned
-    /// coal, CCGT and peaker plants on AGC are returned; everything else is left as it is.
-    /// Pure: the session is unchanged.
-    pub fn automatic_commitment_plan(&self) -> CommitmentPlan {
-        let mut order: Vec<&Plant> = self
+/// The same bounded search as the synchronous query, with cooperative step boundaries.
+pub struct AutomaticCommitmentSearch {
+    session: GameSession,
+    order: VecDeque<PlantId>,
+    plan: CommitmentPlan,
+    best: Evaluation,
+    floor: Floor,
+    reference_score: CommitmentScore,
+    decisions: Vec<CommitmentDecision>,
+    current: Option<PlantSearch>,
+}
+
+struct PlantSearch {
+    plant: PlantId,
+    kind: PlantKind,
+    grid: NodeId,
+    before: CommitmentScore,
+    valid_candidates: usize,
+    capacity_screened: usize,
+    evaluation_limited: usize,
+    all_off_screen_margin_mw: f64,
+    remaining: VecDeque<[bool; 24]>,
+    evaluated: Vec<CommitmentCandidate>,
+    chosen: Option<(CommitmentSchedule, Evaluation)>,
+}
+
+impl AutomaticCommitmentSearch {
+    /// Takes an owned snapshot; no live simulation state is touched.
+    pub fn new(session: GameSession) -> Self {
+        let mut plants: Vec<&Plant> = session
             .trimmable_ids()
             .into_iter()
-            .filter_map(|id| self.power.plant(id))
+            .filter_map(|id| session.power.plant(id))
             .collect();
-        // Most expensive first: peakers, then CCGTs, then coal.
-        order.sort_by(|a, b| {
+        plants.sort_by(|a, b| {
             b.spec()
                 .marginal_cost
                 .value()
                 .total_cmp(&a.spec().marginal_cost.value())
                 .then(b.id().cmp(&a.id()))
         });
-        let mut plan = self.all_day_plan();
-        let mut best = self.evaluate(&plan);
+        let order = plants.into_iter().map(Plant::id).collect();
+        let plan = session.all_day_plan();
+        let best = session.evaluate(&plan);
         let floor = best.floor();
-        for plant in order {
-            let spec = plant.commitment_spec();
-            let grid = self.grid_of(plant.node());
-            let slack = best.hourly_slack(&floor);
-            let slack = slack.get(&grid).copied().unwrap_or([f64::INFINITY; 24]);
-            let credit = plant.available_capacity().value();
-            let saving_per_hour = plant.min_output().value() * spec.marginal_cost.value();
-            let startup = spec.startup_cost.cents() as f64 / 100.0;
-            // Screen with the plant's own credit against the current slack, then judge the most
-            // promising few on a full trial.
-            let mut screened: Vec<(f64, [bool; 24])> =
-                candidates(|hours| CommitmentSchedule::try_new(hours, &spec).is_ok())
-                    .into_iter()
-                    .filter(|hours| (0..24).all(|h| hours[h] || slack[h] >= credit - TOLERANCE))
-                    .map(|hours| {
-                        let off = hours.iter().filter(|on| !**on).count() as f64;
-                        let estimate = off * saving_per_hour - f64::from(restarts(hours)) * startup;
-                        (estimate, hours)
-                    })
-                    .collect();
-            screened.sort_by(|a, b| b.0.total_cmp(&a.0));
-            let mut chosen: Option<(CommitmentSchedule, Evaluation)> = None;
-            for (_, hours) in screened.into_iter().take(FULL_EVALUATIONS) {
-                let Ok(schedule) = CommitmentSchedule::try_new(hours, &spec) else {
-                    continue;
-                };
-                let mut trial = plan.clone();
-                trial.insert(plant.id(), schedule);
-                let evaluation = self.evaluate(&trial);
-                let beats =
-                    evaluation.better_than(chosen.as_ref().map_or(&best, |(_, current)| current));
-                if evaluation.covers(&floor) && beats {
-                    chosen = Some((schedule, evaluation));
-                }
-            }
-            if let Some((schedule, evaluation)) = chosen {
-                plan.insert(plant.id(), schedule);
-                best = evaluation;
-            }
+        let reference_score = best.score(&floor);
+        Self {
+            session,
+            order,
+            plan,
+            best,
+            floor,
+            reference_score,
+            decisions: Vec::new(),
+            current: None,
         }
-        plan
+    }
+
+    fn begin_plant(&self, id: PlantId) -> PlantSearch {
+        let plant = self
+            .session
+            .power
+            .plant(id)
+            .expect("search owns its source fleet");
+        let spec = plant.commitment_spec();
+        let grid = self.session.grid_of(plant.node());
+        let slack = self.best.hourly_slack(&self.floor);
+        let slack = slack.get(&grid).copied().unwrap_or([f64::INFINITY; 24]);
+        let credit = plant.available_capacity().value();
+        let saving_per_hour = plant.min_output().value() * spec.marginal_cost.value();
+        let startup = spec.startup_cost.cents() as f64 / 100.0;
+        let valid = candidates(|hours| CommitmentSchedule::try_new(hours, &spec).is_ok());
+        let valid_candidates = valid.len();
+        let mut screened: Vec<(f64, [bool; 24])> = valid
+            .into_iter()
+            .filter(|hours| (0..24).all(|h| hours[h] || slack[h] >= credit - TOLERANCE))
+            .map(|hours| {
+                let off = hours.iter().filter(|on| !**on).count() as f64;
+                let estimate = off * saving_per_hour - f64::from(restarts(hours)) * startup;
+                (estimate, hours)
+            })
+            .collect();
+        screened.sort_by(|a, b| b.0.total_cmp(&a.0));
+        PlantSearch {
+            plant: id,
+            kind: plant.kind(),
+            grid,
+            before: self.best.score(&self.floor),
+            valid_candidates,
+            capacity_screened: valid_candidates - screened.len(),
+            evaluation_limited: screened.len().saturating_sub(FULL_EVALUATIONS),
+            all_off_screen_margin_mw: slack.into_iter().fold(f64::INFINITY, f64::min) - credit,
+            remaining: screened
+                .into_iter()
+                .take(FULL_EVALUATIONS)
+                .map(|(_, hours)| hours)
+                .collect(),
+            evaluated: Vec::new(),
+            chosen: None,
+        }
+    }
+
+    /// Returns true when complete. Repeated calls after completion are harmless.
+    pub fn advance(&mut self) -> bool {
+        if self.current.is_none() {
+            let Some(id) = self.order.pop_front() else {
+                return true;
+            };
+            self.current = Some(self.begin_plant(id));
+        }
+        let current = self
+            .current
+            .as_mut()
+            .expect("plant search just initialized");
+        if let Some(hours) = current.remaining.pop_front() {
+            let plant = self
+                .session
+                .power
+                .plant(current.plant)
+                .expect("owned source fleet");
+            let Ok(schedule) = CommitmentSchedule::try_new(hours, &plant.commitment_spec()) else {
+                return false;
+            };
+            let mut trial = self.plan.clone();
+            trial.insert(current.plant, schedule);
+            let evaluation = self.session.evaluate(&trial);
+            let incumbent = current.chosen.as_ref().map_or(&self.best, |(_, eval)| eval);
+            let beats = evaluation.better_than(incumbent);
+            let covers_floor = evaluation.covers(&self.floor);
+            current.evaluated.push(CommitmentCandidate {
+                hours,
+                score: evaluation.score(&self.floor),
+                compared_to: incumbent.score(&self.floor),
+                covers_floor,
+                comparison: evaluation.comparison(incumbent),
+            });
+            if covers_floor && beats {
+                current.chosen = Some((schedule, evaluation));
+            }
+            return false;
+        }
+        let current = self.current.take().expect("completed plant search");
+        if let Some((schedule, evaluation)) = current.chosen {
+            self.plan.insert(current.plant, schedule);
+            self.best = evaluation;
+        }
+        self.decisions.push(CommitmentDecision {
+            plant: current.plant,
+            kind: current.kind,
+            grid: current.grid,
+            before: current.before,
+            selected: self.plan[&current.plant],
+            selected_score: self.best.score(&self.floor),
+            valid_candidates: current.valid_candidates,
+            capacity_screened: current.capacity_screened,
+            evaluation_limited: current.evaluation_limited,
+            all_off_screen_margin_mw: current.all_off_screen_margin_mw,
+            candidates: current.evaluated,
+        });
+        self.order.is_empty()
+    }
+
+    /// Completes any remaining steps, then returns the unchanged planner's final report.
+    pub fn finish(mut self) -> CommitmentReport {
+        while !self.advance() {}
+        CommitmentReport {
+            plan: self.plan,
+            demand_cushion_factor: 1.0
+                + 2.0 * self.session.region.demand_noise().forecast_error.value(),
+            score_tolerance: TOLERANCE,
+            evaluation_limit_per_plant: FULL_EVALUATIONS,
+            reference_score: self.reference_score,
+            selected_score: self.best.score(&self.floor),
+            decisions: self.decisions,
+        }
+    }
+}
+
+impl GameSession {
+    /// The commitment patterns that cover the coming day's forecast plus its cushion while
+    /// burning the least expensive fuel (spec 2026-10-31 §4). Only connected, commissioned
+    /// coal, CCGT and peaker plants on AGC are returned; everything else is left as it is.
+    /// Pure: the session is unchanged.
+    pub fn automatic_commitment_plan(&self) -> CommitmentPlan {
+        self.automatic_commitment_report().plan
+    }
+
+    /// The same search, with the evidence behind every evaluated alternative. This does not
+    /// evaluate extra candidates or change the tie-breaking policy.
+    pub fn automatic_commitment_report(&self) -> CommitmentReport {
+        self.automatic_commitment_search().finish()
+    }
+
+    /// An owned pure query that callers can advance between other work. Each step evaluates
+    /// at most one candidate; stopping early never changes the source session.
+    pub fn automatic_commitment_search(&self) -> AutomaticCommitmentSearch {
+        AutomaticCommitmentSearch::new(self.clone())
     }
 
     /// Every trimmable plant committed all day (spec §4.3's reference plan).

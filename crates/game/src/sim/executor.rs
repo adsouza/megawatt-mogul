@@ -1,4 +1,4 @@
-//! Platform job execution. Only ordinary Rust completion data leaves the local future/thread.
+//! Platform job execution shared by persistence and speculative planning.
 use std::{
     future::Future,
     sync::mpsc::{self, Receiver},

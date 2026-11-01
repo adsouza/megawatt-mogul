@@ -61,6 +61,10 @@ impl<H> CommandLogLayer<H> {
 }
 
 impl<H: CommandHandler> CommandHandler for CommandLogLayer<H> {
+    fn record_diagnostic(&mut self, text: &str) -> Result<(), CommandLogError> {
+        self.sink.append_diagnostic(text)
+    }
+
     fn handle(
         &mut self,
         session: &mut GameSession,

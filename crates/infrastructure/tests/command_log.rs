@@ -30,6 +30,61 @@ fn minimal_region_bytes() -> Vec<u8> {
     MINIMAL.to_vec()
 }
 
+#[test]
+fn automatic_commitment_diagnostics_are_persisted_without_changing_replay() {
+    let fixture = Fixture::new();
+    let mut game = Game::start_new(
+        &fixture.catalog(),
+        &RegionId::new("minimal"),
+        7,
+        GameSettings::default(),
+        Box::new(FileCommandLog::create(&fixture.log()).unwrap()),
+    )
+    .unwrap();
+    let before = fs::read(fixture.log()).unwrap();
+    game.plan_automatic_commitments();
+    game.plan_automatic_commitments();
+    let diagnostics = fs::read_to_string(
+        infrastructure::command_log::diagnostic_log_path(&fixture.log()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        diagnostics.matches("automatic commitment month=").count(),
+        2
+    );
+    assert!(diagnostics.contains("equal estimated cost"));
+    assert_eq!(fs::read(fixture.log()).unwrap(), before);
+    assert!(load_replay(&fixture.log()).is_ok());
+}
+
+#[test]
+fn automatic_commitment_diagnostic_failure_preserves_commands_and_recording_health() {
+    let fixture = Fixture::new();
+    let mut game = Game::start_new(
+        &fixture.catalog(),
+        &RegionId::new("minimal"),
+        7,
+        GameSettings::default(),
+        Box::new(FileCommandLog::create(&fixture.log()).unwrap()),
+    )
+    .unwrap();
+    // A directory at the output path forces diagnostic creation to fail on every platform.
+    fs::create_dir(infrastructure::command_log::diagnostic_log_path(&fixture.log()).unwrap())
+        .unwrap();
+    let before = game.checkpoint();
+    let expected = application::automatic_commitment_commands(&game);
+    let commands = game.plan_automatic_commitments();
+    assert_eq!(commands, expected);
+    assert_eq!(game.checkpoint(), before);
+    assert!(game.log_failure().is_none());
+    for command in commands {
+        game.execute(command).unwrap();
+    }
+    game.execute(Command::BeginOperating).unwrap();
+    assert!(game.log_failure().is_none());
+    assert!(load_replay(&fixture.log()).is_ok());
+}
+
 fn fingerprint_of(source: &[u8]) -> RegionFingerprint {
     RegionFingerprint::new(Sha256::digest(source).into())
 }

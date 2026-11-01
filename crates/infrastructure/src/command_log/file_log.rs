@@ -42,6 +42,13 @@ pub fn checkpoint_archive_path(path: &Path) -> Option<PathBuf> {
     Some(path.with_file_name(name))
 }
 
+/// Human-readable planner evidence, separate from the replay stream and its format version.
+pub fn diagnostic_log_path(path: &Path) -> Option<PathBuf> {
+    let mut name = path.file_name()?.to_owned();
+    name.push(".diagnostics.log");
+    Some(path.with_file_name(name))
+}
+
 fn log_error(message: impl Into<String>) -> CommandLogError {
     CommandLogError {
         message: message.into(),
@@ -67,6 +74,8 @@ enum State {
 #[derive(Debug)]
 pub struct FileCommandLog {
     log: File,
+    diagnostic_path: PathBuf,
+    diagnostics: Option<File>,
     archive_path: PathBuf,
     checkpoint_path: PathBuf,
     state: State,
@@ -86,6 +95,9 @@ impl FileCommandLog {
             .map_err(|e| io_error("cannot create log", path, &e))?;
         Ok(Self {
             log,
+            diagnostic_path: diagnostic_log_path(path)
+                .ok_or_else(|| log_error("diagnostic path"))?,
+            diagnostics: None,
             archive_path,
             checkpoint_path: checkpoint_archive_path(path)
                 .ok_or_else(|| log_error("checkpoint path"))?,
@@ -127,6 +139,30 @@ impl FileCommandLog {
 }
 
 impl CommandLogSink for FileCommandLog {
+    fn append_diagnostic(&mut self, text: &str) -> Result<(), CommandLogError> {
+        if self.state != State::Ready {
+            return Err(log_error("log not initialised"));
+        }
+        if self.diagnostics.is_none() {
+            self.diagnostics = Some(
+                OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&self.diagnostic_path)
+                    .map_err(|e| {
+                        io_error("cannot create diagnostics", &self.diagnostic_path, &e)
+                    })?,
+            );
+        }
+        if let Some(file) = &mut self.diagnostics {
+            file.write_all(text.as_bytes())
+                .and_then(|()| file.write_all(b"\n"))
+                .and_then(|()| file.flush())
+                .map_err(|e| io_error("cannot write diagnostics", &self.diagnostic_path, &e))?;
+        }
+        Ok(())
+    }
+
     fn initialize(
         &mut self,
         header: &LogHeader,

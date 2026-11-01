@@ -17,6 +17,11 @@ impl<H> TracingLayer<H> {
 }
 
 impl<H: CommandHandler> CommandHandler for TracingLayer<H> {
+    fn record_diagnostic(&mut self, text: &str) -> Result<(), crate::CommandLogError> {
+        tracing::info!(target: "automatic_commitment", diagnostic = %text);
+        self.inner.record_diagnostic(text)
+    }
+
     fn handle(
         &mut self,
         session: &mut GameSession,

@@ -326,6 +326,11 @@ impl Plugin for HudPlugin {
                         .after(SimSet::Apply)
                         .run_if(in_game.clone()),
                     // After a load's poll, which clears the outgoing game's events.
+                    action::precompute_review_commitments
+                        .after(SimSet::Apply)
+                        .after(SimSet::Persist)
+                        .before(action::auto_commit_on_planning)
+                        .run_if(in_game.clone()),
                     action::auto_commit_on_planning
                         .after(SimSet::Apply)
                         .after(SimSet::Persist)

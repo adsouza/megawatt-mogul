@@ -91,6 +91,11 @@ pub enum Command {
 /// innermost one applies the command to the session. `Send + Sync` so a
 /// `Game` holding the pipeline can live in a Bevy `Resource`.
 pub trait CommandHandler: Send + Sync {
+    /// Optional observational diagnostics, separate from replayable commands.
+    fn record_diagnostic(&mut self, _text: &str) -> Result<(), crate::CommandLogError> {
+        Ok(())
+    }
+
     fn handle(
         &mut self,
         session: &mut GameSession,
@@ -99,6 +104,10 @@ pub trait CommandHandler: Send + Sync {
 }
 
 impl<H: CommandHandler + ?Sized> CommandHandler for Box<H> {
+    fn record_diagnostic(&mut self, text: &str) -> Result<(), crate::CommandLogError> {
+        (**self).record_diagnostic(text)
+    }
+
     fn handle(
         &mut self,
         session: &mut GameSession,

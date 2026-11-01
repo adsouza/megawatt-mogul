@@ -64,6 +64,15 @@ fn set_auto_commitments_on_in_planning_sends_planner_commands() {
             .collect::<Vec<_>>()
     );
     assert!(sent::<PlayerCommand>(&app).is_empty());
+    app.update();
+    let diagnostic = std::fs::read_dir(logs.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.to_string_lossy().ends_with(".log.diagnostics.log"))
+        .expect("the UI's planner run persists its reasoning beside the recording");
+    let diagnostic = std::fs::read_to_string(diagnostic).unwrap();
+    assert!(diagnostic.contains("automatic commitment month="));
+    assert!(diagnostic.contains("equal estimated cost"));
 }
 
 #[test]
@@ -147,6 +156,27 @@ fn planner_refusal_logs_without_a_toast() {
     );
 }
 
+#[test]
+fn automatic_commitment_diagnostics_ignore_a_previous_session() {
+    let logs = TempDir::new().unwrap();
+    let mut app = planning_app(&logs);
+    let generation = app.world().resource::<SessionGeneration>().0;
+    app.world_mut().write_message(game::sim::PlannerDiagnostic(
+        "stale-planner-evidence".into(),
+        generation.wrapping_sub(1),
+    ));
+    dispatch_in(&mut app, vec![UiAction::RunAutoCommitments]);
+    app.update();
+    let diagnostic = std::fs::read_dir(logs.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.to_string_lossy().ends_with(".log.diagnostics.log"))
+        .unwrap();
+    let diagnostic = std::fs::read_to_string(diagnostic).unwrap();
+    assert!(!diagnostic.contains("stale-planner-evidence"));
+    assert_eq!(diagnostic.matches("automatic commitment month=").count(), 1);
+}
+
 mod planning_begins {
     use super::*;
     use crate::save_resume::{open_browser, settle};
@@ -167,6 +197,23 @@ mod planning_begins {
             .iter()
             .map(|plant| plant.commitment)
             .collect()
+    }
+
+    fn wait_for_commitments(app: &mut App) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while app
+            .world()
+            .resource::<game::sim::ReviewCommitmentCache>()
+            .is_applying()
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "commitment worker finished"
+            );
+            app.update();
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        update_n(app, 2);
     }
 
     fn tab(app: &App) -> PlanningTab {
@@ -244,8 +291,72 @@ mod planning_begins {
             domain::session::DayPhase::Planning
         );
         assert_eq!(tab(&app), PlanningTab::Forecast);
+        wait_for_commitments(&mut app);
         assert!(application::automatic_commitment_commands(game(&app)).is_empty());
         assert!(patterns(&app).iter().any(|hours| hours != &[true; 24]));
+    }
+
+    #[test]
+    fn review_precomputes_without_mutating_the_game_and_continue_reuses_it() {
+        let logs = TempDir::new().unwrap();
+        let mut app = started(&logs, true);
+        dispatch_in(
+            &mut app,
+            vec![
+                UiAction::Command(Command::BeginOperating),
+                UiAction::Command(Command::AdvanceTicks { n: 1440 }),
+            ],
+        );
+        settle(&mut app);
+        update_n(&mut app, 2);
+        let before = game(&app).checkpoint();
+        let diagnostics_path = std::fs::read_dir(logs.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.to_string_lossy().ends_with(".log.diagnostics.log"))
+            .unwrap();
+        let diagnostics_before = std::fs::read_to_string(&diagnostics_path).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while !app
+            .world()
+            .resource::<game::sim::ReviewCommitmentCache>()
+            .is_ready()
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "review precomputation finished"
+            );
+            app.update();
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(game(&app).checkpoint(), before);
+        assert_eq!(
+            std::fs::read_to_string(&diagnostics_path).unwrap(),
+            diagnostics_before
+        );
+        dispatch_in(&mut app, vec![UiAction::Command(Command::FinishReview)]);
+        update_n(&mut app, 3);
+        assert_eq!(
+            game(&app).session().phase(),
+            domain::session::DayPhase::Planning
+        );
+        assert_eq!(tab(&app), PlanningTab::Forecast);
+        assert!(
+            !app.world()
+                .resource::<game::sim::ReviewCommitmentCache>()
+                .is_applying()
+        );
+        assert!(application::automatic_commitment_commands(game(&app)).is_empty());
+        let diagnostics_after = std::fs::read_to_string(diagnostics_path).unwrap();
+        assert_eq!(
+            diagnostics_after
+                .matches("automatic commitment month=")
+                .count(),
+            diagnostics_before
+                .matches("automatic commitment month=")
+                .count()
+                + 1
+        );
     }
 
     #[test]

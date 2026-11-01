@@ -368,3 +368,85 @@ fn automatic_commitment_commands_apply_cleanly_and_are_idempotent() {
     game.execute(Command::BeginOperating).unwrap();
     assert!(application::automatic_commitment_commands(&game).is_empty());
 }
+
+#[test]
+fn automatic_commitment_logs_even_when_no_commands_change() {
+    let (mut game, log) = support::game_on(tiny_region_parts(), 3);
+    let before = game.checkpoint();
+    let commands = game.plan_automatic_commitments();
+    assert_eq!(game.checkpoint(), before);
+    assert_eq!(log.diagnostics().len(), 1);
+    let diagnostic = &log.diagnostics()[0];
+    assert!(diagnostic.contains("automatic commitment"));
+    assert!(diagnostic.contains("equal estimated cost"));
+    assert!(diagnostic.contains("capacity_screened="));
+    for command in commands {
+        game.execute(command).unwrap();
+    }
+    assert!(game.plan_automatic_commitments().is_empty());
+    assert_eq!(log.diagnostics().len(), 2);
+    game.execute(Command::BeginOperating).unwrap();
+    assert!(game.plan_automatic_commitments().is_empty());
+    assert_eq!(log.diagnostics().len(), 2);
+}
+
+#[test]
+fn automatic_commitment_log_explains_keeping_equal_cost_ccgts_online() {
+    let mut parts = tiny_region_parts();
+    for city in &mut parts.cities {
+        city.base_load = Megawatts::new(city.base_load.value() * 0.7);
+    }
+    for plant in &mut parts.start.fleet {
+        plant.kind = PlantKind::Ccgt;
+    }
+    for spec in &mut parts.catalog {
+        if spec.kind == PlantKind::Ccgt {
+            spec.min_stable = domain::units::Ratio::new(0.0).unwrap();
+        }
+    }
+    let (mut game, log) = support::game_on(parts, 3);
+    assert!(game.plan_automatic_commitments().is_empty());
+    let diagnostic = &log.diagnostics()[0];
+    assert!(
+        diagnostic
+            .contains("kept online: shutting down all day has equal estimated cost and surplus")
+    );
+    assert!(diagnostic.contains("estimated_cost_delta=0.000000000"));
+    assert!(diagnostic.contains("keep available reserve"));
+}
+
+#[test]
+fn review_precomputation_matches_continue_without_advancing_the_live_game() {
+    let (mut game, log) = support::game_on(tiny_region_parts(), 3);
+    game.execute(Command::BeginOperating).unwrap();
+    game.execute(Command::AdvanceTicks { n: 1440 }).unwrap();
+    let before = game.checkpoint();
+    let mut work = application::ReviewCommitmentWork::new(game.session().clone()).unwrap();
+    while !work.advance() {}
+    let prepared = work.finish();
+    assert_eq!(game.checkpoint(), before);
+    assert!(log.diagnostics().is_empty());
+    game.execute(Command::FinishReview).unwrap();
+    let expected = application::automatic_commitment_run(&game).unwrap();
+    let run = prepared
+        .into_run(&game)
+        .expect("same next-month RNG and state");
+    assert_eq!(run.commands, expected.commands);
+    assert_eq!(run.diagnostic, expected.diagnostic);
+}
+
+#[test]
+fn review_precomputation_rejects_a_different_planning_state() {
+    let (mut game, _) = support::game_on(tiny_region_parts(), 3);
+    game.execute(Command::BeginOperating).unwrap();
+    game.execute(Command::AdvanceTicks { n: 1440 }).unwrap();
+    let work = application::ReviewCommitmentWork::new(game.session().clone()).unwrap();
+    let prepared = work.finish();
+    game.execute(Command::FinishReview).unwrap();
+    game.execute(Command::BuildPlant {
+        kind: PlantKind::Ccgt,
+        cell: domain::ids::CellCoord { x: 5, y: 1 },
+    })
+    .unwrap();
+    assert!(prepared.into_run(&game).is_none());
+}

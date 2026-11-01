@@ -1,6 +1,6 @@
 //! Persistence orchestration. Immutable captures leave the main thread; only verified candidates
 //! return. Commands and worker results are scoped to a session generation.
-mod executor;
+use super::executor;
 #[cfg(not(target_arch = "wasm32"))]
 mod storage;
 use super::{CommandFailed, DomainEventMessage, PlayerCommand, ReturnToMenu, Session, SimSpeed};

@@ -55,6 +55,7 @@ boot-error-title = The game could not start
 ui-quit = Quit
 ui-back = Back
 ui-continue = Continue
+commitment-updating = Updating commitments…
 ui-close = Close
 menu-eyebrow = THE POWER COMPANY SIMULATOR
 menu-subtitle = Build your grid. Keep the lights on.

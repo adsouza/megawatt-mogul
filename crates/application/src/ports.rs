@@ -168,6 +168,11 @@ pub struct CommandLogError {
 /// Where commands are recorded. `Send + Sync` so the pipeline that owns a
 /// sink, and the `Game` around it, can live in a Bevy `Resource`.
 pub trait CommandLogSink: Send + Sync {
+    /// Optional human-readable diagnostics. Failures must not invalidate the command stream.
+    fn append_diagnostic(&mut self, _text: &str) -> Result<(), CommandLogError> {
+        Ok(())
+    }
+
     /// Archives the region source and records the single header. Must be
     /// called once, before `append` accepts anything.
     fn initialize(
@@ -204,6 +209,7 @@ struct InMemoryLog {
     initialized: bool,
     records: Vec<LogRecord>,
     region_source: Vec<u8>,
+    diagnostics: Vec<String>,
 }
 
 /// A command log held in memory. Clones share the same storage, so a test can
@@ -214,6 +220,10 @@ pub struct InMemoryCommandLog {
 }
 
 impl InMemoryCommandLog {
+    pub fn diagnostics(&self) -> Vec<String> {
+        self.lock().diagnostics.clone()
+    }
+
     fn lock(&self) -> MutexGuard<'_, InMemoryLog> {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -230,6 +240,17 @@ impl InMemoryCommandLog {
 }
 
 impl CommandLogSink for InMemoryCommandLog {
+    fn append_diagnostic(&mut self, text: &str) -> Result<(), CommandLogError> {
+        let mut log = self.lock();
+        if !log.initialized {
+            return Err(CommandLogError {
+                message: "log not initialised".into(),
+            });
+        }
+        log.diagnostics.push(text.to_owned());
+        Ok(())
+    }
+
     fn initialize(
         &mut self,
         header: &LogHeader,

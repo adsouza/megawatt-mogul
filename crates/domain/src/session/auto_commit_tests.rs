@@ -58,6 +58,76 @@ fn peaker_stays_when_needed_for_the_band() {
 }
 
 #[test]
+fn report_explains_equal_cost_shutdown_without_changing_the_plan() {
+    let mut parts = parts_at(0.7);
+    for plant in &mut parts.start.fleet {
+        plant.kind = PlantKind::Ccgt;
+    }
+    for spec in &mut parts.catalog {
+        if spec.kind == PlantKind::Ccgt {
+            spec.min_stable = crate::units::Ratio::new(0.0).unwrap();
+        }
+    }
+    let s = session_of(parts);
+    let before = s.state_hash();
+    let report = s.automatic_commitment_report();
+    assert_eq!(s.state_hash(), before);
+    assert_eq!(report, s.automatic_commitment_report());
+    assert_eq!(report.plan, s.automatic_commitment_plan());
+    assert!(
+        report
+            .plan
+            .values()
+            .all(|p| *p == CommitmentSchedule::all_day())
+    );
+    assert!(report.decisions.iter().any(|decision| {
+        decision.candidates.iter().any(|candidate| {
+            candidate.hours == [false; 24]
+                && candidate.covers_floor
+                && candidate.comparison == CommitmentComparison::EqualScore
+        })
+    }));
+}
+
+#[test]
+fn incremental_commitment_search_matches_the_complete_report() {
+    let s = session_of(parts_at(1.2));
+    let before = s.state_hash();
+    let mut search = s.automatic_commitment_search();
+    let mut steps = 0;
+    while !search.advance() {
+        steps += 1;
+    }
+    assert!(steps > s.automatic_commitment_report().decisions.len());
+    assert_eq!(search.finish(), s.automatic_commitment_report());
+    assert_eq!(s.state_hash(), before);
+}
+
+#[test]
+fn report_distinguishes_capacity_screening_and_successful_trimming() {
+    let report = session_of(parts_at(1.0)).automatic_commitment_report();
+    assert!(report.decisions.iter().any(|d| d.capacity_screened > 0));
+    let peaker = report
+        .decisions
+        .iter()
+        .find(|d| d.kind == PlantKind::Peaker)
+        .unwrap();
+    assert_eq!(peaker.selected.hours(), [false; 24]);
+    assert!(peaker.candidates.iter().any(|candidate| {
+        candidate.hours == [false; 24]
+            && candidate.covers_floor
+            && candidate.comparison == CommitmentComparison::LowerCost
+    }));
+    for decision in &report.decisions {
+        assert_eq!(
+            decision.valid_candidates,
+            decision.capacity_screened + decision.evaluation_limited + decision.candidates.len()
+        );
+        assert!(decision.candidates.len() <= FULL_EVALUATIONS);
+    }
+}
+
+#[test]
 fn battery_spare_discharge_lets_an_evening_peaker_go() {
     let mut parts = parts_at(1.2);
     parts.start.fleet.push(StartPlantDef {
@@ -251,7 +321,8 @@ proptest::proptest! {
         let s = session_of(parts_at(scale));
         let all_day = s.all_day_plan();
         let base = s.evaluate(&all_day);
-        let plan = s.automatic_commitment_plan();
+        let report = s.automatic_commitment_report();
+        let plan = report.plan;
         for (id, pattern) in &plan {
             let plant = s.power.plant(*id).unwrap();
             proptest::prop_assert!(
@@ -259,6 +330,16 @@ proptest::proptest! {
             );
         }
         let planned = s.evaluate(&plan);
+        proptest::prop_assert_eq!(report.selected_score, planned.score(&base.floor()));
+        for decision in &report.decisions {
+            proptest::prop_assert_eq!(decision.valid_candidates,
+                decision.capacity_screened + decision.evaluation_limited + decision.candidates.len());
+            proptest::prop_assert!(decision.candidates.len() <= report.evaluation_limit_per_plant);
+            for candidate in &decision.candidates {
+                let margin = candidate.score.minimum_floor_margin_mw.unwrap();
+                proptest::prop_assert_eq!(candidate.covers_floor, margin >= -report.score_tolerance);
+            }
+        }
         proptest::prop_assert!(planned.covers(&base.floor()));
         proptest::prop_assert!(!base.better_than(&planned));
     }
@@ -267,8 +348,8 @@ proptest::proptest! {
     fn plan_is_pure_and_deterministic(scale in 0.5..1.5f64) {
         let s = session_of(parts_at(scale));
         let before = s.state_hash();
-        let first = s.automatic_commitment_plan();
+        let first = s.automatic_commitment_report();
         proptest::prop_assert_eq!(s.state_hash(), before);
-        proptest::prop_assert_eq!(first, s.automatic_commitment_plan());
+        proptest::prop_assert_eq!(first, s.automatic_commitment_report());
     }
 }

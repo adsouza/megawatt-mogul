@@ -30,6 +30,29 @@ pub struct Game {
 }
 
 impl Game {
+    pub(crate) fn automatic_commitment_diagnostic_context(
+        &self,
+        text: &str,
+        commands: usize,
+    ) -> String {
+        format!(
+            "automatic commitment month={:?} region={:?} currency={:?} seed={} command_count={} changed_plants={}\n{text}",
+            self.session.clock().month(),
+            self.header.region,
+            self.session.region().currency(),
+            self.header.seed,
+            self.journal.len(),
+            commands
+        )
+    }
+
+    /// Records observational planner evidence without changing session state or its journal.
+    pub fn record_planner_diagnostic(&mut self, text: &str) {
+        if let Err(error) = self.handler.record_diagnostic(text) {
+            tracing::warn!(%error, "failed to record automatic commitment diagnostics");
+        }
+    }
+
     /// Loads `region` once, writes the log header and region archive through
     /// `sink`, and only then creates the session. Any failure along the way
     /// means no game: a game without its replay inputs is never returned.

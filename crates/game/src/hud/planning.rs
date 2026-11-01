@@ -79,6 +79,17 @@ pub struct PlanningModel {
     pub content: PlanningContent,
 }
 
+impl PlanningModel {
+    #[must_use]
+    pub fn with_automatic_commitment_pending(mut self, pending: bool, l10n: &Localizer) -> Self {
+        if pending {
+            self.begin.enabled = false;
+            self.begin_hint = Some(l10n.text("commitment-updating"));
+        }
+        self
+    }
+}
+
 /// The Planning panel; `None` outside Planning, when nothing can be committed.
 pub fn planning_model(
     game: &Game,
@@ -278,6 +289,7 @@ pub(super) fn planning_panel(
     else {
         return Ok(());
     };
+    let model = model.with_automatic_commitment_pending(sink.automatic_commitment_pending(), &l10n);
     let actions = area.show_panel(contexts.ctx_mut()?, PLANNING_PANEL, 0.0, |ui| {
         draw_planning(ui, &model, &mut form)
     });
@@ -309,6 +321,19 @@ mod tests {
             &usd_style(),
         )
         .expect("the game is planning")
+    }
+
+    #[test]
+    fn pending_automatic_commitments_keep_forecast_visible_and_pause_start() {
+        let game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let ui = UiState {
+            tab: PlanningTab::Forecast,
+            ..Default::default()
+        };
+        let model = build(&game, &ui).with_automatic_commitment_pending(true, &shipped_l10n());
+        assert!(matches!(model.content, PlanningContent::Forecast(_)));
+        assert!(!model.begin.enabled);
+        assert_eq!(model.begin_hint.as_deref(), Some("Updating commitments…"));
     }
 
     #[test]

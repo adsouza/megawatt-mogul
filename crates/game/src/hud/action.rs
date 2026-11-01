@@ -316,6 +316,8 @@ pub struct ActionSink<'w> {
     world: ResMut<'w, crate::world::WorldControls>,
     commands: MessageWriter<'w, PlayerCommand>,
     planner: MessageWriter<'w, crate::sim::PlannerCommand>,
+    planner_diagnostics: MessageWriter<'w, crate::sim::PlannerDiagnostic>,
+    review_commitments: ResMut<'w, crate::sim::ReviewCommitmentCache>,
     persistence: ResMut<'w, Persistence>,
     generation: Res<'w, SessionGeneration>,
     log_dir: Option<Res<'w, crate::paths::LogDir>>,
@@ -338,6 +340,10 @@ pub struct ActionSink<'w> {
 }
 
 impl ActionSink<'_> {
+    pub fn automatic_commitment_pending(&self) -> bool {
+        self.review_commitments.is_applying()
+    }
+
     pub fn game(&self) -> Option<&application::Game> {
         self.session.as_ref().map(|s| &s.0)
     }
@@ -437,6 +443,29 @@ pub(super) fn auto_commit_on_planning(
     }
 }
 
+/// Starts work while Review is visible, and later publishes a still-current result without
+/// blocking the Forecast panel if the player continued before the worker finished.
+pub(super) fn precompute_review_commitments(mut sink: ActionSink) {
+    let Some(session) = sink.session.as_ref() else {
+        sink.review_commitments.clear();
+        return;
+    };
+    if sink.persistence.frozen()
+        && session.0.session().phase() == domain::session::DayPhase::Planning
+    {
+        return;
+    }
+    let run = sink.review_commitments.refresh(
+        &session.0,
+        sink.generation.0,
+        session.last_changed().get(),
+        sink.ui.auto_commitments.0,
+    );
+    if let Some(run) = run {
+        send_auto_commitments(run, &mut sink);
+    }
+}
+
 /// Opens Planning on the forecast while commitments are planned automatically, else on the grid.
 pub(super) fn open_planning_tab(mut sink: ActionSink) {
     let tab = if sink.ui.auto_commitments.0 {
@@ -456,9 +485,29 @@ fn run_auto_commitments(sink: &mut ActionSink) {
     let Some(session) = sink.session.as_ref() else {
         return;
     };
+    let run = match sink.review_commitments.request(
+        &session.0,
+        sink.generation.0,
+        session.last_changed().get(),
+    ) {
+        crate::sim::review_commitments::ReviewPlan::Ready(run) => run,
+        crate::sim::review_commitments::ReviewPlan::Waiting => return,
+        crate::sim::review_commitments::ReviewPlan::Unavailable => {
+            let Some(run) = application::automatic_commitment_run(&session.0) else {
+                return;
+            };
+            run
+        }
+    };
+    send_auto_commitments(run, sink);
+}
+
+fn send_auto_commitments(run: application::AutomaticCommitmentRun, sink: &mut ActionSink) {
     let generation = sink.generation.0;
+    sink.planner_diagnostics
+        .write(crate::sim::PlannerDiagnostic(run.diagnostic, generation));
     sink.planner.write_batch(
-        application::automatic_commitment_commands(&session.0)
+        run.commands
             .into_iter()
             .map(|command| crate::sim::PlannerCommand(command, generation)),
     );
@@ -466,6 +515,15 @@ fn run_auto_commitments(sink: &mut ActionSink) {
 
 pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSink) {
     for action in actions {
+        if sink.review_commitments.is_applying()
+            && matches!(
+                action,
+                UiAction::Command(Command::BeginOperating)
+                    | UiAction::Prompt(Some(Prompt::ShortfallStart { .. }))
+            )
+        {
+            continue;
+        }
         let previous_zone = sink.ui.island;
         let explicit_zone = matches!(
             action,
@@ -734,12 +792,13 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
                 }
             }
             UiAction::SetAutoCommitments(true) => run_auto_commitments(sink),
+            UiAction::SetAutoCommitments(false) | UiAction::EditCommitment { .. } => {
+                sink.review_commitments.clear()
+            }
             UiAction::RunAutoCommitments => run_auto_commitments(sink),
             UiAction::SetPlanningTab(_)
             | UiAction::OpenPlanningTab(_)
-            | UiAction::SetAutoCommitments(false)
             | UiAction::ShowHour(_)
-            | UiAction::EditCommitment { .. }
             | UiAction::ToggleWarnings
             | UiAction::DiscardCommitmentDraft => {}
             UiAction::Navigate(screen) => navigate(sink, screen),
