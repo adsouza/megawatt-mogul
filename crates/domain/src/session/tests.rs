@@ -2051,3 +2051,32 @@ fn forecast_round_trips_at_schema_9_and_is_absent_at_8() {
         s.power.weather_forecast()
     );
 }
+
+/// Spec 2026-10-31 §6 "No leak": two sessions that differ only in the generator after the
+/// forecast was drawn show identical Planning views, and their days then differ, so the surprise
+/// is drawn when the day begins, not before.
+#[test]
+fn planning_views_never_depend_on_the_coming_surprise() {
+    let mut s = session();
+    let mut t = s.clone();
+    t.rng = crate::rng::SimRng::from_seed(999);
+    assert_eq!(s.supply_forecast(), t.supply_forecast());
+    assert_eq!(s.hourly_forecast(), t.hourly_forecast());
+    assert_eq!(s.capacity_shortfall_check(), t.capacity_shortfall_check());
+    assert_eq!(s.minimum_generation_check(), t.minimum_generation_check());
+    assert_eq!(s.automatic_commitment_plan(), t.automatic_commitment_plan());
+    for tick in [0, 720, 1080] {
+        let (month, region) = (s.clock.month(), s.region.clone());
+        assert_eq!(
+            s.power.wind_forecast(&region, month, tick),
+            t.power.wind_forecast(&region, month, tick)
+        );
+        assert_eq!(
+            s.power.solar_forecast(&region, month, tick),
+            t.power.solar_forecast(&region, month, tick)
+        );
+    }
+    s.begin_operating().unwrap();
+    t.begin_operating().unwrap();
+    assert_ne!(s.power.wind_factor(), t.power.wind_factor());
+}
