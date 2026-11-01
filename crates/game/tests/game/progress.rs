@@ -53,9 +53,14 @@ fn progress_loads_and_writes_in_tempdir() {
         .value
         .played_regions
         .insert("western_interconnection".into());
+    app.world_mut()
+        .resource_mut::<ClientProgressStore>()
+        .value
+        .outlook_tutorial_pending = false;
     update_n(&mut app, 1);
     let expected = app.world().resource::<ClientProgressStore>().value.clone();
     assert_eq!(expected.played_regions.len(), 2);
+    assert!(!expected.outlook_tutorial_pending);
     assert_eq!(read_progress(root.path()).unwrap(), expected);
 
     // A fresh app reads back what the last one wrote.

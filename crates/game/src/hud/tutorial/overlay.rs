@@ -118,23 +118,32 @@ pub fn tutorial_view(
             l10n.text(key)
         }
     };
+    view_with_text(
+        step,
+        if step.kind == StepKind::Move {
+            String::new()
+        } else {
+            text()
+        },
+        shown_for,
+    )
+}
+
+fn view_with_text(step: &StepDef, text: String, shown_for: f32) -> TutorialView {
     let anchor = step.anchor.unwrap_or(TutorialAnchor::Map);
     match step.kind {
         StepKind::Move => TutorialView::Move(step.step),
         StepKind::Crawl => TutorialView::Crawl {
-            text: text(),
+            text,
             progress: shown_for / CRAWL_SECONDS,
         },
         StepKind::Spotlight => TutorialView::Spotlight {
             step: step.step,
             anchor,
-            text: text(),
+            text,
             opacity: spotlight_opacity(shown_for),
         },
-        StepKind::Instruction => TutorialView::Instruction {
-            anchor,
-            text: text(),
-        },
+        StepKind::Instruction => TutorialView::Instruction { anchor, text },
     }
 }
 
@@ -210,14 +219,14 @@ pub(crate) fn tutorial_overlay(
     let ctx = contexts.ctx_mut()?.clone();
     let now = time.elapsed_secs_f64();
     let uncover = UiAction::Tutorial(TutorialAction::Cover(false));
-    let (Some(state), Some(game)) = (sink.tutorial(), sink.game()) else {
-        // Ending the run dropped its reveals.
-        *shown = None;
-        *active = None;
-        dispatch([uncover], &mut sink);
-        return Ok(());
-    };
-    let def = active_step(state, game, sink.selection());
+    let guide = sink
+        .ui_state()
+        .outlook_guide
+        .filter(|_| sink.ui_state().outlook_open);
+    let main = sink.tutorial().zip(sink.game());
+    let def = guide
+        .map(|step| step.definition())
+        .or_else(|| main.and_then(|(state, game)| active_step(state, game, sink.selection())));
     let mut actions = Vec::new();
     // A reveal the step before asked for and no panel finished goes with it: the next step's
     // own asks come after.
@@ -236,7 +245,9 @@ pub(crate) fn tutorial_overlay(
         Some(clock) if clock.step == def.step => clock,
         _ => Shown::new(def.step),
     };
-    let prompt_open = sink.open_prompt().0.is_some() || sink.ui_state().outlook_open;
+    let prompt_open = sink.open_prompt().0.is_some()
+        || (sink.ui_state().outlook_open && guide.is_none())
+        || (guide.is_some() && egui::Popup::is_any_open(&ctx));
     // Prompts come first: a timed step waits for one to close.
     let anchor = def.anchor.and_then(|anchor| anchor_rect(&ctx, anchor));
     let ready = !prompt_open
@@ -262,7 +273,17 @@ pub(crate) fn tutorial_overlay(
     }
     clock.tick(now, frame.0, ready);
     let shown_for = clock.shown_for as f32;
-    let view = tutorial_view(def, state, game, sink.selection(), &l10n, shown_for);
+    let view = if guide.is_some() {
+        view_with_text(
+            def,
+            l10n.text(def.text_key.unwrap_or("tutorial-outlook-cushion")),
+            shown_for,
+        )
+    } else if let Some((state, game)) = main {
+        tutorial_view(def, state, game, sink.selection(), &l10n, shown_for)
+    } else {
+        unreachable!("a tutorial definition has a run or a tool guide")
+    };
     let escape = !prompt_open && !egui::Popup::is_any_open(&ctx);
     // Whether the crawl or a spotlight is drawn and stays up: it takes every click, so the
     // keyboard shortcuts wait while it does.
@@ -328,6 +349,8 @@ fn scrolls(anchor: TutorialAnchor) -> bool {
             | TutorialAnchor::LineSection
             | TutorialAnchor::PlantLineButton
             | TutorialAnchor::ReviewConstruction
+            | TutorialAnchor::OutlookCity
+            | TutorialAnchor::OutlookGraph
     )
 }
 

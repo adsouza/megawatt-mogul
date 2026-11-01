@@ -59,7 +59,7 @@ mod tariff;
 pub mod theme;
 mod toasts;
 mod top_bar;
-pub use outlook::{OutlookModel, OutlookRow, draw_outlook, outlook_model};
+pub use outlook::{CapacityBands, OutlookModel, OutlookRow, draw_outlook, outlook_model};
 pub mod tutorial;
 mod ui_state;
 

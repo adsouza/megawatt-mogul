@@ -23,3 +23,16 @@ The preview chooser excludes every city with an existing or ordered grid path an
 the baseline when the selected map city is ineligible. Scheduled city demand is verified to enter
 the baseline at the connection's completion date. Focused follow-up checks: 24 game tests and
 5 domain outlook tests passed; formatting and diff checks passed.
+
+First-use guide extension:
+
+- [x] Add independently persisted first-use guidance for the actual city chooser and graph.
+- [x] Wait for a real city choice; support preselection, empty chooser, abort/reopen and popups.
+- [x] Fill dependable surplus green and shortfall bright red, with exact line crossings and a
+  worst-month summary. Keep these indicators after the guide finishes.
+- [x] Cover real widgets, maximum zoom, automatic spotlight expiry, persistence, drawn fill colours,
+  and property-based band geometry.
+
+Validation for the first-use and colour extension: 161 focused game checks and 10 progress-codec
+checks passed. A subsequent focused run of all 12 outlook checks passed after strengthening the
+dialog border to a two-point blue outline.

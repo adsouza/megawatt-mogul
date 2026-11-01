@@ -36,9 +36,11 @@ pub enum TutorialAnchor {
     ReviewConstruction,
     Save,
     CrystalBall,
+    OutlookCity,
+    OutlookGraph,
 }
 
-/// One step of the tutorial, in the order they play.
+/// Step identities for the main tutorial and the independent first-use outlook guide.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum TutorialStep {
     FrameGrid,
@@ -64,6 +66,9 @@ pub enum TutorialStep {
     ConnectCcgt,
     SaveSnapshot,
     CrystalBall,
+    OutlookCitySpotlight,
+    OutlookChooseCity,
+    OutlookCushion,
 }
 
 /// How a step presents itself. Moves, the crawl and spotlights are one-shot: they join
@@ -297,6 +302,50 @@ pub const TUTORIAL_STEPS: [StepDef; 23] = {
         ),
     ]
 };
+
+/// First-use tool guidance, independent of the first game's lifecycle and save loading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutlookGuideStep {
+    CitySpotlight,
+    ChooseCity,
+    Cushion,
+}
+impl OutlookGuideStep {
+    pub fn definition(self) -> &'static StepDef {
+        &OUTLOOK_STEPS[match self {
+            Self::CitySpotlight => 0,
+            Self::ChooseCity => 1,
+            Self::Cushion => 2,
+        }]
+    }
+}
+/// Tool definitions run in every in-game phase; their phase field is unused.
+pub const OUTLOOK_STEPS: [StepDef; 3] = [
+    def(
+        TutorialStep::OutlookCitySpotlight,
+        DayPhase::Planning,
+        StepKind::Spotlight,
+        Some(TutorialAnchor::OutlookCity),
+        Some("tutorial-outlook-city"),
+        Done::Never,
+    ),
+    def(
+        TutorialStep::OutlookChooseCity,
+        DayPhase::Planning,
+        StepKind::Instruction,
+        Some(TutorialAnchor::OutlookCity),
+        Some("tutorial-outlook-city"),
+        Done::Never,
+    ),
+    def(
+        TutorialStep::OutlookCushion,
+        DayPhase::Planning,
+        StepKind::Spotlight,
+        Some(TutorialAnchor::OutlookGraph),
+        Some("tutorial-outlook-cushion"),
+        Done::Never,
+    ),
+];
 
 /// What the game's state can't tell the tutorial: which game it belongs to, the plants the
 /// player started with, the one-shot steps that have played and whether the first Review has

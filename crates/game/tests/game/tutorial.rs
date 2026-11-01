@@ -403,6 +403,10 @@ fn ccgt_walkthrough_after_review_builds_and_connects_through_real_widgets() {
     update_n(&mut app, 2);
     assert!(run(&app).is_none());
     assert!(!pending(&app));
+    app.world_mut()
+        .resource_mut::<ClientProgressStore>()
+        .value
+        .outlook_tutorial_pending = false;
     pass.settled(&mut app, MIN.0, MIN.1);
     pass.click_at(&mut app, MIN.0, MIN.1, crystal.center());
     assert!(
@@ -814,8 +818,13 @@ fn without_a_run_tutorial_actions_do_nothing() {
 
 fn any_tutorial_action() -> impl proptest::strategy::Strategy<Value = TutorialAction> {
     use proptest::strategy::Strategy;
-    (0..TUTORIAL_STEPS.len(), 0u8..6).prop_map(|(index, which)| {
-        let step = TUTORIAL_STEPS[index].step;
+    let all: Vec<_> = TUTORIAL_STEPS
+        .iter()
+        .chain(game::hud::tutorial::OUTLOOK_STEPS.iter())
+        .map(|def| def.step)
+        .collect();
+    (0..all.len(), 0u8..6).prop_map(move |(index, which)| {
+        let step = all[index];
         match which {
             0 => TutorialAction::Play(step),
             1 => TutorialAction::Dismiss(step),
@@ -855,7 +864,7 @@ fn tutorial_actions_never_send_player_commands() {
 #[derive(Resource, Default)]
 struct SeenAnchors(BTreeMap<TutorialAnchor, egui::Rect>);
 
-const ANCHORS: [TutorialAnchor; 11] = [
+const ANCHORS: [TutorialAnchor; 13] = [
     TutorialAnchor::Cash,
     TutorialAnchor::Map,
     TutorialAnchor::PlantCard,
@@ -867,6 +876,8 @@ const ANCHORS: [TutorialAnchor; 11] = [
     TutorialAnchor::ReviewConstruction,
     TutorialAnchor::Save,
     TutorialAnchor::CrystalBall,
+    TutorialAnchor::OutlookCity,
+    TutorialAnchor::OutlookGraph,
 ];
 
 fn probe_anchors(mut contexts: EguiContexts, mut seen: ResMut<SeenAnchors>) -> Result {

@@ -20,6 +20,7 @@ fn app(logs: &TempDir) -> (App, EguiPass) {
         .resource_mut::<game::progress::ClientProgressStore>();
     progress.loaded = true;
     progress.value.tutorial_pending = false;
+    progress.value.outlook_tutorial_pending = false;
     request(&mut app, "western_interconnection");
     let pass = EguiPass::attach(&mut app);
     (app, pass)
@@ -317,5 +318,255 @@ fn outlook_preview_excludes_connected_and_scheduled_cities_and_clears_ineligible
             .iter()
             .any(|w| w.role == egui::accesskit::Role::ComboBox
                 && w.text == "Current grid and scheduled orders")
+    );
+}
+
+const CITY_GUIDANCE: &str = "Choose a new city here to preview its demand before you connect it.";
+const CUSHION_GUIDANCE: &str = "The gap between demand and dependable capacity is your cushion. Green means spare capacity; bright red means demand exceeds supply, so build more capacity before expanding.";
+
+#[test]
+fn first_outlook_use_guides_the_city_chooser() {
+    use game::hud::tutorial::OutlookGuideStep;
+    use game::progress::ClientProgressStore;
+    let logs = TempDir::new().unwrap();
+    let (mut app, pass) = app(&logs);
+    app.world_mut()
+        .resource_mut::<ClientProgressStore>()
+        .value
+        .outlook_tutorial_pending = true;
+    let model =
+        hud::outlook_model(&app.world().resource::<Session>().0, &shipped_l10n(), None).unwrap();
+    let (city, city_name) = model.cities[1].clone();
+    dispatch_in(
+        &mut app,
+        vec![
+            UiAction::Select(Selection::City(city.unwrap())),
+            UiAction::ShowOutlook(true),
+        ],
+    );
+    let hash = app.world().resource::<Session>().0.session().state_hash();
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    assert!(widgets.iter().any(|w| w.text == CITY_GUIDANCE));
+    assert_eq!(
+        app.world().resource::<UiState>().outlook_guide,
+        Some(OutlookGuideStep::CitySpotlight)
+    );
+    escape(&pass, &mut app, (1024.0, 640.0));
+    assert!(app.world().resource::<UiState>().outlook_open);
+    assert_eq!(
+        app.world().resource::<UiState>().outlook_guide,
+        Some(OutlookGuideStep::ChooseCity)
+    );
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    assert!(widgets.iter().any(|w| w.text == CITY_GUIDANCE));
+    let picker = widgets
+        .iter()
+        .find(|w| w.role == egui::accesskit::Role::ComboBox && w.text == city_name)
+        .unwrap()
+        .rect;
+    pass.click_at(&mut app, 1024.0, 640.0, picker.center());
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    assert!(
+        !widgets.iter().any(|w| w.text == CITY_GUIDANCE),
+        "the instruction steps aside for the popup"
+    );
+    pass.click_at(
+        &mut app,
+        1024.0,
+        640.0,
+        button(&widgets, &city_name).rect.center(),
+    );
+    assert_eq!(
+        app.world().resource::<UiState>().outlook_guide,
+        Some(OutlookGuideStep::Cushion)
+    );
+    for _ in 0..30 {
+        pass.run(&mut app, 1024.0, 640.0);
+    }
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    assert!(widgets.iter().any(|w| w.text == CUSHION_GUIDANCE));
+    assert!(
+        app.world()
+            .resource::<ClientProgressStore>()
+            .value
+            .outlook_tutorial_pending
+    );
+    escape(&pass, &mut app, (1024.0, 640.0));
+    assert!(
+        !app.world()
+            .resource::<ClientProgressStore>()
+            .value
+            .outlook_tutorial_pending
+    );
+    assert!(
+        app.world().resource::<UiState>().outlook_open,
+        "dismissing guidance does not close the preview"
+    );
+    assert_eq!(app.world().resource::<UiState>().outlook_guide, None);
+    let saved = app.world().resource::<ClientProgressStore>().value.clone();
+    assert!(
+        !infrastructure::client_progress::decode_progress(
+            &infrastructure::client_progress::encode_progress(&saved).unwrap()
+        )
+        .unwrap()
+        .outlook_tutorial_pending
+    );
+    pass.settled(&mut app, 1024.0, 640.0);
+    escape(&pass, &mut app, (1024.0, 640.0));
+    dispatch_in(&mut app, vec![UiAction::ShowOutlook(true)]);
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    assert_eq!(app.world().resource::<UiState>().outlook_guide, None);
+    assert!(
+        !widgets
+            .iter()
+            .any(|w| w.text == CITY_GUIDANCE || w.text == CUSHION_GUIDANCE)
+    );
+    assert_eq!(
+        app.world().resource::<Session>().0.session().state_hash(),
+        hash
+    );
+    assert!(sent::<PlayerCommand>(&app).is_empty());
+}
+
+#[test]
+fn closing_the_first_use_guide_keeps_it_pending_and_small_window_guidance_fits() {
+    use game::progress::ClientProgressStore;
+    let logs = TempDir::new().unwrap();
+    let (mut app, pass) = app(&logs);
+    app.world_mut()
+        .resource_mut::<ClientProgressStore>()
+        .value
+        .outlook_tutorial_pending = true;
+    dispatch_in(&mut app, vec![UiAction::ShowOutlook(true)]);
+    let size = (1024.0 / 1.5, 640.0 / 1.5);
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(size.0, size.1));
+    let widgets = pass.settled(&mut app, size.0, size.1);
+    assert!(
+        widgets
+            .iter()
+            .filter(|w| w.text == CITY_GUIDANCE)
+            .all(|w| screen.contains_rect(w.rect))
+    );
+    escape(&pass, &mut app, size);
+    pass.settled(&mut app, size.0, size.1);
+    escape(&pass, &mut app, size);
+    assert!(!app.world().resource::<UiState>().outlook_open);
+    assert!(
+        app.world()
+            .resource::<ClientProgressStore>()
+            .value
+            .outlook_tutorial_pending
+    );
+    dispatch_in(&mut app, vec![UiAction::ShowOutlook(true)]);
+    pass.settled(&mut app, size.0, size.1);
+    escape(&pass, &mut app, size);
+    let city = hud::outlook_model(&app.world().resource::<Session>().0, &shipped_l10n(), None)
+        .unwrap()
+        .cities[1]
+        .0;
+    dispatch_in(&mut app, vec![UiAction::PreviewOutlookCity(city)]);
+    for _ in 0..30 {
+        pass.run(&mut app, size.0, size.1);
+    }
+    let widgets = pass.settled(&mut app, size.0, size.1);
+    let notes: Vec<_> = widgets
+        .iter()
+        .filter(|w| w.text == CUSHION_GUIDANCE)
+        .collect();
+    assert!(!notes.is_empty());
+    assert!(notes.iter().all(|w| screen.contains_rect(w.rect)));
+}
+
+#[test]
+fn first_use_spotlights_expire_but_city_selection_still_requires_a_real_choice() {
+    use game::hud::tutorial::OutlookGuideStep;
+    use game::progress::ClientProgressStore;
+    let logs = TempDir::new().unwrap();
+    let (mut app, pass) = app(&logs);
+    app.world_mut()
+        .resource_mut::<ClientProgressStore>()
+        .value
+        .outlook_tutorial_pending = true;
+    dispatch_in(&mut app, vec![UiAction::ShowOutlook(true)]);
+    pass.settled(&mut app, 1024.0, 640.0);
+    for _ in 0..7 {
+        crate::tutorial::advance_real(&mut app, 1.0);
+        pass.run(&mut app, 1024.0, 640.0);
+    }
+    assert_eq!(
+        app.world().resource::<UiState>().outlook_guide,
+        Some(OutlookGuideStep::ChooseCity)
+    );
+    dispatch_in(&mut app, vec![UiAction::PreviewOutlookCity(None)]);
+    assert_eq!(
+        app.world().resource::<UiState>().outlook_guide,
+        Some(OutlookGuideStep::ChooseCity)
+    );
+    let city = hud::outlook_model(&app.world().resource::<Session>().0, &shipped_l10n(), None)
+        .unwrap()
+        .cities[1]
+        .0;
+    dispatch_in(&mut app, vec![UiAction::PreviewOutlookCity(city)]);
+    pass.settled(&mut app, 1024.0, 640.0);
+    for _ in 0..7 {
+        crate::tutorial::advance_real(&mut app, 1.0);
+        pass.run(&mut app, 1024.0, 640.0);
+    }
+    assert_eq!(app.world().resource::<UiState>().outlook_guide, None);
+    assert!(
+        !app.world()
+            .resource::<ClientProgressStore>()
+            .value
+            .outlook_tutorial_pending
+    );
+}
+
+#[test]
+fn first_use_with_no_new_cities_highlights_the_existing_capacity_cushion() {
+    use game::hud::tutorial::OutlookGuideStep;
+    use game::progress::ClientProgressStore;
+    let logs = TempDir::new().unwrap();
+    let (mut app, pass) = app(&logs);
+    {
+        let mut session = app.world_mut().resource_mut::<Session>();
+        let from = session.0.session().anchor_node();
+        let cities = session.0.session().city_views();
+        for city in cities {
+            if session
+                .0
+                .session()
+                .city_connection_months(city.id)
+                .is_none()
+            {
+                session
+                    .0
+                    .execute(application::Command::BuildLine {
+                        from,
+                        to: city.node,
+                    })
+                    .unwrap();
+            }
+        }
+    }
+    app.world_mut()
+        .resource_mut::<ClientProgressStore>()
+        .value
+        .outlook_tutorial_pending = true;
+    dispatch_in(&mut app, vec![UiAction::ShowOutlook(true)]);
+    assert_eq!(
+        app.world().resource::<UiState>().outlook_guide,
+        Some(OutlookGuideStep::Cushion)
+    );
+    for _ in 0..30 {
+        pass.run(&mut app, 1024.0, 640.0);
+    }
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    assert!(widgets.iter().any(|w| w.text == CUSHION_GUIDANCE));
+    escape(&pass, &mut app, (1024.0, 640.0));
+    assert!(
+        !app.world()
+            .resource::<ClientProgressStore>()
+            .value
+            .outlook_tutorial_pending
     );
 }

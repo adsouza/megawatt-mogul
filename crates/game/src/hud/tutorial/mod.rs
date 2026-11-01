@@ -7,6 +7,8 @@
 //! then highlighting Save and the crystal ball before the player expands the grid.
 //! Loading a save never starts one, and leaving the game part-way drops it without clearing
 //! `tutorial_pending`.
+//! The outlook's first-use guide shares this overlay but has its own persisted completion flag
+//! and UI state, so it can run after the main tutorial or after loading a save.
 
 mod anchors;
 mod crawl;
@@ -22,8 +24,9 @@ pub use self::overlay::{
     CRAWL_SECONDS, SPOTLIGHT_SECONDS, TutorialView, spotlight_opacity, tutorial_view,
 };
 pub use self::steps::{
-    Done, StepDef, StepKind, TUTORIAL_STEPS, TutorialAnchor, TutorialState, TutorialStep,
-    active_step, construction_key, tutorial_battery_nodes, tutorial_plant_nodes,
+    Done, OUTLOOK_STEPS, OutlookGuideStep, StepDef, StepKind, TUTORIAL_STEPS, TutorialAnchor,
+    TutorialState, TutorialStep, active_step, construction_key, tutorial_battery_nodes,
+    tutorial_plant_nodes,
 };
 use crate::hud::{HudSet, UiState};
 use crate::l10n::Localizer;

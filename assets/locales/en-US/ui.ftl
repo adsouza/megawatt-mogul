@@ -824,3 +824,11 @@ outlook-headroom = Spare dependable MW
 outlook-help = Seasonal demand estimates and scheduled construction, in MW. Additions count only after the plant and its grid connection are ready. Dependable capacity uses regional credits for wind, solar, and storage. These are company totals, not a guarantee of hourly balance or transfers between separate grids; weather, resources, and construction outcomes can differ.
 outlook-close = Close outlook
 outlook-unavailable = The outlook is unavailable for this date.
+
+tutorial-outlook-city = Choose a new city here to preview its demand before you connect it.
+tutorial-outlook-cushion = The gap between demand and dependable capacity is your cushion. Green means spare capacity; bright red means demand exceeds supply, so build more capacity before expanding.
+outlook-cushion = Spare dependable capacity
+outlook-shortfall = Demand above dependable capacity
+outlook-cushion-summary = Smallest dependable capacity cushion: { $amount } in { $month }.
+outlook-shortfall-summary = Demand exceeds dependable capacity by up to { $amount } in { $month }.
+outlook-zero-summary = No dependable capacity cushion in { $month }.

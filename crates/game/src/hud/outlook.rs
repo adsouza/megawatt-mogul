@@ -1,4 +1,6 @@
 //! Read-only yearly planning, kept separate from the representative day's dispatch forecast.
+use super::TutorialAction;
+use super::tutorial::{TutorialAnchor, mark_visible_anchor};
 use super::{ActionSink, ButtonModel, UiAction, button, dispatch, theme::TextTone};
 use crate::{
     l10n::{Localizer, Names, format},
@@ -12,7 +14,49 @@ use domain::{
     ids::CityId,
     session::{CapacityEstimate, YearAheadOutlook},
 };
-use egui_plot::{Line, Plot};
+use egui_plot::{FilledArea, Line, Plot};
+
+fn cushion_green() -> egui::Color32 {
+    egui::Color32::from_rgba_unmultiplied(40, 220, 90, 80)
+}
+fn shortfall_red() -> egui::Color32 {
+    egui::Color32::from_rgba_unmultiplied(255, 25, 25, 185)
+}
+
+/// Crossings are explicit vertices, so green and red fills never overlap between months.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct CapacityBands {
+    pub x: Vec<f64>,
+    pub demand: Vec<f64>,
+    pub dependable: Vec<f64>,
+    pub upper: Vec<f64>,
+}
+impl CapacityBands {
+    fn push(&mut self, x: f64, demand: f64, dependable: f64) {
+        self.x.push(x);
+        self.demand.push(demand);
+        self.dependable.push(dependable);
+        self.upper.push(demand.max(dependable));
+    }
+    fn of(points: &[(f64, f64)]) -> Self {
+        let mut bands = Self::default();
+        let Some(&(demand, capacity)) = points.first() else {
+            return bands;
+        };
+        bands.push(0.0, demand, capacity);
+        for (i, pair) in points.windows(2).enumerate() {
+            let a = pair[0].1 - pair[0].0;
+            let b = pair[1].1 - pair[1].0;
+            if (a > 0.0 && b < 0.0) || (a < 0.0 && b > 0.0) {
+                let t = a / (a - b);
+                let y = pair[0].0 + t * (pair[1].0 - pair[0].0);
+                bands.push(i as f64 + t, y, y);
+            }
+            bands.push((i + 1) as f64, pair[1].0, pair[1].1);
+        }
+        bands
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct OutlookRow {
@@ -37,6 +81,11 @@ pub struct OutlookModel {
     pub series: Vec<String>,
     pub rows: Vec<OutlookRow>,
     pub close: ButtonModel,
+    pub bands: CapacityBands,
+    pub cushion_label: String,
+    pub shortfall_label: String,
+    pub cushion_summary: String,
+    pub has_shortfall: bool,
 }
 
 /// Cities with existing or ordered paths belong to the baseline, not the what-if chooser.
@@ -109,7 +158,7 @@ fn model_from(game: &Game, l10n: &Localizer, outlook: &YearAheadOutlook) -> Outl
             _ => l10n.args("outlook-no-route", &[("city", names.city(c.city).into())]),
         },
     };
-    let rows = outlook
+    let rows: Vec<OutlookRow> = outlook
         .months
         .iter()
         .map(|point| {
@@ -156,7 +205,38 @@ fn model_from(game: &Game, l10n: &Localizer, outlook: &YearAheadOutlook) -> Outl
         ]
         .map(|key| l10n.text(key)),
     );
+    let bands = CapacityBands::of(&rows.iter().map(|r| (r.peak, r.firm)).collect::<Vec<_>>());
+    let worst = rows
+        .iter()
+        .min_by(|a, b| (a.firm - a.peak).total_cmp(&(b.firm - b.peak)));
+    let has_shortfall = worst.is_some_and(|row| row.firm < row.peak);
+    let cushion_summary = worst
+        .map(|row| {
+            let margin = row.firm - row.peak;
+            l10n.args(
+                if margin < 0.0 {
+                    "outlook-shortfall-summary"
+                } else if margin == 0.0 {
+                    "outlook-zero-summary"
+                } else {
+                    "outlook-cushion-summary"
+                },
+                &[
+                    (
+                        "amount",
+                        format::megawatts(domain::units::Megawatts::new(margin.abs())).into(),
+                    ),
+                    ("month", row.month.clone().into()),
+                ],
+            )
+        })
+        .unwrap_or_default();
     OutlookModel {
+        bands,
+        has_shortfall,
+        cushion_summary,
+        cushion_label: l10n.text("outlook-cushion"),
+        shortfall_label: l10n.text("outlook-shortfall"),
         title: l10n.text("outlook-title"),
         help: l10n.text("outlook-help"),
         power_label: l10n.text("forecast-axis-power"),
@@ -180,6 +260,13 @@ fn model_from(game: &Game, l10n: &Localizer, outlook: &YearAheadOutlook) -> Outl
 }
 
 pub fn draw_outlook(ui: &mut egui::Ui, model: &OutlookModel) -> Vec<UiAction> {
+    draw_outlook_revealed(ui, model, None)
+}
+fn draw_outlook_revealed(
+    ui: &mut egui::Ui,
+    model: &OutlookModel,
+    reveal: Option<TutorialAnchor>,
+) -> Vec<UiAction> {
     let mut actions = Vec::new();
     let popup_was_open = egui::Popup::is_any_open(ui.ctx());
     ui.horizontal_wrapped(|ui| {
@@ -194,7 +281,7 @@ pub fn draw_outlook(ui: &mut egui::Ui, model: &OutlookModel) -> Vec<UiAction> {
             .find(|(id, _)| *id == model.city)
             .map(|(_, name)| name.as_str())
             .unwrap_or_default();
-        egui::ComboBox::from_id_salt("outlook-city")
+        let picker = egui::ComboBox::from_id_salt("outlook-city")
             .selected_text(selected)
             .show_ui(ui, |ui| {
                 for (id, name) in &model.cities {
@@ -203,8 +290,21 @@ pub fn draw_outlook(ui: &mut egui::Ui, model: &OutlookModel) -> Vec<UiAction> {
                     }
                 }
             });
+        mark_visible_anchor(ui, TutorialAnchor::OutlookCity, picker.response.rect);
+        if reveal == Some(TutorialAnchor::OutlookCity) {
+            picker.response.scroll_to_me(Some(egui::Align::Center));
+            actions.push(UiAction::Tutorial(TutorialAction::RevealDone));
+        }
     });
     ui.label(&model.route);
+    ui.colored_label(
+        if model.has_shortfall {
+            TextTone::Negative.color()
+        } else {
+            TextTone::Positive.color()
+        },
+        &model.cushion_summary,
+    );
     let colors = [
         TextTone::Caution.color(),
         TextTone::Negative.color(),
@@ -213,6 +313,8 @@ pub fn draw_outlook(ui: &mut egui::Ui, model: &OutlookModel) -> Vec<UiAction> {
         super::theme::heading_color(),
     ];
     ui.horizontal_wrapped(|ui| {
+        ui.colored_label(TextTone::Positive.color(), &model.cushion_label);
+        ui.colored_label(TextTone::Negative.color(), &model.shortfall_label);
         for (i, label) in model
             .series
             .iter()
@@ -223,7 +325,7 @@ pub fn draw_outlook(ui: &mut egui::Ui, model: &OutlookModel) -> Vec<UiAction> {
         }
     });
     let labels: Vec<_> = model.rows.iter().map(|r| r.month.clone()).collect();
-    Plot::new("year-ahead-outlook")
+    let chart = Plot::new("year-ahead-outlook")
         .height(210.0)
         .include_y(0.0)
         .include_x(0.0)
@@ -244,6 +346,26 @@ pub fn draw_outlook(ui: &mut egui::Ui, model: &OutlookModel) -> Vec<UiAction> {
             },
         )])
         .show(ui, |plot| {
+            plot.add(
+                FilledArea::new(
+                    &model.cushion_label,
+                    &model.bands.x,
+                    &model.bands.demand,
+                    &model.bands.upper,
+                )
+                .fill_color(cushion_green())
+                .allow_hover(false),
+            );
+            plot.add(
+                FilledArea::new(
+                    &model.shortfall_label,
+                    &model.bands.x,
+                    &model.bands.dependable,
+                    &model.bands.upper,
+                )
+                .fill_color(shortfall_red())
+                .allow_hover(false),
+            );
             for (i, (name, color)) in model.series.iter().zip(colors).enumerate() {
                 if i == 1 && model.city.is_none() {
                     continue;
@@ -272,6 +394,11 @@ pub fn draw_outlook(ui: &mut egui::Ui, model: &OutlookModel) -> Vec<UiAction> {
                 );
             }
         });
+    mark_visible_anchor(ui, TutorialAnchor::OutlookGraph, chart.response.rect);
+    if reveal == Some(TutorialAnchor::OutlookGraph) {
+        chart.response.scroll_to_me(Some(egui::Align::Center));
+        actions.push(UiAction::Tutorial(TutorialAction::RevealDone));
+    }
     // The table makes the chart's exact numbers readable without hover and supports narrow screens.
     egui::ScrollArea::horizontal()
         .id_salt("outlook-table")
@@ -331,25 +458,141 @@ pub(super) fn outlook_panel(
     let ctx = contexts.ctx_mut()?;
     let screen = ctx.content_rect().size();
     let mut actions = Vec::new();
-    egui::Modal::new(egui::Id::new("outlook-dialog")).show(ctx, |ui| {
-        ui.set_width((screen.x - 64.0).clamp(220.0, 920.0));
-        egui::ScrollArea::vertical()
-            .max_height((screen.y - 80.0).max(120.0))
-            .show(ui, |ui| match cached.value.as_ref() {
-                Some(Ok(outlook)) => {
-                    actions = draw_outlook(ui, &model_from(&session.0, &l10n, outlook))
-                }
-                _ => {
-                    ui.label(l10n.text("outlook-unavailable"));
-                    let close =
-                        ButtonModel::new(l10n.text("outlook-close"), UiAction::ShowOutlook(false));
-                    button(ui, &close, &mut actions);
-                    if super::action::cancelled(ui, &close) {
-                        actions.push(close.action);
+    let reveal = sink.ui_state().reveal_anchor;
+    egui::Modal::new(egui::Id::new("outlook-dialog"))
+        .frame(
+            egui::Frame::popup(&ctx.global_style())
+                .stroke(egui::Stroke::new(2.0, super::theme::heading_color())),
+        )
+        .show(ctx, |ui| {
+            ui.set_width((screen.x - 64.0).clamp(220.0, 920.0));
+            egui::ScrollArea::vertical()
+                .max_height((screen.y - 80.0).max(120.0))
+                .show(ui, |ui| match cached.value.as_ref() {
+                    Some(Ok(outlook)) => {
+                        actions = draw_outlook_revealed(
+                            ui,
+                            &model_from(&session.0, &l10n, outlook),
+                            reveal,
+                        )
                     }
-                }
-            });
-    });
+                    _ => {
+                        ui.label(l10n.text("outlook-unavailable"));
+                        let close = ButtonModel::new(
+                            l10n.text("outlook-close"),
+                            UiAction::ShowOutlook(false),
+                        );
+                        button(ui, &close, &mut actions);
+                        if super::action::cancelled(ui, &close) {
+                            actions.push(close.action);
+                        }
+                    }
+                });
+        });
     dispatch(actions, &mut sink);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn capacity_bands_split_at_crossings_without_hiding_a_shortage() {
+        let bands = CapacityBands::of(&[(100.0, 200.0), (200.0, 100.0)]);
+        assert_eq!(bands.x, vec![0.0, 0.5, 1.0]);
+        assert_eq!(bands.demand, vec![100.0, 150.0, 200.0]);
+        assert_eq!(bands.dependable, vec![200.0, 150.0, 100.0]);
+        assert_eq!(bands.upper, vec![200.0, 150.0, 200.0]);
+        assert_eq!(CapacityBands::of(&[(100.0, 100.0)]).upper, vec![100.0]);
+        assert!(CapacityBands::of(&[]).x.is_empty());
+    }
+    proptest::proptest! {
+        #[test]
+        fn bands_are_ordered_exact_and_do_not_mix_surplus_with_shortfall(points in proptest::collection::vec((0.0f64..10000.0, 0.0f64..10000.0), 1..13)) {
+            let bands = CapacityBands::of(&points);
+            proptest::prop_assert_eq!(bands.x.len(), bands.demand.len());
+            proptest::prop_assert_eq!(bands.x.len(), bands.dependable.len());
+            proptest::prop_assert_eq!(bands.x.len(), bands.upper.len());
+            for i in 0..bands.x.len() {
+                proptest::prop_assert_eq!(bands.upper[i], bands.demand[i].max(bands.dependable[i]));
+                if i > 0 {
+                    proptest::prop_assert!(bands.x[i] > bands.x[i-1]);
+                    let a = bands.dependable[i-1] - bands.demand[i-1];
+                    let b = bands.dependable[i] - bands.demand[i];
+                    proptest::prop_assert!(!((a > 0.0 && b < 0.0) || (a < 0.0 && b > 0.0)));
+                }
+            }
+            for (i, &(demand, capacity)) in points.iter().enumerate() {
+                let sample = bands.x.iter().position(|x| *x == i as f64).unwrap();
+                proptest::prop_assert_eq!(bands.demand[sample], demand);
+                proptest::prop_assert_eq!(bands.dependable[sample], capacity);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod paint_tests {
+    use super::*;
+    use crate::hud::test_support::{eastern_game, shipped_l10n};
+    use application::InMemoryCommandLog;
+
+    #[test]
+    fn outlook_paints_green_capacity_cushion_and_bright_red_shortfall() {
+        let game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let mut model = outlook_model(&game, &shipped_l10n(), None).unwrap();
+        for (i, row) in model.rows.iter_mut().enumerate() {
+            row.peak = if i < 6 { 100.0 } else { 300.0 };
+            row.firm = 200.0;
+            row.existing = 200.0;
+            row.scheduled = 0.0;
+            row.baseline_peak = row.peak;
+        }
+        model.bands = CapacityBands::of(
+            &model
+                .rows
+                .iter()
+                .map(|r| (r.peak, r.firm))
+                .collect::<Vec<_>>(),
+        );
+        let ctx = egui::Context::default();
+        let mut painted = Vec::new();
+        for _ in 0..4 {
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1024.0, 900.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    draw_outlook(ui, &model);
+                },
+            );
+            painted = output.shapes.clone();
+            output.drop_without_applying_deltas();
+        }
+        fn contains(shape: &egui::Shape, color: egui::Color32) -> bool {
+            match shape {
+                egui::Shape::Mesh(mesh) => mesh.vertices.iter().any(|v| v.color == color),
+                egui::Shape::Vec(shapes) => shapes.iter().any(|s| contains(s, color)),
+                _ => false,
+            }
+        }
+        assert!(
+            painted.iter().any(|s| contains(
+                &s.shape,
+                egui::Color32::from_rgba_unmultiplied(40, 220, 90, 80)
+            )),
+            "green surplus is actually filled on the graph"
+        );
+        assert!(
+            painted.iter().any(|s| contains(
+                &s.shape,
+                egui::Color32::from_rgba_unmultiplied(255, 25, 25, 185)
+            )),
+            "the shortage is a bright red fill"
+        );
+    }
 }

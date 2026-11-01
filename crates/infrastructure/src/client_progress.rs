@@ -20,6 +20,8 @@ pub struct ClientProgress {
     pub version: u32,
     /// The first-game tutorial has not yet been completed or dismissed.
     pub tutorial_pending: bool,
+    /// The first-use city-demand preview walkthrough has not been completed.
+    pub outlook_tutorial_pending: bool,
     /// Region ids the player has played.
     pub played_regions: BTreeSet<String>,
 }
@@ -28,6 +30,7 @@ impl Default for ClientProgress {
         Self {
             version: 1,
             tutorial_pending: true,
+            outlook_tutorial_pending: true,
             played_regions: BTreeSet::new(),
         }
     }

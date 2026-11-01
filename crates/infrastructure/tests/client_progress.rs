@@ -48,6 +48,7 @@ fn round_trip() {
 fn absent_keys_take_defaults() {
     let bare = decode_progress(b"(version:1)").unwrap();
     assert!(bare.tutorial_pending);
+    assert!(bare.outlook_tutorial_pending);
     assert!(bare.played_regions.is_empty());
     // Delete each key in turn from a record whose other fields are non-default: the deleted
     // one takes its default and the others keep their values.
@@ -201,9 +202,10 @@ proptest::proptest! {
     #[test]
     fn valid_progress_round_trips_exactly(
         pending in proptest::bool::ANY,
+        outlook_pending in proptest::bool::ANY,
         ids in proptest::collection::btree_set("[a-z0-9_-]{1,64}", 0..32),
     ) {
-        let progress = ClientProgress { tutorial_pending: pending, played_regions: ids, ..Default::default() };
+        let progress = ClientProgress { tutorial_pending: pending, outlook_tutorial_pending: outlook_pending, played_regions: ids, ..Default::default() };
         proptest::prop_assert_eq!(decode_progress(&encode_progress(&progress).unwrap()).unwrap(), progress);
     }
 }

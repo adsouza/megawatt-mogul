@@ -602,10 +602,21 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             | UiAction::InspectForecast { .. }
             | UiAction::ShowLinks(_)
             | UiAction::ShowOutlook(false)
-            | UiAction::PreviewOutlookCity(_)
             | UiAction::InspectHvdc { .. }
             | UiAction::SetHvdcTab(_)
             | UiAction::EditHvdcRange(_) => {}
+            UiAction::PreviewOutlookCity(city) => {
+                sink.ui.outlook_city = sink
+                    .session
+                    .as_ref()
+                    .and_then(|session| super::outlook::preview_city(session.0.session(), city));
+                if sink.ui.outlook_open
+                    && sink.ui.outlook_guide.is_some()
+                    && sink.ui.outlook_city.is_some()
+                {
+                    sink.ui.outlook_guide = Some(super::tutorial::OutlookGuideStep::Cushion);
+                }
+            }
             UiAction::ShowOutlook(true) => {
                 let selected = match *sink.selection {
                     Selection::City(city) => Some(city),
@@ -614,6 +625,19 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
                 sink.ui.outlook_city = sink.session.as_ref().and_then(|session| {
                     super::outlook::preview_city(session.0.session(), selected)
                 });
+                if sink.progress.loaded && sink.progress.value.outlook_tutorial_pending {
+                    let can_choose = sink.session.as_ref().is_some_and(|session| {
+                        session.0.session().city_views().iter().any(|city| {
+                            super::outlook::preview_city(session.0.session(), Some(city.id))
+                                .is_some()
+                        })
+                    });
+                    sink.ui.outlook_guide = Some(if can_choose {
+                        super::tutorial::OutlookGuideStep::CitySpotlight
+                    } else {
+                        super::tutorial::OutlookGuideStep::Cushion
+                    });
+                }
                 *sink.speed = SimSpeed::Paused;
             }
             UiAction::World(action) => sink.world.apply(action),
@@ -778,6 +802,38 @@ fn tutorial(sink: &mut ActionSink, action: TutorialAction) {
         }
         return;
     }
+    if let TutorialAction::Play(step) | TutorialAction::Dismiss(step) = action
+        && matches!(
+            step,
+            TutorialStep::OutlookCitySpotlight
+                | TutorialStep::OutlookChooseCity
+                | TutorialStep::OutlookCushion
+        )
+    {
+        use super::tutorial::OutlookGuideStep;
+        if sink.ui.outlook_open {
+            match (step, sink.ui.outlook_guide) {
+                (TutorialStep::OutlookCitySpotlight, Some(OutlookGuideStep::CitySpotlight)) => {
+                    sink.ui.outlook_guide = Some(OutlookGuideStep::ChooseCity)
+                }
+                (TutorialStep::OutlookCushion, Some(OutlookGuideStep::Cushion)) => {
+                    sink.ui.outlook_guide = None;
+                    sink.progress.value.outlook_tutorial_pending = false;
+                }
+                _ => {}
+            }
+        }
+        return;
+    }
+    if let TutorialAction::Reveal(
+        anchor @ (TutorialAnchor::OutlookCity | TutorialAnchor::OutlookGraph),
+    ) = action
+    {
+        if sink.ui.outlook_guide.is_some() {
+            sink.ui.reveal_anchor = Some(anchor);
+        }
+        return;
+    }
     let Some(state) = sink.tutorial.0.as_mut() else {
         return;
     };
@@ -792,7 +848,9 @@ fn tutorial(sink: &mut ActionSink, action: TutorialAction) {
                 TutorialAnchor::PlantBuildButton
                 | TutorialAnchor::LineSection
                 | TutorialAnchor::PlantLineButton
-                | TutorialAnchor::ReviewConstruction => {
+                | TutorialAnchor::ReviewConstruction
+                | TutorialAnchor::OutlookCity
+                | TutorialAnchor::OutlookGraph => {
                     sink.ui.reveal_anchor = Some(anchor);
                 }
                 _ => {}

@@ -87,6 +87,7 @@ pub struct UiState {
     pub links_open: bool,
     pub outlook_open: bool,
     pub outlook_city: Option<domain::ids::CityId>,
+    pub outlook_guide: Option<super::tutorial::OutlookGuideStep>,
     pub hvdc_selected: Option<domain::ids::LinkId>,
     pub hvdc_terminal: Option<domain::grid::ConverterStationId>,
     pub hvdc_tab: super::links::HvdcTab,
@@ -151,7 +152,12 @@ impl UiState {
                 self.warnings_open = false;
             }
             UiAction::ShowLinks(open) => self.links_open = *open,
-            UiAction::ShowOutlook(open) => self.outlook_open = *open,
+            UiAction::ShowOutlook(open) => {
+                self.outlook_open = *open;
+                if !open {
+                    self.outlook_guide = None;
+                }
+            }
             UiAction::PreviewOutlookCity(city) => self.outlook_city = *city,
             UiAction::InspectHvdc { link, station } => {
                 if self.hvdc_selected != Some(*link) {
