@@ -83,6 +83,13 @@ pub enum UiAction {
     ShowLegend(bool),
     /// Open another tab of the Planning panel.
     SetPlanningTab(PlanningTab),
+    /// The tab Planning opens on, chosen by the game rather than clicked: it sets the tab and
+    /// nothing else (unlike a click on Commitments, which also selects a local grid).
+    OpenPlanningTab(PlanningTab),
+    /// Switch automatic commitments on or off. Switching on in Planning plans now.
+    SetAutoCommitments(bool),
+    /// Plan commitments automatically now: send the planner's patterns, dropping any draft.
+    RunAutoCommitments,
     /// Open another tab of the Operating panel.
     SetOperatingTab(OperatingTab),
     SelectSupplyMonth(SimMonth),
@@ -306,6 +313,7 @@ pub struct ActionSink<'w> {
     session: Option<Res<'w, Session>>,
     world: ResMut<'w, crate::world::WorldControls>,
     commands: MessageWriter<'w, PlayerCommand>,
+    planner: MessageWriter<'w, crate::sim::PlannerCommand>,
     persistence: ResMut<'w, Persistence>,
     generation: Res<'w, SessionGeneration>,
     log_dir: Option<Res<'w, crate::paths::LogDir>>,
@@ -404,6 +412,23 @@ impl ActionSink<'_> {
 
 /// Turns the HUD's actions into messages and state changes, in order: the single mapping from a
 /// click to the rest of the game.
+/// Sends the automatic commitment plan as planner commands, in Planning only. `UiState::apply`
+/// has already dropped any open draft.
+fn run_auto_commitments(sink: &mut ActionSink) {
+    if sink.persistence.frozen() {
+        return;
+    }
+    let Some(session) = sink.session.as_ref() else {
+        return;
+    };
+    let generation = sink.generation.0;
+    sink.planner.write_batch(
+        application::automatic_commitment_commands(&session.0)
+            .into_iter()
+            .map(|command| crate::sim::PlannerCommand(command, generation)),
+    );
+}
+
 pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSink) {
     for action in actions {
         let previous_zone = sink.ui.island;
@@ -637,7 +662,11 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
                     sink.ui.apply(&UiAction::SelectIsland(Some(island)));
                 }
             }
+            UiAction::SetAutoCommitments(true) => run_auto_commitments(sink),
+            UiAction::RunAutoCommitments => run_auto_commitments(sink),
             UiAction::SetPlanningTab(_)
+            | UiAction::OpenPlanningTab(_)
+            | UiAction::SetAutoCommitments(false)
             | UiAction::ShowHour(_)
             | UiAction::EditCommitment { .. }
             | UiAction::ToggleWarnings

@@ -44,6 +44,11 @@ pub struct Catalog(pub RonRegionCatalog);
 #[derive(Message, Debug, Clone, PartialEq)]
 pub struct PlayerCommand(pub Command, pub u64);
 
+/// A command from the automatic commitment planner. It runs like a player's command and is
+/// recorded the same way, but a refusal is a planner bug: it is logged, never shown as a toast.
+#[derive(Message, Debug, Clone, PartialEq)]
+pub struct PlannerCommand(pub Command, pub u64);
+
 /// A command (or a new game) that was refused. The session is unchanged.
 #[derive(Message, Debug, Clone, PartialEq)]
 pub struct CommandFailed(pub CommandError);
@@ -127,6 +132,7 @@ impl Plugin for SimulationPlugin {
         let in_game = in_state(AppState::InGame).and_then(resource_exists::<Session>);
         let in_menus = in_state(AppState::MainMenu).or_else(in_state(AppState::RegionSelect));
         app.add_message::<PlayerCommand>()
+            .add_message::<PlannerCommand>()
             .add_message::<CommandFailed>()
             .add_message::<DomainEventMessage>()
             .add_message::<NewGameRequest>()
@@ -196,7 +202,9 @@ fn insert_catalog(mut commands: Commands, root: Res<AssetRoot>) {
 /// Runs every queued command through the game, in the order sent, within this one system run.
 /// A command made invalid by an earlier one in the same batch (say a target change after the
 /// month closed) is refused by the domain like any other: one `CommandFailed`, nothing applied.
+#[allow(clippy::too_many_arguments)] // Independent ECS resources and message channels.
 pub fn apply_player_commands(
+    mut planned: MessageReader<PlannerCommand>,
     mut commands: MessageReader<PlayerCommand>,
     mut session: ResMut<Session>,
     mut in_flight: ResMut<TicksInFlight>,
@@ -205,11 +213,22 @@ pub fn apply_player_commands(
     mut persistence: ResMut<Persistence>,
     generation: Res<SessionGeneration>,
 ) {
-    persistence
-        .pending
-        .extend(commands.read().filter(|m| m.1 == generation.0).cloned());
+    // The planner's commands go first: they were sent as Planning began, before any click.
+    persistence.pending.extend(
+        planned
+            .read()
+            .filter(|m| m.1 == generation.0)
+            .map(|PlannerCommand(command, owner)| (PlayerCommand(command.clone(), *owner), true)),
+    );
+    persistence.pending.extend(
+        commands
+            .read()
+            .filter(|m| m.1 == generation.0)
+            .map(|command| (command.clone(), false)),
+    );
     while !persistence.frozen() || persistence.draining {
-        let Some(PlayerCommand(command, owner)) = persistence.pending.pop_front() else {
+        let Some((PlayerCommand(command, owner), from_planner)) = persistence.pending.pop_front()
+        else {
             break;
         };
         if owner != generation.0 {
@@ -235,6 +254,9 @@ pub fn apply_player_commands(
                         break;
                     }
                 }
+            }
+            Err(error) if from_planner => {
+                error!("the automatic commitment planner sent a refused command: {error:?}");
             }
             Err(error) => {
                 failures.write(CommandFailed(error));

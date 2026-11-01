@@ -107,6 +107,9 @@ pub struct KindGroup {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CommitmentModel {
+    /// *Plan commitments automatically each month*: the player's preference.
+    pub auto: ToggleModel,
+    pub auto_tip: String,
     pub island: Option<NodeId>,
     pub scope_label: String,
     pub scopes: Vec<ToggleModel>,
@@ -444,7 +447,16 @@ pub fn commitment_model(
         }
     }
     let groups = local_groups;
+    let auto_on = ui.auto_commitments.0;
     CommitmentModel {
+        auto: ToggleModel {
+            button: ButtonModel::new(
+                l10n.text("commitment-auto"),
+                UiAction::SetAutoCommitments(!auto_on),
+            ),
+            on: auto_on,
+        },
+        auto_tip: l10n.text("commitment-auto-tip"),
         island: selected,
         scope_label: l10n.text("commitment-grid"),
         scopes,
@@ -551,6 +563,14 @@ pub fn draw_commitment(
     form: &mut CommitmentForm,
 ) -> Vec<UiAction> {
     let mut actions = Vec::new();
+    let mut auto = model.auto.on;
+    if ui
+        .checkbox(&mut auto, &model.auto.button.label)
+        .on_hover_text(&model.auto_tip)
+        .clicked()
+    {
+        actions.push(model.auto.button.action.clone());
+    }
     if model.scopes.len() > 1 {
         ui.horizontal_wrapped(|ui| {
             ui.label(&model.scope_label);
@@ -684,6 +704,25 @@ mod tests {
 
     use super::*;
     use crate::hud::test_support::{eastern_game, empty_start, shipped_game, shipped_l10n};
+
+    #[test]
+    fn the_checkbox_reflects_the_preference() {
+        let game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let l10n = shipped_l10n();
+        let form = CommitmentForm::default();
+        let on = commitment_model(&game, &l10n, &UiState::default(), &form);
+        assert!(on.auto.on);
+        assert_eq!(on.auto.button.label, l10n.text("commitment-auto"));
+        assert_eq!(on.auto.button.action, UiAction::SetAutoCommitments(false));
+        assert_eq!(on.auto_tip, l10n.text("commitment-auto-tip"));
+        let ui = UiState {
+            auto_commitments: crate::hud::ui_state::AutoCommitments(false),
+            ..Default::default()
+        };
+        let off = commitment_model(&game, &l10n, &ui, &form);
+        assert!(!off.auto.on);
+        assert_eq!(off.auto.button.action, UiAction::SetAutoCommitments(true));
+    }
 
     #[test]
     fn commitment_axis_names_the_system_zone() {

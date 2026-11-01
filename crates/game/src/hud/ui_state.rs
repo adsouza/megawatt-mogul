@@ -67,6 +67,17 @@ pub struct PendingCommit {
     pub hours: [bool; 24],
 }
 
+/// Whether commitments are planned automatically when Planning begins (spec 2026-10-31 §5): the
+/// player's preference, on unless they switch it off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AutoCommitments(pub bool);
+
+impl Default for AutoCommitments {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
 /// What the Planning panel remembers between frames.
 #[derive(Resource, Debug, Clone, PartialEq, Eq, Default)]
 pub struct UiState {
@@ -82,6 +93,7 @@ pub struct UiState {
     pub hvdc_construction: bool,
     pub tab: PlanningTab,
     pub supply_chart_layout: SupplyChartLayout,
+    pub auto_commitments: AutoCommitments,
     /// The archived supply chart's month; `None` selects the latest completed month.
     pub supply_month: Option<SimMonth>,
     /// Whether Review is displaying the completed-day chart rather than the summary.
@@ -154,7 +166,10 @@ impl UiState {
                 self.review_supply = *show;
                 self.supply_month = None;
             }
-            UiAction::SetPlanningTab(tab) => self.tab = *tab,
+            UiAction::SetPlanningTab(tab) | UiAction::OpenPlanningTab(tab) => self.tab = *tab,
+            UiAction::SetAutoCommitments(on) => self.auto_commitments = AutoCommitments(*on),
+            // The draft was drafted against the patterns the planner is about to replace.
+            UiAction::RunAutoCommitments => self.draft = None,
             UiAction::ShowHour(hour) => self.highlight_hour = *hour,
             UiAction::ToggleWarnings => self.warnings_open = !self.warnings_open,
             UiAction::EditCommitment { plant, hours } => {
@@ -207,6 +222,7 @@ pub struct CommitmentForm {
 pub(super) fn reset_ui_state(mut ui: ResMut<UiState>, mut form: ResMut<CommitmentForm>) {
     *ui = UiState {
         supply_chart_layout: ui.supply_chart_layout,
+        auto_commitments: ui.auto_commitments,
         ..Default::default()
     };
     *form = CommitmentForm::default();
@@ -221,6 +237,7 @@ pub(super) fn reset_planning_state(mut ui: ResMut<UiState>, mut form: ResMut<Com
         hvdc_terminal: ui.hvdc_terminal,
         hvdc_tab: ui.hvdc_tab,
         supply_chart_layout: ui.supply_chart_layout,
+        auto_commitments: ui.auto_commitments,
         ..Default::default()
     };
     *form = CommitmentForm::default();

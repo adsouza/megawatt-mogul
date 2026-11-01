@@ -401,6 +401,8 @@ pub const ALL_UI_KEYS: &[&str] = &[
     // Shell: top bar, toasts and game over
     "time-with-zone",
     "city-local-time",
+    "commitment-auto",
+    "commitment-auto-tip",
     "commitment-system-time",
     "commitment-system-zone",
     "line-submarine",

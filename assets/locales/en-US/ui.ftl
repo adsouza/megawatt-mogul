@@ -238,6 +238,8 @@ tariff-review-months = { $months ->
     [one] The December review is 1 month away.
    *[other] The December review is { $months } months away.
 }
+commitment-auto = Plan commitments automatically each month
+commitment-auto-tip = Each Planning phase, switches off expensive plants the forecast doesn't need, keeping a cushion above the forecast.
 commitment-title = Commitments
 commitment-grid = Planning zone
 commitment-unconnected = Not connected to a grid zone

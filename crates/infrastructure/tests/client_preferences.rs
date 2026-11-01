@@ -125,3 +125,20 @@ fn chart_layout_defaults_to_separate_and_roundtrips_both_choices() {
         assert_eq!(read_preferences(dir.path()).unwrap(), preferences);
     }
 }
+#[test]
+fn auto_commitments_defaults_on_and_round_trips() {
+    // A file written before the preference existed reads as on.
+    let old = br#"(version: 1, zoom: 1.0, speed: 2, effects: true)"#;
+    assert!(
+        infrastructure::client_preferences::decode_preferences(old)
+            .unwrap()
+            .auto_commitments
+    );
+    let dir = TempDir::new().unwrap();
+    let off = ClientPreferences {
+        auto_commitments: false,
+        ..Default::default()
+    };
+    write_preferences(dir.path(), &off).unwrap();
+    assert!(!read_preferences(dir.path()).unwrap().auto_commitments);
+}
