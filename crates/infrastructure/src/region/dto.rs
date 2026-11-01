@@ -358,6 +358,12 @@ impl Serialize for IrradianceV4 {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WeatherDto {
+    pub surprise_share: f64,
+}
+
 /// Strict schema-4 source; no legacy locale or tuning defaults.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -402,6 +408,13 @@ pub struct RegionFileV4 {
     pub geothermal: Option<GeothermalDto>,
 
     pub wind: WindDto,
+    /// How much of each day's weather the forecast leaves unknown (schema 6).
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub weather: Option<WeatherDto>,
     pub catalog: Vec<PlantSpecDtoV4>,
     pub cities: Vec<CityDtoV4>,
     pub system_zone: u16,

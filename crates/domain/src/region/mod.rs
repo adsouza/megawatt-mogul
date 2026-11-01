@@ -38,7 +38,7 @@ pub use clock::{CityLocale, ClimateId, GeoBounds, RegionClock, TimeZone, ZoneId}
 pub use params::{
     CityDef, FrequencyParams, GeothermalParams, HydroParams, LineParams, RegulatorParams,
     SatisfactionParams, SolarModel, SolarParams, StartDef, StartPlantDef, StorageAccreditation,
-    WindParams,
+    WeatherParams, WindParams,
 };
 pub use plant_spec::{BatterySpec, PlantKind, PlantSpec, SitingRule};
 pub use terrain::{Cell, TerrainGrid};
@@ -125,6 +125,7 @@ pub struct RegionDefinitionParts {
     pub calendar: Calendar,
     pub solar: SolarParams,
     pub wind: WindParams,
+    pub weather: WeatherParams,
     pub hydro: HydroParams,
     pub geothermal: Option<GeothermalParams>,
     pub frequency: FrequencyParams,
@@ -161,6 +162,7 @@ pub struct RegionDefinition {
     solar_weather_rows: Vec<f64>,
     solar_monthly_means: [f64; 12],
     wind: WindParams,
+    weather: WeatherParams,
     hydro: HydroParams,
     geothermal: Option<GeothermalParams>,
     frequency: FrequencyParams,
@@ -295,6 +297,10 @@ impl RegionDefinition {
 
     pub fn wind(&self) -> &WindParams {
         &self.wind
+    }
+
+    pub fn weather(&self) -> &WeatherParams {
+        &self.weather
     }
 
     pub fn hydro(&self) -> &HydroParams {
@@ -518,6 +524,11 @@ fn validate_shapes(parts: &RegionDefinitionParts) -> Result<(), RegionError> {
     check_shape(
         s.clearness_sd.is_finite() && s.clearness_sd >= 0.0,
         "solar.clearness_sd",
+    )?;
+    let share = parts.weather.surprise_share;
+    check_shape(
+        share.is_finite() && (0.0..=1.0).contains(&share),
+        "weather.surprise_share",
     )?;
     check_shape(
         all_positive(&parts.hydro.monthly_flow),
@@ -759,6 +770,7 @@ impl TryFrom<RegionDefinitionParts> for RegionDefinition {
             solar_weather_rows,
             solar_monthly_means,
             wind: parts.wind,
+            weather: parts.weather,
             hydro: parts.hydro,
             geothermal: parts.geothermal,
             frequency: parts.frequency,
@@ -1123,6 +1135,32 @@ mod tests {
             );
         }
         assert!(RegionDefinition::try_from(parts_with(|p| p.solar.clearness_sd = 0.0)).is_ok());
+    }
+
+    #[test]
+    fn surprise_share_must_lie_in_unit_interval() {
+        for share in [1.5, -0.1, f64::NAN] {
+            let r = RegionDefinition::try_from(parts_with(|p| p.weather.surprise_share = share));
+            assert_eq!(r.unwrap_err(), shape("weather.surprise_share"), "{share}");
+        }
+        for share in [0.0, 0.5, 1.0] {
+            assert!(
+                RegionDefinition::try_from(parts_with(|p| p.weather.surprise_share = share))
+                    .is_ok()
+            );
+        }
+    }
+
+    #[test]
+    fn weather_sds_split_the_variance() {
+        let weather = WeatherParams {
+            surprise_share: 0.5,
+        };
+        assert!((weather.surprise_sd(0.18) - 0.09).abs() < 1e-12);
+        let total = weather.forecast_sd(0.18).powi(2) + weather.surprise_sd(0.18).powi(2);
+        assert!((total - 0.18_f64.powi(2)).abs() < 1e-12);
+        let region = RegionDefinition::try_from(parts_with(|_| {})).unwrap();
+        assert_eq!(region.weather().surprise_share, 0.5);
     }
 
     #[test]

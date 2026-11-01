@@ -141,7 +141,7 @@
 // Turkiye, Kosovo, Andorra, Monaco, Liechtenstein, San Marino and Vatican
 // City.
 (
-    region_schema: 5,
+    region_schema: 6,
     id: "continental_europe_maghreb",
     system_zone: 2,
     // Civil clocks (spec section 28.4). The EU zones observe summer time from
@@ -516,6 +516,7 @@
     // A19 balance tuning; amounts below are local major currency units, not cents.
     geothermal: (success_min: 0.45, success_max: 0.80, quality_min: 0.15, quality_max: 1.0, exploration_months: 3, exploration_share: 0.12, monthly_decline: 0.002535048613836126, makeup_capital: 15000000, makeup_months: 3, ceiling_step: 0.05, minimum_gain: 0.03),
     wind: (monthly: [0.77, 0.74, 0.69, 0.57, 0.48, 0.44, 0.42, 0.39, 0.43, 0.53, 0.63, 0.72], persistence: 0.995, innovation_sd: 0.015, initial_sd: 0.15, band: 0.25),
+    weather: (surprise_share: 0.5),
     // Unit sizes and operating parameters follow the North American catalog
     // (spec section 3.2): no row names a local unit size, so no start-up or
     // ramp is rescaled per MW (ruling 24). Money and build months come from the

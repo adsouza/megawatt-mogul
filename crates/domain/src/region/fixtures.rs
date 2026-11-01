@@ -400,6 +400,9 @@ pub fn tiny_region_parts() -> RegionDefinitionParts {
             initial_sd: 0.15,
             band: r(0.25),
         },
+        weather: WeatherParams {
+            surprise_share: 0.5,
+        },
         geothermal: Some(geothermal_params()),
         hydro: HydroParams {
             monthly_flow: [0.6, 0.6, 0.9, 1.2, 1.4, 1.3, 1.0, 0.8, 0.7, 0.6, 0.6, 0.6],

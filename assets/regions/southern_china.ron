@@ -41,7 +41,7 @@
 // values by its pacing method. Each entry's comment cites its rows and shows
 // the arithmetic; the ratios use full precision.
 (
-    region_schema: 5,
+    region_schema: 6,
     id: "southern_china",
     system_zone: 1,
     // China Standard Time, UTC+8 with no daylight saving, for every city,
@@ -238,6 +238,7 @@
     // A19 balance tuning; amounts below are local major currency units, not cents.
     geothermal: (success_min: 0.45, success_max: 0.80, quality_min: 0.15, quality_max: 1.0, exploration_months: 3, exploration_share: 0.12, monthly_decline: 0.002535048613836126, makeup_capital: 15000000, makeup_months: 3, ceiling_step: 0.05, minimum_gain: 0.03),
     wind: (monthly: [0.62, 0.6, 0.57, 0.51, 0.49, 0.53, 0.53, 0.47, 0.53, 0.65, 0.66, 0.65], persistence: 0.995, innovation_sd: 0.015, initial_sd: 0.15, band: 0.25),
+    weather: (surprise_share: 0.5),
     // Unit sizes and operating parameters follow the North American
     // catalog (spec section 3.2), except coal: Guangdong builds 1,000 MW
     // ultra-supercritical units [P7-SC-003]. Money and build months come from
