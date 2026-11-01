@@ -39,6 +39,8 @@ mod operating_side;
 mod outlook;
 #[path = "game/panel_resize.rs"]
 mod panel_resize;
+#[path = "game/payoff.rs"]
+mod payoff;
 #[path = "game/phase_change.rs"]
 mod phase_change;
 #[path = "game/planning_performance.rs"]

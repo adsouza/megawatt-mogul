@@ -9,6 +9,7 @@ mod expansion;
 mod lessons;
 mod milestones;
 mod monthly_report;
+mod payoff;
 mod plant_history;
 mod ramp_warning;
 mod rate_review;
@@ -25,6 +26,7 @@ pub use milestones::{
     MILESTONES, MilestoneKind, MilestoneProgress, MilestoneProjection, MilestoneStatus,
 };
 pub use monthly_report::MonthlyReportProjection;
+pub use payoff::{PlantPayoff, plant_payoff};
 pub use plant_history::{PlantHistory, PlantHistoryProjection};
 pub use ramp_warning::{RampWarning, RampWarningProjection, ramp_warning};
 pub use rate_review::RateReviewProjection;

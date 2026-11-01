@@ -86,6 +86,7 @@ pub struct UiState {
     pub last_planning_island: Option<domain::ids::NodeId>,
     pub links_open: bool,
     pub outlook_open: bool,
+    pub payoff_open: bool,
     pub outlook_city: Option<domain::ids::CityId>,
     pub outlook_guide: Option<super::tutorial::OutlookGuideStep>,
     pub hvdc_selected: Option<domain::ids::LinkId>,
@@ -152,6 +153,7 @@ impl UiState {
                 self.warnings_open = false;
             }
             UiAction::ShowLinks(open) => self.links_open = *open,
+            UiAction::ShowPayoff(open) => self.payoff_open = *open,
             UiAction::ShowOutlook(open) => {
                 self.outlook_open = *open;
                 if !open {

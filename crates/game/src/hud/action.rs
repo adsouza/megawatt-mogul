@@ -51,6 +51,7 @@ pub enum UiAction {
     },
     ShowLinks(bool),
     ShowOutlook(bool),
+    ShowPayoff(bool),
     PreviewOutlookCity(Option<domain::ids::CityId>),
     InspectHvdc {
         link: domain::ids::LinkId,
@@ -660,6 +661,7 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             | UiAction::InspectForecast { .. }
             | UiAction::ShowLinks(_)
             | UiAction::ShowOutlook(false)
+            | UiAction::ShowPayoff(false)
             | UiAction::InspectHvdc { .. }
             | UiAction::SetHvdcTab(_)
             | UiAction::EditHvdcRange(_) => {}
@@ -674,6 +676,9 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
                 {
                     sink.ui.outlook_guide = Some(super::tutorial::OutlookGuideStep::Cushion);
                 }
+            }
+            UiAction::ShowPayoff(true) => {
+                *sink.speed = SimSpeed::Paused;
             }
             UiAction::ShowOutlook(true) => {
                 let selected = match *sink.selection {

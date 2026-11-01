@@ -41,16 +41,6 @@ pub(super) fn makeup_capital(
     ))
 }
 
-/// Round half-even at a fixed rational boundary; retain cents for large capital values.
-pub(super) fn capital_share(capital: Money, ratio: Ratio) -> Money {
-    let denominator = 1_000_000_000_000i128;
-    let numerator = i128::from(capital.cents())
-        * (ratio.value() * denominator as f64).round_ties_even() as i128;
-    let (q, r) = (numerator / denominator, numerator % denominator);
-    Money::from_cents(
-        (q + i128::from(r * 2 > denominator || (r * 2 == denominator && q % 2 != 0))) as i64,
-    )
-}
 impl GameSession {
     pub fn geothermal_available(&self) -> bool {
         self.geothermal_available

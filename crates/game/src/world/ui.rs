@@ -355,6 +355,7 @@ pub fn finish_surface(
         if !ctx.egui_wants_keyboard_input()
             && !sink.ui_state().tutorial_cover
             && !sink.ui_state().outlook_open
+            && !sink.ui_state().payoff_open
         {
             if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::R)) {
                 actions.push(UiAction::World(WorldAction::Reset));

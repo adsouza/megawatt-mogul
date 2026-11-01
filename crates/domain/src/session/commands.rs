@@ -55,10 +55,7 @@ impl GameSession {
             let (odds, field) = self.geothermal_site(cell)?;
             Some(ExplorationQuote {
                 months: params.exploration_months,
-                capital_at_risk: super::geothermal::capital_share(
-                    spec.capital_cost,
-                    params.exploration_share,
-                ),
+                capital_at_risk: params.exploration_capital(spec.capital_cost),
                 odds,
                 expected_output: spec.capacity * field.value(),
             })
@@ -164,8 +161,7 @@ impl GameSession {
         let instalments = if kind == PlantKind::Geothermal {
             let params = self.region.geothermal().expect("validated geothermal");
             let (odds, field) = geothermal_site.expect("geothermal order");
-            let capital =
-                super::geothermal::capital_share(spec.capital_cost, params.exploration_share);
+            let capital = params.exploration_capital(spec.capital_cost);
             built.set_geothermal(crate::generation::GeothermalState {
                 exploration_left: params.exploration_months,
                 odds,

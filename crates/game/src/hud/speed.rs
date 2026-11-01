@@ -120,6 +120,7 @@ pub(super) fn pause_on_space(
         || sink.open_prompt().0.is_some()
         || sink.ui_state().tutorial_cover
         || sink.ui_state().outlook_open
+        || sink.ui_state().payoff_open
         || session.0.session().status() != SessionStatus::Active;
     if let Some(action) = space_action(sink.speed(), sink.last_speed(), blocked) {
         dispatch([action], &mut sink);

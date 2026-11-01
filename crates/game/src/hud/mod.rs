@@ -52,6 +52,8 @@ mod saves;
 mod selection;
 pub use saves::{SaveForm, SaveRowModel, SavesModel, draw_saves, save_error, saves_model};
 mod outlook;
+mod payoff;
+pub use payoff::{PayoffModel, PayoffRow, draw_payoff, payoff_model};
 mod speed;
 mod supply_chart;
 mod supply_history;
@@ -387,6 +389,13 @@ impl Plugin for HudPlugin {
                         .in_set(HudSet::Overlays)
                         .after(prompt::prompt_overlay)
                         .after(review::review_modal)
+                        .run_if(saves::other_overlays)
+                        .run_if(in_game.clone().and_then(has_l10n)),
+                    payoff::payoff_panel
+                        .in_set(HudSet::Overlays)
+                        .after(prompt::prompt_overlay)
+                        .after(review::review_modal)
+                        .after(outlook::outlook_panel)
                         .run_if(saves::other_overlays)
                         .run_if(in_game.clone().and_then(has_l10n)),
                     links::links_panel

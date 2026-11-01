@@ -57,6 +57,68 @@ fn fixture() -> (tempfile::TempDir, Game, Localizer) {
 }
 
 #[test]
+fn payoff_comparison_uses_selected_zone_terms_and_current_currency_without_mutation() {
+    let (_dir, game, l10n) = fixture();
+    let style = MoneyStyle::resolve(Currency::Eur, &l10n, |_| true);
+    let before = game.session().state_hash();
+    for (cell, zone, capital, months) in [
+        (
+            CellCoord { x: 4, y: 4 },
+            "Western construction market",
+            100_000_000,
+            2,
+        ),
+        (
+            CellCoord { x: 8, y: 5 },
+            "Eastern construction market",
+            200_000_000,
+            3,
+        ),
+    ] {
+        let model = hud::payoff_model(&game, &l10n, Some(cell), &style);
+        assert!(model.context.contains(zone));
+        let row = model
+            .rows
+            .iter()
+            .find(|r| r.kind == PlantKind::Wind)
+            .unwrap();
+        assert_eq!(row.cash.construction.len(), months);
+        assert_eq!(
+            row.cash.construction.iter().map(|m| m.cents()).sum::<i64>(),
+            capital
+        );
+        assert_eq!(
+            row.values[1],
+            money(domain::units::Money::from_cents(capital), &style)
+        );
+        assert!(row.values[1].contains('€'));
+        assert_eq!(row.points[0], [0.0, 0.0]);
+        assert_eq!(row.points[months], [months as f64 / 12.0, -capital as f64]);
+        assert!(row.cash.payback_months.is_some());
+    }
+    let baseline = hud::payoff_model(&game, &l10n, None, &style);
+    assert!(baseline.rows.iter().all(|r| r.kind != PlantKind::Battery));
+    let wind = baseline
+        .rows
+        .iter()
+        .find(|r| r.kind == PlantKind::Wind)
+        .unwrap();
+    assert_eq!(
+        wind.cash
+            .construction
+            .iter()
+            .map(|m| m.cents())
+            .sum::<i64>(),
+        game.session()
+            .region()
+            .spec(PlantKind::Wind)
+            .capital_cost
+            .cents()
+    );
+    assert_eq!(game.session().state_hash(), before);
+}
+
+#[test]
 fn local_build_widgets_and_real_construction_card_show_the_order_terms() {
     let (dir, game, l10n) = fixture();
     let style = MoneyStyle::resolve(Currency::Eur, &l10n, |_| true);

@@ -39,6 +39,8 @@ pub struct PlantRow {
     pub kind: PlantKind,
     pub name: String,
     pub help: Option<String>,
+    /// A financial caution, separate from the siting errors that disable construction.
+    pub warning: Option<String>,
     /// Capacity, capital cost, build time and fuel cost, from the region's spec.
     pub stats: Vec<PlantStat>,
     /// Why the plant can't go on this cell: the localised siting error.
@@ -100,6 +102,7 @@ pub enum LineSection {
 #[derive(Debug, Clone, PartialEq)]
 pub struct BuildModel {
     pub title: String,
+    pub payoff: ButtonModel,
     pub plant: PlantSection,
     pub line: LineSection,
     pub hvdc: Option<LineSection>,
@@ -208,6 +211,7 @@ fn build_model_for_tool(
     let nodes = node_choices(game, l10n);
     Some(BuildModel {
         title: l10n.text("build-title"),
+        payoff: ButtonModel::new(l10n.text("payoff-open"), UiAction::ShowPayoff(true)),
         hvdc_active,
         reveal: None,
         reveal_line: false,
@@ -442,6 +446,29 @@ fn plant_section(
             PlantRow {
                 kind,
                 name: kind.localize(l10n),
+                warning: (kind == PlantKind::Ccgt)
+                    .then(|| {
+                        application::projections::plant_payoff(
+                            &spec,
+                            game.session().company_view().tariff,
+                            None,
+                        )
+                    })
+                    .flatten()
+                    .filter(|cash| cash.monthly_net.is_negative())
+                    .map(|cash| {
+                        l10n.args(
+                            "build-ccgt-loss-warning",
+                            &[
+                                ("loss", format::money(-cash.monthly_net, style).into()),
+                                (
+                                    "price",
+                                    format::price(game.session().company_view().tariff, style)
+                                        .into(),
+                                ),
+                            ],
+                        )
+                    }),
                 help: if kind == PlantKind::Geothermal {
                     Some(l10n.text("geothermal-build-help"))
                 } else if kind == PlantKind::Wind {
@@ -703,6 +730,7 @@ fn line_end_section(
 pub fn draw_build(ui: &mut egui::Ui, model: &BuildModel) -> Vec<UiAction> {
     let mut actions = Vec::new();
     ui.heading(egui::RichText::new(&model.title).color(heading_color()));
+    button(ui, &model.payoff, &mut actions);
     // Each line stage scrolls on its own, so switching stage starts at the top.
     let active = if model.hvdc_active {
         model.hvdc.as_ref().unwrap_or(&model.line)
@@ -778,6 +806,9 @@ fn draw_plant_section(
                     });
                     if let Some(help) = &row.help {
                         ui.add(egui::Label::new(help).wrap());
+                    }
+                    if let Some(warning) = &row.warning {
+                        ui.colored_label(TextTone::Caution.color(), warning);
                     }
                     if let Some(reason) = &row.blocked {
                         ui.colored_label(TextTone::Caution.color(), reason);

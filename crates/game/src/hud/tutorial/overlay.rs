@@ -246,6 +246,7 @@ pub(crate) fn tutorial_overlay(
         _ => Shown::new(def.step),
     };
     let prompt_open = sink.open_prompt().0.is_some()
+        || sink.ui_state().payoff_open
         || (sink.ui_state().outlook_open && guide.is_none())
         || (guide.is_some() && egui::Popup::is_any_open(&ctx));
     // Prompts come first: a timed step waits for one to close.

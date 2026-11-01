@@ -291,6 +291,17 @@ pub struct GeothermalParams {
     pub minimum_gain: Ratio,
 }
 impl GeothermalParams {
+    /// Exploration's capital share, rounded half-even while retaining large-value cents.
+    pub fn exploration_capital(&self, capital: Money) -> Money {
+        let denominator = 1_000_000_000_000i128;
+        let numerator = i128::from(capital.cents())
+            * (self.exploration_share.value() * denominator as f64).round_ties_even() as i128;
+        let (q, r) = (numerator / denominator, numerator % denominator);
+        Money::from_cents(
+            (q + i128::from(r * 2 > denominator || (r * 2 == denominator && q % 2 != 0))) as i64,
+        )
+    }
+
     pub fn validate(&self, spec: &super::PlantSpec) -> Result<(), RegionError> {
         if self.success_min > self.success_max
             || self.quality_min == Ratio::ZERO

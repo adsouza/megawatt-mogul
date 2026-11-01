@@ -221,10 +221,7 @@ impl GameSession {
                 plant.set_geothermal(crate::generation::GeothermalState {
                     exploration_left: 0,
                     odds,
-                    exploration_capital: geothermal::capital_share(
-                        plant.spec().capital_cost,
-                        params.exploration_share,
-                    ),
+                    exploration_capital: params.exploration_capital(plant.spec().capital_cost),
                     initial_field: field,
                     field,
                     rounds: 0,
@@ -959,10 +956,7 @@ impl GameSession {
                 if (g.odds.value() - odds.value()).abs() > 1e-12
                     || (g.initial_field.value() - quality.value()).abs() > 1e-12
                     || g.exploration_capital
-                        != geothermal::capital_share(
-                            plant.spec().capital_cost,
-                            params.exploration_share,
-                        )
+                        != params.exploration_capital(plant.spec().capital_cost)
                 {
                     return Err(StateError::Invalid);
                 }
