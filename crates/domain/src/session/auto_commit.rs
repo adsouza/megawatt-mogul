@@ -266,10 +266,11 @@ impl GameSession {
                 / 100.0,
         };
         if trial.planned_by_island() {
-            let islands: Vec<NodeId> = trial.power.island_nodes().keys().copied().collect();
-            for id in islands {
-                if let Some(local) = trial.island_session(id) {
-                    local.judge_grid(id, &mut evaluation);
+            // One transfer plan for every island, as each island's own view would compute it.
+            let planned = trial.transfer_planned_power();
+            for id in trial.power.island_nodes().keys() {
+                if let Some(local) = trial.island_session_with(&planned, *id) {
+                    local.judge_grid(*id, &mut evaluation);
                 }
             }
         } else {

@@ -12,12 +12,27 @@ use crate::{
 impl GameSession {
     /// A read-only controller view with the selected island's fleet, clocks and incidents.
     pub fn island_session(&self, id: NodeId) -> Option<Self> {
-        let planned = if self.phase == DayPhase::Planning {
+        self.island_session_with(&self.transfer_planned_power(), id)
+    }
+
+    /// The power system as Planning sees it: transfers re-planned from the current commitments
+    /// during Planning, as they are; otherwise unchanged.
+    pub(super) fn transfer_planned_power(&self) -> crate::grid::PowerSystem {
+        if self.phase == DayPhase::Planning {
             self.power
                 .with_transfer_plan(&self.region, self.clock.month())
         } else {
             self.power.clone()
-        };
+        }
+    }
+
+    /// [`GameSession::island_session`] from an already transfer-planned power system, so a
+    /// caller visiting every island plans the transfers once.
+    pub(super) fn island_session_with(
+        &self,
+        planned: &crate::grid::PowerSystem,
+        id: NodeId,
+    ) -> Option<Self> {
         let power = planned.scoped_island(id, &self.region)?;
         let day_ticks = self
             .day_ticks
