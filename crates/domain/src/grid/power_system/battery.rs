@@ -32,6 +32,11 @@ pub struct SupplyForecastPoint {
     pub gross_supply: Megawatts,
     pub battery_charge: Megawatts,
     pub battery_discharge: Megawatts,
+    /// The summed power limit of enabled, connected batteries at this minute.
+    pub battery_power: Megawatts,
+    /// Energy those batteries could still deliver to the grid after this minute's flows:
+    /// stored energy times discharge efficiency, summed.
+    pub battery_deliverable_energy: MegawattHours,
 }
 
 impl SupplyForecastPoint {
@@ -760,6 +765,8 @@ impl PowerSystem {
             let mut charging_room = (primary - demand).max(Megawatts::ZERO);
             let mut storage = Megawatts::ZERO;
             let mut charging = Megawatts::ZERO;
+            let mut battery_power = Megawatts::ZERO;
+            let mut battery_energy = 0.0;
             for p in &inputs.batteries {
                 let (Some(spec), Some(state)) = (p.spec().battery, inventory.get_mut(&p.id()))
                 else {
@@ -786,6 +793,11 @@ impl PowerSystem {
                 remaining = (remaining - flow.discharge).max(Megawatts::ZERO);
                 storage += flow.discharge;
                 charging += flow.charge;
+                if state.enabled() {
+                    battery_power += p.available_capacity();
+                    battery_energy +=
+                        state.flow().stored.value() * spec.discharge_efficiency.value();
+                }
                 charging_room = (charging_room - flow.charge).max(Megawatts::ZERO);
             }
             if let Some(generation) = generation {
@@ -795,6 +807,8 @@ impl PowerSystem {
                     gross_supply: primary + storage,
                     battery_charge: charging,
                     battery_discharge: storage,
+                    battery_power,
+                    battery_deliverable_energy: MegawattHours::new(battery_energy),
                 });
             }
         }

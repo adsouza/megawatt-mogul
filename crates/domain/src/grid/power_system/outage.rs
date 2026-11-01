@@ -183,6 +183,8 @@ impl PowerSystem {
                         + Megawatts::new(self.injections[(tick / TICKS_PER_HOUR) as usize]),
                     battery_charge: Megawatts::ZERO,
                     battery_discharge: Megawatts::ZERO,
+                    battery_power: Megawatts::ZERO,
+                    battery_deliverable_energy: crate::units::MegawattHours::ZERO,
                 }
             })
             .collect();
