@@ -53,6 +53,40 @@ const SHIPPED: &[&str] = &[
     WEST,
 ];
 
+#[test]
+fn milestone_targets_scale_with_each_shipped_regions_start_and_demand() {
+    use application::projections::{MilestoneKind, regional_milestones};
+    let catalog = RonRegionCatalog::new(REGIONS_DIR);
+    for (id, gw, cities) in [
+        (EAST, 30, 14),
+        (WEST, 9, 13),
+        (BRAZIL, 8, 21),
+        (EUROPE_MAGHREB, 35, 22),
+        (INDIA, 14, 21),
+        (IPS, 10, 20),
+        (SGCC, 80, 18),
+        (SOUTHERN_CHINA, 15, 20),
+    ] {
+        let loaded = catalog.load(&RegionId::new(id)).unwrap();
+        let region = &loaded.definition;
+        let targets = regional_milestones(region);
+        assert_eq!(
+            targets,
+            [
+                MilestoneKind::ServePeak { gigawatts: gw },
+                MilestoneKind::FullSeasonWithoutStrike,
+                MilestoneKind::ConnectCities { count: cities }
+            ],
+            "{id}"
+        );
+        assert!(
+            cities as usize > region.start().connected_cities.len(),
+            "{id}"
+        );
+        assert!((cities as usize) <= region.cities().len(), "{id}");
+    }
+}
+
 /// The IDs Plan 7 adds, a subset of `SHIPPED`. The provenance, scale and squareness tests
 /// iterate it: the Eastern and Western files predate those rules.
 const NEW_REGIONS: &[&str] = &[BRAZIL, EUROPE_MAGHREB, INDIA, IPS, SOUTHERN_CHINA];

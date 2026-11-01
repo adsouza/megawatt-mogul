@@ -47,8 +47,9 @@ never as code constants. Shipped files declare `region_schema: 5`, including exp
 climate, calendar, currency, astronomical-sun and geothermal data. Legacy region schemas retain frozen
 defaults in `infrastructure::region::legacy`; old-source integrity is checked before any
 upcast. Unexpected new fields on legacy sources and unsupported schemas fail with typed errors.
-Region schema versions are independent of portable state schema 8, written by current saves;
-readers retain schemas 1–8. Schema 8 appends the expansion projection (month closes since the
+Region schema versions are independent of portable state schema 10, written by current saves;
+readers retain schemas 1–10. Schema 10 freezes regional milestone targets. Schema 8 appends the
+expansion projection (month closes since the
 first non-starter city connected); older snapshots seed it from the restored session, so an
 already-expanded game starts counting at the restore.
 
@@ -208,6 +209,13 @@ The presentation layer never reads aggregate internals. It uses cheap snapshot q
 and per-tick summaries (timeline, monthly report, plant history, milestones, rate-review estimate,
 ramp warnings, lessons). Milestones are read-side: they are tracked by a projection, not emitted as
 domain events.
+
+Milestone targets scale with each region's starting territory and authored annual demand: roughly
+half the remaining cities and halfway between the starter and whole-region simultaneous annual
+peaks. The strike-free season uses the regional calendar. Schema 10 freezes the three targets in
+the projection and adds MW-scale peaks for small regions. Schemas 1–9 migrate pending goals from
+their archived region while retaining all progress and earned targets/dates; rules 33 fence older
+command-only journals whose achievements would differ.
 
 The timeline projection keeps its rolling live buffer and archives each completed day's full
 minute samples on `MonthClosed`. It captures the original hourly forecast on entering Operating,

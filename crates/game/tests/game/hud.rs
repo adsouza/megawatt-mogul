@@ -189,7 +189,7 @@ fn the_egui_systems_have_no_conflicting_parameters() {
     );
     update_n(&mut app, 3);
     let widgets = pass.run(&mut app, 1024.0, 640.0);
-    assert!(has(&widgets, "Month in review") && has(&widgets, "Connect 10 cities"));
+    assert!(has(&widgets, "Month in review") && has(&widgets, "Connect 14 cities"));
 }
 
 /// The real systems draw each phase's panels, by their run conditions, and none of the other

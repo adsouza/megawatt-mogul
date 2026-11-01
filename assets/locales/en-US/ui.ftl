@@ -42,6 +42,7 @@ name-city-unknown = City #{ $id }
 name-line = Line { $id }
 
 milestone-serve-peak = Serve a monthly peak of { $gigawatts } GW
+milestone-serve-peak-mw = Serve a monthly peak of { $megawatts } MW
 milestone-full-season-without-strike = Get through a full season without a strike
 milestone-connect-cities = Connect { $count } cities
 milestone-progress-peak = Best monthly peak so far: { $best } of { $goal }

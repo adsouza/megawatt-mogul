@@ -640,7 +640,7 @@ fn the_milestones_panel_opens_from_the_top_bar_in_every_phase() {
             find_button(&widgets, label).rect.center(),
         );
     };
-    let first = "Serve a monthly peak of 50 GW";
+    let first = "Serve a monthly peak of 30 GW";
 
     // Planning.
     assert!(!has(&pass.settled(&mut app, width, height), first));
@@ -650,7 +650,7 @@ fn the_milestones_panel_opens_from_the_top_bar_in_every_phase() {
     for text in [
         first,
         "Get through a full season without a strike",
-        "Connect 10 cities",
+        "Connect 14 cities",
         "0 of 3 strike-free months this season",
     ] {
         assert!(has(&widgets, text), "Planning: {text}");

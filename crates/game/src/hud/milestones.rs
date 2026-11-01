@@ -3,7 +3,7 @@
 //! doesn't pause the game.
 
 use application::Game;
-use application::projections::{MILESTONES, MilestoneKind, MilestoneStatus};
+use application::projections::{MilestoneKind, MilestoneStatus};
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 
@@ -51,7 +51,8 @@ pub fn milestones_model(game: &Game, l10n: &Localizer) -> MilestonesModel {
     let now = game.session().clock().month();
     MilestonesModel {
         title: l10n.text("milestones-title"),
-        rows: MILESTONES
+        rows: milestones
+            .targets()
             .iter()
             .map(|kind| {
                 milestone_row(
@@ -189,8 +190,8 @@ mod tests {
             .filter(|city| city.connected)
             .count();
         assert!(
-            connected < 10,
-            "the eastern start has fewer than ten cities"
+            connected < 14,
+            "the eastern start is below the regional city milestone"
         );
 
         let model = milestones_model(&game, &l10n);
@@ -205,9 +206,9 @@ mod tests {
             rows,
             [
                 (
-                    "Serve a monthly peak of 50 GW",
+                    "Serve a monthly peak of 30 GW",
                     "In progress",
-                    "Best monthly peak so far: 0.0 GW of 50.0 GW"
+                    "Best monthly peak so far: 0.0 GW of 30.0 GW"
                 ),
                 (
                     "Get through a full season without a strike",
@@ -215,9 +216,9 @@ mod tests {
                     "0 of 3 strike-free months this season"
                 ),
                 (
-                    "Connect 10 cities",
+                    "Connect 14 cities",
                     "In progress",
-                    format!("{connected} of 10 cities connected").as_str()
+                    format!("{connected} of 14 cities connected").as_str()
                 ),
             ]
         );

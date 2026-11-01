@@ -401,6 +401,7 @@ fn plant_statuses() -> Vec<PlantStatus> {
 fn milestones() -> Vec<MilestoneKind> {
     vec![
         MilestoneKind::ServePeak { gigawatts: 50 },
+        MilestoneKind::ServePeakMegawatts { megawatts: 1_500 },
         MilestoneKind::FullSeasonWithoutStrike,
         MilestoneKind::ConnectCities { count: 10 },
     ]
@@ -784,10 +785,11 @@ fn the_variant_tables_cover_every_variant() {
         PlantStatus::Online { .. } => 3,
         PlantStatus::Stopping { .. } => 4,
     });
-    assert_covers_every_variant("MilestoneKind", &milestones(), 3, |m| match m {
+    assert_covers_every_variant("MilestoneKind", &milestones(), 4, |m| match m {
         MilestoneKind::ServePeak { .. } => 0,
         MilestoneKind::FullSeasonWithoutStrike => 1,
         MilestoneKind::ConnectCities { .. } => 2,
+        MilestoneKind::ServePeakMegawatts { .. } => 3,
     });
     assert_covers_every_variant("MilestoneProgress", &milestone_progress(), 3, |p| match p {
         MilestoneProgress::Peak { .. } => 0,

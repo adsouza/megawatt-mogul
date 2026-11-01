@@ -34,6 +34,39 @@ fn same(a: &Game, b: &Game) {
 }
 
 #[test]
+fn schema_9_snapshot_upgrades_pending_regional_milestones_without_losing_progress() {
+    use domain::state::State;
+    let (mut game, _) = game_on(tiny_region_parts(), 8);
+    game.execute(Command::BeginOperating).unwrap();
+    game.execute(Command::AdvanceTicks { n: TICKS_PER_DAY })
+        .unwrap();
+    let mut checkpoint = game.checkpoint();
+    checkpoint.header.sim_rules_version = 32;
+    let snapshot = checkpoint.snapshot.as_mut().unwrap();
+    snapshot.schema = 9;
+    snapshot.session = game.session().snapshot_state_schema(9);
+    snapshot.projections = game.projections().state_bytes_schema(9);
+    checkpoint.state_hash = snapshot.state_hash();
+    let restored = Game::restore(
+        tiny_loaded_region(),
+        checkpoint,
+        Box::new(InMemoryCommandLog::default()),
+        &|| false,
+    )
+    .unwrap();
+    assert_eq!(restored.session().state_hash(), game.session().state_hash());
+    assert_eq!(
+        restored.projections().milestones,
+        game.projections().milestones
+    );
+    assert_eq!(
+        restored.projections().milestones.targets()[2],
+        application::projections::MilestoneKind::ConnectCities { count: 3 }
+    );
+    assert_eq!(restored.checkpoint().snapshot.unwrap().schema, 10);
+}
+
+#[test]
 fn cancelled_line_stays_cancelled_in_snapshots_and_command_replay() {
     use domain::state::State;
     let (mut game, _) = game_on(tiny_region_parts(), 8);

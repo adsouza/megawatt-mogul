@@ -179,6 +179,9 @@ impl Game {
                 // Older saves never counted closes since the first expansion: start from now.
                 projections.expansion = ExpansionProjection::new(&session);
             }
+            if snapshot.schema < 10 {
+                projections.milestones.upgrade_targets(&session);
+            }
             (session, projections)
         } else {
             let (session, projections) =

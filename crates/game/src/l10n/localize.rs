@@ -500,6 +500,10 @@ impl Localize for MilestoneKind {
                 "milestone-serve-peak",
                 &[("gigawatts", gigawatts.to_string().into())],
             ),
+            Self::ServePeakMegawatts { megawatts } => l10n.args(
+                "milestone-serve-peak-mw",
+                &[("megawatts", megawatts.to_string().into())],
+            ),
             Self::FullSeasonWithoutStrike => l10n.text("milestone-full-season-without-strike"),
             Self::ConnectCities { count } => l10n.args(
                 "milestone-connect-cities",
