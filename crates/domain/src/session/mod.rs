@@ -616,6 +616,16 @@ impl GameSession {
         out
     }
     /// Invoked only after verifying the original schema-1 canonical boundary.
+    /// Saves from before the day-ahead forecast (state schema < 9) get the month's mean as
+    /// their forecast: what a region that knows nothing ahead forecasts (spec 2026-10-31 §3.2).
+    pub fn upgrade_weather_forecast(&mut self) {
+        self.power
+            .set_weather_forecast(crate::grid::WeatherForecast::neutral(
+                &self.region,
+                self.clock.month(),
+            ));
+    }
+
     pub fn upgrade_schema1(&mut self) {
         let tick =
             (self.phase == DayPhase::Operating).then_some(self.clock.tick().saturating_sub(1));

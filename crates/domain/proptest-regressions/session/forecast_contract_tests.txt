@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 3252202d17d2e6904c762078abace17a00b8fa811d51352246fed4c620a2b160 # shrinks to month = 1, flow = 1, count = 1, hydro_on = false

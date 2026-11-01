@@ -6,25 +6,18 @@ impl PowerSystem {
         self.wind_factor
     }
 
+    /// The wind factor forecast at `tick`: central, low and high. In Planning it is the
+    /// day-ahead forecast path; while the day runs, the current surprise decays toward that
+    /// path. The band is the surprise's ±2σ (spec 2026-10-31 §3.3).
     pub fn wind_factor_forecast(
         &self,
         region: &RegionDefinition,
         month: SimMonth,
         tick: u32,
     ) -> (f64, f64, f64) {
-        let w = region.wind();
-        let mean = w.monthly[month.index0()];
-        let factor = if self.wind_month == Some(month) {
-            let horizon = tick.saturating_sub(self.wind_tick.unwrap_or(0));
-            mean + w.persistence.powf(f64::from(horizon)) * (self.wind_factor - mean)
-        } else {
-            mean
-        };
-        (
-            factor,
-            (factor - w.band.value()).max(0.0),
-            (factor + w.band.value()).min(1.0),
-        )
+        let actual = (self.wind_month == Some(month))
+            .then(|| (self.wind_factor, self.wind_tick.unwrap_or(0)));
+        wind_forecast_from(&self.weather_forecast, region, month, tick, actual)
     }
 
     pub fn wind_forecast(
@@ -145,4 +138,30 @@ impl PowerSystem {
         }
         self.wind_needs_replan = true;
     }
+}
+
+/// The wind factor forecast shared by the whole system and each island's view: the forecast
+/// path, plus the decaying surprise `actual` (the factor and the minute it was observed) when
+/// the day is running.
+pub(super) fn wind_forecast_from(
+    forecast: &WeatherForecast,
+    region: &RegionDefinition,
+    month: SimMonth,
+    tick: u32,
+    actual: Option<(f64, u32)>,
+) -> (f64, f64, f64) {
+    let w = region.wind();
+    let mean = w.monthly[month.index0()];
+    let path = mean + forecast.wind_deviation(tick);
+    let factor = match actual {
+        Some((factor, observed)) => {
+            let horizon = tick.saturating_sub(observed);
+            let surprise = factor - mean - forecast.wind_deviation(observed);
+            path + w.persistence.powf(f64::from(horizon)) * surprise
+        }
+        None => path,
+    }
+    .clamp(0.0, 1.0);
+    let band = 2.0 * region.weather().surprise_sd(w.initial_sd);
+    (factor, (factor - band).max(0.0), (factor + band).min(1.0))
 }

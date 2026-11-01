@@ -10,26 +10,14 @@ OverbuildOutcome {
         (
             SimMonth {
                 year: 2027,
-                month: 8,
-            },
-            FrequencyNoticeIssued {
-                month: SimMonth {
-                    year: 2027,
-                    month: 8,
-                },
-            },
-        ),
-        (
-            SimMonth {
-                year: 2027,
                 month: 12,
             },
             RateReviewCompleted {
                 tariff: Price(
-                    100.461336052,
+                    100.028219839,
                 ),
                 allowed_return: Ratio(
-                    0.0946873618874,
+                    0.0945651438422,
                 ),
             },
         ),
@@ -40,10 +28,10 @@ OverbuildOutcome {
             },
             RateReviewCompleted {
                 tariff: Price(
-                    99.2318579725,
+                    99.4462138907,
                 ),
                 allowed_return: Ratio(
-                    0.0955550683647,
+                    0.0959458215925,
                 ),
             },
         ),
@@ -120,7 +108,7 @@ OverbuildOutcome {
         (
             SimMonth {
                 year: 2029,
-                month: 10,
+                month: 9,
             },
             StrikeIssued {
                 strikes: 2,
@@ -130,7 +118,7 @@ OverbuildOutcome {
         (
             SimMonth {
                 year: 2029,
-                month: 11,
+                month: 10,
             },
             StrikeIssued {
                 strikes: 3,
@@ -140,7 +128,7 @@ OverbuildOutcome {
         (
             SimMonth {
                 year: 2029,
-                month: 11,
+                month: 10,
             },
             LicenseRevoked,
         ),
@@ -152,10 +140,10 @@ OverbuildOutcome {
                 1280.0,
             ),
             net_load: Megawatts(
-                617.4,
+                579.6,
             ),
             excess: Megawatts(
-                662.6,
+                700.4,
             ),
         },
     ),
@@ -163,14 +151,14 @@ OverbuildOutcome {
         islands: {},
         month: SimMonth {
             year: 2029,
-            month: 11,
+            month: 10,
         },
-        days: 30,
+        days: 31,
         revenue: Money(
-            5834581251,
+            5813824889,
         ),
         fuel: Money(
-            -2221155082,
+            -2235799080,
         ),
         start_up: Money(
             0,
@@ -182,18 +170,18 @@ OverbuildOutcome {
             0,
         ),
         net: Money(
-            3096426169,
+            3061025809,
         ),
         storage: {},
         energy_by_kind: {
             Coal: MegawattHours(
-                301373.242412,
+                291920.184147,
             ),
             Ccgt: MegawattHours(
-                292407.856679,
+                301955.228552,
             ),
             Peaker: MegawattHours(
-                80.0,
+                82.6666666667,
             ),
         },
         merit_order: [
@@ -206,7 +194,7 @@ OverbuildOutcome {
                     30.0,
                 ),
                 energy: MegawattHours(
-                    301373.242412,
+                    291920.184147,
                 ),
             },
             MeritOrderEntry {
@@ -218,7 +206,7 @@ OverbuildOutcome {
                     45.0,
                 ),
                 energy: MegawattHours(
-                    900.0,
+                    930.0,
                 ),
             },
             MeritOrderEntry {
@@ -230,7 +218,7 @@ OverbuildOutcome {
                     45.0,
                 ),
                 energy: MegawattHours(
-                    1400.0,
+                    1446.66666667,
                 ),
             },
             MeritOrderEntry {
@@ -242,7 +230,7 @@ OverbuildOutcome {
                     45.0,
                 ),
                 energy: MegawattHours(
-                    1900.0,
+                    1963.33333333,
                 ),
             },
             MeritOrderEntry {
@@ -254,7 +242,7 @@ OverbuildOutcome {
                     45.0,
                 ),
                 energy: MegawattHours(
-                    144207.856679,
+                    148815.228552,
                 ),
             },
             MeritOrderEntry {
@@ -266,7 +254,7 @@ OverbuildOutcome {
                     45.0,
                 ),
                 energy: MegawattHours(
-                    144000.0,
+                    148800.0,
                 ),
             },
             MeritOrderEntry {
@@ -278,15 +266,15 @@ OverbuildOutcome {
                     150.0,
                 ),
                 energy: MegawattHours(
-                    80.0,
+                    82.6666666667,
                 ),
             },
         ],
         demand: MegawattHours(
-            587974.605143,
+            584620.033484,
         ),
         served: MegawattHours(
-            587974.605143,
+            584620.033484,
         ),
         unserved: MegawattHours(
             0.0,
@@ -295,10 +283,10 @@ OverbuildOutcome {
             0.0,
         ),
         imbalance: MegawattHours(
-            5886.49394819,
+            9338.04588161,
         ),
         overgeneration: MegawattHours(
-            6544.64285156,
+            9925.22925372,
         ),
         rotating_outage: MegawattHours(
             0.0,
@@ -307,7 +295,7 @@ OverbuildOutcome {
             0.0,
         ),
         peak_demand: Megawatts(
-            966.303576731,
+            945.041521753,
         ),
         reliability: Ratio(
             1.0,
@@ -348,7 +336,7 @@ OverbuildOutcome {
         ],
         over_frequency_trips: 4,
         out_of_band_share: Ratio(
-            0.147916666667,
+            0.202083333333,
         ),
         frequency_failed: true,
         frequency_notice: false,

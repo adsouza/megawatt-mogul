@@ -1370,7 +1370,22 @@ impl PowerSystem {
         month: SimMonth,
         tick: u32,
     ) -> Megawatts {
-        let clearness = region.expected_clearness(month);
+        self.solar_at_clearness(
+            region,
+            month,
+            tick,
+            self.weather_forecast.expected_clearness,
+        )
+    }
+
+    /// Connected solar's output at `tick` under a given regional `clearness`.
+    pub(crate) fn solar_at_clearness(
+        &self,
+        region: &RegionDefinition,
+        month: SimMonth,
+        tick: u32,
+        clearness: f64,
+    ) -> Megawatts {
         self.connected_plants()
             .filter(|p| p.kind() == PlantKind::Solar)
             .map(|p| {

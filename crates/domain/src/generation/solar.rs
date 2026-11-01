@@ -211,6 +211,33 @@ mod tests {
     }
 
     #[test]
+    fn the_forecast_conditioned_expectation_is_unbiased() {
+        let mut parts = crate::region::fixtures::tiny_region_parts();
+        parts.solar.model = crate::region::SolarModel::Astronomical;
+        parts.solar.annual_site_clearness = true;
+        parts.solar.clearness_mean = [0.92; 12];
+        parts.solar.clearness_sd = 0.13;
+        let r = crate::region::RegionDefinition::try_from(parts).unwrap();
+        let (weather, solar) = (r.weather(), r.solar());
+        let (mean, sd) = (solar.clearness_mean[6], solar.clearness_sd);
+        let mut rng = SimRng::from_seed(74);
+        let draws = 100_000;
+        let (mut expected, mut actual) = (0.0, 0.0);
+        for _ in 0..draws {
+            let forecast = mean + weather.forecast_sd(sd) * rng.standard_normal();
+            expected += mean_clearness(forecast, weather.surprise_sd(sd));
+            actual += (forecast + weather.surprise_sd(sd) * rng.standard_normal())
+                .clamp(MIN_CLEARNESS, MAX_CLEARNESS);
+        }
+        let (expected, actual) = (expected / draws as f64, actual / draws as f64);
+        assert!(
+            (expected - actual).abs() < 0.002,
+            "forecast {expected}, actual {actual}"
+        );
+        assert!((expected - mean_clearness(mean, sd)).abs() < 0.002);
+    }
+
+    #[test]
     fn calibrated_seasonal_weather_has_no_second_annual_cloud_penalty() {
         let mut parts = crate::region::fixtures::tiny_region_parts();
         parts.solar.model = crate::region::SolarModel::Astronomical;

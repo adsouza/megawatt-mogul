@@ -10,10 +10,10 @@ MonthlyReport {
     },
     days: 30,
     revenue: Money(
-        6408059942,
+        6544671691,
     ),
     fuel: Money(
-        -1949365479,
+        -1941323236,
     ),
     start_up: Money(
         0,
@@ -25,21 +25,21 @@ MonthlyReport {
         0,
     ),
     net: Money(
-        3931694463,
+        4076348455,
     ),
     storage: {},
     energy_by_kind: {
         Coal: MegawattHours(
-            287435.106648,
+            277668.695672,
         ),
         Ccgt: MegawattHours(
-            145568.924162,
+            150292.699857,
         ),
         Peaker: MegawattHours(
             28800.0,
         ),
         Solar: MegawattHours(
-            212813.822268,
+            232223.575318,
         ),
     },
     merit_order: [
@@ -52,7 +52,7 @@ MonthlyReport {
                 0.0,
             ),
             energy: MegawattHours(
-                42562.7644537,
+                46444.7150635,
             ),
         },
         MeritOrderEntry {
@@ -64,7 +64,7 @@ MonthlyReport {
                 0.0,
             ),
             energy: MegawattHours(
-                42562.7644537,
+                46444.7150635,
             ),
         },
         MeritOrderEntry {
@@ -76,7 +76,7 @@ MonthlyReport {
                 0.0,
             ),
             energy: MegawattHours(
-                42562.7644537,
+                46444.7150635,
             ),
         },
         MeritOrderEntry {
@@ -88,7 +88,7 @@ MonthlyReport {
                 0.0,
             ),
             energy: MegawattHours(
-                42562.7644537,
+                46444.7150635,
             ),
         },
         MeritOrderEntry {
@@ -100,7 +100,7 @@ MonthlyReport {
                 0.0,
             ),
             energy: MegawattHours(
-                42562.7644537,
+                46444.7150635,
             ),
         },
         MeritOrderEntry {
@@ -112,7 +112,7 @@ MonthlyReport {
                 30.0,
             ),
             energy: MegawattHours(
-                287435.106648,
+                277668.695672,
             ),
         },
         MeritOrderEntry {
@@ -124,7 +124,7 @@ MonthlyReport {
                 45.0,
             ),
             energy: MegawattHours(
-                145568.924162,
+                150292.699857,
             ),
         },
         MeritOrderEntry {
@@ -141,22 +141,22 @@ MonthlyReport {
         },
     ],
     demand: MegawattHours(
-        674532.625465,
+        688912.809619,
     ),
     served: MegawattHours(
-        674532.625465,
+        688912.809619,
     ),
     unserved: MegawattHours(
         0.0,
     ),
     curtailed: MegawattHours(
-        45425.2272577,
+        79578.9381332,
     ),
     imbalance: MegawattHours(
-        85.2276128823,
+        72.16122772,
     ),
     overgeneration: MegawattHours(
-        989.383574514,
+        1000.2327839,
     ),
     rotating_outage: MegawattHours(
         0.0,
@@ -165,7 +165,7 @@ MonthlyReport {
         0.0,
     ),
     peak_demand: Megawatts(
-        1204.05865197,
+        1234.21181108,
     ),
     reliability: Ratio(
         1.0,
@@ -173,14 +173,14 @@ MonthlyReport {
     incidents: [],
     over_frequency_trips: 0,
     out_of_band_share: Ratio(
-        0.00694444444444,
+        0.00763888888889,
     ),
     frequency_failed: false,
     frequency_notice: false,
     rate_review: None,
     curtailed_by_kind: {
         Solar: MegawattHours(
-            45425.2272577,
+            79578.9381332,
         ),
     },
 }

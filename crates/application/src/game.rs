@@ -149,6 +149,9 @@ impl Game {
             if snapshot.schema == 1 {
                 session.upgrade_schema1();
             }
+            if snapshot.schema < 9 {
+                session.upgrade_weather_forecast();
+            }
             if snapshot.schema < 8 {
                 // Older saves never counted closes since the first expansion: start from now.
                 projections.expansion = ExpansionProjection::new(&session);

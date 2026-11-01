@@ -6,6 +6,7 @@ use crate::generation::{MAX_CLEARNESS, MIN_CLEARNESS, mean_clearness};
 use crate::region::RegionDefinition;
 use crate::rng::SimRng;
 use crate::time::{SimMonth, TICKS_PER_DAY};
+use crate::units::Megawatts;
 
 /// The coming day's forecast weather, regional like the weather itself.
 ///
@@ -100,17 +101,55 @@ impl PowerSystem {
         );
     }
 
+    /// Connected solar's forecast at `tick`: central, low and high. The band is the clearness
+    /// surprise's ±2σ around the forecast clearness, clamped like the actual draw.
+    pub fn solar_forecast(
+        &self,
+        region: &RegionDefinition,
+        month: SimMonth,
+        tick: u32,
+    ) -> (Megawatts, Megawatts, Megawatts) {
+        if !self.island_nodes().is_empty() && !self.island_states().is_empty() {
+            return self
+                .island_nodes()
+                .keys()
+                .filter_map(|id| self.scoped_island(*id, region))
+                .map(|p| p.solar_forecast(region, month, tick))
+                .fold(
+                    (Megawatts::ZERO, Megawatts::ZERO, Megawatts::ZERO),
+                    |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2),
+                );
+        }
+        let spread = 2.0 * region.weather().surprise_sd(region.solar().clearness_sd);
+        let at = |clearness: f64| {
+            self.solar_at_clearness(
+                region,
+                month,
+                tick,
+                clearness.clamp(MIN_CLEARNESS, MAX_CLEARNESS),
+            )
+        };
+        let forecast = self.weather_forecast.clearness;
+        (
+            self.expected_solar(region, month, tick),
+            at(forecast - spread),
+            at(forecast + spread),
+        )
+    }
+
     pub fn weather_forecast(&self) -> &WeatherForecast {
         &self.weather_forecast
     }
 
-    #[cfg(test)]
     pub(crate) fn set_weather_forecast(&mut self, forecast: WeatherForecast) {
         self.weather_forecast = forecast;
     }
 
     /// Draws the day-ahead forecast for `month`: one normal for clearness, then one for each
-    /// minute of the wind path. Every normal is drawn even when its coefficient is zero.
+    /// minute of the wind path. Every normal is drawn even when its coefficient is zero, except
+    /// in a region that knows nothing ahead (`surprise_share == 1`, every pre-forecast region):
+    /// its forecast is the month's mean and draws nothing, so saves from before the forecast
+    /// existed continue exactly as they would have.
     pub fn draw_weather_forecast(
         &mut self,
         region: &RegionDefinition,
@@ -118,6 +157,10 @@ impl PowerSystem {
         rng: &mut SimRng,
     ) {
         let (weather, solar, wind) = (region.weather(), region.solar(), region.wind());
+        if weather.surprise_share >= 1.0 {
+            self.weather_forecast = WeatherForecast::neutral(region, month);
+            return;
+        }
         let clearness = solar.clearness_mean[month.index0()]
             + weather.forecast_sd(solar.clearness_sd) * rng.standard_normal();
         let mut wind_path = Vec::with_capacity(TICKS_PER_DAY as usize);
@@ -187,11 +230,14 @@ mod tests {
     }
 
     #[test]
-    fn share_one_gives_a_neutral_mean_forecast() {
+    fn share_one_gives_a_neutral_mean_forecast_without_drawing() {
         let region = region_with_share(1.0);
         let mut power = super::super::tests::system_with(&region, &[]);
-        power.draw_weather_forecast(&region, april(), &mut SimRng::from_seed(3));
+        let mut rng = SimRng::from_seed(3);
+        power.draw_weather_forecast(&region, april(), &mut rng);
+        assert_eq!(rng, SimRng::from_seed(3));
         let forecast = power.weather_forecast();
+        assert_eq!(forecast, &WeatherForecast::neutral(&region, april()));
         assert_eq!(
             forecast.clearness,
             region.solar().clearness_mean[april().index0()]
@@ -257,11 +303,8 @@ mod day_tests {
     fn share_one_reproduces_todays_day_bit_for_bit() {
         let region = region_with_share(1.0);
         let (_, clearness, winds) = played_day(&region, 21);
-        // Today's day, on a generator advanced past the 1 + 1440 forecast normals.
+        // Today's day, on the same generator: a share-one forecast draws nothing.
         let mut reference = SimRng::from_seed(21);
-        for _ in 0..=TICKS_PER_DAY {
-            reference.standard_normal();
-        }
         let expected_clearness = draw_clearness(region.solar(), april(), &mut reference);
         let w = region.wind();
         let m = w.monthly[april().index0()];
@@ -300,5 +343,55 @@ mod day_tests {
                 "tick {tick}: {wind} vs {expected}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod reader_tests {
+    use super::super::tests::{connected, system_with};
+    use crate::ids::CellCoord;
+    use crate::region::PlantKind;
+    use crate::region::fixtures::tiny_region;
+    use crate::rng::SimRng;
+    use crate::time::SimMonth;
+
+    fn april() -> SimMonth {
+        SimMonth::new(2027, 4).unwrap()
+    }
+
+    #[test]
+    fn planning_wind_forecast_follows_the_forecast_path() {
+        let region = tiny_region();
+        let mut sys = system_with(&region, &[]);
+        sys.draw_weather_forecast(&region, april(), &mut SimRng::from_seed(13));
+        let w = region.wind();
+        let m = w.monthly[april().index0()];
+        let band = 2.0 * region.weather().surprise_sd(w.initial_sd);
+        for tick in [0, 30, 700, 1439] {
+            let central = (m + sys.weather_forecast().wind_deviation(tick)).clamp(0.0, 1.0);
+            let (got, low, high) = sys.wind_factor_forecast(&region, april(), tick);
+            assert_eq!(got, central, "tick {tick}");
+            assert_eq!(low, (central - band).max(0.0));
+            assert_eq!(high, (central + band).min(1.0));
+        }
+    }
+
+    #[test]
+    fn solar_band_brackets_the_central_forecast() {
+        let region = tiny_region();
+        let mut sys = system_with(
+            &region,
+            &[connected(PlantKind::Solar, CellCoord { x: 5, y: 5 })],
+        );
+        sys.draw_weather_forecast(&region, april(), &mut SimRng::from_seed(14));
+        let mut widest = 0.0;
+        for hour in 0..24 {
+            let tick = hour * 60 + 30;
+            let (central, low, high) = sys.solar_forecast(&region, april(), tick);
+            assert_eq!(central, sys.expected_solar(&region, april(), tick));
+            assert!(low <= central && central <= high, "hour {hour}");
+            widest = f64::max(widest, (high - low).value());
+        }
+        assert!(widest > 0.0);
     }
 }

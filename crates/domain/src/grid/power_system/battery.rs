@@ -148,7 +148,7 @@ impl<'a> BatteryPlanningInputs<'a> {
 
     pub(super) fn minute(&self, tick: u32) -> &PlanningMinute {
         self.minutes[tick as usize].get_or_init(|| {
-            let clearness = self.region.expected_clearness(self.month);
+            let clearness = self.power.weather_forecast().expected_clearness;
             PlanningMinute {
                 injection: Megawatts::new(self.power.injections[(tick / TICKS_PER_HOUR) as usize]),
                 demand: crate::demand::forecast_demand(

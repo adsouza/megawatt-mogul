@@ -131,6 +131,12 @@ the monthly mean within a few hours.
 
 - **When the forecast is drawn:** in `GameSession::new`, for the first day, and when `FinishReview`
   enters Planning. Nowhere else. Loading a save never redraws.
+- **Share 1 draws nothing (implementation ruling).** A region with `surprise_share = 1`, which
+  includes every pre-forecast region (§3.2, region schema), knows nothing ahead. Its forecast is
+  the month's mean (`WeatherForecast::neutral`), and drawing it consumes no random numbers. Frozen
+  saves from before this change then continue bit for bit, which the golden-save tests require.
+  Share is fixed region data, so skipping the draws can't make the random stream depend on the
+  fleet.
 - **When the surprise is drawn:** at `BeginOperating`, where today's draws happen, and per minute as
   today. Keep the main spec's ordering rules (§25.3): one `SimRng` draw per `z`, drawn even when
   its coefficient is 0 and regardless of fleet, with the per-tick demand draw before wind.

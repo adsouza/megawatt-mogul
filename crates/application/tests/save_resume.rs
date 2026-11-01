@@ -888,3 +888,63 @@ fn schema_7_snapshot_restores_with_seeded_expansion() {
     assert_ne!(game.projections().expansion, seeded);
     assert_eq!(current.projections(), game.projections());
 }
+
+#[test]
+fn schema_8_snapshots_restore_in_every_phase_with_a_neutral_forecast() {
+    use domain::grid::WeatherForecast;
+    use domain::state::State;
+    let parts = tiny_region_parts();
+    for phase in [DayPhase::Planning, DayPhase::Operating, DayPhase::Review] {
+        let (mut game, _) = game_on(parts.clone(), 9);
+        match phase {
+            DayPhase::Planning => {}
+            DayPhase::Operating => {
+                game.execute(Command::BeginOperating).unwrap();
+                game.execute(Command::AdvanceTicks { n: 300 }).unwrap();
+            }
+            DayPhase::Review => {
+                game.execute(Command::BeginOperating).unwrap();
+                game.execute(Command::AdvanceTicks { n: TICKS_PER_DAY })
+                    .unwrap();
+            }
+        }
+        assert_eq!(game.session().phase(), phase);
+        let mut checkpoint = game.checkpoint();
+        let snapshot = checkpoint.snapshot.as_mut().unwrap();
+        snapshot.schema = 8;
+        snapshot.session = game.session().snapshot_state_schema(8);
+        snapshot.projections = game.projections().state_bytes_schema(8);
+        checkpoint.state_hash = snapshot.state_hash();
+        let restore = || {
+            Game::restore(
+                support::loaded_region(parts.clone()),
+                checkpoint.clone(),
+                Box::new(InMemoryCommandLog::default()),
+                &|| false,
+            )
+            .unwrap()
+        };
+        let (mut restored, again) = (restore(), restore());
+        assert_eq!(
+            restored.session().state_hash(),
+            again.session().state_hash(),
+            "{phase:?}"
+        );
+        let session = restored.session();
+        assert_eq!(
+            session.power().weather_forecast(),
+            &WeatherForecast::neutral(session.region(), session.clock().month()),
+            "{phase:?}"
+        );
+        // It plays on to the next month close.
+        if phase == DayPhase::Review {
+            restored.execute(Command::FinishReview).unwrap();
+        }
+        if restored.session().phase() == DayPhase::Planning {
+            restored.execute(Command::BeginOperating).unwrap();
+        }
+        let left = TICKS_PER_DAY - restored.session().clock().tick();
+        restored.execute(Command::AdvanceTicks { n: left }).unwrap();
+        assert_eq!(restored.session().phase(), DayPhase::Review, "{phase:?}");
+    }
+}

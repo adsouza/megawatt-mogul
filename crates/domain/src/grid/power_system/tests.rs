@@ -29,7 +29,7 @@ pub(super) struct PlantDef {
     connected: bool,
 }
 
-fn connected(kind: PlantKind, cell: CellCoord) -> PlantDef {
+pub(super) fn connected(kind: PlantKind, cell: CellCoord) -> PlantDef {
     PlantDef {
         kind,
         cell,
@@ -954,19 +954,22 @@ fn connected_demand_forecast_counts_connected_cities_only() {
 }
 
 #[test]
-fn expected_solar_uses_mean_clearness_for_connected_plants() {
+fn expected_solar_uses_the_forecast_clearness() {
     let region = tiny_region();
     let isolated = PlantDef {
         kind: PlantKind::Solar,
         cell: cell(4, 4),
         connected: false,
     };
-    let sys = system_with(
+    let mut sys = system_with(
         &region,
         &[connected(PlantKind::Solar, cell(5, 5)), isolated],
     );
+    sys.draw_weather_forecast(&region, april(), &mut SimRng::from_seed(12));
+    let clearness = sys.weather_forecast().expected_clearness;
+    assert_ne!(clearness, region.expected_clearness(april()));
     let sun = region.sun(cell(5, 5), april(), 762);
-    let expected = 300.0 * 0.8 * sun * 0.75;
+    let expected = 300.0 * 0.8 * sun * clearness;
     let got = sys.expected_solar(&region, april(), 762);
     assert!((got.value() - expected).abs() < 1e-9);
     assert_eq!(sys.expected_solar(&region, april(), 0), Megawatts::ZERO);
@@ -5187,6 +5190,8 @@ fn astronomical_solar_actual_forecast_and_curtailment_use_each_plant_cell() {
                 connected(PlantKind::Wind, cell(7, 3)),
             ],
         );
+        // The month's mean forecast, so expected solar is the authored mean clearness.
+        sys.set_weather_forecast(WeatherForecast::neutral(&region, april()));
         sys.begin_day(&region, april(), &mut SimRng::from_seed(1));
         // At 05:00 MSK (02:00 UTC) the eastern site is lit while the western site is dark.
         let tick = 300;

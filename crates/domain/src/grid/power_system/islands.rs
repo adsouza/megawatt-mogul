@@ -250,21 +250,11 @@ impl PowerSystem {
                 self.wind_factor_forecast(region, month, tick),
             );
         };
-        let w = region.wind();
-        let mean = w.monthly[month.index0()];
-        let factor = if state.wind_month == Some(month) {
-            let horizon = tick.saturating_sub(state.wind_tick.unwrap_or(0));
-            mean + w.persistence.powf(f64::from(horizon)) * (state.wind_factor - mean)
-        } else {
-            mean
-        };
+        let actual = (state.wind_month == Some(month))
+            .then(|| (state.wind_factor, state.wind_tick.unwrap_or(0)));
         (
             state.wind_factor,
-            (
-                factor,
-                (factor - w.band.value()).max(0.0),
-                (factor + w.band.value()).min(1.0),
-            ),
+            super::wind::wind_forecast_from(&self.weather_forecast, region, month, tick, actual),
         )
     }
     pub(crate) fn mode_at(&self, node: NodeId) -> GridMode {

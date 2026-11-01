@@ -86,10 +86,12 @@ fn shared_wind_does_not_draw_per_farm_or_during_queries() {
             Megawatts::new(120.0)
         );
         assert_eq!(one, before);
+        // The band is the surprise's ±2σ (spec 2026-10-31 §3.3); this region has no wind
+        // variance, so it collapses onto the central forecast.
         let band = two.wind_forecast(&region, april(), tick);
         assert_eq!(band.0, Megawatts::new(240.0));
-        assert_eq!(band.1, Megawatts::new(120.0));
-        assert_eq!(band.2, Megawatts::new(360.0));
+        assert_eq!(band.1, Megawatts::new(240.0));
+        assert_eq!(band.2, Megawatts::new(240.0));
     }
 }
 
