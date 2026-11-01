@@ -1,6 +1,6 @@
 //! The first-game tutorial's run lifecycle (first-game tutorial spec §3, §4.3): a new game starts
 //! it when progress says it is owed, loading a save never does, leaving the game drops it, and
-//! leaving the first Review finishes it.
+//! leaving the first Review starts the CCGT chapter.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -188,7 +188,7 @@ fn a_new_session_generation_clears_the_run() {
 }
 
 #[test]
-fn leaving_first_review_finishes() {
+fn leaving_first_review_continues_with_supply_guidance() {
     let logs = TempDir::new().unwrap();
     let mut app = new_game(&logs, true, true);
 
@@ -210,9 +210,243 @@ fn leaving_first_review_finishes() {
         app.world().resource::<Session>().0.session().phase(),
         DayPhase::Planning
     );
+    assert!(run(&app).is_some(), "the CCGT walkthrough follows Review");
+    assert!(
+        pending(&app),
+        "building and connecting supply is still owed"
+    );
+}
+
+#[test]
+fn starting_the_second_day_early_finishes_optional_guidance() {
+    let logs = TempDir::new().unwrap();
+    let mut app = new_game(&logs, true, true);
+    execute(&mut app, Command::BeginOperating);
+    execute(&mut app, Command::AdvanceTicks { n: TICKS_PER_DAY });
+    execute(&mut app, Command::FinishReview);
+    assert!(run(&app).is_some());
+    set_reveals(&mut app);
+    execute(&mut app, Command::BeginOperating);
     assert!(run(&app).is_none());
-    assert!(!pending(&app), "leaving the first Review finishes it");
+    assert!(!pending(&app));
     assert_no_reveals(&app);
+}
+
+/// The review's actual Continue button leads into guidance, and the actual CCGT / line buttons
+/// queue exactly one of each order. The callouts expose each control at the minimum window size.
+#[test]
+fn ccgt_walkthrough_after_review_builds_and_connects_through_real_widgets() {
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    let saves = TempDir::new().unwrap();
+    app.insert_resource(SaveDir(saves.path().into()));
+    let pass = with_anchor_probe(&mut app);
+    execute(&mut app, Command::BeginOperating);
+    execute(&mut app, Command::AdvanceTicks { n: TICKS_PER_DAY });
+    tutorial(
+        &mut app,
+        [TutorialAction::Dismiss(TutorialStep::Construction)],
+    );
+    let widgets = pass.settled(&mut app, MIN.0, MIN.1);
+    pass.click_at(
+        &mut app,
+        MIN.0,
+        MIN.1,
+        find_button(&widgets, "Continue").rect.center(),
+    );
+    update_n(&mut app, 2);
+    assert_eq!(phase(&app), DayPhase::Planning);
+    assert!(run(&app).is_some());
+    let widgets = pass.settled(&mut app, MIN.0, MIN.1);
+    widget(
+        &widgets,
+        "Batteries store electricity. To supply more power, let's build a new power plant.",
+    );
+    press_escape(&pass, &mut app, MIN);
+    let widgets = pass.settled(&mut app, MIN.0, MIN.1);
+    widget(
+        &widgets,
+        "Click a square on the map for your new gas plant.",
+    );
+    let cell = ccgt_site(&app);
+    dispatch_in(&mut app, vec![UiAction::Select(Selection::Cell(cell))]);
+    for _ in 0..60 {
+        pass.run(&mut app, MIN.0, MIN.1);
+    }
+    let widgets = pass.settled(&mut app, MIN.0, MIN.1);
+    widget(
+        &widgets,
+        "A CCGT is a gas plant you can build anywhere. It is relatively cheap and takes 4 months to build.",
+    );
+    press_escape(&pass, &mut app, MIN);
+    for _ in 0..60 {
+        pass.run(&mut app, MIN.0, MIN.1);
+    }
+    let widgets = pass.settled(&mut app, MIN.0, MIN.1);
+    let note = widget(
+        &widgets,
+        "Build a CCGT here. It will take 4 months to build.",
+    )
+    .rect;
+    let target = anchors(&app)[&TutorialAnchor::PlantBuildButton];
+    assert!(!note.intersects(target));
+    assert_points_at(
+        &arrowhead(&painted(&pass, &mut app, MIN)).unwrap(),
+        target,
+        "CCGT Build plant",
+    );
+    pass.click_at(&mut app, MIN.0, MIN.1, target.center());
+    assert_eq!(
+        sent::<PlayerCommand>(&app)
+            .iter()
+            .filter(|command| matches!(
+                command.0,
+                Command::BuildPlant {
+                    kind: PlantKind::Ccgt,
+                    ..
+                }
+            ))
+            .count(),
+        1
+    );
+    update_n(&mut app, 2);
+    assert!(
+        pending(&app),
+        "a plant without a line is unfinished guidance"
+    );
+    let plant = app
+        .world()
+        .resource::<Session>()
+        .0
+        .session()
+        .plant_views()
+        .into_iter()
+        .find(|plant| plant.kind == PlantKind::Ccgt && plant.cell == cell)
+        .expect("CCGT was queued");
+    assert_eq!(
+        *app.world().resource::<Selection>(),
+        Selection::Plant(plant.id)
+    );
+    pass.settled(&mut app, MIN.0, MIN.1);
+    press_escape(&pass, &mut app, MIN);
+    for stage in 0..2 {
+        for _ in 0..60 {
+            pass.run(&mut app, MIN.0, MIN.1);
+        }
+        let widgets = pass.settled(&mut app, MIN.0, MIN.1);
+        let target = anchors(&app)[&TutorialAnchor::PlantLineButton];
+        let note = widget(&widgets, "Build a line from your CCGT to your grid. The plant and line must finish building before they can supply power.").rect;
+        assert!(!note.intersects(target));
+        assert_points_at(
+            &arrowhead(&painted(&pass, &mut app, MIN)).unwrap(),
+            target,
+            "CCGT connection",
+        );
+        pass.click_at(&mut app, MIN.0, MIN.1, target.center());
+        if stage == 0 {
+            assert_eq!(
+                *app.world().resource::<Selection>(),
+                Selection::LineFrom(plant.node)
+            );
+        }
+        if stage == 1 {
+            assert_eq!(
+                sent::<PlayerCommand>(&app)
+                    .iter()
+                    .filter(|command| matches!(command.0,
+                Command::BuildLine { from, .. } if from == plant.node))
+                    .count(),
+                1
+            );
+        }
+        update_n(&mut app, 2);
+    }
+    assert!(
+        run(&app).is_some(),
+        "the save caution still needs to be shown"
+    );
+    assert!(pending(&app));
+    let widgets = pass.settled(&mut app, MIN.0, MIN.1);
+    widget(&widgets, SAVE_SNAPSHOT);
+    let target = anchors(&app)[&TutorialAnchor::Save];
+    let save = widgets
+        .iter()
+        .find(|widget| widget.role == egui::accesskit::Role::Button && widget.rect == target)
+        .expect("the spotlight targets the actual Save button");
+    assert!(save.text.starts_with("Save"));
+    // As for every spotlight, its dismissal click is consumed. Saving remains the player's action.
+    pass.click_at(&mut app, MIN.0, MIN.1, target.center());
+    assert!(played(&app).contains(&TutorialStep::SaveSnapshot));
+    assert_eq!(
+        app.world().resource::<Persistence>().screen,
+        game::sim::SaveScreen::Closed
+    );
+    update_n(&mut app, 2);
+    assert!(run(&app).is_none());
+    assert!(!pending(&app));
+    pass.settled(&mut app, MIN.0, MIN.1);
+    let save = anchors(&app)[&TutorialAnchor::Save];
+    pass.click_at(&mut app, MIN.0, MIN.1, save.center());
+    settle(&mut app);
+    assert_eq!(
+        app.world().resource::<Persistence>().screen,
+        game::sim::SaveScreen::Save
+    );
+    assert_no_reveals(&app);
+}
+
+/// The tutorial's duration follows local construction terms, including plural formatting,
+/// rather than the region-wide default or a fixed number copied into the tutorial.
+#[test]
+fn ccgt_build_guidance_uses_the_selected_sites_effective_duration() {
+    use application::{Game, InMemoryCommandLog};
+    use domain::{ids::RegionId, session::GameSettings};
+    use game::hud::tutorial::{TutorialView, tutorial_view};
+    use infrastructure::region::RonRegionCatalog;
+
+    let dir = TempDir::new().unwrap();
+    let source = include_str!("../../../infrastructure/tests/support/economic_region_v4.ron")
+        .replace(
+            "(kind: Wind, capital_cost: 1000000, build_months: 2)",
+            "(kind: Ccgt, capital_cost: 1000000, build_months: 1)",
+        )
+        .replace(
+            "(kind: Wind, capital_cost: 2000000, build_months: 3)",
+            "(kind: Ccgt, capital_cost: 2000000, build_months: 3)",
+        );
+    std::fs::write(dir.path().join("minimal.ron"), source).unwrap();
+    let game = Game::start_new(
+        &RonRegionCatalog::new(dir.path()),
+        &RegionId::new("minimal"),
+        7,
+        GameSettings::default(),
+        Box::new(InMemoryCommandLog::default()),
+    )
+    .unwrap();
+    let state = TutorialState::new(1, &game);
+    let l10n = crate::support::shipped_l10n();
+    for (cell, expected) in [
+        (CellCoord { x: 4, y: 4 }, "1 month"),
+        (CellCoord { x: 8, y: 5 }, "3 months"),
+    ] {
+        for step in [TutorialStep::CcgtSpotlight, TutorialStep::BuildCcgt] {
+            let def = TUTORIAL_STEPS.iter().find(|def| def.step == step).unwrap();
+            let text = match tutorial_view(def, &state, &game, Selection::Cell(cell), &l10n, 1.0) {
+                TutorialView::Spotlight { text, .. } | TutorialView::Instruction { text, .. } => {
+                    text
+                }
+                other => panic!("expected a note: {other:?}"),
+            };
+            assert!(
+                text.contains(&format!("{expected} to build")),
+                "{cell:?}: {text}"
+            );
+            assert!(
+                !text.contains("30 months"),
+                "regional default leaked: {text}"
+            );
+        }
+    }
 }
 
 /// Asks the build menu and Review for a reveal, as the tutorial does, that nothing has finished.
@@ -391,7 +625,7 @@ fn reveal_asks_the_build_menu_for_a_scrolling_anchor() {
     let mut app = tutorial_app(&logs);
     tutorial(
         &mut app,
-        [TutorialAction::Reveal(TutorialAnchor::BatteryCard)],
+        [TutorialAction::Reveal(TutorialAnchor::PlantCard)],
     );
     assert_eq!(ui_state(&app).reveal_plant_card, Some(PlantKind::Battery));
     assert_eq!(ui_state(&app).reveal_anchor, None);
@@ -400,12 +634,12 @@ fn reveal_asks_the_build_menu_for_a_scrolling_anchor() {
     tutorial(&mut app, [TutorialAction::RevealDone]);
     tutorial(
         &mut app,
-        [TutorialAction::Reveal(TutorialAnchor::BatteryBuildButton)],
+        [TutorialAction::Reveal(TutorialAnchor::PlantBuildButton)],
     );
     assert_eq!(ui_state(&app).reveal_plant_card, None);
     assert_eq!(
         ui_state(&app).reveal_anchor,
-        Some(TutorialAnchor::BatteryBuildButton)
+        Some(TutorialAnchor::PlantBuildButton)
     );
     tutorial(
         &mut app,
@@ -593,16 +827,17 @@ fn tutorial_actions_never_send_player_commands() {
 #[derive(Resource, Default)]
 struct SeenAnchors(BTreeMap<TutorialAnchor, egui::Rect>);
 
-const ANCHORS: [TutorialAnchor; 9] = [
+const ANCHORS: [TutorialAnchor; 10] = [
     TutorialAnchor::Cash,
     TutorialAnchor::Map,
-    TutorialAnchor::BatteryCard,
-    TutorialAnchor::BatteryBuildButton,
+    TutorialAnchor::PlantCard,
+    TutorialAnchor::PlantBuildButton,
     TutorialAnchor::LineSection,
-    TutorialAnchor::BatteryLineButton,
+    TutorialAnchor::PlantLineButton,
     TutorialAnchor::StartDay,
     TutorialAnchor::SpeedControls,
     TutorialAnchor::ReviewConstruction,
+    TutorialAnchor::Save,
 ];
 
 fn probe_anchors(mut contexts: EguiContexts, mut seen: ResMut<SeenAnchors>) -> Result {
@@ -636,6 +871,25 @@ fn battery_site(app: &App) -> CellCoord {
         .expect("a battery can go somewhere")
 }
 
+fn ccgt_site(app: &App) -> CellCoord {
+    let session = app.world().resource::<Session>().0.session();
+    let home = session
+        .city_views()
+        .into_iter()
+        .find(|city| city.node == session.anchor_node())
+        .unwrap()
+        .cell;
+    let terrain = session.region().terrain();
+    (0..terrain.height())
+        .flat_map(|y| (0..terrain.width()).map(move |x| CellCoord { x, y }))
+        .filter(|cell| session.plant_quote(PlantKind::Ccgt, *cell).is_ok())
+        .min_by(|a, b| {
+            domain::grid::distance_cells(*a, home)
+                .total_cmp(&domain::grid::distance_cells(*b, home))
+        })
+        .expect("a site for a CCGT")
+}
+
 const MIN: (f32, f32) = (
     game::window::MIN_WINDOW_SIZE.x,
     game::window::MIN_WINDOW_SIZE.y,
@@ -655,8 +909,8 @@ fn anchors_are_marked_in_planning() {
     for anchor in [
         TutorialAnchor::Cash,
         TutorialAnchor::Map,
-        TutorialAnchor::BatteryCard,
-        TutorialAnchor::BatteryBuildButton,
+        TutorialAnchor::PlantCard,
+        TutorialAnchor::PlantBuildButton,
         TutorialAnchor::LineSection,
         TutorialAnchor::StartDay,
     ] {
@@ -664,8 +918,8 @@ fn anchors_are_marked_in_planning() {
         assert!(rect.is_positive(), "{anchor:?}: {rect:?}");
     }
     // The battery's Build plant button, inside its card.
-    let card = seen[&TutorialAnchor::BatteryCard];
-    let build = seen[&TutorialAnchor::BatteryBuildButton];
+    let card = seen[&TutorialAnchor::PlantCard];
+    let build = seen[&TutorialAnchor::PlantBuildButton];
     assert!(card.contains_rect(build), "{build:?} in {card:?}");
     let widgets = pass.settled(&mut app, width, height);
     assert!(
@@ -682,8 +936,8 @@ fn anchors_are_marked_in_planning() {
     // Without a selected cell there is no battery card to point at.
     dispatch_in(&mut app, vec![UiAction::Select(Selection::None)]);
     pass.settled(&mut app, width, height);
-    assert!(!anchors(&app).contains_key(&TutorialAnchor::BatteryCard));
-    assert!(!anchors(&app).contains_key(&TutorialAnchor::BatteryBuildButton));
+    assert!(!anchors(&app).contains_key(&TutorialAnchor::PlantCard));
+    assert!(!anchors(&app).contains_key(&TutorialAnchor::PlantBuildButton));
 }
 
 /// The build menu's scrolling part at the smallest window: right of the map, below its title and
@@ -714,11 +968,11 @@ fn a_scrolled_away_battery_card_has_no_anchor() {
     pass.settled(&mut app, width, height);
     let seen = anchors(&app);
     assert!(
-        !seen.contains_key(&TutorialAnchor::BatteryCard),
+        !seen.contains_key(&TutorialAnchor::PlantCard),
         "the card starts below the fold: {seen:?}"
     );
     assert!(
-        !seen.contains_key(&TutorialAnchor::BatteryBuildButton),
+        !seen.contains_key(&TutorialAnchor::PlantBuildButton),
         "{seen:?}"
     );
     assert!(!seen.contains_key(&TutorialAnchor::LineSection), "{seen:?}");
@@ -742,7 +996,7 @@ fn reveal_scrolls_battery_card_into_view() {
     let widgets = pass.settled(&mut app, width, height);
     let view = build_menu_view(&widgets);
     assert!(
-        !anchors(&app).contains_key(&TutorialAnchor::BatteryCard),
+        !anchors(&app).contains_key(&TutorialAnchor::PlantCard),
         "the test needs the card out of view first"
     );
 
@@ -760,7 +1014,7 @@ fn reveal_scrolls_battery_card_into_view() {
     for _ in 0..60 {
         pass.run(&mut app, width, height);
     }
-    let card = anchors(&app)[&TutorialAnchor::BatteryCard];
+    let card = anchors(&app)[&TutorialAnchor::PlantCard];
     assert!(card.is_positive());
     assert!(
         view.expand(1.0).contains_rect(card),
@@ -871,6 +1125,7 @@ fn phase(app: &App) -> DayPhase {
     app.world().resource::<Session>().0.session().phase()
 }
 
+const SAVE_SNAPSHOT: &str = "Before risky moves, like connecting a new city, use Save to create a named snapshot. You can load it to return to this point if things go wrong.";
 const CASH_NOTE: &str =
     "This is your money. Grow it by selling power, without blacking out your customers.";
 const PICK_SITE: &str = "Click a square on the map to see what you can build there.";
@@ -892,7 +1147,7 @@ fn tutorial_view_opacity_curve() {
         .find(|def| def.step == TutorialStep::Cash)
         .unwrap();
     for (at, expected) in [(0.0, 0.0), (0.15, 0.5), (2.0, 1.0), (4.45, 0.5), (4.7, 0.0)] {
-        match tutorial_view(cash, state, game, &l10n, at) {
+        match tutorial_view(cash, state, game, Selection::None, &l10n, at) {
             TutorialView::Spotlight {
                 step,
                 anchor,
@@ -913,10 +1168,24 @@ fn tutorial_view_opacity_curve() {
     // The other kinds, for completeness.
     let def = |step| TUTORIAL_STEPS.iter().find(|def| def.step == step).unwrap();
     assert_eq!(
-        tutorial_view(def(TutorialStep::FrameGrid), state, game, &l10n, 0.0),
+        tutorial_view(
+            def(TutorialStep::FrameGrid),
+            state,
+            game,
+            Selection::None,
+            &l10n,
+            0.0
+        ),
         TutorialView::Move(TutorialStep::FrameGrid)
     );
-    match tutorial_view(def(TutorialStep::Crawl), state, game, &l10n, 9.0) {
+    match tutorial_view(
+        def(TutorialStep::Crawl),
+        state,
+        game,
+        Selection::None,
+        &l10n,
+        9.0,
+    ) {
         TutorialView::Crawl { text, progress } => {
             assert!(text.starts_with("You run a power company."), "{text}");
             assert!((progress - 0.2).abs() < 1e-6, "{progress}");
@@ -928,18 +1197,18 @@ fn tutorial_view_opacity_curve() {
         (TutorialStep::PickSite, TutorialAnchor::Map, PICK_SITE),
         (
             TutorialStep::BuildBattery,
-            TutorialAnchor::BatteryBuildButton,
+            TutorialAnchor::PlantBuildButton,
             BUILD_BATTERY,
         ),
         (
             TutorialStep::ConnectBattery,
-            TutorialAnchor::BatteryLineButton,
+            TutorialAnchor::PlantLineButton,
             CONNECT,
         ),
         (TutorialStep::StartDay, TutorialAnchor::StartDay, START_NOTE),
     ] {
         assert_eq!(
-            tutorial_view(def(step), state, game, &l10n, 0.0),
+            tutorial_view(def(step), state, game, Selection::None, &l10n, 0.0),
             TutorialView::Instruction {
                 anchor,
                 text: text.into(),
@@ -951,14 +1220,21 @@ fn tutorial_view_opacity_curve() {
             .iter()
             .filter(|def| def.kind == StepKind::Instruction)
             .count(),
-        4
+        7
     );
     assert_eq!(
         def(TutorialStep::BatterySpotlight).anchor,
-        Some(TutorialAnchor::BatteryCard)
+        Some(TutorialAnchor::PlantCard)
     );
     // The Construction note is chosen from what was ordered: nothing, here.
-    match tutorial_view(def(TutorialStep::Construction), state, game, &l10n, 1.0) {
+    match tutorial_view(
+        def(TutorialStep::Construction),
+        state,
+        game,
+        Selection::None,
+        &l10n,
+        1.0,
+    ) {
         TutorialView::Spotlight { text, .. } => assert_eq!(
             text,
             "Construction is what you pay each month for things you've ordered."
@@ -1225,9 +1501,9 @@ fn battery_instruction_reveals_its_button_once() {
         pass.run(&mut app, width, height);
     }
     let seen = anchors(&app);
-    assert!(seen.contains_key(&TutorialAnchor::BatteryCard), "{seen:?}");
+    assert!(seen.contains_key(&TutorialAnchor::PlantCard), "{seen:?}");
     assert!(
-        !seen.contains_key(&TutorialAnchor::BatteryBuildButton),
+        !seen.contains_key(&TutorialAnchor::PlantBuildButton),
         "the test needs the button out of view: {seen:?}"
     );
     tutorial(
@@ -1237,7 +1513,7 @@ fn battery_instruction_reveals_its_button_once() {
     pass.run(&mut app, width, height);
     assert_eq!(
         ui_state(&app).reveal_anchor,
-        Some(TutorialAnchor::BatteryBuildButton)
+        Some(TutorialAnchor::PlantBuildButton)
     );
     // Let the scroll animation finish.
     for _ in 0..60 {
@@ -1245,7 +1521,7 @@ fn battery_instruction_reveals_its_button_once() {
     }
     let widgets = pass.settled(&mut app, width, height);
     let button = *anchors(&app)
-        .get(&TutorialAnchor::BatteryBuildButton)
+        .get(&TutorialAnchor::PlantBuildButton)
         .expect("the reveal brought the button into view");
     assert_eq!(ui_state(&app).reveal_anchor, None);
     let note = widget(&widgets, BUILD_BATTERY).rect;
@@ -1273,7 +1549,7 @@ fn battery_instruction_reveals_its_button_once() {
     }
     pass.settled(&mut app, width, height);
     assert!(
-        !anchors(&app).contains_key(&TutorialAnchor::BatteryBuildButton),
+        !anchors(&app).contains_key(&TutorialAnchor::PlantBuildButton),
         "scrolled away"
     );
     assert_eq!(ui_state(&app).reveal_anchor, None);
@@ -1291,7 +1567,7 @@ fn battery_instruction_is_an_arrow_callout_beside_build_plant() {
     at_battery_instruction(&mut app, &pass, MIN);
     let widgets = pass.settled(&mut app, width, height);
     let button = *anchors(&app)
-        .get(&TutorialAnchor::BatteryBuildButton)
+        .get(&TutorialAnchor::PlantBuildButton)
         .expect("the battery's Build plant button is in view");
     let note = widget(&widgets, BUILD_BATTERY).rect;
     // To the right, past the arrow (28 points) and the backing's margin (4), centred on it.
@@ -1363,7 +1639,7 @@ fn queueing_the_battery_selects_it_and_the_line_section_starts_from_it() {
     at_battery_instruction(&mut app, &pass, MIN);
     let cell = battery_site(&app);
     let button = *anchors(&app)
-        .get(&TutorialAnchor::BatteryBuildButton)
+        .get(&TutorialAnchor::PlantBuildButton)
         .expect("the battery's Build plant button is in view");
 
     pass.click_at(&mut app, width, height, button.center());
@@ -1505,7 +1781,7 @@ fn pick_site_instruction_points_down_into_the_map() {
 fn at_connect_instruction(app: &mut App, pass: &EguiPass, size: (f32, f32)) -> domain::ids::NodeId {
     at_battery_instruction(app, pass, size);
     let cell = battery_site(app);
-    let button = anchors(app)[&TutorialAnchor::BatteryBuildButton];
+    let button = anchors(app)[&TutorialAnchor::PlantBuildButton];
     pass.click_at(app, size.0, size.1, button.center());
     update_n(app, 1);
     let battery = app
@@ -1545,7 +1821,7 @@ fn connect_instruction_points_at_the_line_from_the_battery_then_its_first_target
         }
         let widgets = pass.settled(&mut app, width, height);
         let target = *anchors(&app)
-            .get(&TutorialAnchor::BatteryLineButton)
+            .get(&TutorialAnchor::PlantLineButton)
             .unwrap_or_else(|| panic!("stage {stage}: the button is in view"));
         let button = widgets
             .iter()
@@ -1597,7 +1873,7 @@ fn a_reveal_its_step_never_finished_goes_with_the_step() {
     }
     assert_eq!(
         ui_state(&app).reveal_anchor,
-        Some(TutorialAnchor::BatteryLineButton),
+        Some(TutorialAnchor::PlantLineButton),
         "the test needs a reveal no panel can finish"
     );
     at_step(&mut app, TutorialStep::StartSpotlight);
@@ -1606,11 +1882,7 @@ fn a_reveal_its_step_never_finished_goes_with_the_step() {
     assert_eq!(ui_state(&app).reveal_plant_card, None);
     // The button it asked for is drawn again: nothing scrolls to it.
     dispatch_in(&mut app, vec![UiAction::Select(Selection::LineFrom(node))]);
-    let button = |app: &App| {
-        anchors(app)
-            .get(&TutorialAnchor::BatteryLineButton)
-            .copied()
-    };
+    let button = |app: &App| anchors(app).get(&TutorialAnchor::PlantLineButton).copied();
     for _ in 0..2 {
         pass.run(&mut app, width, height);
     }
@@ -1670,7 +1942,7 @@ fn an_instruction_without_its_anchor_is_a_plain_callout_at_the_map_top() {
     let widgets = pass.settled(&mut app, width, height);
     let seen = anchors(&app);
     assert!(
-        !seen.contains_key(&TutorialAnchor::BatteryLineButton),
+        !seen.contains_key(&TutorialAnchor::PlantLineButton),
         "{seen:?}"
     );
     let map = seen[&TutorialAnchor::Map];
@@ -1736,7 +2008,7 @@ fn a_spotlight_clock_pauses_while_its_anchor_is_hidden() {
     for _ in 0..2 {
         tutorial(
             &mut app,
-            [TutorialAction::Reveal(TutorialAnchor::BatteryCard)],
+            [TutorialAction::Reveal(TutorialAnchor::PlantCard)],
         );
         for _ in 0..60 {
             pass.run(&mut app, width, height);
@@ -1788,7 +2060,7 @@ fn a_paused_spotlight_asks_for_its_anchor_once_per_selection() {
     let shows_within =
         |pass: &EguiPass, app: &mut App, passes: usize| (0..passes).any(|_| showing(pass, app));
     let hide = |pass: &EguiPass, app: &mut App| {
-        tutorial(app, [TutorialAction::Reveal(TutorialAnchor::BatteryCard)]);
+        tutorial(app, [TutorialAction::Reveal(TutorialAnchor::PlantCard)]);
         // The card's reveal scrolls the section away; the overlay sees it gone the pass after.
         for _ in 0..3 {
             pass.run(app, width, height);
@@ -2022,11 +2294,24 @@ fn cards_fit_minimum_window_at_max_zoom() {
     let logs = TempDir::new().unwrap();
     let mut app = tutorial_app(&logs);
     let pass = with_anchor_probe(&mut app);
-    let cell = battery_site(&app);
+    let mut cell = battery_site(&app);
     let mut battery = None;
+    let mut ccgt = None;
     let mut checked = Vec::new();
-    for phase_now in [DayPhase::Planning, DayPhase::Operating, DayPhase::Review] {
+    for (chapter, phase_now) in [
+        DayPhase::Planning,
+        DayPhase::Operating,
+        DayPhase::Review,
+        DayPhase::Planning,
+    ]
+    .into_iter()
+    .enumerate()
+    {
         match phase_now {
+            DayPhase::Planning if chapter == 3 => {
+                execute(&mut app, Command::FinishReview);
+                cell = ccgt_site(&app);
+            }
             DayPhase::Planning => {}
             DayPhase::Operating => execute(&mut app, Command::BeginOperating),
             DayPhase::Review => execute(&mut app, Command::AdvanceTicks { n: TICKS_PER_DAY }),
@@ -2034,6 +2319,8 @@ fn cards_fit_minimum_window_at_max_zoom() {
         assert_eq!(phase(&app), phase_now);
         for def in TUTORIAL_STEPS.iter().filter(|def| {
             def.phase == phase_now
+                && (phase_now != DayPhase::Planning
+                    || (def.step >= TutorialStep::Supply) == (chapter == 3))
                 && matches!(def.kind, StepKind::Spotlight | StepKind::Instruction)
         }) {
             // From connecting on, the player has ordered a battery, which ordering selects.
@@ -2054,20 +2341,54 @@ fn cards_fit_minimum_window_at_max_zoom() {
                     .into_iter()
                     .find(|plant| plant.kind == PlantKind::Battery && plant.cell == cell);
             }
+            if def.step == TutorialStep::ConnectCcgtSpotlight {
+                execute(
+                    &mut app,
+                    Command::BuildPlant {
+                        kind: PlantKind::Ccgt,
+                        cell,
+                    },
+                );
+                ccgt = app
+                    .world()
+                    .resource::<Session>()
+                    .0
+                    .session()
+                    .plant_views()
+                    .into_iter()
+                    .find(|plant| plant.kind == PlantKind::Ccgt && plant.cell == cell);
+            }
+            if def.step == TutorialStep::SaveSnapshot {
+                let from = ccgt.as_ref().unwrap().node;
+                let to = app.world().resource::<Session>().0.session().anchor_node();
+                execute(&mut app, Command::BuildLine { from, to });
+            }
             at_step(&mut app, def.step);
             // Picking a site is done once a cell is selected; the later steps need one.
             let selection = match (def.step, &battery) {
-                (TutorialStep::PickSite, _) => Selection::None,
+                (TutorialStep::PickSite | TutorialStep::PickCcgtSite, _) => Selection::None,
+                (TutorialStep::ConnectCcgtSpotlight | TutorialStep::ConnectCcgt, _) => {
+                    Selection::Plant(ccgt.as_ref().expect("CCGT ordered").id)
+                }
                 (TutorialStep::ConnectSpotlight | TutorialStep::ConnectBattery, Some(battery)) => {
                     Selection::Plant(battery.id)
                 }
                 _ => Selection::Cell(cell),
             };
             dispatch_in(&mut app, vec![UiAction::Select(selection)]);
-            let text = l10n.text(def.text_key.unwrap_or_else(|| {
-                let game = &app.world().resource::<Session>().0;
-                game::hud::tutorial::construction_key(run(&app).unwrap(), game)
-            }));
+            let view = game::hud::tutorial::tutorial_view(
+                def,
+                run(&app).unwrap(),
+                &app.world().resource::<Session>().0,
+                selection,
+                &l10n,
+                1.0,
+            );
+            let text = match view {
+                game::hud::tutorial::TutorialView::Spotlight { text, .. }
+                | game::hud::tutorial::TutorialView::Instruction { text, .. } => text,
+                other => panic!("expected a note: {other:?}"),
+            };
             // Let a reveal scroll its anchor in.
             let mut found = None;
             for _ in 0..60 {
@@ -2084,6 +2405,11 @@ fn cards_fit_minimum_window_at_max_zoom() {
             }
             if def.step == TutorialStep::ConnectBattery {
                 let node = battery.as_ref().expect("the battery was ordered").node;
+                dispatch_in(&mut app, vec![UiAction::Select(Selection::LineFrom(node))]);
+                check_arrow_callout(&pass, &mut app, (width, height), def, &text);
+            }
+            if def.step == TutorialStep::ConnectCcgt {
+                let node = ccgt.as_ref().unwrap().node;
                 dispatch_in(&mut app, vec![UiAction::Select(Selection::LineFrom(node))]);
                 check_arrow_callout(&pass, &mut app, (width, height), def, &text);
             }
@@ -2269,7 +2595,45 @@ fn tutorial_on_and_off_give_identical_state() {
     for (app, _) in apps.iter_mut() {
         execute(app, Command::FinishReview);
     }
+    tutorial_frames(&mut apps, 12, &mut shown);
+    let cell = ccgt_site(&apps[0].0);
+    for (app, _) in apps.iter_mut() {
+        dispatch_in(app, vec![UiAction::Select(Selection::Cell(cell))]);
+    }
+    tutorial_frames(&mut apps, 12, &mut shown);
+    for (app, _) in apps.iter_mut() {
+        execute(
+            app,
+            Command::BuildPlant {
+                kind: PlantKind::Ccgt,
+                cell,
+            },
+        );
+    }
+    tutorial_frames(&mut apps, 12, &mut shown);
+    for step in [
+        TutorialStep::Supply,
+        TutorialStep::CcgtSpotlight,
+        TutorialStep::ConnectCcgtSpotlight,
+    ] {
+        assert!(shown.contains(&step), "{step:?} wasn't shown");
+    }
+    for (app, _) in apps.iter_mut() {
+        let session = app.world().resource::<Session>().0.session();
+        let from = session.anchor_node();
+        let to = session
+            .plant_views()
+            .into_iter()
+            .find(|plant| plant.kind == PlantKind::Ccgt && plant.cell == cell)
+            .unwrap()
+            .node;
+        execute(app, Command::BuildLine { from, to });
+    }
     tutorial_frames(&mut apps, 4, &mut shown);
+    assert!(
+        shown.contains(&TutorialStep::SaveSnapshot),
+        "the save caution was shown"
+    );
     let [(on, _), (off, _)] = &apps;
     assert!(run(on).is_none() && !pending(on), "the tutorial finished");
     assert_eq!(phase(on), DayPhase::Planning);

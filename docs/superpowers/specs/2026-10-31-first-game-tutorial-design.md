@@ -33,7 +33,7 @@ genuinely played four other regions.
 
 **Non-goals (this version)**
 
-- Steps beyond the first month's Review.
+- Guidance beyond building and connecting the first new CCGT after the first month's Review.
 - Resuming a tutorial in a loaded save. The tutorial runs only in the game it started with.
 - Voice-over, sound cues or animated characters.
 - Translating the new text into other locales (`en-US` only, as today).
@@ -60,8 +60,9 @@ genuinely played four other regions.
   finished: the main menu has no tutorial button.
 - Starting a new game with `tutorial_pending` true starts the tutorial in that game. Loading or
   continuing a save never starts it.
-- The tutorial **finishes** when the player leaves the first Review (§4.4). That sets
-  `tutorial_pending = false` and writes preferences. Leaving the game or
+- After the first Review is dismissed, the tutorial continues with the CCGT walkthrough (§4.5).
+  It **finishes** after the Save spotlight following the new CCGT's grid connection is
+  dismissed or times out, or when the player starts the next representative day early. That sets `tutorial_pending = false` and writes preferences. Leaving the game or
   quitting part-way leaves the flag `true`, so the next new game runs it again.
 
 ## 4. The tutorial
@@ -190,8 +191,7 @@ to `dispatch`.
     and a short line can too), say *"…its power line. They're paid off."* If no battery or line
     was queued (the player went off-script), use a general note: *"Construction is what you pay
     each month for things you've ordered."*
-11. **Finish** when the phase leaves this Review: set `tutorial_pending = false`, write
-    preferences.
+11. **Continue** when this Review is dismissed: begin the new-supply walkthrough (§4.5).
 
 ### 4.4 Text and contrast
 
@@ -203,6 +203,40 @@ The main spec's 4.5:1 contrast floor (§8.4) applies to every tutorial text, inc
   4.5:1 against the backdrop composited over **white**, the worst case for the 3D map beneath.
 - The crawl text **clips** at a horizon line rather than fading out, because the main spec
   forbids opacity fades that make visible text unreadable.
+
+### 4.5 After the first Review: build and connect a CCGT (2026-11-01)
+
+Once the first month's representative day has ended and the player dismisses its Review, guide
+increasing supply in the next Planning phase. Never replay the first month's battery or Start
+steps, even if the player skipped them.
+
+1. Spotlight the map with a short explanation: batteries store electricity; a new power plant
+   adds supply.
+2. Ask the player to select a map square for a gas plant. If a cell is already selected, use it.
+3. Scroll to and spotlight the CCGT card. Explain that a CCGT is a gas plant that can be built
+   anywhere and is relatively cheap. **State its exact build duration**, using the effective
+   plant specification for the selected cell (including economic-zone overrides), with the same
+   month formatting as the build card. Do not hard-code a region's tuning values.
+4. Point at the CCGT's Build plant button. Keep its exact build duration in the instruction too.
+   Re-selecting a site updates the duration. A starter CCGT never satisfies this step; a new
+   player-ordered CCGT does, including an order placed ahead of the walkthrough.
+5. Spotlight the line section, then point at Line from the new CCGT and its first enabled Build
+   line target that already has a complete existing or ordered path to a service grid. Use the
+   same controls and presentation as for the battery. Explain that both plant and line must finish before
+   supplying power. Orders under construction count, because they already have network nodes.
+6. Once the new CCGT has a complete path to a service grid, including ordered lines, spotlight
+   the top bar's **Save** button. Caution the player to create a **named snapshot** before risky
+   moves such as connecting a new city, so they can load it to return to this point if things
+   go wrong. A dangling line to an unconnected city does not unlock this caution.
+7. Finish after this Save spotlight is dismissed or times out. As with the other spotlights,
+   the dismissal click is consumed and saving remains optional; the tutorial does not create a
+   snapshot or open the dialog automatically. Clicking Save afterward opens the existing manual
+   save dialog. Starting the next day early also ends the optional guidance. Leaving the game
+   before either condition keeps the tutorial owed.
+
+All existing tutorial interaction, contrast, popup precedence and simulation-isolation rules
+continue to apply. The plant card, Build plant and connection-button anchors are shared between
+chapters; the current chapter chooses the plant kind and new-plant node set.
 
 ## 5. Where it fits the existing code
 

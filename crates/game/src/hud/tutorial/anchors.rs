@@ -93,13 +93,13 @@ mod tests {
             ui.set_clip_rect(clip);
             // Half in view, then wholly below it, then touching its edge only.
             let half = egui::Rect::from_min_size(egui::pos2(10.0, 30.0), egui::vec2(20.0, 40.0));
-            mark_visible_anchor(ui, TutorialAnchor::BatteryCard, half);
+            mark_visible_anchor(ui, TutorialAnchor::PlantCard, half);
             let below = egui::Rect::from_min_size(egui::pos2(10.0, 60.0), egui::vec2(20.0, 40.0));
             mark_visible_anchor(ui, TutorialAnchor::LineSection, below);
             let edge = egui::Rect::from_min_size(egui::pos2(10.0, 50.0), egui::vec2(20.0, 40.0));
             mark_visible_anchor(ui, TutorialAnchor::ReviewConstruction, edge);
             seen = Some((
-                anchor_rect(ui.ctx(), TutorialAnchor::BatteryCard),
+                anchor_rect(ui.ctx(), TutorialAnchor::PlantCard),
                 anchor_rect(ui.ctx(), TutorialAnchor::LineSection),
                 anchor_rect(ui.ctx(), TutorialAnchor::ReviewConstruction),
             ));

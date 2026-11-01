@@ -794,3 +794,11 @@ hvdc-control-override = Temporary MW override active until resumed or the day en
 hvdc-control-standby = Automatic · waiting for a useful transfer
 hvdc-control-transfer = Automatic · { $mw } from { $from } to { $to } to balance supply and reduce generation cost
 hvdc-control-manual = Manual · following the stored hourly schedule
+
+# After the first month's review: add generating capacity and connect it.
+tutorial-supply = Batteries store electricity. To supply more power, let's build a new power plant.
+tutorial-ccgt-pick-site = Click a square on the map for your new gas plant.
+tutorial-ccgt-spotlight = A CCGT is a gas plant you can build anywhere. It is relatively cheap and takes { $time } to build.
+tutorial-ccgt-build = Build a CCGT here. It will take { $time } to build.
+tutorial-ccgt-connect = Build a line from your CCGT to your grid. The plant and line must finish building before they can supply power.
+tutorial-save-snapshot = Before risky moves, like connecting a new city, use Save to create a named snapshot. You can load it to return to this point if things go wrong.

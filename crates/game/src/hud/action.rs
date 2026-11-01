@@ -771,13 +771,13 @@ fn tutorial(sink: &mut ActionSink, action: TutorialAction) {
         TutorialAction::Play(step) | TutorialAction::Dismiss(step) => step,
         TutorialAction::Reveal(anchor) => {
             match anchor {
-                TutorialAnchor::BatteryCard => {
-                    sink.ui.reveal_plant_card = Some(domain::region::PlantKind::Battery);
+                TutorialAnchor::PlantCard => {
+                    sink.ui.reveal_plant_card = Some(state.plant_kind());
                 }
                 // The button on its own: the card can be taller than the build menu's view.
-                TutorialAnchor::BatteryBuildButton
+                TutorialAnchor::PlantBuildButton
                 | TutorialAnchor::LineSection
-                | TutorialAnchor::BatteryLineButton
+                | TutorialAnchor::PlantLineButton
                 | TutorialAnchor::ReviewConstruction => {
                     sink.ui.reveal_anchor = Some(anchor);
                 }
@@ -810,8 +810,8 @@ fn tutorial(sink: &mut ActionSink, action: TutorialAction) {
         TutorialStep::ShowForecast => sink
             .ui
             .apply(&UiAction::SetPlanningTab(PlanningTab::Forecast)),
-        TutorialStep::RevealBattery => {
-            sink.ui.reveal_plant_card = Some(domain::region::PlantKind::Battery);
+        TutorialStep::RevealBattery | TutorialStep::RevealCcgt => {
+            sink.ui.reveal_plant_card = Some(state.plant_kind());
         }
         _ => {}
     }

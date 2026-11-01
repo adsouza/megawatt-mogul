@@ -374,6 +374,7 @@ pub fn draw_top_bar(ui: &mut egui::Ui, model: &TopBarModel) -> Vec<UiAction> {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             button(ui, &model.menu, &mut actions);
             let save = button(ui, &model.save, &mut actions);
+            mark_anchor(ui.ctx(), TutorialAnchor::Save, save.rect);
             if let Some(status) = &model.last_saved {
                 save.on_hover_text(status);
             }

@@ -23,17 +23,18 @@ use crate::hud::Selection;
 pub enum TutorialAnchor {
     Cash,
     Map,
-    BatteryCard,
-    /// The battery card's *Build plant* button.
-    BatteryBuildButton,
+    PlantCard,
+    /// The current chapter's plant card's *Build plant* button.
+    PlantBuildButton,
     LineSection,
-    /// The build menu's button that takes a line on from a tutorial battery: the first *Line
+    /// The build menu's button that takes a line on from a tutorial plant: the first *Line
     /// from* button that starts at one, or, once a line starts at one, the first enabled *Build
     /// line* button among its targets.
-    BatteryLineButton,
+    PlantLineButton,
     StartDay,
     SpeedControls,
     ReviewConstruction,
+    Save,
 }
 
 /// One step of the tutorial, in the order they play.
@@ -53,6 +54,14 @@ pub enum TutorialStep {
     StartDay,
     Speed,
     Construction,
+    Supply,
+    PickCcgtSite,
+    RevealCcgt,
+    CcgtSpotlight,
+    BuildCcgt,
+    ConnectCcgtSpotlight,
+    ConnectCcgt,
+    SaveSnapshot,
 }
 
 /// How a step presents itself. Moves, the crawl and spotlights are one-shot: they join
@@ -77,6 +86,11 @@ pub enum Done {
     BatteryQueued,
     /// Some tutorial battery's node is an end of a line, built or under construction.
     BatteryLinked,
+    CellSelectedOrCcgt,
+    CcgtQueued,
+    CcgtLinked,
+    /// The save caution waits until the new CCGT has an ordered grid path.
+    CcgtNotLinked,
 }
 
 /// One row of [`TUTORIAL_STEPS`].
@@ -110,7 +124,7 @@ const fn def(
 }
 
 /// The tutorial, in order (spec §4.3).
-pub const TUTORIAL_STEPS: [StepDef; 14] = {
+pub const TUTORIAL_STEPS: [StepDef; 22] = {
     use DayPhase::{Operating, Planning, Review};
     use StepKind::{Crawl, Instruction, Move, Spotlight};
     use TutorialAnchor as A;
@@ -154,7 +168,7 @@ pub const TUTORIAL_STEPS: [StepDef; 14] = {
             S::BatterySpotlight,
             Planning,
             Spotlight,
-            Some(A::BatteryCard),
+            Some(A::PlantCard),
             Some("tutorial-battery-spotlight"),
             Done::BatteryQueued,
         ),
@@ -162,7 +176,7 @@ pub const TUTORIAL_STEPS: [StepDef; 14] = {
             S::BuildBattery,
             Planning,
             Instruction,
-            Some(A::BatteryBuildButton),
+            Some(A::PlantBuildButton),
             Some("tutorial-battery-build"),
             Done::BatteryQueued,
         ),
@@ -178,7 +192,7 @@ pub const TUTORIAL_STEPS: [StepDef; 14] = {
             S::ConnectBattery,
             Planning,
             Instruction,
-            Some(A::BatteryLineButton),
+            Some(A::PlantLineButton),
             Some("tutorial-connect-build"),
             Done::BatteryLinked,
         ),
@@ -214,10 +228,67 @@ pub const TUTORIAL_STEPS: [StepDef; 14] = {
             None,
             Done::Never,
         ),
+        def(
+            S::Supply,
+            Planning,
+            Spotlight,
+            Some(A::Map),
+            Some("tutorial-supply"),
+            Done::CcgtLinked,
+        ),
+        def(
+            S::PickCcgtSite,
+            Planning,
+            Instruction,
+            Some(A::Map),
+            Some("tutorial-ccgt-pick-site"),
+            Done::CellSelectedOrCcgt,
+        ),
+        def(S::RevealCcgt, Planning, Move, None, None, Done::CcgtQueued),
+        def(
+            S::CcgtSpotlight,
+            Planning,
+            Spotlight,
+            Some(A::PlantCard),
+            Some("tutorial-ccgt-spotlight"),
+            Done::CcgtQueued,
+        ),
+        def(
+            S::BuildCcgt,
+            Planning,
+            Instruction,
+            Some(A::PlantBuildButton),
+            Some("tutorial-ccgt-build"),
+            Done::CcgtQueued,
+        ),
+        def(
+            S::ConnectCcgtSpotlight,
+            Planning,
+            Spotlight,
+            Some(A::LineSection),
+            Some("tutorial-connect-spotlight"),
+            Done::CcgtLinked,
+        ),
+        def(
+            S::ConnectCcgt,
+            Planning,
+            Instruction,
+            Some(A::PlantLineButton),
+            Some("tutorial-ccgt-connect"),
+            Done::CcgtLinked,
+        ),
+        def(
+            S::SaveSnapshot,
+            Planning,
+            Spotlight,
+            Some(A::Save),
+            Some("tutorial-save-snapshot"),
+            Done::CcgtNotLinked,
+        ),
     ]
 };
 
-/// What the game's state can't tell the tutorial: which game it belongs to, the batteries the
+/// What the game's state can't tell the tutorial: which game it belongs to, the plants the
 /// player started with, the one-shot steps that have played and whether the first Review has
 /// been seen.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -227,6 +298,8 @@ pub struct TutorialState {
     /// The batteries in the starter fleet, which don't count as the player's (Southern China
     /// starts with one).
     pub starter_batteries: BTreeSet<PlantId>,
+    /// Starter CCGTs never count as the player's new supply.
+    pub starter_ccgts: BTreeSet<PlantId>,
     pub played: BTreeSet<TutorialStep>,
     pub seen_review: bool,
 }
@@ -244,8 +317,24 @@ impl TutorialState {
         Self {
             generation,
             starter_batteries,
+            starter_ccgts: game
+                .session()
+                .plant_views()
+                .into_iter()
+                .filter(|plant| plant.kind == PlantKind::Ccgt)
+                .map(|plant| plant.id)
+                .collect(),
             played: BTreeSet::new(),
             seen_review: false,
+        }
+    }
+
+    /// The plant the current Planning chapter asks the player to build.
+    pub fn plant_kind(&self) -> PlantKind {
+        if self.seen_review {
+            PlantKind::Ccgt
+        } else {
+            PlantKind::Battery
         }
     }
 }
@@ -259,9 +348,13 @@ pub fn active_step(
 ) -> Option<&'static StepDef> {
     let session = game.session();
     let phase = session.phase();
-    let facts = Facts::of(state, &session.plant_views(), &session.line_views());
+    let facts = Facts::of(state, game);
     TUTORIAL_STEPS.iter().find(|def| {
-        def.phase == phase && !state.played.contains(&def.step) && !facts.done(def.done, selection)
+        def.phase == phase
+            && (phase != DayPhase::Planning
+                || (def.step >= TutorialStep::Supply) == state.seen_review)
+            && !state.played.contains(&def.step)
+            && !facts.done(def.done, selection)
     })
 }
 
@@ -309,6 +402,31 @@ pub fn tutorial_battery_nodes(state: &TutorialState, game: &Game) -> BTreeSet<No
         .collect()
 }
 
+/// Nodes for the plant the current chapter asks for, including construction orders.
+pub fn tutorial_plant_nodes(state: &TutorialState, game: &Game) -> BTreeSet<NodeId> {
+    if !state.seen_review {
+        return tutorial_battery_nodes(state, game);
+    }
+    tutorial_ccgts(state, &game.session().plant_views())
+        .map(|plant| plant.node)
+        .collect()
+}
+
+/// Whether a new CCGT has a complete path to a service grid, including ordered lines.
+#[cfg(test)]
+fn ccgt_linked(state: &TutorialState, game: &Game) -> bool {
+    Facts::of(state, game).ccgt_linked
+}
+
+fn tutorial_ccgts<'a>(
+    state: &'a TutorialState,
+    plants: &'a [PlantView],
+) -> impl Iterator<Item = &'a PlantView> {
+    plants
+        .iter()
+        .filter(|plant| plant.kind == PlantKind::Ccgt && !state.starter_ccgts.contains(&plant.id))
+}
+
 /// The batteries in `plants` that weren't in the starter fleet: the player's, built or not.
 fn tutorial_batteries<'a>(
     state: &'a TutorialState,
@@ -327,14 +445,30 @@ fn touches(line: &LineView, node: NodeId) -> bool {
 struct Facts {
     battery_queued: bool,
     battery_linked: bool,
+    ccgt_queued: bool,
+    ccgt_linked: bool,
 }
 
 impl Facts {
-    fn of(state: &TutorialState, plants: &[PlantView], lines: &[LineView]) -> Self {
-        let nodes: Vec<NodeId> = tutorial_batteries(state, plants)
+    fn of(state: &TutorialState, game: &Game) -> Self {
+        let session = game.session();
+        let plants = session.plant_views();
+        let lines = session.line_views();
+        let nodes: Vec<NodeId> = tutorial_batteries(state, &plants)
             .map(|battery| battery.node)
             .collect();
+        let ccgts: Vec<NodeId> = tutorial_ccgts(state, &plants)
+            .map(|plant| plant.node)
+            .collect();
         Self {
+            ccgt_queued: !ccgts.is_empty(),
+            ccgt_linked: ccgts.iter().any(|node| {
+                session
+                    .power()
+                    .network()
+                    .months_until_connected(*node)
+                    .is_some()
+            }),
             battery_queued: !nodes.is_empty(),
             battery_linked: nodes
                 .iter()
@@ -350,6 +484,10 @@ impl Facts {
             }
             Done::BatteryQueued => self.battery_queued,
             Done::BatteryLinked => self.battery_linked,
+            Done::CellSelectedOrCcgt => matches!(selection, Selection::Cell(_)) || self.ccgt_queued,
+            Done::CcgtQueued => self.ccgt_queued,
+            Done::CcgtLinked => self.ccgt_linked,
+            Done::CcgtNotLinked => !self.ccgt_linked,
         }
     }
 }
@@ -447,7 +585,7 @@ mod tests {
         sorted.sort();
         sorted.dedup();
         assert_eq!(steps, sorted);
-        assert_eq!(steps.len(), 14);
+        assert_eq!(steps.len(), 22);
     }
 
     #[test]
@@ -694,5 +832,152 @@ mod tests {
             construction_key(&state, &game),
             "tutorial-construction-paid"
         );
+    }
+    #[test]
+    fn ccgt_chapter_starts_only_after_review_and_ignores_starter_ccgts() {
+        let mut game = game("western_interconnection");
+        let mut state = TutorialState::new(1, &game);
+        assert!(!state.starter_ccgts.is_empty());
+        assert_eq!(state.plant_kind(), PlantKind::Battery);
+        play_month(&mut game);
+        state.seen_review = true;
+        assert_eq!(
+            active(&state, &game, Selection::None),
+            Some(TutorialStep::Construction)
+        );
+        game.execute(Command::FinishReview).unwrap();
+        assert_eq!(state.plant_kind(), PlantKind::Ccgt);
+        assert_eq!(
+            active(&state, &game, Selection::None),
+            Some(TutorialStep::Supply)
+        );
+        state.played.insert(TutorialStep::Supply);
+        assert_eq!(
+            active(&state, &game, Selection::None),
+            Some(TutorialStep::PickCcgtSite)
+        );
+        let (cell, _) = battery_site(&game);
+        assert_eq!(
+            active(&state, &game, Selection::Cell(cell)),
+            Some(TutorialStep::RevealCcgt)
+        );
+        state.played.insert(TutorialStep::RevealCcgt);
+        assert_eq!(
+            active(&state, &game, Selection::Cell(cell)),
+            Some(TutorialStep::CcgtSpotlight)
+        );
+        state.played.insert(TutorialStep::CcgtSpotlight);
+        assert_eq!(
+            active(&state, &game, Selection::Cell(cell)),
+            Some(TutorialStep::BuildCcgt)
+        );
+        assert_eq!(
+            active(&state, &game, Selection::None),
+            Some(TutorialStep::PickCcgtSite)
+        );
+    }
+
+    #[test]
+    fn early_ccgt_order_skips_build_steps_and_its_line_completes_connecting() {
+        let mut game = game("western_interconnection");
+        let mut state = TutorialState::new(1, &game);
+        let (cell, anchor) = battery_site(&game);
+        game.execute(Command::BuildPlant {
+            kind: PlantKind::Ccgt,
+            cell,
+        })
+        .unwrap();
+        let node = game
+            .session()
+            .plant_views()
+            .into_iter()
+            .find(|plant| plant.kind == PlantKind::Ccgt && plant.cell == cell)
+            .unwrap()
+            .node;
+        play_month(&mut game);
+        state.seen_review = true;
+        game.execute(Command::FinishReview).unwrap();
+        state.played.insert(TutorialStep::Supply);
+        assert_eq!(tutorial_plant_nodes(&state, &game), BTreeSet::from([node]));
+        assert_eq!(
+            active(&state, &game, Selection::None),
+            Some(TutorialStep::ConnectCcgtSpotlight)
+        );
+        state.played.insert(TutorialStep::ConnectCcgtSpotlight);
+        assert_eq!(
+            active(&state, &game, Selection::None),
+            Some(TutorialStep::ConnectCcgt)
+        );
+        assert!(!ccgt_linked(&state, &game));
+        game.execute(Command::BuildLine {
+            from: anchor,
+            to: node,
+        })
+        .unwrap();
+        assert!(ccgt_linked(&state, &game));
+        assert_eq!(
+            active(&state, &game, Selection::None),
+            Some(TutorialStep::SaveSnapshot)
+        );
+        state.played.insert(TutorialStep::SaveSnapshot);
+        assert_eq!(active(&state, &game, Selection::None), None);
+    }
+
+    #[test]
+    fn a_ccgt_line_to_an_unconnected_city_still_needs_a_path_to_the_grid() {
+        let mut game = game("western_interconnection");
+        let state = TutorialState::new(1, &game);
+        let (cell, anchor) = battery_site(&game);
+        game.execute(Command::BuildPlant {
+            kind: PlantKind::Ccgt,
+            cell,
+        })
+        .unwrap();
+        let node = game
+            .session()
+            .plant_views()
+            .into_iter()
+            .find(|plant| plant.kind == PlantKind::Ccgt && plant.cell == cell)
+            .unwrap()
+            .node;
+        let remote = game
+            .session()
+            .city_views()
+            .into_iter()
+            .find(|city| !game.session().power().network().is_connected(city.node))
+            .unwrap()
+            .node;
+        game.execute(Command::BuildLine {
+            from: node,
+            to: remote,
+        })
+        .unwrap();
+        assert!(
+            !ccgt_linked(&state, &game),
+            "a dangling line cannot supply the existing grid"
+        );
+        game.execute(Command::BuildLine {
+            from: remote,
+            to: anchor,
+        })
+        .unwrap();
+        assert!(
+            ccgt_linked(&state, &game),
+            "a complete ordered path counts before commissioning"
+        );
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn planning_never_shows_steps_from_the_other_chapter(seen_review in proptest::bool::ANY, mask in proptest::num::u32::ANY) {
+            let game = game("western_interconnection");
+            let mut state = TutorialState::new(1, &game);
+            state.seen_review = seen_review;
+            state.played = TUTORIAL_STEPS.iter().enumerate()
+                .filter(|(index, _)| mask & (1 << index) != 0).map(|(_, def)| def.step).collect();
+            if let Some(def) = active_step(&state, &game, Selection::None) {
+                proptest::prop_assert_eq!(def.step >= TutorialStep::Supply, seen_review);
+            }
+        }
     }
 }

@@ -91,14 +91,32 @@ pub fn tutorial_view(
     step: &StepDef,
     state: &TutorialState,
     game: &Game,
+    selection: Selection,
     l10n: &Localizer,
     shown_for: f32,
 ) -> TutorialView {
     let text = || {
-        l10n.text(
-            step.text_key
-                .unwrap_or_else(|| construction_key(state, game)),
-        )
+        let key = step
+            .text_key
+            .unwrap_or_else(|| construction_key(state, game));
+        if matches!(
+            step.step,
+            TutorialStep::CcgtSpotlight | TutorialStep::BuildCcgt
+        ) {
+            let region = game.session().region();
+            let kind = domain::region::PlantKind::Ccgt;
+            let months = match selection {
+                Selection::Cell(cell) => region
+                    .plant_spec_at(kind, cell)
+                    .map(|spec| spec.build_months)
+                    .unwrap_or(region.spec(kind).build_months),
+                _ => region.spec(kind).build_months,
+            };
+            let time = l10n.args("build-months-value", &[("months", months.into())]);
+            l10n.args(key, &[("time", time.into())])
+        } else {
+            l10n.text(key)
+        }
     };
     let anchor = step.anchor.unwrap_or(TutorialAnchor::Map);
     match step.kind {
@@ -244,7 +262,7 @@ pub(crate) fn tutorial_overlay(
     }
     clock.tick(now, frame.0, ready);
     let shown_for = clock.shown_for as f32;
-    let view = tutorial_view(def, state, game, &l10n, shown_for);
+    let view = tutorial_view(def, state, game, sink.selection(), &l10n, shown_for);
     let escape = !prompt_open && !egui::Popup::is_any_open(&ctx);
     // Whether the crawl or a spotlight is drawn and stays up: it takes every click, so the
     // keyboard shortcuts wait while it does.
@@ -305,10 +323,10 @@ pub(crate) fn tutorial_overlay(
 fn scrolls(anchor: TutorialAnchor) -> bool {
     matches!(
         anchor,
-        TutorialAnchor::BatteryCard
-            | TutorialAnchor::BatteryBuildButton
+        TutorialAnchor::PlantCard
+            | TutorialAnchor::PlantBuildButton
             | TutorialAnchor::LineSection
-            | TutorialAnchor::BatteryLineButton
+            | TutorialAnchor::PlantLineButton
             | TutorialAnchor::ReviewConstruction
     )
 }

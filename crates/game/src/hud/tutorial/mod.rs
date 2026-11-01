@@ -3,8 +3,10 @@
 //! ([`overlay`], [`crawl`]) and the run's lifecycle.
 //!
 //! A run starts with a new game when the player's progress says the tutorial is owed, belongs to
-//! that one game, and finishes when the player leaves the first Review. Loading a save never
-//! starts one, and leaving the game part-way drops it without clearing `tutorial_pending`.
+//! that one game, and continues after the first Review through building and connecting a CCGT,
+//! then highlighting Save before the player takes risks.
+//! Loading a save never starts one, and leaving the game part-way drops it without clearing
+//! `tutorial_pending`.
 
 mod anchors;
 mod crawl;
@@ -21,7 +23,7 @@ pub use self::overlay::{
 };
 pub use self::steps::{
     Done, StepDef, StepKind, TUTORIAL_STEPS, TutorialAnchor, TutorialState, TutorialStep,
-    active_step, construction_key, tutorial_battery_nodes,
+    active_step, construction_key, tutorial_battery_nodes, tutorial_plant_nodes,
 };
 use crate::hud::{HudSet, UiState};
 use crate::l10n::Localizer;
@@ -88,8 +90,8 @@ fn start_run(
 }
 
 /// Ends a run whose game is gone (a load or another new game changes the session generation),
-/// notes the first Review, and finishes the tutorial when the player leaves it. A run that ends
-/// takes the reveals it asked for with it.
+/// notes the first Review, and finishes after the save caution or an early next-day start.
+/// A run that ends takes the reveals it asked for with it.
 fn track_run(
     session: Option<Res<Session>>,
     generation: Res<SessionGeneration>,
@@ -106,7 +108,14 @@ fn track_run(
     };
     match session.0.session().phase() {
         DayPhase::Review => state.seen_review = true,
-        DayPhase::Planning if state.seen_review => {
+        DayPhase::Planning
+            if state.seen_review && state.played.contains(&TutorialStep::SaveSnapshot) =>
+        {
+            progress.value.tutorial_pending = false;
+            end_run(&mut run, &mut ui);
+        }
+        // Starting the next day early skips the remaining optional Planning guidance.
+        DayPhase::Operating if state.seen_review => {
             progress.value.tutorial_pending = false;
             end_run(&mut run, &mut ui);
         }

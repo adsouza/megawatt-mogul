@@ -20,7 +20,7 @@ use super::layout::{Edge, HudArea, OuterPanel};
 use super::plant_panel::PlantStat;
 use super::selection::Selection;
 use super::theme::{TextTone, ValueColor, heading_color, marginal_cost_fraction};
-use super::tutorial::{TutorialAnchor, mark_visible_anchor, tutorial_battery_nodes};
+use super::tutorial::{TutorialAnchor, mark_visible_anchor, tutorial_plant_nodes};
 use crate::l10n::{Localize, LocalizeWith, Localizer, Names, format};
 use crate::sim::{DomainEventMessage, Session};
 
@@ -111,35 +111,38 @@ pub struct BuildModel {
     /// Whether to scroll the line section into view when it is drawn: the tutorial's reveal, from
     /// [`UiState::reveal_anchor`](super::UiState::reveal_anchor).
     pub reveal_line: bool,
-    /// Whether to scroll the battery card's Build plant button into view when it is drawn: the
+    /// Whether to scroll the current tutorial plant's Build plant button into view when it is drawn: the
     /// tutorial's reveal, from [`UiState::reveal_anchor`](super::UiState::reveal_anchor).
-    pub reveal_battery_build: bool,
-    /// The tutorial's battery line button, as an index into the AC line section's buttons (its
-    /// starts, or its targets): from `battery_line_button`.
-    pub battery_line: Option<usize>,
+    pub reveal_plant_build: bool,
+    /// The plant whose card and buttons the current tutorial chapter targets.
+    pub tutorial_plant: PlantKind,
+    /// The tutorial's plant line button, as an index into the AC line section's buttons (its
+    /// starts, or its targets): from `plant_line_button`.
+    pub plant_line: Option<usize>,
     /// Whether to scroll that button into view when it is drawn: the tutorial's reveal, from
     /// [`UiState::reveal_anchor`](super::UiState::reveal_anchor).
-    pub reveal_battery_line: bool,
+    pub reveal_plant_line: bool,
 }
 
-/// Which of `line`'s buttons takes a line on from one of `batteries` (the tutorial's): the first
-/// start at a battery's node; or, once `selection` starts the line at one, the first target whose
-/// *Build line* is enabled (none if no target's is). The tutorial's connect instruction points at
-/// it.
-pub fn battery_line_button(
+/// Which of `line`'s buttons takes a line on from one of `plants` (the tutorial's): the first
+/// start at a plant's node; or, once `selection` starts the line at one, the first target whose
+/// *Build line* is enabled and `target_allowed` accepts it (none if no target qualifies).
+/// The CCGT chapter restricts targets to nodes with a complete existing or ordered grid path.
+pub fn plant_line_button(
     line: &LineSection,
     selection: Selection,
-    batteries: &BTreeSet<NodeId>,
+    plants: &BTreeSet<NodeId>,
+    target_allowed: impl Fn(NodeId) -> bool,
 ) -> Option<usize> {
     match line {
         LineSection::Start { from, .. } => from.iter().position(|choice| {
             matches!(choice.action, UiAction::Select(Selection::LineFrom(node))
-                if batteries.contains(&node))
+                if plants.contains(&node))
         }),
         LineSection::End { targets, .. } => match selection {
-            Selection::LineFrom(node) if batteries.contains(&node) => {
-                targets.iter().position(|target| target.build.enabled)
-            }
+            Selection::LineFrom(node) if plants.contains(&node) => targets
+                .iter()
+                .position(|target| target.build.enabled && target_allowed(target.node)),
             _ => None,
         },
     }
@@ -208,9 +211,10 @@ fn build_model_for_tool(
         hvdc_active,
         reveal: None,
         reveal_line: false,
-        reveal_battery_build: false,
-        battery_line: None,
-        reveal_battery_line: false,
+        reveal_plant_build: false,
+        tutorial_plant: PlantKind::Battery,
+        plant_line: None,
+        reveal_plant_line: false,
         transport_modes: if session.region().hvdc().is_some() {
             vec![
                 super::ToggleModel {
@@ -716,7 +720,7 @@ pub fn draw_build(ui: &mut egui::Ui, model: &BuildModel) -> Vec<UiAction> {
                 ui,
                 &model.plant,
                 model.reveal,
-                model.reveal_battery_build,
+                (model.tutorial_plant, model.reveal_plant_build),
                 &mut actions,
             );
             ui.separator();
@@ -725,11 +729,11 @@ pub fn draw_build(ui: &mut egui::Ui, model: &BuildModel) -> Vec<UiAction> {
                     super::toggle_button(ui, mode, &mut actions);
                 }
             });
-            // The tutorial's battery line button is in the AC section.
-            let battery_line = if model.hvdc_active {
+            // The tutorial's plant line button is in the AC section.
+            let plant_line = if model.hvdc_active {
                 None
             } else {
-                model.battery_line
+                model.plant_line
             };
             ui.push_id(model.hvdc_active, |ui| {
                 draw_line_section(
@@ -737,8 +741,8 @@ pub fn draw_build(ui: &mut egui::Ui, model: &BuildModel) -> Vec<UiAction> {
                     active,
                     LineReveals {
                         section: model.reveal_line,
-                        battery_line,
-                        reveal_battery_line: model.reveal_battery_line,
+                        plant_line,
+                        reveal_plant_line: model.reveal_plant_line,
                     },
                     &mut actions,
                 )
@@ -747,14 +751,13 @@ pub fn draw_build(ui: &mut egui::Ui, model: &BuildModel) -> Vec<UiAction> {
     actions
 }
 
-/// The plant rows. The battery's row is the tutorial's battery card, and its Build plant button the
-/// tutorial's battery build button. The row of `reveal`, or with `reveal_battery_build` the
-/// battery's Build plant button, when it is drawn, is scrolled into view once and reported done.
+/// The current tutorial plant's row and Build plant button mark its anchors. A reveal scrolls
+/// the requested card or button into view once and is reported done.
 fn draw_plant_section(
     ui: &mut egui::Ui,
     section: &PlantSection,
     reveal: Option<PlantKind>,
-    reveal_battery_build: bool,
+    (tutorial_plant, reveal_plant_build): (PlantKind, bool),
     actions: &mut Vec<UiAction>,
 ) {
     match section {
@@ -780,16 +783,16 @@ fn draw_plant_section(
                         ui.colored_label(TextTone::Caution.color(), reason);
                     }
                     let build = button(ui, &row.build, actions);
-                    if row.kind == PlantKind::Battery {
-                        mark_visible_anchor(ui, TutorialAnchor::BatteryBuildButton, build.rect);
-                        if reveal_battery_build {
+                    if row.kind == tutorial_plant {
+                        mark_visible_anchor(ui, TutorialAnchor::PlantBuildButton, build.rect);
+                        if reveal_plant_build {
                             build.scroll_to_me(Some(egui::Align::Center));
                             actions.push(UiAction::Tutorial(TutorialAction::RevealDone));
                         }
                     }
                 });
-                if row.kind == PlantKind::Battery {
-                    mark_visible_anchor(ui, TutorialAnchor::BatteryCard, card.response.rect);
+                if row.kind == tutorial_plant {
+                    mark_visible_anchor(ui, TutorialAnchor::PlantCard, card.response.rect);
                 }
                 if reveal == Some(row.kind) {
                     card.response.scroll_to_me(Some(egui::Align::Center));
@@ -805,13 +808,13 @@ fn draw_plant_section(
 struct LineReveals {
     /// Scroll the section's top into view.
     section: bool,
-    /// The tutorial's battery line button, by index (see [`BuildModel::battery_line`]).
-    battery_line: Option<usize>,
+    /// The tutorial's plant line button, by index (see [`BuildModel::plant_line`]).
+    plant_line: Option<usize>,
     /// Scroll that button into view.
-    reveal_battery_line: bool,
+    reveal_plant_line: bool,
 }
 
-/// The line section, marked as the tutorial's line-section anchor where it shows, and its battery
+/// The line section, marked as the tutorial's line-section anchor where it shows, and its plant
 /// line button as that anchor. A reveal scrolls its target into view once and is reported done.
 fn draw_line_section(
     ui: &mut egui::Ui,
@@ -820,10 +823,10 @@ fn draw_line_section(
     actions: &mut Vec<UiAction>,
 ) {
     let drawn = ui.scope(|ui| {
-        let battery_line = draw_line_stage(ui, section, reveals.battery_line, actions)?;
-        mark_visible_anchor(ui, TutorialAnchor::BatteryLineButton, battery_line.rect);
-        if reveals.reveal_battery_line {
-            battery_line.scroll_to_me(Some(egui::Align::Center));
+        let plant_line = draw_line_stage(ui, section, reveals.plant_line, actions)?;
+        mark_visible_anchor(ui, TutorialAnchor::PlantLineButton, plant_line.rect);
+        if reveals.reveal_plant_line {
+            plant_line.scroll_to_me(Some(egui::Align::Center));
             actions.push(UiAction::Tutorial(TutorialAction::RevealDone));
         }
         Some(())
@@ -835,11 +838,11 @@ fn draw_line_section(
     }
 }
 
-/// The section's stage; the response of its button at `battery_line`, if drawn.
+/// The section's stage; the response of its button at `plant_line`, if drawn.
 fn draw_line_stage(
     ui: &mut egui::Ui,
     section: &LineSection,
-    battery_line: Option<usize>,
+    plant_line: Option<usize>,
     actions: &mut Vec<UiAction>,
 ) -> Option<egui::Response> {
     let mut marked = None;
@@ -853,7 +856,7 @@ fn draw_line_stage(
             ui.weak(hint.as_str());
             for (index, choice) in from.iter().enumerate() {
                 let response = button(ui, choice, actions);
-                if battery_line == Some(index) {
+                if plant_line == Some(index) {
                     marked = Some(response);
                 }
             }
@@ -890,7 +893,7 @@ fn draw_line_stage(
                         }
                     }
                     let response = button(ui, &target.build, actions);
-                    if battery_line == Some(index) {
+                    if plant_line == Some(index) {
                         marked = Some(response);
                     }
                 });
@@ -947,14 +950,24 @@ pub(super) fn build_panel(
     };
     model.reveal = sink.ui_state().reveal_plant_card;
     model.reveal_line = sink.ui_state().reveal_anchor == Some(TutorialAnchor::LineSection);
-    model.reveal_battery_build =
-        sink.ui_state().reveal_anchor == Some(TutorialAnchor::BatteryBuildButton);
+    model.reveal_plant_build =
+        sink.ui_state().reveal_anchor == Some(TutorialAnchor::PlantBuildButton);
     if let Some(state) = sink.tutorial() {
-        let batteries = tutorial_battery_nodes(state, &session.0);
-        model.battery_line = battery_line_button(&model.line, sink.selection(), &batteries);
+        model.tutorial_plant = state.plant_kind();
+        let plants = tutorial_plant_nodes(state, &session.0);
+        model.plant_line = plant_line_button(&model.line, sink.selection(), &plants, |node| {
+            !state.seen_review
+                || session
+                    .0
+                    .session()
+                    .power()
+                    .network()
+                    .months_until_connected(node)
+                    .is_some()
+        });
     }
-    model.reveal_battery_line =
-        sink.ui_state().reveal_anchor == Some(TutorialAnchor::BatteryLineButton);
+    model.reveal_plant_line =
+        sink.ui_state().reveal_anchor == Some(TutorialAnchor::PlantLineButton);
     let actions = area.show_panel(contexts.ctx_mut()?, BUILD_PANEL, 0.0, |ui| {
         draw_build(ui, &model)
     });
@@ -1143,7 +1156,7 @@ mod tests {
     /// The tutorial's connect instruction points at the first start at one of its batteries'
     /// nodes, or, once the line starts at one, the first target; at nothing otherwise.
     #[test]
-    fn the_battery_line_button_takes_the_line_on_from_a_tutorial_battery() {
+    fn the_plant_line_button_takes_the_line_on_from_a_tutorial_battery() {
         let l10n = shipped_l10n();
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
         let plants = game.session().plant_views();
@@ -1153,7 +1166,7 @@ mod tests {
         let LineSection::Start { from, .. } = &model.line else {
             panic!("choosing a start");
         };
-        let index = battery_line_button(&model.line, Selection::None, &batteries)
+        let index = plant_line_button(&model.line, Selection::None, &batteries, |_| true)
             .expect("the battery's start");
         assert_eq!(
             from[index].action,
@@ -1164,14 +1177,14 @@ mod tests {
             "the test needs the battery's start not to be first"
         );
         assert_eq!(
-            battery_line_button(&model.line, Selection::None, &BTreeSet::new()),
+            plant_line_button(&model.line, Selection::None, &BTreeSet::new(), |_| true),
             None
         );
         // With the battery selected, its start comes first.
         let selected = Selection::Plant(plants[1].id);
         let model = build_model(&game, &l10n, selected, &usd_style()).unwrap();
         assert_eq!(
-            battery_line_button(&model.line, selected, &batteries),
+            plant_line_button(&model.line, selected, &batteries, |_| true),
             Some(0)
         );
         // Choosing the other end: the first target, only for a line from the battery.
@@ -1179,13 +1192,13 @@ mod tests {
         let model = build_model(&game, &l10n, from_battery, &usd_style()).unwrap();
         assert!(!targets(&model).is_empty());
         assert_eq!(
-            battery_line_button(&model.line, from_battery, &batteries),
+            plant_line_button(&model.line, from_battery, &batteries, |_| true),
             Some(0)
         );
         let from_other = Selection::LineFrom(other);
         let model = build_model(&game, &l10n, from_other, &usd_style()).unwrap();
         assert_eq!(
-            battery_line_button(&model.line, from_other, &batteries),
+            plant_line_button(&model.line, from_other, &batteries, |_| true),
             None
         );
     }
@@ -1193,7 +1206,7 @@ mod tests {
     /// Choosing the other end, the instruction points at the first target whose *Build line*
     /// can be clicked, and at nothing when none can.
     #[test]
-    fn the_battery_line_button_skips_disabled_targets() {
+    fn the_plant_line_button_skips_disabled_targets() {
         let l10n = shipped_l10n();
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
         let battery = game.session().plant_views()[1].node;
@@ -1208,7 +1221,7 @@ mod tests {
         targets[1].build.enabled = false;
         targets[2].build.enabled = true;
         assert_eq!(
-            battery_line_button(&model.line, from_battery, &batteries),
+            plant_line_button(&model.line, from_battery, &batteries, |_| true),
             Some(2)
         );
         let LineSection::End { targets, .. } = &mut model.line else {
@@ -1218,7 +1231,33 @@ mod tests {
             target.build.enabled = false;
         }
         assert_eq!(
-            battery_line_button(&model.line, from_battery, &batteries),
+            plant_line_button(&model.line, from_battery, &batteries, |_| true),
+            None
+        );
+    }
+
+    #[test]
+    fn the_plant_line_button_skips_targets_outside_the_grid() {
+        let game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let l10n = shipped_l10n();
+        let node = game.session().plant_views()[1].node;
+        let plants = BTreeSet::from([node]);
+        let selection = Selection::LineFrom(node);
+        let mut model = build_model(&game, &l10n, selection, &usd_style()).unwrap();
+        let LineSection::End { targets, .. } = &mut model.line else {
+            panic!("targets")
+        };
+        assert!(targets.len() >= 3);
+        for target in targets.iter_mut() {
+            target.build.enabled = true;
+        }
+        let on_grid = targets[2].node;
+        assert_eq!(
+            plant_line_button(&model.line, selection, &plants, |to| to == on_grid),
+            Some(2)
+        );
+        assert_eq!(
+            plant_line_button(&model.line, selection, &plants, |_| false),
             None
         );
     }
