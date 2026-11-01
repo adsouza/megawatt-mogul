@@ -65,6 +65,11 @@ pub fn shipped_l10n() -> Localizer {
 
 /// A headless app with the core plugins and the HUD plugin, past boot, in the main menu, writing
 /// logs under `logs`. Fixed time stands still, so no ticks run while a test is in game.
+///
+/// Automatic commitments (spec 2026-10-31 §5) are switched off, as a player can: these tests
+/// drive the commitment grid, count commands and compare checkpoints as the player alone would
+/// change them. Tests of the planner, and the fresh-player end-to-end month, switch it back on
+/// with [`auto_commitments_on`].
 pub fn hud_app(logs: &Path) -> App {
     let mut app = headless_app(&shipped_assets(), logs);
     app.insert_resource(TimeUpdateStrategy::ManualDuration(
@@ -76,7 +81,17 @@ pub fn hud_app(logs: &Path) -> App {
         *app.world().resource::<State<AppState>>().get(),
         AppState::MainMenu
     );
+    app.world_mut()
+        .resource_mut::<game::hud::UiState>()
+        .auto_commitments = game::hud::AutoCommitments(false);
     app
+}
+
+/// Restores the player's default: commitments planned automatically as each Planning begins.
+pub fn auto_commitments_on(app: &mut App) {
+    app.world_mut()
+        .resource_mut::<game::hud::UiState>()
+        .auto_commitments = game::hud::AutoCommitments(true);
 }
 
 /// Asks for a new game in `region`, seed 7, and runs the frames it takes to start.

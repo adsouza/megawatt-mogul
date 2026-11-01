@@ -146,3 +146,177 @@ fn planner_refusal_logs_without_a_toast() {
         before
     );
 }
+
+mod planning_begins {
+    use super::*;
+    use crate::save_resume::{open_browser, settle};
+    use crate::support::{hud_app, request};
+    use game::paths::SaveDir;
+    use game::sim::{PersistAction, Persistence, Session};
+
+    const EAST: &str = "eastern_interconnection";
+
+    fn game(app: &App) -> &application::Game {
+        &app.world().resource::<Session>().0
+    }
+
+    fn patterns(app: &App) -> Vec<[bool; 24]> {
+        game(app)
+            .session()
+            .plant_views()
+            .iter()
+            .map(|plant| plant.commitment)
+            .collect()
+    }
+
+    fn tab(app: &App) -> PlanningTab {
+        app.world().resource::<UiState>().tab
+    }
+
+    /// A new game in the HUD app, given a few frames for the planner's commands to land.
+    fn started(logs: &TempDir, auto: bool) -> App {
+        let mut app = hud_app(logs.path());
+        update_n(&mut app, 2);
+        if auto {
+            crate::support::auto_commitments_on(&mut app);
+        }
+        request(&mut app, EAST);
+        update_n(&mut app, 3);
+        app
+    }
+
+    #[test]
+    fn new_game_opens_on_forecast_with_trimmed_patterns() {
+        let logs = TempDir::new().unwrap();
+        let app = started(&logs, true);
+        assert_eq!(tab(&app), PlanningTab::Forecast);
+        assert!(application::automatic_commitment_commands(game(&app)).is_empty());
+        assert!(
+            patterns(&app).iter().any(|hours| hours != &[true; 24]),
+            "the inherited all-day schedule was trimmed"
+        );
+    }
+
+    #[test]
+    fn with_the_preference_off_nothing_is_replanned_and_the_tab_is_commitments() {
+        let logs = TempDir::new().unwrap();
+        let app = started(&logs, false);
+        assert_eq!(tab(&app), PlanningTab::Commitments);
+        assert!(!application::automatic_commitment_commands(game(&app)).is_empty());
+    }
+
+    #[test]
+    fn finish_review_replans_and_opens_on_forecast() {
+        let logs = TempDir::new().unwrap();
+        let mut app = started(&logs, true);
+        // A hand edit for this month: every plant all day.
+        let plants: Vec<_> = game(&app)
+            .session()
+            .plant_views()
+            .iter()
+            .filter(|plant| plant.kind.is_dispatchable())
+            .map(|plant| plant.id)
+            .collect();
+        dispatch_in(
+            &mut app,
+            plants
+                .into_iter()
+                .map(|plant| {
+                    UiAction::Command(Command::CommitPlant {
+                        plant,
+                        hours: [true; 24],
+                    })
+                })
+                .chain([
+                    UiAction::SetPlanningTab(PlanningTab::Tariff),
+                    UiAction::Command(Command::BeginOperating),
+                    UiAction::Command(Command::AdvanceTicks { n: 1440 }),
+                ])
+                .collect(),
+        );
+        settle(&mut app);
+        update_n(&mut app, 2);
+        assert!(patterns(&app).iter().all(|hours| hours == &[true; 24]));
+        dispatch_in(&mut app, vec![UiAction::Command(Command::FinishReview)]);
+        update_n(&mut app, 4);
+        assert_eq!(
+            game(&app).session().phase(),
+            domain::session::DayPhase::Planning
+        );
+        assert_eq!(tab(&app), PlanningTab::Forecast);
+        assert!(application::automatic_commitment_commands(game(&app)).is_empty());
+        assert!(patterns(&app).iter().any(|hours| hours != &[true; 24]));
+    }
+
+    #[test]
+    fn loading_a_planning_manual_save_keeps_its_patterns() {
+        let logs = TempDir::new().unwrap();
+        let saves = TempDir::new().unwrap();
+        let mut app = hud_app(logs.path());
+        app.insert_resource(SaveDir(saves.path().into()));
+        update_n(&mut app, 2);
+        crate::support::auto_commitments_on(&mut app);
+        request(&mut app, EAST);
+        update_n(&mut app, 3);
+        // Undo the plan by hand, then save mid-Planning.
+        let plants: Vec<_> = game(&app)
+            .session()
+            .plant_views()
+            .iter()
+            .filter(|plant| plant.kind.is_dispatchable())
+            .map(|plant| plant.id)
+            .collect();
+        dispatch_in(
+            &mut app,
+            plants
+                .into_iter()
+                .map(|plant| {
+                    UiAction::Command(Command::CommitPlant {
+                        plant,
+                        hours: [true; 24],
+                    })
+                })
+                .collect(),
+        );
+        update_n(&mut app, 2);
+        let edited = patterns(&app);
+        assert!(edited.iter().all(|hours| hours == &[true; 24]));
+        dispatch_in(
+            &mut app,
+            vec![UiAction::Persistence(PersistAction::OpenSave {
+                leave: false,
+            })],
+        );
+        settle(&mut app);
+        dispatch_in(
+            &mut app,
+            vec![UiAction::Persistence(PersistAction::SaveNew(
+                "Planning".into(),
+            ))],
+        );
+        settle(&mut app);
+        let slot = app
+            .world()
+            .resource::<Persistence>()
+            .last_saved()
+            .unwrap()
+            .metadata
+            .slot
+            .clone();
+        drop(app);
+        let mut app = hud_app(logs.path());
+        app.insert_resource(SaveDir(saves.path().into()));
+        update_n(&mut app, 2);
+        crate::support::auto_commitments_on(&mut app);
+        open_browser(&mut app);
+        settle(&mut app);
+        dispatch_in(
+            &mut app,
+            vec![UiAction::Persistence(PersistAction::Load(slot))],
+        );
+        settle(&mut app);
+        update_n(&mut app, 6);
+        assert_eq!(patterns(&app), edited);
+        assert_eq!(tab(&app), PlanningTab::Forecast);
+    }
+}

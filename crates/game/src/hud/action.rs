@@ -412,6 +412,39 @@ impl ActionSink<'_> {
 
 /// Turns the HUD's actions into messages and state changes, in order: the single mapping from a
 /// click to the rest of the game.
+/// Plans commitments as each Planning phase begins (spec 2026-10-31 §5.1): when a new game
+/// starts and after every review. A loaded save sends neither message, so loading never
+/// re-plans the patterns it holds.
+pub(super) fn auto_commit_on_planning(
+    mut started: MessageReader<crate::sim::NewGameStarted>,
+    mut events: MessageReader<crate::sim::DomainEventMessage>,
+    mut sink: ActionSink,
+) {
+    let new_game = started.read().count() > 0;
+    let next_month = events.read().any(|event| {
+        matches!(
+            event.0,
+            domain::events::DomainEvent::PhaseChanged {
+                to: domain::session::DayPhase::Planning,
+                ..
+            }
+        )
+    });
+    if (new_game || next_month) && sink.ui.auto_commitments.0 {
+        dispatch([UiAction::RunAutoCommitments], &mut sink);
+    }
+}
+
+/// Opens Planning on the forecast while commitments are planned automatically, else on the grid.
+pub(super) fn open_planning_tab(mut sink: ActionSink) {
+    let tab = if sink.ui.auto_commitments.0 {
+        PlanningTab::Forecast
+    } else {
+        PlanningTab::Commitments
+    };
+    dispatch([UiAction::OpenPlanningTab(tab)], &mut sink);
+}
+
 /// Sends the automatic commitment plan as planner commands, in Planning only. `UiState::apply`
 /// has already dropped any open draft.
 fn run_auto_commitments(sink: &mut ActionSink) {
