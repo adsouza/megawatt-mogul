@@ -320,3 +320,27 @@ mod planning_begins {
         assert_eq!(tab(&app), PlanningTab::Forecast);
     }
 }
+
+#[test]
+fn ticking_the_checkbox_on_discards_an_open_draft() {
+    let logs = TempDir::new().unwrap();
+    let mut app = planning_app(&logs);
+    dispatch_in(&mut app, vec![UiAction::SetAutoCommitments(false)]);
+    let plant = app
+        .world()
+        .resource::<game::sim::Session>()
+        .0
+        .session()
+        .plant_views()[0]
+        .id;
+    dispatch_in(
+        &mut app,
+        vec![UiAction::EditCommitment {
+            plant,
+            hours: [false; 24],
+        }],
+    );
+    assert!(app.world().resource::<UiState>().draft.is_some());
+    dispatch_in(&mut app, vec![UiAction::SetAutoCommitments(true)]);
+    assert!(app.world().resource::<UiState>().draft.is_none());
+}

@@ -167,8 +167,14 @@ impl UiState {
                 self.supply_month = None;
             }
             UiAction::SetPlanningTab(tab) | UiAction::OpenPlanningTab(tab) => self.tab = *tab,
-            UiAction::SetAutoCommitments(on) => self.auto_commitments = AutoCommitments(*on),
-            // The draft was drafted against the patterns the planner is about to replace.
+            // The draft was drafted against the patterns the planner is about to replace, and
+            // switching automatic commitments on runs the planner.
+            UiAction::SetAutoCommitments(on) => {
+                self.auto_commitments = AutoCommitments(*on);
+                if *on {
+                    self.draft = None;
+                }
+            }
             UiAction::RunAutoCommitments => self.draft = None,
             UiAction::ShowHour(hour) => self.highlight_hour = *hour,
             UiAction::ToggleWarnings => self.warnings_open = !self.warnings_open,
