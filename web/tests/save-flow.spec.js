@@ -95,3 +95,28 @@ test('unavailable storage reports a save error and keeps an unsaved session play
  await expect(page.locator('body')).toHaveAttribute('data-app-state','InGame');await expect(page.locator('body')).toHaveAttribute('data-sim-tick','0');
  await expect(page.locator('#preview')).toContainText('Automatic storage cleanup may remove saves');
 });
+
+test('player progress written as a region loads survives reload',async({page})=>{
+ await page.addInitScript(()=>{
+  // While window.slowOpen is set, IndexedDB opens finish late, so a write's await spans the region load.
+  const open=IDBFactory.prototype.open,setter=Object.getOwnPropertyDescriptor(IDBRequest.prototype,'onsuccess').set;
+  IDBFactory.prototype.open=function(...args){
+   const request=open.apply(this,args);
+   if(window.slowOpen)Object.defineProperty(request,'onsuccess',{set(handler){setter.call(request,event=>setTimeout(()=>handler.call(request,event),3000));}});
+   return request;
+  };
+ });
+ await page.goto('./');await expect(page.locator('body')).toHaveAttribute('data-app-state','RegionSelect',{timeout:150000});
+ await expect(page.locator('body')).toHaveAttribute('data-tutorial-pending','true');await settled(page);
+ await page.evaluate(()=>{window.slowOpen=true;});
+ await page.mouse.click(296,130);await expect(page.locator('body')).toHaveAttribute('data-tutorial-pending','false');
+ await page.mouse.click(860,420);await expect(page.locator('body')).toHaveAttribute('data-app-state','InGame');
+ await page.evaluate(()=>{window.slowOpen=false;});
+ await expect.poll(()=>page.evaluate(async()=>{
+  const request=indexedDB.open('megawatt-mogul',1);const db=await new Promise(resolve=>{request.onsuccess=()=>resolve(request.result);});
+  const value=await new Promise(resolve=>{const request=db.transaction('preferences').objectStore('preferences').get('progress');request.onsuccess=()=>resolve(request.result);});db.close();
+  return value?new TextDecoder().decode(value):null;
+ }),{timeout:15000}).toContain('tutorial_pending:false');
+ await page.reload();await expect(page.locator('body')).toHaveAttribute('data-ready','true',{timeout:150000});
+ await expect(page.locator('body')).toHaveAttribute('data-tutorial-pending','false');
+});
