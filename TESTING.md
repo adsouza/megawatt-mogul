@@ -276,6 +276,11 @@ The game's tests sit in six layers, from the cheapest to the widest. None opens 
   on screen by the end of the frame their event arrives in, and every toast must come from an
   event. Each run takes about 0.2 s.
 
+Workflows that start another day after *Continue* use `support::settle_automatic_commitments`
+to wait for the background plan and its queued commands. A fixed frame count cannot guarantee
+worker completion. Replay-log assertions identify the command log by its accompanying region
+archive; planner diagnostics also have a `.log` extension but contain no replay commands.
+
 **The empty start.** A new game runs the previous operator's schedule (spec §16.3), so its fleet
 is committed all day with AGC on. A test that needs an uncommitted fleet (a shortfall, an outage,
 a plant to start by hand) recreates the old empty start explicitly: `empty_start(&mut game)` on a

@@ -35,6 +35,31 @@ pub fn update_n(app: &mut App, n: usize) {
     }
 }
 
+/// Settle the automatic plan after entering Planning. A review's worker can finish after
+/// Continue; its commands are then queued for the following frame, rather than applied at once.
+pub fn settle_automatic_commitments(app: &mut App) {
+    update_n(app, 2);
+    assert_eq!(
+        app.world().resource::<Session>().0.session().phase(),
+        domain::session::DayPhase::Planning,
+        "the workflow must reach Planning before waiting for commitments"
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while app
+        .world()
+        .resource::<game::sim::ReviewCommitmentCache>()
+        .is_applying()
+    {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "automatic commitments did not finish"
+        );
+        app.update();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    update_n(app, 2);
+}
+
 /// Every region shipped in `assets/regions`, sorted like `RonRegionCatalog::list`. Each region
 /// task inserts its ID here; the shipped-region name-key test checks it against the folder.
 pub const SHIPPED_REGIONS: &[&str] = &[

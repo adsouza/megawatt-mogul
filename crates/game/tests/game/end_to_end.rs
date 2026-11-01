@@ -34,7 +34,7 @@ use game::sim::{CommandFailed, DomainEventMessage, PlayerCommand, Session, SimSp
 use game::state::PhaseState;
 use tempfile::TempDir;
 
-use crate::support::{empty_start_in, hud_app, request, update_n};
+use crate::support::{empty_start_in, hud_app, request, settle_automatic_commitments, update_n};
 
 /// The month's day has 1,440 ticks; 8× runs 8 per fixed step. A margin for the frames around it.
 const MAX_FIXED_STEPS: usize = 1_440 / 8 + 20;
@@ -132,12 +132,16 @@ fn record(
     record.log_lines.push((so_far, lines));
 }
 
-/// The one command log a game wrote under `dir` (beside it sits the region archive).
+/// The one replay log, identified by its region archive; diagnostics also end in `.log`.
 fn the_log(dir: &Path) -> PathBuf {
     let logs: Vec<PathBuf> = fs::read_dir(dir)
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .filter(|path| path.extension().is_some_and(|ext| ext == "log"))
+        .filter(|path| {
+            infrastructure::command_log::region_archive_path(path)
+                .is_some_and(|archive| archive.is_file())
+        })
         .collect();
     assert_eq!(logs.len(), 1, "{logs:?}");
     logs.into_iter().next().unwrap()
@@ -292,7 +296,8 @@ fn play_a_hands_off_month(region: &str) {
     let steps = run_the_day_at_8x(&mut app, region);
     let next = continue_from_review(&app);
     click(&mut app, vec![next]);
-    update_n(&mut app, 2);
+    settle_automatic_commitments(&mut app);
+    assert!(application::automatic_commitment_commands(game(&app)).is_empty());
 
     // The phases, in order.
     assert_eq!(phase(&app), PhaseState::Planning);

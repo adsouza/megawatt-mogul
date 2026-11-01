@@ -3,7 +3,9 @@ use crate::hud_smoke::dispatch_in;
 use crate::support::egui_harness::{Harness, buttons};
 use crate::support::egui_pass::EguiPass;
 use crate::support::usd_style;
-use crate::support::{headless_app, request, shipped_assets, shipped_l10n, update_n};
+use crate::support::{
+    headless_app, request, settle_automatic_commitments, shipped_assets, shipped_l10n, update_n,
+};
 use application::Command;
 use domain::{ids::CellCoord, region::PlantKind};
 use game::{
@@ -88,9 +90,13 @@ fn wind_build_connect_commission_and_real_card_have_resource_forecast_without_th
             ],
         );
         update_n(&mut app, 2);
+        assert_eq!(
+            app.world().resource::<Session>().0.session().phase(),
+            domain::session::DayPhase::Review
+        );
         if month < 2 {
             dispatch_in(&mut app, vec![UiAction::Command(Command::FinishReview)]);
-            update_n(&mut app, 2);
+            settle_automatic_commitments(&mut app);
         }
     }
     dispatch_in(
@@ -100,7 +106,7 @@ fn wind_build_connect_commission_and_real_card_have_resource_forecast_without_th
             UiAction::Select(Selection::Plant(id)),
         ],
     );
-    update_n(&mut app, 2);
+    settle_automatic_commitments(&mut app);
     let game = &app.world().resource::<Session>().0;
     let view = game
         .session()
@@ -109,6 +115,10 @@ fn wind_build_connect_commission_and_real_card_have_resource_forecast_without_th
         .find(|p| p.id == id)
         .unwrap();
     assert!(view.connected && view.wind.is_some());
+    assert!(!matches!(
+        view.status,
+        domain::generation::PlantStatus::UnderConstruction { .. }
+    ));
     let model = hud::forecast_model(game, &l10n, app.world().resource::<hud::UiState>());
     assert!(
         model

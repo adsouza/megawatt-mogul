@@ -199,23 +199,6 @@ mod planning_begins {
             .collect()
     }
 
-    fn wait_for_commitments(app: &mut App) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
-        while app
-            .world()
-            .resource::<game::sim::ReviewCommitmentCache>()
-            .is_applying()
-        {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "commitment worker finished"
-            );
-            app.update();
-            std::thread::sleep(std::time::Duration::from_millis(2));
-        }
-        update_n(app, 2);
-    }
-
     fn tab(app: &App) -> PlanningTab {
         app.world().resource::<UiState>().tab
     }
@@ -291,7 +274,7 @@ mod planning_begins {
             domain::session::DayPhase::Planning
         );
         assert_eq!(tab(&app), PlanningTab::Forecast);
-        wait_for_commitments(&mut app);
+        crate::support::settle_automatic_commitments(&mut app);
         assert!(application::automatic_commitment_commands(game(&app)).is_empty());
         assert!(patterns(&app).iter().any(|hours| hours != &[true; 24]));
     }
