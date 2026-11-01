@@ -51,6 +51,7 @@ pub use region_atlas::RegionAtlas;
 mod saves;
 mod selection;
 pub use saves::{SaveForm, SaveRowModel, SavesModel, draw_saves, save_error, saves_model};
+mod outlook;
 mod speed;
 mod supply_chart;
 mod supply_history;
@@ -58,6 +59,7 @@ mod tariff;
 pub mod theme;
 mod toasts;
 mod top_bar;
+pub use outlook::{OutlookModel, OutlookRow, draw_outlook, outlook_model};
 pub mod tutorial;
 mod ui_state;
 
@@ -376,6 +378,12 @@ impl Plugin for HudPlugin {
                             .and_then(resource_exists::<RegionListings>),
                     ),
                     // All in-game phases (spec §8.4), so gated by `AppState` only.
+                    outlook::outlook_panel
+                        .in_set(HudSet::Overlays)
+                        .after(prompt::prompt_overlay)
+                        .after(review::review_modal)
+                        .run_if(saves::other_overlays)
+                        .run_if(in_game.clone().and_then(has_l10n)),
                     links::links_panel
                         .in_set(HudSet::Overlays)
                         .run_if(in_game.clone().and_then(has_l10n)),

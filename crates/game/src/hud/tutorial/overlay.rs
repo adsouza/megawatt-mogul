@@ -236,7 +236,7 @@ pub(crate) fn tutorial_overlay(
         Some(clock) if clock.step == def.step => clock,
         _ => Shown::new(def.step),
     };
-    let prompt_open = sink.open_prompt().0.is_some();
+    let prompt_open = sink.open_prompt().0.is_some() || sink.ui_state().outlook_open;
     // Prompts come first: a timed step waits for one to close.
     let anchor = def.anchor.and_then(|anchor| anchor_rect(&ctx, anchor));
     let ready = !prompt_open

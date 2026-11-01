@@ -149,7 +149,12 @@ impl GameSession {
         Ok(None)
     }
 
-    fn connection_power(&self, network: Network, months: u32, month: SimMonth) -> PowerSystem {
+    pub(super) fn connection_power(
+        &self,
+        network: Network,
+        months: u32,
+        month: SimMonth,
+    ) -> PowerSystem {
         let plants = self
             .power
             .plants()

@@ -85,6 +85,8 @@ pub struct UiState {
     /// The local planner to return to after viewing the company-wide overview.
     pub last_planning_island: Option<domain::ids::NodeId>,
     pub links_open: bool,
+    pub outlook_open: bool,
+    pub outlook_city: Option<domain::ids::CityId>,
     pub hvdc_selected: Option<domain::ids::LinkId>,
     pub hvdc_terminal: Option<domain::grid::ConverterStationId>,
     pub hvdc_tab: super::links::HvdcTab,
@@ -149,6 +151,8 @@ impl UiState {
                 self.warnings_open = false;
             }
             UiAction::ShowLinks(open) => self.links_open = *open,
+            UiAction::ShowOutlook(open) => self.outlook_open = *open,
+            UiAction::PreviewOutlookCity(city) => self.outlook_city = *city,
             UiAction::InspectHvdc { link, station } => {
                 if self.hvdc_selected != Some(*link) {
                     self.hvdc_range = Default::default();

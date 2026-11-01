@@ -50,6 +50,8 @@ pub enum UiAction {
         hour: u8,
     },
     ShowLinks(bool),
+    ShowOutlook(bool),
+    PreviewOutlookCity(Option<domain::ids::CityId>),
     InspectHvdc {
         link: domain::ids::LinkId,
         station: Option<domain::grid::ConverterStationId>,
@@ -599,9 +601,21 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             UiAction::SelectIsland(_)
             | UiAction::InspectForecast { .. }
             | UiAction::ShowLinks(_)
+            | UiAction::ShowOutlook(false)
+            | UiAction::PreviewOutlookCity(_)
             | UiAction::InspectHvdc { .. }
             | UiAction::SetHvdcTab(_)
             | UiAction::EditHvdcRange(_) => {}
+            UiAction::ShowOutlook(true) => {
+                let selected = match *sink.selection {
+                    Selection::City(city) => Some(city),
+                    _ => None,
+                };
+                sink.ui.outlook_city = sink.session.as_ref().and_then(|session| {
+                    super::outlook::preview_city(session.0.session(), selected)
+                });
+                *sink.speed = SimSpeed::Paused;
+            }
             UiAction::World(action) => sink.world.apply(action),
             UiAction::Persistence(action) => {
                 let generation = sink.generation.0;

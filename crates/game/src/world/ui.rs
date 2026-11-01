@@ -352,7 +352,10 @@ pub fn finish_surface(
         // wait for it as well. `owns` already excludes a top modal layer, which the crawl and a
         // spotlight claim, so this check is a deliberate backstop: it holds on the pass before
         // egui reports that layer, and whatever the overlay's shape.
-        if !ctx.egui_wants_keyboard_input() && !sink.ui_state().tutorial_cover {
+        if !ctx.egui_wants_keyboard_input()
+            && !sink.ui_state().tutorial_cover
+            && !sink.ui_state().outlook_open
+        {
             if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::R)) {
                 actions.push(UiAction::World(WorldAction::Reset));
             }

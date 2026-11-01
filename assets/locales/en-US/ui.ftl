@@ -802,3 +802,24 @@ tutorial-ccgt-spotlight = A CCGT is a gas plant you can build anywhere. It is re
 tutorial-ccgt-build = Build a CCGT here. It will take { $time } to build.
 tutorial-ccgt-connect = Build a line from your CCGT to your grid. The plant and line must finish building before they can supply power.
 tutorial-save-snapshot = Before risky moves, like connecting a new city, use Save to create a named snapshot. You can load it to return to this point if things go wrong.
+
+# Long-term planning; installed capacity differs from committed daily generation.
+outlook-open = Crystal ball: 12-month outlook
+outlook-title = Crystal ball — the next 12 months
+outlook-city = Preview a city connection
+outlook-current-grid = Current grid and scheduled orders
+outlook-select-city = Select a city to compare demand after a connection from the closest part of your grid.
+outlook-route = Connect { $city } from { $source }: { $time } to build, ready { $month }. Includes other cities and plants reached by this route.
+outlook-already-ordered = { $city } already has an existing or ordered grid path, included in the baseline.
+outlook-no-route = No eligible connection to { $city } from the current grid. The baseline is unchanged.
+outlook-month = Month
+outlook-demand = Peak demand
+outlook-with-city = With city
+outlook-existing = Existing capacity
+outlook-scheduled = Scheduled additions
+outlook-total = Total capacity
+outlook-firm = Dependable capacity
+outlook-headroom = Spare dependable MW
+outlook-help = Seasonal demand estimates and scheduled construction, in MW. Additions count only after the plant and its grid connection are ready. Dependable capacity uses regional credits for wind, solar, and storage. These are company totals, not a guarantee of hourly balance or transfers between separate grids; weather, resources, and construction outcomes can differ.
+outlook-close = Close outlook
+outlook-unavailable = The outlook is unavailable for this date.

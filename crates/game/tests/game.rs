@@ -35,6 +35,8 @@ mod line_cancellation;
 mod map_legend;
 #[path = "game/operating_side.rs"]
 mod operating_side;
+#[path = "game/outlook.rs"]
+mod outlook;
 #[path = "game/panel_resize.rs"]
 mod panel_resize;
 #[path = "game/phase_change.rs"]

@@ -64,6 +64,7 @@ pub struct TopBarModel {
     /// Opens the leave prompt (see `prompt.rs`); it does not leave by itself.
     pub menu: ButtonModel,
     pub save: ButtonModel,
+    pub outlook: ButtonModel,
     pub last_saved: Option<String>,
 }
 
@@ -190,6 +191,7 @@ pub fn top_bar_model(
             ),
             UiAction::Persistence(PersistAction::OpenSave { leave: false }),
         ),
+        outlook: ButtonModel::new(l10n.text("outlook-open"), UiAction::ShowOutlook(true)),
         menu: ButtonModel::new(
             l10n.text("topbar-menu"),
             UiAction::Prompt(Some(Prompt::LeaveGame)),
@@ -314,7 +316,7 @@ fn top_bar_width(ui: &egui::Ui, model: &TopBarModel) -> f32 {
     } else {
         0.0
     };
-    width + texts.len() as f32 * 4.0 + 6.0 * ui.spacing().button_padding.x + 40.0 + recording
+    width + 32.0 + texts.len() as f32 * 4.0 + 6.0 * ui.spacing().button_padding.x + 40.0 + recording
 }
 
 fn draw_scores(ui: &mut egui::Ui, model: &TopBarModel) {
@@ -352,6 +354,46 @@ fn draw_warning(ui: &mut egui::Ui, model: &TopBarModel) {
     }
 }
 
+/// Vector artwork keeps the crystal ball readable without an installed emoji font.
+fn draw_crystal_ball(ui: &mut egui::Ui, model: &ButtonModel, actions: &mut Vec<UiAction>) {
+    let response = super::add_enabled(
+        ui,
+        model.enabled,
+        egui::Button::new("").min_size(egui::vec2(28.0, ui.spacing().interact_size.y)),
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, model.enabled, &model.label)
+    });
+    let center = response.rect.center() - egui::vec2(0.0, 2.0);
+    let color = TextTone::Information.color();
+    let painter = ui.painter();
+    painter.circle(
+        center,
+        7.0,
+        egui::Color32::from_rgb(80, 52, 115),
+        egui::Stroke::new(1.5, color),
+    );
+    painter.line_segment(
+        [
+            center + egui::vec2(-5.0, 9.0),
+            center + egui::vec2(5.0, 9.0),
+        ],
+        egui::Stroke::new(2.0, color),
+    );
+    painter.line_segment(
+        [
+            center + egui::vec2(-2.0, -4.0),
+            center + egui::vec2(-4.0, -1.0),
+        ],
+        egui::Stroke::new(1.5, color),
+    );
+    painter.circle_filled(center + egui::vec2(3.0, 2.0), 1.5, color);
+    if response.clicked() {
+        actions.push(model.action.clone());
+    }
+    response.on_hover_text(&model.label);
+}
+
 pub fn draw_top_bar(ui: &mut egui::Ui, model: &TopBarModel) -> Vec<UiAction> {
     let mut actions = Vec::new();
     let two_rows = top_bar_width(ui, model) > ui.available_width();
@@ -379,6 +421,7 @@ pub fn draw_top_bar(ui: &mut egui::Ui, model: &TopBarModel) -> Vec<UiAction> {
                 save.on_hover_text(status);
             }
             button(ui, &model.milestones, &mut actions);
+            draw_crystal_ball(ui, &model.outlook, &mut actions);
             if !two_rows {
                 draw_warning(ui, model);
             }
