@@ -35,6 +35,7 @@ pub enum TutorialAnchor {
     SpeedControls,
     ReviewConstruction,
     Save,
+    CrystalBall,
 }
 
 /// One step of the tutorial, in the order they play.
@@ -62,6 +63,7 @@ pub enum TutorialStep {
     ConnectCcgtSpotlight,
     ConnectCcgt,
     SaveSnapshot,
+    CrystalBall,
 }
 
 /// How a step presents itself. Moves, the crawl and spotlights are one-shot: they join
@@ -124,7 +126,7 @@ const fn def(
 }
 
 /// The tutorial, in order (spec §4.3).
-pub const TUTORIAL_STEPS: [StepDef; 22] = {
+pub const TUTORIAL_STEPS: [StepDef; 23] = {
     use DayPhase::{Operating, Planning, Review};
     use StepKind::{Crawl, Instruction, Move, Spotlight};
     use TutorialAnchor as A;
@@ -283,6 +285,14 @@ pub const TUTORIAL_STEPS: [StepDef; 22] = {
             Spotlight,
             Some(A::Save),
             Some("tutorial-save-snapshot"),
+            Done::CcgtNotLinked,
+        ),
+        def(
+            S::CrystalBall,
+            Planning,
+            Spotlight,
+            Some(A::CrystalBall),
+            Some("tutorial-crystal-ball"),
             Done::CcgtNotLinked,
         ),
     ]
@@ -585,7 +595,7 @@ mod tests {
         sorted.sort();
         sorted.dedup();
         assert_eq!(steps, sorted);
-        assert_eq!(steps.len(), 22);
+        assert_eq!(steps.len(), 23);
     }
 
     #[test]
@@ -920,6 +930,11 @@ mod tests {
             Some(TutorialStep::SaveSnapshot)
         );
         state.played.insert(TutorialStep::SaveSnapshot);
+        assert_eq!(
+            active(&state, &game, Selection::None),
+            Some(TutorialStep::CrystalBall)
+        );
+        state.played.insert(TutorialStep::CrystalBall);
         assert_eq!(active(&state, &game, Selection::None), None);
     }
 

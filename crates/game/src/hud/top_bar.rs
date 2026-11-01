@@ -364,6 +364,7 @@ fn draw_crystal_ball(ui: &mut egui::Ui, model: &ButtonModel, actions: &mut Vec<U
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, model.enabled, &model.label)
     });
+    mark_anchor(ui.ctx(), TutorialAnchor::CrystalBall, response.rect);
     let center = response.rect.center() - egui::vec2(0.0, 2.0);
     let color = TextTone::Information.color();
     let painter = ui.painter();

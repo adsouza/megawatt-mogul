@@ -802,6 +802,7 @@ tutorial-ccgt-spotlight = A CCGT is a gas plant you can build anywhere. It is re
 tutorial-ccgt-build = Build a CCGT here. It will take { $time } to build.
 tutorial-ccgt-connect = Build a line from your CCGT to your grid. The plant and line must finish building before they can supply power.
 tutorial-save-snapshot = Before risky moves, like connecting a new city, use Save to create a named snapshot. You can load it to return to this point if things go wrong.
+tutorial-crystal-ball = Before connecting a new city, use the crystal ball to compare demand and supply for the next 12 months. Choose a city to preview its extra demand once the connection is built.
 
 # Long-term planning; installed capacity differs from committed daily generation.
 outlook-open = Crystal ball: 12-month outlook

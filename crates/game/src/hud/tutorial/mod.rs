@@ -4,7 +4,7 @@
 //!
 //! A run starts with a new game when the player's progress says the tutorial is owed, belongs to
 //! that one game, and continues after the first Review through building and connecting a CCGT,
-//! then highlighting Save before the player takes risks.
+//! then highlighting Save and the crystal ball before the player expands the grid.
 //! Loading a save never starts one, and leaving the game part-way drops it without clearing
 //! `tutorial_pending`.
 
@@ -90,7 +90,7 @@ fn start_run(
 }
 
 /// Ends a run whose game is gone (a load or another new game changes the session generation),
-/// notes the first Review, and finishes after the save caution or an early next-day start.
+/// notes the first Review, and finishes after the crystal-ball spotlight or an early next-day start.
 /// A run that ends takes the reveals it asked for with it.
 fn track_run(
     session: Option<Res<Session>>,
@@ -109,7 +109,7 @@ fn track_run(
     match session.0.session().phase() {
         DayPhase::Review => state.seen_review = true,
         DayPhase::Planning
-            if state.seen_review && state.played.contains(&TutorialStep::SaveSnapshot) =>
+            if state.seen_review && state.played.contains(&TutorialStep::CrystalBall) =>
         {
             progress.value.tutorial_pending = false;
             end_run(&mut run, &mut ui);

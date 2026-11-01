@@ -61,8 +61,9 @@ genuinely played four other regions.
 - Starting a new game with `tutorial_pending` true starts the tutorial in that game. Loading or
   continuing a save never starts it.
 - After the first Review is dismissed, the tutorial continues with the CCGT walkthrough (§4.5).
-  It **finishes** after the Save spotlight following the new CCGT's grid connection is
-  dismissed or times out, or when the player starts the next representative day early. That sets `tutorial_pending = false` and writes preferences. Leaving the game or
+  It **finishes** after the crystal-ball spotlight following the Save reminder is dismissed or
+  times out, or when the player starts the next representative day early. That sets
+  `tutorial_pending = false` and writes preferences. Leaving the game or
   quitting part-way leaves the flag `true`, so the next new game runs it again.
 
 ## 4. The tutorial
@@ -228,11 +229,14 @@ steps, even if the player skipped them.
    the top bar's **Save** button. Caution the player to create a **named snapshot** before risky
    moves such as connecting a new city, so they can load it to return to this point if things
    go wrong. A dangling line to an unconnected city does not unlock this caution.
-7. Finish after this Save spotlight is dismissed or times out. As with the other spotlights,
-   the dismissal click is consumed and saving remains optional; the tutorial does not create a
-   snapshot or open the dialog automatically. Clicking Save afterward opens the existing manual
-   save dialog. Starting the next day early also ends the optional guidance. Leaving the game
-   before either condition keeps the tutorial owed.
+7. After the Save reminder, spotlight the **crystal ball** in the top bar. Explain that it
+   compares demand and planned supply over the next twelve months, and that choosing a city
+   previews its added demand once the proposed connection is built, before the player places
+   the order. Point at the actual icon; opening the outlook remains the player's action.
+8. Finish after this crystal-ball spotlight is dismissed or times out. As with the other
+   spotlights, dismissal clicks are consumed and opening either dialog remains optional; the
+   tutorial does not save or open dialogs automatically. Starting the next day early also ends
+   the optional guidance. Leaving the game before either condition keeps the tutorial owed.
 
 All existing tutorial interaction, contrast, popup precedence and simulation-isolation rules
 continue to apply. The plant card, Build plant and connection-button anchors are shared between

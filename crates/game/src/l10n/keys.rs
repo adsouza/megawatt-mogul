@@ -412,6 +412,7 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "tutorial-ccgt-build",
     "tutorial-ccgt-connect",
     "tutorial-save-snapshot",
+    "tutorial-crystal-ball",
     "region-locked",
     "region-select-title",
     "region-select-subtitle",

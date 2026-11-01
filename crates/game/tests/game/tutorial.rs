@@ -382,8 +382,36 @@ fn ccgt_walkthrough_after_review_builds_and_connects_through_real_widgets() {
         game::sim::SaveScreen::Closed
     );
     update_n(&mut app, 2);
+    assert!(
+        run(&app).is_some(),
+        "the crystal-ball spotlight follows Save"
+    );
+    assert!(pending(&app));
+    let widgets = pass.settled(&mut app, MIN.0, MIN.1);
+    widget(&widgets, CRYSTAL_BALL);
+    let crystal = anchors(&app)[&TutorialAnchor::CrystalBall];
+    assert_eq!(
+        find_button(&widgets, "Crystal ball: 12-month outlook").rect,
+        crystal
+    );
+    pass.click_at(&mut app, MIN.0, MIN.1, crystal.center());
+    assert!(played(&app).contains(&TutorialStep::CrystalBall));
+    assert!(
+        !ui_state(&app).outlook_open,
+        "the spotlight consumes its dismissal click"
+    );
+    update_n(&mut app, 2);
     assert!(run(&app).is_none());
     assert!(!pending(&app));
+    pass.settled(&mut app, MIN.0, MIN.1);
+    pass.click_at(&mut app, MIN.0, MIN.1, crystal.center());
+    assert!(
+        ui_state(&app).outlook_open,
+        "the highlighted control opens the city preview"
+    );
+    pass.settled(&mut app, MIN.0, MIN.1);
+    press_escape(&pass, &mut app, MIN);
+    assert!(!ui_state(&app).outlook_open);
     pass.settled(&mut app, MIN.0, MIN.1);
     let save = anchors(&app)[&TutorialAnchor::Save];
     pass.click_at(&mut app, MIN.0, MIN.1, save.center());
@@ -827,7 +855,7 @@ fn tutorial_actions_never_send_player_commands() {
 #[derive(Resource, Default)]
 struct SeenAnchors(BTreeMap<TutorialAnchor, egui::Rect>);
 
-const ANCHORS: [TutorialAnchor; 10] = [
+const ANCHORS: [TutorialAnchor; 11] = [
     TutorialAnchor::Cash,
     TutorialAnchor::Map,
     TutorialAnchor::PlantCard,
@@ -838,6 +866,7 @@ const ANCHORS: [TutorialAnchor; 10] = [
     TutorialAnchor::SpeedControls,
     TutorialAnchor::ReviewConstruction,
     TutorialAnchor::Save,
+    TutorialAnchor::CrystalBall,
 ];
 
 fn probe_anchors(mut contexts: EguiContexts, mut seen: ResMut<SeenAnchors>) -> Result {
@@ -1125,6 +1154,7 @@ fn phase(app: &App) -> DayPhase {
     app.world().resource::<Session>().0.session().phase()
 }
 
+const CRYSTAL_BALL: &str = "Before connecting a new city, use the crystal ball to compare demand and supply for the next 12 months. Choose a city to preview its extra demand once the connection is built.";
 const SAVE_SNAPSHOT: &str = "Before risky moves, like connecting a new city, use Save to create a named snapshot. You can load it to return to this point if things go wrong.";
 const CASH_NOTE: &str =
     "This is your money. Grow it by selling power, without blacking out your customers.";
@@ -2633,6 +2663,10 @@ fn tutorial_on_and_off_give_identical_state() {
     assert!(
         shown.contains(&TutorialStep::SaveSnapshot),
         "the save caution was shown"
+    );
+    assert!(
+        shown.contains(&TutorialStep::CrystalBall),
+        "the crystal-ball guidance was shown"
     );
     let [(on, _), (off, _)] = &apps;
     assert!(run(on).is_none() && !pending(on), "the tutorial finished");
