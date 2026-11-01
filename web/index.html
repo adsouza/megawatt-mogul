@@ -9,9 +9,30 @@ window.addEventListener("unhandledrejection", () => { window.mmBootFailed = true
 <link data-trunk rel="copy-dir" href="assets">
 <link data-trunk rel="copy-file" href="shell.js">
 <link data-trunk rel="copy-file" href="codec-worker.js">
-<style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#101922;color:#e6e8ea;font:16px system-ui}#surface{position:absolute;inset:30px 0 0}canvas{width:100%;height:100%;outline:none}#preview{height:30px;text-align:center;font-size:14px}#status{position:absolute;inset:40% 10%;text-align:center}button,a{color:inherit}#reload{margin:12px}a{position:absolute;right:12px;top:4px}</style>
-<script src="shell.js" defer></script></head><body>
-<div id="preview"></div><a id="source" href="https://github.com/adsouza/megawatt-mogul"></a>
-<div id="surface"><canvas id="game" tabindex="0"></canvas></div>
-<div id="status"></div><button id="reload" hidden></button>
-<span id="small" style="position:absolute;bottom:4px"></span><a id="notices" style="top:auto;bottom:4px" href="assets/licenses.html" target="_blank"></a></body></html>
+<style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#101922;color:#e6e8ea;font:16px system-ui}
+body{display:flex;flex-direction:column}
+[hidden]{display:none!important}
+#save-notice{display:flex;align-items:center;justify-content:center;gap:12px;padding:2px 12px;font-size:14px;line-height:20px;background:#1c2b38}
+#dismiss-notice{padding:2px 10px}
+#preview{flex:0 1 auto}
+button{background:#25394a;border:1px solid #8195a6;border-radius:4px;padding:4px 10px;font:inherit;cursor:pointer}
+button:focus-visible,a:focus-visible{outline:2px solid #f5cf6e;outline-offset:2px}
+#surface{position:relative;flex:1;min-height:0}
+canvas{display:block;width:100%;height:100%;outline:none}
+#boot-status{position:absolute;top:40%;left:10%;right:10%;text-align:center}
+button,a{color:inherit}
+#reload{margin:12px}
+footer a{position:absolute;bottom:4px;font-size:14px}
+#source{left:12px}#notices{right:12px}
+#viewport-warning{position:fixed;inset:0;overflow:auto;box-sizing:border-box;padding:clamp(16px,6vw,80px);background:#101922}
+#viewport-warning h1{font-size:24px}
+#viewport-warning p{max-width:720px;line-height:1.6}
+body[data-viewport-supported="false"] #surface,body[data-viewport-supported="false"] #save-notice,body[data-viewport-supported="false"] footer{visibility:hidden}
+</style>
+<script src="shell.js" defer></script></head><body data-viewport-supported="false">
+<div id="save-notice"><span id="preview"></span><button id="dismiss-notice" type="button"></button></div>
+<div id="surface"><canvas id="game" tabindex="0"></canvas>
+<div id="boot-status"><div id="status"></div><button id="reload" hidden></button></div></div>
+<section id="viewport-warning" role="status" hidden><h1 id="viewport-title"></h1><p id="viewport-dimensions"></p><p id="viewport-minimum"></p><p id="viewport-help"></p></section>
+<footer><a id="source" href="https://github.com/adsouza/megawatt-mogul"></a><a id="notices" href="assets/licenses.html" target="_blank"></a></footer></body></html>

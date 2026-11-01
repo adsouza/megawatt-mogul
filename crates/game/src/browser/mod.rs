@@ -11,6 +11,33 @@ mod probe;
 use std::collections::BTreeMap;
 use wasm_bindgen::{JsCast, JsValue};
 
+#[wasm_bindgen::prelude::wasm_bindgen(inline_js = "
+export function wait_for_viewport() {
+    return new Promise(resolve => {
+        const check = () => {
+            if (document.body?.dataset.viewportSupported === 'true') {
+                window.removeEventListener('mm-viewport-change', check);
+                resolve();
+            }
+        };
+        window.addEventListener('mm-viewport-change', check);
+        check();
+    });
+}
+")]
+extern "C" {
+    fn wait_for_viewport() -> js_sys::Promise;
+}
+
+pub(crate) fn viewport_supported() -> bool {
+    web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.body())
+        .and_then(|b| b.get_attribute("data-viewport-supported"))
+        .as_deref()
+        == Some("true")
+}
+
 #[derive(Resource)]
 pub struct WebAssets(pub BTreeMap<String, Vec<u8>>);
 const BUILD: &str = match option_env!("MM_BUILD_SHA") {
@@ -61,6 +88,7 @@ pub fn run() {
     }
     wasm_bindgen_futures::spawn_local(async {
         let result = async {
+            wasm_bindgen_futures::JsFuture::from(wait_for_viewport()).await?;
             let assets = assets().await?;
             wasm_bindgen_futures::JsFuture::from(infrastructure::browser::prepare_codec(BUILD))
                 .await?;
@@ -81,6 +109,8 @@ pub fn run() {
                     .ok();
                 }
             }
+            // The window may have shrunk while deployment assets were loading.
+            wasm_bindgen_futures::JsFuture::from(wait_for_viewport()).await?;
             launch(assets)
         }
         .await;
@@ -148,10 +178,18 @@ fn launch(assets: WebAssets) -> Result<(), JsValue> {
     app.run();
     Ok(())
 }
-fn visibility(mut speed: ResMut<SimSpeed>) {
-    if web_sys::window()
-        .and_then(|w| w.document())
-        .is_some_and(|d| d.hidden())
+fn visibility(
+    mut speed: ResMut<SimSpeed>,
+    mut hud_cameras: Query<&mut Camera, With<bevy_egui::PrimaryEguiContext>>,
+) {
+    let supported = viewport_supported();
+    for mut camera in &mut hud_cameras {
+        camera.is_active = supported;
+    }
+    if !supported
+        || web_sys::window()
+            .and_then(|w| w.document())
+            .is_some_and(|d| d.hidden())
     {
         *speed = SimSpeed::Paused;
     }

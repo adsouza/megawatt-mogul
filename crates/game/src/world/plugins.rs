@@ -159,6 +159,8 @@ fn update_camera(
         )
     });
     let active = scene.model.is_some() && view.is_some() && surface.pose.is_some();
+    #[cfg(target_arch = "wasm32")]
+    let active = active && crate::browser::viewport_supported();
     if cameras.is_empty() && active {
         let entity = spawn_diorama_camera(&mut commands, view.clone(), surface.pose);
         set_effects(

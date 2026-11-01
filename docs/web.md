@@ -3,7 +3,15 @@
 The browser client shares the native Rust simulation and egui UI. Saves and preferences live
 in this browser/profile's `megawatt-mogul` IndexedDB database. Manual saves, monthly autosaves
 and Resume preserve the complete verified game and history. Clearing site data removes saves;
-the header reports when automatic cleanup protection has not been granted.
+the dismissible header reports when automatic cleanup protection has not been granted.
+Dismissal is remembered in this browser when site preferences are available and gives the
+space back to the game. Clearing site data also resets that preference.
+
+The game requires a 1280×640 CSS-pixel content area, plus the save notice's height while it
+is visible. Smaller windows show their current window and screen dimensions and the required
+minimum instead of the canvas. Startup waits until the window fits. Shrinking an active game
+hides the canvas, stops camera rendering and pauses simulation; enlarging restores the same
+game, still paused.
 
 ## Build and run
 
@@ -45,7 +53,7 @@ rebuilds the current revision. To roll back source, revert the offending changes
 and let the same checks/deployment run; an old workflow cannot bypass the head guard.
 
 The browser job uses a minimal pinned Rust toolchain and builds on Ubuntu 24.04. It runs all
-17 acceptance tests, with one worker, in the digest-pinned Playwright 1.64.1 Noble image. The
+browser acceptance tests, with one worker, in the digest-pinned Playwright 1.64.1 Noble image. The
 image supplies Chromium and its system dependencies; CI does not install desktop Bevy libraries,
 nextest or browser apt packages for this job. The native backup helper uses the same Ubuntu
 baseline as the test container. The image tag and npm package version must be upgraded together.
