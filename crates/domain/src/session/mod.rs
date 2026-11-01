@@ -9,6 +9,8 @@
 //! a command that returns `Err` leaves [`GameSession::state_hash`] unchanged.
 
 mod activation;
+mod auto_commit;
+pub use auto_commit::CommitmentPlan;
 #[cfg(test)]
 mod battery_tests;
 mod commands;

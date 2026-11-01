@@ -49,6 +49,23 @@ impl WeatherForecast {
         }
     }
 
+    /// The dull, calm edge of the forecast: clearness and every minute's wind lowered by twice
+    /// the surprise's standard deviation. What the commitment planner counts on.
+    pub fn low_edge(&self, region: &RegionDefinition) -> Self {
+        let (weather, solar, wind) = (region.weather(), region.solar(), region.wind());
+        let clearness = self.clearness - 2.0 * weather.surprise_sd(solar.clearness_sd);
+        let calm = 2.0 * weather.surprise_sd(wind.initial_sd);
+        let wind_path = (0..TICKS_PER_DAY)
+            .map(|tick| self.wind_deviation(tick) - calm)
+            .collect();
+        Self {
+            month: self.month,
+            clearness,
+            expected_clearness: clearness.clamp(MIN_CLEARNESS, MAX_CLEARNESS),
+            wind_path,
+        }
+    }
+
     /// The forecast wind deviation from the monthly mean at `tick`.
     pub fn wind_deviation(&self, tick: u32) -> f64 {
         self.wind_path.get(tick as usize).copied().unwrap_or(0.0)
