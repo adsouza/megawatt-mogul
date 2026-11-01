@@ -5,8 +5,9 @@ use crate::rng::SimRng;
 use crate::time::{SimMonth, TICKS_PER_HOUR};
 use crate::units::{Megawatts, Ratio};
 
-pub(crate) const MIN_CLEARNESS: f64 = 0.2;
-pub(crate) const MAX_CLEARNESS: f64 = 1.0;
+/// The bounds of a day's clearness draw.
+pub const MIN_CLEARNESS: f64 = 0.2;
+pub const MAX_CLEARNESS: f64 = 1.0;
 
 /// How high the sun is, `0.0..=1.0`: a half sine between sunrise and sunset,
 /// zero at night. Time of day is the start of the tick's minute, `tick / 60`
@@ -91,7 +92,7 @@ pub(crate) fn annual_sun_integral_with_clearness(lat: f64, clearness: &[f64; 12]
 /// Mean of the bounded daily draw, integrated once when a region loads.
 /// Midpoint quadrature on ±8 standard deviations leaves less than 2e-15 tail mass.
 /// This cache consumes no simulation randomness and includes both clipping bounds.
-pub(crate) fn mean_clearness(mean: f64, sd: f64) -> f64 {
+pub fn mean_clearness(mean: f64, sd: f64) -> f64 {
     if sd == 0.0 {
         return mean.clamp(MIN_CLEARNESS, MAX_CLEARNESS);
     }

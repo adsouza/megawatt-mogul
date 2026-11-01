@@ -4044,3 +4044,142 @@ proptest::proptest! {
         proptest::prop_assert_eq!(game.session().status(), SessionStatus::Active);
     }
 }
+
+/// Spec 2026-10-31 §6: splitting each day's weather into a day-ahead forecast and a surprise
+/// keeps the long-run weather each shipped region was calibrated to. The calibration tests above
+/// only check terrain, so these compare the daily draws themselves with today's process.
+mod weather_statistics {
+    use super::*;
+    use domain::generation::{
+        MAX_CLEARNESS, MIN_CLEARNESS, mean_clearness, wind_step, wind_step_with_forecast,
+    };
+    use domain::rng::SimRng;
+
+    const SEED: u64 = 20261031;
+
+    #[test]
+    fn split_clearness_matches_todays_mean() {
+        for id in SHIPPED {
+            let region = region(id);
+            let (weather, solar) = (region.weather(), region.solar());
+            let sd = solar.clearness_sd;
+            let mut rng = SimRng::from_seed(SEED);
+            for month in 0..12 {
+                let mean = solar.clearness_mean[month];
+                let days = 200_000;
+                let total: f64 = (0..days)
+                    .map(|_| {
+                        let forecast = mean + weather.forecast_sd(sd) * rng.standard_normal();
+                        (forecast + weather.surprise_sd(sd) * rng.standard_normal())
+                            .clamp(MIN_CLEARNESS, MAX_CLEARNESS)
+                    })
+                    .sum();
+                let got = total / f64::from(days);
+                let today = mean_clearness(mean, sd);
+                assert!(
+                    (got - today).abs() < 0.005,
+                    "{id} month {}: {got} vs {today}",
+                    month + 1
+                );
+            }
+        }
+    }
+
+    /// Mean and standard deviation of every minute's wind factor over `days` days.
+    fn moments(samples: impl Iterator<Item = f64>) -> (f64, f64) {
+        let (mut n, mut sum, mut squares) = (0.0, 0.0, 0.0);
+        for x in samples {
+            n += 1.0;
+            sum += x;
+            squares += x * x;
+        }
+        let mean = sum / n;
+        (mean, (squares / n - mean * mean).max(0.0).sqrt())
+    }
+
+    #[test]
+    fn split_wind_matches_todays_process() {
+        let days = 4_000;
+        for id in SHIPPED {
+            let region = region(id);
+            let (weather, wind) = (region.weather(), region.wind());
+            let (low, high) = (0..12).fold((0, 0), |(low, high), m| {
+                (
+                    if wind.monthly[m] < wind.monthly[low] {
+                        m
+                    } else {
+                        low
+                    },
+                    if wind.monthly[m] > wind.monthly[high] {
+                        m
+                    } else {
+                        high
+                    },
+                )
+            });
+            for month in [low, high] {
+                let m = wind.monthly[month];
+                let mut rng = SimRng::from_seed(SEED);
+                let today = moments((0..days).flat_map(|_| {
+                    let mut w = (m + wind.initial_sd * rng.standard_normal()).clamp(0.0, 1.0);
+                    let first = w;
+                    std::iter::once(first)
+                        .chain((1..TICKS_PER_DAY).map(|_| {
+                            w = wind_step(
+                                w,
+                                m,
+                                wind.persistence,
+                                wind.innovation_sd,
+                                rng.standard_normal(),
+                            );
+                            w
+                        }))
+                        .collect::<Vec<_>>()
+                }));
+                let mut rng = SimRng::from_seed(SEED + 1);
+                let split = moments((0..days).flat_map(|_| {
+                    let mut path =
+                        vec![weather.forecast_sd(wind.initial_sd) * rng.standard_normal()];
+                    for _ in 1..TICKS_PER_DAY {
+                        let previous = *path.last().unwrap();
+                        path.push(
+                            wind.persistence * previous
+                                + weather.forecast_sd(wind.innovation_sd) * rng.standard_normal(),
+                        );
+                    }
+                    let mut w = (m
+                        + path[0]
+                        + weather.surprise_sd(wind.initial_sd) * rng.standard_normal())
+                    .clamp(0.0, 1.0);
+                    let mut day = vec![w];
+                    for t in 1..TICKS_PER_DAY as usize {
+                        w = wind_step_with_forecast(
+                            w,
+                            m,
+                            path[t - 1],
+                            path[t],
+                            wind.persistence,
+                            weather.surprise_sd(wind.innovation_sd),
+                            rng.standard_normal(),
+                        );
+                        day.push(w);
+                    }
+                    day
+                }));
+                let label = format!("{id} month {} (m = {m})", month + 1);
+                assert!(
+                    (split.0 - today.0).abs() < 0.005,
+                    "{label}: mean {} vs {}",
+                    split.0,
+                    today.0
+                );
+                assert!(
+                    (split.1 - today.1).abs() <= 0.05 * today.1 + 1e-9,
+                    "{label}: sd {} vs {}",
+                    split.1,
+                    today.1
+                );
+            }
+        }
+    }
+}
