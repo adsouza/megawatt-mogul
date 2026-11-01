@@ -1,4 +1,8 @@
 payoff-open = Compare plant payoff
+tutorial-payoff-open = You've planned a generator and explored future demand. Before your next expansion, open Compare plant payoff to compare upfront cost, construction time and running costs.
+tutorial-payoff-construction = Deeper dips cost more upfront. Longer builds delay income; compare both before committing your cash.
+tutorial-payoff-operating = After commissioning, the slope is revenue minus fuel and upkeep. Crossing zero repays capital; Never means it cannot pay back at today's price.
+tutorial-payoff-close = Lower running costs can require more capital or a longer build. Compare all three; full output is optimistic, so weather, water and demand can delay payoff. Close the comparison to continue.
 payoff-title = Plant payoff comparison
 payoff-close = Close comparison
 payoff-regional = Regional default construction terms. Select a land cell to compare its local costs and build times.

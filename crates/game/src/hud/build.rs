@@ -730,7 +730,8 @@ fn line_end_section(
 pub fn draw_build(ui: &mut egui::Ui, model: &BuildModel) -> Vec<UiAction> {
     let mut actions = Vec::new();
     ui.heading(egui::RichText::new(&model.title).color(heading_color()));
-    button(ui, &model.payoff, &mut actions);
+    let payoff = button(ui, &model.payoff, &mut actions);
+    mark_visible_anchor(ui, TutorialAnchor::PayoffButton, payoff.rect);
     // Each line stage scrolls on its own, so switching stage starts at the top.
     let active = if model.hvdc_active {
         model.hvdc.as_ref().unwrap_or(&model.line)

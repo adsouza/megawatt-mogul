@@ -12,6 +12,7 @@ use domain::{
 };
 use egui_plot::{HLine, Line, Plot, Points};
 
+use super::tutorial::{TutorialAnchor, mark_visible_anchor};
 use super::{ActionSink, ButtonModel, Selection, UiAction, button, dispatch};
 use crate::{
     l10n::{
@@ -164,11 +165,26 @@ pub fn payoff_model(
 }
 
 pub fn draw_payoff(ui: &mut egui::Ui, model: &PayoffModel) -> Vec<UiAction> {
+    draw_payoff_revealed(ui, model, None)
+}
+
+fn draw_payoff_revealed(
+    ui: &mut egui::Ui,
+    model: &PayoffModel,
+    reveal: Option<TutorialAnchor>,
+) -> Vec<UiAction> {
     let mut actions = Vec::new();
     let popup_was_open = egui::Popup::is_any_open(ui.ctx());
     ui.horizontal_wrapped(|ui| {
         ui.heading(&model.title);
-        button(ui, &model.close, &mut actions);
+        let close = button(ui, &model.close, &mut actions);
+        payoff_anchor(
+            ui,
+            TutorialAnchor::PayoffClose,
+            close.rect,
+            reveal,
+            &mut actions,
+        );
     });
     ui.label(&model.context);
     ui.label(&model.price);
@@ -185,7 +201,7 @@ pub fn draw_payoff(ui: &mut egui::Ui, model: &PayoffModel) -> Vec<UiAction> {
         }),
     );
     let style = model.money_style.clone();
-    Plot::new("plant-payoff-plot")
+    let chart = Plot::new("plant-payoff-plot")
         .id(plot_id)
         .height(260.0)
         .include_x(0.0)
@@ -248,9 +264,16 @@ pub fn draw_payoff(ui: &mut egui::Ui, model: &PayoffModel) -> Vec<UiAction> {
                 );
             }
         });
+    payoff_anchor(
+        ui,
+        TutorialAnchor::PayoffGraph,
+        chart.response.rect,
+        reveal,
+        &mut actions,
+    );
     ui.label(&model.markers);
     ui.label(&model.horizon_label);
-    egui::ScrollArea::horizontal()
+    let table = egui::ScrollArea::horizontal()
         .id_salt("payoff-table-scroll")
         .show(ui, |ui| {
             egui::Grid::new("payoff-table")
@@ -274,8 +297,15 @@ pub fn draw_payoff(ui: &mut egui::Ui, model: &PayoffModel) -> Vec<UiAction> {
                         }
                         ui.end_row();
                     }
-                });
+                })
         });
+    payoff_anchor(
+        ui,
+        TutorialAnchor::PayoffTable,
+        table.inner.response.rect,
+        reveal,
+        &mut actions,
+    );
     for assumption in &model.assumptions {
         ui.label(assumption);
     }
@@ -283,6 +313,20 @@ pub fn draw_payoff(ui: &mut egui::Ui, model: &PayoffModel) -> Vec<UiAction> {
         return vec![model.close.action.clone()];
     }
     actions
+}
+
+fn payoff_anchor(
+    ui: &egui::Ui,
+    anchor: TutorialAnchor,
+    rect: egui::Rect,
+    reveal: Option<TutorialAnchor>,
+    actions: &mut Vec<UiAction>,
+) {
+    mark_visible_anchor(ui, anchor, rect);
+    if reveal == Some(anchor) {
+        ui.scroll_to_rect(rect, Some(egui::Align::Center));
+        actions.push(UiAction::Tutorial(super::TutorialAction::RevealDone));
+    }
 }
 
 pub(super) fn payoff_panel(
@@ -302,13 +346,14 @@ pub(super) fn payoff_panel(
     let model = payoff_model(&session.0, &l10n, cell, &style);
     let ctx = contexts.ctx_mut()?;
     let screen = ctx.content_rect().size();
+    let reveal = sink.ui_state().reveal_anchor;
     let mut actions = Vec::new();
     egui::Modal::new(egui::Id::new("payoff-dialog")).show(ctx, |ui| {
         ui.set_width((screen.x - 64.0).clamp(220.0, 1100.0));
         egui::ScrollArea::vertical()
             .max_height((screen.y - 80.0).max(120.0))
             .show(ui, |ui| {
-                actions = draw_payoff(ui, &model);
+                actions = draw_payoff_revealed(ui, &model, reveal);
             });
     });
     dispatch(actions, &mut sink);

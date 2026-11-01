@@ -661,7 +661,6 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             | UiAction::InspectForecast { .. }
             | UiAction::ShowLinks(_)
             | UiAction::ShowOutlook(false)
-            | UiAction::ShowPayoff(false)
             | UiAction::InspectHvdc { .. }
             | UiAction::SetHvdcTab(_)
             | UiAction::EditHvdcRange(_) => {}
@@ -677,10 +676,31 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
                     sink.ui.outlook_guide = Some(super::tutorial::OutlookGuideStep::Cushion);
                 }
             }
-            UiAction::ShowPayoff(true) => {
-                *sink.speed = SimSpeed::Paused;
+            UiAction::ShowPayoff(open) => {
+                if open {
+                    *sink.speed = SimSpeed::Paused;
+                }
+                if let Some((state, session)) = sink.tutorial.0.as_mut().zip(sink.session.as_ref())
+                {
+                    let step = super::tutorial::active_step(state, &session.0, *sink.selection)
+                        .map(|def| def.step);
+                    if open && step == Some(TutorialStep::OpenPayoff) {
+                        state.played.insert(TutorialStep::OpenPayoff);
+                    } else if !open && state.played.contains(&TutorialStep::OpenPayoff) {
+                        // Closing early is a deliberate skip, so missing modal anchors never
+                        // leave the remaining build walkthrough waiting on a closed dialog.
+                        state.played.extend([
+                            TutorialStep::PayoffConstruction,
+                            TutorialStep::PayoffOperating,
+                            TutorialStep::ClosePayoff,
+                        ]);
+                    }
+                }
             }
             UiAction::ShowOutlook(true) => {
+                if let Some(state) = sink.tutorial.0.as_mut() {
+                    state.outlook_used = true;
+                }
                 let selected = match *sink.selection {
                     Selection::City(city) => Some(city),
                     _ => None,
@@ -914,7 +934,10 @@ fn tutorial(sink: &mut ActionSink, action: TutorialAction) {
                 | TutorialAnchor::PlantLineButton
                 | TutorialAnchor::ReviewConstruction
                 | TutorialAnchor::OutlookCity
-                | TutorialAnchor::OutlookGraph => {
+                | TutorialAnchor::OutlookGraph
+                | TutorialAnchor::PayoffGraph
+                | TutorialAnchor::PayoffTable
+                | TutorialAnchor::PayoffClose => {
                     sink.ui.reveal_anchor = Some(anchor);
                 }
                 _ => {}

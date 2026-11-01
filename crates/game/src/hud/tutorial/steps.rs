@@ -14,6 +14,7 @@ use domain::grid::LineStatus;
 use domain::ids::{NodeId, PlantId};
 use domain::region::PlantKind;
 use domain::session::{DayPhase, LineView, PlantView};
+use domain::time::SimMonth;
 
 use crate::hud::Selection;
 
@@ -38,6 +39,10 @@ pub enum TutorialAnchor {
     CrystalBall,
     OutlookCity,
     OutlookGraph,
+    PayoffButton,
+    PayoffGraph,
+    PayoffTable,
+    PayoffClose,
 }
 
 /// Step identities for the main tutorial and the independent first-use outlook guide.
@@ -66,9 +71,23 @@ pub enum TutorialStep {
     ConnectCcgt,
     SaveSnapshot,
     CrystalBall,
+    OpenPayoff,
+    PayoffConstruction,
+    PayoffOperating,
+    ClosePayoff,
     OutlookCitySpotlight,
     OutlookChooseCity,
     OutlookCushion,
+}
+
+impl TutorialStep {
+    /// The main tutorial notes drawn inside the payoff dialog rather than behind it.
+    pub(crate) fn is_payoff_guide(self) -> bool {
+        matches!(
+            self,
+            Self::PayoffConstruction | Self::PayoffOperating | Self::ClosePayoff
+        )
+    }
 }
 
 /// How a step presents itself. Moves, the crawl and spotlights are one-shot: they join
@@ -131,7 +150,7 @@ const fn def(
 }
 
 /// The tutorial, in order (spec §4.3).
-pub const TUTORIAL_STEPS: [StepDef; 23] = {
+pub const TUTORIAL_STEPS: [StepDef; 27] = {
     use DayPhase::{Operating, Planning, Review};
     use StepKind::{Crawl, Instruction, Move, Spotlight};
     use TutorialAnchor as A;
@@ -300,6 +319,38 @@ pub const TUTORIAL_STEPS: [StepDef; 23] = {
             Some("tutorial-crystal-ball"),
             Done::CcgtNotLinked,
         ),
+        def(
+            S::OpenPayoff,
+            Planning,
+            Instruction,
+            Some(A::PayoffButton),
+            Some("tutorial-payoff-open"),
+            Done::Never,
+        ),
+        def(
+            S::PayoffConstruction,
+            Planning,
+            Spotlight,
+            Some(A::PayoffGraph),
+            Some("tutorial-payoff-construction"),
+            Done::Never,
+        ),
+        def(
+            S::PayoffOperating,
+            Planning,
+            Spotlight,
+            Some(A::PayoffTable),
+            Some("tutorial-payoff-operating"),
+            Done::Never,
+        ),
+        def(
+            S::ClosePayoff,
+            Planning,
+            Instruction,
+            Some(A::PayoffClose),
+            Some("tutorial-payoff-close"),
+            Done::Never,
+        ),
     ]
 };
 
@@ -361,6 +412,10 @@ pub struct TutorialState {
     pub starter_ccgts: BTreeSet<PlantId>,
     pub played: BTreeSet<TutorialStep>,
     pub seen_review: bool,
+    /// The annual outlook was actually opened during this run.
+    pub outlook_used: bool,
+    /// First Planning month for the final comparison chapter, after both prerequisites.
+    pub payoff_month: Option<SimMonth>,
 }
 
 impl TutorialState {
@@ -385,6 +440,8 @@ impl TutorialState {
                 .collect(),
             played: BTreeSet::new(),
             seen_review: false,
+            outlook_used: false,
+            payoff_month: None,
         }
     }
 
@@ -408,10 +465,17 @@ pub fn active_step(
     let session = game.session();
     let phase = session.phase();
     let facts = Facts::of(state, game);
+    let payoff_ready = state
+        .payoff_month
+        .is_some_and(|month| session.clock().month() >= month);
     TUTORIAL_STEPS.iter().find(|def| {
         def.phase == phase
             && (phase != DayPhase::Planning
-                || (def.step >= TutorialStep::Supply) == state.seen_review)
+                || if def.step >= TutorialStep::OpenPayoff {
+                    payoff_ready
+                } else {
+                    !payoff_ready && (def.step >= TutorialStep::Supply) == state.seen_review
+                })
             && !state.played.contains(&def.step)
             && !facts.done(def.done, selection)
     })
@@ -472,8 +536,7 @@ pub fn tutorial_plant_nodes(state: &TutorialState, game: &Game) -> BTreeSet<Node
 }
 
 /// Whether a new CCGT has a complete path to a service grid, including ordered lines.
-#[cfg(test)]
-fn ccgt_linked(state: &TutorialState, game: &Game) -> bool {
+pub(super) fn ccgt_linked(state: &TutorialState, game: &Game) -> bool {
     Facts::of(state, game).ccgt_linked
 }
 
@@ -644,7 +707,7 @@ mod tests {
         sorted.sort();
         sorted.dedup();
         assert_eq!(steps, sorted);
-        assert_eq!(steps.len(), 23);
+        assert_eq!(steps.len(), 27);
     }
 
     #[test]

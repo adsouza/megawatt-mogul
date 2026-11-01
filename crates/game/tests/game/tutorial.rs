@@ -232,6 +232,127 @@ fn starting_the_second_day_early_finishes_optional_guidance() {
     assert_no_reveals(&app);
 }
 
+#[test]
+fn payoff_is_scheduled_for_the_next_month_only_after_generator_and_actual_outlook_use() {
+    for (generator, outlook) in [(false, false), (true, false), (false, true), (true, true)] {
+        let logs = TempDir::new().unwrap();
+        let mut app = tutorial_app(&logs);
+        execute(&mut app, Command::BeginOperating);
+        execute(&mut app, Command::AdvanceTicks { n: TICKS_PER_DAY });
+        execute(&mut app, Command::FinishReview);
+        if generator {
+            let cell = ccgt_site(&app);
+            execute(
+                &mut app,
+                Command::BuildPlant {
+                    kind: PlantKind::Ccgt,
+                    cell,
+                },
+            );
+            let session = app.world().resource::<Session>().0.session();
+            let from = session.anchor_node();
+            let to = session
+                .plant_views()
+                .into_iter()
+                .find(|p| p.cell == cell)
+                .unwrap()
+                .node;
+            execute(&mut app, Command::BuildLine { from, to });
+        }
+        tutorial(
+            &mut app,
+            [TutorialAction::Dismiss(TutorialStep::CrystalBall)],
+        );
+        update_n(&mut app, 2);
+        assert!(run(&app).is_some(), "the payoff chapter is still owed");
+        if outlook {
+            dispatch_in(
+                &mut app,
+                vec![UiAction::ShowOutlook(true), UiAction::ShowOutlook(false)],
+            );
+            update_n(&mut app, 2);
+        }
+        let game = &app.world().resource::<Session>().0;
+        let state = run(&app).unwrap();
+        assert_eq!(
+            state.payoff_month,
+            (generator && outlook).then(|| game
+                .session()
+                .clock()
+                .month()
+                .checked_add_months(1)
+                .unwrap())
+        );
+        assert_ne!(
+            game::hud::tutorial::active_step(state, game, Selection::None).map(|s| s.step),
+            Some(TutorialStep::OpenPayoff)
+        );
+    }
+}
+
+#[test]
+fn payoff_tutorial_closing_early_finishes_the_final_chapter_and_reopening_is_unguided() {
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    execute(&mut app, Command::BeginOperating);
+    execute(&mut app, Command::AdvanceTicks { n: TICKS_PER_DAY });
+    execute(&mut app, Command::FinishReview);
+    let month = app
+        .world()
+        .resource::<Session>()
+        .0
+        .session()
+        .clock()
+        .month();
+    app.world_mut()
+        .resource_mut::<TutorialRun>()
+        .0
+        .as_mut()
+        .unwrap()
+        .payoff_month = Some(month);
+    at_step(&mut app, TutorialStep::OpenPayoff);
+    let cell = ccgt_site(&app);
+    dispatch_in(&mut app, vec![UiAction::Select(Selection::Cell(cell))]);
+    let before = app.world().resource::<Session>().0.session().state_hash();
+    dispatch_in(&mut app, vec![UiAction::ShowPayoff(true)]);
+    assert!(played(&app).contains(&TutorialStep::OpenPayoff));
+    // A lost selection while the modal is open must not strand its remaining guide steps.
+    dispatch_in(
+        &mut app,
+        vec![
+            UiAction::Select(Selection::None),
+            UiAction::ShowPayoff(false),
+        ],
+    );
+    for step in [
+        TutorialStep::PayoffConstruction,
+        TutorialStep::PayoffOperating,
+        TutorialStep::ClosePayoff,
+    ] {
+        assert!(played(&app).contains(&step));
+    }
+    update_n(&mut app, 2);
+    assert!(run(&app).is_none());
+    assert!(!pending(&app));
+    let pass = EguiPass::attach(&mut app);
+    dispatch_in(&mut app, vec![UiAction::ShowPayoff(true)]);
+    let widgets = pass.settled(&mut app, MIN.0, MIN.1);
+    assert!(widgets.iter().any(|w| w.text == "Plant payoff comparison"));
+    assert!(
+        !widgets
+            .iter()
+            .any(|w| w.text == crate::support::shipped_l10n().text("tutorial-payoff-operating"))
+    );
+    press_escape(&pass, &mut app, MIN);
+    assert!(!ui_state(&app).payoff_open);
+    assert!(run(&app).is_none());
+    assert_eq!(
+        app.world().resource::<Session>().0.session().state_hash(),
+        before
+    );
+    assert!(sent::<PlayerCommand>(&app).is_empty());
+}
+
 /// The review's actual Continue button leads into guidance, and the actual CCGT / line buttons
 /// queue exactly one of each order. The callouts expose each control at the minimum window size.
 #[test]
@@ -401,8 +522,11 @@ fn ccgt_walkthrough_after_review_builds_and_connects_through_real_widgets() {
         "the spotlight consumes its dismissal click"
     );
     update_n(&mut app, 2);
-    assert!(run(&app).is_none());
-    assert!(!pending(&app));
+    assert!(
+        run(&app).is_some(),
+        "the comparison follows in a later month"
+    );
+    assert!(pending(&app));
     app.world_mut()
         .resource_mut::<ClientProgressStore>()
         .value
@@ -416,6 +540,95 @@ fn ccgt_walkthrough_after_review_builds_and_connects_through_real_widgets() {
     pass.settled(&mut app, MIN.0, MIN.1);
     press_escape(&pass, &mut app, MIN);
     assert!(!ui_state(&app).outlook_open);
+    update_n(&mut app, 2);
+    let scheduled = run(&app)
+        .unwrap()
+        .payoff_month
+        .expect("actual outlook use schedules comparison");
+    assert!(
+        scheduled
+            > app
+                .world()
+                .resource::<Session>()
+                .0
+                .session()
+                .clock()
+                .month()
+    );
+    assert_eq!(
+        game::hud::tutorial::active_step(
+            run(&app).unwrap(),
+            &app.world().resource::<Session>().0,
+            Selection::None
+        ),
+        None
+    );
+    execute(&mut app, Command::BeginOperating);
+    assert!(
+        run(&app).is_some(),
+        "the comparison survives the intervening day"
+    );
+    execute(&mut app, Command::AdvanceTicks { n: TICKS_PER_DAY });
+    execute(&mut app, Command::FinishReview);
+    assert_eq!(
+        app.world()
+            .resource::<Session>()
+            .0
+            .session()
+            .clock()
+            .month(),
+        scheduled
+    );
+    assert_eq!(
+        game::hud::tutorial::active_step(
+            run(&app).unwrap(),
+            &app.world().resource::<Session>().0,
+            Selection::None
+        )
+        .unwrap()
+        .step,
+        TutorialStep::OpenPayoff
+    );
+    let widgets = pass.settled(&mut app, MIN.0, MIN.1);
+    let compare = find_button(&widgets, "Compare plant payoff").rect;
+    assert_eq!(anchors(&app)[&TutorialAnchor::PayoffButton], compare);
+    let before_comparison = app.world().resource::<Session>().0.session().state_hash();
+    pass.click_at(&mut app, MIN.0, MIN.1, compare.center());
+    for (step, key) in [
+        (
+            TutorialStep::PayoffConstruction,
+            "tutorial-payoff-construction",
+        ),
+        (TutorialStep::PayoffOperating, "tutorial-payoff-operating"),
+    ] {
+        let widgets = pass.settled(&mut app, MIN.0, MIN.1);
+        widget(&widgets, &crate::support::shipped_l10n().text(key));
+        press_escape(&pass, &mut app, MIN);
+        assert!(played(&app).contains(&step));
+        assert!(
+            ui_state(&app).payoff_open,
+            "Escape dismisses the lesson first"
+        );
+    }
+    let widgets = pass.settled(&mut app, MIN.0, MIN.1);
+    widget(
+        &widgets,
+        &crate::support::shipped_l10n().text("tutorial-payoff-close"),
+    );
+    for _ in 0..60 {
+        pass.run(&mut app, MIN.0, MIN.1);
+    }
+    let widgets = pass.settled(&mut app, MIN.0, MIN.1);
+    let close = find_button(&widgets, "Close comparison").rect;
+    pass.click_at(&mut app, MIN.0, MIN.1, close.center());
+    assert!(!ui_state(&app).payoff_open);
+    assert_eq!(
+        app.world().resource::<Session>().0.session().state_hash(),
+        before_comparison
+    );
+    update_n(&mut app, 2);
+    assert!(run(&app).is_none());
+    assert!(!pending(&app));
     pass.settled(&mut app, MIN.0, MIN.1);
     let save = anchors(&app)[&TutorialAnchor::Save];
     pass.click_at(&mut app, MIN.0, MIN.1, save.center());
@@ -864,7 +1077,7 @@ fn tutorial_actions_never_send_player_commands() {
 #[derive(Resource, Default)]
 struct SeenAnchors(BTreeMap<TutorialAnchor, egui::Rect>);
 
-const ANCHORS: [TutorialAnchor; 13] = [
+const ANCHORS: [TutorialAnchor; 17] = [
     TutorialAnchor::Cash,
     TutorialAnchor::Map,
     TutorialAnchor::PlantCard,
@@ -878,6 +1091,10 @@ const ANCHORS: [TutorialAnchor; 13] = [
     TutorialAnchor::CrystalBall,
     TutorialAnchor::OutlookCity,
     TutorialAnchor::OutlookGraph,
+    TutorialAnchor::PayoffButton,
+    TutorialAnchor::PayoffGraph,
+    TutorialAnchor::PayoffTable,
+    TutorialAnchor::PayoffClose,
 ];
 
 fn probe_anchors(mut contexts: EguiContexts, mut seen: ResMut<SeenAnchors>) -> Result {
@@ -1261,7 +1478,7 @@ fn tutorial_view_opacity_curve() {
             .iter()
             .filter(|def| def.kind == StepKind::Instruction)
             .count(),
-        7
+        9
     );
     assert_eq!(
         def(TutorialStep::BatterySpotlight).anchor,
@@ -2344,6 +2561,7 @@ fn cards_fit_minimum_window_at_max_zoom() {
         DayPhase::Operating,
         DayPhase::Review,
         DayPhase::Planning,
+        DayPhase::Planning,
     ]
     .into_iter()
     .enumerate()
@@ -2353,6 +2571,21 @@ fn cards_fit_minimum_window_at_max_zoom() {
                 execute(&mut app, Command::FinishReview);
                 cell = ccgt_site(&app);
             }
+            DayPhase::Planning if chapter == 4 => {
+                let month = app
+                    .world()
+                    .resource::<Session>()
+                    .0
+                    .session()
+                    .clock()
+                    .month();
+                app.world_mut()
+                    .resource_mut::<TutorialRun>()
+                    .0
+                    .as_mut()
+                    .unwrap()
+                    .payoff_month = Some(month);
+            }
             DayPhase::Planning => {}
             DayPhase::Operating => execute(&mut app, Command::BeginOperating),
             DayPhase::Review => execute(&mut app, Command::AdvanceTicks { n: TICKS_PER_DAY }),
@@ -2361,7 +2594,11 @@ fn cards_fit_minimum_window_at_max_zoom() {
         for def in TUTORIAL_STEPS.iter().filter(|def| {
             def.phase == phase_now
                 && (phase_now != DayPhase::Planning
-                    || (def.step >= TutorialStep::Supply) == (chapter == 3))
+                    || if def.step >= TutorialStep::OpenPayoff {
+                        chapter == 4
+                    } else {
+                        (def.step >= TutorialStep::Supply) == (chapter == 3) && chapter != 4
+                    })
                 && matches!(def.kind, StepKind::Spotlight | StepKind::Instruction)
         }) {
             // From connecting on, the player has ordered a battery, which ordering selects.
@@ -2405,6 +2642,15 @@ fn cards_fit_minimum_window_at_max_zoom() {
                 execute(&mut app, Command::BuildLine { from, to });
             }
             at_step(&mut app, def.step);
+            dispatch_in(
+                &mut app,
+                vec![UiAction::ShowPayoff(matches!(
+                    def.step,
+                    TutorialStep::PayoffConstruction
+                        | TutorialStep::PayoffOperating
+                        | TutorialStep::ClosePayoff
+                ))],
+            );
             // Picking a site is done once a cell is selected; the later steps need one.
             let selection = match (def.step, &battery) {
                 (TutorialStep::PickSite | TutorialStep::PickCcgtSite, _) => Selection::None,
@@ -2439,7 +2685,14 @@ fn cards_fit_minimum_window_at_max_zoom() {
                     break;
                 }
             }
-            let note = found.unwrap_or_else(|| panic!("{:?} drew no note", def.step));
+            let note = found.unwrap_or_else(|| {
+                panic!(
+                    "{:?} drew no note; anchors={:?}, ui={:?}",
+                    def.step,
+                    anchors(&app),
+                    ui_state(&app)
+                )
+            });
             assert!(screen.contains_rect(note), "{:?}: {note:?}", def.step);
             if def.kind == StepKind::Instruction {
                 check_arrow_callout(&pass, &mut app, (width, height), def, &text);
@@ -2679,6 +2932,32 @@ fn tutorial_on_and_off_give_identical_state() {
         shown.contains(&TutorialStep::CrystalBall),
         "the crystal-ball guidance was shown"
     );
+    for (app, _) in apps.iter_mut() {
+        app.world_mut()
+            .resource_mut::<ClientProgressStore>()
+            .value
+            .outlook_tutorial_pending = false;
+        dispatch_in(
+            app,
+            vec![UiAction::ShowOutlook(true), UiAction::ShowOutlook(false)],
+        );
+        update_n(app, 2);
+        execute(app, Command::BeginOperating);
+        execute(app, Command::AdvanceTicks { n: TICKS_PER_DAY });
+        execute(app, Command::FinishReview);
+        dispatch_in(app, vec![UiAction::ShowPayoff(true)]);
+    }
+    tutorial_frames(&mut apps, 12, &mut shown);
+    for step in [
+        TutorialStep::PayoffConstruction,
+        TutorialStep::PayoffOperating,
+    ] {
+        assert!(shown.contains(&step), "{step:?} wasn't shown");
+    }
+    for (app, _) in apps.iter_mut() {
+        dispatch_in(app, vec![UiAction::ShowPayoff(false)]);
+        update_n(app, 2);
+    }
     let [(on, _), (off, _)] = &apps;
     assert!(run(on).is_none() && !pending(on), "the tutorial finished");
     assert_eq!(phase(on), DayPhase::Planning);

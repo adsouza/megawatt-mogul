@@ -245,10 +245,11 @@ pub(crate) fn tutorial_overlay(
         Some(clock) if clock.step == def.step => clock,
         _ => Shown::new(def.step),
     };
+    let payoff_guide = def.step.is_payoff_guide() && sink.ui_state().payoff_open;
     let prompt_open = sink.open_prompt().0.is_some()
-        || sink.ui_state().payoff_open
+        || (sink.ui_state().payoff_open && !payoff_guide)
         || (sink.ui_state().outlook_open && guide.is_none())
-        || (guide.is_some() && egui::Popup::is_any_open(&ctx));
+        || ((guide.is_some() || payoff_guide) && egui::Popup::is_any_open(&ctx));
     // Prompts come first: a timed step waits for one to close.
     let anchor = def.anchor.and_then(|anchor| anchor_rect(&ctx, anchor));
     let ready = !prompt_open
@@ -352,6 +353,9 @@ fn scrolls(anchor: TutorialAnchor) -> bool {
             | TutorialAnchor::ReviewConstruction
             | TutorialAnchor::OutlookCity
             | TutorialAnchor::OutlookGraph
+            | TutorialAnchor::PayoffGraph
+            | TutorialAnchor::PayoffTable
+            | TutorialAnchor::PayoffClose
     )
 }
 
