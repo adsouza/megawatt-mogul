@@ -1070,6 +1070,108 @@ fn scenario_cases_cover_every_shipped_region() {
     assert_eq!(SCENARIO_REGIONS, SHIPPED);
 }
 
+/// One year with the automatic commitment plan applied at every Planning phase, on top of the
+/// hands-off setup (spec 2026-10-31 §6): the months played, rotating outages, and fuel plus
+/// start-up spend in cents.
+struct PlannedYear {
+    months: u32,
+    outages: Vec<String>,
+    spend: i64,
+}
+
+fn play_year(id: &str, seed: u64, auto_plan: bool) -> PlannedYear {
+    let mut game = hands_off_game(&catalog(), id, seed);
+    let mut year = PlannedYear {
+        months: 0,
+        outages: Vec::new(),
+        spend: 0,
+    };
+    for _ in 1..=12 {
+        if auto_plan {
+            for command in application::automatic_commitment_commands(&game) {
+                game.execute(command).expect("planned commitment applies");
+            }
+        }
+        let played = play_month(&mut game);
+        year.months += 1;
+        let report = &played.report;
+        year.spend -= (report.fuel + report.start_up).cents();
+        if report.rotating_outage.value() != 0.0 {
+            year.outages.push(format!(
+                "{id} seed {seed} {:?}: {:?} planned (peak share {:?})",
+                report.month, report.rotating_outage, report.peak_outage_share,
+            ));
+        }
+        if game.session().status() != SessionStatus::Active {
+            break;
+        }
+        game.execute(Command::FinishReview).expect("finish review");
+    }
+    year
+}
+
+/// The automatic plan keeps every shipped region outage-free through year one and never spends
+/// more on fuel and start-ups than running the whole fleet all day.
+fn assert_auto_plan_year_one(id: &str, seed: u64) {
+    let planned = play_year(id, seed, true);
+    assert_eq!(planned.months, 12, "{id} seed {seed}: months played");
+    assert!(
+        planned.outages.is_empty(),
+        "rotating outages:\n{}",
+        planned.outages.join("\n")
+    );
+    let hands_off = play_year(id, seed, false);
+    assert!(
+        planned.spend <= hands_off.spend,
+        "{id} seed {seed}: planned spend {} > hands-off {}",
+        planned.spend,
+        hands_off.spend
+    );
+}
+
+macro_rules! auto_plan_cases {
+    ($(($module:ident, $id:expr)),+ $(,)?) => {
+        $(
+            mod $module {
+                use super::*;
+                scenario_seeds!(assert_auto_plan_year_one, $id);
+            }
+        )+
+
+        const AUTO_PLAN_REGIONS: &[&str] = &[$($id),+];
+    };
+}
+
+auto_plan_cases! {
+    (auto_plan_brazil_sin, BRAZIL),
+    (auto_plan_continental_europe_maghreb, EUROPE_MAGHREB),
+    (auto_plan_eastern_interconnection, EAST),
+    (auto_plan_india_nepal_bhutan, INDIA),
+    (auto_plan_ips_ups, IPS),
+    (auto_plan_sgcc, SGCC),
+    (auto_plan_southern_china, SOUTHERN_CHINA),
+    (auto_plan_western_interconnection, WEST),
+}
+
+#[test]
+fn auto_plan_cases_cover_every_shipped_region() {
+    assert_eq!(AUTO_PLAN_REGIONS, SHIPPED);
+}
+
+/// Across the shipped regions the automatic plan saves fuel and start-ups overall.
+#[test]
+fn auto_plan_spends_less_in_total() {
+    let (mut planned, mut hands_off) = (0, 0);
+    for id in SHIPPED {
+        planned += play_year(id, 0, true).spend;
+        hands_off += play_year(id, 0, false).spend;
+    }
+    assert!(
+        planned < hands_off,
+        "planned {planned}, hands-off {hands_off}"
+    );
+}
+
 /// Plays twelve months on region `id` at one seed, with the game started by `start` and given no
 /// commands beyond the phase changes, and asserts the game is still `Active` at every close.
 /// Before every month the forecast shows no shortfall, so a hands-off player never sees the

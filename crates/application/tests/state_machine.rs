@@ -348,3 +348,23 @@ proptest! {
         prop_assert_eq!(game.session().plant_views().iter().find(|p| p.id == plant).unwrap().commitment, hours);
     }
 }
+
+#[test]
+fn automatic_commitment_commands_apply_cleanly_and_are_idempotent() {
+    let (mut game, _) = support::game_on(tiny_region_parts(), 3);
+    let commands = application::automatic_commitment_commands(&game);
+    assert!(!commands.is_empty(), "the tiny fleet's peaker can go");
+    assert!(commands.windows(2).all(|pair| match pair {
+        [
+            Command::CommitPlant { plant: a, .. },
+            Command::CommitPlant { plant: b, .. },
+        ] => a < b,
+        _ => false,
+    }));
+    for command in commands {
+        game.execute(command).unwrap();
+    }
+    assert!(application::automatic_commitment_commands(&game).is_empty());
+    game.execute(Command::BeginOperating).unwrap();
+    assert!(application::automatic_commitment_commands(&game).is_empty());
+}
