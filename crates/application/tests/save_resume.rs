@@ -8,6 +8,7 @@ use application::{
     SaveMetadata,
 };
 use domain::ids::PlantId;
+use domain::region::PlantKind;
 use domain::region::fixtures::tiny_region_parts;
 use domain::session::{DayPhase, GameSettings};
 use domain::time::TICKS_PER_DAY;
@@ -67,6 +68,103 @@ fn schema_9_snapshot_upgrades_pending_regional_milestones_without_losing_progres
         application::projections::MilestoneKind::ConnectCities { count: 3 }
     );
     assert_eq!(restored.checkpoint().snapshot.unwrap().schema, 12);
+}
+
+/// Commits `kinds` all day on AGC, or stops them: the player's plan for one month.
+fn run_kinds(game: &mut Game, kinds: &[PlantKind], on: bool) {
+    let plants: Vec<_> = game
+        .session()
+        .plant_views()
+        .iter()
+        .filter(|plant| kinds.contains(&plant.kind))
+        .map(|plant| plant.id)
+        .collect();
+    for plant in plants {
+        if on {
+            game.execute(Command::CommitPlant {
+                plant,
+                hours: [true; 24],
+            })
+            .unwrap();
+        } else {
+            game.execute(Command::StopPlant { plant }).unwrap();
+        }
+        game.execute(Command::SetAutoFollow { plant, on }).unwrap();
+    }
+}
+
+#[test]
+fn seeded_run_equals_live_run() {
+    use application::projections::{
+        FOSSIL_FREE_MONTHS, MilestoneKind, MilestoneProgress, MilestoneStatus,
+    };
+    use domain::events::DomainEvent;
+    use domain::region::fixtures::may_2033_parts;
+    use domain::state::State;
+    // Five 800 MW hydro units and four CCGTs serve a flat quarter of the 2033 incident's load.
+    // Fossil runs in the first month and is stopped from the second; the fifth month stops the
+    // hydro too, so the whole load goes unserved and the regulator strikes; clean months follow.
+    const FOSSIL: [PlantKind; 3] = [PlantKind::Coal, PlantKind::Ccgt, PlantKind::Peaker];
+    let mut parts = may_2033_parts();
+    for city in &mut parts.cities {
+        city.base_load = city.base_load * 0.25;
+    }
+    // The hydro fleet's tracking error sheds about 2.5% of the load, which this region's
+    // threshold would strike: widen it so only the blackout month is struck.
+    parts.regulator.strike_threshold = domain::units::Ratio::new(0.05).unwrap();
+    let (mut game, _) = game_on(parts.clone(), 21);
+    let mut struck = Vec::new();
+    for month in 1..=8 {
+        let events = play_month(&mut game, |game| match month {
+            1 => {}
+            2 => {
+                run_kinds(game, &FOSSIL, false);
+                run_kinds(game, &[PlantKind::Hydro], true);
+            }
+            5 => run_kinds(game, &[PlantKind::Hydro], false),
+            6 => run_kinds(game, &[PlantKind::Hydro], true),
+            _ => {}
+        });
+        struck.push(
+            events
+                .iter()
+                .any(|event| matches!(event, DomainEvent::StrikeIssued { .. })),
+        );
+    }
+    assert_eq!(
+        struck,
+        [false, false, false, false, true, false, false, false],
+        "only the month with every plant stopped drew a strike"
+    );
+    let live = game.projections().milestones.clone();
+    // The live projection counted the three clean months since the strike.
+    assert_eq!(
+        live.status(
+            MilestoneKind::FossilFreeYear,
+            game.session().clock().month(),
+            game.session().region().calendar()
+        ),
+        MilestoneStatus::InProgress(MilestoneProgress::CleanMonths {
+            months: 3,
+            needed: FOSSIL_FREE_MONTHS
+        })
+    );
+
+    let mut checkpoint = game.checkpoint();
+    let snapshot = checkpoint.snapshot.as_mut().unwrap();
+    snapshot.schema = 11;
+    snapshot.session = game.session().snapshot_state_schema(11);
+    snapshot.projections = game.projections().state_bytes_schema(11);
+    checkpoint.state_hash = snapshot.state_hash();
+    let restored = Game::restore(
+        loaded_region(parts),
+        checkpoint,
+        Box::new(InMemoryCommandLog::default()),
+        &|| false,
+    )
+    .unwrap();
+    // The schema 11 bytes carry no run; the restore rebuilt the live one from the reports.
+    assert_eq!(restored.projections().milestones, live);
 }
 
 #[test]

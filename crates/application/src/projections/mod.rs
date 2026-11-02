@@ -24,7 +24,7 @@ pub use expansion::{ExpansionProjection, PLAYED_MONTHS};
 pub use lessons::{Lesson, LessonsProjection, lessons_for};
 pub use milestones::{
     FOSSIL_FREE_MONTHS, MILESTONES, MilestoneKind, MilestoneProgress, MilestoneProjection,
-    MilestoneStatus, month_is_clean, regional_milestones,
+    MilestoneStatus, month_is_clean, month_struck, regional_milestones,
 };
 pub use monthly_report::MonthlyReportProjection;
 pub use payoff::{PlantPayoff, plant_payoff};

@@ -47,8 +47,9 @@ never as code constants. The current region schema is 7 (it adds a required `dem
 climate, calendar, currency, astronomical-sun and geothermal data. Legacy region schemas retain frozen
 defaults in `infrastructure::region::legacy`; old-source integrity is checked before any
 upcast. Unexpected new fields on legacy sources and unsupported schemas fail with typed errors.
-Region schema versions are independent of portable state schema 11, written by current saves;
-readers retain schemas 1–11. Schema 11 stores the compounded demand growth factor (older saves
+Region schema versions are independent of portable state schema 12, written by current saves;
+readers retain schemas 1–12. Schema 12 adds the fossil-free run and the bonus reveal month to the
+milestones (older saves rebuild the run from their monthly reports). Schema 11 stores the compounded demand growth factor (older saves
 read no growth). Schema 10 freezes regional milestone targets. Schema 8 appends the
 expansion projection (month closes since the
 first non-starter city connected); older snapshots seed it from the restored session, so an

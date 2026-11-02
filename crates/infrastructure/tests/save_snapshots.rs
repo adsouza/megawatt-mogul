@@ -717,7 +717,8 @@ fn calibrated_solar_regions_resume_identically_with_their_archived_calibration()
 #[test]
 fn schema7_saves_restore_with_expansion_seeded_from_the_session() {
     use application::projections::{
-        ExpansionProjection, MILESTONES, MilestoneStatus, Projections, regional_milestones,
+        ExpansionProjection, FOSSIL_FREE_MONTHS, MILESTONES, MilestoneKind, MilestoneProgress,
+        MilestoneStatus, Projections, month_is_clean, month_struck, regional_milestones,
     };
     for (name, expanded) in [("expanded.mgsave", true), ("starter.mgsave", false)] {
         let bytes = std::fs::read(
@@ -749,8 +750,33 @@ fn schema7_saves_restore_with_expansion_seeded_from_the_session() {
             kept.state_bytes_schema(7),
             "{name}: the other schema-7 projections are kept"
         );
+        // Schema 12 added the fossil-free run: the restore rebuilds it from the monthly reports,
+        // still hidden, and without a notification.
+        let threshold = game.session().region().regulator().strike_threshold;
+        let run = game
+            .projections()
+            .monthly_reports
+            .history()
+            .iter()
+            .rev()
+            .take_while(|r| month_is_clean(r, month_struck(r, threshold)))
+            .count();
+        assert_eq!(
+            milestones.status(
+                MilestoneKind::FossilFreeYear,
+                game.session().clock().month(),
+                game.session().region().calendar()
+            ),
+            MilestoneStatus::InProgress(MilestoneProgress::CleanMonths {
+                months: u32::try_from(run).unwrap(),
+                needed: FOSSIL_FREE_MONTHS
+            }),
+            "{name}"
+        );
         let targets = regional_milestones(game.session().region());
         assert_eq!(milestones.targets(), &targets, "{name}");
+        let all_reached = targets.iter().all(|t| milestones.reached().contains(t));
+        assert_eq!(milestones.bonus().is_some(), all_reached, "{name}");
         let cities = targets[2];
         assert_eq!(milestones.reached().contains(&cities), expanded, "{name}");
         if expanded {

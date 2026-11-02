@@ -4,9 +4,9 @@ use domain::events::DomainEvent;
 use domain::region::{Calendar, PlantKind, RegionDefinition};
 use domain::session::{GameSession, MonthlyReport};
 use domain::time::{Season, SimMonth};
-use domain::units::Megawatts;
+use domain::units::{Megawatts, Ratio};
 
-use super::Projection;
+use super::{MonthlyReportProjection, Projection};
 
 /// An achievement the player can earn once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -167,6 +167,16 @@ pub fn month_is_clean(report: &MonthlyReport, struck: bool) -> bool {
         })
 }
 
+/// Whether `report`'s month drew a strike, read back from the report: it mirrors
+/// `Regulator::assess_month`, where unserved energy over the threshold is a strike, and a failed
+/// frequency month is a strike unless it drew the once-a-year notice. Saves written before schema
+/// 12 kept no strike flag per month, so their run is rebuilt from this.
+pub fn month_struck(report: &MonthlyReport, strike_threshold: Ratio) -> bool {
+    let unserved_failed = report.demand.value() > 0.0
+        && report.unserved.value() / report.demand.value() > strike_threshold.value();
+    unserved_failed || (report.frequency_failed && !report.frequency_notice)
+}
+
 const MW_PER_GW: f64 = 1_000.0;
 
 /// A run of strike-free closed months within one season.
@@ -227,6 +237,29 @@ impl MilestoneProjection {
         });
         // Credit newly attainable goals at the restored month, without replaying achievement
         // notifications. Preserve any notification state that was already in the snapshot.
+        let pending = self.newly_reached.len();
+        self.check(session.clock().month(), session.region().calendar());
+        self.newly_reached.truncate(pending);
+    }
+
+    /// Rebuilds the fossil-free run of a save written before schema 12 from its monthly reports,
+    /// then reveals and awards the bonus at the restored month if the goals and the run allow.
+    /// Like [`upgrade_targets`](Self::upgrade_targets) it raises no notification.
+    pub(crate) fn upgrade_fossil_free(
+        &mut self,
+        reports: &MonthlyReportProjection,
+        session: &GameSession,
+    ) {
+        let threshold = session.region().regulator().strike_threshold;
+        self.clean_run = u32::try_from(
+            reports
+                .history()
+                .iter()
+                .rev()
+                .take_while(|report| month_is_clean(report, month_struck(report, threshold)))
+                .count(),
+        )
+        .unwrap_or(u32::MAX);
         let pending = self.newly_reached.len();
         self.check(session.clock().month(), session.region().calendar());
         self.newly_reached.truncate(pending);
@@ -1316,6 +1349,174 @@ mod tests {
         assert_eq!(restored.peak_demand, milestones.peak_demand);
         assert_eq!(restored.connected_cities, milestones.connected_cities);
         assert_eq!(restored.run, milestones.run);
+    }
+
+    // Old saves: the run is rebuilt from the monthly reports.
+    fn reports_of(
+        reports: impl IntoIterator<Item = domain::session::MonthlyReport>,
+    ) -> MonthlyReportProjection {
+        let mut history = MonthlyReportProjection::default();
+        for report in reports {
+            history.apply(&DomainEvent::MonthClosed(Box::new(report)), &session());
+        }
+        history
+    }
+
+    /// A projection as a schema 11 save restores it: three goals reached, no run, no reveal.
+    fn schema_11_with_three_reached() -> MilestoneProjection {
+        use domain::state::State;
+        let mut live = revealed_after(5);
+        live.take_newly_reached();
+        let bytes = live.state_bytes_schema(11);
+        let old = MilestoneProjection::from_state_bytes_schema(&bytes, 11).unwrap();
+        assert_eq!((old.clean_run, old.bonus_revealed), (0, None));
+        assert_eq!(old.reached().len(), 3);
+        old
+    }
+
+    fn struck_report(index: u32) -> domain::session::MonthlyReport {
+        let mut report = report_at(index);
+        report.demand = MegawattHours::new(1_000.0);
+        report.unserved = MegawattHours::new(100.0);
+        report
+    }
+
+    #[test]
+    fn old_save_with_three_reached_reveals_and_awards_silently() {
+        let mut old = schema_11_with_three_reached();
+        let history = reports_of((0..12).map(report_at));
+        old.upgrade_fossil_free(&history, &session());
+        let restored_month = session().clock().month();
+        assert_eq!(old.clean_run, 12);
+        assert_eq!(old.bonus_revealed, Some(restored_month));
+        assert!(matches!(
+            old.status(MilestoneKind::FossilFreeYear, restored_month, session().region().calendar()),
+            MilestoneStatus::Reached { month } if month == restored_month
+        ));
+        assert_eq!(old.reached().last(), Some(&MilestoneKind::FossilFreeYear));
+        assert!(old.newly_reached.is_empty(), "no notification");
+    }
+
+    #[test]
+    fn old_save_keeps_pending_notifications_and_shows_an_unfinished_run() {
+        let mut old = schema_11_with_three_reached();
+        old.newly_reached
+            .push(MilestoneKind::FullSeasonWithoutStrike);
+        // Eleven clean months behind a struck one: revealed, not awarded.
+        let history = reports_of(std::iter::once(struck_report(0)).chain((1..12).map(report_at)));
+        old.upgrade_fossil_free(&history, &session());
+        assert_eq!(old.clean_run, 11);
+        assert!(old.bonus().is_some());
+        assert!(!old.reached().contains(&MilestoneKind::FossilFreeYear));
+        assert_eq!(old.newly_reached, [MilestoneKind::FullSeasonWithoutStrike]);
+    }
+
+    #[test]
+    fn old_save_run_stops_at_the_latest_fossil_or_struck_month() {
+        let mut old = schema_11_with_three_reached();
+        let mut fossil = report_at(7);
+        fossil
+            .energy_by_kind
+            .insert(PlantKind::Ccgt, MegawattHours::new(5.0));
+        let history = reports_of(
+            (0..7)
+                .map(report_at)
+                .chain([fossil])
+                .chain((8..11).map(report_at))
+                .chain([struck_report(11)])
+                .chain((12..14).map(report_at)),
+        );
+        old.upgrade_fossil_free(&history, &session());
+        assert_eq!(old.clean_run, 2);
+        assert!(!old.reached().contains(&MilestoneKind::FossilFreeYear));
+    }
+
+    #[test]
+    fn old_save_without_three_reached_stays_hidden_whatever_the_run() {
+        let mut old = MilestoneProjection::new(&session());
+        let history = reports_of((0..14).map(report_at));
+        old.upgrade_fossil_free(&history, &session());
+        assert_eq!(old.clean_run, 14);
+        assert_eq!(old.bonus(), None);
+        assert!(!old.reached().contains(&MilestoneKind::FossilFreeYear));
+    }
+
+    #[test]
+    fn a_frequency_notice_month_does_not_break_an_old_saves_run() {
+        let mut old = schema_11_with_three_reached();
+        let mut noticed = report_at(4);
+        noticed.frequency_failed = true;
+        noticed.frequency_notice = true;
+        let history = reports_of(
+            (0..4)
+                .map(report_at)
+                .chain([noticed])
+                .chain((5..12).map(report_at)),
+        );
+        old.upgrade_fossil_free(&history, &session());
+        assert_eq!(old.clean_run, 12);
+    }
+
+    proptest::proptest! {
+        /// `month_struck` agrees with a regulator that judged the same month, including when a
+        /// notice earlier in the year has already been spent.
+        #[test]
+        fn month_struck_matches_the_regulator(
+            demand in proptest::prop_oneof![proptest::strategy::Just(0.0), 1.0f64..1.0e6],
+            share in proptest::prop_oneof![
+                proptest::strategy::Just(0.0),
+                proptest::strategy::Just(0.005),
+                0.0f64..0.02,
+            ],
+            out_of_band in 0.0f64..=1.0,
+            prior_notice in proptest::bool::ANY,
+        ) {
+            use domain::regulation::Regulator;
+            let session = session();
+            let params = session.region().regulator();
+            let mut regulator = Regulator::new(params);
+            let spent = SimMonth::new(2027, 3).unwrap();
+            if prior_notice {
+                // A failing month with no notice on record draws the notice and spends it.
+                let events = regulator.assess_month(
+                    spent,
+                    MegawattHours::new(1.0),
+                    MegawattHours::new(0.0),
+                    Ratio::ONE,
+                    params,
+                );
+                let spent_notice = matches!(
+                    events.as_slice(),
+                    [DomainEvent::FrequencyNoticeIssued { .. }]
+                );
+                proptest::prop_assert!(spent_notice);
+            }
+            let month = SimMonth::new(2027, 6).unwrap();
+            let out_of_band = Ratio::new(out_of_band).unwrap();
+            let events = regulator.assess_month(
+                month,
+                MegawattHours::new(demand),
+                MegawattHours::new(demand * share),
+                out_of_band,
+                params,
+            );
+            let mut report = report(2027, 6, 100.0);
+            report.demand = MegawattHours::new(demand);
+            report.unserved = MegawattHours::new(demand * share);
+            report.frequency_failed = Regulator::fails_frequency(out_of_band, params);
+            report.frequency_notice = events
+                .iter()
+                .any(|event| matches!(event, DomainEvent::FrequencyNoticeIssued { .. }));
+            let struck = events
+                .iter()
+                .any(|event| matches!(event, DomainEvent::StrikeIssued { .. }));
+            proptest::prop_assert_eq!(
+                month_struck(&report, params.strike_threshold),
+                struck,
+                "{:?}",
+                events
+            );
+        }
     }
 
     #[test]
