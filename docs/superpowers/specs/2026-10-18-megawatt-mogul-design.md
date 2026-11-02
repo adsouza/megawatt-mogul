@@ -108,6 +108,9 @@ demand counts, both as revenue and as load that must be served. Unconnected citi
 but are not simulated. Connecting a city too early, before there is capacity to serve it, is a
 classic overreach that the game should punish fairly.
 
+Once every city of the region is connected, demand grows at the region's real forecast rate, which
+is region data; see `docs/superpowers/specs/2026-11-02-endgame-growth-and-green-milestone-design.md`.
+
 This keeps early games manageable (tens of plants, not hundreds) and puts the "connect suppliers
 with consumers" fantasy at the centre of the game.
 

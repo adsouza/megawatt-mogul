@@ -182,6 +182,12 @@ impl Game {
             if snapshot.schema < 10 {
                 projections.milestones.upgrade_targets(&session);
             }
+            if snapshot.schema < 12 {
+                // After the targets, so a schema 9 save ends as if the run had been seeded first.
+                projections
+                    .milestones
+                    .upgrade_fossil_free(&projections.monthly_reports, &session);
+            }
             (session, projections)
         } else {
             let (session, projections) =

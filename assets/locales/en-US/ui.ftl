@@ -45,9 +45,11 @@ milestone-serve-peak = Serve a monthly peak of { $gigawatts } GW
 milestone-serve-peak-mw = Serve a monthly peak of { $megawatts } MW
 milestone-full-season-without-strike = Get through a full season without a strike
 milestone-connect-cities = Connect { $count } cities
+milestone-fossil-free-year = Run a full year on clean power, without a strike
 milestone-progress-peak = Best monthly peak so far: { $best } of { $goal }
 milestone-progress-strike-free = { $months } of { $needed } strike-free months this season
 milestone-progress-cities = { $connected } of { $needed } cities connected
+milestone-progress-clean-months = { $months } of { $needed } clean, strike-free months
 
 ## Shell: boot, menu and region select
 
@@ -114,6 +116,11 @@ topbar-warnings = { $count ->
    *[other] ⚠ { $count } warnings
 }
 toast-repeated = { $text } (×{ $count })
+# `$name` is the milestone's name, as in the Milestones panel.
+toast-milestone-revealed = New milestone: { $name }
+toast-milestone-reached = Milestone reached: { $name }
+# `$percent` is the region's yearly demand growth, one decimal, such as 3.3.
+toast-demand-growth-started = Every city is connected. Demand will now grow about { $percent }% a year.
 game-over-title = Game over
 game-over-final-cash = Final cash
 game-over-reliability = Reliability
@@ -373,6 +380,9 @@ city-connect-hint = Build a line to it from the build menu to connect it.
 # The connection date accounts for every unfinished line on a complete route to the home grid.
 city-line-under-construction = Grid connection under construction: connected from { $month }
 city-base-load = Base load
+# Shown once demand growth has started; `$percent` is the region's yearly rate, one decimal.
+city-demand-growth = Demand growth
+city-demand-growth-value = { $percent }% a year
 city-peak = Peak today
 # What an unconnected city would add to demand, at the day's peak, once a line reaches it.
 city-would-add = Would add at peak

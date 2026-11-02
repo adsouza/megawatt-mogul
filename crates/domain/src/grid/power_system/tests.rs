@@ -1,5 +1,9 @@
 use super::*;
 
+use crate::demand::DemandGrowth;
+use crate::grid::power_system::battery::BatteryPlanningInputs;
+use crate::state::State;
+
 use crate::generation::{CommitmentSchedule, PlantStatus, draw_clearness, water_fill};
 use crate::grid::network::{LineStatus, Node, NodeKind};
 use crate::ids::{CellCoord, LineId};
@@ -1074,13 +1078,13 @@ fn projected_peak_uses_summed_hourly_means_and_current_connectivity() {
         }
         best
     };
-    let got = sys.projected_connected_peak(&region, april());
+    let got = sys.projected_connected_peak(&region, april(), DemandGrowth::NONE, 1.0);
     assert!((got.value() - 1000.0 * peak_factor(april())).abs() < 1e-9);
     // Connecting city 3 (300 MW) raises the projection at once.
     sys.network_mut()
         .add_line(LineId(999), ROOT, NodeId(13), LineStatus::InService)
         .unwrap();
-    let got = sys.projected_connected_peak(&region, april());
+    let got = sys.projected_connected_peak(&region, april(), DemandGrowth::NONE, 1.0);
     assert!((got.value() - 1300.0 * peak_factor(april())).abs() < 1e-9);
 }
 
@@ -5293,4 +5297,114 @@ fn geothermal_agc_forecasts_credit_available_capacity_not_nameplate() {
             "charge budget at {tick}"
         );
     }
+}
+
+fn grown(factor: f64) -> DemandGrowth {
+    DemandGrowth::NONE.stepped(factor)
+}
+
+#[test]
+fn connected_demand_scales_by_the_growth_factor() {
+    let region = tiny_region();
+    let mut sys = system_with(&region, &start_fleet(&region));
+    let base: Vec<Megawatts> = (0..24)
+        .map(|h| sys.connected_demand_forecast(&region, april(), h * 60 + 30))
+        .collect();
+    assert!(base.iter().all(|d| *d > Megawatts::ZERO));
+    sys.set_demand_growth(grown(1.05));
+    assert_eq!(sys.demand_growth().factor(), 1.05);
+    for (h, plain) in (0..24).zip(base) {
+        let scaled = sys.connected_demand_forecast(&region, april(), h * 60 + 30);
+        assert_eq!(scaled, plain * 1.05, "hour {h}");
+    }
+}
+
+#[test]
+fn projected_connected_peak_scales_by_the_growth_factor() {
+    let region = tiny_region();
+    let sys = system_with(&region, &start_fleet(&region));
+    let plain = sys.projected_connected_peak(&region, april(), DemandGrowth::NONE, 1.0);
+    assert_eq!(
+        sys.projected_connected_peak(&region, april(), grown(1.05), 1.0),
+        plain * 1.05
+    );
+}
+
+#[test]
+fn projected_connected_peak_grows_one_step_a_month() {
+    let region = tiny_region();
+    let sys = system_with(&region, &start_fleet(&region));
+    let (first, monthly) = (grown(1.05), 1.002);
+    let cities: Vec<_> = sys.connected_cities().collect();
+    let mut expected = Megawatts::ZERO;
+    let mut month = april();
+    for i in 0..12 {
+        let growth = first.ahead(monthly, i);
+        for point in hourly_forecast(cities.iter().copied(), &region, month, growth) {
+            expected = expected.max(point.mean);
+        }
+        month = month.next();
+    }
+    let got = sys.projected_connected_peak(&region, april(), first, monthly);
+    assert_eq!(got, expected);
+    assert!(got > sys.projected_connected_peak(&region, april(), first, 1.0));
+}
+
+#[test]
+fn battery_planning_demand_scales_by_the_growth_factor() {
+    let region = tiny_region();
+    let mut sys = system_with(&region, &start_fleet(&region));
+    let plain = BatteryPlanningInputs::new(&sys, &region, april())
+        .minute(600)
+        .demand;
+    sys.set_demand_growth(grown(1.05));
+    let scaled = BatteryPlanningInputs::new(&sys, &region, april())
+        .minute(600)
+        .demand;
+    assert_eq!(scaled, plain * 1.05);
+}
+
+#[test]
+fn scoped_island_carries_the_growth_factor() {
+    let region = tiny_region();
+    let mut sys = system_with(&region, &start_fleet(&region));
+    sys.recompute_islands();
+    sys.set_demand_growth(grown(1.05));
+    let ids: Vec<NodeId> = sys.island_nodes().keys().copied().collect();
+    assert!(!ids.is_empty());
+    for id in ids {
+        assert_eq!(
+            sys.scoped_island(id, &region).unwrap().demand_growth(),
+            sys.demand_growth()
+        );
+        assert_eq!(
+            sys.scoped_connection_island(id, &region)
+                .unwrap()
+                .demand_growth(),
+            sys.demand_growth()
+        );
+    }
+}
+
+#[test]
+fn demand_growth_round_trips_at_schema_11() {
+    let region = tiny_region();
+    let mut sys = system_with(&region, &start_fleet(&region));
+    sys.set_demand_growth(grown(1.05));
+    let bytes = sys.state_bytes_schema(11);
+    let back = PowerSystem::from_state_bytes_schema(&bytes, 11).unwrap();
+    assert_eq!(back.demand_growth(), grown(1.05));
+    assert_eq!(back.state_bytes_schema(11), bytes);
+}
+
+#[test]
+fn schema_10_state_reads_no_growth() {
+    let region = tiny_region();
+    let mut sys = system_with(&region, &start_fleet(&region));
+    let plain = sys.state_bytes_schema(10);
+    sys.set_demand_growth(grown(1.05));
+    // The field is not part of schema 10, so the bytes carry no trace of it.
+    assert_eq!(sys.state_bytes_schema(10), plain);
+    let back = PowerSystem::from_state_bytes_schema(&plain, 10).unwrap();
+    assert_eq!(back.demand_growth(), DemandGrowth::NONE);
 }

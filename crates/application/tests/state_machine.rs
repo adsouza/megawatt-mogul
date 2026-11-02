@@ -26,7 +26,7 @@ use proptest::array::uniform24;
 use proptest::prelude::*;
 use proptest::sample::select;
 use proptest_state_machine::{ReferenceStateMachine, StateMachineTest, prop_state_machine};
-use support::{empty_start, game_on};
+use support::{empty_start, game_on, growth_parts, order_line_to_the_last_city};
 
 /// What the model knows about a game: its seed, whether the game starts
 /// empty, the day phase and the tick within the day, and the ids the start
@@ -449,4 +449,51 @@ fn review_precomputation_rejects_a_different_planning_state() {
     })
     .unwrap();
     assert!(prepared.into_run(&game).is_none());
+}
+
+#[test]
+fn review_precompute_agrees_after_a_growth_close() {
+    use domain::demand::DemandGrowth;
+    const RATE: f64 = 0.024;
+    let (mut grown, _) = game_on(growth_parts(RATE), 3);
+    let (mut flat, _) = game_on(growth_parts(0.0), 3);
+    for game in [&mut grown, &mut flat] {
+        order_line_to_the_last_city(game);
+    }
+    // Play to the close that completes the region and stop in its Review.
+    while grown.session().demand_growth() == DemandGrowth::NONE {
+        for game in [&mut grown, &mut flat] {
+            game.execute(Command::BeginOperating).unwrap();
+            game.execute(Command::AdvanceTicks { n: TICKS_PER_DAY })
+                .unwrap();
+        }
+        if grown.session().demand_growth() == DemandGrowth::NONE {
+            for game in [&mut grown, &mut flat] {
+                game.execute(Command::FinishReview).unwrap();
+            }
+        }
+    }
+    assert_eq!(grown.session().phase(), DayPhase::Review);
+    let mut work = application::ReviewCommitmentWork::new(grown.session().clone()).unwrap();
+    while !work.advance() {}
+    let prepared = work.finish();
+    for game in [&mut grown, &mut flat] {
+        game.execute(Command::FinishReview).unwrap();
+    }
+    let expected = application::automatic_commitment_run(&grown).unwrap();
+    let run = prepared
+        .into_run(&grown)
+        .expect("the grown state hashes the same as the precompute's");
+    assert_eq!(run.commands, expected.commands);
+    assert_eq!(run.diagnostic, expected.diagnostic);
+    // The planning forecast it was computed against is the grown demand.
+    let factor = grown.session().demand_growth().factor();
+    for (g, f) in grown
+        .session()
+        .hourly_forecast()
+        .iter()
+        .zip(flat.session().hourly_forecast().iter())
+    {
+        assert!((g.mean.value() - f.mean.value() * factor).abs() < 1e-9 * f.mean.value());
+    }
 }

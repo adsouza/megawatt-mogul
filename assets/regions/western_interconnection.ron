@@ -27,7 +27,7 @@
 // file (the coarser grid gives way). With the three cuts no centre is
 // playable in both regions.
 (
-    region_schema: 6,
+    region_schema: 7,
     id: "western_interconnection",
     system_zone: 1,
     time_zones: [
@@ -248,6 +248,10 @@
     geothermal: (success_min: 0.45, success_max: 0.80, quality_min: 0.15, quality_max: 1.0, exploration_months: 3, exploration_share: 0.12, monthly_decline: 0.002535048613836126, makeup_capital: 15000000, makeup_months: 3, ceiling_step: 0.05, minimum_gain: 0.03),
     wind: (monthly: [0.6, 0.6, 0.65, 0.65, 0.6, 0.55, 0.5, 0.5, 0.55, 0.6, 0.6, 0.6], persistence: 0.995, innovation_sd: 0.015, initial_sd: 0.15, band: 0.25),
     weather: (surprise_share: 0.5),
+    // Demand growth, 2.2% a year: peak demand 2026-2035, the sum of the 8 WECC areas,
+    // 187.1 to 228.2 GW. NERC, 2025 Long-Term Reliability Assessment (Jan 2026),
+    // Total Internal Demand by assessment area. Driver: data centres.
+    demand_growth_per_year: 0.022,
     catalog: [
         // Geothermal [P7-GEO-001]: explicit A19 gameplay tuning in local major units;
         // not derived from this region's real-world costs or Plan 7 pacing ratios.

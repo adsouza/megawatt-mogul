@@ -23,8 +23,8 @@ pub use chart_archive::ArchivedChartMonth;
 pub use expansion::{ExpansionProjection, PLAYED_MONTHS};
 pub use lessons::{Lesson, LessonsProjection, lessons_for};
 pub use milestones::{
-    MILESTONES, MilestoneKind, MilestoneProgress, MilestoneProjection, MilestoneStatus,
-    regional_milestones,
+    FOSSIL_FREE_MONTHS, MILESTONES, MilestoneKind, MilestoneProgress, MilestoneProjection,
+    MilestoneStatus, month_is_clean, month_struck, regional_milestones,
 };
 pub use monthly_report::MonthlyReportProjection;
 pub use payoff::{PlantPayoff, plant_payoff};

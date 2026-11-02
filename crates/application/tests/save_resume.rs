@@ -8,11 +8,15 @@ use application::{
     SaveMetadata,
 };
 use domain::ids::PlantId;
+use domain::region::PlantKind;
 use domain::region::fixtures::tiny_region_parts;
 use domain::session::{DayPhase, GameSettings};
 use domain::time::TICKS_PER_DAY;
 use proptest::prelude::*;
-use support::{StaticCatalog, game_on, tiny_loaded_region};
+use support::{
+    StaticCatalog, game_on, growth_parts, loaded_region, order_line_to_the_last_city, play_month,
+    tiny_loaded_region,
+};
 
 fn restore(game: &Game) -> Game {
     Game::restore(
@@ -63,7 +67,104 @@ fn schema_9_snapshot_upgrades_pending_regional_milestones_without_losing_progres
         restored.projections().milestones.targets()[2],
         application::projections::MilestoneKind::ConnectCities { count: 3 }
     );
-    assert_eq!(restored.checkpoint().snapshot.unwrap().schema, 10);
+    assert_eq!(restored.checkpoint().snapshot.unwrap().schema, 12);
+}
+
+/// Commits `kinds` all day on AGC, or stops them: the player's plan for one month.
+fn run_kinds(game: &mut Game, kinds: &[PlantKind], on: bool) {
+    let plants: Vec<_> = game
+        .session()
+        .plant_views()
+        .iter()
+        .filter(|plant| kinds.contains(&plant.kind))
+        .map(|plant| plant.id)
+        .collect();
+    for plant in plants {
+        if on {
+            game.execute(Command::CommitPlant {
+                plant,
+                hours: [true; 24],
+            })
+            .unwrap();
+        } else {
+            game.execute(Command::StopPlant { plant }).unwrap();
+        }
+        game.execute(Command::SetAutoFollow { plant, on }).unwrap();
+    }
+}
+
+#[test]
+fn seeded_run_equals_live_run() {
+    use application::projections::{
+        FOSSIL_FREE_MONTHS, MilestoneKind, MilestoneProgress, MilestoneStatus,
+    };
+    use domain::events::DomainEvent;
+    use domain::region::fixtures::may_2033_parts;
+    use domain::state::State;
+    // Five 800 MW hydro units and four CCGTs serve a flat quarter of the 2033 incident's load.
+    // Fossil runs in the first month and is stopped from the second; the fifth month stops the
+    // hydro too, so the whole load goes unserved and the regulator strikes; clean months follow.
+    const FOSSIL: [PlantKind; 3] = [PlantKind::Coal, PlantKind::Ccgt, PlantKind::Peaker];
+    let mut parts = may_2033_parts();
+    for city in &mut parts.cities {
+        city.base_load = city.base_load * 0.25;
+    }
+    // The hydro fleet's tracking error sheds about 2.5% of the load, which this region's
+    // threshold would strike: widen it so only the blackout month is struck.
+    parts.regulator.strike_threshold = domain::units::Ratio::new(0.05).unwrap();
+    let (mut game, _) = game_on(parts.clone(), 21);
+    let mut struck = Vec::new();
+    for month in 1..=8 {
+        let events = play_month(&mut game, |game| match month {
+            1 => {}
+            2 => {
+                run_kinds(game, &FOSSIL, false);
+                run_kinds(game, &[PlantKind::Hydro], true);
+            }
+            5 => run_kinds(game, &[PlantKind::Hydro], false),
+            6 => run_kinds(game, &[PlantKind::Hydro], true),
+            _ => {}
+        });
+        struck.push(
+            events
+                .iter()
+                .any(|event| matches!(event, DomainEvent::StrikeIssued { .. })),
+        );
+    }
+    assert_eq!(
+        struck,
+        [false, false, false, false, true, false, false, false],
+        "only the month with every plant stopped drew a strike"
+    );
+    let live = game.projections().milestones.clone();
+    // The live projection counted the three clean months since the strike.
+    assert_eq!(
+        live.status(
+            MilestoneKind::FossilFreeYear,
+            game.session().clock().month(),
+            game.session().region().calendar()
+        ),
+        MilestoneStatus::InProgress(MilestoneProgress::CleanMonths {
+            months: 3,
+            needed: FOSSIL_FREE_MONTHS
+        })
+    );
+
+    let mut checkpoint = game.checkpoint();
+    let snapshot = checkpoint.snapshot.as_mut().unwrap();
+    snapshot.schema = 11;
+    snapshot.session = game.session().snapshot_state_schema(11);
+    snapshot.projections = game.projections().state_bytes_schema(11);
+    checkpoint.state_hash = snapshot.state_hash();
+    let restored = Game::restore(
+        loaded_region(parts),
+        checkpoint,
+        Box::new(InMemoryCommandLog::default()),
+        &|| false,
+    )
+    .unwrap();
+    // The schema 11 bytes carry no run; the restore rebuilt the live one from the reports.
+    assert_eq!(restored.projections().milestones, live);
 }
 
 #[test]
@@ -979,5 +1080,57 @@ fn schema_8_snapshots_restore_in_every_phase_with_a_neutral_forecast() {
         let left = TICKS_PER_DAY - restored.session().clock().tick();
         restored.execute(Command::AdvanceTicks { n: left }).unwrap();
         assert_eq!(restored.session().phase(), DayPhase::Review, "{phase:?}");
+    }
+}
+
+#[test]
+fn resume_mid_growth_continues_exactly() {
+    use domain::demand::DemandGrowth;
+    const RATE: f64 = 0.024;
+    let (mut game, _) = game_on(growth_parts(RATE), 5);
+    order_line_to_the_last_city(&mut game);
+    while game.session().demand_growth() == DemandGrowth::NONE {
+        play_month(&mut game, |_| {});
+    }
+    // One growth close is behind us; take a second so the factor is a compounded product.
+    play_month(&mut game, |_| {});
+    let monthly = 1.0 + RATE / 12.0;
+    assert_eq!(game.session().demand_growth().factor(), monthly * monthly);
+
+    let from_snapshot = game.checkpoint();
+    let mut replay_only = game.checkpoint();
+    replay_only.snapshot = None;
+    replay_only.state_hash = game.session().state_hash();
+    for checkpoint in [from_snapshot, replay_only] {
+        let mut restored = Game::restore(
+            loaded_region(growth_parts(RATE)),
+            checkpoint,
+            Box::new(InMemoryCommandLog::default()),
+            &|| false,
+        )
+        .unwrap();
+        assert_eq!(
+            restored.session().demand_growth(),
+            game.session().demand_growth()
+        );
+        assert_eq!(restored.session().state_hash(), game.session().state_hash());
+        play_month(&mut restored, |_| {});
+        let mut uninterrupted = Game::restore(
+            loaded_region(growth_parts(RATE)),
+            game.checkpoint(),
+            Box::new(InMemoryCommandLog::default()),
+            &|| false,
+        )
+        .unwrap();
+        play_month(&mut uninterrupted, |_| {});
+        assert_eq!(
+            restored.session().demand_growth().factor(),
+            monthly * monthly * monthly
+        );
+        assert_eq!(
+            restored.session().state_hash(),
+            uninterrupted.session().state_hash()
+        );
+        assert_eq!(restored.checkpoint(), uninterrupted.checkpoint());
     }
 }

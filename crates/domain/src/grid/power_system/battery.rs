@@ -161,6 +161,7 @@ impl<'a> BatteryPlanningInputs<'a> {
                     self.region,
                     self.month,
                     tick,
+                    self.power.demand_growth,
                 ),
                 solar: self
                     .solar

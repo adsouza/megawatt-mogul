@@ -740,7 +740,7 @@ fn every_save_gate_accepts_supported_schemas_and_rejects_unknown_versions() {
     use application::{RestoreError, SaveStore};
     use domain::state::State;
     use infrastructure::save::FileSaveStore;
-    for schema in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] {
+    for schema in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] {
         let dir = tempfile::TempDir::new().unwrap();
         let mut saved = bundle();
         let (_, region) = decode_save(&encode_save(&saved).unwrap(), &identity()).unwrap();
@@ -771,7 +771,7 @@ fn every_save_gate_accepts_supported_schemas_and_rejects_unknown_versions() {
             Box::new(InMemoryCommandLog::default()),
             &|| false,
         );
-        if matches!(schema, 1..=10) {
+        if matches!(schema, 1..=12) {
             assert!(rows[0].entry.is_ok(), "listing schema {schema}");
             let (read, region) = decoded.unwrap();
             assert_eq!(read, saved);

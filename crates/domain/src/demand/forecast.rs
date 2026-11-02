@@ -1,6 +1,6 @@
 //! The player-facing 24-hour demand forecast with an uncertainty band.
 
-use super::{DemandCenter, forecast_demand};
+use super::{DemandCenter, DemandGrowth, forecast_demand};
 use crate::region::RegionDefinition;
 use crate::time::{SimMonth, TICKS_PER_HOUR};
 use crate::units::Megawatts;
@@ -16,18 +16,19 @@ pub struct ForecastPoint {
 }
 
 /// Forecast for each hour of a day in `month`. The mean is taken at minute 30 of
-/// the hour. Sums only the cities it is given.
+/// the hour, scaled by `growth`. Sums only the cities it is given.
 pub fn hourly_forecast<'a>(
     cities: impl IntoIterator<Item = &'a DemandCenter>,
     region: &RegionDefinition,
     month: SimMonth,
+    growth: DemandGrowth,
 ) -> [ForecastPoint; 24] {
     let cities: Vec<&DemandCenter> = cities.into_iter().collect();
     let band = 2.0 * region.demand_noise().forecast_error.value();
     std::array::from_fn(|h| {
         let hour = h as u8;
         let tick = u32::from(hour) * TICKS_PER_HOUR + TICKS_PER_HOUR / 2;
-        let mean = forecast_demand(cities.iter().copied(), region, month, tick);
+        let mean = forecast_demand(cities.iter().copied(), region, month, tick, growth);
         ForecastPoint {
             hour,
             mean,
@@ -63,7 +64,7 @@ mod tests {
     fn forecast_band_brackets_mean() {
         let r = tiny_region();
         let month = SimMonth::new(2027, 4).unwrap();
-        let points = hourly_forecast(&centers(), &r, month);
+        let points = hourly_forecast(&centers(), &r, month, DemandGrowth::NONE);
         for p in points {
             assert!(p.low < p.mean && p.mean < p.high);
         }
@@ -73,7 +74,7 @@ mod tests {
     fn forecast_covers_each_hour_at_minute_30_with_two_sigma_band() {
         let r = tiny_region();
         let month = SimMonth::new(2027, 4).unwrap();
-        let points = hourly_forecast(&centers(), &r, month);
+        let points = hourly_forecast(&centers(), &r, month, DemandGrowth::NONE);
         for (h, p) in points.iter().enumerate() {
             assert_eq!(usize::from(p.hour), h);
             let mean = 1300.0 * r.load_factor(r.cities()[0].id, month, h as u32 * 60 + 30);

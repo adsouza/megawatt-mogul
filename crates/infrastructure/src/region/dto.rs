@@ -415,6 +415,13 @@ pub struct RegionFileV4 {
         skip_serializing_if = "Option::is_none"
     )]
     pub weather: Option<WeatherDto>,
+    /// Yearly growth of every city's demand, as a fraction (schema 7).
+    #[serde(
+        default,
+        with = "present_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub demand_growth_per_year: Option<f64>,
     pub catalog: Vec<PlantSpecDtoV4>,
     pub cities: Vec<CityDtoV4>,
     pub system_zone: u16,

@@ -21,6 +21,7 @@ mod connection;
 #[cfg(test)]
 mod forecast_contract_tests;
 mod geothermal;
+mod growth;
 pub use geothermal::DrySite;
 mod invariants;
 mod links;

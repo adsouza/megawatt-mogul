@@ -33,6 +33,7 @@ pub use links::{
 };
 pub(crate) mod map;
 mod menu;
+mod milestone_toasts;
 mod milestones;
 mod operating;
 mod planning;
@@ -127,6 +128,7 @@ pub use self::menu::{
     RegionProblem, RegionSelectModel, TutorialToggle, boot_error_model, draw_boot_error,
     draw_main_menu, draw_region_select, main_menu_model, region_select_model,
 };
+pub use self::milestone_toasts::{MilestoneNotice, MilestoneToast};
 pub use self::milestones::{
     MILESTONES_WIDTH, MilestoneRow, MilestonesModel, MilestonesOpen, draw_milestones,
     milestone_row, milestones_model,
@@ -237,6 +239,8 @@ impl Plugin for HudPlugin {
             .init_resource::<OperatingTab>()
             .init_resource::<PlantPanelForm>()
             .init_resource::<ToastQueue>()
+            .init_resource::<milestone_toasts::MilestoneCursor>()
+            .add_message::<MilestoneToast>()
             .init_resource::<HudArea>()
             .init_resource::<SaveForm>()
             .init_resource::<saves::PersistenceShown>()
@@ -320,6 +324,11 @@ impl Plugin for HudPlugin {
                         .after(crate::l10n::load_localizer)
                         .before(toasts::collect_toasts)
                         .run_if(has_l10n),
+                    milestone_toasts::announce_milestones
+                        .after(SimSet::Apply)
+                        .after(SimSet::Persist)
+                        .before(toasts::collect_toasts)
+                        .run_if(in_game.clone()),
                     // After a load's poll, which clears the outgoing game's events and refusals:
                     // they never become toasts over the loaded game.
                     toasts::collect_toasts
@@ -733,6 +742,73 @@ pub(crate) mod test_support {
             "../../../infrastructure/tests/support/global-foundations/eastern_interconnection-v3.ron"
         )).unwrap();
         shipped_game_in(dir.path(), "eastern_interconnection")
+    }
+
+    /// The tiny fixture region, growing at `rate` a year once every city is connected.
+    struct TinyCatalog(f64);
+
+    impl application::RegionCatalog for TinyCatalog {
+        fn list(&self) -> Result<Vec<application::RegionListing>, application::RegionLoadError> {
+            Ok(Vec::new())
+        }
+
+        fn load(
+            &self,
+            _: &RegionId,
+        ) -> Result<application::LoadedRegion, application::RegionLoadError> {
+            let mut parts = domain::region::fixtures::tiny_region_parts();
+            parts.demand_growth_per_year = self.0;
+            Ok(application::LoadedRegion {
+                definition: std::sync::Arc::new(
+                    domain::region::RegionDefinition::try_from(parts).expect("a valid region"),
+                ),
+                source_bytes: Vec::new(),
+                fingerprint: application::RegionFingerprint::new([0; 32]),
+            })
+        }
+    }
+
+    /// A new game in the tiny fixture region (one city unconnected), seed 7, in Planning, whose
+    /// demand grows at `rate` a year once every city is connected.
+    pub fn tiny_game(rate: f64) -> Game {
+        Game::start_new(
+            &TinyCatalog(rate),
+            &RegionId::new("tiny"),
+            7,
+            GameSettings::default(),
+            Box::new(application::InMemoryCommandLog::default()),
+        )
+        .expect("the tiny region starts")
+    }
+
+    /// [`tiny_game`] played, in Planning, to the first month after demand growth has begun: the
+    /// last city is connected and one month's growth has been applied (none at a rate of 0).
+    pub fn grown_tiny_game(rate: f64) -> Game {
+        use domain::time::TICKS_PER_DAY;
+        let mut game = tiny_game(rate);
+        let to = game
+            .session()
+            .city_views()
+            .into_iter()
+            .find(|city| !city.connected)
+            .expect("the tiny region starts with an unconnected city")
+            .node;
+        let from = game.session().anchor_node();
+        game.execute(Command::BuildLine { from, to })
+            .expect("order the last line");
+        // The close that connects the last city is the one that starts the growth.
+        while game
+            .session()
+            .city_views()
+            .iter()
+            .any(|city| !city.connected)
+        {
+            game.execute(Command::BeginOperating).unwrap();
+            game.execute(Command::AdvanceTicks { n: TICKS_PER_DAY })
+                .unwrap();
+            game.execute(Command::FinishReview).unwrap();
+        }
+        game
     }
 
     /// A new eastern game, seed 7, in Planning, recording to `sink`.

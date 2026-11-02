@@ -5,6 +5,7 @@ use proptest::prelude::*;
 use super::super::*;
 use super::{LedgerTotals, is_zero_capital, share};
 use crate::company::{AssetProfile, LedgerCategory, ReserveReviewInputs};
+use crate::demand::DemandGrowth;
 use crate::generation::PlantStatus;
 use crate::grid::GridMode;
 use crate::ids::CityId;
@@ -471,7 +472,9 @@ fn december_capacity_and_city_connection_are_assessed_together() {
         .firm_capacity(&s.region().regulator().storage_accreditation);
     assert_eq!(firm, Megawatts::new(2300.0));
     let next = SimMonth::new(2028, 1).unwrap();
-    let projected = s.power().projected_connected_peak(s.region(), next);
+    let projected = s
+        .power()
+        .projected_connected_peak(s.region(), next, DemandGrowth::NONE, 1.0);
     assert_eq!(projected, Megawatts::new(2000.0));
     // 2.3 GW firm is within 2 GW × 1.2: nothing is held.
     assert!(
@@ -1170,7 +1173,7 @@ fn the_estimate_and_the_review_read_the_same_months() {
             Megawatts::new(1.0),
         );
     }
-    let inputs = s.review_inputs(s.clock.month());
+    let inputs = s.review_inputs(s.clock.month(), s.demand_growth());
     assert_eq!(inputs.rate_review(Money::ZERO).tally.months, 5);
 }
 
@@ -1391,4 +1394,385 @@ fn blackout_dark_load_is_not_counted_as_planned() {
             >= (dark_unserved * weight).value() - 1e-6
     );
     assert!(report.rotating_outage < report.unserved);
+}
+
+const GROWTH_RATE: f64 = 0.024;
+
+/// A tiny-region session whose region grows at `rate` a year once every city is connected. The
+/// fleet is the robust one, and the line to the one unconnected city (3) is ordered when
+/// `connect_last` is set.
+fn growth_session(rate: f64, connect_last: bool) -> GameSession {
+    let mut parts = tiny_region_parts();
+    parts.demand_growth_per_year = rate;
+    let mut s = session_from(parts, 1);
+    robust_fleet(&mut s);
+    if connect_last {
+        let city3 = city_node(&s, CityId(3));
+        s.build_line(s.anchor_node(), city3).unwrap();
+    }
+    s
+}
+
+/// Plays months until `CityConnected` for city 3; returns that close's events.
+fn play_until_last_city_connects(s: &mut GameSession) -> Vec<DomainEvent> {
+    for _ in 0..6 {
+        let events = play_day(s);
+        if events.contains(&DomainEvent::CityConnected { city: CityId(3) }) {
+            return events;
+        }
+        s.finish_review().unwrap();
+    }
+    panic!("city 3 never connected");
+}
+
+fn growth_started(events: &[DomainEvent]) -> Vec<&DomainEvent> {
+    events
+        .iter()
+        .filter(|e| matches!(e, DomainEvent::DemandGrowthStarted { .. }))
+        .collect()
+}
+
+#[test]
+fn no_growth_while_a_city_is_unconnected() {
+    let mut s = growth_session(GROWTH_RATE, false);
+    for _ in 0..3 {
+        let events = play_day(&mut s);
+        assert_eq!(s.demand_growth(), DemandGrowth::NONE);
+        assert!(growth_started(&events).is_empty());
+        s.finish_review().unwrap();
+    }
+}
+
+#[test]
+fn growth_starts_at_the_close_that_connects_the_last_city() {
+    let mut s = growth_session(GROWTH_RATE, true);
+    let events = play_until_last_city_connects(&mut s);
+    let connected = events
+        .iter()
+        .position(|e| *e == DomainEvent::CityConnected { city: CityId(3) })
+        .unwrap();
+    let started = events
+        .iter()
+        .position(|e| {
+            *e == DomainEvent::DemandGrowthStarted {
+                annual_rate: GROWTH_RATE,
+            }
+        })
+        .expect("growth is announced at the completing close");
+    assert!(connected < started);
+    assert_eq!(growth_started(&events).len(), 1);
+    let monthly = 1.0 + GROWTH_RATE / 12.0;
+    assert_eq!(s.demand_growth().factor(), monthly);
+    assert!((s.demand_growth().factor() - 1.002).abs() < 1e-12);
+
+    s.finish_review().unwrap();
+    let next = play_day(&mut s);
+    assert!(growth_started(&next).is_empty());
+    assert_eq!(s.demand_growth().factor(), monthly * monthly);
+}
+
+#[test]
+fn month_report_shows_the_demand_actually_served() {
+    let mut growing = growth_session(GROWTH_RATE, true);
+    let mut flat = growth_session(0.0, true);
+    let grown_events = play_until_last_city_connects(&mut growing);
+    let flat_events = play_until_last_city_connects(&mut flat);
+    assert_ne!(growing.demand_growth(), DemandGrowth::NONE);
+    assert_eq!(
+        report_in(&grown_events).demand,
+        report_in(&flat_events).demand
+    );
+    // The step is felt from the next month on.
+    growing.finish_review().unwrap();
+    flat.finish_review().unwrap();
+    let grown_next = report_in(&play_day(&mut growing)).demand;
+    let flat_next = report_in(&play_day(&mut flat)).demand;
+    let ratio = grown_next.value() / flat_next.value();
+    assert!((ratio - (1.0 + GROWTH_RATE / 12.0)).abs() < 1e-6, "{ratio}");
+}
+
+#[test]
+fn zero_rate_never_steps_or_announces() {
+    let mut s = growth_session(0.0, true);
+    let events = play_until_last_city_connects(&mut s);
+    assert_eq!(s.demand_growth(), DemandGrowth::NONE);
+    assert!(growth_started(&events).is_empty());
+    s.finish_review().unwrap();
+    let next = play_day(&mut s);
+    assert_eq!(s.demand_growth(), DemandGrowth::NONE);
+    assert!(growth_started(&next).is_empty());
+}
+
+/// The tiny region with every city connected from the start, growing at `rate` a year.
+fn complete_parts(rate: f64) -> RegionDefinitionParts {
+    let mut parts = tiny_region_parts();
+    parts.demand_growth_per_year = rate;
+    parts.start.connected_cities = vec![CityId(1), CityId(2), CityId(3)];
+    parts
+}
+
+fn assert_scaled(grown: Megawatts, flat: Megawatts, factor: f64) {
+    let expected = flat * factor;
+    assert!(
+        (grown - expected).value().abs() <= expected.value().abs() * 1e-12,
+        "{grown:?} vs {expected:?}"
+    );
+}
+
+#[test]
+fn review_projects_next_years_grown_peak() {
+    let mut parts = complete_parts(GROWTH_RATE);
+    parts.start.month = SimMonth::new(2027, 12).unwrap();
+    let mut s = session_from(parts, 1);
+    let current = DemandGrowth::NONE.stepped(1.05);
+    s.power.set_demand_growth(current);
+    let december = s.clock().month();
+    let january = december.next();
+    let monthly = s.region().monthly_demand_growth();
+    // Month i of next year plays after this close and i more, each one step of growth.
+    let mut expected = Megawatts::ZERO;
+    let mut month = january;
+    for i in 0..12 {
+        let growth = current.ahead(monthly, i + 1);
+        for point in
+            crate::demand::hourly_forecast(s.power().cities().values(), s.region(), month, growth)
+        {
+            expected = expected.max(point.mean);
+        }
+        month = month.next();
+    }
+    assert_eq!(s.growth_for(january), current.stepped(monthly));
+    let inputs = s.review_inputs(december, s.growth_for(january));
+    assert_eq!(inputs.rate.projected_peak, expected);
+    assert_estimate_matches_annual_review(&s);
+}
+
+/// Total capital held at the close of a flat-load December growing at `rate`. City 2 is
+/// connected from the start, or by a line that completes at this close; a new peaker lifts
+/// firm capacity midway between the flat and the grown (at 2.4% a year) projected peak plus
+/// reserve margin. Returns the session after the close and the capital held.
+fn december_held(rate: f64, city2_from_start: bool) -> (GameSession, Money) {
+    let mut parts = flat_december();
+    parts.demand_growth_per_year = rate;
+    parts.cities[1].base_load = Megawatts::new(400.0);
+    parts.start.connected_cities = if city2_from_start {
+        vec![CityId(1), CityId(2), CityId(3)]
+    } else {
+        vec![CityId(1), CityId(3)]
+    };
+    let flat_peak: Megawatts = parts.cities.iter().map(|c| c.base_load).sum();
+    let prudent = flat_peak * (1.0 + parts.regulator.reserve_margin.value());
+    let grown = prudent
+        * DemandGrowth::NONE
+            .ahead(crate::demand::monthly_growth_factor(GROWTH_RATE), 12)
+            .factor();
+    let coal = parts
+        .catalog
+        .iter()
+        .find(|spec| spec.kind == PlantKind::Coal)
+        .unwrap()
+        .capacity;
+    let coal_firm = coal * parts.start.fleet.len() as f64;
+    let peaker = (prudent + grown) * 0.5 - coal_firm;
+    assert!(peaker > Megawatts::ZERO);
+    parts
+        .catalog
+        .iter_mut()
+        .find(|spec| spec.kind == PlantKind::Peaker)
+        .unwrap()
+        .capacity = peaker;
+    let mut s = session_from(parts, 1);
+    auto_fleet(&mut s);
+    s.build_plant(PlantKind::Peaker, cell(5, 5)).unwrap();
+    if !city2_from_start {
+        let city2 = city_node(&s, CityId(2));
+        s.build_line(s.anchor_node(), city2).unwrap();
+    }
+    let events = play_day(&mut s);
+    assert_eq!(s.clock().month().month(), 12);
+    assert!(report_in(&events).rate_review.is_some());
+    assert_eq!(
+        events.contains(&DomainEvent::CityConnected { city: CityId(2) }),
+        !city2_from_start
+    );
+    let held = events
+        .iter()
+        .filter_map(|e| match e {
+            DomainEvent::CapitalHeld { amount, .. } => Some(*amount),
+            _ => None,
+        })
+        .sum();
+    (s, held)
+}
+
+#[test]
+fn growth_built_ahead_is_not_held() {
+    let (s, held) = december_held(GROWTH_RATE, true);
+    assert_eq!(held, Money::ZERO);
+    assert_ne!(s.demand_growth(), DemandGrowth::NONE);
+    // Without growth the same plant is excess.
+    assert!(december_held(0.0, true).1 > Money::ZERO);
+}
+
+#[test]
+fn december_completing_close_projects_growth() {
+    let (s, held) = december_held(GROWTH_RATE, false);
+    assert_eq!(s.demand_growth(), DemandGrowth::NONE.stepped(1.002));
+    assert_eq!(held, Money::ZERO);
+    assert!(december_held(0.0, false).1 > Money::ZERO);
+}
+
+#[test]
+fn pending_line_starts_growth_in_the_outlook() {
+    let mut s = growth_session(GROWTH_RATE, true);
+    let flat = growth_session(0.0, true);
+    let monthly = s.region().monthly_demand_growth();
+    let start = s.clock().month();
+    let months_left = s
+        .power()
+        .network()
+        .lines()
+        .find_map(|l| match l.status {
+            crate::grid::LineStatus::UnderConstruction { months_left } => Some(months_left),
+            _ => None,
+        })
+        .unwrap();
+    assert!(months_left >= 2);
+    // The close that commissions the line completes the region and grows demand first.
+    let commissioning = start.checked_add_months(months_left - 1).unwrap();
+    assert_eq!(s.first_growth_close(), Some(commissioning));
+    let at = |k: u32| start.checked_add_months(k).unwrap();
+    let expected = |k: u32| DemandGrowth::NONE.ahead(monthly, (k + 1).saturating_sub(months_left));
+    for k in 0..12 {
+        assert_eq!(s.growth_for(at(k)), expected(k), "{k} months ahead");
+    }
+    let grown = s.year_ahead_outlook(None).unwrap();
+    let plain = flat.year_ahead_outlook(None).unwrap();
+    for (k, (g, f)) in grown.months.iter().zip(&plain.months).enumerate() {
+        let factor = expected(k as u32).factor();
+        assert_scaled(g.baseline.peak_demand, f.baseline.peak_demand, factor);
+    }
+    // Playing on reaches exactly the factors the outlook projected.
+    for k in 1..=months_left + 1 {
+        play_day(&mut s);
+        s.finish_review().unwrap();
+        assert_eq!(s.clock().month(), at(k));
+        assert_eq!(s.demand_growth(), expected(k), "after {k} closes");
+    }
+}
+
+#[test]
+fn review_outlook_does_not_count_the_closed_month_twice() {
+    let mut s = growth_session(GROWTH_RATE, true);
+    play_until_last_city_connects(&mut s);
+    s.finish_review().unwrap();
+    play_day(&mut s);
+    let monthly = s.region().monthly_demand_growth();
+    assert_eq!(s.phase(), DayPhase::Review);
+    assert_eq!(
+        s.demand_growth(),
+        DemandGrowth::NONE.ahead(monthly, 2),
+        "two growing closes so far"
+    );
+    // The closed month's step is already in the factor: the next month plays at it.
+    let next = s.clock().month().next();
+    assert_eq!(s.first_growth_close(), Some(next));
+    assert_eq!(s.growth_for(next), s.demand_growth());
+    assert_eq!(
+        s.growth_for(next.next()),
+        s.demand_growth().stepped(monthly)
+    );
+    let review = s.year_ahead_outlook(None).unwrap();
+    s.finish_review().unwrap();
+    let planning = s.year_ahead_outlook(None).unwrap();
+    assert_eq!(review.months[0].month, s.clock().month());
+    assert_eq!(review.months, planning.months);
+}
+
+#[test]
+fn a_close_that_ends_the_game_does_not_grow_demand() {
+    let mut parts = complete_parts(GROWTH_RATE);
+    parts.start.cash = Money::from_dollars(-1_000_000_000_000);
+    let mut s = session_from(parts, 1);
+    robust_fleet(&mut s);
+    // Two negative closes already behind it: this close bankrupts the company.
+    assert!(!s.company.close_solvency_month());
+    assert!(!s.company.close_solvency_month());
+    let events = play_day(&mut s);
+    assert_eq!(
+        s.status(),
+        SessionStatus::GameOver(GameOverReason::Bankrupt)
+    );
+    assert_eq!(s.demand_growth(), DemandGrowth::NONE);
+    assert!(growth_started(&events).is_empty());
+    // Nothing closes after the game ends, so nothing more is projected.
+    assert_eq!(s.first_growth_close(), None);
+    let later = s.clock().month().checked_add_months(6).unwrap();
+    assert_eq!(s.growth_for(later), DemandGrowth::NONE);
+}
+
+/// December's review runs midway through its close, after construction has advanced. A line
+/// left to complete the region at January's close must not count December's close as growing:
+/// this close does not step, and the projection keeps today's cities.
+#[test]
+fn december_review_waits_for_the_close_that_completes_the_region() {
+    let held = |rate| {
+        let mut parts = flat_december();
+        parts.demand_growth_per_year = rate;
+        parts.cities[1].base_load = Megawatts::new(100.0);
+        parts.start.connected_cities = vec![CityId(1), CityId(2)];
+        parts.start.fleet.truncate(2);
+        let mut s = session_from(parts, 1);
+        auto_fleet(&mut s);
+        s.build_plant(PlantKind::Peaker, cell(5, 5)).unwrap();
+        let city3 = city_node(&s, CityId(3));
+        let (line, _) = s.build_line(s.anchor_node(), city3).unwrap();
+        assert_eq!(s.line_build_months(line), Some(2));
+        let events = play_day(&mut s);
+        assert!(report_in(&events).rate_review.is_some());
+        assert_eq!(s.demand_growth(), DemandGrowth::NONE);
+        if rate > 0.0 {
+            assert_eq!(s.first_growth_close(), Some(s.clock().month().next()));
+        }
+        events
+            .iter()
+            .filter_map(|e| match e {
+                DomainEvent::CapitalHeld { amount, .. } => Some(*amount),
+                _ => None,
+            })
+            .sum::<Money>()
+    };
+    let flat = held(0.0);
+    assert!(flat > Money::ZERO);
+    assert_eq!(held(GROWTH_RATE), flat);
+}
+
+/// Two areas at a growing rate, every city physically connected, but city 3 (in the second
+/// area) reached only by an HVDC link into an area nobody has activated yet.
+fn physically_complete_with_an_inactive_area() -> GameSession {
+    let mut parts = crate::region::fixtures::two_area_parts();
+    parts.demand_growth_per_year = GROWTH_RATE;
+    let mut s = session_from(parts, 1);
+    let far = city_node(&s, CityId(3));
+    let link = s.ids.next();
+    let anchor = s.anchor_node();
+    s.power
+        .network_mut()
+        .add_link(link, anchor, far, crate::grid::LineStatus::InService)
+        .unwrap();
+    s.power.recompute_islands();
+    s
+}
+
+#[test]
+fn projections_do_not_grow_while_a_connected_city_sits_in_an_inactive_area() {
+    let s = physically_complete_with_an_inactive_area();
+    let far = city_node(&s, CityId(3));
+    assert!(s.power().network().is_connected(far), "physically reached");
+    assert!(!s.power().node_active(far), "but its area is not enrolled");
+    // The live step would not grow here (`region_complete` is false), so neither may a projection.
+    assert!(!s.region_complete());
+    assert_eq!(s.first_growth_close(), None);
+    let later = s.clock().month().checked_add_months(6).unwrap();
+    assert_eq!(s.growth_for(later), s.demand_growth());
 }

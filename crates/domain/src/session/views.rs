@@ -95,6 +95,9 @@ pub struct CityDetail {
     /// A physical route exists, but this remote island has no commissioned synchronous source.
     pub inactive: bool,
     pub base_load: Megawatts,
+    /// The demand growth factor now applying to `base_load` (`1.0` before growth
+    /// starts): the load the city draws at its daily average is `base_load * growth`.
+    pub growth: f64,
     /// `base_load` over the connected cities' total base load; zero for an
     /// unconnected city.
     pub share: Ratio,
@@ -418,7 +421,12 @@ impl GameSession {
         };
         // The city's own climate in its local time, including the load an
         // unconnected city would add.
-        let forecast = hourly_forecast([city], &self.region, self.clock.month());
+        let forecast = hourly_forecast(
+            [city],
+            &self.region,
+            self.clock.month(),
+            self.power.demand_growth(),
+        );
         let peak = forecast.iter().fold(forecast[0], |best, point| {
             if point.mean > best.mean { *point } else { best }
         });
@@ -475,6 +483,7 @@ impl GameSession {
             connected,
             inactive,
             base_load,
+            growth: self.power.demand_growth().factor(),
             share,
             peak: peak.mean,
             peak_hour: peak.hour,
@@ -514,6 +523,11 @@ impl GameSession {
         Some(self.line_construction(line)?.months)
     }
 
+    /// The compounded demand growth applied to every demand figure.
+    pub fn demand_growth(&self) -> crate::demand::DemandGrowth {
+        self.power.demand_growth()
+    }
+
     /// The noise-free demand forecast of connected cities for each hour of
     /// the current month's representative day.
     pub fn hourly_forecast(&self) -> [ForecastPoint; 24] {
@@ -522,7 +536,12 @@ impl GameSession {
             .cities()
             .values()
             .filter(|city| self.power.node_active(city.node()));
-        hourly_forecast(connected, &self.region, self.clock.month())
+        hourly_forecast(
+            connected,
+            &self.region,
+            self.clock.month(),
+            self.power.demand_growth(),
+        )
     }
 
     /// Today's hydro peak-shaving schedule (spec §12.6), valid per phase:
@@ -756,9 +775,11 @@ impl GameSession {
     /// and their review counts are untouched.
     ///
     /// The review peak is `max(year's peak so far, projected peak)`, as in
-    /// December's real review, with the projection starting next month.
+    /// December's real review, with the projection starting next month at the
+    /// demand growth that month will be played at.
     pub fn rate_review_estimate(&self) -> RateReviewEstimate {
-        let inputs = self.review_inputs(self.clock.month());
+        let month = self.clock.month();
+        let inputs = self.review_inputs(month, self.growth_for(month.next()));
         let mut rate_base = self.company.rate_base().clone();
         rate_base.refresh_plant_firm(|id| {
             self.power

@@ -17,8 +17,8 @@ use super::top_bar::Stat;
 use crate::l10n::{Localizer, Names, format};
 
 /// The most figures a city card shows: base load, the peak, and in Operating the demand now, the
-/// load served now and the share cut.
-pub const MOST_CITY_STATS: usize = 5;
+/// load served now and the share cut, then the yearly growth once demand grows.
+pub const MOST_CITY_STATS: usize = 6;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CityCardModel {
@@ -30,8 +30,9 @@ pub struct CityCardModel {
     pub local_time: String,
     pub connected: bool,
     pub cutting_load: bool,
-    /// Base load and the peak; in Operating, for a connected city, the demand and the load served
-    /// now, and the share cut while an outage or a shed is on.
+    /// Base load (grown by the demand growth so far) and the peak; in Operating, for a connected
+    /// city, the demand and the load served now, and the share cut while an outage or a shed is
+    /// on; last, the yearly demand growth once it has started.
     pub stats: Vec<Stat>,
     /// For an unconnected city, how to connect it, or, while a line to it is being built, the
     /// month it connects; `None` for a connected one.
@@ -57,7 +58,11 @@ pub fn city_card_model(game: &Game, l10n: &Localizer, city: CityId) -> Option<Ci
         ],
     );
     let mut stats = vec![
-        stat("city-base-load", format::megawatts(detail.base_load)),
+        // The authored load, grown by the demand growth so far.
+        stat(
+            "city-base-load",
+            format::megawatts(detail.base_load * detail.growth),
+        ),
         // An unconnected city's peak is what connecting it would add.
         stat(
             if detail.connected {
@@ -75,6 +80,17 @@ pub fn city_card_model(game: &Game, l10n: &Localizer, city: CityId) -> Option<Ci
         if let Some(cut) = cut_share(demand, served) {
             stats.push(stat("city-cut", format::percent(cut)));
         }
+    }
+    // After the live rows, so the rows the draw function tones by position stay put.
+    if detail.growth != 1.0 {
+        let rate = l10n.args(
+            "city-demand-growth-value",
+            &[(
+                "percent",
+                format::percent_number(session.region().demand_growth_per_year()).into(),
+            )],
+        );
+        stats.push(stat("city-demand-growth", rate));
     }
     Some(CityCardModel {
         city,
@@ -181,7 +197,10 @@ mod tests {
     use domain::session::{CityDetail, DayPhase};
 
     use super::*;
-    use crate::hud::test_support::{eastern_game, empty_start, shipped_game, shipped_l10n};
+    use crate::hud::test_support::{
+        eastern_game, empty_start, global_l10n, grown_tiny_game, shipped_game, shipped_l10n,
+        tiny_game,
+    };
     use crate::hud::{Project, construction_model, in_service_month};
 
     fn card(game: &Game, city: CityId) -> CityCardModel {
@@ -572,7 +591,8 @@ mod tests {
             labels(&model),
             ["Base load", "Peak today", "Demand now", "Served now", "Cut"]
         );
-        assert_eq!(model.stats.len(), MOST_CITY_STATS);
+        // Demand isn't growing here, so the card has all but the growth figure.
+        assert_eq!(model.stats.len(), MOST_CITY_STATS - 1);
         let (demand, served) = (d.demand_now.unwrap(), d.served_now.unwrap());
         assert!(served < demand);
         let cut = Ratio::new(1.0 - served.value() / demand.value()).unwrap();
@@ -581,6 +601,96 @@ mod tests {
         let system = Ratio::new(1.0 - tick.served.value() / tick.demand.value()).unwrap();
         assert_eq!(format::percent(cut), format::percent(system));
         assert_eq!(l10n.problems(), vec![]);
+    }
+
+    #[test]
+    fn city_card_shows_grown_base_load_and_rate() {
+        let l10n = global_l10n();
+        let game = grown_tiny_game(0.033);
+        let factor = game.session().demand_growth().factor();
+        assert!(factor > 1.0, "a month of growth: {factor}");
+        for view in game.session().city_views() {
+            let d = detail(&game, view.id);
+            assert_eq!(d.growth, factor);
+            let model = city_card_model(&game, &l10n, view.id).unwrap();
+            // The authored base load is untouched; the card shows it grown.
+            assert_eq!(
+                value(&model, "Base load"),
+                format::megawatts(d.base_load * factor)
+            );
+            assert_ne!(
+                value(&model, "Base load"),
+                format::megawatts(d.base_load),
+                "the authored load is shown grown"
+            );
+            assert_eq!(value(&model, "Demand growth"), "3.3% a year");
+            assert_eq!(labels(&model), ["Base load", "Peak today", "Demand growth"]);
+        }
+        assert_eq!(l10n.problems(), vec![]);
+    }
+
+    #[test]
+    fn city_card_without_growth_shows_the_authored_load_and_no_rate() {
+        let l10n = global_l10n();
+        // A growing region before every city is connected, and a flat region after.
+        for game in [tiny_game(0.033), grown_tiny_game(0.0)] {
+            for view in game.session().city_views() {
+                let d = detail(&game, view.id);
+                assert_eq!(d.growth, 1.0);
+                let model = city_card_model(&game, &l10n, view.id).unwrap();
+                assert!(!labels(&model).contains(&"Demand growth"), "{model:?}");
+                assert_eq!(value(&model, "Base load"), format::megawatts(d.base_load));
+            }
+        }
+    }
+
+    /// The tallest card, a connected city in an outage once demand grows, fits the details block
+    /// that Operating keeps at one height for it.
+    #[test]
+    fn the_tallest_card_fits_the_details_block() {
+        let stat = |label: &str, value: &str| Stat {
+            label: label.to_owned(),
+            value: value.to_owned(),
+        };
+        let model = CityCardModel {
+            city: CityId(1),
+            name: "A city".to_owned(),
+            connection: "Connected".to_owned(),
+            local_time: "Local time: 00:00".to_owned(),
+            connected: true,
+            cutting_load: true,
+            stats: ["Base load", "Peak today", "Demand now", "Served now", "Cut"]
+                .into_iter()
+                .chain(["Demand growth"])
+                .map(|label| stat(label, "1.0 GW"))
+                .collect(),
+            hint: None,
+        };
+        assert_eq!(model.stats.len(), MOST_CITY_STATS);
+        let ctx = egui::Context::default();
+        let mut heights = None;
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(400.0, 800.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                draw_city_card(ui, &model);
+                heights = Some((
+                    ui.min_rect().height(),
+                    crate::hud::plant_details_height(ui.ctx()),
+                ));
+            },
+        );
+        output.drop_without_applying_deltas();
+        let (card, block) = heights.expect("the pass ran");
+        assert!(
+            card <= block,
+            "the card is {card} tall in a block of {block}"
+        );
     }
 
     #[test]

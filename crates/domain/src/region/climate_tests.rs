@@ -77,13 +77,21 @@ fn cities_in_other_zones_peak_at_their_local_hour() {
         .map(|c| crate::demand::DemandCenter::new(c.clone(), crate::ids::NodeId(0)))
         .collect();
     assert_eq!(
-        crate::demand::forecast_demand(&cities, &r, month(1), 15 * 60).value(),
+        crate::demand::forecast_demand(
+            &cities,
+            &r,
+            month(1),
+            15 * 60,
+            crate::demand::DemandGrowth::NONE
+        )
+        .value(),
         850.0
     );
     assert_eq!(
-        crate::demand::hourly_forecast(&cities, &r, month(1))[15]
-            .mean
-            .value(),
+        crate::demand::hourly_forecast(&cities, &r, month(1), crate::demand::DemandGrowth::NONE)
+            [15]
+        .mean
+        .value(),
         750.0
     );
 }
@@ -200,9 +208,15 @@ fn legacy_climate_is_bit_identical_to_the_old_shape() {
             let sum: crate::units::Megawatts =
                 cities.iter().map(|c| c.def().base_load * expected).sum();
             assert_eq!(
-                crate::demand::forecast_demand(&cities, &r, month(m), tick)
-                    .value()
-                    .to_bits(),
+                crate::demand::forecast_demand(
+                    &cities,
+                    &r,
+                    month(m),
+                    tick,
+                    crate::demand::DemandGrowth::NONE
+                )
+                .value()
+                .to_bits(),
                 sum.value().to_bits()
             );
         }

@@ -1701,7 +1701,11 @@ fn region_schema6_requires_weather_and_schema5_defaults_to_one() {
         ),
         "{error}"
     );
-    let schema5 = text.replacen("region_schema: 6", "region_schema: 5", 1);
+    let schema5 = without_field(&text, "demand_growth_per_year").replacen(
+        "region_schema: 7",
+        "region_schema: 5",
+        1,
+    );
     let error = load_edited_western(schema5.clone()).unwrap_err();
     assert!(
         matches!(
@@ -1717,6 +1721,83 @@ fn region_schema6_requires_weather_and_schema5_defaults_to_one() {
     );
     let loaded = load_edited_western(without_top_level_field(&schema5, "weather")).unwrap();
     assert_eq!(loaded.definition.weather().surprise_share, 1.0);
+}
+
+/// The shipped Western file (schema 7) with `demand_growth_per_year: <rate>`, or without the field.
+fn western_schema7(rate: Option<&str>) -> String {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/regions");
+    let text = fs::read_to_string(root.join("western_interconnection.ron")).unwrap();
+    let text = without_field(&text, "demand_growth_per_year");
+    let Some(rate) = rate else { return text };
+    let anchor = "\n    weather: (surprise_share: 0.5),";
+    assert!(text.contains(anchor), "weather line in source");
+    text.replacen(
+        anchor,
+        &format!("{anchor}\n    demand_growth_per_year: {rate},"),
+        1,
+    )
+}
+
+#[test]
+fn region_schema7_requires_demand_growth() {
+    let error = load_edited_western(western_schema7(None)).unwrap_err();
+    assert!(
+        matches!(
+            &error,
+            RegionLoadError::Invalid {
+                error: RegionError::MissingField {
+                    field: "demand_growth_per_year"
+                },
+                ..
+            }
+        ),
+        "{error}"
+    );
+}
+
+#[test]
+fn region_schema7_maps_demand_growth() {
+    let loaded = load_edited_western(western_schema7(Some("0.033"))).unwrap();
+    assert_eq!(loaded.definition.demand_growth_per_year(), 0.033);
+}
+
+#[test]
+fn region_schema6_rejects_demand_growth_and_defaults_to_zero() {
+    let schema7 = western_schema7(Some("0.019"));
+    let schema6 = schema7.replacen("region_schema: 7", "region_schema: 6", 1);
+    let error = load_edited_western(schema6).unwrap_err();
+    assert!(
+        matches!(
+            &error,
+            RegionLoadError::Invalid {
+                error: RegionError::InvalidShape {
+                    field: "region_schema"
+                },
+                ..
+            }
+        ),
+        "{error}"
+    );
+    // Downgrade the shipped (schema 7) text in memory: schema 6 has no such field.
+    let schema6 = western_schema7(None).replacen("region_schema: 7", "region_schema: 6", 1);
+    let loaded = load_edited_western(schema6).unwrap();
+    assert_eq!(loaded.definition.demand_growth_per_year(), 0.0);
+}
+
+#[test]
+fn region_schema8_is_unsupported() {
+    let text = western_schema7(Some("0.019")).replacen("region_schema: 7", "region_schema: 8", 1);
+    let error = load_edited_western(text).unwrap_err();
+    assert!(
+        matches!(
+            &error,
+            RegionLoadError::Invalid {
+                error: RegionError::UnsupportedRegionSchema(8),
+                ..
+            }
+        ),
+        "{error}"
+    );
 }
 
 /// `text` without the top-level `field: (...)` entry, its trailing comma and line.

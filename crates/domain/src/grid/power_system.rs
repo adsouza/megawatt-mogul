@@ -30,7 +30,7 @@ use super::frequency::{FrequencyBand, band, next_deviation};
 use super::network::Network;
 use super::protection::{GridMode, ProtectionOutcome, ProtectionState, evaluate, restoration_step};
 use super::summary::TickSummary;
-use crate::demand::{DemandCenter, DemandNoise, forecast_demand, hourly_forecast};
+use crate::demand::{DemandCenter, DemandGrowth, DemandNoise, forecast_demand, hourly_forecast};
 use crate::error::DomainError;
 use crate::events::DomainEvent;
 use crate::generation::{BoundaryStart, CommitmentAction, Plant, PlantStatus, commitment_actions};
@@ -119,6 +119,9 @@ pub struct PowerSystem {
     wind_needs_replan: bool,
     /// The coming day's forecast weather, drawn when Planning begins.
     weather_forecast: WeatherForecast,
+    /// Compounded endgame demand growth: a multiplier on every demand figure. `NONE` until the
+    /// month close steps it.
+    demand_growth: DemandGrowth,
     deviation: Hertz,
     /// The band last reported, so `FrequencyDeviated` fires only on a change.
     band: FrequencyBand,
@@ -208,6 +211,7 @@ impl PowerSystem {
             battery_bus_surplus: None,
             wind_needs_replan: false,
             weather_forecast: WeatherForecast::default(),
+            demand_growth: DemandGrowth::NONE,
             deviation: Hertz::ZERO,
             band: FrequencyBand::Normal,
             protection: ProtectionState::default(),
@@ -1352,6 +1356,18 @@ impl PowerSystem {
         events
     }
 
+    /// The compounded demand growth every demand figure is multiplied by.
+    pub fn demand_growth(&self) -> DemandGrowth {
+        self.demand_growth
+    }
+
+    /// Replaces the demand growth factor. Called by the month-close growth step to compound it,
+    /// and when a projected system is copied from the live one so its demand carries the same
+    /// (or a projected) factor.
+    pub fn set_demand_growth(&mut self, growth: DemandGrowth) {
+        self.demand_growth = growth;
+    }
+
     /// Expected (noise-free) demand of connected cities at `tick`.
     pub fn connected_demand_forecast(
         &self,
@@ -1359,7 +1375,13 @@ impl PowerSystem {
         month: SimMonth,
         tick: u32,
     ) -> Megawatts {
-        forecast_demand(self.connected_cities(), region, month, tick)
+        forecast_demand(
+            self.connected_cities(),
+            region,
+            month,
+            tick,
+            self.demand_growth,
+        )
     }
 
     /// Expected output of connected commissioned solar at `tick`, using the
@@ -1430,19 +1452,25 @@ impl PowerSystem {
 
     /// The highest hourly mean of the summed connected-city profiles over the
     /// twelve calendar months from `first_month`, with today's connectivity.
+    /// `first_month` plays at demand growth `first` and each later month one
+    /// more step at the monthly factor `monthly` (1.0 when demand does not grow).
     pub fn projected_connected_peak(
         &self,
         region: &RegionDefinition,
         first_month: SimMonth,
+        first: DemandGrowth,
+        monthly: f64,
     ) -> Megawatts {
         let cities: Vec<&DemandCenter> = self.connected_cities().collect();
         let mut month = first_month;
+        let mut growth = first;
         let mut peak = Megawatts::ZERO;
         for _ in 0..MONTHS_PER_YEAR {
-            for point in hourly_forecast(cities.iter().copied(), region, month) {
+            for point in hourly_forecast(cities.iter().copied(), region, month, growth) {
                 peak = peak.max(point.mean);
             }
             month = month.next();
+            growth = growth.stepped(monthly);
         }
         peak
     }
@@ -1510,6 +1538,9 @@ impl crate::state::State for PowerSystem {
         }
         if schema >= 9 {
             self.weather_forecast.write_schema(out, schema);
+        }
+        if schema >= 11 {
+            self.demand_growth.write_schema(out, schema);
         }
     }
     fn read(input: &mut crate::state::StateReader<'_>) -> Result<Self, crate::state::StateError> {
@@ -1588,6 +1619,11 @@ impl crate::state::State for PowerSystem {
                 crate::state::State::read(input)?
             } else {
                 WeatherForecast::default()
+            },
+            demand_growth: if input.schema >= 11 {
+                crate::state::State::read(input)?
+            } else {
+                DemandGrowth::NONE
             },
         };
         if input.schema < 5 {

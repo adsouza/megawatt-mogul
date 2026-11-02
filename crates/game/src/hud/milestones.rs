@@ -40,7 +40,8 @@ pub struct MilestoneRow {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MilestonesModel {
     pub title: String,
-    /// Every milestone, in the order the game checks them.
+    /// Every milestone in view, in the order the game checks them: the three regional ones, then
+    /// the bonus once it has appeared.
     pub rows: Vec<MilestoneRow>,
     /// Closes the panel.
     pub close: ButtonModel,
@@ -51,9 +52,11 @@ pub fn milestones_model(game: &Game, l10n: &Localizer) -> MilestonesModel {
     let now = game.session().clock().month();
     MilestonesModel {
         title: l10n.text("milestones-title"),
+        // The hidden bonus follows the three once it has appeared.
         rows: milestones
             .targets()
             .iter()
+            .chain(&milestones.bonus())
             .map(|kind| {
                 milestone_row(
                     *kind,

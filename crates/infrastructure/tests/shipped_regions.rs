@@ -640,6 +640,30 @@ fn ships_exactly_the_listed_regions() {
     }
 }
 
+/// The real-world forecast rate each region ships (design spec section 6).
+const GROWTH_RATES: &[(&str, f64)] = &[
+    (EAST, 0.019),
+    (WEST, 0.022),
+    (BRAZIL, 0.033),
+    (EUROPE_MAGHREB, 0.024),
+    (INDIA, 0.053),
+    (IPS, 0.026),
+    (SGCC, 0.052),
+    (SOUTHERN_CHINA, 0.052),
+];
+
+#[test]
+fn shipped_regions_declare_their_growth_rates() {
+    assert_eq!(table_keys(GROWTH_RATES).len(), SHIPPED.len());
+    for &id in SHIPPED {
+        assert_eq!(
+            region(id).demand_growth_per_year(),
+            table_value(GROWTH_RATES, id),
+            "{id}"
+        );
+    }
+}
+
 #[test]
 fn shipped_sgcc_unlocks_after_four_regions() {
     let listed = catalog().list().expect("shipped regions list");

@@ -33,6 +33,8 @@ mod layout;
 mod line_cancellation;
 #[path = "game/map_legend.rs"]
 mod map_legend;
+#[path = "game/milestones.rs"]
+mod milestones;
 #[path = "game/operating_side.rs"]
 mod operating_side;
 #[path = "game/outlook.rs"]

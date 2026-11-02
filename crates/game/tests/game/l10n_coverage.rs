@@ -404,6 +404,7 @@ fn milestones() -> Vec<MilestoneKind> {
         MilestoneKind::ServePeakMegawatts { megawatts: 1_500 },
         MilestoneKind::FullSeasonWithoutStrike,
         MilestoneKind::ConnectCities { count: 10 },
+        MilestoneKind::FossilFreeYear,
     ]
 }
 
@@ -420,6 +421,10 @@ fn milestone_progress() -> Vec<MilestoneProgress> {
         MilestoneProgress::Cities {
             connected: 4,
             needed: 10,
+        },
+        MilestoneProgress::CleanMonths {
+            months: 5,
+            needed: 12,
         },
     ]
 }
@@ -648,6 +653,10 @@ fn events() -> Vec<(DomainEvent, bool)> {
             },
             false,
         ),
+        (
+            DomainEvent::DemandGrowthStarted { annual_rate: 0.024 },
+            true,
+        ),
     ]
 }
 
@@ -785,24 +794,27 @@ fn the_variant_tables_cover_every_variant() {
         PlantStatus::Online { .. } => 3,
         PlantStatus::Stopping { .. } => 4,
     });
-    assert_covers_every_variant("MilestoneKind", &milestones(), 4, |m| match m {
+    assert_covers_every_variant("MilestoneKind", &milestones(), 5, |m| match m {
         MilestoneKind::ServePeak { .. } => 0,
         MilestoneKind::FullSeasonWithoutStrike => 1,
         MilestoneKind::ConnectCities { .. } => 2,
         MilestoneKind::ServePeakMegawatts { .. } => 3,
+        MilestoneKind::FossilFreeYear => 4,
     });
-    assert_covers_every_variant("MilestoneProgress", &milestone_progress(), 3, |p| match p {
+    assert_covers_every_variant("MilestoneProgress", &milestone_progress(), 4, |p| match p {
         MilestoneProgress::Peak { .. } => 0,
         MilestoneProgress::StrikeFreeMonths { .. } => 1,
         MilestoneProgress::Cities { .. } => 2,
+        MilestoneProgress::CleanMonths { .. } => 3,
     });
     let events: Vec<DomainEvent> = events().into_iter().map(|(event, _)| event).collect();
-    assert_covers_every_variant("DomainEvent", &events, 38, |e| match e {
+    assert_covers_every_variant("DomainEvent", &events, 39, |e| match e {
         DomainEvent::ExplorationSucceeded { .. } => 33,
         DomainEvent::ExplorationDry { .. } => 34,
         DomainEvent::FieldDeclineThreshold { .. } => 35,
         DomainEvent::MakeupDrillingOrdered { .. } => 36,
         DomainEvent::MakeupDrillingCompleted { .. } => 37,
+        DomainEvent::DemandGrowthStarted { .. } => 38,
         DomainEvent::PlantStarting { .. } => 0,
         DomainEvent::PlantOnline { .. } => 1,
         DomainEvent::PlantStopped { .. } => 2,

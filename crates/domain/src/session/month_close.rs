@@ -11,6 +11,7 @@ use std::sync::Arc;
 use super::report::{MeritOrderEntry, MonthlyReport};
 use super::{DayPhase, GameOverReason, GameSession, SessionStatus};
 use crate::company::{AssetProfile, AssetRef, LedgerCategory, LedgerEntry, ReserveReviewInputs};
+use crate::demand::DemandGrowth;
 use crate::events::DomainEvent;
 use crate::generation::PlantStatus;
 use crate::grid::NodeKind;
@@ -53,13 +54,26 @@ impl ReviewInputs {
 
 impl GameSession {
     /// The review inputs on today's state, for a review held at the close of
-    /// `month`: the projection of connected peak demand starts the month after.
-    pub(super) fn review_inputs(&self, month: SimMonth) -> ReviewInputs {
+    /// `month`: the projection of connected peak demand starts the month after,
+    /// at demand growth `next`, the factor that month will be played at.
+    ///
+    /// The caller supplies `next` because the real review runs midway through
+    /// December's close, after construction has advanced but before the close's
+    /// own growth step, which [`GameSession::growth_for`] cannot tell apart from
+    /// Operating. Like the projection's cities, its growth is today's
+    /// connectivity: each later month grows one more step only if every city is
+    /// connected now.
+    pub(super) fn review_inputs(&self, month: SimMonth, next: DemandGrowth) -> ReviewInputs {
         let params = self.region.regulator();
         let firm = self.power.firm_capacity(&params.storage_accreditation);
-        let projected = self
-            .power
-            .projected_connected_peak(&self.region, month.next());
+        let monthly = if self.growing() {
+            self.region.monthly_demand_growth()
+        } else {
+            1.0
+        };
+        let projected =
+            self.power
+                .projected_connected_peak(&self.region, month.next(), next, monthly);
         let tally = self.regulator.tally().clone();
         let excess = reserve_excess(firm, tally.peak_demand, projected, params.reserve_margin);
         ReviewInputs {
@@ -100,6 +114,8 @@ impl GameSession {
     /// 8. Each plant that was commissioned all month records whether it sat
     ///    offline, the report is published, the finished day is cleared, the
     ///    hydro schedule is frozen for review, and the phase moves to `Review`.
+    /// 9. Once every city is connected, demand growth steps one month, after
+    ///    the report so the closed month shows the demand it served.
     pub(super) fn close_month(&mut self) -> Vec<DomainEvent> {
         let region = Arc::clone(&self.region);
         let month = self.clock.month();
@@ -159,6 +175,7 @@ impl GameSession {
         self.record_offline_months(&commissioned);
         let report = self.build_report(month, days, totals, frequency_notice, rate_review);
         events.push(DomainEvent::MonthClosed(Box::new(report)));
+        self.step_demand_growth(&mut events);
         self.month_to_date.reset();
         self.day_ticks.clear();
         self.power.finish_hydro_day();
@@ -319,6 +336,44 @@ impl GameSession {
         commissioned
     }
 
+    /// Whether every city of the region is energised.
+    pub(super) fn region_complete(&self) -> bool {
+        let connected = self.connected_cities();
+        self.region
+            .cities()
+            .iter()
+            .all(|c| connected.contains(&c.id))
+    }
+
+    /// Step 9: once every city is connected, demand grows one month at every close. The close
+    /// that first completes the region announces it. It runs after the report, so the month
+    /// shows the demand actually served, and the next month plays at the grown demand. A close
+    /// that ended the game neither grows nor announces.
+    fn step_demand_growth(&mut self, events: &mut Vec<DomainEvent>) {
+        if !self.growing() {
+            return;
+        }
+        let growth = self.power.demand_growth();
+        if growth == DemandGrowth::NONE {
+            events.push(DomainEvent::DemandGrowthStarted {
+                annual_rate: self.region.demand_growth_per_year(),
+            });
+        }
+        self.power
+            .set_demand_growth(growth.stepped(self.region.monthly_demand_growth()));
+    }
+
+    /// The demand growth next month plays at, from within this close: stepped
+    /// once if this close grows demand.
+    fn growth_after_close(&self) -> DemandGrowth {
+        let growth = self.power.demand_growth();
+        if self.growing() {
+            growth.stepped(self.region.monthly_demand_growth())
+        } else {
+            growth
+        }
+    }
+
     fn connected_cities(&self) -> BTreeSet<CityId> {
         let network = self.power.network();
         network
@@ -351,8 +406,9 @@ impl GameSession {
                 .rate_base_mut()
                 .review_link_utilisation(month.year(), &utilisation),
         );
-        // Connectivity is already this close's: December's new cities count.
-        let inputs = self.review_inputs(month);
+        // Connectivity is already this close's: December's new cities count,
+        // and so does the growth step this close will take.
+        let inputs = self.review_inputs(month, self.growth_after_close());
         let capital = self
             .company
             .rate_base_mut()

@@ -1,12 +1,12 @@
 //! One-off achievements, for the player's sense of progress.
 
 use domain::events::DomainEvent;
-use domain::region::{Calendar, RegionDefinition};
-use domain::session::GameSession;
+use domain::region::{Calendar, PlantKind, RegionDefinition};
+use domain::session::{GameSession, MonthlyReport};
 use domain::time::{Season, SimMonth};
-use domain::units::Megawatts;
+use domain::units::{Megawatts, Ratio};
 
-use super::Projection;
+use super::{MonthlyReportProjection, Projection};
 
 /// An achievement the player can earn once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,6 +19,9 @@ pub enum MilestoneKind {
     FullSeasonWithoutStrike,
     /// This many cities are connected.
     ConnectCities { count: u32 },
+    /// Twelve closed months in a row with no strike and no coal, CCGT or peaker energy: the hidden
+    /// bonus, revealed once the three regional milestones are reached (schema 12).
+    FossilFreeYear,
 }
 
 /// Legacy targets, retained for decoding schemas 1–9 and preserving earned awards.
@@ -37,6 +40,7 @@ impl MilestoneKind {
                 Self::ServePeak { .. } | Self::ServePeakMegawatts { .. }
             ) | (Self::FullSeasonWithoutStrike, Self::FullSeasonWithoutStrike)
                 | (Self::ConnectCities { .. }, Self::ConnectCities { .. })
+                | (Self::FossilFreeYear, Self::FossilFreeYear)
         )
     }
 }
@@ -140,6 +144,38 @@ pub enum MilestoneProgress {
     StrikeFreeMonths { months: u32, needed: u32 },
     /// Cities connected now, against the cities to connect.
     Cities { connected: u32, needed: u32 },
+    /// Closed months in a row with no strike and no fossil energy (none while a strike issued
+    /// this month taints it), against the months needed.
+    CleanMonths { months: u32, needed: u32 },
+}
+
+/// Clean, strike-free closed months in a row that earn [`MilestoneKind::FossilFreeYear`].
+pub const FOSSIL_FREE_MONTHS: u32 = 12;
+/// Fossil energy at or below this is rounding, not generation; a month's start-up tail is above it.
+const FOSSIL_EPSILON_MWH: f64 = 1e-9;
+const FOSSIL_KINDS: [PlantKind; 3] = [PlantKind::Coal, PlantKind::Ccgt, PlantKind::Peaker];
+
+/// Whether `report`'s month counts toward [`MilestoneKind::FossilFreeYear`]: no strike was issued
+/// in it and no coal, CCGT or peaker produced energy. A fossil entry listed with zero energy is
+/// clean; a frequency notice is not a strike.
+pub fn month_is_clean(report: &MonthlyReport, struck: bool) -> bool {
+    !struck
+        && FOSSIL_KINDS.iter().all(|kind| {
+            report
+                .energy_by_kind
+                .get(kind)
+                .is_none_or(|energy| energy.value() <= FOSSIL_EPSILON_MWH)
+        })
+}
+
+/// Whether `report`'s month drew a strike, read back from the report: it mirrors
+/// `Regulator::assess_month`, where unserved energy over the threshold is a strike, and a failed
+/// frequency month is a strike unless it drew the once-a-year notice. Saves written before schema
+/// 12 kept no strike flag per month, so their run is rebuilt from this.
+pub fn month_struck(report: &MonthlyReport, strike_threshold: Ratio) -> bool {
+    let unserved_failed = report.demand.value() > 0.0
+        && report.unserved.value() / report.demand.value() > strike_threshold.value();
+    unserved_failed || (report.frequency_failed && !report.frequency_notice)
 }
 
 const MW_PER_GW: f64 = 1_000.0;
@@ -163,6 +199,11 @@ pub struct MilestoneProjection {
     strike_pending: bool,
     run: Option<StrikeFreeRun>,
     goals: [MilestoneKind; 3],
+    /// Consecutive closed months that were strike-free and fossil-free, counted from the start of
+    /// the game whether or not the bonus is revealed yet (schema 12).
+    clean_run: u32,
+    /// The month the three regional milestones were all reached, which reveals the bonus.
+    bonus_revealed: Option<SimMonth>,
 }
 
 impl MilestoneProjection {
@@ -176,6 +217,8 @@ impl MilestoneProjection {
             strike_pending: false,
             run: None,
             goals: regional_milestones(session.region()),
+            clean_run: 0,
+            bonus_revealed: None,
         };
         projection.observe_connected_cities(session);
         projection
@@ -198,6 +241,34 @@ impl MilestoneProjection {
         let pending = self.newly_reached.len();
         self.check(session.clock().month(), session.region().calendar());
         self.newly_reached.truncate(pending);
+    }
+
+    /// Rebuilds the fossil-free run of a save written before schema 12 from its monthly reports,
+    /// then reveals and awards the bonus at the restored month if the goals and the run allow.
+    /// Like [`upgrade_targets`](Self::upgrade_targets) it raises no notification.
+    pub(crate) fn upgrade_fossil_free(
+        &mut self,
+        reports: &MonthlyReportProjection,
+        session: &GameSession,
+    ) {
+        let threshold = session.region().regulator().strike_threshold;
+        self.clean_run = u32::try_from(
+            reports
+                .history()
+                .iter()
+                .rev()
+                .take_while(|report| month_is_clean(report, month_struck(report, threshold)))
+                .count(),
+        )
+        .unwrap_or(u32::MAX);
+        let pending = self.newly_reached.len();
+        self.check(session.clock().month(), session.region().calendar());
+        self.newly_reached.truncate(pending);
+    }
+
+    /// The hidden bonus milestone, once the three regional milestones are reached.
+    pub fn bonus(&self) -> Option<MilestoneKind> {
+        self.bonus_revealed.map(|_| MilestoneKind::FossilFreeYear)
     }
 
     /// Milestones reached so far, in the order they were reached.
@@ -239,6 +310,15 @@ impl MilestoneProjection {
                 connected: self.connected_cities,
                 needed: count,
             },
+            MilestoneKind::FossilFreeYear => MilestoneProgress::CleanMonths {
+                // Like the season run: a strike issued this month already taints it.
+                months: if self.strike_pending {
+                    0
+                } else {
+                    self.clean_run
+                },
+                needed: FOSSIL_FREE_MONTHS,
+            },
         })
     }
 
@@ -265,10 +345,18 @@ impl MilestoneProjection {
         self.check(month, calendar);
     }
 
-    fn close_month(&mut self, month: SimMonth, peak: Megawatts, calendar: &Calendar) {
+    fn close_month(&mut self, report: &MonthlyReport, calendar: &Calendar) {
+        let month = report.month;
         let season = calendar.season(month);
-        self.peak_demand = self.peak_demand.max(peak);
-        self.run = if std::mem::take(&mut self.strike_pending) {
+        self.peak_demand = self.peak_demand.max(report.peak_demand);
+        // `StrikeIssued` precedes `MonthClosed`, so the flag is this month's; take it once.
+        let struck = std::mem::take(&mut self.strike_pending);
+        self.clean_run = if month_is_clean(report, struck) {
+            self.clean_run.saturating_add(1)
+        } else {
+            0
+        };
+        self.run = if struck {
             None
         } else {
             Some(match self.run {
@@ -284,18 +372,30 @@ impl MilestoneProjection {
 
     /// Records every milestone whose condition now holds and that is not yet
     /// reached, in the frozen regional target order, as reached in `month`.
+    ///
+    /// Once all three are reached the hidden bonus is revealed in `month`, and it is earned as
+    /// soon as the run, counted since the game began, is long enough.
     fn check(&mut self, month: SimMonth, calendar: &Calendar) {
         for kind in self.goals {
-            if !self
-                .reached
-                .iter()
-                .any(|(reached, _)| reached.same_objective(kind))
-                && self.is_met(kind, month, calendar)
-            {
+            if !self.is_reached(kind) && self.is_met(kind, month, calendar) {
                 self.reached.push((kind, month));
                 self.newly_reached.push(kind);
             }
         }
+        if self.bonus_revealed.is_none() && self.goals.iter().all(|kind| self.is_reached(*kind)) {
+            self.bonus_revealed = Some(month);
+        }
+        let bonus = MilestoneKind::FossilFreeYear;
+        if !self.is_reached(bonus) && self.is_met(bonus, month, calendar) {
+            self.reached.push((bonus, month));
+            self.newly_reached.push(bonus);
+        }
+    }
+
+    fn is_reached(&self, kind: MilestoneKind) -> bool {
+        self.reached
+            .iter()
+            .any(|(reached, _)| reached.same_objective(kind))
     }
 
     fn is_met(&self, kind: MilestoneKind, month: SimMonth, calendar: &Calendar) -> bool {
@@ -311,6 +411,9 @@ impl MilestoneProjection {
                     && run.months >= u32::from(calendar.run_length(month))
             }),
             MilestoneKind::ConnectCities { count } => self.connected_cities >= count,
+            MilestoneKind::FossilFreeYear => {
+                self.bonus_revealed.is_some() && self.clean_run >= FOSSIL_FREE_MONTHS
+            }
         }
     }
 }
@@ -319,11 +422,7 @@ impl Projection for MilestoneProjection {
     fn apply(&mut self, event: &DomainEvent, session: &GameSession) {
         match event {
             DomainEvent::MonthClosed(report) => {
-                self.close_month(
-                    report.month,
-                    report.peak_demand,
-                    session.region().calendar(),
-                );
+                self.close_month(report, session.region().calendar());
             }
             DomainEvent::StrikeIssued { .. } => self.strike_pending = true,
             DomainEvent::CityConnected { .. } => self.observe_connected_cities(session),
@@ -333,15 +432,54 @@ impl Projection for MilestoneProjection {
 }
 
 // Portable state schema 1: explicit field order and enum tags.
-domain::state_record!(MilestoneProjection {
-    reached,
-    newly_reached,
-    peak_demand,
-    connected_cities,
-    strike_pending,
-    run;
-    since10 { goals: MILESTONES }
-});
+// Schema 10 appends the frozen goals and schema 12 the fossil-free run and its reveal month; the
+// `state_record!` macro supports only one such group, so this is written out.
+impl domain::state::State for MilestoneProjection {
+    fn write(&self, out: &mut Vec<u8>) {
+        self.write_schema(out, domain::state::CURRENT_STATE_SCHEMA);
+    }
+    fn write_schema(&self, out: &mut Vec<u8>, schema: u32) {
+        self.reached.write_schema(out, schema);
+        self.newly_reached.write_schema(out, schema);
+        self.peak_demand.write_schema(out, schema);
+        self.connected_cities.write_schema(out, schema);
+        self.strike_pending.write_schema(out, schema);
+        self.run.write_schema(out, schema);
+        if schema >= 10 {
+            self.goals.write_schema(out, schema);
+        }
+        if schema >= 12 {
+            self.clean_run.write_schema(out, schema);
+            self.bonus_revealed.write_schema(out, schema);
+        }
+    }
+    fn read(input: &mut domain::state::StateReader<'_>) -> Result<Self, domain::state::StateError> {
+        use domain::state::State;
+        Ok(Self {
+            reached: State::read(input)?,
+            newly_reached: State::read(input)?,
+            peak_demand: State::read(input)?,
+            connected_cities: State::read(input)?,
+            strike_pending: State::read(input)?,
+            run: State::read(input)?,
+            goals: if input.schema >= 10 {
+                State::read(input)?
+            } else {
+                MILESTONES
+            },
+            clean_run: if input.schema >= 12 {
+                State::read(input)?
+            } else {
+                0
+            },
+            bonus_revealed: if input.schema >= 12 {
+                State::read(input)?
+            } else {
+                None
+            },
+        })
+    }
+}
 impl domain::state::State for MilestoneKind {
     fn write(&self, out: &mut Vec<u8>) {
         match self {
@@ -360,6 +498,9 @@ impl domain::state::State for MilestoneKind {
                 domain::state::State::write(&2u8, out);
                 domain::state::State::write(count, out);
             }
+            Self::FossilFreeYear => {
+                domain::state::State::write(&4u8, out);
+            }
         }
     }
     fn read(input: &mut domain::state::StateReader<'_>) -> Result<Self, domain::state::StateError> {
@@ -374,6 +515,7 @@ impl domain::state::State for MilestoneKind {
             3 if input.schema >= 10 => Self::ServePeakMegawatts {
                 megawatts: domain::state::State::read(input)?,
             },
+            4 if input.schema >= 12 => Self::FossilFreeYear,
             _ => return Err(domain::state::StateError::Invalid),
         })
     }
@@ -396,6 +538,11 @@ impl domain::state::State for MilestoneProgress {
                 domain::state::State::write(connected, out);
                 domain::state::State::write(needed, out);
             }
+            Self::CleanMonths { months, needed } => {
+                domain::state::State::write(&3u8, out);
+                domain::state::State::write(months, out);
+                domain::state::State::write(needed, out);
+            }
         }
     }
     fn read(input: &mut domain::state::StateReader<'_>) -> Result<Self, domain::state::StateError> {
@@ -410,6 +557,10 @@ impl domain::state::State for MilestoneProgress {
             },
             2 => Self::Cities {
                 connected: domain::state::State::read(input)?,
+                needed: domain::state::State::read(input)?,
+            },
+            3 if input.schema >= 12 => Self::CleanMonths {
+                months: domain::state::State::read(input)?,
                 needed: domain::state::State::read(input)?,
             },
             _ => return Err(domain::state::StateError::Invalid),
@@ -447,6 +598,7 @@ mod tests {
     use crate::projections::test_support::{report, session};
     use domain::regulation::StrikeReason;
     use domain::time::SimMonth;
+    use domain::units::MegawattHours;
 
     #[test]
     fn regional_targets_are_above_the_starter_grid_and_below_the_full_region() {
@@ -547,22 +699,17 @@ mod tests {
             _ => unreachable!("peak objective"),
         };
         let calendar = session.region().calendar();
-        let jan = SimMonth::new(2027, 1).unwrap();
         let feb = SimMonth::new(2027, 2).unwrap();
-        projection.close_month(jan, Megawatts::new(f64::from(mw - 1)), calendar);
+        projection.close_month(&report(2027, 1, f64::from(mw - 1)), calendar);
         assert!(projection.reached().is_empty());
-        projection.close_month(feb, Megawatts::new(f64::from(mw)), calendar);
+        projection.close_month(&report(2027, 2, f64::from(mw)), calendar);
         projection.set_connected_cities(3, feb, calendar);
         projection.set_connected_cities(3, feb, calendar);
         assert_eq!(
             projection.take_newly_reached(),
             [peak, MilestoneKind::ConnectCities { count: 3 }]
         );
-        projection.close_month(
-            SimMonth::new(2027, 3).unwrap(),
-            Megawatts::new(f64::from(mw) * 2.0),
-            calendar,
-        );
+        projection.close_month(&report(2027, 3, f64::from(mw) * 2.0), calendar);
         assert!(projection.take_newly_reached().is_empty());
     }
 
@@ -633,7 +780,7 @@ mod tests {
                 needed: 4
             })
         );
-        milestones.close_month(jan, Megawatts::ZERO, &calendar);
+        milestones.close_month(&report(2027, 1, 0.0), &calendar);
         assert_eq!(
             milestones.status(MilestoneKind::FullSeasonWithoutStrike, feb, &calendar),
             MilestoneStatus::InProgress(MilestoneProgress::StrikeFreeMonths {
@@ -641,7 +788,7 @@ mod tests {
                 needed: 2
             })
         );
-        milestones.close_month(feb, Megawatts::ZERO, &calendar);
+        milestones.close_month(&report(2027, 2, 0.0), &calendar);
         assert_eq!(
             milestones.status(MilestoneKind::FullSeasonWithoutStrike, feb, &calendar),
             MilestoneStatus::Reached { month: feb }
@@ -669,7 +816,7 @@ mod tests {
         };
         let mut milestones = legacy_projection();
         for m in [7, 8, 9] {
-            milestones.close_month(SimMonth::new(2027, m).unwrap(), Megawatts::ZERO, &calendar);
+            milestones.close_month(&report(2027, m, 0.0), &calendar);
         }
         milestones.set_connected_cities(3, SimMonth::new(2027, 10).unwrap(), &calendar);
         assert!(
@@ -909,6 +1056,506 @@ mod tests {
             milestones.status(cities, now, session().region().calendar()),
             MilestoneStatus::Reached { month: start }
         );
+    }
+
+    // The fossil-free bonus. Closes start in March 2027, so the first three are one season.
+    const BIG_PEAK: f64 = 10_000.0;
+
+    fn at(index: u32) -> SimMonth {
+        let year = 2027 + i32::try_from(index / 12).unwrap();
+        SimMonth::new(year, u8::try_from(index % 12).unwrap() + 1).unwrap()
+    }
+
+    fn report_at(index: u32) -> domain::session::MonthlyReport {
+        let month = at(index + 2);
+        report(month.year(), month.month(), BIG_PEAK)
+    }
+
+    fn close_at(projection: &mut MilestoneProjection, index: u32) {
+        close_report(projection, report_at(index));
+    }
+
+    fn close_report(projection: &mut MilestoneProjection, report: domain::session::MonthlyReport) {
+        projection.apply(&DomainEvent::MonthClosed(Box::new(report)), &session());
+    }
+
+    fn close_with_energy(
+        projection: &mut MilestoneProjection,
+        index: u32,
+        kind: PlantKind,
+        mwh: f64,
+    ) {
+        let mut report = report_at(index);
+        report.energy_by_kind.insert(kind, MegawattHours::new(mwh));
+        close_report(projection, report);
+    }
+
+    fn connect_third_city(projection: &mut MilestoneProjection, index: u32) {
+        projection.set_connected_cities(3, at(index + 2), session().region().calendar());
+    }
+
+    /// Reveals the bonus after `closes` clean closes: peak and season done, the third city last.
+    fn revealed_after(closes: u32) -> MilestoneProjection {
+        let mut projection = MilestoneProjection::new(&session());
+        for index in 0..closes {
+            close_at(&mut projection, index);
+        }
+        connect_third_city(&mut projection, closes - 1);
+        assert!(projection.bonus().is_some(), "{closes} closes then city");
+        projection
+    }
+
+    fn clean_months(projection: &MilestoneProjection, index: u32) -> MilestoneStatus {
+        projection.status(
+            MilestoneKind::FossilFreeYear,
+            at(index + 2),
+            session().region().calendar(),
+        )
+    }
+
+    fn progress(months: u32) -> MilestoneStatus {
+        MilestoneStatus::InProgress(MilestoneProgress::CleanMonths {
+            months,
+            needed: FOSSIL_FREE_MONTHS,
+        })
+    }
+
+    #[test]
+    fn bonus_hidden_until_three_reached() {
+        let mut milestones = MilestoneProjection::new(&session());
+        close_at(&mut milestones, 0);
+        close_at(&mut milestones, 1);
+        connect_third_city(&mut milestones, 1);
+        assert_eq!(
+            milestones.reached().len(),
+            2,
+            "the peak and the cities, not yet a full season"
+        );
+        assert_eq!(milestones.bonus(), None);
+    }
+
+    #[test]
+    fn bonus_revealed_in_the_month_the_third_is_reached() {
+        let mut milestones = MilestoneProjection::new(&session());
+        close_at(&mut milestones, 0);
+        close_at(&mut milestones, 1);
+        connect_third_city(&mut milestones, 1);
+        close_at(&mut milestones, 2);
+        assert_eq!(milestones.reached().len(), 3);
+        assert_eq!(milestones.bonus(), Some(MilestoneKind::FossilFreeYear));
+        assert_eq!(milestones.bonus_revealed, Some(at(4)));
+        assert_eq!(clean_months(&milestones, 2), progress(3));
+        assert!(
+            !milestones
+                .reached()
+                .contains(&MilestoneKind::FossilFreeYear)
+        );
+    }
+
+    #[test]
+    fn run_counts_before_reveal_and_awards_at_reveal() {
+        let mut milestones = MilestoneProjection::new(&session());
+        for index in 0..14 {
+            close_at(&mut milestones, index);
+        }
+        assert_eq!(milestones.bonus(), None, "the third city is still missing");
+        assert_eq!(milestones.clean_run, 14);
+        milestones.take_newly_reached();
+        connect_third_city(&mut milestones, 13);
+        assert_eq!(
+            clean_months(&milestones, 13),
+            MilestoneStatus::Reached { month: at(15) }
+        );
+        assert_eq!(
+            milestones.take_newly_reached(),
+            [
+                MilestoneKind::ConnectCities { count: 3 },
+                MilestoneKind::FossilFreeYear
+            ]
+        );
+    }
+
+    #[test]
+    fn run_of_five_at_reveal_awards_seven_closes_later() {
+        let mut milestones = revealed_after(5);
+        assert_eq!(clean_months(&milestones, 4), progress(5));
+        for index in 5..11 {
+            close_at(&mut milestones, index);
+            assert!(
+                !milestones
+                    .reached()
+                    .contains(&MilestoneKind::FossilFreeYear),
+                "close {index}"
+            );
+        }
+        assert_eq!(clean_months(&milestones, 10), progress(11));
+        milestones.take_newly_reached();
+        close_at(&mut milestones, 11);
+        assert_eq!(
+            clean_months(&milestones, 11),
+            MilestoneStatus::Reached { month: at(13) }
+        );
+        assert_eq!(
+            milestones.take_newly_reached(),
+            [MilestoneKind::FossilFreeYear]
+        );
+        close_at(&mut milestones, 12);
+        assert!(milestones.take_newly_reached().is_empty(), "awarded once");
+    }
+
+    #[test]
+    fn fossil_energy_resets_the_run() {
+        for kind in [PlantKind::Coal, PlantKind::Ccgt, PlantKind::Peaker] {
+            let mut milestones = revealed_after(5);
+            close_with_energy(&mut milestones, 5, kind, 0.5);
+            assert_eq!(clean_months(&milestones, 5), progress(0), "{kind:?}");
+            close_at(&mut milestones, 6);
+            assert_eq!(clean_months(&milestones, 6), progress(1), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn non_fossil_energy_does_not_reset_the_run() {
+        let mut milestones = revealed_after(5);
+        for (index, kind) in [
+            PlantKind::Nuclear,
+            PlantKind::Hydro,
+            PlantKind::Wind,
+            PlantKind::Solar,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            close_with_energy(&mut milestones, 5 + index as u32, kind, 50_000.0);
+        }
+        assert_eq!(clean_months(&milestones, 8), progress(9));
+    }
+
+    #[test]
+    fn zero_energy_fossil_entries_do_not_reset() {
+        let mut milestones = revealed_after(5);
+        let mut report = report_at(5);
+        for kind in [PlantKind::Coal, PlantKind::Ccgt, PlantKind::Peaker] {
+            report.energy_by_kind.insert(kind, MegawattHours::new(0.0));
+        }
+        close_report(&mut milestones, report);
+        assert_eq!(clean_months(&milestones, 5), progress(6));
+    }
+
+    #[test]
+    fn energy_at_epsilon_does_not_reset() {
+        for kind in [PlantKind::Coal, PlantKind::Ccgt, PlantKind::Peaker] {
+            let mut milestones = revealed_after(5);
+            close_with_energy(&mut milestones, 5, kind, 1e-9);
+            assert_eq!(clean_months(&milestones, 5), progress(6), "{kind:?}");
+            close_with_energy(&mut milestones, 6, kind, 2e-9);
+            assert_eq!(clean_months(&milestones, 6), progress(0), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn strike_resets_the_run() {
+        let mut milestones = revealed_after(5);
+        strike(&mut milestones);
+        close_at(&mut milestones, 5);
+        assert_eq!(clean_months(&milestones, 5), progress(0));
+        close_at(&mut milestones, 6);
+        assert_eq!(clean_months(&milestones, 6), progress(1));
+    }
+
+    #[test]
+    fn a_pending_strike_shows_no_clean_months_until_the_month_closes() {
+        let mut milestones = revealed_after(5);
+        assert_eq!(clean_months(&milestones, 5), progress(5));
+        strike(&mut milestones);
+        // Like the season row: the month being played already counts as struck.
+        assert_eq!(clean_months(&milestones, 5), progress(0));
+        close_at(&mut milestones, 5);
+        assert_eq!(clean_months(&milestones, 5), progress(0));
+        close_at(&mut milestones, 6);
+        assert_eq!(clean_months(&milestones, 6), progress(1));
+    }
+
+    #[test]
+    fn frequency_notice_does_not_reset_the_run() {
+        let mut milestones = revealed_after(5);
+        notice(&mut milestones, 7);
+        close_at(&mut milestones, 5);
+        assert_eq!(clean_months(&milestones, 5), progress(6));
+    }
+
+    #[test]
+    fn a_struck_fossil_month_is_not_clean_for_either_reason() {
+        let clean = report_at(0);
+        assert!(month_is_clean(&clean, false));
+        assert!(!month_is_clean(&clean, true));
+        let mut fossil = report_at(0);
+        fossil
+            .energy_by_kind
+            .insert(PlantKind::Coal, MegawattHours::new(1.0));
+        assert!(!month_is_clean(&fossil, false));
+        assert!(!month_is_clean(&fossil, true));
+    }
+
+    #[test]
+    fn bonus_wire_tags_require_schema_twelve() {
+        use domain::state::{State, StateError};
+        let kind = MilestoneKind::FossilFreeYear;
+        assert_eq!(kind.state_bytes(), [4]);
+        let progress = MilestoneProgress::CleanMonths {
+            months: 7,
+            needed: 12,
+        };
+        let bytes = progress.state_bytes();
+        assert_eq!(bytes[0], 3);
+        assert_eq!(MilestoneKind::from_state_bytes(&[4]).unwrap(), kind);
+        assert_eq!(
+            MilestoneProgress::from_state_bytes(&bytes).unwrap(),
+            progress
+        );
+        for schema in 1..=11 {
+            assert_eq!(
+                MilestoneKind::from_state_bytes_schema(&[4], schema),
+                Err(StateError::Invalid)
+            );
+            assert_eq!(
+                MilestoneProgress::from_state_bytes_schema(&bytes, schema),
+                Err(StateError::Invalid)
+            );
+        }
+        assert_eq!(
+            MilestoneKind::from_state_bytes_schema(&[4], 12).unwrap(),
+            kind
+        );
+        assert!(kind.same_objective(MilestoneKind::FossilFreeYear));
+        assert!(!kind.same_objective(MilestoneKind::FullSeasonWithoutStrike));
+    }
+
+    #[test]
+    fn bonus_state_round_trips_at_schema_12() {
+        use domain::state::State;
+        let mut milestones = revealed_after(5);
+        close_at(&mut milestones, 5);
+        let bytes = milestones.state_bytes();
+        assert_eq!(bytes, milestones.state_bytes_schema(12));
+        let restored = MilestoneProjection::from_state_bytes(&bytes).unwrap();
+        assert_eq!(restored, milestones);
+        assert_eq!(restored.clean_run, 6);
+        assert_eq!(restored.bonus_revealed, Some(at(6)));
+
+        let mut earned = revealed_after(12);
+        assert!(earned.reached().contains(&MilestoneKind::FossilFreeYear));
+        earned.take_newly_reached();
+        let bytes = earned.state_bytes();
+        assert_eq!(
+            MilestoneProjection::from_state_bytes(&bytes).unwrap(),
+            earned
+        );
+    }
+
+    #[test]
+    fn schema_11_state_reads_empty_run_unrevealed() {
+        use domain::state::State;
+        let milestones = revealed_after(5);
+        let bytes = milestones.state_bytes_schema(11);
+        assert!(bytes.len() < milestones.state_bytes().len());
+        let restored = MilestoneProjection::from_state_bytes_schema(&bytes, 11).unwrap();
+        assert_eq!(restored.clean_run, 0);
+        assert_eq!(restored.bonus_revealed, None);
+        assert_eq!(restored.bonus(), None);
+        assert_eq!(restored.reached, milestones.reached);
+        assert_eq!(restored.goals, milestones.goals);
+        assert_eq!(restored.peak_demand, milestones.peak_demand);
+        assert_eq!(restored.connected_cities, milestones.connected_cities);
+        assert_eq!(restored.run, milestones.run);
+    }
+
+    // Old saves: the run is rebuilt from the monthly reports.
+    fn reports_of(
+        reports: impl IntoIterator<Item = domain::session::MonthlyReport>,
+    ) -> MonthlyReportProjection {
+        let mut history = MonthlyReportProjection::default();
+        for report in reports {
+            history.apply(&DomainEvent::MonthClosed(Box::new(report)), &session());
+        }
+        history
+    }
+
+    /// A projection as a schema 11 save restores it: three goals reached, no run, no reveal.
+    fn schema_11_with_three_reached() -> MilestoneProjection {
+        use domain::state::State;
+        let mut live = revealed_after(5);
+        live.take_newly_reached();
+        let bytes = live.state_bytes_schema(11);
+        let old = MilestoneProjection::from_state_bytes_schema(&bytes, 11).unwrap();
+        assert_eq!((old.clean_run, old.bonus_revealed), (0, None));
+        assert_eq!(old.reached().len(), 3);
+        old
+    }
+
+    fn struck_report(index: u32) -> domain::session::MonthlyReport {
+        let mut report = report_at(index);
+        report.demand = MegawattHours::new(1_000.0);
+        report.unserved = MegawattHours::new(100.0);
+        report
+    }
+
+    #[test]
+    fn old_save_with_three_reached_reveals_and_awards_silently() {
+        let mut old = schema_11_with_three_reached();
+        let history = reports_of((0..12).map(report_at));
+        old.upgrade_fossil_free(&history, &session());
+        let restored_month = session().clock().month();
+        assert_eq!(old.clean_run, 12);
+        assert_eq!(old.bonus_revealed, Some(restored_month));
+        assert!(matches!(
+            old.status(MilestoneKind::FossilFreeYear, restored_month, session().region().calendar()),
+            MilestoneStatus::Reached { month } if month == restored_month
+        ));
+        assert_eq!(old.reached().last(), Some(&MilestoneKind::FossilFreeYear));
+        assert!(old.newly_reached.is_empty(), "no notification");
+    }
+
+    #[test]
+    fn old_save_keeps_pending_notifications_and_shows_an_unfinished_run() {
+        let mut old = schema_11_with_three_reached();
+        old.newly_reached
+            .push(MilestoneKind::FullSeasonWithoutStrike);
+        // Eleven clean months behind a struck one: revealed, not awarded.
+        let history = reports_of(std::iter::once(struck_report(0)).chain((1..12).map(report_at)));
+        old.upgrade_fossil_free(&history, &session());
+        assert_eq!(old.clean_run, 11);
+        assert!(old.bonus().is_some());
+        assert!(!old.reached().contains(&MilestoneKind::FossilFreeYear));
+        assert_eq!(old.newly_reached, [MilestoneKind::FullSeasonWithoutStrike]);
+    }
+
+    #[test]
+    fn old_save_run_stops_at_the_latest_fossil_or_struck_month() {
+        let mut old = schema_11_with_three_reached();
+        let mut fossil = report_at(7);
+        fossil
+            .energy_by_kind
+            .insert(PlantKind::Ccgt, MegawattHours::new(5.0));
+        let history = reports_of(
+            (0..7)
+                .map(report_at)
+                .chain([fossil])
+                .chain((8..11).map(report_at))
+                .chain([struck_report(11)])
+                .chain((12..14).map(report_at)),
+        );
+        old.upgrade_fossil_free(&history, &session());
+        assert_eq!(old.clean_run, 2);
+        assert!(!old.reached().contains(&MilestoneKind::FossilFreeYear));
+    }
+
+    #[test]
+    fn old_save_run_stops_at_a_fossil_month_that_is_the_latest_unclean_one() {
+        // A struck month long ago, then a fossil month: the run counts only what follows the
+        // fossil month, however many clean months sit before it.
+        let mut old = schema_11_with_three_reached();
+        let mut fossil = report_at(9);
+        fossil
+            .energy_by_kind
+            .insert(PlantKind::Coal, MegawattHours::new(5.0));
+        let history = reports_of(
+            std::iter::once(struck_report(0))
+                .chain((1..9).map(report_at))
+                .chain([fossil])
+                .chain((10..13).map(report_at)),
+        );
+        old.upgrade_fossil_free(&history, &session());
+        assert_eq!(old.clean_run, 3);
+        assert!(!old.reached().contains(&MilestoneKind::FossilFreeYear));
+    }
+
+    #[test]
+    fn old_save_without_three_reached_stays_hidden_whatever_the_run() {
+        let mut old = MilestoneProjection::new(&session());
+        let history = reports_of((0..14).map(report_at));
+        old.upgrade_fossil_free(&history, &session());
+        assert_eq!(old.clean_run, 14);
+        assert_eq!(old.bonus(), None);
+        assert!(!old.reached().contains(&MilestoneKind::FossilFreeYear));
+    }
+
+    #[test]
+    fn a_frequency_notice_month_does_not_break_an_old_saves_run() {
+        let mut old = schema_11_with_three_reached();
+        let mut noticed = report_at(4);
+        noticed.frequency_failed = true;
+        noticed.frequency_notice = true;
+        let history = reports_of(
+            (0..4)
+                .map(report_at)
+                .chain([noticed])
+                .chain((5..12).map(report_at)),
+        );
+        old.upgrade_fossil_free(&history, &session());
+        assert_eq!(old.clean_run, 12);
+    }
+
+    proptest::proptest! {
+        /// `month_struck` agrees with a regulator that judged the same month, including when a
+        /// notice earlier in the year has already been spent.
+        #[test]
+        fn month_struck_matches_the_regulator(
+            demand in proptest::prop_oneof![proptest::strategy::Just(0.0), 1.0f64..1.0e6],
+            share in proptest::prop_oneof![
+                proptest::strategy::Just(0.0),
+                proptest::strategy::Just(0.005),
+                0.0f64..0.02,
+            ],
+            out_of_band in 0.0f64..=1.0,
+            prior_notice in proptest::bool::ANY,
+        ) {
+            use domain::regulation::Regulator;
+            let session = session();
+            let params = session.region().regulator();
+            let mut regulator = Regulator::new(params);
+            let spent = SimMonth::new(2027, 3).unwrap();
+            if prior_notice {
+                // A failing month with no notice on record draws the notice and spends it.
+                let events = regulator.assess_month(
+                    spent,
+                    MegawattHours::new(1.0),
+                    MegawattHours::new(0.0),
+                    Ratio::ONE,
+                    params,
+                );
+                let spent_notice = matches!(
+                    events.as_slice(),
+                    [DomainEvent::FrequencyNoticeIssued { .. }]
+                );
+                proptest::prop_assert!(spent_notice);
+            }
+            let month = SimMonth::new(2027, 6).unwrap();
+            let out_of_band = Ratio::new(out_of_band).unwrap();
+            let events = regulator.assess_month(
+                month,
+                MegawattHours::new(demand),
+                MegawattHours::new(demand * share),
+                out_of_band,
+                params,
+            );
+            let mut report = report(2027, 6, 100.0);
+            report.demand = MegawattHours::new(demand);
+            report.unserved = MegawattHours::new(demand * share);
+            report.frequency_failed = Regulator::fails_frequency(out_of_band, params);
+            report.frequency_notice = events
+                .iter()
+                .any(|event| matches!(event, DomainEvent::FrequencyNoticeIssued { .. }));
+            let struck = events
+                .iter()
+                .any(|event| matches!(event, DomainEvent::StrikeIssued { .. }));
+            proptest::prop_assert_eq!(
+                month_struck(&report, params.strike_threshold),
+                struck,
+                "{:?}",
+                events
+            );
+        }
     }
 
     #[test]

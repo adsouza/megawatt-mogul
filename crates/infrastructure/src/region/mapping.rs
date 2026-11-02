@@ -88,6 +88,7 @@ pub fn map_region(mut file: RegionFile) -> Result<RegionDefinition> {
         weather: WeatherParams {
             surprise_share: 1.0,
         },
+        demand_growth_per_year: 0.0,
         geothermal: None,
         hydro: HydroParams {
             monthly_flow: array(&file.hydro.monthly_flow, "hydro.monthly_flow")?,
@@ -599,7 +600,7 @@ fn map_regulator_v4(r: &RegulatorDtoV4) -> Result<RegulatorParams> {
 
 /// The schema-4 checks that make `rasterize_geometry(file.geography())` safe to call.
 pub(super) fn check_v4_geography(file: &RegionFileV4) -> Result<()> {
-    if !matches!(file.region_schema, 4..=6) {
+    if !matches!(file.region_schema, 4..=7) {
         return Err(RegionError::UnsupportedRegionSchema(file.region_schema));
     }
     if file.region_schema >= 6 {
@@ -607,6 +608,15 @@ pub(super) fn check_v4_geography(file: &RegionFileV4) -> Result<()> {
             return Err(RegionError::MissingField { field: "weather" });
         }
     } else if file.weather.is_some() {
+        return Err(invalid("region_schema"));
+    }
+    if file.region_schema >= 7 {
+        if file.demand_growth_per_year.is_none() {
+            return Err(RegionError::MissingField {
+                field: "demand_growth_per_year",
+            });
+        }
+    } else if file.demand_growth_per_year.is_some() {
         return Err(invalid("region_schema"));
     }
     if file.grid.width > 256 || file.grid.height > 128 {
@@ -797,6 +807,8 @@ pub fn map_region_v4(file: RegionFileV4) -> Result<RegionDefinition> {
                 .as_ref()
                 .map_or(1.0, |weather| weather.surprise_share),
         },
+        // Schema 7 requires the field (checked above); older sources grow nothing.
+        demand_growth_per_year: file.demand_growth_per_year.unwrap_or(0.0),
         geothermal: None,
         hydro: HydroParams {
             monthly_flow: array(&file.hydro.monthly_flow, "hydro.monthly_flow")?,

@@ -33,6 +33,10 @@ pub enum DomainEvent {
         plant: PlantId,
         restored: Megawatts,
     },
+    /// Every city is connected: demand now grows at this annual rate, starting this close.
+    DemandGrowthStarted {
+        annual_rate: f64,
+    },
 
     /// A plant began its start-up sequence.
     PlantStarting {
@@ -210,6 +214,10 @@ impl crate::state::State for DomainEvent {
                 crate::state::State::write_schema(plant, out, schema);
                 crate::state::State::write_schema(restored, out, schema);
             }
+            Self::DemandGrowthStarted { annual_rate } => {
+                crate::state::State::write(&38u8, out);
+                crate::state::State::write_schema(annual_rate, out, schema);
+            }
             Self::PlantStarting { plant } => {
                 crate::state::State::write_schema(&0u8, out, schema);
                 crate::state::State::write_schema(plant, out, schema);
@@ -376,6 +384,9 @@ impl crate::state::State for DomainEvent {
                 plant: crate::state::State::read(input)?,
                 restored: crate::state::State::read(input)?,
             },
+            38 if input.schema >= 11 => Self::DemandGrowthStarted {
+                annual_rate: crate::state::State::read(input)?,
+            },
             0 => Self::PlantStarting {
                 plant: crate::state::State::read(input)?,
             },
@@ -475,5 +486,26 @@ impl crate::state::State for DomainEvent {
             },
             _ => return Err(crate::state::StateError::Invalid),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::State;
+
+    #[test]
+    fn demand_growth_started_is_tag_38_from_schema_11() {
+        let event = DomainEvent::DemandGrowthStarted { annual_rate: 0.024 };
+        let mut bytes = vec![38u8];
+        bytes.extend(0.024f64.to_bits().to_le_bytes());
+        assert_eq!(event.state_bytes_schema(11), bytes);
+        assert_eq!(
+            DomainEvent::from_state_bytes_schema(&bytes, 11),
+            Ok(event.clone())
+        );
+        for schema in 1..=10 {
+            assert!(DomainEvent::from_state_bytes_schema(&bytes, schema).is_err());
+        }
     }
 }

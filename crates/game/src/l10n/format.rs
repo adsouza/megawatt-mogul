@@ -141,6 +141,12 @@ pub fn percent(share: Ratio) -> String {
     format!("{:.1}%", share.value() * 100.0)
 }
 
+/// A yearly rate as a bare percentage with one decimal, for a message that adds the `%`: `3.3`
+/// for 0.033.
+pub fn percent_number(fraction: f64) -> String {
+    format!("{:.1}", fraction * 100.0)
+}
+
 /// A margin that can be negative: `+18.0%`, `−5.2%`. A margin that rounds to zero shows no sign.
 pub fn signed_percent(fraction: f64) -> String {
     let tenths = (fraction * 1000.0).round();
@@ -588,6 +594,14 @@ mod tests {
                 (1_234.0, "1234"),
                 (0.0, "0"),
             ],
+        );
+    }
+
+    #[test]
+    fn percent_number_is_a_bare_percentage_with_one_decimal() {
+        check(
+            percent_number,
+            &[(0.033, "3.3"), (0.024, "2.4"), (0.0, "0.0"), (0.2, "20.0")],
         );
     }
 

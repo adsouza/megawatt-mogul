@@ -509,6 +509,7 @@ impl Localize for MilestoneKind {
                 "milestone-connect-cities",
                 &[("count", count.to_string().into())],
             ),
+            Self::FossilFreeYear => l10n.text("milestone-fossil-free-year"),
         }
     }
 }
@@ -534,6 +535,13 @@ impl Localize for MilestoneProgress {
                 "milestone-progress-cities",
                 &[
                     ("connected", connected.to_string().into()),
+                    ("needed", needed.to_string().into()),
+                ],
+            ),
+            Self::CleanMonths { months, needed } => l10n.args(
+                "milestone-progress-clean-months",
+                &[
+                    ("months", months.to_string().into()),
                     ("needed", needed.to_string().into()),
                 ],
             ),
@@ -812,6 +820,10 @@ impl Toast for DomainEvent {
                     ("tariff", format::price(*tariff, style).into()),
                     ("allowed_return", format::percent(*allowed_return).into()),
                 ],
+            ),
+            Self::DemandGrowthStarted { annual_rate } => l10n.args(
+                "toast-demand-growth-started",
+                &[("percent", format::percent_number(*annual_rate).into())],
             ),
             // Bookkeeping, not news: no toast.
             Self::PlantStarting { .. }
