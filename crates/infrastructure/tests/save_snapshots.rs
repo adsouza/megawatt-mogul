@@ -713,7 +713,9 @@ fn calibrated_solar_regions_resume_identically_with_their_archived_calibration()
 /// load, never earlier; a game without one stays unset, however many months close.
 #[test]
 fn schema7_saves_restore_with_expansion_seeded_from_the_session() {
-    use application::projections::ExpansionProjection;
+    use application::projections::{
+        ExpansionProjection, MILESTONES, MilestoneStatus, Projections, regional_milestones,
+    };
     for (name, expanded) in [("expanded.mgsave", true), ("starter.mgsave", false)] {
         let bytes = std::fs::read(
             Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -731,10 +733,43 @@ fn schema7_saves_restore_with_expansion_seeded_from_the_session() {
             source.session,
             "{name}: the schema-7 session is kept"
         );
+        // Schema 10 froze regional milestone targets: the restore upgrades the legacy goals and
+        // credits any already met at the loaded month, without a notification. Every other
+        // schema-7 projection is kept byte for byte.
+        let milestones = &game.projections().milestones;
+        let mut kept = Projections::from_state_bytes_schema(&source.projections, 7).unwrap();
+        assert_eq!(kept.milestones.targets(), &MILESTONES, "{name}");
+        assert!(kept.milestones.reached().is_empty(), "{name}");
+        kept.milestones = milestones.clone();
         assert_eq!(
             game.projections().state_bytes_schema(7),
-            source.projections,
-            "{name}: the schema-7 projections are kept"
+            kept.state_bytes_schema(7),
+            "{name}: the other schema-7 projections are kept"
+        );
+        let targets = regional_milestones(game.session().region());
+        assert_eq!(milestones.targets(), &targets, "{name}");
+        let cities = targets[2];
+        assert_eq!(milestones.reached().contains(&cities), expanded, "{name}");
+        if expanded {
+            assert_eq!(
+                milestones.status(
+                    cities,
+                    game.session().clock().month(),
+                    game.session().region().calendar()
+                ),
+                MilestoneStatus::Reached {
+                    month: game.session().clock().month()
+                },
+                "{name}: credited at the loaded month"
+            );
+        }
+        assert!(
+            game.projections()
+                .milestones
+                .clone()
+                .take_newly_reached()
+                .is_empty(),
+            "{name}"
         );
         let starters = game.session().region().start().connected_cities.clone();
         let extra = game

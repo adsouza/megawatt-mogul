@@ -189,10 +189,11 @@ mod tests {
         let mut projections = Projections::new(&session());
         projections.expansion.closes_since_expansion = Some(3);
         let current = projections.state_bytes_schema(8);
-        assert_eq!(
-            Projections::from_state_bytes_schema(&current, 8),
-            Ok(projections.clone())
-        );
+        // Schema 8 predates the frozen regional milestone targets (schema 10): they read back as
+        // the legacy goals until the restore upgrades them from the session, as `Game` does.
+        let mut restored = Projections::from_state_bytes_schema(&current, 8).unwrap();
+        restored.milestones.upgrade_targets(&session());
+        assert_eq!(restored, projections);
         // Schema 7 never carried the projection: it reads back as the default.
         let old = projections.state_bytes_schema(7);
         assert_eq!(old.len() + 2, current.len());
