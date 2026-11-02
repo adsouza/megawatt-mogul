@@ -11,6 +11,7 @@ use std::sync::Arc;
 use super::report::{MeritOrderEntry, MonthlyReport};
 use super::{DayPhase, GameOverReason, GameSession, SessionStatus};
 use crate::company::{AssetProfile, AssetRef, LedgerCategory, LedgerEntry, ReserveReviewInputs};
+use crate::demand::DemandGrowth;
 use crate::events::DomainEvent;
 use crate::generation::PlantStatus;
 use crate::grid::NodeKind;
@@ -100,6 +101,8 @@ impl GameSession {
     /// 8. Each plant that was commissioned all month records whether it sat
     ///    offline, the report is published, the finished day is cleared, the
     ///    hydro schedule is frozen for review, and the phase moves to `Review`.
+    /// 9. Once every city is connected, demand growth steps one month, after
+    ///    the report so the closed month shows the demand it served.
     pub(super) fn close_month(&mut self) -> Vec<DomainEvent> {
         let region = Arc::clone(&self.region);
         let month = self.clock.month();
@@ -159,6 +162,7 @@ impl GameSession {
         self.record_offline_months(&commissioned);
         let report = self.build_report(month, days, totals, frequency_notice, rate_review);
         events.push(DomainEvent::MonthClosed(Box::new(report)));
+        self.step_demand_growth(&mut events);
         self.month_to_date.reset();
         self.day_ticks.clear();
         self.power.finish_hydro_day();
@@ -317,6 +321,33 @@ impl GameSession {
                 .map(|city| DomainEvent::CityConnected { city: *city }),
         );
         commissioned
+    }
+
+    /// Whether every city of the region is energised.
+    fn region_complete(&self) -> bool {
+        let connected = self.connected_cities();
+        self.region
+            .cities()
+            .iter()
+            .all(|c| connected.contains(&c.id))
+    }
+
+    /// Step 9: once every city is connected, demand grows one month at every close. The close
+    /// that first completes the region announces it. It runs after the report, so the month
+    /// shows the demand actually served, and the next month plays at the grown demand.
+    fn step_demand_growth(&mut self, events: &mut Vec<DomainEvent>) {
+        let annual = self.region.demand_growth_per_year();
+        if annual == 0.0 || !self.region_complete() {
+            return;
+        }
+        let growth = self.power.demand_growth();
+        if growth == DemandGrowth::NONE {
+            events.push(DomainEvent::DemandGrowthStarted {
+                annual_rate: annual,
+            });
+        }
+        self.power
+            .set_demand_growth(growth.stepped(self.region.monthly_demand_growth()));
     }
 
     fn connected_cities(&self) -> BTreeSet<CityId> {

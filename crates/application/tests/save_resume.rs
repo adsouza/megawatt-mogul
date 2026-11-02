@@ -12,7 +12,10 @@ use domain::region::fixtures::tiny_region_parts;
 use domain::session::{DayPhase, GameSettings};
 use domain::time::TICKS_PER_DAY;
 use proptest::prelude::*;
-use support::{StaticCatalog, game_on, tiny_loaded_region};
+use support::{
+    StaticCatalog, game_on, growth_parts, loaded_region, order_line_to_the_last_city, play_month,
+    tiny_loaded_region,
+};
 
 fn restore(game: &Game) -> Game {
     Game::restore(
@@ -979,5 +982,57 @@ fn schema_8_snapshots_restore_in_every_phase_with_a_neutral_forecast() {
         let left = TICKS_PER_DAY - restored.session().clock().tick();
         restored.execute(Command::AdvanceTicks { n: left }).unwrap();
         assert_eq!(restored.session().phase(), DayPhase::Review, "{phase:?}");
+    }
+}
+
+#[test]
+fn resume_mid_growth_continues_exactly() {
+    use domain::demand::DemandGrowth;
+    const RATE: f64 = 0.024;
+    let (mut game, _) = game_on(growth_parts(RATE), 5);
+    order_line_to_the_last_city(&mut game);
+    while game.session().demand_growth() == DemandGrowth::NONE {
+        play_month(&mut game, |_| {});
+    }
+    // One growth close is behind us; take a second so the factor is a compounded product.
+    play_month(&mut game, |_| {});
+    let monthly = 1.0 + RATE / 12.0;
+    assert_eq!(game.session().demand_growth().factor(), monthly * monthly);
+
+    let from_snapshot = game.checkpoint();
+    let mut replay_only = game.checkpoint();
+    replay_only.snapshot = None;
+    replay_only.state_hash = game.session().state_hash();
+    for checkpoint in [from_snapshot, replay_only] {
+        let mut restored = Game::restore(
+            loaded_region(growth_parts(RATE)),
+            checkpoint,
+            Box::new(InMemoryCommandLog::default()),
+            &|| false,
+        )
+        .unwrap();
+        assert_eq!(
+            restored.session().demand_growth(),
+            game.session().demand_growth()
+        );
+        assert_eq!(restored.session().state_hash(), game.session().state_hash());
+        play_month(&mut restored, |_| {});
+        let mut uninterrupted = Game::restore(
+            loaded_region(growth_parts(RATE)),
+            game.checkpoint(),
+            Box::new(InMemoryCommandLog::default()),
+            &|| false,
+        )
+        .unwrap();
+        play_month(&mut uninterrupted, |_| {});
+        assert_eq!(
+            restored.session().demand_growth().factor(),
+            monthly * monthly * monthly
+        );
+        assert_eq!(
+            restored.session().state_hash(),
+            uninterrupted.session().state_hash()
+        );
+        assert_eq!(restored.checkpoint(), uninterrupted.checkpoint());
     }
 }

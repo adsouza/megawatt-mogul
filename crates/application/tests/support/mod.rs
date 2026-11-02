@@ -301,3 +301,26 @@ pub fn rounded_debug(value: &impl std::fmt::Debug) -> String {
     }
     out
 }
+
+/// The tiny region growing at `rate` a year once every city is connected.
+pub fn growth_parts(rate: f64) -> RegionDefinitionParts {
+    let mut parts = tiny_region_parts();
+    parts.demand_growth_per_year = rate;
+    parts
+}
+
+/// Orders a line from the home city to the one city the tiny region starts without.
+pub fn order_line_to_the_last_city(game: &mut Game) {
+    let to = game
+        .session()
+        .city_views()
+        .into_iter()
+        .find(|city| !city.connected)
+        .expect("the tiny region starts with an unconnected city")
+        .node;
+    game.execute(Command::BuildLine {
+        from: game.session().anchor_node(),
+        to,
+    })
+    .expect("order the last line");
+}

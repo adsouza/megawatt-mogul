@@ -648,6 +648,11 @@ fn events() -> Vec<(DomainEvent, bool)> {
             },
             false,
         ),
+        // Its toast arrives with the growth notice.
+        (
+            DomainEvent::DemandGrowthStarted { annual_rate: 0.024 },
+            false,
+        ),
     ]
 }
 
@@ -797,12 +802,13 @@ fn the_variant_tables_cover_every_variant() {
         MilestoneProgress::Cities { .. } => 2,
     });
     let events: Vec<DomainEvent> = events().into_iter().map(|(event, _)| event).collect();
-    assert_covers_every_variant("DomainEvent", &events, 38, |e| match e {
+    assert_covers_every_variant("DomainEvent", &events, 39, |e| match e {
         DomainEvent::ExplorationSucceeded { .. } => 33,
         DomainEvent::ExplorationDry { .. } => 34,
         DomainEvent::FieldDeclineThreshold { .. } => 35,
         DomainEvent::MakeupDrillingOrdered { .. } => 36,
         DomainEvent::MakeupDrillingCompleted { .. } => 37,
+        DomainEvent::DemandGrowthStarted { .. } => 38,
         DomainEvent::PlantStarting { .. } => 0,
         DomainEvent::PlantOnline { .. } => 1,
         DomainEvent::PlantStopped { .. } => 2,

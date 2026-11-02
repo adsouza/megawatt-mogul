@@ -5,6 +5,7 @@ use proptest::prelude::*;
 use super::super::*;
 use super::{LedgerTotals, is_zero_capital, share};
 use crate::company::{AssetProfile, LedgerCategory, ReserveReviewInputs};
+use crate::demand::DemandGrowth;
 use crate::generation::PlantStatus;
 use crate::grid::GridMode;
 use crate::ids::CityId;
@@ -1391,4 +1392,111 @@ fn blackout_dark_load_is_not_counted_as_planned() {
             >= (dark_unserved * weight).value() - 1e-6
     );
     assert!(report.rotating_outage < report.unserved);
+}
+
+const GROWTH_RATE: f64 = 0.024;
+
+/// A tiny-region session whose region grows at `rate` a year once every city is connected. The
+/// fleet is the robust one, and the line to the one unconnected city (3) is ordered when
+/// `connect_last` is set.
+fn growth_session(rate: f64, connect_last: bool) -> GameSession {
+    let mut parts = tiny_region_parts();
+    parts.demand_growth_per_year = rate;
+    let mut s = session_from(parts, 1);
+    robust_fleet(&mut s);
+    if connect_last {
+        let city3 = city_node(&s, CityId(3));
+        s.build_line(s.anchor_node(), city3).unwrap();
+    }
+    s
+}
+
+/// Plays months until `CityConnected` for city 3; returns that close's events.
+fn play_until_last_city_connects(s: &mut GameSession) -> Vec<DomainEvent> {
+    for _ in 0..6 {
+        let events = play_day(s);
+        if events.contains(&DomainEvent::CityConnected { city: CityId(3) }) {
+            return events;
+        }
+        s.finish_review().unwrap();
+    }
+    panic!("city 3 never connected");
+}
+
+fn growth_started(events: &[DomainEvent]) -> Vec<&DomainEvent> {
+    events
+        .iter()
+        .filter(|e| matches!(e, DomainEvent::DemandGrowthStarted { .. }))
+        .collect()
+}
+
+#[test]
+fn no_growth_while_a_city_is_unconnected() {
+    let mut s = growth_session(GROWTH_RATE, false);
+    for _ in 0..3 {
+        let events = play_day(&mut s);
+        assert_eq!(s.demand_growth(), DemandGrowth::NONE);
+        assert!(growth_started(&events).is_empty());
+        s.finish_review().unwrap();
+    }
+}
+
+#[test]
+fn growth_starts_at_the_close_that_connects_the_last_city() {
+    let mut s = growth_session(GROWTH_RATE, true);
+    let events = play_until_last_city_connects(&mut s);
+    let connected = events
+        .iter()
+        .position(|e| *e == DomainEvent::CityConnected { city: CityId(3) })
+        .unwrap();
+    let started = events
+        .iter()
+        .position(|e| {
+            *e == DomainEvent::DemandGrowthStarted {
+                annual_rate: GROWTH_RATE,
+            }
+        })
+        .expect("growth is announced at the completing close");
+    assert!(connected < started);
+    assert_eq!(growth_started(&events).len(), 1);
+    let monthly = 1.0 + GROWTH_RATE / 12.0;
+    assert_eq!(s.demand_growth().factor(), monthly);
+    assert!((s.demand_growth().factor() - 1.002).abs() < 1e-12);
+
+    s.finish_review().unwrap();
+    let next = play_day(&mut s);
+    assert!(growth_started(&next).is_empty());
+    assert_eq!(s.demand_growth().factor(), monthly * monthly);
+}
+
+#[test]
+fn month_report_shows_the_demand_actually_served() {
+    let mut growing = growth_session(GROWTH_RATE, true);
+    let mut flat = growth_session(0.0, true);
+    let grown_events = play_until_last_city_connects(&mut growing);
+    let flat_events = play_until_last_city_connects(&mut flat);
+    assert_ne!(growing.demand_growth(), DemandGrowth::NONE);
+    assert_eq!(
+        report_in(&grown_events).demand,
+        report_in(&flat_events).demand
+    );
+    // The step is felt from the next month on.
+    growing.finish_review().unwrap();
+    flat.finish_review().unwrap();
+    let grown_next = report_in(&play_day(&mut growing)).demand;
+    let flat_next = report_in(&play_day(&mut flat)).demand;
+    let ratio = grown_next.value() / flat_next.value();
+    assert!((ratio - (1.0 + GROWTH_RATE / 12.0)).abs() < 1e-6, "{ratio}");
+}
+
+#[test]
+fn zero_rate_never_steps_or_announces() {
+    let mut s = growth_session(0.0, true);
+    let events = play_until_last_city_connects(&mut s);
+    assert_eq!(s.demand_growth(), DemandGrowth::NONE);
+    assert!(growth_started(&events).is_empty());
+    s.finish_review().unwrap();
+    let next = play_day(&mut s);
+    assert_eq!(s.demand_growth(), DemandGrowth::NONE);
+    assert!(growth_started(&next).is_empty());
 }

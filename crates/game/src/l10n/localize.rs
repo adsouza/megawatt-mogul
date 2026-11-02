@@ -813,8 +813,9 @@ impl Toast for DomainEvent {
                     ("allowed_return", format::percent(*allowed_return).into()),
                 ],
             ),
-            // Bookkeeping, not news: no toast.
-            Self::PlantStarting { .. }
+            // Bookkeeping, not news: no toast. (`DemandGrowthStarted` gets its toast in Task 6.)
+            Self::DemandGrowthStarted { .. }
+            | Self::PlantStarting { .. }
             | Self::PlantOnline { .. }
             | Self::PlantStopped { .. }
             | Self::TickCompleted(_)
