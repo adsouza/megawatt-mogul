@@ -43,7 +43,7 @@ never compile Bevy, so feedback takes seconds.
 | Rendering, input, UI and localised text | `game` (see [The game crate](#the-game-crate)) |
 
 Region data (plant tuning numbers, cities, regulator parameters) lives in `assets/regions/*.ron`,
-never as code constants. Shipped files declare `region_schema: 5`, including explicit clock,
+never as code constants. The current region schema is 7 (it adds a required `demand_growth_per_year`); shipped files declare it, including explicit clock,
 climate, calendar, currency, astronomical-sun and geothermal data. Legacy region schemas retain frozen
 defaults in `infrastructure::region::legacy`; old-source integrity is checked before any
 upcast. Unexpected new fields on legacy sources and unsupported schemas fail with typed errors.
