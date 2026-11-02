@@ -66,7 +66,7 @@ fn schema_9_snapshot_upgrades_pending_regional_milestones_without_losing_progres
         restored.projections().milestones.targets()[2],
         application::projections::MilestoneKind::ConnectCities { count: 3 }
     );
-    assert_eq!(restored.checkpoint().snapshot.unwrap().schema, 11);
+    assert_eq!(restored.checkpoint().snapshot.unwrap().schema, 12);
 }
 
 #[test]

@@ -509,6 +509,7 @@ impl Localize for MilestoneKind {
                 "milestone-connect-cities",
                 &[("count", count.to_string().into())],
             ),
+            Self::FossilFreeYear => l10n.text("milestone-fossil-free-year"),
         }
     }
 }
@@ -534,6 +535,13 @@ impl Localize for MilestoneProgress {
                 "milestone-progress-cities",
                 &[
                     ("connected", connected.to_string().into()),
+                    ("needed", needed.to_string().into()),
+                ],
+            ),
+            Self::CleanMonths { months, needed } => l10n.args(
+                "milestone-progress-clean-months",
+                &[
+                    ("months", months.to_string().into()),
                     ("needed", needed.to_string().into()),
                 ],
             ),

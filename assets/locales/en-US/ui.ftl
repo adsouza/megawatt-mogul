@@ -45,9 +45,11 @@ milestone-serve-peak = Serve a monthly peak of { $gigawatts } GW
 milestone-serve-peak-mw = Serve a monthly peak of { $megawatts } MW
 milestone-full-season-without-strike = Get through a full season without a strike
 milestone-connect-cities = Connect { $count } cities
+milestone-fossil-free-year = Run a full year on clean power, without a strike
 milestone-progress-peak = Best monthly peak so far: { $best } of { $goal }
 milestone-progress-strike-free = { $months } of { $needed } strike-free months this season
 milestone-progress-cities = { $connected } of { $needed } cities connected
+milestone-progress-clean-months = { $months } of { $needed } clean, strike-free months
 
 ## Shell: boot, menu and region select
 
