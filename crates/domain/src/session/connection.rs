@@ -99,6 +99,7 @@ impl GameSession {
                         &self.region,
                         month,
                         tick,
+                        self.power.demand_growth(),
                     )
                 })
                 .fold(Megawatts::ZERO, Megawatts::max);
@@ -183,6 +184,8 @@ impl GameSession {
         );
         // A future month has no day-ahead forecast yet: judge it at the month's mean weather.
         power.set_weather_forecast(crate::grid::WeatherForecast::neutral(&self.region, month));
+        // Today's growth for now: the prospective power system is not a fresh, ungrown one.
+        power.set_demand_growth(self.power.demand_growth());
         power.recompute_islands();
         power.prospective_service();
         let synchronous: BTreeSet<_> = power
@@ -267,6 +270,29 @@ mod tests {
             s.connection_warning(ConnectionKind::Ac, s.anchor_node(), city(&s, 3))
                 .unwrap(),
             Some(warning)
+        );
+    }
+    #[test]
+    fn connection_preview_carries_the_growth_factor() {
+        let mut s = game(|p| {
+            p.cities[2].base_load = Megawatts::new(3000.0);
+        });
+        let warn = |s: &GameSession| {
+            s.connection_warning(ConnectionKind::Ac, s.anchor_node(), city(s, 3))
+                .unwrap()
+                .unwrap()
+        };
+        let plain = warn(&s);
+        s.power
+            .set_demand_growth(crate::demand::DemandGrowth::NONE.stepped(1.05));
+        let grown = warn(&s);
+        assert_eq!(grown.added_peak, plain.added_peak * 1.05);
+        // The prospective system is grown too, so the shortage deepens.
+        assert!(grown.shortage.shortfall > plain.shortage.shortfall);
+        assert_eq!(
+            s.connection_power(s.power.network().clone(), 0, s.clock().month())
+                .demand_growth(),
+            s.demand_growth()
         );
     }
     #[test]

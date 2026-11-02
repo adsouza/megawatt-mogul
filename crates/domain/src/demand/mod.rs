@@ -56,18 +56,21 @@ impl DemandNoise {
     }
 }
 
-/// Total expected demand of `cities` at `tick`, without noise. Sums only the
-/// cities it is given; the caller decides which ones are connected.
+/// Total expected demand of `cities` at `tick`, without noise, scaled by the
+/// compounded `growth`. Sums only the cities it is given; the caller decides
+/// which ones are connected.
 pub fn forecast_demand<'a>(
     cities: impl IntoIterator<Item = &'a DemandCenter>,
     region: &RegionDefinition,
     month: SimMonth,
     tick: u32,
+    growth: DemandGrowth,
 ) -> Megawatts {
-    cities
+    let sum: Megawatts = cities
         .into_iter()
         .map(|city| city.def.base_load * region.load_factor(city.id(), month, tick))
-        .sum()
+        .sum();
+    growth.apply(sum)
 }
 
 // Portable state schema 1: explicit field order and enum tags.
@@ -166,11 +169,11 @@ mod tests {
         let r = tiny_region();
         let cities = centers();
         let factor = r.load_factor(r.cities()[0].id, april(), 600);
-        let all = forecast_demand(&cities, &r, april(), 600);
+        let all = forecast_demand(&cities, &r, april(), 600, DemandGrowth::NONE);
         assert!((all.value() - 1300.0 * factor).abs() < 1e-9);
-        let one = forecast_demand(&cities[..1], &r, april(), 600);
+        let one = forecast_demand(&cities[..1], &r, april(), 600, DemandGrowth::NONE);
         assert!((one.value() - 600.0 * factor).abs() < 1e-9);
-        let none = forecast_demand(&cities[..0], &r, april(), 600);
+        let none = forecast_demand(&cities[..0], &r, april(), 600, DemandGrowth::NONE);
         assert_eq!(none, Megawatts::ZERO);
     }
 

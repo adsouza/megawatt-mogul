@@ -2080,3 +2080,43 @@ fn planning_views_never_depend_on_the_coming_surprise() {
     t.begin_operating().unwrap();
     assert_ne!(s.power.wind_factor(), t.power.wind_factor());
 }
+
+#[test]
+fn live_tick_demand_scales_by_the_growth_factor() {
+    use crate::demand::DemandGrowth;
+    let mut plain = session();
+    let mut grown = session();
+    grown
+        .power
+        .set_demand_growth(DemandGrowth::NONE.stepped(1.05));
+    assert_eq!(grown.demand_growth().factor(), 1.05);
+    plain.begin_operating().unwrap();
+    grown.begin_operating().unwrap();
+    for _ in 0..60 {
+        plain.tick().unwrap();
+        grown.tick().unwrap();
+        let (a, b) = (
+            plain.day_ticks.last().unwrap().demand.value(),
+            grown.day_ticks.last().unwrap().demand.value(),
+        );
+        assert!(a > 0.0);
+        assert!(((b / a) - 1.05).abs() < 1e-9, "{a} vs {b}");
+    }
+}
+
+#[test]
+fn growth_scales_the_demand_views() {
+    use crate::demand::DemandGrowth;
+    let mut grown = session();
+    let plain = grown.hourly_forecast();
+    let city = grown.city_views().iter().find(|c| c.connected).unwrap().id;
+    let plain_peak = grown.city_detail(city).unwrap().peak;
+    grown
+        .power
+        .set_demand_growth(DemandGrowth::NONE.stepped(1.05));
+    for (before, after) in plain.iter().zip(grown.hourly_forecast()) {
+        assert_eq!(after.mean, before.mean * 1.05);
+        assert_eq!(after.low, after.mean * (1.0 - 0.06));
+    }
+    assert_eq!(grown.city_detail(city).unwrap().peak, plain_peak * 1.05);
+}

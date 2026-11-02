@@ -482,6 +482,8 @@ impl PowerSystem {
         }
         // The forecast is regional: every island copy plans and operates against it.
         power.weather_forecast = self.weather_forecast.clone();
+        // Growth is regional too: an island copy sees the same demand multiplier.
+        power.demand_growth = self.demand_growth;
         power.injections = self.transfer_schedule(id, region);
         Some(power)
     }

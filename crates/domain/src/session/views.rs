@@ -418,7 +418,12 @@ impl GameSession {
         };
         // The city's own climate in its local time, including the load an
         // unconnected city would add.
-        let forecast = hourly_forecast([city], &self.region, self.clock.month());
+        let forecast = hourly_forecast(
+            [city],
+            &self.region,
+            self.clock.month(),
+            self.power.demand_growth(),
+        );
         let peak = forecast.iter().fold(forecast[0], |best, point| {
             if point.mean > best.mean { *point } else { best }
         });
@@ -514,6 +519,11 @@ impl GameSession {
         Some(self.line_construction(line)?.months)
     }
 
+    /// The compounded demand growth applied to every demand figure.
+    pub fn demand_growth(&self) -> crate::demand::DemandGrowth {
+        self.power.demand_growth()
+    }
+
     /// The noise-free demand forecast of connected cities for each hour of
     /// the current month's representative day.
     pub fn hourly_forecast(&self) -> [ForecastPoint; 24] {
@@ -522,7 +532,12 @@ impl GameSession {
             .cities()
             .values()
             .filter(|city| self.power.node_active(city.node()));
-        hourly_forecast(connected, &self.region, self.clock.month())
+        hourly_forecast(
+            connected,
+            &self.region,
+            self.clock.month(),
+            self.power.demand_growth(),
+        )
     }
 
     /// Today's hydro peak-shaving schedule (spec §12.6), valid per phase:
