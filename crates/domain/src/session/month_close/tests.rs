@@ -1746,3 +1746,33 @@ fn december_review_waits_for_the_close_that_completes_the_region() {
     assert!(flat > Money::ZERO);
     assert_eq!(held(GROWTH_RATE), flat);
 }
+
+/// Two areas at a growing rate, every city physically connected, but city 3 (in the second
+/// area) reached only by an HVDC link into an area nobody has activated yet.
+fn physically_complete_with_an_inactive_area() -> GameSession {
+    let mut parts = crate::region::fixtures::two_area_parts();
+    parts.demand_growth_per_year = GROWTH_RATE;
+    let mut s = session_from(parts, 1);
+    let far = city_node(&s, CityId(3));
+    let link = s.ids.next();
+    let anchor = s.anchor_node();
+    s.power
+        .network_mut()
+        .add_link(link, anchor, far, crate::grid::LineStatus::InService)
+        .unwrap();
+    s.power.recompute_islands();
+    s
+}
+
+#[test]
+fn projections_do_not_grow_while_a_connected_city_sits_in_an_inactive_area() {
+    let s = physically_complete_with_an_inactive_area();
+    let far = city_node(&s, CityId(3));
+    assert!(s.power().network().is_connected(far), "physically reached");
+    assert!(!s.power().node_active(far), "but its area is not enrolled");
+    // The live step would not grow here (`region_complete` is false), so neither may a projection.
+    assert!(!s.region_complete());
+    assert_eq!(s.first_growth_close(), None);
+    let later = s.clock().month().checked_add_months(6).unwrap();
+    assert_eq!(s.growth_for(later), s.demand_growth());
+}

@@ -241,8 +241,10 @@ fn bonus_row_appears_only_after_reveal() {
 }
 
 #[test]
-fn the_bonus_row_reads_zero_while_a_strike_is_pending() {
-    // The projection says so; the panel only shows it (a strike is issued by a real close).
+fn a_new_games_bonus_progress_starts_at_zero_of_twelve() {
+    // A strike is issued and cleared inside one month close, so no game-level test can observe a
+    // pending one; `a_pending_strike_shows_no_clean_months_until_the_month_closes` in the
+    // projection's own tests pins that. Here: a game with no clean months yet reads 0 of 12.
     let game = new_game(WESTERN);
     let status = game.projections().milestones.status(
         MilestoneKind::FossilFreeYear,

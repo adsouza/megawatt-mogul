@@ -1361,6 +1361,9 @@ impl PowerSystem {
         self.demand_growth
     }
 
+    /// Replaces the demand growth factor. Called by the month-close growth step to compound it,
+    /// and when a projected system is copied from the live one so its demand carries the same
+    /// (or a projected) factor.
     pub fn set_demand_growth(&mut self, growth: DemandGrowth) {
         self.demand_growth = growth;
     }

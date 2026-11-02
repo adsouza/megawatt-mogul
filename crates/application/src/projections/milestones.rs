@@ -1451,6 +1451,26 @@ mod tests {
     }
 
     #[test]
+    fn old_save_run_stops_at_a_fossil_month_that_is_the_latest_unclean_one() {
+        // A struck month long ago, then a fossil month: the run counts only what follows the
+        // fossil month, however many clean months sit before it.
+        let mut old = schema_11_with_three_reached();
+        let mut fossil = report_at(9);
+        fossil
+            .energy_by_kind
+            .insert(PlantKind::Coal, MegawattHours::new(5.0));
+        let history = reports_of(
+            std::iter::once(struck_report(0))
+                .chain((1..9).map(report_at))
+                .chain([fossil])
+                .chain((10..13).map(report_at)),
+        );
+        old.upgrade_fossil_free(&history, &session());
+        assert_eq!(old.clean_run, 3);
+        assert!(!old.reached().contains(&MilestoneKind::FossilFreeYear));
+    }
+
+    #[test]
     fn old_save_without_three_reached_stays_hidden_whatever_the_run() {
         let mut old = MilestoneProjection::new(&session());
         let history = reports_of((0..14).map(report_at));

@@ -366,8 +366,10 @@ impl WorldModel {
                 let demand = if s.phase() == DayPhase::Operating {
                     detail.demand_now.unwrap_or_else(|| {
                         // Disconnected cities still have demand, even when none is served.
+                        // Grown like Planning's height, so it does not dip before the first tick.
                         detail.base_load
                             * region.load_factor(c.id, s.clock().month(), s.clock().tick())
+                            * detail.growth
                     })
                 } else {
                     // `max_load` stays the authored maximum, so growth shows as height.
@@ -581,6 +583,40 @@ mod tests {
         let factor = grown.session().demand_growth().factor();
         assert!(factor > 1.0, "{factor}");
         assert_eq!(grown.session().phase(), DayPhase::Planning);
+        let (grown, flat) = (WorldModel::of(&grown), WorldModel::of(&flat));
+        assert_eq!(grown.cities.len(), flat.cities.len());
+        for (id, city) in &grown.cities {
+            let none = flat.cities[id].scale;
+            assert!(none > 0.0);
+            assert!(
+                (city.scale - none * factor as f32).abs() <= 1e-6 * none,
+                "{id:?}: {} vs {none} x {factor}",
+                city.scale
+            );
+        }
+    }
+
+    #[test]
+    fn operating_city_height_grows_before_the_first_tick() {
+        // Before the day's first tick there is no live demand, so each city stands at the
+        // fallback height: the grown game's must be `factor` times the flat game's, as in Planning.
+        let mut grown = grown_tiny_game(0.033);
+        let mut flat = grown_tiny_game(0.0);
+        let factor = grown.session().demand_growth().factor();
+        assert!(factor > 1.0, "{factor}");
+        for game in [&mut grown, &mut flat] {
+            game.execute(application::Command::BeginOperating).unwrap();
+            assert_eq!(game.session().phase(), DayPhase::Operating);
+            assert!(
+                game.session().city_views().iter().all(|c| game
+                    .session()
+                    .city_detail(c.id)
+                    .unwrap()
+                    .demand_now
+                    .is_none()),
+                "no tick has run yet"
+            );
+        }
         let (grown, flat) = (WorldModel::of(&grown), WorldModel::of(&flat));
         assert_eq!(grown.cities.len(), flat.cities.len());
         for (id, city) in &grown.cities {

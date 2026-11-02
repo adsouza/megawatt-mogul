@@ -60,8 +60,17 @@ impl GameSession {
                 .values()
                 .all(|city| network.is_connected(city.node()))
         };
+        // The live network is judged exactly as the close's growth step judges it
+        // ([`GameSession::region_complete`]: a city counts once its area is enrolled, not merely
+        // reached by a link). A proposal has no activation state of its own, so it keeps the
+        // physical-connectivity rule.
+        let complete_now = if network == self.power.network() {
+            self.region_complete()
+        } else {
+            complete(network)
+        };
         // Connectivity only changes when something under construction commissions.
-        let closes = if complete(network) {
+        let closes = if complete_now {
             0
         } else {
             construction_months(network)

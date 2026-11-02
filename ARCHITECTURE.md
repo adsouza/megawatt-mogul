@@ -43,17 +43,18 @@ never compile Bevy, so feedback takes seconds.
 | Rendering, input, UI and localised text | `game` (see [The game crate](#the-game-crate)) |
 
 Region data (plant tuning numbers, cities, regulator parameters) lives in `assets/regions/*.ron`,
-never as code constants. The current region schema is 7 (it adds a required `demand_growth_per_year`); shipped files declare it, including explicit clock,
-climate, calendar, currency, astronomical-sun and geothermal data. Legacy region schemas retain frozen
-defaults in `infrastructure::region::legacy`; old-source integrity is checked before any
-upcast. Unexpected new fields on legacy sources and unsupported schemas fail with typed errors.
-Region schema versions are independent of portable state schema 12, written by current saves;
-readers retain schemas 1–12. Schema 12 adds the fossil-free run and the bonus reveal month to the
-milestones (older saves rebuild the run from their monthly reports). Schema 11 stores the compounded demand growth factor (older saves
-read no growth). Schema 10 freezes regional milestone targets. Schema 8 appends the
-expansion projection (month closes since the
-first non-starter city connected); older snapshots seed it from the restored session, so an
-already-expanded game starts counting at the restore.
+never as code constants. The current region schema is 7 (it adds a required
+`demand_growth_per_year`); shipped files declare it, including explicit clock, climate, calendar,
+currency, astronomical-sun and geothermal data. Legacy region schemas retain frozen defaults in
+`infrastructure::region::legacy`; old-source integrity is checked before any upcast. Unexpected
+new fields on legacy sources and unsupported schemas fail with typed errors. Region schema
+versions are independent of portable state schema 12, written by current saves; readers retain
+schemas 1–12. Schema 12 adds the fossil-free run and the bonus reveal month to the milestones
+(older saves rebuild the run from their monthly reports). Schema 11 stores the compounded demand
+growth factor (older saves read no growth). Schema 10 freezes regional milestone targets. Schema 8
+appends the expansion projection (month closes since the first non-starter city connected); older
+snapshots seed it from the restored session, so an already-expanded game starts counting at the
+restore.
 
 **Sidecars and the region bundle.** Spec §28.11.1 describes the format. Tool-generated blocks
 live in sidecars under `assets/regions/<id>/`, and the hand-authored main file references them:
