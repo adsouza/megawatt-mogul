@@ -370,7 +370,8 @@ impl WorldModel {
                             * region.load_factor(c.id, s.clock().month(), s.clock().tick())
                     })
                 } else {
-                    detail.base_load
+                    // `max_load` stays the authored maximum, so growth shows as height.
+                    detail.base_load * detail.growth
                 };
                 Some((
                     c.id,
@@ -564,4 +565,49 @@ pub(crate) fn line_breaks(a: CellCoord, b: CellCoord) -> Vec<f32> {
     breaks.sort_by(f32::total_cmp);
     breaks.dedup_by(|a, b| (*a - *b).abs() < 0.000001);
     breaks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hud::test_support::{grown_tiny_game, tiny_game};
+
+    #[test]
+    fn planning_city_height_grows_with_demand() {
+        // The same months played with and without growth: the grown game's cities stand
+        // `factor` times as tall, against the same authored-maximum reference.
+        let grown = grown_tiny_game(0.033);
+        let flat = grown_tiny_game(0.0);
+        let factor = grown.session().demand_growth().factor();
+        assert!(factor > 1.0, "{factor}");
+        assert_eq!(grown.session().phase(), DayPhase::Planning);
+        let (grown, flat) = (WorldModel::of(&grown), WorldModel::of(&flat));
+        assert_eq!(grown.cities.len(), flat.cities.len());
+        for (id, city) in &grown.cities {
+            let none = flat.cities[id].scale;
+            assert!(none > 0.0);
+            assert!(
+                (city.scale - none * factor as f32).abs() <= 1e-6 * none,
+                "{id:?}: {} vs {none} x {factor}",
+                city.scale
+            );
+        }
+    }
+
+    #[test]
+    fn planning_city_height_before_growth_is_the_authored_load() {
+        let game = tiny_game(0.033);
+        let s = game.session();
+        let model = WorldModel::of(&game);
+        let max = s
+            .city_views()
+            .iter()
+            .filter_map(|c| s.city_detail(c.id))
+            .map(|d| d.base_load.value())
+            .fold(1.0, f64::max);
+        for city in s.city_views() {
+            let base = s.city_detail(city.id).unwrap().base_load.value();
+            assert_eq!(model.cities[&city.id].scale, (3.0 * base / max) as f32);
+        }
+    }
 }

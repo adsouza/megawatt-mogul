@@ -1077,3 +1077,20 @@ fn each_game_starts_on_the_game_over_summary() {
     assert_eq!(state(&app), AppState::MainMenu);
     assert_eq!(game_over_view(&app), GameOverView::Summary);
 }
+
+#[test]
+fn demand_growth_started_toasts_once() {
+    let logs = TempDir::new().unwrap();
+    let mut app = hud_app(&logs);
+    app.world_mut().write_message(game::sim::DomainEventMessage(
+        domain::events::DomainEvent::DemandGrowthStarted { annual_rate: 0.033 },
+    ));
+    app.update();
+    assert_eq!(
+        toasts(&app),
+        vec!["Every city is connected. Demand will now grow about 3.3% a year."]
+    );
+    // Reading the same frame's event again must not repeat the notification.
+    app.update();
+    assert_eq!(toasts(&app).len(), 1);
+}

@@ -95,6 +95,9 @@ pub struct CityDetail {
     /// A physical route exists, but this remote island has no commissioned synchronous source.
     pub inactive: bool,
     pub base_load: Megawatts,
+    /// The demand growth factor now applying to `base_load` (`1.0` before growth
+    /// starts): the load the city draws at its daily average is `base_load * growth`.
+    pub growth: f64,
     /// `base_load` over the connected cities' total base load; zero for an
     /// unconnected city.
     pub share: Ratio,
@@ -480,6 +483,7 @@ impl GameSession {
             connected,
             inactive,
             base_load,
+            growth: self.power.demand_growth().factor(),
             share,
             peak: peak.mean,
             peak_hour: peak.hour,

@@ -648,10 +648,9 @@ fn events() -> Vec<(DomainEvent, bool)> {
             },
             false,
         ),
-        // Its toast arrives with the growth notice.
         (
             DomainEvent::DemandGrowthStarted { annual_rate: 0.024 },
-            false,
+            true,
         ),
     ]
 }

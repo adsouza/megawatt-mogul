@@ -735,6 +735,73 @@ pub(crate) mod test_support {
         shipped_game_in(dir.path(), "eastern_interconnection")
     }
 
+    /// The tiny fixture region, growing at `rate` a year once every city is connected.
+    struct TinyCatalog(f64);
+
+    impl application::RegionCatalog for TinyCatalog {
+        fn list(&self) -> Result<Vec<application::RegionListing>, application::RegionLoadError> {
+            Ok(Vec::new())
+        }
+
+        fn load(
+            &self,
+            _: &RegionId,
+        ) -> Result<application::LoadedRegion, application::RegionLoadError> {
+            let mut parts = domain::region::fixtures::tiny_region_parts();
+            parts.demand_growth_per_year = self.0;
+            Ok(application::LoadedRegion {
+                definition: std::sync::Arc::new(
+                    domain::region::RegionDefinition::try_from(parts).expect("a valid region"),
+                ),
+                source_bytes: Vec::new(),
+                fingerprint: application::RegionFingerprint::new([0; 32]),
+            })
+        }
+    }
+
+    /// A new game in the tiny fixture region (one city unconnected), seed 7, in Planning, whose
+    /// demand grows at `rate` a year once every city is connected.
+    pub fn tiny_game(rate: f64) -> Game {
+        Game::start_new(
+            &TinyCatalog(rate),
+            &RegionId::new("tiny"),
+            7,
+            GameSettings::default(),
+            Box::new(application::InMemoryCommandLog::default()),
+        )
+        .expect("the tiny region starts")
+    }
+
+    /// [`tiny_game`] played, in Planning, to the first month after demand growth has begun: the
+    /// last city is connected and one month's growth has been applied (none at a rate of 0).
+    pub fn grown_tiny_game(rate: f64) -> Game {
+        use domain::time::TICKS_PER_DAY;
+        let mut game = tiny_game(rate);
+        let to = game
+            .session()
+            .city_views()
+            .into_iter()
+            .find(|city| !city.connected)
+            .expect("the tiny region starts with an unconnected city")
+            .node;
+        let from = game.session().anchor_node();
+        game.execute(Command::BuildLine { from, to })
+            .expect("order the last line");
+        // The close that connects the last city is the one that starts the growth.
+        while game
+            .session()
+            .city_views()
+            .iter()
+            .any(|city| !city.connected)
+        {
+            game.execute(Command::BeginOperating).unwrap();
+            game.execute(Command::AdvanceTicks { n: TICKS_PER_DAY })
+                .unwrap();
+            game.execute(Command::FinishReview).unwrap();
+        }
+        game
+    }
+
     /// A new eastern game, seed 7, in Planning, recording to `sink`.
     pub fn eastern_game(sink: Box<dyn CommandLogSink>) -> Game {
         shipped_game("eastern_interconnection", sink)

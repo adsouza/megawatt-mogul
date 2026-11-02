@@ -114,6 +114,8 @@ topbar-warnings = { $count ->
    *[other] ⚠ { $count } warnings
 }
 toast-repeated = { $text } (×{ $count })
+# `$percent` is the region's yearly demand growth, one decimal, such as 3.3.
+toast-demand-growth-started = Every city is connected. Demand will now grow about { $percent }% a year.
 game-over-title = Game over
 game-over-final-cash = Final cash
 game-over-reliability = Reliability
@@ -373,6 +375,9 @@ city-connect-hint = Build a line to it from the build menu to connect it.
 # The connection date accounts for every unfinished line on a complete route to the home grid.
 city-line-under-construction = Grid connection under construction: connected from { $month }
 city-base-load = Base load
+# Shown once demand growth has started; `$percent` is the region's yearly rate, one decimal.
+city-demand-growth = Demand growth
+city-demand-growth-value = { $percent }% a year
 city-peak = Peak today
 # What an unconnected city would add to demand, at the day's peak, once a line reaches it.
 city-would-add = Would add at peak

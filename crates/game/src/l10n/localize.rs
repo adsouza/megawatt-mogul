@@ -813,9 +813,12 @@ impl Toast for DomainEvent {
                     ("allowed_return", format::percent(*allowed_return).into()),
                 ],
             ),
-            // Bookkeeping, not news: no toast. (`DemandGrowthStarted` gets its toast in Task 6.)
-            Self::DemandGrowthStarted { .. }
-            | Self::PlantStarting { .. }
+            Self::DemandGrowthStarted { annual_rate } => l10n.args(
+                "toast-demand-growth-started",
+                &[("percent", format::percent_number(*annual_rate).into())],
+            ),
+            // Bookkeeping, not news: no toast.
+            Self::PlantStarting { .. }
             | Self::PlantOnline { .. }
             | Self::PlantStopped { .. }
             | Self::TickCompleted(_)
