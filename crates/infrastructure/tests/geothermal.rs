@@ -179,10 +179,19 @@ fn geothermal_region_schema5_requires_fields_and_keeps_six_regions_resource_free
             "{field}: {error}"
         );
     }
-    // A schema-4 source may not declare geothermal at all. It also predates `weather` (schema 6),
-    // so drop that first: only the geothermal fields may cause this refusal.
-    let schema4 =
-        without_field(&text, "weather").replacen("region_schema: 6", "region_schema: 4", 1);
+    // A schema-4 source may not declare geothermal at all. It also predates `weather` (schema 6)
+    // and `demand_growth_per_year` (schema 7), so drop those first: only the geothermal fields
+    // may cause this refusal.
+    let without_growth = text
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("demand_growth_per_year:"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let schema4 = without_field(&without_growth, "weather").replacen(
+        "region_schema: 7",
+        "region_schema: 4",
+        1,
+    );
     let error = load_edited(schema4).expect_err("schema 4 with geothermal fields must be refused");
     assert!(
         matches!(

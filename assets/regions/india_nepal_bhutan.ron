@@ -53,7 +53,7 @@
 // game values by its pacing method. Each entry's comment cites its rows and
 // shows the arithmetic; the ratios use full precision (ruling 25).
 (
-    region_schema: 6,
+    region_schema: 7,
     id: "india_nepal_bhutan",
     system_zone: 1,
     // Indian Standard Time (IST, UTC+5:30) is the dispatcher's clock for all
@@ -272,6 +272,10 @@
     geothermal: (success_min: 0.45, success_max: 0.80, quality_min: 0.15, quality_max: 1.0, exploration_months: 3, exploration_share: 0.12, monthly_decline: 0.002535048613836126, makeup_capital: 15000000, makeup_months: 3, ceiling_step: 0.05, minimum_gain: 0.03),
     wind: (monthly: [0.47, 0.32, 0.38, 0.4, 0.95, 0.93, 0.95, 0.81, 0.64, 0.32, 0.24, 0.37], persistence: 0.995, innovation_sd: 0.015, initial_sd: 0.15, band: 0.25),
     weather: (surprise_share: 0.5),
+    // Demand growth, 5.3% a year: peak demand FY2026-27 to FY2035-36, 288.6 to 459.4 GW.
+    // CEA, Long-Term National Resource Adequacy Plan 2026-27 to 2035-36 (Mar 2026),
+    // Annexure-A. Driver: EVs, green hydrogen and data centres.
+    demand_growth_per_year: 0.053,
     // Unit sizes and operating parameters follow the North American catalog
     // (spec section 3.2), except where the rows name an Indian unit: coal is
     // an 800 MW ultra-supercritical unit, as at Lara Stage II [P7-IN-001];

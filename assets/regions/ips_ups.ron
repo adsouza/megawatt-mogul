@@ -100,7 +100,7 @@
 // game values by its pacing method. Each entry's comment cites its rows and
 // shows the arithmetic; the ratios use full precision (ruling 25).
 (
-    region_schema: 6,
+    region_schema: 7,
     id: "ips_ups",
     system_zone: 1,
     // Moscow time (MSK, UTC+3, which Belarus also keeps) is the dispatcher's
@@ -373,6 +373,11 @@
     geothermal: (success_min: 0.45, success_max: 0.80, quality_min: 0.15, quality_max: 1.0, exploration_months: 3, exploration_share: 0.12, monthly_decline: 0.002535048613836126, makeup_capital: 15000000, makeup_months: 3, ceiling_step: 0.05, minimum_gain: 0.03),
     wind: (monthly: [0.85, 0.84, 0.71, 0.52, 0.39, 0.29, 0.26, 0.31, 0.42, 0.6, 0.75, 0.86], persistence: 0.995, innovation_sd: 0.015, initial_sd: 0.15, band: 0.25),
     weather: (surprise_share: 0.5),
+    // Demand growth, 2.6% a year: a demand-weighted blend over about 2024-2032 of
+    // Russia 2.1% peak (SO UPS draft SiPR 2026-2031), Kazakhstan 5.3% peak (Ministry of
+    // Energy forecast balances) and Uzbekistan about 6% energy (World Bank). Low
+    // confidence: the sources differ in measure and period. Driver: new industrial load.
+    demand_growth_per_year: 0.026,
     // Unit sizes and operating parameters follow the North American catalog
     // (spec section 3.2), except where a row names a local unit: coal is a
     // 230 MW unit, as at Kharanorskaya [P7-IPS-004], so its start-up cost

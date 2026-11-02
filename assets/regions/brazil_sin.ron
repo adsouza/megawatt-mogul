@@ -41,7 +41,7 @@
 // game values by its pacing method. Each entry's comment cites its rows and
 // shows the arithmetic; the ratios use full precision.
 (
-    region_schema: 6,
+    region_schema: 7,
     id: "brazil_sin",
     system_zone: 1,
     // Brasilia time (BRT, UTC-3) is the dispatcher's clock and covers the
@@ -314,6 +314,10 @@
     geothermal: (success_min: 0.45, success_max: 0.80, quality_min: 0.15, quality_max: 1.0, exploration_months: 3, exploration_share: 0.12, monthly_decline: 0.002535048613836126, makeup_capital: 15000000, makeup_months: 3, ceiling_step: 0.05, minimum_gain: 0.03),
     wind: (monthly: [0.41, 0.44, 0.48, 0.46, 0.52, 0.53, 0.70, 0.77, 0.78, 0.77, 0.49, 0.49], persistence: 0.995, innovation_sd: 0.015, initial_sd: 0.15, band: 0.25),
     weather: (surprise_share: 0.5),
+    // Demand growth, 3.3% a year: peak demand 2025-2035, reference case, 109.2 to
+    // 151.4 GWh/h. EPE/MME, PDE 2035 - Demanda de Eletricidade (Sept 2025), p. 29,
+    // "Demanda maxima integrada, SIN". Driver: services growth and GDP.
+    demand_growth_per_year: 0.033,
     // Unit sizes and operating parameters follow the North American catalog
     // (spec section 3.2): the EPE rows give costs per kW without a reference
     // unit size. Money and build months come from the Plan 7 research note
