@@ -88,6 +88,7 @@ pub struct UiState {
     pub outlook_open: bool,
     pub payoff_open: bool,
     pub outlook_city: Option<domain::ids::CityId>,
+    pub outlook_month: Option<SimMonth>,
     pub outlook_guide: Option<super::tutorial::OutlookGuideStep>,
     pub hvdc_selected: Option<domain::ids::LinkId>,
     pub hvdc_terminal: Option<domain::grid::ConverterStationId>,
@@ -156,11 +157,16 @@ impl UiState {
             UiAction::ShowPayoff(open) => self.payoff_open = *open,
             UiAction::ShowOutlook(open) => {
                 self.outlook_open = *open;
+                self.outlook_month = None;
                 if !open {
                     self.outlook_guide = None;
                 }
             }
-            UiAction::PreviewOutlookCity(city) => self.outlook_city = *city,
+            UiAction::PreviewOutlookCity(city) => {
+                self.outlook_city = *city;
+                self.outlook_month = None;
+            }
+            UiAction::SelectOutlookMonth(month) => self.outlook_month = *month,
             UiAction::InspectHvdc { link, station } => {
                 if self.hvdc_selected != Some(*link) {
                     self.hvdc_range = Default::default();

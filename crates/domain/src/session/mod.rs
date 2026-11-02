@@ -25,7 +25,11 @@ pub use geothermal::DrySite;
 mod invariants;
 mod links;
 mod month_close;
+mod operational_outlook;
 mod outlook;
+pub use operational_outlook::{
+    OperationalDay, OperationalMonth, OperationalOutlook, OperationalOutlookWork,
+};
 pub use outlook::{CapacityEstimate, CityConnectionPreview, OutlookMonth, YearAheadOutlook};
 mod report;
 mod settings;

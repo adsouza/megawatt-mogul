@@ -12,7 +12,8 @@ use bevy_egui::{EguiContexts, egui};
 use domain::{
     error::DomainError,
     ids::CityId,
-    session::{CapacityEstimate, YearAheadOutlook},
+    session::{CapacityEstimate, OperationalOutlook},
+    time::SimMonth,
 };
 use egui_plot::{FilledArea, Line, Plot};
 
@@ -61,18 +62,26 @@ impl CapacityBands {
 #[derive(Debug, Clone, PartialEq)]
 pub struct OutlookRow {
     pub month: String,
+    pub date: SimMonth,
+    pub balance: f64,
+    pub baseline_balance: f64,
     pub baseline_peak: f64,
     pub peak: f64,
     pub existing: f64,
     pub scheduled: f64,
     pub firm: f64,
+    pub accredited_headroom: f64,
     pub values: Vec<String>,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct OutlookModel {
+    pub day: Option<super::outlook_day::OutlookDayModel>,
     pub title: String,
     pub help: String,
     pub power_label: String,
+    pub capacity_title: String,
+    pub balance_title: String,
+    pub balance_help: String,
     pub route: String,
     pub city_label: String,
     pub city: Option<CityId>,
@@ -104,10 +113,16 @@ pub fn outlook_model(
     city: Option<CityId>,
 ) -> Result<OutlookModel, DomainError> {
     let city = preview_city(game.session(), city);
-    let outlook = game.session().year_ahead_outlook(city)?;
-    Ok(model_from(game, l10n, &outlook))
+    let outlook = game.session().operational_outlook(city)?;
+    Ok(model_from(game, l10n, &outlook, None))
 }
-fn model_from(game: &Game, l10n: &Localizer, outlook: &YearAheadOutlook) -> OutlookModel {
+fn model_from(
+    game: &Game,
+    l10n: &Localizer,
+    operational: &OperationalOutlook,
+    selected: Option<SimMonth>,
+) -> OutlookModel {
+    let outlook = &operational.capacity;
     let session = game.session();
     let names = Names::new(l10n, session);
     let mut cities = vec![(None, l10n.text("outlook-current-grid"))];
@@ -161,32 +176,53 @@ fn model_from(game: &Game, l10n: &Localizer, outlook: &YearAheadOutlook) -> Outl
     let rows: Vec<OutlookRow> = outlook
         .months
         .iter()
-        .map(|point| {
+        .zip(&operational.months)
+        .map(|(point, operation)| {
+            let day = operation.selected();
             let CapacityEstimate {
-                peak_demand,
+                peak_demand: _,
                 existing_capacity,
                 scheduled_capacity,
                 firm_capacity,
             } = point.with_city.unwrap_or(point.baseline);
+            let peak_demand = day.forecast.minutes.iter().map(|p| p.demand).fold(
+                domain::units::Megawatts::ZERO,
+                domain::units::Megawatts::max,
+            );
+            let baseline_peak = operation
+                .baseline
+                .forecast
+                .minutes
+                .iter()
+                .map(|p| p.demand)
+                .fold(
+                    domain::units::Megawatts::ZERO,
+                    domain::units::Megawatts::max,
+                );
             let month = format::month_year_short(point.month);
-            let mut values = vec![month.clone(), format::megawatts(point.baseline.peak_demand)];
+            let mut values = vec![month.clone(), format::megawatts(baseline_peak)];
             if outlook.connection.is_some() {
                 values.push(format::megawatts(peak_demand));
             }
             values.extend([
-                format::megawatts(existing_capacity),
-                format::megawatts(scheduled_capacity),
-                format::megawatts(existing_capacity + scheduled_capacity),
                 format::megawatts(firm_capacity),
                 format::megawatts(firm_capacity - peak_demand),
+                format::megawatts(day.worst_balance),
+                format::clock(day.worst_minute),
+                format::duration(domain::time::SimDuration::from_ticks(day.shortfall_minutes)),
+                format::megawatt_hours(day.unserved_energy),
             ]);
             OutlookRow {
                 month,
-                baseline_peak: point.baseline.peak_demand.value(),
+                date: point.month,
+                balance: day.worst_balance.value(),
+                baseline_balance: operation.baseline.worst_balance.value(),
+                baseline_peak: baseline_peak.value(),
                 peak: peak_demand.value(),
                 existing: existing_capacity.value(),
                 scheduled: scheduled_capacity.value(),
                 firm: firm_capacity.value(),
+                accredited_headroom: (firm_capacity - peak_demand).value(),
                 values,
             }
         })
@@ -197,22 +233,21 @@ fn model_from(game: &Game, l10n: &Localizer, outlook: &YearAheadOutlook) -> Outl
     }
     headings.extend(
         [
-            "outlook-existing",
-            "outlook-scheduled",
-            "outlook-total",
             "outlook-firm",
+            "outlook-accredited-headroom",
             "outlook-headroom",
+            "outlook-tightest-time",
+            "outlook-shortage-duration",
+            "outlook-unserved-energy",
         ]
         .map(|key| l10n.text(key)),
     );
-    let bands = CapacityBands::of(&rows.iter().map(|r| (r.peak, r.firm)).collect::<Vec<_>>());
-    let worst = rows
-        .iter()
-        .min_by(|a, b| (a.firm - a.peak).total_cmp(&(b.firm - b.peak)));
-    let has_shortfall = worst.is_some_and(|row| row.firm < row.peak);
+    let bands = CapacityBands::of(&rows.iter().map(|r| (0.0, r.balance)).collect::<Vec<_>>());
+    let worst = rows.iter().min_by(|a, b| a.balance.total_cmp(&b.balance));
+    let has_shortfall = worst.is_some_and(|row| row.balance < 0.0);
     let cushion_summary = worst
         .map(|row| {
-            let margin = row.firm - row.peak;
+            let margin = row.balance;
             l10n.args(
                 if margin < 0.0 {
                     "outlook-shortfall-summary"
@@ -227,11 +262,25 @@ fn model_from(game: &Game, l10n: &Localizer, outlook: &YearAheadOutlook) -> Outl
                         format::megawatts(domain::units::Megawatts::new(margin.abs())).into(),
                     ),
                     ("month", row.month.clone().into()),
+                    ("time", row.values[row.values.len() - 3].clone().into()),
                 ],
             )
         })
         .unwrap_or_default();
     OutlookModel {
+        day: selected.and_then(|month| {
+            outlook
+                .months
+                .iter()
+                .position(|p| p.month == month)
+                .map(|index| {
+                    super::outlook_day::outlook_day_model(
+                        l10n,
+                        month,
+                        operational.months[index].selected(),
+                    )
+                })
+        }),
         bands,
         has_shortfall,
         cushion_summary,
@@ -240,6 +289,9 @@ fn model_from(game: &Game, l10n: &Localizer, outlook: &YearAheadOutlook) -> Outl
         title: l10n.text("outlook-title"),
         help: l10n.text("outlook-help"),
         power_label: l10n.text("forecast-axis-power"),
+        capacity_title: l10n.text("outlook-capacity-chart"),
+        balance_title: l10n.text("outlook-balance-chart"),
+        balance_help: l10n.text("outlook-balance-help"),
         route,
         city_label: l10n.text("outlook-city"),
         city: outlook.connection.map(|c| c.city),
@@ -249,14 +301,154 @@ fn model_from(game: &Game, l10n: &Localizer, outlook: &YearAheadOutlook) -> Outl
         series: [
             "outlook-demand",
             "outlook-with-city",
-            "outlook-existing",
             "outlook-total",
             "outlook-firm",
+            "outlook-baseline-balance",
+            "outlook-city-balance",
         ]
         .map(|key| l10n.text(key))
         .to_vec(),
         close: ButtonModel::new(l10n.text("outlook-close"), UiAction::ShowOutlook(false)),
     }
+}
+
+struct OutlookChartSeries {
+    label: String,
+    color: egui::Color32,
+    values: Vec<[f64; 2]>,
+    width: f32,
+}
+
+/// The main planning chart retains capacity and demand; balance has a separate scale.
+fn outlook_chart_series(model: &OutlookModel) -> Vec<OutlookChartSeries> {
+    let colors = [
+        TextTone::Information.color(),
+        TextTone::Caution.color(),
+        TextTone::Positive.color(),
+        TextTone::Neutral.color(),
+    ];
+    model
+        .series
+        .iter()
+        .take(4)
+        .enumerate()
+        .filter(|(i, _)| model.city.is_some() || *i != 1)
+        .map(|(i, label)| OutlookChartSeries {
+            label: label.clone(),
+            color: colors[i],
+            values: model
+                .rows
+                .iter()
+                .enumerate()
+                .map(|(month, row)| {
+                    [
+                        month as f64,
+                        match i {
+                            0 => row.baseline_peak,
+                            1 => row.peak,
+                            2 => row.existing + row.scheduled,
+                            _ => row.firm,
+                        },
+                    ]
+                })
+                .collect(),
+            width: if i < 2 { 2.5 } else { 1.5 },
+        })
+        .collect()
+}
+
+fn outlook_balance_series(model: &OutlookModel) -> Vec<OutlookChartSeries> {
+    let colors = [TextTone::Information.color(), TextTone::Caution.color()];
+    model
+        .series
+        .iter()
+        .skip(4)
+        .enumerate()
+        .filter(|(i, _)| *i == 0 || model.city.is_some())
+        .map(|(i, label)| OutlookChartSeries {
+            label: label.clone(),
+            color: colors[i],
+            width: 2.0,
+            values: model
+                .rows
+                .iter()
+                .enumerate()
+                .map(|(month, row)| {
+                    [
+                        month as f64,
+                        if i == 0 {
+                            row.baseline_balance
+                        } else {
+                            row.balance
+                        },
+                    ]
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+fn draw_month_chart(
+    ui: &mut egui::Ui,
+    id: &str,
+    model: &OutlookModel,
+    series: &[OutlookChartSeries],
+    height: f32,
+    balance: bool,
+) -> egui::Response {
+    let labels: Vec<_> = model.rows.iter().map(|r| r.month.clone()).collect();
+    Plot::new(id)
+        .height(height)
+        .include_y(0.0)
+        .include_x(0.0)
+        .include_x(11.0)
+        .allow_zoom(false)
+        .allow_drag(false)
+        .allow_scroll(false)
+        .custom_y_axes(vec![super::chart_style::y_axis(&model.power_label)])
+        .custom_x_axes(vec![super::chart_style::x_axis("").formatter(
+            move |mark, _| {
+                if mark.value < 0.0 || mark.value > 11.0 {
+                    return String::new();
+                }
+                labels
+                    .get(mark.value.round() as usize)
+                    .cloned()
+                    .unwrap_or_default()
+            },
+        )])
+        .show(ui, |plot| {
+            if balance {
+                plot.add(
+                    FilledArea::new(
+                        &model.cushion_label,
+                        &model.bands.x,
+                        &model.bands.demand,
+                        &model.bands.upper,
+                    )
+                    .fill_color(cushion_green())
+                    .allow_hover(false),
+                );
+                plot.add(
+                    FilledArea::new(
+                        &model.shortfall_label,
+                        &model.bands.x,
+                        &model.bands.dependable,
+                        &model.bands.upper,
+                    )
+                    .fill_color(shortfall_red())
+                    .allow_hover(false),
+                );
+            }
+            for curve in series {
+                plot.line(
+                    Line::new(curve.label.clone(), curve.values.clone())
+                        .color(curve.color)
+                        .width(curve.width),
+                );
+            }
+        })
+        .response
 }
 
 pub fn draw_outlook(ui: &mut egui::Ui, model: &OutlookModel) -> Vec<UiAction> {
@@ -267,6 +459,9 @@ fn draw_outlook_revealed(
     model: &OutlookModel,
     reveal: Option<TutorialAnchor>,
 ) -> Vec<UiAction> {
+    if let Some(day) = &model.day {
+        return super::outlook_day::draw_outlook_day(ui, day);
+    }
     let mut actions = Vec::new();
     let popup_was_open = egui::Popup::is_any_open(ui.ctx());
     ui.horizontal_wrapped(|ui| {
@@ -305,98 +500,40 @@ fn draw_outlook_revealed(
         },
         &model.cushion_summary,
     );
-    let colors = [
-        TextTone::Caution.color(),
-        TextTone::Negative.color(),
-        TextTone::Information.color(),
-        TextTone::Positive.color(),
-        super::theme::heading_color(),
-    ];
+    ui.horizontal_wrapped(|ui| {
+        for row in &model.rows {
+            button(
+                ui,
+                &ButtonModel::new(
+                    row.month.clone(),
+                    UiAction::SelectOutlookMonth(Some(row.date)),
+                ),
+                &mut actions,
+            );
+        }
+    });
+    ui.label(egui::RichText::new(&model.capacity_title).strong());
+    let capacity = outlook_chart_series(model);
+    ui.horizontal_wrapped(|ui| {
+        for curve in &capacity {
+            ui.colored_label(curve.color, &curve.label);
+        }
+    });
+    draw_month_chart(ui, "year-ahead-capacity", model, &capacity, 210.0, false);
+    ui.label(egui::RichText::new(&model.balance_title).strong());
+    ui.label(&model.balance_help);
+    let balance = outlook_balance_series(model);
     ui.horizontal_wrapped(|ui| {
         ui.colored_label(TextTone::Positive.color(), &model.cushion_label);
         ui.colored_label(TextTone::Negative.color(), &model.shortfall_label);
-        for (i, label) in model
-            .series
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| *i != 1 || model.city.is_some())
-        {
-            ui.colored_label(colors[i], label);
+        for curve in &balance {
+            ui.colored_label(curve.color, &curve.label);
         }
     });
-    let labels: Vec<_> = model.rows.iter().map(|r| r.month.clone()).collect();
-    let chart = Plot::new("year-ahead-outlook")
-        .height(210.0)
-        .include_y(0.0)
-        .include_x(0.0)
-        .include_x(11.0)
-        .allow_zoom(false)
-        .allow_drag(false)
-        .allow_scroll(false)
-        .custom_y_axes(vec![super::chart_style::y_axis(&model.power_label)])
-        .custom_x_axes(vec![super::chart_style::x_axis("").formatter(
-            move |mark, _| {
-                if mark.value < 0.0 || mark.value > 11.0 {
-                    return String::new();
-                }
-                labels
-                    .get(mark.value.round() as usize)
-                    .cloned()
-                    .unwrap_or_default()
-            },
-        )])
-        .show(ui, |plot| {
-            plot.add(
-                FilledArea::new(
-                    &model.cushion_label,
-                    &model.bands.x,
-                    &model.bands.demand,
-                    &model.bands.upper,
-                )
-                .fill_color(cushion_green())
-                .allow_hover(false),
-            );
-            plot.add(
-                FilledArea::new(
-                    &model.shortfall_label,
-                    &model.bands.x,
-                    &model.bands.dependable,
-                    &model.bands.upper,
-                )
-                .fill_color(shortfall_red())
-                .allow_hover(false),
-            );
-            for (i, (name, color)) in model.series.iter().zip(colors).enumerate() {
-                if i == 1 && model.city.is_none() {
-                    continue;
-                }
-                let values: Vec<[f64; 2]> = model
-                    .rows
-                    .iter()
-                    .enumerate()
-                    .map(|(m, r)| {
-                        [
-                            m as f64,
-                            match i {
-                                0 => r.baseline_peak,
-                                1 => r.peak,
-                                2 => r.existing,
-                                3 => r.existing + r.scheduled,
-                                _ => r.firm,
-                            },
-                        ]
-                    })
-                    .collect();
-                plot.line(
-                    Line::new(name.clone(), values)
-                        .color(color)
-                        .width(if i < 2 { 2.5 } else { 1.5 }),
-                );
-            }
-        });
-    mark_visible_anchor(ui, TutorialAnchor::OutlookGraph, chart.response.rect);
+    let chart = draw_month_chart(ui, "year-ahead-balance", model, &balance, 130.0, true);
+    mark_visible_anchor(ui, TutorialAnchor::OutlookGraph, chart.rect);
     if reveal == Some(TutorialAnchor::OutlookGraph) {
-        chart.response.scroll_to_me(Some(egui::Align::Center));
+        chart.scroll_to_me(Some(egui::Align::Center));
         actions.push(UiAction::Tutorial(TutorialAction::RevealDone));
     }
     // The table makes the chart's exact numbers readable without hover and supports narrow screens.
@@ -412,7 +549,7 @@ fn draw_outlook_revealed(
                     ui.end_row();
                     for row in &model.rows {
                         for (i, value) in row.values.iter().enumerate() {
-                            let color = if i + 1 == row.values.len() && row.firm < row.peak {
+                            let color = if i >= row.values.len() - 4 && row.balance < 0.0 {
                                 TextTone::Negative.color()
                             } else {
                                 TextTone::Neutral.color()
@@ -430,20 +567,16 @@ fn draw_outlook_revealed(
     actions
 }
 
-#[derive(Default)]
-pub(super) struct OutlookCache {
-    source: Option<(u32, u64, Option<CityId>)>,
-    value: Option<Result<YearAheadOutlook, DomainError>>,
-}
 pub(super) fn outlook_panel(
     mut contexts: EguiContexts,
     session: Res<Session>,
     generation: Res<SessionGeneration>,
     l10n: Res<Localizer>,
-    mut cached: Local<OutlookCache>,
+    mut cached: Local<super::outlook_work::OutlookCache>,
     mut sink: ActionSink,
 ) -> Result {
     if !sink.ui_state().outlook_open || sink.open_prompt().0.is_some() {
+        cached.cancel();
         return Ok(());
     }
     let source = (
@@ -451,10 +584,8 @@ pub(super) fn outlook_panel(
         generation.0,
         preview_city(session.0.session(), sink.ui_state().outlook_city),
     );
-    if cached.source != Some(source) {
-        cached.value = Some(session.0.session().year_ahead_outlook(source.2));
-        cached.source = Some(source);
-    }
+    let failed = cached.failed(source.2);
+    let ready = cached.refresh(session.0.session(), (source.0, source.1), source.2);
     let ctx = contexts.ctx_mut()?;
     let screen = ctx.content_rect().size();
     let mut actions = Vec::new();
@@ -466,18 +597,32 @@ pub(super) fn outlook_panel(
         )
         .show(ctx, |ui| {
             ui.set_width((screen.x - 64.0).clamp(220.0, 920.0));
+            // Keep the loading shell and results the same size. Otherwise the scroll area
+            // can retain the tiny loading viewport and clip the completed controls.
+            ui.set_min_height((screen.y - 100.0).clamp(120.0, 700.0));
             egui::ScrollArea::vertical()
+                .id_salt(("outlook-scroll", sink.ui_state().outlook_month))
                 .max_height((screen.y - 80.0).max(120.0))
-                .show(ui, |ui| match cached.value.as_ref() {
-                    Some(Ok(outlook)) => {
+                .show(ui, |ui| match ready {
+                    Some(outlook) => {
                         actions = draw_outlook_revealed(
                             ui,
-                            &model_from(&session.0, &l10n, outlook),
+                            &model_from(&session.0, &l10n, outlook, sink.ui_state().outlook_month),
                             reveal,
                         )
                     }
                     _ => {
-                        ui.label(l10n.text("outlook-unavailable"));
+                        ui.heading(l10n.text("outlook-title"));
+                        ui.label(l10n.text(if failed {
+                            "outlook-unavailable"
+                        } else {
+                            "outlook-loading"
+                        }));
+                        if !failed {
+                            ui.spinner();
+                            ui.ctx()
+                                .request_repaint_after(std::time::Duration::from_millis(16));
+                        }
                         let close = ButtonModel::new(
                             l10n.text("outlook-close"),
                             UiAction::ShowOutlook(false),
@@ -538,21 +683,127 @@ mod paint_tests {
     use application::InMemoryCommandLog;
 
     #[test]
-    fn outlook_paints_green_capacity_cushion_and_bright_red_shortfall() {
+    fn annual_chart_always_plots_baseline_demand_and_adds_selected_city_demand() {
+        let game = eastern_game(Box::new(InMemoryCommandLog::default()));
+        let l10n = shipped_l10n();
+        let baseline = outlook_model(&game, &l10n, None).unwrap();
+        for city in [None, baseline.cities[1].0] {
+            let model = outlook_model(&game, &l10n, city).unwrap();
+            let curves = outlook_chart_series(&model);
+            assert!(
+                model
+                    .balance_help
+                    .contains("Accredited capacity − Peak demand")
+            );
+            assert!(
+                model
+                    .headings
+                    .contains(&l10n.text("outlook-accredited-headroom"))
+            );
+            for row in &model.rows {
+                assert!((row.accredited_headroom - (row.firm - row.peak)).abs() < 1e-6);
+            }
+            assert!(
+                model
+                    .rows
+                    .iter()
+                    .any(|row| (row.accredited_headroom - row.balance).abs() > 1e-6),
+                "headroom and hourly balance are distinct measures in this fixture"
+            );
+            for (key, expected) in [
+                (
+                    "outlook-total",
+                    model
+                        .rows
+                        .iter()
+                        .map(|r| r.existing + r.scheduled)
+                        .collect::<Vec<_>>(),
+                ),
+                ("outlook-firm", model.rows.iter().map(|r| r.firm).collect()),
+            ] {
+                let capacity = curves
+                    .iter()
+                    .find(|s| s.label == l10n.text(key))
+                    .expect("capacity belongs beside demand");
+                assert_eq!(
+                    capacity.values.iter().map(|p| p[1]).collect::<Vec<_>>(),
+                    expected
+                );
+            }
+            assert!(
+                !curves
+                    .iter()
+                    .any(|s| s.label == l10n.text("outlook-existing"))
+            );
+            assert!(
+                !curves
+                    .iter()
+                    .any(|s| s.label == l10n.text("outlook-baseline-balance")),
+                "balance has its own graph"
+            );
+            let demand = curves
+                .iter()
+                .find(|s| s.label == l10n.text("outlook-demand"))
+                .expect("baseline demand is always visible");
+            assert_eq!(demand.color, TextTone::Information.color());
+            let balances = outlook_balance_series(&model);
+            assert_eq!(balances[0].color, demand.color);
+            assert!(curves.iter().all(|s| s.color != TextTone::Caution.color()
+                || s.label == l10n.text("outlook-with-city")));
+            assert_eq!(
+                demand.values,
+                model
+                    .rows
+                    .iter()
+                    .enumerate()
+                    .map(|(month, row)| [month as f64, row.baseline_peak])
+                    .collect::<Vec<_>>()
+            );
+            let preview = curves
+                .iter()
+                .find(|s| s.label == l10n.text("outlook-with-city"));
+            assert_eq!(preview.is_some(), city.is_some());
+            if let Some(preview) = preview {
+                assert_eq!(preview.color, TextTone::Caution.color());
+                assert_eq!(balances[1].color, preview.color);
+                assert_eq!(
+                    preview.values,
+                    model
+                        .rows
+                        .iter()
+                        .enumerate()
+                        .map(|(month, row)| [month as f64, row.peak])
+                        .collect::<Vec<_>>()
+                );
+                assert!(
+                    preview
+                        .values
+                        .iter()
+                        .zip(&demand.values)
+                        .any(|(a, b)| a[1] > b[1])
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn outlook_paints_shortages_red_even_when_accredited_capacity_is_ample() {
         let game = eastern_game(Box::new(InMemoryCommandLog::default()));
         let mut model = outlook_model(&game, &shipped_l10n(), None).unwrap();
         for (i, row) in model.rows.iter_mut().enumerate() {
-            row.peak = if i < 6 { 100.0 } else { 300.0 };
+            row.peak = 100.0;
             row.firm = 200.0;
             row.existing = 200.0;
             row.scheduled = 0.0;
             row.baseline_peak = row.peak;
+            row.balance = if i < 6 { 100.0 } else { -100.0 };
+            row.baseline_balance = row.balance;
         }
         model.bands = CapacityBands::of(
             &model
                 .rows
                 .iter()
-                .map(|r| (r.peak, r.firm))
+                .map(|r| (0.0, r.balance))
                 .collect::<Vec<_>>(),
         );
         let ctx = egui::Context::default();

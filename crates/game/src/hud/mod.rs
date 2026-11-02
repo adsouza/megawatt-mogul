@@ -52,6 +52,8 @@ mod saves;
 mod selection;
 pub use saves::{SaveForm, SaveRowModel, SavesModel, draw_saves, save_error, saves_model};
 mod outlook;
+mod outlook_day;
+mod outlook_work;
 mod payoff;
 pub use payoff::{PayoffModel, PayoffRow, draw_payoff, payoff_model};
 mod speed;

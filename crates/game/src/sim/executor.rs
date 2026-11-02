@@ -13,7 +13,7 @@ pub(super) trait PlatformSend {}
 impl<T> PlatformSend for T {}
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(super) fn spawn<T: Send + 'static, F, Fut>(
+pub(crate) fn spawn<T: Send + 'static, F, Fut>(
     name: &str,
     work: F,
     failed: impl FnOnce() -> T + Send + 'static,
@@ -35,7 +35,7 @@ where
     Ok(rx)
 }
 #[cfg(target_arch = "wasm32")]
-pub(super) fn spawn<T: 'static, F, Fut>(
+pub(crate) fn spawn<T: 'static, F, Fut>(
     _: &str,
     work: F,
     _failed: impl FnOnce() -> T + 'static,

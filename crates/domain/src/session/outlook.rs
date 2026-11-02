@@ -71,7 +71,7 @@ impl GameSession {
         Ok(YearAheadOutlook { months, connection })
     }
 
-    fn outlook_connection(
+    pub(super) fn outlook_connection(
         &self,
         city: CityId,
         proposed: &mut crate::grid::Network,
@@ -193,6 +193,20 @@ mod tests {
     use super::*;
     use crate::{region::fixtures, session::GameSettings};
     use std::sync::Arc;
+    #[test]
+    fn operational_current_month_matches_daily_forecast_without_mutating_state() {
+        let s = GameSession::new(
+            Arc::new(fixtures::tiny_region()),
+            7,
+            GameSettings::default(),
+        );
+        let before = s.state_hash();
+        let outlook = s.operational_outlook(None).unwrap();
+        assert_eq!(outlook.months.len(), 12);
+        assert_eq!(outlook.months[0].baseline.forecast, s.supply_forecast());
+        assert_eq!(s.state_hash(), before);
+        assert_eq!(outlook, s.operational_outlook(None).unwrap());
+    }
     #[test]
     fn outlook_has_twelve_consecutive_months_and_preserves_the_session() {
         let s = GameSession::new(

@@ -25,6 +25,29 @@ fn app(logs: &TempDir) -> (App, EguiPass) {
     let pass = EguiPass::attach(&mut app);
     (app, pass)
 }
+fn settled(
+    pass: &EguiPass,
+    app: &mut App,
+    width: f32,
+    height: f32,
+) -> Vec<crate::support::egui_harness::Widget> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let widgets = pass.settled(app, width, height);
+        if !widgets
+            .iter()
+            .any(|w| w.text == "Calculating monthly supply forecasts…")
+        {
+            pass.settled(app, width, height);
+            return pass.settled(app, width, height);
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "outlook worker did not finish"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+}
 fn nearby_city(app: &App) -> domain::ids::CityId {
     let session = app.world().resource::<Session>().0.session();
     session
@@ -69,7 +92,7 @@ fn outlook_icon_opens_selected_city_preview_and_close_leaves_simulation_unchange
     let city = nearby_city(&app);
     dispatch_in(&mut app, vec![UiAction::Select(Selection::City(city))]);
     let before = app.world().resource::<Session>().0.session().state_hash();
-    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    let widgets = settled(&pass, &mut app, 1024.0, 640.0);
     let icon = button(&widgets, "Crystal ball: 12-month outlook").rect;
     assert!(icon.width() <= 40.0, "a compact icon");
     let milestones = button(&widgets, "Milestones").rect;
@@ -90,7 +113,7 @@ fn outlook_icon_opens_selected_city_preview_and_close_leaves_simulation_unchange
     pass.click_at(&mut app, 1024.0, 640.0, icon.center());
     assert!(app.world().resource::<UiState>().outlook_open);
     assert_eq!(app.world().resource::<UiState>().outlook_city, Some(city));
-    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    let widgets = settled(&pass, &mut app, 1024.0, 640.0);
     assert!(
         widgets
             .iter()
@@ -114,6 +137,70 @@ fn outlook_icon_opens_selected_city_preview_and_close_leaves_simulation_unchange
     );
     assert!(sent::<PlayerCommand>(&app).is_empty());
 }
+
+#[test]
+fn outlook_month_opens_daily_curves_and_escape_returns_then_closes() {
+    let logs = TempDir::new().unwrap();
+    let (mut app, pass) = app(&logs);
+    let before = app.world().resource::<Session>().0.session().state_hash();
+    let month = app
+        .world()
+        .resource::<Session>()
+        .0
+        .session()
+        .clock()
+        .month();
+    dispatch_in(&mut app, vec![UiAction::ShowOutlook(true)]);
+    let widgets = settled(&pass, &mut app, 1200.0, 900.0);
+    let label = game::l10n::format::month_year_short(month);
+    pass.click_at(
+        &mut app,
+        1200.0,
+        900.0,
+        button(&widgets, &label).rect.center(),
+    );
+    assert_eq!(app.world().resource::<UiState>().outlook_month, Some(month));
+    let widgets = settled(&pass, &mut app, 1200.0, 900.0);
+    assert!(widgets.iter().any(|w| w.text == "Available net supply"));
+    assert!(
+        widgets
+            .iter()
+            .any(|w| w.text.starts_with("Daily outlook —"))
+    );
+    assert!(widgets.iter().any(|w| w.text == "Back to 12 months"));
+    escape(&pass, &mut app, (1200.0, 900.0));
+    assert!(app.world().resource::<UiState>().outlook_open);
+    assert_eq!(app.world().resource::<UiState>().outlook_month, None);
+    escape(&pass, &mut app, (1200.0, 900.0));
+    assert!(!app.world().resource::<UiState>().outlook_open);
+    assert_eq!(
+        app.world().resource::<Session>().0.session().state_hash(),
+        before
+    );
+    assert!(sent::<PlayerCommand>(&app).is_empty());
+}
+
+#[test]
+fn outlook_loading_is_visible_and_can_be_closed_with_escape() {
+    let logs = TempDir::new().unwrap();
+    let (mut app, pass) = app(&logs);
+    let before = app.world().resource::<Session>().0.session().state_hash();
+    dispatch_in(&mut app, vec![UiAction::ShowOutlook(true)]);
+    let widgets = pass.run(&mut app, 1024.0, 640.0);
+    assert!(
+        widgets
+            .iter()
+            .any(|w| w.text == "Calculating monthly supply forecasts…")
+    );
+    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    assert!(!button(&widgets, "Close outlook").disabled);
+    escape(&pass, &mut app, (1024.0, 640.0));
+    assert!(!app.world().resource::<UiState>().outlook_open);
+    assert_eq!(
+        app.world().resource::<Session>().0.session().state_hash(),
+        before
+    );
+}
 #[test]
 fn outlook_city_chooser_and_escape_respect_popup_precedence_at_maximum_zoom() {
     let logs = TempDir::new().unwrap();
@@ -128,7 +215,7 @@ fn outlook_city_chooser_and_escape_respect_popup_precedence_at_maximum_zoom() {
     );
     let size = (1024.0 / 1.5, 640.0 / 1.5);
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(size.0, size.1));
-    let widgets = pass.settled(&mut app, size.0, size.1);
+    let widgets = settled(&pass, &mut app, size.0, size.1);
     assert!(screen.contains_rect(button(&widgets, "Close outlook").rect));
     let picker = widgets
         .iter()
@@ -151,7 +238,7 @@ fn outlook_city_chooser_and_escape_respect_popup_precedence_at_maximum_zoom() {
         app.world().resource::<UiState>().outlook_open,
         "the popup receives Escape first"
     );
-    let widgets = pass.settled(&mut app, size.0, size.1);
+    let widgets = settled(&pass, &mut app, size.0, size.1);
     let picker = widgets
         .iter()
         .find(|w| {
@@ -166,11 +253,11 @@ fn outlook_city_chooser_and_escape_respect_popup_precedence_at_maximum_zoom() {
         .unwrap()
         .rect;
     pass.click_at(&mut app, size.0, size.1, picker.center());
-    let widgets = pass.settled(&mut app, size.0, size.1);
+    let widgets = settled(&pass, &mut app, size.0, size.1);
     let current = button(&widgets, "Current grid and scheduled orders").rect;
     pass.click_at(&mut app, size.0, size.1, current.center());
     assert_eq!(app.world().resource::<UiState>().outlook_city, None);
-    pass.settled(&mut app, size.0, size.1);
+    settled(&pass, &mut app, size.0, size.1);
     escape(&pass, &mut app, size);
     assert!(!app.world().resource::<UiState>().outlook_open);
 }
@@ -192,7 +279,7 @@ fn outlook_pauses_operating_and_survives_review_with_the_next_month_first() {
         ],
     );
     assert_eq!(*app.world().resource::<SimSpeed>(), SimSpeed::Paused);
-    pass.settled(&mut app, 1024.0, 640.0);
+    settled(&pass, &mut app, 1024.0, 640.0);
     escape(&pass, &mut app, (1024.0, 640.0));
     app.world_mut()
         .resource_mut::<Session>()
@@ -203,7 +290,7 @@ fn outlook_pauses_operating_and_survives_review_with_the_next_month_first() {
         .unwrap();
     update_n(&mut app, 2);
     dispatch_in(&mut app, vec![UiAction::ShowOutlook(true)]);
-    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    let widgets = settled(&pass, &mut app, 1024.0, 640.0);
     assert!(
         widgets
             .iter()
@@ -242,6 +329,12 @@ fn outlook_forecasts_every_shipped_region_without_changing_state() {
         .unwrap();
         let hash = game.session().state_hash();
         let outlook = game.session().year_ahead_outlook(None).unwrap();
+        let operational = game.session().operational_outlook(None).unwrap();
+        assert_eq!(
+            operational.months[0].baseline.forecast,
+            game.session().supply_forecast(),
+            "{id}"
+        );
         assert_eq!(outlook.months.len(), 12, "{id}");
         let peak = (0..domain::time::TICKS_PER_DAY)
             .map(|tick| {
@@ -312,7 +405,7 @@ fn outlook_preview_excludes_connected_and_scheduled_cities_and_clears_ineligible
         ],
     );
     assert_eq!(app.world().resource::<UiState>().outlook_city, None);
-    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    let widgets = settled(&pass, &mut app, 1024.0, 640.0);
     assert!(
         widgets
             .iter()
@@ -322,7 +415,7 @@ fn outlook_preview_excludes_connected_and_scheduled_cities_and_clears_ineligible
 }
 
 const CITY_GUIDANCE: &str = "Choose a new city here to preview its demand before you connect it.";
-const CUSHION_GUIDANCE: &str = "The gap between demand and dependable capacity is your cushion. Green means spare capacity; bright red means demand exceeds supply, so build more capacity before expanding.";
+const CUSHION_GUIDANCE: &str = "The graph checks supply throughout each month's representative day. Green means no expected shortage; bright red means a local grid falls short. Click a month to inspect generation, battery charging and demand before expanding.";
 
 #[test]
 fn first_outlook_use_guides_the_city_chooser() {
@@ -345,7 +438,7 @@ fn first_outlook_use_guides_the_city_chooser() {
         ],
     );
     let hash = app.world().resource::<Session>().0.session().state_hash();
-    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    let widgets = settled(&pass, &mut app, 1024.0, 640.0);
     assert!(widgets.iter().any(|w| w.text == CITY_GUIDANCE));
     assert_eq!(
         app.world().resource::<UiState>().outlook_guide,
@@ -357,7 +450,7 @@ fn first_outlook_use_guides_the_city_chooser() {
         app.world().resource::<UiState>().outlook_guide,
         Some(OutlookGuideStep::ChooseCity)
     );
-    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    let widgets = settled(&pass, &mut app, 1024.0, 640.0);
     assert!(widgets.iter().any(|w| w.text == CITY_GUIDANCE));
     let picker = widgets
         .iter()
@@ -365,7 +458,7 @@ fn first_outlook_use_guides_the_city_chooser() {
         .unwrap()
         .rect;
     pass.click_at(&mut app, 1024.0, 640.0, picker.center());
-    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    let widgets = settled(&pass, &mut app, 1024.0, 640.0);
     assert!(
         !widgets.iter().any(|w| w.text == CITY_GUIDANCE),
         "the instruction steps aside for the popup"
@@ -383,7 +476,7 @@ fn first_outlook_use_guides_the_city_chooser() {
     for _ in 0..30 {
         pass.run(&mut app, 1024.0, 640.0);
     }
-    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    let widgets = settled(&pass, &mut app, 1024.0, 640.0);
     assert!(widgets.iter().any(|w| w.text == CUSHION_GUIDANCE));
     assert!(
         app.world()
@@ -411,10 +504,10 @@ fn first_outlook_use_guides_the_city_chooser() {
         .unwrap()
         .outlook_tutorial_pending
     );
-    pass.settled(&mut app, 1024.0, 640.0);
+    settled(&pass, &mut app, 1024.0, 640.0);
     escape(&pass, &mut app, (1024.0, 640.0));
     dispatch_in(&mut app, vec![UiAction::ShowOutlook(true)]);
-    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    let widgets = settled(&pass, &mut app, 1024.0, 640.0);
     assert_eq!(app.world().resource::<UiState>().outlook_guide, None);
     assert!(
         !widgets
@@ -440,7 +533,7 @@ fn closing_the_first_use_guide_keeps_it_pending_and_small_window_guidance_fits()
     dispatch_in(&mut app, vec![UiAction::ShowOutlook(true)]);
     let size = (1024.0 / 1.5, 640.0 / 1.5);
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(size.0, size.1));
-    let widgets = pass.settled(&mut app, size.0, size.1);
+    let widgets = settled(&pass, &mut app, size.0, size.1);
     assert!(
         widgets
             .iter()
@@ -448,7 +541,7 @@ fn closing_the_first_use_guide_keeps_it_pending_and_small_window_guidance_fits()
             .all(|w| screen.contains_rect(w.rect))
     );
     escape(&pass, &mut app, size);
-    pass.settled(&mut app, size.0, size.1);
+    settled(&pass, &mut app, size.0, size.1);
     escape(&pass, &mut app, size);
     assert!(!app.world().resource::<UiState>().outlook_open);
     assert!(
@@ -458,7 +551,7 @@ fn closing_the_first_use_guide_keeps_it_pending_and_small_window_guidance_fits()
             .outlook_tutorial_pending
     );
     dispatch_in(&mut app, vec![UiAction::ShowOutlook(true)]);
-    pass.settled(&mut app, size.0, size.1);
+    settled(&pass, &mut app, size.0, size.1);
     escape(&pass, &mut app, size);
     let city = hud::outlook_model(&app.world().resource::<Session>().0, &shipped_l10n(), None)
         .unwrap()
@@ -468,7 +561,7 @@ fn closing_the_first_use_guide_keeps_it_pending_and_small_window_guidance_fits()
     for _ in 0..30 {
         pass.run(&mut app, size.0, size.1);
     }
-    let widgets = pass.settled(&mut app, size.0, size.1);
+    let widgets = settled(&pass, &mut app, size.0, size.1);
     let notes: Vec<_> = widgets
         .iter()
         .filter(|w| w.text == CUSHION_GUIDANCE)
@@ -488,8 +581,8 @@ fn first_use_spotlights_expire_but_city_selection_still_requires_a_real_choice()
         .value
         .outlook_tutorial_pending = true;
     dispatch_in(&mut app, vec![UiAction::ShowOutlook(true)]);
-    pass.settled(&mut app, 1024.0, 640.0);
-    for _ in 0..7 {
+    settled(&pass, &mut app, 1024.0, 640.0);
+    for _ in 0..12 {
         crate::tutorial::advance_real(&mut app, 1.0);
         pass.run(&mut app, 1024.0, 640.0);
     }
@@ -507,8 +600,8 @@ fn first_use_spotlights_expire_but_city_selection_still_requires_a_real_choice()
         .cities[1]
         .0;
     dispatch_in(&mut app, vec![UiAction::PreviewOutlookCity(city)]);
-    pass.settled(&mut app, 1024.0, 640.0);
-    for _ in 0..7 {
+    settled(&pass, &mut app, 1024.0, 640.0);
+    for _ in 0..12 {
         crate::tutorial::advance_real(&mut app, 1.0);
         pass.run(&mut app, 1024.0, 640.0);
     }
@@ -560,7 +653,7 @@ fn first_use_with_no_new_cities_highlights_the_existing_capacity_cushion() {
     for _ in 0..30 {
         pass.run(&mut app, 1024.0, 640.0);
     }
-    let widgets = pass.settled(&mut app, 1024.0, 640.0);
+    let widgets = settled(&pass, &mut app, 1024.0, 640.0);
     assert!(widgets.iter().any(|w| w.text == CUSHION_GUIDANCE));
     escape(&pass, &mut app, (1024.0, 640.0));
     assert!(

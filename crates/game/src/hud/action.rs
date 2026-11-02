@@ -53,6 +53,7 @@ pub enum UiAction {
     ShowOutlook(bool),
     ShowPayoff(bool),
     PreviewOutlookCity(Option<domain::ids::CityId>),
+    SelectOutlookMonth(Option<SimMonth>),
     InspectHvdc {
         link: domain::ids::LinkId,
         station: Option<domain::grid::ConverterStationId>,
@@ -791,6 +792,7 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
             }
             UiAction::SetOperatingTab(tab) => *sink.operating_tab = tab,
             UiAction::SelectSupplyMonth(_)
+            | UiAction::SelectOutlookMonth(_)
             | UiAction::ShowReviewSupply(_)
             | UiAction::SetSupplyChartLayout(_) => {}
             UiAction::Select(selection) => {

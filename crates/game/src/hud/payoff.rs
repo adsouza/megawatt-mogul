@@ -348,14 +348,19 @@ pub(super) fn payoff_panel(
     let screen = ctx.content_rect().size();
     let reveal = sink.ui_state().reveal_anchor;
     let mut actions = Vec::new();
-    egui::Modal::new(egui::Id::new("payoff-dialog")).show(ctx, |ui| {
-        ui.set_width((screen.x - 64.0).clamp(220.0, 1100.0));
-        egui::ScrollArea::vertical()
-            .max_height((screen.y - 80.0).max(120.0))
-            .show(ui, |ui| {
-                actions = draw_payoff_revealed(ui, &model, reveal);
-            });
-    });
+    egui::Modal::new(egui::Id::new("payoff-dialog"))
+        .frame(
+            egui::Frame::popup(&ctx.global_style())
+                .stroke(egui::Stroke::new(2.0, super::theme::heading_color())),
+        )
+        .show(ctx, |ui| {
+            ui.set_width((screen.x - 64.0).clamp(220.0, 1100.0));
+            egui::ScrollArea::vertical()
+                .max_height((screen.y - 80.0).max(120.0))
+                .show(ui, |ui| {
+                    actions = draw_payoff_revealed(ui, &model, reveal);
+                });
+        });
     dispatch(actions, &mut sink);
     Ok(())
 }

@@ -8,7 +8,7 @@
 //! - [`drive_ticks`] sends `AdvanceTicks { n: speed }` from `FixedUpdate`, at 4 Hz.
 
 mod driver;
-mod executor;
+pub(crate) mod executor;
 mod new_game;
 mod persistence;
 pub(crate) mod review_commitments;

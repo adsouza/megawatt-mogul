@@ -739,6 +739,18 @@ Escape invokes the active dialog's enabled Cancel/Close action through `action::
 Check before drawing text fields so they cannot swallow cancellation by surrendering focus.
 An open popup gets Escape first, and dialogs without an enabled cancellation remain open.
 
+The crystal ball runs `OperationalOutlookWork` over an immutable session snapshot, one monthly
+representative-day check per work unit. It reuses the daily supply planners for hydro, storage,
+renewables and HVDC. Shortages are counted per local grid before aggregation. Current-month
+curves retain current weather and commitments; future months use mean seasonal weather and
+all-day automatic dispatch. Review has already advanced construction, so its first future month
+does not advance projects again. Capacity accreditation remains a secondary reference.
+The HUD caches the baseline and one city scenario by session revision and generation, sharing
+baseline curves across city choices. A cancellable native worker computes results; browser jobs
+yield between months. Stale completions cannot publish. The loading shell stays the same size as
+the results, keeping the completed scroll viewport usable. Month buttons open cached daily power
+and storage curves; Escape returns to the annual view before closing the dialog.
+
 Confirmations go through one `OpenPrompt` resource and one `prompt_overlay`: a button sends
 `UiAction::Prompt(Some(..))`, and a new prompt is a `Prompt` variant plus its case in
 `prompt_model`. A prompt that belongs to one phase, like the shortfall confirmation on *Start the
