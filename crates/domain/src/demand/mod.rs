@@ -2,8 +2,10 @@
 //! noise-free forecast the player sees.
 
 mod forecast;
+mod growth;
 
 pub use forecast::{ForecastPoint, hourly_forecast};
+pub use growth::{DemandGrowth, monthly_growth_factor};
 
 use crate::ids::{CityId, NodeId};
 use crate::region::{CityDef, DemandNoiseParams, RegionDefinition};

@@ -126,6 +126,8 @@ pub struct RegionDefinitionParts {
     pub solar: SolarParams,
     pub wind: WindParams,
     pub weather: WeatherParams,
+    /// Nominal annual demand growth, applied monthly once growth is on.
+    pub demand_growth_per_year: f64,
     pub hydro: HydroParams,
     pub geothermal: Option<GeothermalParams>,
     pub frequency: FrequencyParams,
@@ -163,6 +165,7 @@ pub struct RegionDefinition {
     solar_monthly_means: [f64; 12],
     wind: WindParams,
     weather: WeatherParams,
+    demand_growth_per_year: f64,
     hydro: HydroParams,
     geothermal: Option<GeothermalParams>,
     frequency: FrequencyParams,
@@ -301,6 +304,16 @@ impl RegionDefinition {
 
     pub fn weather(&self) -> &WeatherParams {
         &self.weather
+    }
+
+    /// Nominal annual demand growth rate, within `0.0..=0.2`.
+    pub fn demand_growth_per_year(&self) -> f64 {
+        self.demand_growth_per_year
+    }
+
+    /// The factor one month of growth multiplies demand by.
+    pub fn monthly_demand_growth(&self) -> f64 {
+        crate::demand::monthly_growth_factor(self.demand_growth_per_year)
     }
 
     pub fn hydro(&self) -> &HydroParams {
@@ -529,6 +542,11 @@ fn validate_shapes(parts: &RegionDefinitionParts) -> Result<(), RegionError> {
     check_shape(
         share.is_finite() && (0.0..=1.0).contains(&share),
         "weather.surprise_share",
+    )?;
+    check_shape(
+        parts.demand_growth_per_year.is_finite()
+            && (0.0..=0.2).contains(&parts.demand_growth_per_year),
+        "demand_growth_per_year",
     )?;
     check_shape(
         all_positive(&parts.hydro.monthly_flow),
@@ -771,6 +789,7 @@ impl TryFrom<RegionDefinitionParts> for RegionDefinition {
             solar_monthly_means,
             wind: parts.wind,
             weather: parts.weather,
+            demand_growth_per_year: parts.demand_growth_per_year,
             hydro: parts.hydro,
             geothermal: parts.geothermal,
             frequency: parts.frequency,
@@ -1161,6 +1180,26 @@ mod tests {
         assert!((total - 0.18_f64.powi(2)).abs() < 1e-12);
         let region = RegionDefinition::try_from(parts_with(|_| {})).unwrap();
         assert_eq!(region.weather().surprise_share, 0.5);
+    }
+
+    #[test]
+    fn rate_outside_bounds_is_rejected() {
+        for rate in [-0.01, 0.21, f64::NAN] {
+            let r = RegionDefinition::try_from(parts_with(|p| p.demand_growth_per_year = rate));
+            assert_eq!(r.unwrap_err(), shape("demand_growth_per_year"), "{rate}");
+        }
+        for rate in [0.0, 0.033, 0.2] {
+            assert!(
+                RegionDefinition::try_from(parts_with(|p| p.demand_growth_per_year = rate)).is_ok()
+            );
+        }
+    }
+
+    #[test]
+    fn fixture_rate_is_zero() {
+        let region = fixtures::tiny_region();
+        assert_eq!(region.demand_growth_per_year(), 0.0);
+        assert_eq!(region.monthly_demand_growth(), 1.0);
     }
 
     #[test]

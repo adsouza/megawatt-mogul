@@ -88,6 +88,7 @@ pub fn map_region(mut file: RegionFile) -> Result<RegionDefinition> {
         weather: WeatherParams {
             surprise_share: 1.0,
         },
+        demand_growth_per_year: 0.0,
         geothermal: None,
         hydro: HydroParams {
             monthly_flow: array(&file.hydro.monthly_flow, "hydro.monthly_flow")?,
@@ -797,6 +798,7 @@ pub fn map_region_v4(file: RegionFileV4) -> Result<RegionDefinition> {
                 .as_ref()
                 .map_or(1.0, |weather| weather.surprise_share),
         },
+        demand_growth_per_year: 0.0,
         geothermal: None,
         hydro: HydroParams {
             monthly_flow: array(&file.hydro.monthly_flow, "hydro.monthly_flow")?,
