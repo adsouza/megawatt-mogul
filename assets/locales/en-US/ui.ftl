@@ -116,6 +116,9 @@ topbar-warnings = { $count ->
    *[other] ⚠ { $count } warnings
 }
 toast-repeated = { $text } (×{ $count })
+# `$name` is the milestone's name, as in the Milestones panel.
+toast-milestone-revealed = New milestone: { $name }
+toast-milestone-reached = Milestone reached: { $name }
 # `$percent` is the region's yearly demand growth, one decimal, such as 3.3.
 toast-demand-growth-started = Every city is connected. Demand will now grow about { $percent }% a year.
 game-over-title = Game over

@@ -1368,7 +1368,7 @@ fn older_build_store(saves: &TempDir) -> infrastructure::save::FileSaveStore {
 }
 
 /// Writes `checkpoint` through `store`, stamped with that store's build, as a manual save.
-fn write_manual(
+pub(crate) fn write_manual(
     store: &infrastructure::save::FileSaveStore,
     name: &str,
     checkpoint: application::GameCheckpoint,

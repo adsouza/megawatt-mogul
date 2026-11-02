@@ -512,6 +512,8 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "recording-stopped",
     "topbar-warnings",
     "toast-repeated",
+    "toast-milestone-revealed",
+    "toast-milestone-reached",
     "toast-demand-growth-started",
     "game-over-title",
     "game-over-final-cash",

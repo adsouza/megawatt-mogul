@@ -33,6 +33,7 @@ pub use links::{
 };
 pub(crate) mod map;
 mod menu;
+mod milestone_toasts;
 mod milestones;
 mod operating;
 mod planning;
@@ -127,6 +128,7 @@ pub use self::menu::{
     RegionProblem, RegionSelectModel, TutorialToggle, boot_error_model, draw_boot_error,
     draw_main_menu, draw_region_select, main_menu_model, region_select_model,
 };
+pub use self::milestone_toasts::{MilestoneNotice, MilestoneToast};
 pub use self::milestones::{
     MILESTONES_WIDTH, MilestoneRow, MilestonesModel, MilestonesOpen, draw_milestones,
     milestone_row, milestones_model,
@@ -237,6 +239,8 @@ impl Plugin for HudPlugin {
             .init_resource::<OperatingTab>()
             .init_resource::<PlantPanelForm>()
             .init_resource::<ToastQueue>()
+            .init_resource::<milestone_toasts::MilestoneCursor>()
+            .add_message::<MilestoneToast>()
             .init_resource::<HudArea>()
             .init_resource::<SaveForm>()
             .init_resource::<saves::PersistenceShown>()
@@ -320,6 +324,11 @@ impl Plugin for HudPlugin {
                         .after(crate::l10n::load_localizer)
                         .before(toasts::collect_toasts)
                         .run_if(has_l10n),
+                    milestone_toasts::announce_milestones
+                        .after(SimSet::Apply)
+                        .after(SimSet::Persist)
+                        .before(toasts::collect_toasts)
+                        .run_if(in_game.clone()),
                     // After a load's poll, which clears the outgoing game's events and refusals:
                     // they never become toasts over the loaded game.
                     toasts::collect_toasts

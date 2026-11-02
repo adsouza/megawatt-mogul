@@ -9,6 +9,7 @@ use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 
 use super::action::UiAction;
+use super::milestone_toasts::MilestoneToast;
 use crate::l10n::{LocalizeWith, Localizer, Names, Toast};
 use crate::sim::{CommandFailed, DomainEventMessage, Session};
 
@@ -108,9 +109,11 @@ pub(super) fn clear_toasts(mut queue: ResMut<ToastQueue>) {
 
 /// Turns this frame's refusals and toast-worthy events into toasts, and retires old ones. Runs in
 /// every state: a new game that fails to start is refused from the menu.
+#[allow(clippy::too_many_arguments)] // One reader per source of toasts, and the shared state.
 pub(super) fn collect_toasts(
     mut failures: MessageReader<CommandFailed>,
     mut events: MessageReader<DomainEventMessage>,
+    mut milestones: MessageReader<MilestoneToast>,
     session: Option<Res<Session>>,
     l10n: Res<Localizer>,
     time: Res<Time<Real>>,
@@ -119,7 +122,7 @@ pub(super) fn collect_toasts(
 ) {
     let now = time.elapsed_secs_f64();
     queue.expire(now);
-    if failures.is_empty() && events.is_empty() {
+    if failures.is_empty() && events.is_empty() && milestones.is_empty() {
         return;
     }
     let names = match &session {
@@ -133,6 +136,9 @@ pub(super) fn collect_toasts(
         if let Some(text) = event.toast(&l10n, &names, &style) {
             queue.push(text, now);
         }
+    }
+    for MilestoneToast(notice) in milestones.read() {
+        queue.push(notice.text(&l10n), now);
     }
 }
 

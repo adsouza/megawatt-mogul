@@ -144,7 +144,8 @@ pub enum MilestoneProgress {
     StrikeFreeMonths { months: u32, needed: u32 },
     /// Cities connected now, against the cities to connect.
     Cities { connected: u32, needed: u32 },
-    /// Closed months in a row with no strike and no fossil energy, against the months needed.
+    /// Closed months in a row with no strike and no fossil energy (none while a strike issued
+    /// this month taints it), against the months needed.
     CleanMonths { months: u32, needed: u32 },
 }
 
@@ -310,7 +311,12 @@ impl MilestoneProjection {
                 needed: count,
             },
             MilestoneKind::FossilFreeYear => MilestoneProgress::CleanMonths {
-                months: self.clean_run,
+                // Like the season run: a strike issued this month already taints it.
+                months: if self.strike_pending {
+                    0
+                } else {
+                    self.clean_run
+                },
                 needed: FOSSIL_FREE_MONTHS,
             },
         })
@@ -1251,6 +1257,19 @@ mod tests {
     fn strike_resets_the_run() {
         let mut milestones = revealed_after(5);
         strike(&mut milestones);
+        close_at(&mut milestones, 5);
+        assert_eq!(clean_months(&milestones, 5), progress(0));
+        close_at(&mut milestones, 6);
+        assert_eq!(clean_months(&milestones, 6), progress(1));
+    }
+
+    #[test]
+    fn a_pending_strike_shows_no_clean_months_until_the_month_closes() {
+        let mut milestones = revealed_after(5);
+        assert_eq!(clean_months(&milestones, 5), progress(5));
+        strike(&mut milestones);
+        // Like the season row: the month being played already counts as struck.
+        assert_eq!(clean_months(&milestones, 5), progress(0));
         close_at(&mut milestones, 5);
         assert_eq!(clean_months(&milestones, 5), progress(0));
         close_at(&mut milestones, 6);
