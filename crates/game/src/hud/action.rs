@@ -971,7 +971,7 @@ fn tutorial(sink: &mut ActionSink, action: TutorialAction) {
         TutorialStep::ShowForecast => sink
             .ui
             .apply(&UiAction::SetPlanningTab(PlanningTab::Forecast)),
-        TutorialStep::RevealBattery | TutorialStep::RevealCcgt => {
+        TutorialStep::RevealBattery | TutorialStep::RevealGenerator => {
             sink.ui.reveal_plant_card = Some(state.plant_kind());
         }
         _ => {}

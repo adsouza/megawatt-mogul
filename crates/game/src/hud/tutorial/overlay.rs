@@ -96,15 +96,25 @@ pub fn tutorial_view(
     shown_for: f32,
 ) -> TutorialView {
     let text = || {
-        let key = step
-            .text_key
-            .unwrap_or_else(|| construction_key(state, game));
+        let key = if state.supply_kind == domain::region::PlantKind::Solar {
+            match step.step {
+                TutorialStep::PickGeneratorSite => Some("tutorial-solar-pick-site"),
+                TutorialStep::GeneratorSpotlight => Some("tutorial-solar-spotlight"),
+                TutorialStep::BuildGenerator => Some("tutorial-solar-build"),
+                TutorialStep::ConnectGenerator => Some("tutorial-solar-connect"),
+                TutorialStep::CrystalBall => Some("tutorial-solar-crystal-ball"),
+                _ => step.text_key,
+            }
+        } else {
+            step.text_key
+        }
+        .unwrap_or_else(|| construction_key(state, game));
         if matches!(
             step.step,
-            TutorialStep::CcgtSpotlight | TutorialStep::BuildCcgt
+            TutorialStep::GeneratorSpotlight | TutorialStep::BuildGenerator
         ) {
             let region = game.session().region();
-            let kind = domain::region::PlantKind::Ccgt;
+            let kind = state.supply_kind;
             let months = match selection {
                 Selection::Cell(cell) => region
                     .plant_spec_at(kind, cell)

@@ -218,6 +218,13 @@ capital adjustments are non-cash and written-off value is not recovered again.
 
 ## The game crate
 
+The tutorial tests cover the regional expansion choice: solar in Brazil SIN and Southern China,
+CCGT elsewhere. Real widget walkthroughs build and connect each recommendation through the
+payoff chapter. Presenter checks exclude starter plants and other plant kinds, accept early
+orders, require a complete grid path, and resolve build durations from selected-cell overrides
+for both solar and CCGT. Solar guidance explains daylight generation and the outlook check before
+expanding demand.
+
 The game's tests sit in six layers, from the cheapest to the widest. None opens a window.
 
 - **Presenter tests**, inline under `#[cfg(test)] mod tests` in each `game/src/hud/<panel>.rs`. They

@@ -1,6 +1,6 @@
 //! The first-game tutorial's run lifecycle (first-game tutorial spec §3, §4.3): a new game starts
 //! it when progress says it is owed, loading a save never does, leaving the game drops it, and
-//! leaving the first Review starts the CCGT chapter.
+//! leaving the first Review starts the regional generator chapter.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -353,12 +353,39 @@ fn payoff_tutorial_closing_early_finishes_the_final_chapter_and_reopening_is_ung
     assert!(sent::<PlayerCommand>(&app).is_empty());
 }
 
-/// The review's actual Continue button leads into guidance, and the actual CCGT / line buttons
+/// The review's actual Continue button leads into guidance, and the actual plant / line buttons
 /// queue exactly one of each order. The callouts expose each control at the minimum window size.
 #[test]
 fn ccgt_walkthrough_after_review_builds_and_connects_through_real_widgets() {
+    generator_walkthrough("western_interconnection", PlantKind::Ccgt);
+}
+
+#[test]
+fn brazil_solar_walkthrough_builds_connects_and_completes_through_real_widgets() {
+    generator_walkthrough("brazil_sin", PlantKind::Solar);
+}
+
+#[test]
+fn southern_china_solar_walkthrough_builds_connects_and_completes_through_real_widgets() {
+    generator_walkthrough("southern_china", PlantKind::Solar);
+}
+
+fn generator_walkthrough(region: &str, kind: PlantKind) {
     let logs = TempDir::new().unwrap();
-    let mut app = tutorial_app(&logs);
+    let mut app = hud_app(logs.path());
+    set_progress(&mut app, true, true);
+    request(&mut app, region);
+    let l10n = crate::support::shipped_l10n();
+    let key = |suffix: &str| {
+        format!(
+            "tutorial-{}-{suffix}",
+            if kind == PlantKind::Solar {
+                "solar"
+            } else {
+                "ccgt"
+            }
+        )
+    };
     let saves = TempDir::new().unwrap();
     app.insert_resource(SaveDir(saves.path().into()));
     let pass = with_anchor_probe(&mut app);
@@ -385,11 +412,18 @@ fn ccgt_walkthrough_after_review_builds_and_connects_through_real_widgets() {
     );
     press_escape(&pass, &mut app, MIN);
     let widgets = pass.settled(&mut app, MIN.0, MIN.1);
-    widget(
-        &widgets,
-        "Click a square on the map for your new gas plant.",
-    );
-    let cell = ccgt_site(&app);
+    widget(&widgets, &l10n.text(&key("pick-site")));
+    let cell = generator_site(&app, kind);
+    let months = app
+        .world()
+        .resource::<Session>()
+        .0
+        .session()
+        .region()
+        .plant_spec_at(kind, cell)
+        .unwrap()
+        .build_months;
+    let time = l10n.args("build-months-value", &[("months", months.into())]);
     dispatch_in(&mut app, vec![UiAction::Select(Selection::Cell(cell))]);
     for _ in 0..60 {
         pass.run(&mut app, MIN.0, MIN.1);
@@ -397,7 +431,7 @@ fn ccgt_walkthrough_after_review_builds_and_connects_through_real_widgets() {
     let widgets = pass.settled(&mut app, MIN.0, MIN.1);
     widget(
         &widgets,
-        "A CCGT is a gas plant you can build anywhere. It is relatively cheap and takes 4 months to build.",
+        &l10n.args(&key("spotlight"), &[("time", time.clone().into())]),
     );
     press_escape(&pass, &mut app, MIN);
     for _ in 0..60 {
@@ -406,7 +440,7 @@ fn ccgt_walkthrough_after_review_builds_and_connects_through_real_widgets() {
     let widgets = pass.settled(&mut app, MIN.0, MIN.1);
     let note = widget(
         &widgets,
-        "Build a CCGT here. It will take 4 months to build.",
+        &l10n.args(&key("build"), &[("time", time.into())]),
     )
     .rect;
     let target = anchors(&app)[&TutorialAnchor::PlantBuildButton];
@@ -414,7 +448,7 @@ fn ccgt_walkthrough_after_review_builds_and_connects_through_real_widgets() {
     assert_points_at(
         &arrowhead(&painted(&pass, &mut app, MIN)).unwrap(),
         target,
-        "CCGT Build plant",
+        "generator Build plant",
     );
     pass.click_at(&mut app, MIN.0, MIN.1, target.center());
     assert_eq!(
@@ -422,10 +456,7 @@ fn ccgt_walkthrough_after_review_builds_and_connects_through_real_widgets() {
             .iter()
             .filter(|command| matches!(
                 command.0,
-                Command::BuildPlant {
-                    kind: PlantKind::Ccgt,
-                    ..
-                }
+                Command::BuildPlant { kind: built, .. } if built == kind
             ))
             .count(),
         1
@@ -442,8 +473,8 @@ fn ccgt_walkthrough_after_review_builds_and_connects_through_real_widgets() {
         .session()
         .plant_views()
         .into_iter()
-        .find(|plant| plant.kind == PlantKind::Ccgt && plant.cell == cell)
-        .expect("CCGT was queued");
+        .find(|plant| plant.kind == kind && plant.cell == cell)
+        .expect("the recommended generator was queued");
     assert_eq!(
         *app.world().resource::<Selection>(),
         Selection::Plant(plant.id)
@@ -456,12 +487,12 @@ fn ccgt_walkthrough_after_review_builds_and_connects_through_real_widgets() {
         }
         let widgets = pass.settled(&mut app, MIN.0, MIN.1);
         let target = anchors(&app)[&TutorialAnchor::PlantLineButton];
-        let note = widget(&widgets, "Build a line from your CCGT to your grid. The plant and line must finish building before they can supply power.").rect;
+        let note = widget(&widgets, &l10n.text(&key("connect"))).rect;
         assert!(!note.intersects(target));
         assert_points_at(
             &arrowhead(&painted(&pass, &mut app, MIN)).unwrap(),
             target,
-            "CCGT connection",
+            "generator connection",
         );
         pass.click_at(&mut app, MIN.0, MIN.1, target.center());
         if stage == 0 {
@@ -509,7 +540,15 @@ fn ccgt_walkthrough_after_review_builds_and_connects_through_real_widgets() {
     );
     assert!(pending(&app));
     let widgets = pass.settled(&mut app, MIN.0, MIN.1);
-    widget(&widgets, CRYSTAL_BALL);
+    let solar_outlook = l10n.text("tutorial-solar-crystal-ball");
+    widget(
+        &widgets,
+        if kind == PlantKind::Solar {
+            &solar_outlook
+        } else {
+            CRYSTAL_BALL
+        },
+    );
     let crystal = anchors(&app)[&TutorialAnchor::CrystalBall];
     assert_eq!(
         find_button(&widgets, "Crystal ball: 12-month outlook").rect,
@@ -643,54 +682,64 @@ fn ccgt_walkthrough_after_review_builds_and_connects_through_real_widgets() {
 /// The tutorial's duration follows local construction terms, including plural formatting,
 /// rather than the region-wide default or a fixed number copied into the tutorial.
 #[test]
-fn ccgt_build_guidance_uses_the_selected_sites_effective_duration() {
+fn generator_build_guidance_uses_the_selected_sites_effective_duration() {
     use application::{Game, InMemoryCommandLog};
     use domain::{ids::RegionId, session::GameSettings};
     use game::hud::tutorial::{TutorialView, tutorial_view};
     use infrastructure::region::RonRegionCatalog;
 
-    let dir = TempDir::new().unwrap();
-    let source = include_str!("../../../infrastructure/tests/support/economic_region_v4.ron")
-        .replace(
-            "(kind: Wind, capital_cost: 1000000, build_months: 2)",
-            "(kind: Ccgt, capital_cost: 1000000, build_months: 1)",
-        )
-        .replace(
-            "(kind: Wind, capital_cost: 2000000, build_months: 3)",
-            "(kind: Ccgt, capital_cost: 2000000, build_months: 3)",
-        );
-    std::fs::write(dir.path().join("minimal.ron"), source).unwrap();
-    let game = Game::start_new(
-        &RonRegionCatalog::new(dir.path()),
-        &RegionId::new("minimal"),
-        7,
-        GameSettings::default(),
-        Box::new(InMemoryCommandLog::default()),
-    )
-    .unwrap();
-    let state = TutorialState::new(1, &game);
-    let l10n = crate::support::shipped_l10n();
-    for (cell, expected) in [
-        (CellCoord { x: 4, y: 4 }, "1 month"),
-        (CellCoord { x: 8, y: 5 }, "3 months"),
+    for (region, kind) in [
+        ("minimal", PlantKind::Ccgt),
+        ("brazil_sin", PlantKind::Solar),
     ] {
-        for step in [TutorialStep::CcgtSpotlight, TutorialStep::BuildCcgt] {
-            let def = TUTORIAL_STEPS.iter().find(|def| def.step == step).unwrap();
-            let text = match tutorial_view(def, &state, &game, Selection::Cell(cell), &l10n, 1.0) {
-                TutorialView::Spotlight { text, .. } | TutorialView::Instruction { text, .. } => {
-                    text
-                }
-                other => panic!("expected a note: {other:?}"),
-            };
-            assert!(
-                text.contains(&format!("{expected} to build")),
-                "{cell:?}: {text}"
-            );
-            assert!(
-                !text.contains("30 months"),
-                "regional default leaked: {text}"
-            );
+        let dir = TempDir::new().unwrap();
+        let source = include_str!("../../../infrastructure/tests/support/economic_region_v4.ron")
+            .replace(
+                "(kind: Wind, capital_cost: 1000000, build_months: 2)",
+                &format!("(kind: {kind:?}, capital_cost: 1000000, build_months: 1)"),
+            )
+            .replace(
+                "(kind: Wind, capital_cost: 2000000, build_months: 3)",
+                &format!("(kind: {kind:?}, capital_cost: 2000000, build_months: 3)"),
+            )
+            .replace("id: \"minimal\"", &format!("id: \"{region}\""));
+        std::fs::write(dir.path().join(format!("{region}.ron")), source).unwrap();
+        let game = Game::start_new(
+            &RonRegionCatalog::new(dir.path()),
+            &RegionId::new(region),
+            7,
+            GameSettings::default(),
+            Box::new(InMemoryCommandLog::default()),
+        )
+        .unwrap();
+        let state = TutorialState::new(1, &game);
+        let l10n = crate::support::shipped_l10n();
+        for (cell, expected) in [
+            (CellCoord { x: 4, y: 4 }, "1 month"),
+            (CellCoord { x: 8, y: 5 }, "3 months"),
+        ] {
+            for step in [
+                TutorialStep::GeneratorSpotlight,
+                TutorialStep::BuildGenerator,
+            ] {
+                let def = TUTORIAL_STEPS.iter().find(|def| def.step == step).unwrap();
+                let text =
+                    match tutorial_view(def, &state, &game, Selection::Cell(cell), &l10n, 1.0) {
+                        TutorialView::Spotlight { text, .. }
+                        | TutorialView::Instruction { text, .. } => text,
+                        other => panic!("expected a note: {other:?}"),
+                    };
+                assert!(
+                    text.contains(&format!("{expected} to build")),
+                    "{cell:?}: {text}"
+                );
+                assert!(
+                    !text.contains("30 months"),
+                    "regional default leaked: {text}"
+                );
+            }
         }
+        assert!(l10n.problems().is_empty());
     }
 }
 
@@ -1129,6 +1178,10 @@ fn battery_site(app: &App) -> CellCoord {
 }
 
 fn ccgt_site(app: &App) -> CellCoord {
+    generator_site(app, PlantKind::Ccgt)
+}
+
+fn generator_site(app: &App, kind: PlantKind) -> CellCoord {
     let session = app.world().resource::<Session>().0.session();
     let home = session
         .city_views()
@@ -1139,12 +1192,12 @@ fn ccgt_site(app: &App) -> CellCoord {
     let terrain = session.region().terrain();
     (0..terrain.height())
         .flat_map(|y| (0..terrain.width()).map(move |x| CellCoord { x, y }))
-        .filter(|cell| session.plant_quote(PlantKind::Ccgt, *cell).is_ok())
+        .filter(|cell| session.plant_quote(kind, *cell).is_ok())
         .min_by(|a, b| {
             domain::grid::distance_cells(*a, home)
                 .total_cmp(&domain::grid::distance_cells(*b, home))
         })
-        .expect("a site for a CCGT")
+        .expect("a site for the generator")
 }
 
 const MIN: (f32, f32) = (
@@ -2545,16 +2598,29 @@ fn escape_ends_the_crawl_or_a_spotlight_over_links_and_leaves_the_window_open() 
 /// checked at both its stages: choosing where the line starts, and where it ends.
 #[test]
 fn cards_fit_minimum_window_at_max_zoom() {
+    tutorial_cards_fit("western_interconnection", PlantKind::Ccgt);
+}
+
+#[test]
+fn solar_cards_fit_minimum_window_at_max_zoom() {
+    for region in ["brazil_sin", "southern_china"] {
+        tutorial_cards_fit(region, PlantKind::Solar);
+    }
+}
+
+fn tutorial_cards_fit(region: &str, kind: PlantKind) {
     const MAX_ZOOM: f32 = 1.5;
     let (width, height) = (MIN.0 / MAX_ZOOM, MIN.1 / MAX_ZOOM);
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, height));
     let l10n = crate::support::shipped_l10n();
     let logs = TempDir::new().unwrap();
-    let mut app = tutorial_app(&logs);
+    let mut app = hud_app(logs.path());
+    set_progress(&mut app, true, true);
+    request(&mut app, region);
     let pass = with_anchor_probe(&mut app);
     let mut cell = battery_site(&app);
     let mut battery = None;
-    let mut ccgt = None;
+    let mut generator = None;
     let mut checked = Vec::new();
     for (chapter, phase_now) in [
         DayPhase::Planning,
@@ -2569,7 +2635,7 @@ fn cards_fit_minimum_window_at_max_zoom() {
         match phase_now {
             DayPhase::Planning if chapter == 3 => {
                 execute(&mut app, Command::FinishReview);
-                cell = ccgt_site(&app);
+                cell = generator_site(&app, kind);
             }
             DayPhase::Planning if chapter == 4 => {
                 let month = app
@@ -2619,25 +2685,19 @@ fn cards_fit_minimum_window_at_max_zoom() {
                     .into_iter()
                     .find(|plant| plant.kind == PlantKind::Battery && plant.cell == cell);
             }
-            if def.step == TutorialStep::ConnectCcgtSpotlight {
-                execute(
-                    &mut app,
-                    Command::BuildPlant {
-                        kind: PlantKind::Ccgt,
-                        cell,
-                    },
-                );
-                ccgt = app
+            if def.step == TutorialStep::ConnectGeneratorSpotlight {
+                execute(&mut app, Command::BuildPlant { kind, cell });
+                generator = app
                     .world()
                     .resource::<Session>()
                     .0
                     .session()
                     .plant_views()
                     .into_iter()
-                    .find(|plant| plant.kind == PlantKind::Ccgt && plant.cell == cell);
+                    .find(|plant| plant.kind == kind && plant.cell == cell);
             }
             if def.step == TutorialStep::SaveSnapshot {
-                let from = ccgt.as_ref().unwrap().node;
+                let from = generator.as_ref().unwrap().node;
                 let to = app.world().resource::<Session>().0.session().anchor_node();
                 execute(&mut app, Command::BuildLine { from, to });
             }
@@ -2653,9 +2713,9 @@ fn cards_fit_minimum_window_at_max_zoom() {
             );
             // Picking a site is done once a cell is selected; the later steps need one.
             let selection = match (def.step, &battery) {
-                (TutorialStep::PickSite | TutorialStep::PickCcgtSite, _) => Selection::None,
-                (TutorialStep::ConnectCcgtSpotlight | TutorialStep::ConnectCcgt, _) => {
-                    Selection::Plant(ccgt.as_ref().expect("CCGT ordered").id)
+                (TutorialStep::PickSite | TutorialStep::PickGeneratorSite, _) => Selection::None,
+                (TutorialStep::ConnectGeneratorSpotlight | TutorialStep::ConnectGenerator, _) => {
+                    Selection::Plant(generator.as_ref().expect("generator ordered").id)
                 }
                 (TutorialStep::ConnectSpotlight | TutorialStep::ConnectBattery, Some(battery)) => {
                     Selection::Plant(battery.id)
@@ -2702,8 +2762,8 @@ fn cards_fit_minimum_window_at_max_zoom() {
                 dispatch_in(&mut app, vec![UiAction::Select(Selection::LineFrom(node))]);
                 check_arrow_callout(&pass, &mut app, (width, height), def, &text);
             }
-            if def.step == TutorialStep::ConnectCcgt {
-                let node = ccgt.as_ref().unwrap().node;
+            if def.step == TutorialStep::ConnectGenerator {
+                let node = generator.as_ref().unwrap().node;
                 dispatch_in(&mut app, vec![UiAction::Select(Selection::LineFrom(node))]);
                 check_arrow_callout(&pass, &mut app, (width, height), def, &text);
             }
@@ -2907,8 +2967,8 @@ fn tutorial_on_and_off_give_identical_state() {
     tutorial_frames(&mut apps, 12, &mut shown);
     for step in [
         TutorialStep::Supply,
-        TutorialStep::CcgtSpotlight,
-        TutorialStep::ConnectCcgtSpotlight,
+        TutorialStep::GeneratorSpotlight,
+        TutorialStep::ConnectGeneratorSpotlight,
     ] {
         assert!(shown.contains(&step), "{step:?} wasn't shown");
     }

@@ -130,7 +130,7 @@ pub struct BuildModel {
 /// Which of `line`'s buttons takes a line on from one of `plants` (the tutorial's): the first
 /// start at a plant's node; or, once `selection` starts the line at one, the first target whose
 /// *Build line* is enabled and `target_allowed` accepts it (none if no target qualifies).
-/// The CCGT chapter restricts targets to nodes with a complete existing or ordered grid path.
+/// The generator chapter restricts targets to nodes with a complete existing or ordered grid path.
 pub fn plant_line_button(
     line: &LineSection,
     selection: Selection,

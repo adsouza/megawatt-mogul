@@ -803,6 +803,11 @@ tutorial-ccgt-pick-site = Click a square on the map for your new gas plant.
 tutorial-ccgt-spotlight = A CCGT is a gas plant you can build anywhere. It is relatively cheap and takes { $time } to build.
 tutorial-ccgt-build = Build a CCGT here. It will take { $time } to build.
 tutorial-ccgt-connect = Build a line from your CCGT to your grid. The plant and line must finish building before they can supply power.
+tutorial-solar-pick-site = Click a square on the map for your new solar farm.
+tutorial-solar-spotlight = Solar is quick to build and needs no fuel. It takes { $time } to build. It generates during daylight; batteries can store some of that energy for later.
+tutorial-solar-build = Build a solar farm here. It will take { $time } to build.
+tutorial-solar-connect = Build a line from your solar farm to your grid. The plant and line must finish building before they can supply power.
+tutorial-solar-crystal-ball = Solar produces nothing at night; its rated capacity isn't available all day. Use the crystal ball to compare supply and demand for the next 12 months. Choose a city to preview its extra demand before connecting it.
 tutorial-save-snapshot = Before risky moves, like connecting a new city, use Save to create a named snapshot. You can load it to return to this point if things go wrong.
 tutorial-crystal-ball = Before connecting a new city, use the crystal ball to compare demand and supply for the next 12 months. Choose a city to preview its extra demand once the connection is built.
 

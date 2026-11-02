@@ -3,7 +3,7 @@
 //! ([`overlay`], [`crawl`]) and the run's lifecycle.
 //!
 //! A run starts with a new game when the player's progress says the tutorial is owed, belongs to
-//! that one game, and continues after the first Review through building and connecting a CCGT,
+//! that one game, and continues after the first Review through building and connecting a generator,
 //! then highlighting Save and the crystal ball. The payoff comparison follows in the month after
 //! the player has ordered and connected the generator and opened the annual outlook.
 //! Loading a save never starts one, and leaving the game part-way drops it without clearing
@@ -112,7 +112,10 @@ fn track_run(
         return;
     };
     let month = session.0.session().clock().month();
-    if state.payoff_month.is_none() && state.outlook_used && steps::ccgt_linked(state, &session.0) {
+    if state.payoff_month.is_none()
+        && state.outlook_used
+        && steps::generator_linked(state, &session.0)
+    {
         state.payoff_month = month.checked_add_months(1).ok();
     }
     match session.0.session().phase() {
