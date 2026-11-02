@@ -152,7 +152,12 @@ impl GameSession {
         offset: u32,
         month: SimMonth,
     ) -> CapacityEstimate {
-        let projected = self.connection_power(network.projected_after(offset), offset, month);
+        let projected = self.connection_power(
+            network.projected_after(offset),
+            offset,
+            month,
+            self.growth_on(network, month),
+        );
         // Peak of the summed profiles, not a sum of each city's independent maximum. Minute
         // resolution preserves authored sub-hour peaks and local time offsets.
         let peak_demand = (0..crate::time::TICKS_PER_DAY)
@@ -275,6 +280,38 @@ mod tests {
             }
         }
         assert_eq!(s.state_hash(), before);
+    }
+
+    #[test]
+    fn a_previewed_connection_that_completes_the_region_grows_its_months() {
+        let outlook = |rate| {
+            let mut parts = fixtures::tiny_region_parts();
+            parts.demand_growth_per_year = rate;
+            let s = GameSession::new(
+                Arc::new(crate::region::RegionDefinition::try_from(parts).unwrap()),
+                7,
+                GameSettings::default(),
+            );
+            s.year_ahead_outlook(Some(CityId(3))).unwrap()
+        };
+        let (flat, grown) = (outlook(0.0), outlook(0.024));
+        let ready = grown.connection.unwrap().months.unwrap();
+        assert!(ready > 0 && ready < 11);
+        for (k, (f, g)) in flat.months.iter().zip(&grown.months).enumerate() {
+            // Without the proposal no city is added, so nothing grows.
+            assert_eq!(g.baseline, f.baseline);
+            let steps = (k as u32 + 1).saturating_sub(ready);
+            let factor = crate::demand::DemandGrowth::NONE
+                .ahead(1.002, steps)
+                .factor();
+            let (f, g) = (f.with_city.unwrap(), g.with_city.unwrap());
+            let expected = f.peak_demand * factor;
+            assert!(
+                (g.peak_demand - expected).value().abs() <= expected.value() * 1e-12,
+                "month {k}: {:?} vs {expected:?}",
+                g.peak_demand
+            );
+        }
     }
 
     #[test]

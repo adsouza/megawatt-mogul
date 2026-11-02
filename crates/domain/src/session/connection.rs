@@ -73,9 +73,18 @@ impl GameSession {
         }
         for (months, cities) in arrivals {
             let month = self.clock.month().checked_add_months(months)?;
-            let before =
-                self.connection_power(self.power.network().projected_after(months), months, month);
-            let after = self.connection_power(proposed.projected_after(months), months, month);
+            let live = self.power.network();
+            let before = self.connection_power(
+                live.projected_after(months),
+                months,
+                month,
+                self.growth_on(live, month),
+            );
+            // Growth as it would be with the proposal built: one that connects the last city
+            // grows demand from the close that commissions it.
+            let growth = self.growth_on(&proposed, month);
+            let after =
+                self.connection_power(proposed.projected_after(months), months, month, growth);
             let baseline: Vec<_> = before
                 .island_nodes()
                 .iter()
@@ -99,7 +108,7 @@ impl GameSession {
                         &self.region,
                         month,
                         tick,
-                        self.power.demand_growth(),
+                        growth,
                     )
                 })
                 .fold(Megawatts::ZERO, Megawatts::max);
@@ -150,11 +159,14 @@ impl GameSession {
         Ok(None)
     }
 
+    /// The power system `months` closes ahead on `network` (already projected that far), in
+    /// `month`, with demand grown to `growth`.
     pub(super) fn connection_power(
         &self,
         network: Network,
         months: u32,
         month: SimMonth,
+        growth: crate::demand::DemandGrowth,
     ) -> PowerSystem {
         let plants = self
             .power
@@ -184,8 +196,7 @@ impl GameSession {
         );
         // A future month has no day-ahead forecast yet: judge it at the month's mean weather.
         power.set_weather_forecast(crate::grid::WeatherForecast::neutral(&self.region, month));
-        // Today's growth for now: the prospective power system is not a fresh, ungrown one.
-        power.set_demand_growth(self.power.demand_growth());
+        power.set_demand_growth(growth);
         power.recompute_islands();
         power.prospective_service();
         let synchronous: BTreeSet<_> = power
@@ -289,11 +300,32 @@ mod tests {
         assert_eq!(grown.added_peak, plain.added_peak * 1.05);
         // The prospective system is grown too, so the shortage deepens.
         assert!(grown.shortage.shortfall > plain.shortage.shortfall);
+        let growth = s.growth_for(s.clock().month());
+        assert_eq!(growth, s.demand_growth());
         assert_eq!(
-            s.connection_power(s.power.network().clone(), 0, s.clock().month())
+            s.connection_power(s.power.network().clone(), 0, s.clock().month(), growth)
                 .demand_growth(),
-            s.demand_growth()
+            growth
         );
+    }
+    #[test]
+    fn a_connection_that_completes_the_region_previews_its_growth() {
+        let warn = |rate| {
+            let s = game(|p| {
+                p.cities[2].base_load = Megawatts::new(3000.0);
+                p.demand_growth_per_year = rate;
+            });
+            // Nothing ordered completes the region: only the proposal would.
+            assert_eq!(s.first_growth_close(), None);
+            s.connection_warning(ConnectionKind::Ac, s.anchor_node(), city(&s, 3))
+                .unwrap()
+                .unwrap()
+        };
+        let (flat, grown) = (warn(0.0), warn(0.024));
+        assert_eq!(grown.month, flat.month);
+        // The commissioning close completes the region and steps once before the city arrives.
+        assert_eq!(grown.added_peak, flat.added_peak * 1.002);
+        assert!(grown.shortage.demand > flat.shortage.demand);
     }
     #[test]
     fn covered_expansions_and_isolated_orders_do_not_warn() {
@@ -358,7 +390,12 @@ mod tests {
     fn connection_previews_judge_a_future_month_at_its_mean_weather() {
         let s = game(|_| {});
         let month = s.clock.month().next();
-        let power = s.connection_power(s.power.network().projected_after(1), 1, month);
+        let power = s.connection_power(
+            s.power.network().projected_after(1),
+            1,
+            month,
+            s.growth_for(month),
+        );
         assert_eq!(
             power.weather_forecast(),
             &crate::grid::WeatherForecast::neutral(&s.region, month)
@@ -405,7 +442,12 @@ mod tests {
                     LineStatus::InService,
                 )
                 .unwrap();
-            let power = s.connection_power(proposed.projected_after(months), months, warning.month);
+            let power = s.connection_power(
+                proposed.projected_after(months),
+                months,
+                warning.month,
+                s.growth_for(warning.month),
+            );
             let id = *power
                 .island_nodes()
                 .iter()

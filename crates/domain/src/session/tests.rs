@@ -51,7 +51,7 @@ proptest::proptest! {
             proptest::prop_assert_eq!(spec.firm_capacity(&s.region().regulator().storage_accreditation), firm);
         }
         proptest::prop_assert_eq!(s.power().firm_capacity(&s.region().regulator().storage_accreditation), expected);
-        let inputs = s.review_inputs(s.clock().month());
+        let inputs = s.review_inputs(s.clock().month(), s.demand_growth());
         let peak = inputs.review_peak();
         let before = s.state_hash();
         proptest::prop_assert!((s.rate_review_estimate().reserve_margin - (expected / peak - 1.0)).abs() < 1e-12);
@@ -1145,9 +1145,12 @@ fn rate_review_estimate_of_a_fresh_game_holds_nothing() {
     assert_eq!(estimate.capital_to_release, Money::ZERO);
     assert_eq!(estimate.capital_at_risk, Money::ZERO);
     let region = s.region().clone();
-    let peak = s
-        .power()
-        .projected_connected_peak(&region, s.clock().month().next());
+    let peak = s.power().projected_connected_peak(
+        &region,
+        s.clock().month().next(),
+        s.demand_growth(),
+        1.0,
+    );
     let firm = s
         .power()
         .firm_capacity(&s.region().regulator().storage_accreditation);
@@ -2119,4 +2122,80 @@ fn growth_scales_the_demand_views() {
         assert_eq!(after.low, after.mean * (1.0 - 0.06));
     }
     assert_eq!(grown.city_detail(city).unwrap().peak, plain_peak * 1.05);
+}
+
+/// The tiny region with every city connected from the start, growing at `rate` a year.
+fn complete_region(rate: f64) -> GameSession {
+    session_with(|p| {
+        p.demand_growth_per_year = rate;
+        p.start.connected_cities = vec![CityId(1), CityId(2), CityId(3)];
+    })
+}
+
+fn assert_scaled(grown: Megawatts, flat: Megawatts, factor: f64) {
+    let expected = flat * factor;
+    assert!(
+        (grown - expected).value().abs() <= expected.value().abs() * 1e-12,
+        "{grown:?} vs {expected:?}"
+    );
+}
+
+#[test]
+fn first_growth_close_is_none_at_zero_rate() {
+    use crate::demand::DemandGrowth;
+    let s = complete_region(0.0);
+    assert_eq!(s.first_growth_close(), None);
+    let later = s.clock().month().checked_add_months(12).unwrap();
+    assert_eq!(s.growth_for(later), DemandGrowth::NONE);
+    // At a non-zero rate the same complete region grows from the first close to come.
+    let growing = complete_region(0.024);
+    assert_eq!(growing.first_growth_close(), Some(s.clock().month()));
+}
+
+#[test]
+fn growth_for_counts_each_growing_close_before_the_month() {
+    use crate::demand::DemandGrowth;
+    let mut s = complete_region(0.024);
+    let current = DemandGrowth::NONE.stepped(1.05);
+    s.power.set_demand_growth(current);
+    let month = s.clock().month();
+    let monthly = s.region().monthly_demand_growth();
+    assert_eq!(monthly, 1.002);
+    // The month being played, and any before it, play at today's factor.
+    assert_eq!(s.growth_for(month), current);
+    assert_eq!(s.growth_for(SimMonth::new(2026, 1).unwrap()), current);
+    for k in 1..=14 {
+        assert_eq!(
+            s.growth_for(month.checked_add_months(k).unwrap()),
+            current.ahead(monthly, k),
+            "{k} months ahead"
+        );
+    }
+}
+
+#[test]
+fn outlook_months_scale_with_growth() {
+    use crate::demand::DemandGrowth;
+    let flat = complete_region(0.0);
+    let grown = complete_region(0.024);
+    let monthly = grown.region().monthly_demand_growth();
+    let flat_outlook = flat.year_ahead_outlook(None).unwrap();
+    let grown_outlook = grown.year_ahead_outlook(None).unwrap();
+    let flat_ops = flat.operational_outlook(None).unwrap();
+    let grown_ops = grown.operational_outlook(None).unwrap();
+    for i in 0..12 {
+        let factor = DemandGrowth::NONE.ahead(monthly, i as u32).factor();
+        let (f, g) = (&flat_outlook.months[i], &grown_outlook.months[i]);
+        assert_eq!(f.month, g.month);
+        assert_scaled(g.baseline.peak_demand, f.baseline.peak_demand, factor);
+        assert_eq!(g.baseline.firm_capacity, f.baseline.firm_capacity);
+        let (f, g) = (&flat_ops.months[i].baseline, &grown_ops.months[i].baseline);
+        for minute in [0, 600, 1100] {
+            assert_scaled(
+                g.forecast.minutes[minute].demand,
+                f.forecast.minutes[minute].demand,
+                factor,
+            );
+        }
+    }
 }

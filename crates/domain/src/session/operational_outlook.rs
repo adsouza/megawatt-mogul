@@ -211,7 +211,12 @@ impl GameSession {
                     .collect(),
             );
         }
-        let projected = self.connection_power(network.projected_after(ahead), ahead, month);
+        let projected = self.connection_power(
+            network.projected_after(ahead),
+            ahead,
+            month,
+            self.growth_on(network, month),
+        );
         if self.region.areas().is_none() {
             return OperationalDay::from_forecasts(vec![
                 projected.supply_forecast(&self.region, month),

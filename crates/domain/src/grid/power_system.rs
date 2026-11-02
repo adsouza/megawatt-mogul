@@ -1449,20 +1449,25 @@ impl PowerSystem {
 
     /// The highest hourly mean of the summed connected-city profiles over the
     /// twelve calendar months from `first_month`, with today's connectivity.
+    /// `first_month` plays at demand growth `first` and each later month one
+    /// more step at the monthly factor `monthly` (1.0 when demand does not grow).
     pub fn projected_connected_peak(
         &self,
         region: &RegionDefinition,
         first_month: SimMonth,
+        first: DemandGrowth,
+        monthly: f64,
     ) -> Megawatts {
         let cities: Vec<&DemandCenter> = self.connected_cities().collect();
         let mut month = first_month;
+        let mut growth = first;
         let mut peak = Megawatts::ZERO;
         for _ in 0..MONTHS_PER_YEAR {
-            for point in hourly_forecast(cities.iter().copied(), region, month, self.demand_growth)
-            {
+            for point in hourly_forecast(cities.iter().copied(), region, month, growth) {
                 peak = peak.max(point.mean);
             }
             month = month.next();
+            growth = growth.stepped(monthly);
         }
         peak
     }

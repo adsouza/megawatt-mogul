@@ -54,13 +54,26 @@ impl ReviewInputs {
 
 impl GameSession {
     /// The review inputs on today's state, for a review held at the close of
-    /// `month`: the projection of connected peak demand starts the month after.
-    pub(super) fn review_inputs(&self, month: SimMonth) -> ReviewInputs {
+    /// `month`: the projection of connected peak demand starts the month after,
+    /// at demand growth `next`, the factor that month will be played at.
+    ///
+    /// The caller supplies `next` because the real review runs midway through
+    /// December's close, after construction has advanced but before the close's
+    /// own growth step, which [`GameSession::growth_for`] cannot tell apart from
+    /// Operating. Like the projection's cities, its growth is today's
+    /// connectivity: each later month grows one more step only if every city is
+    /// connected now.
+    pub(super) fn review_inputs(&self, month: SimMonth, next: DemandGrowth) -> ReviewInputs {
         let params = self.region.regulator();
         let firm = self.power.firm_capacity(&params.storage_accreditation);
-        let projected = self
-            .power
-            .projected_connected_peak(&self.region, month.next());
+        let monthly = if self.growing() {
+            self.region.monthly_demand_growth()
+        } else {
+            1.0
+        };
+        let projected =
+            self.power
+                .projected_connected_peak(&self.region, month.next(), next, monthly);
         let tally = self.regulator.tally().clone();
         let excess = reserve_excess(firm, tally.peak_demand, projected, params.reserve_margin);
         ReviewInputs {
@@ -324,7 +337,7 @@ impl GameSession {
     }
 
     /// Whether every city of the region is energised.
-    fn region_complete(&self) -> bool {
+    pub(super) fn region_complete(&self) -> bool {
         let connected = self.connected_cities();
         self.region
             .cities()
@@ -334,20 +347,31 @@ impl GameSession {
 
     /// Step 9: once every city is connected, demand grows one month at every close. The close
     /// that first completes the region announces it. It runs after the report, so the month
-    /// shows the demand actually served, and the next month plays at the grown demand.
+    /// shows the demand actually served, and the next month plays at the grown demand. A close
+    /// that ended the game neither grows nor announces.
     fn step_demand_growth(&mut self, events: &mut Vec<DomainEvent>) {
-        let annual = self.region.demand_growth_per_year();
-        if annual == 0.0 || !self.region_complete() {
+        if !self.growing() {
             return;
         }
         let growth = self.power.demand_growth();
         if growth == DemandGrowth::NONE {
             events.push(DomainEvent::DemandGrowthStarted {
-                annual_rate: annual,
+                annual_rate: self.region.demand_growth_per_year(),
             });
         }
         self.power
             .set_demand_growth(growth.stepped(self.region.monthly_demand_growth()));
+    }
+
+    /// The demand growth next month plays at, from within this close: stepped
+    /// once if this close grows demand.
+    fn growth_after_close(&self) -> DemandGrowth {
+        let growth = self.power.demand_growth();
+        if self.growing() {
+            growth.stepped(self.region.monthly_demand_growth())
+        } else {
+            growth
+        }
     }
 
     fn connected_cities(&self) -> BTreeSet<CityId> {
@@ -382,8 +406,9 @@ impl GameSession {
                 .rate_base_mut()
                 .review_link_utilisation(month.year(), &utilisation),
         );
-        // Connectivity is already this close's: December's new cities count.
-        let inputs = self.review_inputs(month);
+        // Connectivity is already this close's: December's new cities count,
+        // and so does the growth step this close will take.
+        let inputs = self.review_inputs(month, self.growth_after_close());
         let capital = self
             .company
             .rate_base_mut()

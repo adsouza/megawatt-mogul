@@ -771,9 +771,11 @@ impl GameSession {
     /// and their review counts are untouched.
     ///
     /// The review peak is `max(year's peak so far, projected peak)`, as in
-    /// December's real review, with the projection starting next month.
+    /// December's real review, with the projection starting next month at the
+    /// demand growth that month will be played at.
     pub fn rate_review_estimate(&self) -> RateReviewEstimate {
-        let inputs = self.review_inputs(self.clock.month());
+        let month = self.clock.month();
+        let inputs = self.review_inputs(month, self.growth_for(month.next()));
         let mut rate_base = self.company.rate_base().clone();
         rate_base.refresh_plant_firm(|id| {
             self.power

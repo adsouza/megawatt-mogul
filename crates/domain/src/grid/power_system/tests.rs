@@ -1078,13 +1078,13 @@ fn projected_peak_uses_summed_hourly_means_and_current_connectivity() {
         }
         best
     };
-    let got = sys.projected_connected_peak(&region, april());
+    let got = sys.projected_connected_peak(&region, april(), DemandGrowth::NONE, 1.0);
     assert!((got.value() - 1000.0 * peak_factor(april())).abs() < 1e-9);
     // Connecting city 3 (300 MW) raises the projection at once.
     sys.network_mut()
         .add_line(LineId(999), ROOT, NodeId(13), LineStatus::InService)
         .unwrap();
-    let got = sys.projected_connected_peak(&region, april());
+    let got = sys.projected_connected_peak(&region, april(), DemandGrowth::NONE, 1.0);
     assert!((got.value() - 1300.0 * peak_factor(april())).abs() < 1e-9);
 }
 
@@ -5322,10 +5322,32 @@ fn connected_demand_scales_by_the_growth_factor() {
 #[test]
 fn projected_connected_peak_scales_by_the_growth_factor() {
     let region = tiny_region();
-    let mut sys = system_with(&region, &start_fleet(&region));
-    let plain = sys.projected_connected_peak(&region, april());
-    sys.set_demand_growth(grown(1.05));
-    assert_eq!(sys.projected_connected_peak(&region, april()), plain * 1.05);
+    let sys = system_with(&region, &start_fleet(&region));
+    let plain = sys.projected_connected_peak(&region, april(), DemandGrowth::NONE, 1.0);
+    assert_eq!(
+        sys.projected_connected_peak(&region, april(), grown(1.05), 1.0),
+        plain * 1.05
+    );
+}
+
+#[test]
+fn projected_connected_peak_grows_one_step_a_month() {
+    let region = tiny_region();
+    let sys = system_with(&region, &start_fleet(&region));
+    let (first, monthly) = (grown(1.05), 1.002);
+    let cities: Vec<_> = sys.connected_cities().collect();
+    let mut expected = Megawatts::ZERO;
+    let mut month = april();
+    for i in 0..12 {
+        let growth = first.ahead(monthly, i);
+        for point in hourly_forecast(cities.iter().copied(), &region, month, growth) {
+            expected = expected.max(point.mean);
+        }
+        month = month.next();
+    }
+    let got = sys.projected_connected_peak(&region, april(), first, monthly);
+    assert_eq!(got, expected);
+    assert!(got > sys.projected_connected_peak(&region, april(), first, 1.0));
 }
 
 #[test]

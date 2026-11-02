@@ -321,6 +321,9 @@ fn an_old_battery_is_accredited_without_rewriting_the_save() {
     }
     let estimate = game.session().rate_review_estimate();
     let session = game.session();
+    // The saved region predates demand growth: next year's projection is ungrown.
+    assert_eq!(session.region().demand_growth_per_year(), 0.0);
+    let next = session.clock().month().next();
     let accreditation = &session.region().regulator().storage_accreditation;
     let total = session.power().firm_capacity(accreditation).value();
     // Independently add the shipped 170 MW for each commissioned battery to the generator credits.
@@ -350,12 +353,12 @@ fn an_old_battery_is_accredited_without_rewriting_the_save() {
                     .regulator()
                     .tally()
                     .peak_demand
-                    .max(
-                        session.power().projected_connected_peak(
-                            session.region(),
-                            session.clock().month().next()
-                        )
-                    )
+                    .max(session.power().projected_connected_peak(
+                        session.region(),
+                        next,
+                        session.growth_for(next),
+                        1.0
+                    ))
                     .value()
                 - 1.0))
             .abs()
