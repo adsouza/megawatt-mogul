@@ -1,5 +1,5 @@
 //! The first-game tutorial's run lifecycle (first-game tutorial spec §3, §4.3): a new game starts
-//! it when progress says it is owed, loading a save never does, leaving the game drops it, and
+//! it when progress says it is owed, loading restores the snapshot's optional run, leaving drops it, and
 //! leaving the first Review starts the regional generator chapter.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -92,7 +92,7 @@ fn not_pending_means_no_tutorial() {
 }
 
 #[test]
-fn loading_a_save_mid_tutorial_stops_it() {
+fn loading_a_save_after_restart_resumes_its_tutorial_even_when_globally_completed() {
     let logs = TempDir::new().unwrap();
     let saves = TempDir::new().unwrap();
     let mut app = hud_app(logs.path());
@@ -100,6 +100,14 @@ fn loading_a_save_mid_tutorial_stops_it() {
     set_progress(&mut app, true, true);
     request(&mut app, "western_interconnection");
     assert!(run(&app).is_some());
+    tutorial(
+        &mut app,
+        [
+            TutorialAction::Play(TutorialStep::FrameGrid),
+            TutorialAction::Play(TutorialStep::Crawl),
+        ],
+    );
+    let saved_progress = run(&app).unwrap().clone();
 
     dispatch_in(
         &mut app,
@@ -130,6 +138,12 @@ fn loading_a_save_mid_tutorial_stops_it() {
     );
     assert!(run(&app).is_none());
 
+    drop(app);
+    let resumed_logs = TempDir::new().unwrap();
+    let mut app = hud_app(resumed_logs.path());
+    app.insert_resource(SaveDir(saves.path().into()));
+    set_progress(&mut app, true, false);
+
     open_browser(&mut app);
     settle(&mut app);
     dispatch_in(
@@ -143,11 +157,297 @@ fn loading_a_save_mid_tutorial_stops_it() {
         AppState::InGame
     );
     assert!(app.world().contains_resource::<Session>());
+    let restored = run(&app).expect("the saved tutorial resumes after restarting the app");
+    assert_eq!(restored.played, saved_progress.played);
+    assert_eq!(
+        restored.starter_generators,
+        saved_progress.starter_generators
+    );
+    assert_eq!(restored.starter_batteries, saved_progress.starter_batteries);
+    assert_eq!(
+        restored.generation,
+        app.world().resource::<SessionGeneration>().0
+    );
+    assert_eq!(
+        game::hud::tutorial::active_step(
+            restored,
+            &app.world().resource::<Session>().0,
+            Selection::None
+        )
+        .unwrap()
+        .step,
+        TutorialStep::ShowForecast
+    );
+}
+
+fn save_tutorial_snapshot(app: &mut App, name: &str) -> application::SaveId {
+    dispatch_in(
+        app,
+        vec![UiAction::Persistence(PersistAction::OpenSave {
+            leave: false,
+        })],
+    );
+    settle(app);
+    dispatch_in(
+        app,
+        vec![UiAction::Persistence(PersistAction::SaveNew(name.into()))],
+    );
+    settle(app);
+    assert!(app.world().resource::<Persistence>().error.is_none());
+    app.world()
+        .resource::<Persistence>()
+        .last_saved()
+        .unwrap()
+        .metadata
+        .slot
+        .clone()
+}
+
+fn load_tutorial_snapshot(app: &mut App, slot: application::SaveId) {
+    // Load game is entered from the menus, after leaving the current game.
+    if *app.world().resource::<State<AppState>>().get() == AppState::InGame {
+        app.world_mut().write_message(ReturnToMenu);
+        update_n(app, 3);
+    }
+    open_browser(app);
+    settle(app);
+    dispatch_in(app, vec![UiAction::Persistence(PersistAction::Load(slot))]);
+    settle(app);
+    update_n(app, 6);
+    assert!(app.world().resource::<Persistence>().error.is_none());
+}
+
+#[test]
+fn loading_an_earlier_snapshot_rewinds_tutorial_progress_and_keeps_new_generators_new() {
+    let logs = TempDir::new().unwrap();
+    let saves = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    app.insert_resource(SaveDir(saves.path().into()));
+    execute(&mut app, Command::BeginOperating);
+    execute(&mut app, Command::AdvanceTicks { n: TICKS_PER_DAY });
+    execute(&mut app, Command::FinishReview);
+    let kind = PlantKind::Wind;
+    let cell = generator_site(&app, kind);
+    execute(&mut app, Command::BuildPlant { kind, cell });
+    let session = app.world().resource::<Session>().0.session();
+    let plant = session
+        .plant_views()
+        .into_iter()
+        .find(|p| p.cell == cell)
+        .unwrap();
+    let from = session.anchor_node();
+    execute(
+        &mut app,
+        Command::BuildLine {
+            from,
+            to: plant.node,
+        },
+    );
+    tutorial(
+        &mut app,
+        [TutorialAction::Dismiss(TutorialStep::SaveSnapshot)],
+    );
+    dispatch_in(
+        &mut app,
+        vec![UiAction::ShowOutlook(true), UiAction::ShowOutlook(false)],
+    );
+    update_n(&mut app, 2);
+    let saved_progress = run(&app).unwrap().clone();
+    let earlier = save_tutorial_snapshot(&mut app, "Before tutorial completion");
+    tutorial(
+        &mut app,
+        [TutorialAction::Dismiss(TutorialStep::RenewableSiting)],
+    );
+    update_n(&mut app, 2);
+    assert!(run(&app).is_none());
+    let finished = save_tutorial_snapshot(&mut app, "After tutorial completion");
+
+    load_tutorial_snapshot(&mut app, earlier);
+    let restored = run(&app).unwrap();
+    assert_eq!(restored.played, saved_progress.played);
+    assert_eq!(
+        restored.starter_generators,
+        saved_progress.starter_generators
+    );
+    assert!(!restored.starter_generators.contains(&plant.id));
+    assert_eq!(restored.payoff_month, saved_progress.payoff_month);
+    assert!(restored.seen_review && restored.outlook_used);
+    execute(&mut app, Command::BeginOperating);
+    assert!(
+        run(&app).is_some(),
+        "the future payoff chapter survives its intervening day"
+    );
+    execute(&mut app, Command::AdvanceTicks { n: TICKS_PER_DAY });
+    execute(&mut app, Command::FinishReview);
+    assert_eq!(
+        game::hud::tutorial::active_step(
+            run(&app).unwrap(),
+            &app.world().resource::<Session>().0,
+            Selection::None
+        )
+        .unwrap()
+        .step,
+        TutorialStep::OpenPayoff
+    );
+    load_tutorial_snapshot(&mut app, finished);
     assert!(
         run(&app).is_none(),
-        "loading a save never starts a tutorial"
+        "finished snapshots never restart the tutorial"
     );
-    assert!(pending(&app), "the tutorial is still owed");
+}
+
+#[test]
+fn reloading_the_same_spotlight_restarts_its_full_display_time() {
+    let logs = TempDir::new().unwrap();
+    let saves = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    app.insert_resource(SaveDir(saves.path().into()));
+    at_step(&mut app, TutorialStep::Cash);
+    let slot = save_tutorial_snapshot(&mut app, "Before the cash lesson");
+    let pass = with_anchor_probe(&mut app);
+    pass.settled(&mut app, MIN.0, MIN.1);
+    advance_real(&mut app, 3.0);
+    pass.run(&mut app, MIN.0, MIN.1);
+    assert!(!played(&app).contains(&TutorialStep::Cash));
+    load_tutorial_snapshot(&mut app, slot);
+    pass.settled(&mut app, MIN.0, MIN.1);
+    advance_real(&mut app, 2.0);
+    let widgets = pass.run(&mut app, MIN.0, MIN.1);
+    widget(&widgets, CASH_NOTE);
+    assert!(
+        !played(&app).contains(&TutorialStep::Cash),
+        "the preceding run's three seconds must not carry over"
+    );
+    advance_real(&mut app, 3.0);
+    pass.run(&mut app, MIN.0, MIN.1);
+    assert!(played(&app).contains(&TutorialStep::Cash));
+}
+
+#[test]
+fn monthly_autosave_resumes_tutorial_in_review_through_preloaded_continue_after_restart() {
+    let logs = TempDir::new().unwrap();
+    let saves = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    app.insert_resource(SaveDir(saves.path().into()));
+    tutorial(
+        &mut app,
+        [
+            TutorialAction::Play(TutorialStep::FrameGrid),
+            TutorialAction::Play(TutorialStep::Crawl),
+        ],
+    );
+    dispatch_in(&mut app, vec![UiAction::Command(Command::BeginOperating)]);
+    update_n(&mut app, 2);
+    dispatch_in(
+        &mut app,
+        vec![UiAction::Command(Command::AdvanceTicks {
+            n: TICKS_PER_DAY,
+        })],
+    );
+    settle(&mut app);
+    let slot = app
+        .world()
+        .resource::<Persistence>()
+        .last_saved()
+        .unwrap()
+        .metadata
+        .slot
+        .clone();
+    let saved_progress = run(&app).unwrap().clone();
+    let hash = state_hash(&app);
+    drop(app);
+
+    let resumed_logs = TempDir::new().unwrap();
+    let mut app = hud_app(resumed_logs.path());
+    app.insert_resource(SaveDir(saves.path().into()));
+    set_progress(&mut app, true, false);
+    // This fixture adds SaveDir after boot; explicitly run the menu's save scan.
+    update_n(&mut app, 1);
+    open_browser(&mut app);
+    settle(&mut app);
+    dispatch_in(&mut app, vec![UiAction::Persistence(PersistAction::Cancel)]);
+    dispatch_in(
+        &mut app,
+        vec![UiAction::Persistence(PersistAction::PreloadResume)],
+    );
+    assert!(
+        app.world()
+            .resource::<Persistence>()
+            .continue_entry()
+            .is_some(),
+        "{:?}",
+        app.world().resource::<Persistence>().entries
+    );
+    dispatch_in(
+        &mut app,
+        vec![UiAction::Persistence(PersistAction::Continue(slot))],
+    );
+    settle(&mut app);
+    update_n(&mut app, 6);
+    assert!(
+        app.world().resource::<Persistence>().error.is_none(),
+        "{:?}",
+        app.world().resource::<Persistence>().error
+    );
+    let restored = run(&app).expect("Continue restores the monthly tutorial checkpoint");
+    assert!(
+        restored.seen_review,
+        "the autosave captures the new Review in its own frame"
+    );
+    assert_eq!(restored.played, saved_progress.played);
+    assert_eq!(state_hash(&app), hash);
+    assert_eq!(phase(&app), DayPhase::Review);
+    assert_eq!(
+        *app.world().resource::<game::sim::SimSpeed>(),
+        game::sim::SimSpeed::Paused
+    );
+    let pass = with_anchor_probe(&mut app);
+    let widgets = pass.settled(&mut app, MIN.0, MIN.1);
+    widget(
+        &widgets,
+        &crate::support::shipped_l10n().text("tutorial-construction-general"),
+    );
+}
+
+#[test]
+fn legacy_missing_or_invalid_tutorial_records_load_without_starting_a_tutorial() {
+    use application::{SaveBundle, SaveKind, SaveMetadata, SaveStore, SaveTarget};
+    let logs = TempDir::new().unwrap();
+    let saves = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    app.insert_resource(SaveDir(saves.path().into()));
+    let checkpoint = app.world().resource::<Session>().0.checkpoint();
+    let hash = state_hash(&app);
+    let store = infrastructure::save::FileSaveStore::new(saves.path().into());
+    for client_state in [
+        None,
+        Some(b"malformed tutorial record".to_vec()),
+        Some(b"(version:999)".to_vec()),
+    ] {
+        let metadata = SaveMetadata {
+            slot: store.allocate_id(),
+            run: store.allocate_id(),
+            kind: SaveKind::Manual,
+            name: "Old or unknown tutorial".into(),
+            saved_at: store.now(),
+        };
+        let slot = metadata.slot.clone();
+        store
+            .write(
+                &SaveBundle {
+                    client_state,
+                    compatibility: store.compatibility(),
+                    metadata,
+                    checkpoint: checkpoint.clone(),
+                },
+                &SaveTarget::Create,
+                &|| false,
+            )
+            .unwrap();
+        load_tutorial_snapshot(&mut app, slot);
+        assert!(run(&app).is_none());
+        assert_eq!(state_hash(&app), hash);
+    }
 }
 
 #[test]
@@ -288,6 +588,68 @@ fn payoff_is_scheduled_for_the_next_month_only_after_generator_and_actual_outloo
             Some(TutorialStep::OpenPayoff)
         );
     }
+}
+
+#[test]
+fn connecting_an_alternative_generator_spotlights_save_and_unlocks_the_later_chapter() {
+    let logs = TempDir::new().unwrap();
+    let mut app = tutorial_app(&logs);
+    execute(&mut app, Command::BeginOperating);
+    execute(&mut app, Command::AdvanceTicks { n: TICKS_PER_DAY });
+    execute(&mut app, Command::FinishReview);
+    let kind = PlantKind::Wind;
+    let cell = generator_site(&app, kind);
+    execute(&mut app, Command::BuildPlant { kind, cell });
+    let session = app.world().resource::<Session>().0.session();
+    let from = session.anchor_node();
+    let to = session
+        .plant_views()
+        .into_iter()
+        .find(|p| p.cell == cell)
+        .unwrap()
+        .node;
+    execute(&mut app, Command::BuildLine { from, to });
+    assert_eq!(
+        game::hud::tutorial::active_step(
+            run(&app).unwrap(),
+            &app.world().resource::<Session>().0,
+            Selection::None,
+        )
+        .unwrap()
+        .step,
+        TutorialStep::SaveSnapshot,
+    );
+    let before = state_hash(&app);
+    let pass = with_anchor_probe(&mut app);
+    let widgets = pass.settled(&mut app, MIN.0, MIN.1);
+    widget(&widgets, SAVE_SNAPSHOT);
+    let save = anchors(&app)[&TutorialAnchor::Save];
+    assert!(
+        widgets
+            .iter()
+            .any(|w| w.text.starts_with("Save") && w.rect == save)
+    );
+    press_escape(&pass, &mut app, MIN);
+    assert!(played(&app).contains(&TutorialStep::SaveSnapshot));
+    assert!(run(&app).unwrap().payoff_month.is_none());
+    dispatch_in(
+        &mut app,
+        vec![UiAction::ShowOutlook(true), UiAction::ShowOutlook(false)],
+    );
+    update_n(&mut app, 2);
+    let month = app
+        .world()
+        .resource::<Session>()
+        .0
+        .session()
+        .clock()
+        .month();
+    assert_eq!(
+        run(&app).unwrap().payoff_month,
+        Some(month.checked_add_months(1).unwrap())
+    );
+    assert_eq!(state_hash(&app), before);
+    assert!(sent::<PlayerCommand>(&app).is_empty());
 }
 
 #[test]

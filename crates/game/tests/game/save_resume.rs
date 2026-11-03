@@ -1375,6 +1375,7 @@ pub(crate) fn write_manual(
 ) -> application::SaveId {
     use application::SaveStore;
     let bundle = application::SaveBundle {
+        client_state: None,
         compatibility: store.compatibility(),
         metadata: application::SaveMetadata {
             slot: store.allocate_id(),
@@ -2242,6 +2243,7 @@ fn write_snapshot(
 ) -> application::SaveId {
     use application::SaveStore;
     let bundle = application::SaveBundle {
+        client_state: None,
         compatibility: store.compatibility(),
         metadata: application::SaveMetadata {
             slot: store.allocate_id(),

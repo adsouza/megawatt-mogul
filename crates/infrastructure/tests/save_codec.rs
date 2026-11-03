@@ -30,6 +30,7 @@ fn capture() -> GameCheckpoint {
 }
 fn bundle() -> SaveBundle {
     SaveBundle {
+        client_state: None,
         compatibility: identity(),
         metadata: SaveMetadata {
             slot: SaveId::new("a".repeat(32)).unwrap(),
@@ -93,13 +94,31 @@ fn a_save_from_another_build_or_platform_decodes_with_its_metadata() {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(16))]
     #[test]
-    fn save_codec_round_trip_original_batches(seed in any::<u64>(), ns in prop::collection::vec(0u32..32, 0..8)) {
+    fn save_codec_round_trip_original_batches_and_client_state(seed in any::<u64>(), ns in prop::collection::vec(0u32..32, 0..8), client_state in prop::option::of(prop::collection::vec(any::<u8>(), 0..512))) {
         let mut b = bundle(); b.checkpoint.header.seed = seed;
+        b.client_state = client_state;
         b.checkpoint.commands = std::iter::once(Command::BeginOperating).chain(ns.into_iter().map(|n| Command::AdvanceTicks { n })).collect();
         b.checkpoint.command_count = b.checkpoint.commands.len() as u64;
         let bytes = encode_save(&b).unwrap();
         prop_assert_eq!(decode_save(&bytes, &identity()).unwrap().0, b);
     }
+}
+
+#[test]
+fn saves_without_client_progress_keep_the_legacy_payload_shape() {
+    let bytes = encode_save(&bundle()).unwrap();
+    assert!(
+        !std::str::from_utf8(&bytes)
+            .unwrap()
+            .contains("client_state")
+    );
+    assert!(
+        decode_save(&bytes, &identity())
+            .unwrap()
+            .0
+            .client_state
+            .is_none()
+    );
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]

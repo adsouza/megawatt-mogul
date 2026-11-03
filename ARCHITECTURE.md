@@ -571,6 +571,12 @@ layer shown, is a selected toggle, not a disabled button.
 | `DailyAudioPlugin` | Presentation-only daily time signals at 1×: rooster at sunrise, metro at 08:30/17:00, gong followed by children laughing at noon, and doorbell at 17:30. Clips finish naturally if the player changes speed. |
 | `HudPlugin` | Every egui panel, toast, prompt and modal, plus its non-egui glue (listing regions, collecting toasts, resetting HUD state between games). |
 
+Each `SaveBundle` may also carry opaque client progress, separate from the simulation checkpoint.
+The tutorial captures stable lesson keys, original starter IDs and chapter markers at the same
+boundary as each manual save or monthly autosave. Verified Load/Continue publishes this record
+with the new session generation; the HUD validates and restores it independently of global
+first-game preferences. Old or unsupported client records do not prevent loading the simulation.
+
 `CorePlugins` groups the first three. They need no window or renderer, so the tests run them on
 `MinimalPlugins` plus `StatesPlugin`. `GamePlugins` adds `EguiPlugin`, `HudPlugin`, `PreferencesPlugin` and `ProgressPlugin`, and
 `main.rs` puts it on `DefaultPlugins` with a 1280×640 minimum client area, targeting 1280×720

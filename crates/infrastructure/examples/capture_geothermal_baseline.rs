@@ -137,6 +137,7 @@ fn main() {
             checkpoint.state_hash = snapshot.state_hash();
         }
         let bundle = SaveBundle {
+            client_state: None,
             compatibility: replay_compatibility(),
             metadata: SaveMetadata {
                 slot: SaveId::new("a".repeat(32)).unwrap(),

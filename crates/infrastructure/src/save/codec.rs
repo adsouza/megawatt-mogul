@@ -24,6 +24,8 @@ pub(super) struct Envelope {
 #[serde(deny_unknown_fields)]
 pub(super) struct Payload<C> {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) client_state: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) snapshot: Option<SnapshotDto>,
     pub(super) build: String,
     pub(super) platform: String,
@@ -135,6 +137,7 @@ pub(crate) fn encode_save_as(
     }
     let m = &bundle.metadata;
     let payload = Payload {
+        client_state: bundle.client_state.clone(),
         snapshot: c.snapshot.as_ref().map(SnapshotDto::encode).transpose()?,
         build: compatibility.build.clone(),
         platform: compatibility.platform.clone(),
@@ -365,6 +368,7 @@ fn decode_payload<C: Into<super::journal::JournalRecord>>(
     };
     Ok((
         SaveBundle {
+            client_state: p.client_state,
             compatibility,
             metadata,
             checkpoint,

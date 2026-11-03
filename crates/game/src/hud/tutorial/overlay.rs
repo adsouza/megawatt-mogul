@@ -215,18 +215,35 @@ impl Shown {
     }
 }
 
-/// Draws the active tutorial step over the HUD and hands what it asks for to [`dispatch`], with
-/// whether the crawl or a spotlight now covers the screen.
+/// Presentation clocks belong to one session generation and aren't serialized.
+#[derive(Default)]
+pub(crate) struct OverlayState {
+    shown: Option<Shown>,
+    active: Option<TutorialStep>,
+    generation: Option<u64>,
+}
+
+/// Draws the active tutorial step and sends its actions through [`dispatch`].
 pub(crate) fn tutorial_overlay(
     mut contexts: EguiContexts,
     time: Res<Time<Real>>,
     frame: Res<FrameCount>,
     l10n: Res<Localizer>,
-    mut shown: Local<Option<Shown>>,
-    mut active: Local<Option<TutorialStep>>,
+    mut overlay: Local<OverlayState>,
     mut sink: ActionSink,
 ) -> Result {
     let ctx = contexts.ctx_mut()?.clone();
+    let OverlayState {
+        shown,
+        active,
+        generation: owner,
+    } = &mut *overlay;
+    let generation = sink.session_generation();
+    if *owner != Some(generation) {
+        *owner = Some(generation);
+        *shown = None;
+        *active = None;
+    }
     let now = time.elapsed_secs_f64();
     let uncover = UiAction::Tutorial(TutorialAction::Cover(false));
     let guide = sink

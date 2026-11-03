@@ -260,6 +260,7 @@ impl PreparedRecording {
         }
         let snapshot = if checkpoint.snapshot.is_some() {
             let bundle = application::SaveBundle {
+                client_state: None,
                 compatibility: crate::save::replay_compatibility(),
                 checkpoint: checkpoint.clone(),
                 metadata: application::SaveMetadata {

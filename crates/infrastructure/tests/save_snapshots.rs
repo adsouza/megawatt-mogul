@@ -660,6 +660,7 @@ fn calibrated_solar_regions_resume_identically_with_their_archived_calibration()
             listing.id.as_str()
         );
         let bundle = SaveBundle {
+            client_state: None,
             compatibility: replay_compatibility(),
             metadata: SaveMetadata {
                 slot: SaveId::new("a".repeat(32)).unwrap(),

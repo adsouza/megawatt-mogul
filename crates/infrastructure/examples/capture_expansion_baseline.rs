@@ -28,6 +28,7 @@ fn save(root: &Path, name: &str, game: &Game) {
     let checkpoint = game.checkpoint();
     assert_eq!(checkpoint.snapshot.as_ref().unwrap().schema, 7);
     let bundle = SaveBundle {
+        client_state: None,
         compatibility: replay_compatibility(),
         metadata: SaveMetadata {
             slot: SaveId::new("a".repeat(32)).unwrap(),

@@ -368,6 +368,7 @@ fn battery_day_flows_change_line_direction_and_survive_history_review_and_restor
     );
     let identity = infrastructure::save::replay_compatibility();
     let bundle = application::SaveBundle {
+        client_state: None,
         compatibility: identity.clone(),
         metadata: application::SaveMetadata {
             slot: application::SaveId::new("a".repeat(32)).unwrap(),

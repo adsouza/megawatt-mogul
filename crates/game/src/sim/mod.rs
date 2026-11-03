@@ -79,6 +79,13 @@ pub struct NewGameStarted {
     pub generation: u64,
 }
 
+/// A verified save has been installed. Client progress belongs to this generation only.
+#[derive(Message, Debug, Clone)]
+pub struct GameLoaded {
+    pub generation: u64,
+    pub client_state: Option<Vec<u8>>,
+}
+
 /// Leave the game for the main menu, dropping the session.
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ReturnToMenu;
@@ -145,6 +152,7 @@ impl Plugin for SimulationPlugin {
             .add_message::<DomainEventMessage>()
             .add_message::<NewGameRequest>()
             .add_message::<NewGameStarted>()
+            .add_message::<GameLoaded>()
             .add_message::<ReturnToMenu>()
             .init_resource::<SimSpeed>()
             .init_resource::<TicksInFlight>()
@@ -222,6 +230,7 @@ pub fn apply_player_commands(
     mut failures: MessageWriter<CommandFailed>,
     mut persistence: ResMut<Persistence>,
     generation: Res<SessionGeneration>,
+    tutorial: Option<Res<crate::hud::tutorial::TutorialRun>>,
 ) {
     for diagnostic in diagnostics.read().filter(|m| m.1 == generation.0) {
         session.0.record_planner_diagnostic(&diagnostic.0);
@@ -262,7 +271,13 @@ pub fn apply_player_commands(
                         .map(DomainEventMessage),
                 );
                 if closed {
-                    persistence.month_closed(&session.0, generation.0);
+                    persistence.month_closed(
+                        &session.0,
+                        generation.0,
+                        tutorial
+                            .as_ref()
+                            .and_then(|run| run.saved_state(&session.0, generation.0)),
+                    );
                     if persistence.frozen() {
                         break;
                     }
@@ -276,7 +291,15 @@ pub fn apply_player_commands(
             }
         }
     }
-    persistence.after_apply(&session.0, generation.0);
+    let client_state = persistence
+        .draining
+        .then(|| {
+            tutorial
+                .as_ref()
+                .and_then(|run| run.saved_state(&session.0, generation.0))
+        })
+        .flatten();
+    persistence.after_apply(&session.0, generation.0, client_state);
 }
 
 /// Copies the domain's phase into [`PhaseState`] when they differ: the only writer of

@@ -49,6 +49,7 @@ fn probe(id: &str, bytes: &[u8], months: u32) -> Result<js_sys::Array, Box<dyn s
     let captured = js_sys::Date::now();
     let slot = SaveId::new("00000000000000000000000000000001".into())?;
     let bundle = SaveBundle {
+        client_state: None,
         compatibility: replay_compatibility(),
         metadata: SaveMetadata {
             slot: slot.clone(),

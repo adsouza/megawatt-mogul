@@ -7,8 +7,9 @@
 //! then highlighting Save and the crystal ball. The payoff comparison follows in the month after
 //! the player has ordered and connected the generator and opened the annual outlook.
 //! A final resource-map spotlight teaches choosing renewable sites for better yield.
-//! Loading a save never starts one, and leaving the game part-way drops it without clearing
-//! `tutorial_pending`.
+//! Loading a save restores its optional tutorial record. Legacy and finished saves have none.
+//! Leaving the game drops the live run without clearing `tutorial_pending`; each saved snapshot
+//! retains its own progress independently of that global flag.
 //! The outlook's first-use guide shares this overlay but has its own persisted completion flag
 //! and UI state, so it can run after the main tutorial or after loading a save.
 
@@ -19,7 +20,6 @@ mod steps;
 
 use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
-use domain::session::DayPhase;
 
 pub use self::anchors::{anchor_rect, mark_anchor, mark_visible_anchor};
 pub use self::overlay::{
@@ -33,12 +33,26 @@ pub use self::steps::{
 use crate::hud::{HudSet, UiState};
 use crate::l10n::Localizer;
 use crate::progress::ClientProgressStore;
-use crate::sim::{NewGameStarted, Session, SessionGeneration, SimSet};
+use crate::sim::{GameLoaded, NewGameStarted, Session, SessionGeneration, SimSet};
 use crate::state::AppState;
 
 /// The running tutorial, if any.
 #[derive(Resource, Debug, Default)]
 pub struct TutorialRun(pub Option<TutorialState>);
+
+impl TutorialRun {
+    pub(crate) fn saved_state(&self, game: &application::Game, generation: u64) -> Option<Vec<u8>> {
+        let mut state = self
+            .0
+            .as_ref()
+            .filter(|s| s.generation == generation)?
+            .clone();
+        if state.reconcile(game) {
+            return None;
+        }
+        state.saved().encode()
+    }
+}
 
 /// The tutorial run's lifecycle, and its overlay over the HUD. `HudPlugin` adds it.
 ///
@@ -57,9 +71,11 @@ impl Plugin for TutorialPlugin {
                     // The new game's `Session` is inserted by command: order after it so the
                     // starter fleet can be read in the same frame.
                     start_run.after(crate::sim::start_new_game),
-                    track_run.after(SimSet::Apply),
+                    restore_run,
+                    track_run,
                 )
-                    .chain(),
+                    .chain()
+                    .after(SimSet::Persist),
             )
             .add_systems(OnExit(AppState::InGame), clear_run)
             .add_systems(
@@ -74,6 +90,26 @@ impl Plugin for TutorialPlugin {
                     ),
             );
     }
+}
+
+fn restore_run(
+    mut loaded: MessageReader<GameLoaded>,
+    session: Option<Res<Session>>,
+    generation: Res<SessionGeneration>,
+    mut run: ResMut<TutorialRun>,
+    mut ui: ResMut<UiState>,
+) {
+    let Some(loaded) = loaded
+        .read()
+        .last()
+        .filter(|l| l.generation == generation.0)
+    else {
+        return;
+    };
+    end_run(&mut run, &mut ui);
+    run.0 = session.as_ref().and_then(|session| {
+        TutorialState::restore(loaded.client_state.as_deref()?, generation.0, &session.0)
+    });
 }
 
 /// Starts a run for the new game when the tutorial is owed (and progress has loaded, so the owed
@@ -113,27 +149,9 @@ fn track_run(
         end_run(&mut run, &mut ui);
         return;
     };
-    let month = session.0.session().clock().month();
-    if state.payoff_month.is_none()
-        && state.outlook_used
-        && steps::generator_linked(state, &session.0)
-    {
-        state.payoff_month = month.checked_add_months(1).ok();
-    }
-    match session.0.session().phase() {
-        DayPhase::Review => state.seen_review = true,
-        DayPhase::Planning if state.played.contains(&TutorialStep::RenewableSiting) => {
-            progress.value.tutorial_pending = false;
-            end_run(&mut run, &mut ui);
-        }
-        // Starting the next day early skips the remaining optional Planning guidance.
-        DayPhase::Operating
-            if state.seen_review && state.payoff_month.is_none_or(|ready| month >= ready) =>
-        {
-            progress.value.tutorial_pending = false;
-            end_run(&mut run, &mut ui);
-        }
-        _ => {}
+    if state.reconcile(&session.0) {
+        progress.value.tutorial_pending = false;
+        end_run(&mut run, &mut ui);
     }
 }
 

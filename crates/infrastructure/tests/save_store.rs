@@ -23,6 +23,7 @@ fn bundle(store: &FileSaveStore, name: &str) -> SaveBundle {
     )
     .unwrap();
     SaveBundle {
+        client_state: None,
         compatibility: store.compatibility(),
         metadata: SaveMetadata {
             slot: store.allocate_id(),
@@ -288,6 +289,7 @@ fn save_store_a_second_resume_needs_neither_parent_save_nor_logs_nor_installed_r
     live.execute(Command::AdvanceTicks { n: 877 }).unwrap();
     let store = FileSaveStore::new(root.path().join("saves"));
     let first = SaveBundle {
+        client_state: None,
         compatibility: store.compatibility(),
         metadata: SaveMetadata {
             slot: store.allocate_id(),
@@ -322,6 +324,7 @@ fn save_store_a_second_resume_needs_neither_parent_save_nor_logs_nor_installed_r
         branch.checkpoint().commands.len()
     );
     let second = SaveBundle {
+        client_state: None,
         compatibility: store.compatibility(),
         metadata: SaveMetadata {
             slot: store.allocate_id(),

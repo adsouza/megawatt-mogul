@@ -10,6 +10,7 @@ pub mod save;
 pub mod client_preferences;
 
 pub mod client_progress;
+pub mod client_tutorial;
 
 pub mod web_assets;
 

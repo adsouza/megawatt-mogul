@@ -20,6 +20,7 @@ fn bundle(store: &FileSaveStore) -> SaveBundle {
         game.execute(Command::FinishReview).unwrap();
     }
     SaveBundle {
+        client_state: None,
         compatibility: store.compatibility(),
         metadata: SaveMetadata {
             slot: store.allocate_id(),
@@ -35,7 +36,8 @@ fn bundle(store: &FileSaveStore) -> SaveBundle {
 fn directory_snapshot_has_binary_files_per_month_and_restores_exactly() {
     let dir = TempDir::new().unwrap();
     let store = FileSaveStore::new(dir.path().into()).with_monthly_charts();
-    let saved = bundle(&store);
+    let mut saved = bundle(&store);
+    saved.client_state = Some(b"snapshot-specific tutorial progress".to_vec());
     store.write(&saved, &SaveTarget::Create, &|| false).unwrap();
     let slot = dir
         .path()
@@ -588,6 +590,7 @@ fn wind_and_overlapping_battery_policy_restore_through_flat_and_monthly_snapshot
                 .unwrap();
         }
         let saved = SaveBundle {
+            client_state: None,
             compatibility: store.compatibility(),
             metadata: SaveMetadata {
                 slot: store.allocate_id(),

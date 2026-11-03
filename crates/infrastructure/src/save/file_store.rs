@@ -719,6 +719,7 @@ mod tests {
         )
         .unwrap();
         SaveBundle {
+            client_state: None,
             compatibility: store.compatibility(),
             metadata: SaveMetadata {
                 slot: store.allocate_id(),

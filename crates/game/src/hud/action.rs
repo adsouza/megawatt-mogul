@@ -418,6 +418,10 @@ impl ActionSink<'_> {
     pub fn tutorial(&self) -> Option<&TutorialState> {
         self.tutorial.0.as_ref()
     }
+
+    pub fn session_generation(&self) -> u64 {
+        self.generation.0
+    }
 }
 
 /// Turns the HUD's actions into messages and state changes, in order: the single mapping from a

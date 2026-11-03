@@ -34,6 +34,7 @@ fn assert_legacy_continuation(
     // Verify exact resave/restore continuation on every target, including targets whose
     // libm results differ in the last bit from the frozen capture's platform.
     let bundle = SaveBundle {
+        client_state: None,
         compatibility: replay_compatibility(),
         metadata: original.metadata.clone(),
         checkpoint: game.checkpoint(),
@@ -282,6 +283,7 @@ fn geothermal_pipeline_roundtrips_exploration_and_reuse_of_a_dry_cell() {
     })
     .unwrap();
     let bundle = SaveBundle {
+        client_state: None,
         compatibility: replay_compatibility(),
         metadata: SaveMetadata {
             slot: SaveId::new("a".repeat(32)).unwrap(),

@@ -121,6 +121,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         })?;
     }
     let bundle = SaveBundle {
+        client_state: None,
         compatibility: replay_compatibility(),
         metadata: SaveMetadata {
             slot: SaveId::new("c".repeat(32))?,

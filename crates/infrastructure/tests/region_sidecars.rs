@@ -463,6 +463,7 @@ fn save_of(catalog: &RonRegionCatalog) -> SaveBundle {
     .unwrap()
     .checkpoint();
     SaveBundle {
+        client_state: None,
         compatibility: identity(),
         metadata: SaveMetadata {
             slot: SaveId::new("a".repeat(32)).unwrap(),

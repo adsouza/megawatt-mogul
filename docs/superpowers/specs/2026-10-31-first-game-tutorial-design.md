@@ -30,19 +30,20 @@ genuinely played four other regions.
 - The step list is easy to extend: the user plans to carry the tutorial beyond the first month
   soon.
 - SGCC stays locked until four other regions are "played" (§6).
+- An unfinished tutorial resumes with its saved game, including after restarting the client.
 
 **Non-goals (this version)**
 
 - Guidance beyond building and connecting the first new generator after the first month's Review.
-- Resuming a tutorial in a loaded save. The tutorial runs only in the game it started with.
 - Voice-over, sound cues or animated characters.
 - Translating the new text into other locales (`en-US` only, as today).
 
 **Anti-goals** (a failure even if it technically works)
 
 - Any tutorial effect on the simulation. The tutorial never sends a `PlayerCommand` and never
-  writes simulation state, so replays, saves and digests are identical with it on or off. It
-  changes only client UI state (tabs, scroll, camera) and client preferences.
+  writes simulation state, so replay, simulation checkpoints and digests are identical with it
+  on or off. Saved files may carry separate client tutorial bookkeeping. It changes only client
+  UI state (tabs, scroll, camera), client progress and the optional client save record.
 - Blocking the player. Spotlights end on any click, Escape or after a few seconds; instructions
   never stop the player from doing something else.
 - A tutorial that gets stuck because the player went off-script. It must re-evaluate from state
@@ -59,14 +60,16 @@ genuinely played four other regions.
   it is ticked on a first game. It is the only way to turn the tutorial back on once it has
   finished: the main menu has no tutorial button.
 - Starting a new game with `tutorial_pending` true starts the tutorial in that game. Loading or
-  continuing a save never starts it.
+  continuing a save restores that snapshot's unfinished tutorial record, independently of the
+  global flag. A legacy, finished or tutorial-disabled snapshot starts no tutorial.
 - After the first Review is dismissed, the tutorial continues with the regional generator walkthrough (§4.5).
   After the generator is ordered and connected and the annual outlook is opened, the next
   month's Planning phase offers the plant-payoff comparison. Closing that comparison leads to
   a final renewable-siting spotlight (§4.6). It **finishes** when this spotlight is dismissed or
   times out, or when the player starts a day early while optional guidance is available. That sets
   `tutorial_pending = false` and writes preferences. Leaving the game or
-  quitting part-way leaves the flag `true`, so the next new game runs it again.
+  quitting part-way leaves the flag `true`, so the next new game runs it again. Resuming an
+  existing snapshot uses its saved progress instead.
 
 ## 4. The tutorial
 
@@ -132,8 +135,18 @@ the battery steps simply never show; if they press *Start the day* early, the re
 steps are skipped and the Operating step plays.
 
 `TutorialProgress` (a Bevy resource) holds only what state can't tell us: which one-shot steps
-have played, the current spotlight's timer, and whether the tutorial is running. It lives in
-memory for the running game.
+have played, the current spotlight's timer, and whether the tutorial is running. The live resource
+belongs to the current session generation. Each manual save and monthly autosave captures an
+optional versioned client record containing stable lesson keys, original starter battery and
+generator IDs, the recommended generator kind, Review/outlook markers and payoff month.
+
+Loading or Continue restores this record only after the game has verified, rebinds it to the new
+session generation and re-evaluates the next applicable lesson. Spotlight timers and stale UI
+reveals reset. An interrupted payoff comparison re-offers opening the dialog, retaining notes
+already completed. Loading an earlier snapshot also rewinds tutorial progress, even if the global
+tutorial flag has since been cleared. Completed and disabled tutorials have no record. Missing,
+malformed or unsupported tutorial records do not prevent loading a valid game and start no run.
+The client record is separate from portable simulation state, journal and replay hashes.
 
 Presenter pattern as AGENTS.md requires: `tutorial_model` is pure and unit-tested; a draw
 function returns `Vec<UiAction>` (end spotlight, end tutorial, switch tab); a system hands them
@@ -215,8 +228,11 @@ steps, even if the player skipped them.
 
 Recommend **solar in Brazil SIN and Southern China**, where gas costs exceed the starting
 tariff; recommend **CCGT in all other regions**. Use that choice throughout the walkthrough:
-card reveals, build and connection anchors, text, new-order detection and completion. Starter
-plants never count as the player's order, and ordering another kind does not complete the step.
+card reveals, build and connection anchors, text and detection of unconnected recommended orders.
+Starter plants never count as the player's order. A new generating plant of **any kind except
+battery storage**, once connected through an existing or ordered path to a service grid, satisfies
+the supply task and skips any remaining recommended-plant instructions to the Save reminder.
+An unconnected alternative alone does not complete the task.
 
 1. Spotlight the map with a short explanation: batteries store electricity; a new power plant
    adds supply.
@@ -235,10 +251,11 @@ plants never count as the player's order, and ordering another kind does not com
    line target that already has a complete existing or ordered path to a service grid. Use the
    same controls and presentation as for the battery. Explain that both plant and line must finish before
    supplying power. Orders under construction count, because they already have network nodes.
-6. Once the new plant has a complete path to a service grid, including ordered lines, spotlight
+6. Once any new generating plant has a complete path to a service grid, including ordered lines, spotlight
    the top bar's **Save** button. Caution the player to create a **named snapshot** before risky
    moves such as connecting a new city, so they can load it to return to this point if things
-   go wrong. A dangling line to an unconnected city does not unlock this caution.
+   go wrong. A dangling line to an unconnected city does not unlock this caution. Batteries and
+   all starter generators are excluded. Plant and line construction need not have finished.
 7. After the Save reminder, spotlight the **crystal ball** in the top bar. Explain that it
    compares demand and planned supply over the next twelve months, and that choosing a city
    previews its added demand once the proposed connection is built, before the player places

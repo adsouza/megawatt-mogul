@@ -59,6 +59,8 @@ impl SaveMetadata {
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct SaveBundle {
+    /// Optional client-owned progress, captured with this exact checkpoint. Opaque to simulation.
+    pub client_state: Option<Vec<u8>>,
     /// The build that wrote this save. A writer stamps its own; a decoded bundle carries the one
     /// recorded in the file, which may be another build's or platform's.
     pub compatibility: ReplayCompatibility,

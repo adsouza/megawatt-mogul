@@ -77,6 +77,7 @@ fn main() {
         snapshot.schema, checkpoint.state_hash, plant.id.0
     );
     let bundle = SaveBundle {
+        client_state: None,
         compatibility: ReplayCompatibility {
             build: "plan-6a-preflight-rules16".into(),
             platform: "aarch64-apple-darwin".into(),

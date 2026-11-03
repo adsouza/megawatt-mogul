@@ -129,6 +129,7 @@ enum Completion {
 struct LoadedGame {
     game: Box<Game>,
     log: Option<std::path::PathBuf>,
+    client_state: Option<Vec<u8>>,
 }
 /// The boundary whose autosave failed. Boundaries of one run are ordered by their accepted-command
 /// count, so a save with at least as many commands covers it.
@@ -145,6 +146,7 @@ struct Job {
 }
 struct PreloadedGame {
     game: PendingRecording,
+    client_state: Option<Vec<u8>>,
     slot: SaveId,
     revision: SaveRevision,
     #[cfg(not(target_arch = "wasm32"))]
@@ -176,6 +178,7 @@ pub struct Persistence {
     pub(super) pending: VecDeque<(PlayerCommand, bool)>,
     pub(super) draining: bool,
     capture: Option<GameCheckpoint>,
+    capture_client_state: Option<Vec<u8>>,
     manual: Option<ManualIntent>,
     previous_speed: SimSpeed,
     dialog_generation: u64,
@@ -263,6 +266,7 @@ impl Persistence {
                 if store.revision(&slot).await? != revision {
                     return Err(SaveError::SlotChanged);
                 }
+                let client_state = bundle.client_state.clone();
                 let game = bundle.restore(
                     region,
                     &running,
@@ -280,6 +284,7 @@ impl Persistence {
                     #[cfg(not(target_arch = "wasm32"))]
                     recording,
                     game,
+                    client_state,
                     slot,
                     revision,
                 })
@@ -352,6 +357,7 @@ impl Persistence {
                             .map(|game| LoadedGame {
                                 game: Box::new(game),
                                 log: Some(log),
+                                client_state: candidate.client_state,
                             })
                     }
                     #[cfg(target_arch = "wasm32")]
@@ -365,6 +371,7 @@ impl Persistence {
                             .map(|game| LoadedGame {
                                 game: Box::new(game),
                                 log: None,
+                                client_state: candidate.client_state,
                             })
                             .map_err(SaveError::Restore)
                     }
@@ -649,6 +656,7 @@ impl Persistence {
         self.error = None;
         self.task = Some(WriteTask {
             bundle: SaveBundle {
+                client_state: self.capture_client_state.clone(),
                 compatibility: store.compatibility(),
                 metadata,
                 checkpoint: capture.clone(),
@@ -878,6 +886,7 @@ impl Persistence {
                             if cancel.load(Ordering::Relaxed) {
                                 return Err(SaveError::Cancelled);
                             }
+                            let client_state = bundle.client_state.clone();
                             let game = bundle.restore(
                                 region,
                                 &running,
@@ -905,6 +914,7 @@ impl Persistence {
                                 .map(|game| LoadedGame {
                                     game: Box::new(game),
                                     log: Some(log),
+                                    client_state,
                                 })
                             }
                             #[cfg(target_arch = "wasm32")]
@@ -913,6 +923,7 @@ impl Persistence {
                                 Ok(LoadedGame {
                                     game: Box::new(game),
                                     log: None,
+                                    client_state,
                                 })
                             }
                         })
@@ -996,17 +1007,28 @@ impl Persistence {
             _ => (),
         }
     }
-    pub(super) fn after_apply(&mut self, game: &Game, generation: u64) {
+    pub(super) fn after_apply(
+        &mut self,
+        game: &Game,
+        generation: u64,
+        client_state: Option<Vec<u8>>,
+    ) {
         self.enter(generation);
         if self.draining {
             self.capture = Some(game.checkpoint());
+            self.capture_client_state = client_state;
             self.draining = false;
             if self.screen == SaveScreen::Save && self.job.is_none() {
                 self.list(generation);
             }
         }
     }
-    pub(super) fn month_closed(&mut self, game: &Game, generation: u64) {
+    pub(super) fn month_closed(
+        &mut self,
+        game: &Game,
+        generation: u64,
+        client_state: Option<Vec<u8>>,
+    ) {
         // A pending dialog can outlive Operating while its admitted final tick is drained.
         // Cancelling it in Review must never restore the preceding day's running speed.
         self.previous_speed = SimSpeed::Paused;
@@ -1020,10 +1042,12 @@ impl Persistence {
         let checkpoint = game.checkpoint();
         if self.manual.is_some() {
             self.capture = Some(checkpoint.clone());
+            self.capture_client_state = client_state.clone();
             self.draining = false;
         }
         let task = WriteTask {
             bundle: SaveBundle {
+                client_state,
                 compatibility: store.compatibility(),
                 metadata: SaveMetadata {
                     slot: run.automatic.clone(),
@@ -1163,6 +1187,7 @@ pub(super) fn poll_persistence(
     mut events: ResMut<Messages<DomainEventMessage>>,
     mut failures: ResMut<Messages<CommandFailed>>,
     crash: Res<CrashContext>,
+    mut loaded: MessageWriter<super::GameLoaded>,
 ) {
     persistence.poll_preload(generation.0);
     if persistence.resuming {
@@ -1344,7 +1369,11 @@ pub(super) fn poll_persistence(
             }
         },
         Completion::Loaded(result) => match result {
-            Ok(LoadedGame { game, log }) => {
+            Ok(LoadedGame {
+                game,
+                log,
+                client_state,
+            }) => {
                 crash.set_game_log(log);
                 generation.0 = generation.0.wrapping_add(1);
                 persistence.abandon();
@@ -1356,6 +1385,10 @@ pub(super) fn poll_persistence(
                 failures.clear();
                 *speed = SimSpeed::Paused;
                 commands.insert_resource(Session(*game));
+                loaded.write(super::GameLoaded {
+                    generation: generation.0,
+                    client_state,
+                });
                 next.set(AppState::InGame);
             }
             Err(error) => {

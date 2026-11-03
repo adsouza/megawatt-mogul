@@ -425,6 +425,7 @@ fn older() -> ReplayCompatibility {
 /// A save of `checkpoint` as the build `compatibility` recorded it.
 fn stamped(compatibility: ReplayCompatibility, checkpoint: GameCheckpoint) -> SaveBundle {
     SaveBundle {
+        client_state: None,
         compatibility,
         metadata: SaveMetadata {
             slot: SaveId::new("a".repeat(32)).unwrap(),

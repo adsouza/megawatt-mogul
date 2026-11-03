@@ -83,6 +83,43 @@ pub enum TutorialStep {
 }
 
 impl TutorialStep {
+    /// Stable save identifiers; keep these keys when renaming Rust variants.
+    fn save_key(self) -> &'static str {
+        match self {
+            Self::FrameGrid => "frame-grid",
+            Self::Crawl => "crawl",
+            Self::ShowForecast => "show-forecast",
+            Self::Cash => "cash",
+            Self::PickSite => "pick-site",
+            Self::RevealBattery => "reveal-battery",
+            Self::BatterySpotlight => "battery-spotlight",
+            Self::BuildBattery => "build-battery",
+            Self::ConnectSpotlight => "connect-spotlight",
+            Self::ConnectBattery => "connect-battery",
+            Self::StartSpotlight => "start-spotlight",
+            Self::StartDay => "start-day",
+            Self::Speed => "speed",
+            Self::Construction => "construction",
+            Self::Supply => "supply",
+            Self::PickGeneratorSite => "pick-generator-site",
+            Self::RevealGenerator => "reveal-generator",
+            Self::GeneratorSpotlight => "generator-spotlight",
+            Self::BuildGenerator => "build-generator",
+            Self::ConnectGeneratorSpotlight => "connect-generator-spotlight",
+            Self::ConnectGenerator => "connect-generator",
+            Self::SaveSnapshot => "save-snapshot",
+            Self::CrystalBall => "crystal-ball",
+            Self::OpenPayoff => "open-payoff",
+            Self::PayoffConstruction => "payoff-construction",
+            Self::PayoffOperating => "payoff-operating",
+            Self::ClosePayoff => "close-payoff",
+            Self::RenewableSiting => "renewable-siting",
+            Self::OutlookCitySpotlight => "outlook-city-spotlight",
+            Self::OutlookChooseCity => "outlook-choose-city",
+            Self::OutlookCushion => "outlook-cushion",
+        }
+    }
+
     /// The main tutorial notes drawn inside the payoff dialog rather than behind it.
     pub(crate) fn is_payoff_guide(self) -> bool {
         matches!(
@@ -427,7 +464,7 @@ pub struct TutorialState {
     pub starter_batteries: BTreeSet<PlantId>,
     /// The region's recommended generator for the second Planning chapter.
     pub supply_kind: PlantKind,
-    /// Starter generators never count as the player's new supply.
+    /// Every starter generator, regardless of kind; none count as the player's new supply.
     pub starter_generators: BTreeSet<PlantId>,
     pub played: BTreeSet<TutorialStep>,
     pub seen_review: bool,
@@ -459,7 +496,7 @@ impl TutorialState {
                 .session()
                 .plant_views()
                 .into_iter()
-                .filter(|plant| plant.kind == supply_kind)
+                .filter(|plant| plant.kind != PlantKind::Battery)
                 .map(|plant| plant.id)
                 .collect(),
             played: BTreeSet::new(),
@@ -467,6 +504,87 @@ impl TutorialState {
             outlook_used: false,
             payoff_month: None,
         }
+    }
+
+    /// Updates bookkeeping at a simulation boundary. True means the tutorial has finished.
+    pub(crate) fn reconcile(&mut self, game: &Game) -> bool {
+        let session = game.session();
+        let month = session.clock().month();
+        if self.payoff_month.is_none() && self.outlook_used && generator_linked(self, game) {
+            self.payoff_month = month.checked_add_months(1).ok();
+        }
+        match session.phase() {
+            DayPhase::Review => {
+                self.seen_review = true;
+                false
+            }
+            DayPhase::Planning => self.played.contains(&TutorialStep::RenewableSiting),
+            DayPhase::Operating => {
+                self.seen_review && self.payoff_month.is_none_or(|ready| month >= ready)
+            }
+        }
+    }
+
+    pub(crate) fn saved(&self) -> infrastructure::client_tutorial::SavedTutorial {
+        infrastructure::client_tutorial::SavedTutorial {
+            version: 1,
+            played: self
+                .played
+                .iter()
+                .map(|step| step.save_key().to_owned())
+                .collect(),
+            starter_batteries: self.starter_batteries.iter().map(|id| id.0).collect(),
+            starter_generators: self.starter_generators.iter().map(|id| id.0).collect(),
+            supply_kind: match self.supply_kind {
+                PlantKind::Ccgt => "ccgt",
+                PlantKind::Solar => "solar",
+                _ => "unsupported",
+            }
+            .into(),
+            seen_review: self.seen_review,
+            outlook_used: self.outlook_used,
+            payoff_month: self.payoff_month.map(|month| (month.year(), month.month())),
+        }
+    }
+
+    pub(crate) fn restore(bytes: &[u8], generation: u64, game: &Game) -> Option<Self> {
+        let saved = infrastructure::client_tutorial::SavedTutorial::decode(bytes)?;
+        let mut played = saved
+            .played
+            .iter()
+            .map(|key| {
+                TUTORIAL_STEPS
+                    .iter()
+                    .find(|def| def.step.save_key() == key)
+                    .map(|def| def.step)
+            })
+            .collect::<Option<BTreeSet<_>>>()?;
+        // The regional recommendation is independent of the kind the player actually built.
+        let supply_kind = match saved.supply_kind.as_str() {
+            "ccgt" => PlantKind::Ccgt,
+            "solar" => PlantKind::Solar,
+            _ => return None,
+        };
+        // Dialogs aren't persisted. Re-offer opening the comparison, preserving its completed
+        // notes, rather than waiting for an anchor inside a closed dialog.
+        if !played.contains(&TutorialStep::ClosePayoff) {
+            played.remove(&TutorialStep::OpenPayoff);
+        }
+        let payoff_month = match saved.payoff_month {
+            Some((year, month)) => Some(SimMonth::new(year, month).ok()?),
+            None => None,
+        };
+        let mut state = Self {
+            generation,
+            starter_batteries: saved.starter_batteries.into_iter().map(PlantId).collect(),
+            starter_generators: saved.starter_generators.into_iter().map(PlantId).collect(),
+            supply_kind,
+            played,
+            seen_review: saved.seen_review,
+            outlook_used: saved.outlook_used,
+            payoff_month,
+        };
+        (!state.reconcile(game)).then_some(state)
     }
 
     /// The plant the current Planning chapter asks the player to build.
@@ -501,6 +619,10 @@ pub fn active_step(
                     !payoff_ready && (def.step >= TutorialStep::Supply) == state.seen_review
                 })
             && !state.played.contains(&def.step)
+            // A connected alternative generator completes the supply task too, including
+            // the earlier site/card/build instructions for the recommended kind.
+            && !(facts.generator_linked
+                && (TutorialStep::Supply..=TutorialStep::ConnectGenerator).contains(&def.step))
             && !facts.done(def.done, selection)
     })
 }
@@ -559,7 +681,7 @@ pub fn tutorial_plant_nodes(state: &TutorialState, game: &Game) -> BTreeSet<Node
         .collect()
 }
 
-/// Whether a new recommended generator has a grid path, including ordered lines.
+/// Whether any new generating plant has a grid path, including ordered lines. Storage is excluded.
 pub(super) fn generator_linked(state: &TutorialState, game: &Game) -> bool {
     Facts::of(state, game).generator_linked
 }
@@ -608,13 +730,19 @@ impl Facts {
             .collect();
         Self {
             generator_queued: !generators.is_empty(),
-            generator_linked: generators.iter().any(|node| {
-                session
-                    .power()
-                    .network()
-                    .months_until_connected(*node)
-                    .is_some()
-            }),
+            generator_linked: plants
+                .iter()
+                .filter(|plant| {
+                    plant.kind != PlantKind::Battery
+                        && !state.starter_generators.contains(&plant.id)
+                })
+                .any(|plant| {
+                    session
+                        .power()
+                        .network()
+                        .months_until_connected(plant.node)
+                        .is_some()
+                }),
             battery_queued: !nodes.is_empty(),
             battery_linked: nodes
                 .iter()
@@ -672,6 +800,10 @@ mod tests {
 
     /// The cell a battery can be built on nearest the anchor city, and the anchor's node.
     fn battery_site(game: &Game) -> (CellCoord, NodeId) {
+        plant_site(game, PlantKind::Battery)
+    }
+
+    fn plant_site(game: &Game, kind: PlantKind) -> (CellCoord, NodeId) {
         let session = game.session();
         let anchor = session.anchor_node();
         let home = session
@@ -686,12 +818,12 @@ mod tests {
         );
         let cell = (0..h)
             .flat_map(|y| (0..w).map(move |x| CellCoord { x, y }))
-            .filter(|cell| session.plant_quote(PlantKind::Battery, *cell).is_ok())
+            .filter(|cell| session.plant_quote(kind, *cell).is_ok())
             .min_by(|a, b| {
                 domain::grid::distance_cells(*a, home)
                     .total_cmp(&domain::grid::distance_cells(*b, home))
             })
-            .expect("somewhere to build a battery");
+            .expect("somewhere to build the plant");
         (cell, anchor)
     }
 
@@ -1055,7 +1187,7 @@ mod tests {
     }
 
     #[test]
-    fn another_plant_kind_does_not_complete_the_recommended_generator_steps() {
+    fn another_generator_kind_advances_to_save_only_after_connecting() {
         for (region, other) in [
             ("western_interconnection", PlantKind::Solar),
             ("brazil_sin", PlantKind::Ccgt),
@@ -1081,19 +1213,126 @@ mod tests {
                 .find(|plant| plant.kind == other && plant.cell == cell)
                 .unwrap()
                 .node;
+            assert!(!generator_linked(&state, &game), "{region}");
+            assert_eq!(
+                active(&state, &game, Selection::Cell(cell)),
+                Some(TutorialStep::BuildGenerator),
+                "an unconnected alternative does not complete the walkthrough: {region}"
+            );
             game.execute(Command::BuildLine {
                 from: anchor,
                 to: node,
             })
             .unwrap();
             assert!(tutorial_plant_nodes(&state, &game).is_empty(), "{region}");
-            assert!(!generator_linked(&state, &game), "{region}");
+            assert!(generator_linked(&state, &game), "{region}");
             assert_eq!(
                 active(&state, &game, Selection::Cell(cell)),
-                Some(TutorialStep::BuildGenerator),
+                Some(TutorialStep::SaveSnapshot),
                 "{region}"
             );
         }
+    }
+
+    #[test]
+    fn every_new_generating_plant_can_unlock_save_but_storage_and_starters_cannot() {
+        for kind in PlantKind::ALL {
+            let mut game = if kind == PlantKind::Geothermal {
+                proven_geothermal_game()
+            } else {
+                game("western_interconnection")
+            };
+            let mut state = TutorialState::new(1, &game);
+            state.seen_review = true;
+            assert!(!generator_linked(&state, &game), "starter fleet: {kind:?}");
+            let (cell, anchor) = plant_site(&game, kind);
+            game.execute(Command::BuildPlant { kind, cell }).unwrap();
+            let node = game
+                .session()
+                .plant_views()
+                .into_iter()
+                .find(|plant| plant.kind == kind && plant.cell == cell)
+                .unwrap()
+                .node;
+            assert!(!generator_linked(&state, &game), "isolated {kind:?}");
+            if kind == PlantKind::Geothermal {
+                // Connections are forbidden during exploration; use the guaranteed-success
+                // fixture and complete its region-authored exploration period first.
+                let months = game
+                    .session()
+                    .region()
+                    .geothermal()
+                    .unwrap()
+                    .exploration_months;
+                for _ in 0..months {
+                    play_month(&mut game);
+                    game.execute(Command::FinishReview).unwrap();
+                }
+            }
+            let remote = game
+                .session()
+                .city_views()
+                .into_iter()
+                .find(|city| !game.session().power().network().is_connected(city.node))
+                .unwrap()
+                .node;
+            game.execute(Command::BuildLine {
+                from: node,
+                to: remote,
+            })
+            .unwrap();
+            assert!(!generator_linked(&state, &game), "dangling {kind:?}");
+            game.execute(Command::BuildLine {
+                from: remote,
+                to: anchor,
+            })
+            .unwrap();
+            let qualifies = kind != PlantKind::Battery;
+            assert_eq!(generator_linked(&state, &game), qualifies, "{kind:?}");
+            assert_eq!(
+                active(&state, &game, Selection::None),
+                Some(if qualifies {
+                    TutorialStep::SaveSnapshot
+                } else {
+                    TutorialStep::Supply
+                }),
+                "{kind:?}"
+            );
+        }
+    }
+
+    fn proven_geothermal_game() -> Game {
+        struct Catalog;
+        impl application::RegionCatalog for Catalog {
+            fn list(
+                &self,
+            ) -> Result<Vec<application::RegionListing>, application::RegionLoadError> {
+                Ok(Vec::new())
+            }
+            fn load(
+                &self,
+                _: &domain::ids::RegionId,
+            ) -> Result<application::LoadedRegion, application::RegionLoadError> {
+                Ok(application::LoadedRegion {
+                    definition: std::sync::Arc::new(
+                        domain::region::RegionDefinition::try_from(
+                            domain::region::fixtures::geothermal_acceptance_parts(),
+                        )
+                        .unwrap(),
+                    ),
+                    source_bytes: Vec::new(),
+                    fingerprint: application::RegionFingerprint::new([0; 32]),
+                })
+            }
+        }
+        Game::start_new(
+            &Catalog,
+            &domain::ids::RegionId::new("tiny"),
+            7,
+            domain::session::GameSettings::default(),
+            Box::new(InMemoryCommandLog::default()),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -1186,6 +1425,75 @@ mod tests {
                 generator_linked(&state, &game),
                 "a complete ordered path counts before commissioning"
             );
+        }
+    }
+
+    #[test]
+    fn restored_payoff_lesson_reoffers_its_closed_dialog_and_preserves_finished_notes() {
+        let game = game("western_interconnection");
+        let mut state = TutorialState::new(1, &game);
+        state.seen_review = true;
+        state.payoff_month = Some(game.session().clock().month());
+        state.played = played(&[TutorialStep::OpenPayoff, TutorialStep::PayoffConstruction]);
+        let restored = TutorialState::restore(&state.saved().encode().unwrap(), 9, &game).unwrap();
+        assert_eq!(restored.generation, 9);
+        assert!(restored.played.contains(&TutorialStep::PayoffConstruction));
+        assert_eq!(
+            active(&restored, &game, Selection::None),
+            Some(TutorialStep::OpenPayoff)
+        );
+        state
+            .played
+            .extend([TutorialStep::PayoffOperating, TutorialStep::ClosePayoff]);
+        let restored = TutorialState::restore(&state.saved().encode().unwrap(), 9, &game).unwrap();
+        assert_eq!(
+            active(&restored, &game, Selection::None),
+            Some(TutorialStep::RenewableSiting)
+        );
+        state.played.insert(TutorialStep::RenewableSiting);
+        assert!(TutorialState::restore(&state.saved().encode().unwrap(), 9, &game).is_none());
+    }
+
+    #[test]
+    fn unknown_or_invalid_tutorial_fields_do_not_restore_a_run() {
+        let game = game("western_interconnection");
+        let saved = TutorialState::new(1, &game).saved();
+        for invalid in 0..4 {
+            let mut altered = saved.clone();
+            match invalid {
+                0 => altered.version = 99,
+                1 => {
+                    altered.played.insert("unknown-future-lesson".into());
+                }
+                2 => altered.supply_kind = "unknown-plant".into(),
+                _ => altered.payoff_month = Some((2030, 13)),
+            }
+            assert!(TutorialState::restore(&altered.encode().unwrap(), 9, &game).is_none());
+        }
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(16))]
+        #[test]
+        fn tutorial_checkpoint_round_trip_preserves_bookkeeping_without_changing_the_game(
+            mask in proptest::num::u32::ANY,
+            seen_review in proptest::bool::ANY,
+            outlook_used in proptest::bool::ANY,
+            payoff_scheduled in proptest::bool::ANY,
+        ) {
+            let game = game("western_interconnection");
+            let before = game.session().state_hash();
+            let mut state = TutorialState::new(1, &game);
+            state.played = TUTORIAL_STEPS.iter().enumerate()
+                .filter(|(index, def)| mask & (1 << index) != 0 && !matches!(def.step, TutorialStep::OpenPayoff | TutorialStep::RenewableSiting))
+                .map(|(_, def)| def.step).collect();
+            state.seen_review = seen_review;
+            state.outlook_used = outlook_used;
+            state.payoff_month = payoff_scheduled.then(|| game.session().clock().month().checked_add_months(1).unwrap());
+            let restored = TutorialState::restore(&state.saved().encode().unwrap(), 9, &game).unwrap();
+            state.generation = 9;
+            proptest::prop_assert_eq!(restored, state);
+            proptest::prop_assert_eq!(game.session().state_hash(), before);
         }
     }
 

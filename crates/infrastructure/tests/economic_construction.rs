@@ -108,6 +108,7 @@ fn economic_round_trip(game: &Game) -> Game {
         platform: "test".into(),
     };
     let bundle = SaveBundle {
+        client_state: None,
         compatibility: compatibility.clone(),
         metadata: SaveMetadata {
             slot: SaveId::new("a".repeat(32)).unwrap(),
@@ -418,6 +419,7 @@ fn local_inflight_snapshot_restores_with_archived_prices() {
         platform: "test".into(),
     };
     let bundle = SaveBundle {
+        client_state: None,
         compatibility: compatibility.clone(),
         metadata: SaveMetadata {
             slot: SaveId::new("a".repeat(32)).unwrap(),

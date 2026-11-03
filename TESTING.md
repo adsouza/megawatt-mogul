@@ -220,10 +220,17 @@ capital adjustments are non-cash and written-off value is not recovered again.
 
 The tutorial tests cover the regional expansion choice: solar in Brazil SIN and Southern China,
 CCGT elsewhere. Real widget walkthroughs build and connect each recommendation through the
-payoff chapter. Presenter checks exclude starter plants and other plant kinds, accept early
-orders, require a complete grid path, and resolve build durations from selected-cell overrides
-for both solar and CCGT. Solar guidance explains daylight generation and the outlook check before
-expanding demand.
+payoff chapter. Presenter checks exclude starter plants and batteries from new supply, accept any
+new connected generator and early recommended orders, require a complete grid path, and resolve
+build durations from selected-cell overrides for both solar and CCGT. Solar guidance explains
+daylight generation and the outlook check before expanding demand.
+
+Tutorial persistence tests save and restart, restore through Load and preloaded Continue, rewind
+an earlier snapshot after completion, retain starter IDs and payoff scheduling, and restart an
+interrupted spotlight's full display time. Legacy, missing, malformed and unknown-version client
+records never start a run or block a valid game. Property tests round-trip arbitrary completed
+lesson sets and save-client bytes without changing simulation hashes. Native directory snapshots
+and the browser wire/archive paths carry the same optional client record.
 
 The game's tests sit in six layers, from the cheapest to the widest. None opens a window.
 

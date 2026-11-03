@@ -353,6 +353,8 @@ type WireOrigin = (String, [u8; 32], u32, u64, u64);
 type WireSnapshot = (u32, u64, Option<WireOrigin>);
 #[derive(Serialize, Deserialize)]
 struct WireMeta {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    client_state: Option<Vec<u8>>,
     card: Card,
     header: LogHeaderDto,
     count: u64,
@@ -362,6 +364,7 @@ struct WireMeta {
 fn wire(bundle: &SaveBundle) -> Result<JsValue, SaveError> {
     let checkpoint = &bundle.checkpoint;
     let meta = WireMeta {
+        client_state: bundle.client_state.clone(),
         card: Card::of(bundle, String::new()),
         header: (&checkpoint.header).into(),
         count: checkpoint.command_count,
@@ -436,6 +439,7 @@ fn unwire(value: JsValue) -> Result<SaveBundle, SaveError> {
         })
         .transpose()?;
     Ok(SaveBundle {
+        client_state: meta.client_state,
         metadata,
         compatibility: ReplayCompatibility {
             build: meta.card.build,

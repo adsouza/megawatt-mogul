@@ -3942,6 +3942,7 @@ mod sgcc {
         assert!(dc.loss.value() > 0.0);
         assert!(dc.sent.value() > 0.0);
         let bundle = SaveBundle {
+            client_state: None,
             compatibility: replay_compatibility(),
             metadata: SaveMetadata {
                 slot: SaveId::new("a".repeat(32)).unwrap(),
