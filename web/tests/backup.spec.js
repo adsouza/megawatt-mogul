@@ -6,6 +6,7 @@ import {resolve,join} from 'node:path';
 const root=resolve(import.meta.dirname,'../..');
 const tool=resolve(root,'target/debug/examples/save_backup');
 const fixture=resolve(root,'crates/infrastructure/tests/support/monthly-directory-v4/cccccccccccccccccccccccccccccccc.mgsave');
+test.use({trace:'retain-on-failure'});
 async function settled(page){
  // readiness writes this attribute in Bevy's Last schedule, once per game frame.
  // Browser animation callbacks alone don't prove the canvas UI has processed an update.
@@ -21,14 +22,15 @@ async function settled(page){
 async function openBackupChooser(page){
  await expect(page.locator('body')).toHaveAttribute('data-save-screen','Browser');
  await expect(page.locator('body')).toHaveAttribute('data-save-busy','false');
- await page.mouse.move(216,734);
  await settled(page);
+ // The canvas has no DOM button locator. Read the enabled widget's actual rendered target.
+ await expect(page.locator('body')).toHaveAttribute('data-save-import-target',/^\[[\d.]+,[\d.]+\]$/);
+ const [x,y]=JSON.parse(await page.locator('body').getAttribute('data-save-import-target'));
+ const canvas=page.locator('#game'),box=await canvas.boundingBox();
  const [chooser]=await Promise.all([
   page.waitForEvent('filechooser',{timeout:15000}),
-  (async()=>{
-   // Let egui observe the press before releasing it, even on a slow renderer.
-   await page.mouse.down();await settled(page);await page.mouse.up();
-  })(),
+  // A press held across game frames can exceed egui's 0.8-second click limit on CI.
+  canvas.click({position:{x:x*box.width,y:y*box.height}}),
  ]);
  return chooser;
 }
@@ -102,6 +104,42 @@ test('library downloads a backup and uploads it into a new slot; malformed and c
   await page.mouse.click(230,423);await expect(page.locator('body')).toHaveAttribute('data-save-screen','Browser');await expect(page.locator('body')).toHaveAttribute('data-save-busy','false');await settled(page);
   await page.mouse.click(745,346);await expect(page.locator('body')).toHaveAttribute('data-app-state','InGame',{timeout:30000});
   await expect(page.locator('body')).toHaveAttribute('data-sim-tick','900');await expect(page.locator('body')).toHaveAttribute('data-speed','0');
+ }finally{rmSync(directory,{recursive:true,force:true});}
+});
+
+test('backup import uses the rendered button in a resized window with slow game frames',async({page})=>{
+ const directory=mkdtempSync(join(tmpdir(),'mm-backup-slow-'));
+ try{
+  const input=join(directory,'native.mgsave.zip');execFileSync(tool,['export',fixture,input]);
+  await page.goto('./');await expect(page.locator('body')).toHaveAttribute('data-ready','true',{timeout:150000});await service(page);
+  await page.evaluate(async bytes=>{
+   const s=window.backupService,slot='d'.repeat(32),archive=await s.codec('import',{bytes:new Uint8Array(bytes),slot});
+   await s.mutate('write',slot,null,archive,archive.card);
+  },[...readFileSync(input)]);
+  await page.reload();await expect(page.locator('body')).toHaveAttribute('data-app-state','MainMenu',{timeout:150000});
+  await page.mouse.click(230,423);await expect(page.locator('body')).toHaveAttribute('data-save-screen','Browser');
+  await expect(page.locator('body')).toHaveAttribute('data-save-busy','false');await settled(page);
+  await page.setViewportSize({width:1440,height:940});await settled(page);
+  await page.evaluate(()=>{
+   // Slow actual Bevy updates, rather than unrelated browser animation callbacks.
+   const set=Element.prototype.setAttribute;
+   let frames=12;
+   Element.prototype.setAttribute=function(name,value){
+    if(name==='data-save-busy'&&frames-->0){
+     const end=performance.now()+350;while(performance.now()<end){}
+    }
+    return set.call(this,name,value);
+   };
+  });
+  const chooser=await openBackupChooser(page);
+  await expect(page.locator('body')).toHaveAttribute('data-save-busy','true');
+  await expect(page.locator('body')).not.toHaveAttribute('data-save-import-target');
+  await chooser.element().evaluate(input=>input.dispatchEvent(new Event('cancel')));
+  await expect(page.locator('body')).toHaveAttribute('data-save-busy','false');
+  await expect(page.locator('body')).toHaveAttribute('data-save-error','false');
+  await expect(page.locator('body')).toHaveAttribute('data-save-count','1');
+  await page.keyboard.press('Escape');await expect(page.locator('body')).toHaveAttribute('data-save-screen','Closed');
+  await expect(page.locator('body')).not.toHaveAttribute('data-save-import-target');
  }finally{rmSync(directory,{recursive:true,force:true});}
 });
 

@@ -194,6 +194,32 @@ fn visibility(
         *speed = SimSpeed::Paused;
     }
 }
+
+/// Canvas-relative hit target from the rendered widget, alongside the readiness attributes.
+pub(crate) fn save_import_target(response: &bevy_egui::egui::Response) {
+    let Some(body) = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.body())
+    else {
+        return;
+    };
+    let screen = response.ctx.content_rect();
+    if response.enabled() && screen.contains_rect(response.interact_rect) {
+        let center = response.interact_rect.center() - screen.min;
+        body.set_attribute(
+            "data-save-import-target",
+            &format!(
+                "[{},{}]",
+                center.x / screen.width(),
+                center.y / screen.height()
+            ),
+        )
+        .ok();
+    } else {
+        body.remove_attribute("data-save-import-target").ok();
+    }
+}
+
 fn readiness(
     state: Res<State<AppState>>,
     localizer: Res<Localizer>,
@@ -206,6 +232,9 @@ fn readiness(
         return;
     };
     if let Some(body) = document.body() {
+        if persistence.screen != crate::sim::SaveScreen::Browser || persistence.busy() {
+            body.remove_attribute("data-save-import-target").ok();
+        }
         body.set_attribute("data-save-screen", &format!("{:?}", persistence.screen))
             .ok();
         body.set_attribute("data-save-busy", &persistence.busy().to_string())

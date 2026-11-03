@@ -520,6 +520,10 @@ fn card_action(
             .stroke(egui::Stroke::new(1.0, ui.visuals().error_fg_color));
     }
     let response = add_enabled(ui, model.enabled, widget);
+    #[cfg(target_arch = "wasm32")]
+    if model.action == UiAction::Persistence(PersistAction::Import) {
+        crate::browser::save_import_target(&response);
+    }
     if matches!(model.action, UiAction::Persistence(PersistAction::Cancel))
         && ui.ctx().data(|d| {
             d.get_temp::<bool>(egui::Id::new("delete_default_focus"))
