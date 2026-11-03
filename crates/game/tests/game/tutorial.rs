@@ -291,7 +291,7 @@ fn payoff_is_scheduled_for_the_next_month_only_after_generator_and_actual_outloo
 }
 
 #[test]
-fn payoff_tutorial_closing_early_finishes_the_final_chapter_and_reopening_is_unguided() {
+fn closing_payoff_early_still_teaches_renewable_siting_before_finishing() {
     let logs = TempDir::new().unwrap();
     let mut app = tutorial_app(&logs);
     execute(&mut app, Command::BeginOperating);
@@ -332,9 +332,18 @@ fn payoff_tutorial_closing_early_finishes_the_final_chapter_and_reopening_is_ung
         assert!(played(&app).contains(&step));
     }
     update_n(&mut app, 2);
+    assert!(run(&app).is_some(), "renewable siting is still owed");
+    assert!(pending(&app));
+    let pass = EguiPass::attach(&mut app);
+    let widgets = pass.settled(&mut app, MIN.0, MIN.1);
+    widget(
+        &widgets,
+        &crate::support::shipped_l10n().text("tutorial-renewable-siting"),
+    );
+    press_escape(&pass, &mut app, MIN);
+    update_n(&mut app, 2);
     assert!(run(&app).is_none());
     assert!(!pending(&app));
-    let pass = EguiPass::attach(&mut app);
     dispatch_in(&mut app, vec![UiAction::ShowPayoff(true)]);
     let widgets = pass.settled(&mut app, MIN.0, MIN.1);
     assert!(widgets.iter().any(|w| w.text == "Plant payoff comparison"));
@@ -665,6 +674,14 @@ fn generator_walkthrough(region: &str, kind: PlantKind) {
         app.world().resource::<Session>().0.session().state_hash(),
         before_comparison
     );
+    update_n(&mut app, 2);
+    assert!(run(&app).is_some(), "finish the siting note first");
+    let widgets = pass.settled(&mut app, MIN.0, MIN.1);
+    widget(
+        &widgets,
+        &crate::support::shipped_l10n().text("tutorial-renewable-siting"),
+    );
+    press_escape(&pass, &mut app, MIN);
     update_n(&mut app, 2);
     assert!(run(&app).is_none());
     assert!(!pending(&app));
@@ -1126,9 +1143,10 @@ fn tutorial_actions_never_send_player_commands() {
 #[derive(Resource, Default)]
 struct SeenAnchors(BTreeMap<TutorialAnchor, egui::Rect>);
 
-const ANCHORS: [TutorialAnchor; 17] = [
+const ANCHORS: [TutorialAnchor; 18] = [
     TutorialAnchor::Cash,
     TutorialAnchor::Map,
+    TutorialAnchor::MapLayers,
     TutorialAnchor::PlantCard,
     TutorialAnchor::PlantBuildButton,
     TutorialAnchor::LineSection,
@@ -3018,6 +3036,8 @@ fn tutorial_on_and_off_give_identical_state() {
         dispatch_in(app, vec![UiAction::ShowPayoff(false)]);
         update_n(app, 2);
     }
+    tutorial_frames(&mut apps, 4, &mut shown);
+    assert!(shown.contains(&TutorialStep::RenewableSiting));
     let [(on, _), (off, _)] = &apps;
     assert!(run(on).is_none() && !pending(on), "the tutorial finished");
     assert_eq!(phase(on), DayPhase::Planning);
@@ -3048,6 +3068,54 @@ fn world_view_app(logs: &TempDir) -> (App, EguiPass) {
     let pass = EguiPass::attach(&mut app);
     set_progress(&mut app, true, true);
     (app, pass)
+}
+
+#[test]
+fn renewable_siting_highlights_world_layer_controls_and_times_out() {
+    for (width, height) in [(819.2, 512.0), (1920.0, 1080.0)] {
+        let logs = TempDir::new().unwrap();
+        let (mut app, pass) = world_view_app(&logs);
+        app.init_resource::<SeenAnchors>().add_systems(
+            EguiPrimaryContextPass,
+            probe_anchors.in_set(HudSet::Tutorial),
+        );
+        // Isolate the lesson from the independent automatic commitment planner.
+        app.world_mut().resource_mut::<UiState>().auto_commitments =
+            game::hud::AutoCommitments(false);
+        request(&mut app, "western_interconnection");
+        let month = app
+            .world()
+            .resource::<Session>()
+            .0
+            .session()
+            .clock()
+            .month();
+        app.world_mut()
+            .resource_mut::<TutorialRun>()
+            .0
+            .as_mut()
+            .unwrap()
+            .payoff_month = Some(month);
+        at_step(&mut app, TutorialStep::RenewableSiting);
+        let before = state_hash(&app);
+        let widgets = pass.settled(&mut app, width, height);
+        widget(
+            &widgets,
+            &crate::support::shipped_l10n().text("tutorial-renewable-siting"),
+        );
+        let layers = anchors(&app)[&TutorialAnchor::MapLayers];
+        assert!(widgets.iter().any(|w| {
+            (w.role == egui::accesskit::Role::ComboBox || w.text == "Sunshine")
+                && layers.contains_rect(w.rect)
+        }));
+        assert!(run(&app).is_some() && pending(&app));
+        advance_real(&mut app, game::hud::tutorial::SPOTLIGHT_SECONDS + 0.1);
+        pass.run(&mut app, width, height);
+        update_n(&mut app, 2);
+        assert!(run(&app).is_none() && !pending(&app));
+        assert_eq!(state_hash(&app), before);
+        assert!(sent::<PlayerCommand>(&app).is_empty());
+    }
 }
 
 /// A real frame: `Update`, then the egui pass, as the game runs them.

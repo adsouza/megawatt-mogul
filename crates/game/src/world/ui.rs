@@ -102,7 +102,7 @@ pub fn draw_surface(
             }
         }
     };
-    if ui.available_width() < 650.0 {
+    let layers = if ui.available_width() < 650.0 {
         let selected = if toolbar.supply.is_empty() {
             model
                 .layers
@@ -122,10 +122,15 @@ pub fn draw_surface(
                 .truncate()
                 .selected_text(selected)
                 .show_ui(ui, |ui| choices(ui, &mut actions, true));
-        });
+        })
     } else {
-        ui.horizontal_wrapped(|ui| choices(ui, &mut actions, false));
-    }
+        ui.horizontal_wrapped(|ui| choices(ui, &mut actions, false))
+    };
+    crate::hud::tutorial::mark_anchor(
+        ui.ctx(),
+        crate::hud::tutorial::TutorialAnchor::MapLayers,
+        layers.response.rect,
+    );
     ui.horizontal_wrapped(|ui| {
         for model in [&toolbar.reset, &toolbar.overlay, &toolbar.effects]
             .into_iter()

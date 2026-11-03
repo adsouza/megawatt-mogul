@@ -820,6 +820,7 @@ tutorial-solar-connect = Build a line from your solar farm to your grid. The pla
 tutorial-solar-crystal-ball = Solar produces nothing at night; its rated capacity isn't available all day. Use the crystal ball to compare supply and demand for the next 12 months. Choose a city to preview its extra demand before connecting it.
 tutorial-save-snapshot = Before risky moves, like connecting a new city, use Save to create a named snapshot. You can load it to return to this point if things go wrong.
 tutorial-crystal-ball = Before connecting a new city, use the crystal ball to compare demand and supply for the next 12 months. Choose a city to preview its extra demand once the connection is built.
+tutorial-renewable-siting = Hydro, solar, wind and geothermal yield depends on location. Use the Hydro potential, Sunshine, Wind potential and Geothermal potential map layers, then click candidate squares to compare site readings before building. Favor stronger resources; geothermal exploration can still fail.
 
 # Long-term planning; installed capacity differs from committed daily generation.
 outlook-open = Crystal ball: 12-month outlook

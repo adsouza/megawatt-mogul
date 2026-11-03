@@ -902,13 +902,14 @@ pub fn draw_map(ui: &mut egui::Ui, model: &MapModel, cache: &mut MapCache) -> Ve
     // The legend's toggle ends the row, but whether it is on depends on the map's size, known
     // only once the row is laid out: its place is kept here and it is drawn into it below.
     let mut toggle_slot = Rect::NOTHING;
-    ui.horizontal_wrapped(|ui| {
+    let layers = ui.horizontal_wrapped(|ui| {
         for layer in &model.layers {
             toggle_button(ui, layer, &mut actions);
         }
         let size = button_size(ui, &model.legend_toggle);
         toggle_slot = ui.allocate_space(size).1;
     });
+    mark_anchor(ui.ctx(), TutorialAnchor::MapLayers, layers.response.rect);
     if let Some(scale) = &model.resource_scale {
         draw_resource_scale(ui, scale);
     }

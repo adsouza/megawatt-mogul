@@ -6,6 +6,7 @@
 //! that one game, and continues after the first Review through building and connecting a generator,
 //! then highlighting Save and the crystal ball. The payoff comparison follows in the month after
 //! the player has ordered and connected the generator and opened the annual outlook.
+//! A final resource-map spotlight teaches choosing renewable sites for better yield.
 //! Loading a save never starts one, and leaving the game part-way drops it without clearing
 //! `tutorial_pending`.
 //! The outlook's first-use guide shares this overlay but has its own persisted completion flag
@@ -95,7 +96,8 @@ fn start_run(
 
 /// Ends a run whose game is gone (a load or another new game changes the session generation),
 /// notes the first Review, and schedules the final comparison for the month after the generator
-/// and annual outlook have both been used. Starting a day early skips its optional guidance.
+/// and annual outlook have both been used, followed by renewable siting guidance.
+/// Starting a day early skips its optional guidance.
 /// A run that ends takes the reveals it asked for with it.
 fn track_run(
     session: Option<Res<Session>>,
@@ -120,7 +122,7 @@ fn track_run(
     }
     match session.0.session().phase() {
         DayPhase::Review => state.seen_review = true,
-        DayPhase::Planning if state.played.contains(&TutorialStep::ClosePayoff) => {
+        DayPhase::Planning if state.played.contains(&TutorialStep::RenewableSiting) => {
             progress.value.tutorial_pending = false;
             end_run(&mut run, &mut ui);
         }

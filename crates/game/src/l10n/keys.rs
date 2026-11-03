@@ -440,6 +440,7 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "tutorial-payoff-construction",
     "tutorial-payoff-operating",
     "tutorial-payoff-close",
+    "tutorial-renewable-siting",
     "tutorial-ccgt-pick-site",
     "tutorial-ccgt-spotlight",
     "tutorial-ccgt-build",

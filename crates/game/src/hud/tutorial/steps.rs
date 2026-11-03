@@ -24,6 +24,7 @@ use crate::hud::Selection;
 pub enum TutorialAnchor {
     Cash,
     Map,
+    MapLayers,
     PlantCard,
     /// The current chapter's plant card's *Build plant* button.
     PlantBuildButton,
@@ -75,6 +76,7 @@ pub enum TutorialStep {
     PayoffConstruction,
     PayoffOperating,
     ClosePayoff,
+    RenewableSiting,
     OutlookCitySpotlight,
     OutlookChooseCity,
     OutlookCushion,
@@ -150,7 +152,7 @@ const fn def(
 }
 
 /// The tutorial, in order (spec §4.3).
-pub const TUTORIAL_STEPS: [StepDef; 27] = {
+pub const TUTORIAL_STEPS: [StepDef; 28] = {
     use DayPhase::{Operating, Planning, Review};
     use StepKind::{Crawl, Instruction, Move, Spotlight};
     use TutorialAnchor as A;
@@ -356,6 +358,14 @@ pub const TUTORIAL_STEPS: [StepDef; 27] = {
             Instruction,
             Some(A::PayoffClose),
             Some("tutorial-payoff-close"),
+            Done::Never,
+        ),
+        def(
+            S::RenewableSiting,
+            Planning,
+            Spotlight,
+            Some(A::MapLayers),
+            Some("tutorial-renewable-siting"),
             Done::Never,
         ),
     ]
@@ -723,7 +733,7 @@ mod tests {
         sorted.sort();
         sorted.dedup();
         assert_eq!(steps, sorted);
-        assert_eq!(steps.len(), 27);
+        assert_eq!(steps.len(), 28);
     }
 
     #[test]

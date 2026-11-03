@@ -61,8 +61,10 @@ genuinely played four other regions.
 - Starting a new game with `tutorial_pending` true starts the tutorial in that game. Loading or
   continuing a save never starts it.
 - After the first Review is dismissed, the tutorial continues with the regional generator walkthrough (§4.5).
-  It **finishes** after the crystal-ball spotlight following the Save reminder is dismissed or
-  times out, or when the player starts the next representative day early. That sets
+  After the generator is ordered and connected and the annual outlook is opened, the next
+  month's Planning phase offers the plant-payoff comparison. Closing that comparison leads to
+  a final renewable-siting spotlight (§4.6). It **finishes** when this spotlight is dismissed or
+  times out, or when the player starts a day early while optional guidance is available. That sets
   `tutorial_pending = false` and writes preferences. Leaving the game or
   quitting part-way leaves the flag `true`, so the next new game runs it again.
 
@@ -243,14 +245,30 @@ plants never count as the player's order, and ordering another kind does not com
    the order. Point at the actual icon; opening the outlook remains the player's action.
    In the solar walkthrough, also explain that rated capacity is not available throughout the
    day: solar produces nothing at night. The outlook must be checked before expanding demand.
-8. Finish after this crystal-ball spotlight is dismissed or times out. As with the other
-   spotlights, dismissal clicks are consumed and opening either dialog remains optional; the
-   tutorial does not save or open dialogs automatically. Starting the next day early also ends
-   the optional guidance. Leaving the game before either condition keeps the tutorial owed.
+8. After the player has ordered and connected the generator and opened the annual outlook,
+   offer the plant-payoff comparison in the following month's Planning phase. Highlight
+   construction cost and duration, then operating returns, and ask the player to close the
+   comparison. Closing early skips the remaining comparison notes and proceeds to §4.6.
+   The tutorial does not save or open dialogs automatically. Starting a day early while
+   optional guidance is available ends it; leaving the game part-way keeps the tutorial owed.
 
 All existing tutorial interaction, contrast, popup precedence and simulation-isolation rules
 continue to apply. The plant card, Build plant and connection-button anchors are shared between
 chapters; the current chapter chooses the plant kind and new-plant node set.
+
+### 4.6. Renewable siting
+
+After the plant-payoff comparison closes, spotlight the map-layer controls with one final note:
+hydro, solar, wind and geothermal yield depends on location. Direct players to compare Hydro
+potential, Sunshine, Wind potential and Geothermal potential, then click candidate cells to
+inspect their resource readings before building. Favor stronger resources, while explaining
+that geothermal exploration can still fail. The note applies in every region, including ones
+without usable geothermal resources; it requires no new construction or resource availability.
+
+Anchor the spotlight to the layer-button row or compact layer selector in the world view and
+the layer row in the flat map. Use the existing spotlight timing, input handling and dialog
+precedence. Only dismissal or timeout completes the tutorial in Planning; closing the payoff
+comparison alone does not. Starting the day early still skips the optional remaining guidance.
 
 ## 5. Where it fits the existing code
 
