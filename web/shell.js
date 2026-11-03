@@ -21,7 +21,7 @@ function failed() {
   document.getElementById("status").hidden = false;
   reload.hidden = false;
 }
-window.addEventListener("error", failed, true);
+window.addEventListener("error", event => { if (mmOwnFailure(event)) failed(); }, true);
 window.addEventListener("unhandledrejection", failed);
 new MutationObserver(() => { if (document.getElementById("status").dataset.failed) failed(); })
   .observe(document.getElementById("status"), {attributes:true,attributeFilter:["data-failed"]});

@@ -2,7 +2,14 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Megawatt Mogul</title>
 <script>
-window.addEventListener("error", () => { window.mmBootFailed = true; }, true);
+// Only this deployment's files can fail the boot. Scripts a CDN injects, such as an analytics
+// beacon a content blocker stops, fail on another origin or as muted "Script error." events.
+window.mmOwnFailure = event => {
+  const element = event.target instanceof Element ? event.target : null;
+  const url = element ? element.src || element.href || location.href : event.filename;
+  return typeof url === "string" && url !== "" && new URL(url, location.href).origin === location.origin;
+};
+window.addEventListener("error", event => { if (mmOwnFailure(event)) window.mmBootFailed = true; }, true);
 window.addEventListener("unhandledrejection", () => { window.mmBootFailed = true; });
 </script>
 <link data-trunk rel="rust" href="../crates/game/Cargo.toml" data-bin="game" data-cargo-profile="wasm-release" data-wasm-opt="2">

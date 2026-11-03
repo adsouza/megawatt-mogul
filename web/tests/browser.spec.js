@@ -68,6 +68,22 @@ test('a stale page with a removed module offers reload before WASM starts', asyn
   await expect(page.locator('body')).not.toHaveAttribute('data-ready','true');
 });
 
+test('a blocked third-party script does not report a failed boot', async ({page}) => {
+  // Cloudflare injects its analytics beacon into the page; content blockers often block it.
+  const beacon='https://static.cloudflareinsights.com/beacon.min.js';
+  await page.route('https://static.cloudflareinsights.com/**', route=>route.abort('blockedbyclient'));
+  await page.addInitScript(url=>document.addEventListener('DOMContentLoaded',()=>{
+    const script=document.createElement('script');script.src=url;document.head.append(script);
+  }), beacon);
+  await page.goto('./');
+  await expect(page.locator('body')).toHaveAttribute('data-ready','true',{timeout:150000});
+  await page.evaluate(url=>new Promise(resolve=>{
+    const script=document.createElement('script');script.src=url+'?late';script.onerror=resolve;document.head.append(script);
+  }), beacon);
+  await expect(page.locator('#reload')).toBeHidden();
+  await expect(page.locator('#status')).toBeHidden();
+});
+
 test('a codec worker rejects malformed data without breaking the running client',async({page})=>{
  await page.goto('./');await expect(page.locator('body')).toHaveAttribute('data-ready','true',{timeout:150000});
  const failure=await page.evaluate(async()=>{
