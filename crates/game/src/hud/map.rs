@@ -32,7 +32,6 @@ pub enum MapLayer {
     Irradiance,
     WindPotential,
     GeothermalPotential,
-    CoolingWater,
     HydroPotential,
     /// Where a plant of this kind may be built (the region's siting rule).
     Suitability(PlantKind),
@@ -47,7 +46,6 @@ impl MapLayer {
             Self::Irradiance,
             Self::WindPotential,
             Self::GeothermalPotential,
-            Self::CoolingWater,
             Self::HydroPotential,
         ]
         .into_iter()
@@ -351,7 +349,6 @@ pub const UNSUITABLE: Rgb = [120, 55, 55];
 const LOWLAND: Rgb = [64, 128, 70];
 const HIGHLAND: Rgb = [150, 130, 100];
 const DARK: Rgb = [38, 40, 46];
-const COOL: Rgb = [70, 170, 255];
 const HYDRO: Rgb = [60, 220, 190];
 
 fn lerp(from: Rgb, to: Rgb, t: f64) -> Rgb {
@@ -403,7 +400,6 @@ pub fn cell_color(layer: MapLayer, region: &RegionDefinition, at: CellCoord) -> 
             solar_color(cell.geothermal_potential.value())
         }
         MapLayer::GeothermalPotential => WATER,
-        MapLayer::CoolingWater => lerp(DARK, COOL, cell.cooling_water.value()),
         MapLayer::HydroPotential => land_shaded(cell.hydro_potential.value(), HYDRO),
         MapLayer::Suitability(_) if !cell.land => WATER,
         MapLayer::Suitability(kind) if region.site_check(kind, at).is_ok() => SUITABLE,
@@ -808,7 +804,6 @@ fn layer_label(layer: MapLayer, l10n: &Localizer) -> String {
         MapLayer::Irradiance => l10n.text("map-layer-irradiance"),
         MapLayer::WindPotential => l10n.text("map-layer-wind"),
         MapLayer::GeothermalPotential => l10n.text("geothermal-potential"),
-        MapLayer::CoolingWater => l10n.text("map-layer-cooling-water"),
         MapLayer::HydroPotential => l10n.text("map-layer-hydro-potential"),
         MapLayer::Suitability(kind) => l10n.args(
             "map-layer-suitability",
@@ -1951,9 +1946,6 @@ mod tests {
             (&eastern, MapLayer::WindPotential, |c| {
                 c.wind_potential.value()
             }),
-            (&eastern, MapLayer::CoolingWater, |c| {
-                c.cooling_water.value()
-            }),
             (&eastern, MapLayer::HydroPotential, |c| {
                 c.hydro_potential.value()
             }),
@@ -2005,7 +1997,6 @@ mod tests {
                 MapLayer::Irradiance,
                 MapLayer::WindPotential,
                 MapLayer::GeothermalPotential,
-                MapLayer::CoolingWater,
                 MapLayer::HydroPotential,
                 MapLayer::Suitability(PlantKind::Nuclear),
                 MapLayer::Suitability(PlantKind::Coal),
@@ -2032,11 +2023,10 @@ mod tests {
         assert_eq!(labels[1], "Sunshine");
         assert_eq!(labels[2], "Wind potential");
         assert_eq!(labels[3], "Geothermal potential");
-        assert_eq!(labels[4], "Cooling water");
-        assert_eq!(labels[5], "Hydro potential");
-        assert_eq!(labels[6], "Suitability: Nuclear plant");
-        assert_eq!(labels[7], "Suitability: Coal plant");
-        assert_eq!(labels[8], "Suitability: Hydro plant");
+        assert_eq!(labels[4], "Hydro potential");
+        assert_eq!(labels[5], "Suitability: Nuclear plant");
+        assert_eq!(labels[6], "Suitability: Coal plant");
+        assert_eq!(labels[7], "Suitability: Hydro plant");
         assert_eq!(model.layer, MapLayer::Terrain);
         assert_eq!(l10n.problems(), vec![]);
 

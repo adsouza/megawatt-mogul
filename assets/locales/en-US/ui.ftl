@@ -138,7 +138,6 @@ map-solar-low = 0%
 map-solar-mid = 50%
 map-solar-high = 100%
 map-solar-help = Annual solar potential: purple/blue is lower, green/yellow is higher. The same 0–100% scale applies in every region. This is a game site rating, not today's weather or the percentage of sunny days; season, time of day and clouds also affect solar output.
-map-layer-cooling-water = Cooling water
 map-layer-hydro-potential = Hydro potential
 map-layer-suitability = Suitability: { $kind }
 legend-label = Map legend

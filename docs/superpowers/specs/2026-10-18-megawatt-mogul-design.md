@@ -759,14 +759,16 @@ run through the ordinary generating-plant step or acquire synthetic opening outp
   Selection outlines occupy at most 0.9 × 0.9 of a cell and sit just above the terrain. Rendering
   and picking use the same fitted geometry; labels follow the actual scaled roof height.
   Keep the default whole-region framing and allow close zoom to inspect individual cell-sized sites.
-- **Planning overlay:** a grounded terrain and resource view (irradiance, cooling water, hydro
-  sites, siting suitability). Sunshine uses a sequential purple/blue → teal/green → yellow scale
+- **Planning overlay:** a grounded terrain and resource view (irradiance, hydro sites, siting
+  suitability). Sunshine uses a sequential purple/blue → teal/green → yellow scale
   with a visible 0–100% solar-potential key outside the map viewport. Use the same absolute scale
   in every region. This is the site's static game resource rating, not the percentage of sunny
   days or current weather; season, sun angle and cloud cover separately affect solar output.
-- **Selectable map layers:** terrain, sunshine, wind potential, cooling water, hydro potential,
-  and suitability for nuclear, coal and hydro. Solar and wind use their resource-quality maps;
-  their binary suitability overlays are redundant because they accept any land cell. Gas (CCGT),
+- **Selectable map layers:** terrain, sunshine, wind potential, hydro potential, and suitability
+  for nuclear, coal and hydro. Solar and wind use their resource-quality maps;
+  their binary suitability overlays are redundant because they accept any land cell. Cooling water
+  has no layer of its own: it only gates nuclear and coal siting, so their suitability layers
+  show everything it decides; the cell inspector still reports the value. Gas (CCGT),
   peakers and batteries likewise have no suitability overlay. The cell inspector still reports
   suitability for every plant kind.
 - **Operating overlay:** supply indicators over the warm, lit diorama: distinct warm yellow

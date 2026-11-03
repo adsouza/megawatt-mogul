@@ -725,12 +725,7 @@ fn the_map_draws_both_shipped_regions_and_selects_what_is_clicked() {
             map.rect.expand(0.01).contains_rect(layout.bounds()),
             "{region}: the grid fits the panel"
         );
-        for label in [
-            "Sunshine",
-            "Cooling water",
-            "Hydro potential",
-            "Suitability: Coal plant",
-        ] {
+        for label in ["Sunshine", "Hydro potential", "Suitability: Coal plant"] {
             assert!(!find_button(&widgets, label).disabled, "{region}: {label}");
         }
         let terrain = find_button(&widgets, "Terrain");

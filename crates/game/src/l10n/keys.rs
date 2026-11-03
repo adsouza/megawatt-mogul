@@ -531,7 +531,6 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "map-solar-mid",
     "map-solar-high",
     "map-solar-help",
-    "map-layer-cooling-water",
     "map-layer-hydro-potential",
     "map-layer-suitability",
     "legend-label",
