@@ -6,7 +6,32 @@ import {resolve,join} from 'node:path';
 const root=resolve(import.meta.dirname,'../..');
 const tool=resolve(root,'target/debug/examples/save_backup');
 const fixture=resolve(root,'crates/infrastructure/tests/support/monthly-directory-v4/cccccccccccccccccccccccccccccccc.mgsave');
-async function settled(page){await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))));}
+async function settled(page){
+ // readiness writes this attribute in Bevy's Last schedule, once per game frame.
+ // Browser animation callbacks alone don't prove the canvas UI has processed an update.
+ await page.evaluate(()=>new Promise(resolve=>{
+  let frames=0;
+  const observer=new MutationObserver(records=>{
+   frames+=records.length;
+   if(frames>=3){observer.disconnect();resolve();}
+  });
+  observer.observe(document.body,{attributes:true,attributeFilter:['data-save-busy']});
+ }));
+}
+async function openBackupChooser(page){
+ await expect(page.locator('body')).toHaveAttribute('data-save-screen','Browser');
+ await expect(page.locator('body')).toHaveAttribute('data-save-busy','false');
+ await page.mouse.move(216,734);
+ await settled(page);
+ const [chooser]=await Promise.all([
+  page.waitForEvent('filechooser',{timeout:15000}),
+  (async()=>{
+   // Let egui observe the press before releasing it, even on a slow renderer.
+   await page.mouse.down();await settled(page);await page.mouse.up();
+  })(),
+ ]);
+ return chooser;
+}
 async function service(page){await page.evaluate(async()=>{
  const module=document.querySelector('link[rel=modulepreload]').href;
  const source=await(await fetch(module)).text();const path=source.match(/from ['"]([^'"]+browser_storage.js)['"]/)[1];
@@ -61,16 +86,16 @@ test('library downloads a backup and uploads it into a new slot; malformed and c
   const output=join(directory,'download.mgsave.zip');await download.saveAs(output);
   expect(execFileSync(tool,['validate',output],{encoding:'utf8'})).toBe(baseline);
   await expect(page.locator('body')).toHaveAttribute('data-save-busy','false');await settled(page);
-  const chooserEvent=page.waitForEvent('filechooser');await page.mouse.click(216,734);const chooser=await chooserEvent;await chooser.setFiles(output);
+  const chooser=await openBackupChooser(page);await chooser.setFiles(output);
   await expect(page.locator('body')).toHaveAttribute('data-save-count','2',{timeout:30000});
   await expect(page.locator('body')).toHaveAttribute('data-save-busy','false');await expect(page.locator('body')).toHaveAttribute('data-save-error','false');await settled(page);
-  const invalidEvent=page.waitForEvent('filechooser');await page.mouse.click(216,734);const invalid=await invalidEvent;
+  const invalid=await openBackupChooser(page);
   await invalid.setFiles({name:'broken.mgsave.zip',mimeType:'application/zip',buffer:Buffer.from([1,2,3])});
   await expect(page.locator('body')).toHaveAttribute('data-save-error','true');await expect(page.locator('body')).toHaveAttribute('data-save-busy','false');
   await expect(page.locator('body')).toHaveAttribute('data-save-count','2');await expect(page.locator('body')).toHaveAttribute('data-app-state','MainMenu');
   await page.keyboard.press('Escape');await expect(page.locator('body')).toHaveAttribute('data-save-screen','Closed');await settled(page);
   await page.mouse.click(230,423);await expect(page.locator('body')).toHaveAttribute('data-save-screen','Browser');await expect(page.locator('body')).toHaveAttribute('data-save-busy','false');await settled(page);
-  const cancelEvent=page.waitForEvent('filechooser');await page.mouse.click(216,734);const canceled=await cancelEvent;
+  const canceled=await openBackupChooser(page);
   await canceled.element().evaluate(input=>input.dispatchEvent(new Event('cancel')));
   await expect(page.locator('body')).toHaveAttribute('data-save-busy','false');await expect(page.locator('body')).toHaveAttribute('data-save-error','false');await expect(page.locator('body')).toHaveAttribute('data-save-count','2');
   await page.keyboard.press('Escape');await expect(page.locator('body')).toHaveAttribute('data-save-screen','Closed');await settled(page);
