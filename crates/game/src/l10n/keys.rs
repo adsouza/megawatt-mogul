@@ -423,6 +423,7 @@ pub const ALL_UI_KEYS: &[&str] = &[
     "tutorial-show",
     "tutorial-crawl",
     "tutorial-cash",
+    "tutorial-pan-map",
     "tutorial-pick-site",
     "tutorial-battery-spotlight",
     "tutorial-battery-build",

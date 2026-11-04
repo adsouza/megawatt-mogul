@@ -168,6 +168,9 @@ to `dispatch`.
 3. **Switch to Forecast.** The bottom panel switches to the Forecast tab automatically.
 4. **Spotlight cash.** The top bar's cash field. Note: *"This is your money. Grow it by selling
    power, without blacking out your customers."* Doesn't wait.
+   Then spotlight the map: *"Hold Shift while dragging the map to pan."* This timed tip comes
+   before choosing a site for the battery. Skip it if a cell is already selected or the player
+   has already queued a battery; once played, it stays completed when saving and resuming.
 5. **Instruction: pick a site.** After the screen undims: *"Click a square on the map to see what
    you can build there."*, inside the map's top edge with its arrow pointing down into the map
    (§4.1). Done when a map cell is selected, or a battery has been queued.

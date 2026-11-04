@@ -53,6 +53,7 @@ pub enum TutorialStep {
     Crawl,
     ShowForecast,
     Cash,
+    PanMap,
     PickSite,
     RevealBattery,
     BatterySpotlight,
@@ -90,6 +91,7 @@ impl TutorialStep {
             Self::Crawl => "crawl",
             Self::ShowForecast => "show-forecast",
             Self::Cash => "cash",
+            Self::PanMap => "pan-map",
             Self::PickSite => "pick-site",
             Self::RevealBattery => "reveal-battery",
             Self::BatterySpotlight => "battery-spotlight",
@@ -189,7 +191,7 @@ const fn def(
 }
 
 /// The tutorial, in order (spec §4.3).
-pub const TUTORIAL_STEPS: [StepDef; 28] = {
+pub const TUTORIAL_STEPS: [StepDef; 29] = {
     use DayPhase::{Operating, Planning, Review};
     use StepKind::{Crawl, Instruction, Move, Spotlight};
     use TutorialAnchor as A;
@@ -212,6 +214,14 @@ pub const TUTORIAL_STEPS: [StepDef; 28] = {
             Some(A::Cash),
             Some("tutorial-cash"),
             Done::Never,
+        ),
+        def(
+            S::PanMap,
+            Planning,
+            Spotlight,
+            Some(A::Map),
+            Some("tutorial-pan-map"),
+            Done::CellSelectedOrBattery,
         ),
         def(
             S::PickSite,
@@ -790,12 +800,13 @@ mod tests {
         active_step(state, game, selection).map(|def| def.step)
     }
 
-    /// FrameGrid, Crawl, ShowForecast and Cash: the one-shot steps before PickSite.
-    const OPENING: [TutorialStep; 4] = [
+    /// The one-shot steps before PickSite.
+    const OPENING: [TutorialStep; 5] = [
         TutorialStep::FrameGrid,
         TutorialStep::Crawl,
         TutorialStep::ShowForecast,
         TutorialStep::Cash,
+        TutorialStep::PanMap,
     ];
 
     /// The cell a battery can be built on nearest the anchor city, and the anchor's node.
@@ -865,7 +876,7 @@ mod tests {
         sorted.sort();
         sorted.dedup();
         assert_eq!(steps, sorted);
-        assert_eq!(steps.len(), 28);
+        assert_eq!(steps.len(), 29);
     }
 
     #[test]
@@ -903,10 +914,40 @@ mod tests {
     }
 
     #[test]
+    fn pan_tip_precedes_battery_siting_and_stays_completed_after_resume() {
+        let game = game("western_interconnection");
+        let mut state = TutorialState::new(1, &game);
+        state.played = played(&[
+            TutorialStep::FrameGrid,
+            TutorialStep::Crawl,
+            TutorialStep::ShowForecast,
+            TutorialStep::Cash,
+        ]);
+        let tip = active_step(&state, &game, Selection::None).unwrap();
+        assert_eq!(tip.text_key, Some("tutorial-pan-map"));
+        assert_eq!(tip.kind, StepKind::Spotlight);
+        assert_eq!(tip.anchor, Some(TutorialAnchor::Map));
+
+        state.played.insert(tip.step);
+        let restored = TutorialState::restore(&state.saved().encode().unwrap(), 9, &game).unwrap();
+        assert_eq!(
+            active(&restored, &game, Selection::None),
+            Some(TutorialStep::PickSite)
+        );
+        let (cell, _) = battery_site(&game);
+        assert_eq!(
+            active(&restored, &game, Selection::Cell(cell)),
+            Some(TutorialStep::RevealBattery)
+        );
+    }
+
+    #[test]
     fn pick_site_done_by_cell_selection() {
         let game = game("western_interconnection");
         let mut state = TutorialState::new(1, &game);
         state.played = played(&OPENING);
+        // Going straight to a cell skips the navigation tip too.
+        state.played.remove(&TutorialStep::PanMap);
         let (cell, _) = battery_site(&game);
         assert_eq!(
             active(&state, &game, Selection::Cell(cell)),
@@ -931,6 +972,7 @@ mod tests {
         let (cell, anchor) = battery_site(&game);
         let battery = queue_battery(&mut game, cell);
         state.played = played(&OPENING);
+        state.played.remove(&TutorialStep::PanMap);
         assert_eq!(
             active(&state, &game, Selection::None),
             Some(TutorialStep::ConnectSpotlight)

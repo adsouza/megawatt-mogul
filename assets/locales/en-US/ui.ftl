@@ -85,6 +85,7 @@ tutorial-crawl = You run a power company.
     Keep supply equal to demand,
     or the lights go out.
 tutorial-cash = This is your money. Grow it by selling power, without blacking out your customers.
+tutorial-pan-map = Hold Shift while dragging the map to pan.
 tutorial-pick-site = Click a square on the map to see what you can build there.
 tutorial-battery-spotlight = Batteries store power when it's cheap and release it when demand spikes.
 tutorial-battery-build = Build a battery here.

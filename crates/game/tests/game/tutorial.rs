@@ -1375,6 +1375,7 @@ fn the_overlay_covers_the_screen_only_while_the_crawl_or_a_spotlight_is_up() {
     for (step, cover) in [
         (TutorialStep::Crawl, true),
         (TutorialStep::Cash, true),
+        (TutorialStep::PanMap, true),
         (TutorialStep::PickSite, false),
     ] {
         at_step(&mut app, step);
@@ -1382,10 +1383,10 @@ fn the_overlay_covers_the_screen_only_while_the_crawl_or_a_spotlight_is_up() {
         assert_eq!(ui_state(&app).tutorial_cover, cover, "{step:?}");
     }
     // Dismissed: the pass that ends it no longer covers.
-    at_step(&mut app, TutorialStep::Cash);
+    at_step(&mut app, TutorialStep::PanMap);
     pass.settled(&mut app, MIN.0, MIN.1);
     press_escape(&pass, &mut app, MIN);
-    assert!(played(&app).contains(&TutorialStep::Cash));
+    assert!(played(&app).contains(&TutorialStep::PanMap));
     assert!(!ui_state(&app).tutorial_cover);
     // A spotlight waiting behind a prompt doesn't cover.
     at_step(&mut app, TutorialStep::Cash);
@@ -1819,6 +1820,7 @@ const CRYSTAL_BALL: &str = "Before connecting a new city, use the crystal ball t
 const SAVE_SNAPSHOT: &str = "Before risky moves, like connecting a new city, use Save to create a named snapshot. You can load it to return to this point if things go wrong.";
 const CASH_NOTE: &str =
     "This is your money. Grow it by selling power, without blacking out your customers.";
+const PAN_MAP_NOTE: &str = "Hold Shift while dragging the map to pan.";
 const PICK_SITE: &str = "Click a square on the map to see what you can build there.";
 const START_NOTE: &str = "Ready? Start the day.";
 const BUILD_BATTERY: &str = "Build a battery here.";
@@ -1993,17 +1995,23 @@ fn spotlight_ends_by_itself_after_hold() {
     at_step(&mut app, TutorialStep::Cash);
     let pass = EguiPass::attach(&mut app);
     let (width, height) = MIN;
-    let widgets = pass.settled(&mut app, width, height);
-    assert!(crate::support::egui_harness::has(&widgets, CASH_NOTE));
-    advance_real(&mut app, 2.0);
-    let widgets = pass.run(&mut app, width, height);
-    assert!(crate::support::egui_harness::has(&widgets, CASH_NOTE));
-    assert!(!played(&app).contains(&TutorialStep::Cash));
-    advance_real(&mut app, 2.7);
-    pass.run(&mut app, width, height);
-    assert!(played(&app).contains(&TutorialStep::Cash));
+    for (step, note) in [
+        (TutorialStep::Cash, CASH_NOTE),
+        (TutorialStep::PanMap, PAN_MAP_NOTE),
+    ] {
+        let widgets = pass.settled(&mut app, width, height);
+        assert!(crate::support::egui_harness::has(&widgets, note));
+        advance_real(&mut app, 2.0);
+        let widgets = pass.run(&mut app, width, height);
+        assert!(crate::support::egui_harness::has(&widgets, note));
+        assert!(!played(&app).contains(&step));
+        advance_real(&mut app, 2.7);
+        pass.run(&mut app, width, height);
+        assert!(played(&app).contains(&step));
+    }
     let widgets = pass.run(&mut app, width, height);
     assert!(!crate::support::egui_harness::has(&widgets, CASH_NOTE));
+    assert!(!crate::support::egui_harness::has(&widgets, PAN_MAP_NOTE));
     assert!(crate::support::egui_harness::has(&widgets, PICK_SITE));
 }
 
@@ -2900,8 +2908,8 @@ fn milestones_open(app: &App) -> bool {
     app.world().resource::<game::hud::MilestonesOpen>().0
 }
 
-/// A spotlight covers the Milestones window: Escape ends the spotlight and leaves the window
-/// open, and the next Escape closes the window.
+/// Consecutive spotlights cover the Milestones window: Escape ends each spotlight and leaves the
+/// window open, then the next Escape closes the window.
 #[test]
 fn escape_ends_a_spotlight_over_milestones_and_leaves_the_window_open() {
     let logs = TempDir::new().unwrap();
@@ -2909,15 +2917,20 @@ fn escape_ends_a_spotlight_over_milestones_and_leaves_the_window_open() {
     at_step(&mut app, TutorialStep::Cash);
     dispatch_in(&mut app, vec![UiAction::ToggleMilestones]);
     let pass = EguiPass::attach(&mut app);
-    let widgets = pass.settled(&mut app, MIN.0, MIN.1);
-    assert!(crate::support::egui_harness::has(&widgets, CASH_NOTE));
-    assert!(crate::support::egui_harness::has(&widgets, "Milestones"));
-    press_escape(&pass, &mut app, MIN);
-    assert!(played(&app).contains(&TutorialStep::Cash));
-    assert!(
-        milestones_open(&app),
-        "the window under the spotlight stays open"
-    );
+    for (step, note) in [
+        (TutorialStep::Cash, CASH_NOTE),
+        (TutorialStep::PanMap, PAN_MAP_NOTE),
+    ] {
+        let widgets = pass.settled(&mut app, MIN.0, MIN.1);
+        assert!(crate::support::egui_harness::has(&widgets, note));
+        assert!(crate::support::egui_harness::has(&widgets, "Milestones"));
+        press_escape(&pass, &mut app, MIN);
+        assert!(played(&app).contains(&step));
+        assert!(
+            milestones_open(&app),
+            "the window under the spotlight stays open"
+        );
+    }
     // With the spotlight gone, Escape reaches the window.
     pass.settled(&mut app, MIN.0, MIN.1);
     press_escape(&pass, &mut app, MIN);
@@ -3093,7 +3106,10 @@ fn tutorial_cards_fit(region: &str, kind: PlantKind) {
             );
             // Picking a site is done once a cell is selected; the later steps need one.
             let selection = match (def.step, &battery) {
-                (TutorialStep::PickSite | TutorialStep::PickGeneratorSite, _) => Selection::None,
+                (
+                    TutorialStep::PanMap | TutorialStep::PickSite | TutorialStep::PickGeneratorSite,
+                    _,
+                ) => Selection::None,
                 (TutorialStep::ConnectGeneratorSpotlight | TutorialStep::ConnectGenerator, _) => {
                     Selection::Plant(generator.as_ref().expect("generator ordered").id)
                 }
@@ -3318,6 +3334,7 @@ fn tutorial_on_and_off_give_identical_state() {
     for step in [
         TutorialStep::Crawl,
         TutorialStep::Cash,
+        TutorialStep::PanMap,
         TutorialStep::BatterySpotlight,
         TutorialStep::ConnectSpotlight,
         TutorialStep::StartSpotlight,
