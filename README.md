@@ -48,15 +48,28 @@ The simulation core, playable client, save/resume, 3D diorama, battery storage, 
 geothermal plants, the eight regions above, HVDC links, the browser client and a first-game
 tutorial are implemented. Pick a region and seed, plan the day's commitments, operate the grid at
 up to 32× and read the month's review. The diorama shows terrain, resource layers, cities, plants
-and transmission construction. Implementation plans, with their playtest notes, are in
+and transmission construction.
+
+Planning tools help you decide what to build next. **Crystal ball: 12-month outlook** compares
+capacity with peak demand month by month, with daily drill-downs and a preview of a city
+connection's extra demand. **Compare plant payoff** charts each plant type's cumulative net cash
+from ordering through construction and operation. **Cash outlook** projects month-end cash from
+committed construction payments and recent operating income, optionally with a proposed plant.
+Each region has three milestones, and a bonus milestone for a full year on clean power appears
+once they are all reached. Implementation plans, with their playtest notes, are in
 [`docs/superpowers/plans/`](docs/superpowers/plans/). Current new-game batteries can charge from
 00:00 until 22:00 and support generation gaps from 06:00 until midnight.
 
 ## First game
 
 Your first new game runs a short tutorial over the live game: it sets out the goal, then walks you
-through building a battery, connecting it to your grid and starting the day. Loading a save never
-starts it. To see it again, tick **Show tutorial** beside the seed on the new-game screen.
+through building a battery, connecting it to your grid and starting the day. After the first
+month's review it guides your first new power plant, then shows how to save a snapshot, preview
+demand with the crystal ball, compare plant payoff and choose renewable sites.
+
+An unfinished tutorial is saved with the game and resumes when you load that save, even after
+restarting. Loading a save never starts a new tutorial. To see it again, tick **Show tutorial**
+beside the seed on the new-game screen.
 
 ## Browser client
 
@@ -103,7 +116,7 @@ cargo run -p game -- --assets <dir> --log-dir <dir> --save-dir <dir>
 ## Diorama controls
 
 Click a plant, city or terrain cell to inspect it. Drag with the left button to orbit; right or
-middle drag pans; scrolling zooms. **Reset view** or **R** fits the region again. **O** hides or
+middle drag, or Shift with left drag, pans; scrolling zooms. **Reset view** or **R** fits the region again. **O** hides or
 restores the overlay. Keyboard shortcuts work while pointing at the map and leave text entry and
 Space-to-pause alone. Panels, legends and dialogs capture their own input.
 
@@ -135,6 +148,9 @@ transmission build rates, and Continental Europe–Maghreb varies them by countr
 construction is paid at month close, not upfront. First-city acceptance tests cover generation and
 lines together, a full year of seasonal demand and a retained cash buffer.
 
+Once every city in the region is connected, all cities' demand grows each month at the region's
+annual forecast rate, so the grid keeps needing new capacity after the map is complete.
+
 This balance applies to new games. Existing saves retain their original region tuning and build times.
 
 ## Saving and resuming
@@ -154,7 +170,7 @@ Choose **Load game** on the main menu. A restored game always opens paused; use 
 Space to continue at the remembered speed. Choose **Rename** beside a save in either save list to
 change its name without loading it or changing its progress or saved-at date.
 
-**Menu** offers Save and return, Leave without saving, or Cancel. Failed saves keep the game open and offer Retry. The OS close button still quits
+**Leave game** offers Save and return to menu, Leave without saving, or Cancel. Failed saves keep the game open and offer Retry. The OS close button still quits
 immediately without saving game progress; client preferences are flushed on normal exit.
 
 Window size/position, UI zoom, running speed, sidebar/bottom-panel sizes, the Incidents divider,
