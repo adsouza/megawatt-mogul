@@ -2022,7 +2022,7 @@ separate autosave at each month close, as selected by the user.
   Success opens no dialog and does not block Review, the retrospective, Continue or later play.
   Serialize captures in order and resolve each expected revision after the preceding write.
   Only a failure opens the Retry/Continue-without-saving barrier (§21.5).
-- **Menu** offers *Save and return to menu*, *Leave without saving*, and *Stay*. A failed save
+- **Leave game** offers *Save and return to menu*, *Leave without saving*, and *Stay*. A failed save
   keeps the session and the dialog available for Retry or Cancel; it never performs the leave.
   The game-over modal exposes Save too. **The OS close button still quits without confirmation**
   (the earlier user ruling); it does not promise an exit autosave. Main-menu Quit is unchanged.

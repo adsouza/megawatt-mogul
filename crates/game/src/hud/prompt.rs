@@ -5,7 +5,7 @@
 //! a [`Prompt`] variant and its case in [`prompt_model`] (and, if it belongs to one phase, in
 //! [`prompt_in_phase`]); nothing else.
 //!
-//! - **Leave game** (the top bar's *Menu*): *Leave* returns to the menu; *Stay* closes it.
+//! - **Leave game** (the top bar's *Leave game*): *Leave* returns to the menu; *Stay* closes it.
 //! - **Shortfall start** (*Start the day* on a short forecast, spec §16.4): *Start anyway* sends
 //!   `BeginOperating`; *Keep planning* closes it. It is Planning's: the frame that begins the day
 //!   closes it, before any Operating panel draws.
