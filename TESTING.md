@@ -90,7 +90,14 @@ compiled-in fixture paths and the game executable used by crash tests. They exec
 without compiling or restoring Cargo build caches. The matrix does not cancel siblings on a
 failure. The final `check` job requires the build and every shard to succeed, including when
 a prerequisite fails, is skipped or is cancelled; Pages deployment still depends on `check`.
-The `dev-tools` job retains its separate build and tests because that feature changes the graph.
+The `dev-tools-build` job retains its own dependency cache (`dev-tools`) because that feature
+changes the graph. It runs clippy and archives `-p game --features dev` once on Ubuntu 24.04.
+Three `dev-tools-test` runners execute all tests from that archive using nextest's `hash:1/3`
+through `hash:3/3` partitions. The same coverage checker lists the complete archive, including
+ignored tests, and proves these partitions are disjoint, nonempty and exhaustive. New tests and
+binaries are included automatically. The required `dev-tools` gate rejects any failed, skipped
+or cancelled build or shard. These runners use the shared execution action with a separate
+`dev-tools-tests` artifact; the default workspace and tagged-release archive remain unchanged.
 Tagged release validation uses the same build and run actions, dependency cache, matrix and
 coverage guard before allowing packaging. A manual dispatch of `release.yml` exercises that
 validation path without creating packages or a release; see [releasing](docs/releasing.md#tagged-source-validation).

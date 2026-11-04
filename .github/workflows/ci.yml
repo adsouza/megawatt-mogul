@@ -68,17 +68,61 @@ jobs:
           TEST_RESULT: ${{ needs.test.result }}
         run: test "$BUILD_RESULT" = success && test "$TEST_RESULT" = success
 
-  # The `dev` feature changes the game crate's dependency graph, so it builds separately anyway;
-  # as its own job it runs in parallel with the workspace build and shards, with its own cache.
-  dev-tools:
-    runs-on: ubuntu-latest
+  # Keep the dev dependency graph and cache separate, but compile its tests only once.
+  dev-tools-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      matrix: ${{ steps.shards.outputs.matrix }}
     steps:
       - uses: actions/checkout@v7
+      - name: Test CI shard coverage checker
+        run: python3 -m unittest discover -s tools/ci/tests
       - uses: ./.github/actions/rust-setup
+        with:
+          cache-key: dev-tools
       - name: Clippy (development tools)
-        run: cargo clippy -p game --all-targets --features dev -- -D warnings
-      - name: Test (development tools)
-        run: cargo nextest run -p game --features dev --profile ci
+        run: cargo clippy -p game --all-targets --locked --features dev -- -D warnings
+      - name: Build and archive development-tool tests
+        run: cargo nextest archive -p game --locked --features dev --profile ci --archive-file target/dev-tools-tests.tar.zst
+      - name: Verify every development-tool test belongs to exactly one shard
+        id: shards
+        run: python3 tools/ci/test_shards.py --suite dev-tools --archive target/dev-tools-tests.tar.zst --github-output "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dev-tools-tests
+          path: target/dev-tools-tests.tar.zst
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  dev-tools-test:
+    name: Dev tools (${{ matrix.name }})
+    needs: dev-tools-build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.dev-tools-build.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/native-test-run
+        with:
+          archive: dev-tools-tests
+          filter: ${{ matrix.filter }}
+          partition: ${{ matrix.partition }}
+
+  # Preserve the required dev-tools check and reject skipped or cancelled dependencies too.
+  dev-tools:
+    needs: [dev-tools-build, dev-tools-test]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require the development-tool build and every shard to pass
+        env:
+          BUILD_RESULT: ${{ needs.dev-tools-build.result }}
+          TEST_RESULT: ${{ needs.dev-tools-test.result }}
+        run: test "$BUILD_RESULT" = success && test "$TEST_RESULT" = success
 
   browser-build:
     permissions:

@@ -1,6 +1,9 @@
 name: Run an archived native test shard
 description: Execute a shard from this workflow run's archive, without rebuilding tests.
 inputs:
+  archive:
+    description: Artifact and archive basename from this workflow run.
+    default: workspace-tests
   filter:
     description: Nextest filter from the coverage-checked matrix.
     required: true
@@ -16,11 +19,12 @@ runs:
         cache: 'false'
     - uses: actions/download-artifact@v8
       with:
-        name: workspace-tests
-        path: ${{ runner.temp }}/workspace-tests
+        name: ${{ inputs.archive }}
+        path: ${{ runner.temp }}/${{ inputs.archive }}
     - name: Run tests from the shared archive
       shell: bash
       env:
+        TEST_ARCHIVE: ${{ runner.temp }}/${{ inputs.archive }}/${{ inputs.archive }}.tar.zst
         TEST_FILTER: ${{ inputs.filter }}
         TEST_PARTITION: ${{ inputs.partition }}
       run: |
@@ -29,6 +33,6 @@ runs:
           partition_args+=(--partition "$TEST_PARTITION")
         fi
         cargo-nextest nextest run --profile ci \
-          --archive-file "$RUNNER_TEMP/workspace-tests/workspace-tests.tar.zst" \
+          --archive-file "$TEST_ARCHIVE" \
           --extract-to "$GITHUB_WORKSPACE" --workspace-remap "$GITHUB_WORKSPACE" \
           -E "$TEST_FILTER" "${partition_args[@]}"

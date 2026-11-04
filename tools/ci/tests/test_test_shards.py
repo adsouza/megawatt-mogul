@@ -1,7 +1,11 @@
 """Coverage checks for native CI shards, without running game tests."""
 
 import importlib.util
+from contextlib import redirect_stderr
+from io import StringIO
+import json
 from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -25,6 +29,41 @@ def listing(*tests):
 
 
 class ShardCoverageTests(unittest.TestCase):
+    @patch.object(shards, "list_tests")
+    def test_dev_tools_requires_its_feature_archive_before_listing_any_tests(self, list_tests):
+        with tempfile.TemporaryDirectory() as directory, redirect_stderr(StringIO()):
+            with self.assertRaises(SystemExit) as error:
+                shards.main(["--suite", "dev-tools", "--github-output", str(Path(directory) / "output")])
+        self.assertEqual(error.exception.code, 2)
+        list_tests.assert_not_called()
+
+    @patch.object(shards.subprocess, "check_output", return_value=b'{"rust-suites": {}}')
+    def test_archive_inventory_never_requests_a_workspace_or_feature_rebuild(self, check_output):
+        archive = Path("target/dev-tools-tests.tar.zst")
+        shards.list_tests("all()", "hash:2/3", archive=archive)
+        command = check_output.call_args.args[0]
+        self.assertEqual(command[command.index("--archive-file") + 1], str(archive))
+        self.assertEqual(command[command.index("--partition") + 1], "hash:2/3")
+        self.assertEqual(command[command.index("--run-ignored") + 1], "all")
+        for option in ["--workspace", "--locked", "--features", "--package"]:
+            self.assertNotIn(option, command)
+
+    @patch.object(shards, "list_tests")
+    def test_dev_tools_matrix_proves_the_complete_archive_including_future_binaries(self, list_tests):
+        selections = [{("game", "presenter")}, {("game::game", "inspector")},
+                      {("game::future", "new_feature_test")}]
+        list_tests.side_effect = [set().union(*selections), *selections]
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "dev-tools-tests.tar.zst"
+            output = Path(directory) / "output"
+            shards.main(["--suite", "dev-tools", "--archive", str(archive), "--github-output", str(output)])
+            matrix = json.loads(output.read_text().removeprefix("matrix="))
+        self.assertEqual([entry["partition"] for entry in matrix["include"]],
+                         ["hash:1/3", "hash:2/3", "hash:3/3"])
+        self.assertEqual([entry["filter"] for entry in matrix["include"]], ["all()"] * 3)
+        self.assertEqual(list_tests.call_count, 4)
+        self.assertTrue(all(call.kwargs["archive"] == archive for call in list_tests.call_args_list))
+
     def test_region_and_game_shards_use_four_distinct_hash_partitions_each(self):
         regions = [selection for name, selection in shards.SHARDS.items()
                    if name.startswith("shipped-regions-")]
