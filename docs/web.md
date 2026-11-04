@@ -43,7 +43,14 @@ Build the native round-trip tool with `cargo build -p infrastructure --example s
 Run `npm ci`, `npx playwright install chromium`, then `npm test` there while the local
 server runs. Each test gets its own browser context; no personal saves are accessed.
 
-The CI `browser` job builds the production artifact and tests the project subpath.
+The CI `browser-build` job builds the production artifact once, uploads it for Pages, and
+archives the same distribution with the native acceptance tools for three `browser-test`
+shards. The archive preserves the tools' executable permissions. Shards extract it without
+rebuilding; no Rust toolchain is installed on the test runners. Playwright's own test inventory
+proves that every test belongs to exactly one shard before the build proceeds. Individual
+tests are distributed across shards (`fullyParallel`), with one worker per runner.
+The required `browser` gate succeeds only when the build and every shard succeed; failed,
+skipped or cancelled dependencies cannot pass it. Pages deploys the original build's artifact.
 Main builds derive the base path from `configure-pages` metadata; PR builds use the repository
 subpath. The test server and Playwright use that same path. `deploy-pages` depends on `check`,
 `dev-tools` and `browser`. It publishes only the current
@@ -52,8 +59,8 @@ Pages must use GitHub Actions as its publishing source. A manual CI dispatch on 
 rebuilds the current revision. To roll back source, revert the offending changes on `main`
 and let the same checks/deployment run; an old workflow cannot bypass the head guard.
 
-The browser job uses a minimal pinned Rust toolchain and builds on Ubuntu 24.04. It runs all
-browser acceptance tests, with one worker, in the digest-pinned Playwright 1.64.1 Noble image. The
+The browser build uses a minimal pinned Rust toolchain on Ubuntu 24.04. The three test runners
+use the same OS baseline and the digest-pinned Playwright 1.64.1 Noble image. The
 image supplies Chromium and its system dependencies; CI does not install desktop Bevy libraries,
 nextest or browser apt packages for this job. The native backup helper uses the same Ubuntu
 baseline as the test container. The image tag and npm package version must be upgraded together.
@@ -63,9 +70,17 @@ including failed runs. PRs can restore main's cache and their own earlier cache;
 replace main's cache. Before caching, the browser runner removes unused Rust toolchains so
 updates to the runner's preinstalled stable compiler cannot invalidate the pinned compiler's
 cache. The first run with this normalized toolchain inventory builds a fresh cache; subsequent
-runs retain the usual compiler, environment and dependency checks. Closing a PR removes only
-its `browser-rust-*` caches through a trusted default-branch workflow. Other cache namespaces
-and refs are left alone.
+runs retain the usual compiler, environment and dependency checks. Trunk's downloaded
+wasm-bindgen and wasm-opt tools are cached separately in `~/.cache/trunk`, keyed by OS,
+architecture and `web/Trunk.toml` (which pins both versions). Closing a PR removes only
+its `browser-rust-*` and `browser-trunk-*` caches through a trusted default-branch workflow.
+Other cache namespaces and refs are left alone.
+
+Image pulling, container startup and Playwright execution have separate CI steps. The job
+summary records elapsed time and exit status for those commands, the production build, native
+helpers, asset packaging and license notices. The production build total includes its packaging
+hooks. Each shard logs per-test durations and uploads a JSON report, server log and any failure
+screenshots/traces as `browser-results-1`, `browser-results-2` or `browser-results-3`.
 
 WASM/JS and runtime assets are content-addressed. A stale page or mismatched asset inventory
 shows Reload; browser data is never cleared by deployment. This release has no service worker

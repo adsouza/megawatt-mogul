@@ -21,6 +21,8 @@ env:
   # No debug info in CI: it multiplies the size of target/, and so of the cache to save and
   # restore, for backtraces that CI logs do not need. Dependencies already build without it.
   CARGO_PROFILE_DEV_DEBUG: "0"
+  PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright:v1.64.1-noble@sha256:47b510dd9230bf0b9bfc9b20102241e577ea7a99334ab4c3ca19f19770e9b8ea
+  NODE_OPTIONS: --max-old-space-size=1536
 
 jobs:
   build-tests:
@@ -78,17 +80,18 @@ jobs:
       - name: Test (development tools)
         run: cargo nextest run -p game --features dev --profile ci
 
-  browser:
+  browser-build:
     permissions:
       contents: read
       pages: read
     # Match the Playwright image baseline so the native backup helper runs inside it.
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    outputs:
+      matrix: ${{ steps.shards.outputs.matrix }}
+      public-path: ${{ steps.public-path.outputs.path }}
     env:
-      PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright:v1.64.1-noble@sha256:47b510dd9230bf0b9bfc9b20102241e577ea7a99334ab4c3ca19f19770e9b8ea
       MM_BUILD_SHA: ${{ github.sha }}
-      NODE_OPTIONS: --max-old-space-size=1536
     steps:
       - uses: actions/checkout@v7
       # Only infrastructure tools are built natively; the Bevy client targets WASM.
@@ -117,6 +120,11 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: trunk@0.22.1
+      - name: Cache Trunk's pinned wasm-bindgen and wasm-opt tools
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/trunk
+          key: browser-trunk-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('web/Trunk.toml') }}
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
@@ -125,7 +133,8 @@ jobs:
       - name: Check browser tooling and image version
         run: |
           python3 tools/web/test_contracts.py
-          node --test tools/web/tests/prune_browser_cache.test.cjs
+          python3 -m unittest discover -s tools/web/tests
+          node --test tools/web/tests/*.test.cjs tools/web/tests/*.test.mjs
           node --input-type=module <<'JS'
           import {readFileSync} from 'node:fs';
           const version = JSON.parse(readFileSync('web/tests/package.json')).devDependencies['@playwright/test'];
@@ -133,11 +142,17 @@ jobs:
             throw new Error('Playwright package and pinned container versions must match');
           }
           JS
+      - name: Install browser test dependencies
+        run: npm ci --prefix web/tests
+      - name: Verify every browser test belongs to exactly one shard
+        id: shards
+        run: node tools/web/test_shards.mjs --github-output "$GITHUB_OUTPUT"
       - name: Read configured Pages metadata
         if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         id: pages
         uses: actions/configure-pages@v6
       - name: Select the tested public path
+        id: public-path
         env:
           IS_MAIN: ${{ github.ref == 'refs/heads/main' }}
           CONFIGURED_BASE_PATH: ${{ steps.pages.outputs.base_path }}
@@ -147,32 +162,105 @@ jobs:
             base="$CONFIGURED_BASE_PATH"
           fi
           printf 'WEB_PUBLIC_PATH=%s/\n' "$base" >> "$GITHUB_ENV"
+          printf 'path=%s/\n' "$base" >> "$GITHUB_OUTPUT"
       - name: Build browser distribution
         working-directory: web
-        run: trunk build --release --public-url "$WEB_PUBLIC_PATH"
+        run: python3 ../tools/web/time_command.py "Build production distribution (including packaging)" -- trunk build --release --public-url "$WEB_PUBLIC_PATH"
       - name: Build native acceptance tools
-        run: cargo build --locked -p infrastructure --example save_backup --example geothermal_acceptance
-      - run: npm ci --prefix web/tests
-      - name: Test the distribution at its deployed subpath
+        run: python3 tools/web/time_command.py "Build native acceptance tools" -- cargo build --locked -p infrastructure --example save_backup --example geothermal_acceptance
+      # Tar preserves helper executable bits. Every shard extracts this same distribution;
+      # Pages receives the unchanged dist directory from this build, without a second build.
+      - name: Archive the distribution and acceptance tools
         run: |
-          export WEB_BASE_URL="http://127.0.0.1:8765$WEB_PUBLIC_PATH"
-          python3 tools/web/serve.py > target/web-server.log 2>&1 &
-          web_server_pid=$!
-          trap 'kill "$web_server_pid" 2>/dev/null || true' EXIT
-          docker run --rm --init --ipc=host --network=host \
-            --env CI=true --env NODE_OPTIONS --env WEB_BASE_URL \
-            --volume "$PWD:$PWD" --workdir "$PWD" \
-            "$PLAYWRIGHT_IMAGE" npm test --prefix web/tests -- --reporter=line
+          tar -czf "$RUNNER_TEMP/browser-acceptance.tar.gz" \
+            dist target/debug/examples/save_backup target/debug/examples/geothermal_acceptance
       - uses: actions/upload-artifact@v7
-        if: failure()
         with:
-          name: browser-failures
-          path: |
-            web/tests/test-results/
-            target/web-server.log
+          name: browser-acceptance
+          path: ${{ runner.temp }}/browser-acceptance.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
       - uses: actions/upload-pages-artifact@v5
         with:
           path: dist
+
+  browser-test:
+    name: Browser tests (${{ matrix.partition }})
+    needs: browser-build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.browser-build.outputs.matrix) }}
+    env:
+      WEB_PUBLIC_PATH: ${{ needs.browser-build.outputs.public-path }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: browser-acceptance
+          path: ${{ runner.temp }}/browser-acceptance
+      - name: Extract the shared distribution and acceptance tools
+        run: tar -xzf "$RUNNER_TEMP/browser-acceptance/browser-acceptance.tar.gz"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/tests/package-lock.json
+      - name: Install browser test dependencies
+        run: npm ci --prefix web/tests
+      - name: Pull Playwright image
+        run: python3 tools/web/time_command.py "Pull Playwright image" -- docker pull "$PLAYWRIGHT_IMAGE"
+      - name: Start Playwright container
+        run: |
+          export WEB_BASE_URL="http://127.0.0.1:8765$WEB_PUBLIC_PATH"
+          python3 tools/web/time_command.py "Start Playwright container" -- \
+            docker run --detach --name browser-tests --init --ipc=host --network=host \
+            --env CI=true --env NODE_OPTIONS --env WEB_BASE_URL \
+            --env PLAYWRIGHT_JSON_OUTPUT_NAME="$PWD/web/tests/test-results/results.json" \
+            --volume "$PWD:$PWD" --workdir "$PWD" \
+            --entrypoint sleep "$PLAYWRIGHT_IMAGE" infinity
+      - name: Test the distribution at its deployed subpath
+        env:
+          BROWSER_SHARD: ${{ matrix.partition }}
+        run: |
+          python3 tools/web/serve.py > target/web-server.log 2>&1 &
+          web_server_pid=$!
+          trap 'kill "$web_server_pid" 2>/dev/null || true' EXIT
+          # Exclude server startup from the test timing and avoid a startup race.
+          for ((attempt=0; attempt<50; attempt++)); do
+            if curl --fail --silent --output /dev/null "http://127.0.0.1:8765${WEB_PUBLIC_PATH}index.html"; then
+              break
+            fi
+            sleep 0.1
+          done
+          curl --fail --silent --output /dev/null "http://127.0.0.1:8765${WEB_PUBLIC_PATH}index.html"
+          python3 tools/web/time_command.py "Playwright shard $BROWSER_SHARD" -- \
+            docker exec browser-tests npm test --prefix web/tests -- --shard="$BROWSER_SHARD" --reporter=list,json
+      - name: Stop Playwright container
+        if: always()
+        run: docker rm --force browser-tests || true
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: browser-results-${{ matrix.index }}
+          path: |
+            web/tests/test-results/
+            target/web-server.log
+          retention-days: 7
+
+  # Preserve the required browser check and fail closed for failed/skipped/cancelled shards.
+  browser:
+    needs: [browser-build, browser-test]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require the browser build and every browser test shard to pass
+        env:
+          BUILD_RESULT: ${{ needs.browser-build.result }}
+          TEST_RESULT: ${{ needs.browser-test.result }}
+        run: test "$BUILD_RESULT" = success && test "$TEST_RESULT" = success
 
   deploy-pages:
     needs: [check, dev-tools, browser]

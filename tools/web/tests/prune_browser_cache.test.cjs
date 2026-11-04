@@ -11,6 +11,8 @@ test('only this closed PR browser caches are deleted, after all pages are collec
   {id:102,key:'browser-rust-v1-ubuntu24',ref:'refs/heads/main'},
   {id:103,key:'browser-rust-v1-ubuntu24',ref:'refs/pull/14/merge'},
   {id:104,key:'release-cache',ref},
+  {id:105,key:'browser-trunk-v1-Linux-X64-tools',ref},
+  {id:106,key:'browser-trunk-v1-Linux-X64-tools',ref:'refs/heads/main'},
  ]];
  pages[0][3]={id:3,key:'browser-rust-v1-ubuntu24',ref};
  const reads=[],deleted=[];
@@ -19,8 +21,8 @@ test('only this closed PR browser caches are deleted, after all pages are collec
   if(route.startsWith('GET')){assert.equal(args.ref,ref);reads.push(args.page);return{data:{actions_caches:pages[args.page-1]}};}
   assert.deepEqual(reads,[1,2]);deleted.push(args.cache_id);
  }};
- assert.equal(await prune({github,context,core}),2);
- assert.deepEqual(deleted,[3,101]);
+ assert.equal(await prune({github,context,core}),3);
+ assert.deepEqual(deleted,[3,101,105]);
 });
 
 test('invalid PR identity cannot make API calls',async()=>{

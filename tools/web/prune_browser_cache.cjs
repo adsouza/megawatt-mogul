@@ -10,7 +10,8 @@ module.exports = async ({github,context,core}) => {
     const {data}=await github.request('GET /repos/{owner}/{repo}/actions/caches',{
       ...context.repo,ref,per_page:100,page,
     });
-    selected.push(...data.actions_caches.filter(cache=>cache.ref===ref&&cache.key.startsWith('browser-rust-')));
+    selected.push(...data.actions_caches.filter(cache=>cache.ref===ref&&
+      ['browser-rust-','browser-trunk-'].some(prefix=>cache.key.startsWith(prefix))));
     if(data.actions_caches.length<100)break;
   }
   let removed=0;
