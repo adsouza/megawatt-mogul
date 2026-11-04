@@ -1271,7 +1271,7 @@ fn at_the_smallest_window_two_warnings_become_one_indicator_beside_menu_mileston
                     .any(|w| w.text.starts_with('⚠') && w.text.ends_with('…')),
                 "{region} {phase}: the indicator is whole"
             );
-            let menu = find_button(&widgets, "Menu").rect;
+            let menu = find_button(&widgets, "Leave game").rect;
             let milestones = find_button(&widgets, "Milestones").rect;
             let save = find_button(&widgets, SAVE).rect;
             for (name, rect) in [("Menu", menu), ("Milestones", milestones), ("Save", save)] {

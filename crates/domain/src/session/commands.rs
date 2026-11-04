@@ -37,6 +37,15 @@ pub struct ExplorationQuote {
 }
 
 impl GameSession {
+    /// Currently queued construction payments, including geothermal exploration.
+    /// Unpaid post-exploration stages and makeup projects are stored on geothermal plants.
+    pub fn construction_instalments(
+        &self,
+    ) -> &std::collections::BTreeMap<crate::company::AssetRef, std::collections::VecDeque<Money>>
+    {
+        &self.instalments
+    }
+
     /// Pure, phase-independent quote; an order still requires Planning and a valid site.
     pub fn plant_quote(&self, kind: PlantKind, cell: CellCoord) -> Result<PlantQuote, DomainError> {
         self.plant_site_check(kind, cell)

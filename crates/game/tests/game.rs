@@ -89,6 +89,8 @@ mod global_foundations;
 #[path = "game/economics.rs"]
 mod economics;
 
+#[path = "game/cash_outlook.rs"]
+mod cash_outlook;
 #[path = "game/geothermal.rs"]
 mod geothermal;
 #[path = "game/hvdc.rs"]

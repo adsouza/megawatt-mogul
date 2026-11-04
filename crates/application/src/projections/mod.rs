@@ -4,6 +4,7 @@
 //! Projections are pure functions of the event stream (plus the session, for
 //! facts an event only hints at), so they are deterministic and rebuildable.
 
+mod cash_outlook;
 mod chart_archive;
 mod expansion;
 mod lessons;
@@ -19,6 +20,9 @@ mod timeline;
 use domain::events::DomainEvent;
 use domain::session::GameSession;
 
+pub use cash_outlook::{
+    CashMonth, CashOutlook, CashTariffChange, IncomeRange, cash_outlook, quote_payments,
+};
 pub use chart_archive::ArchivedChartMonth;
 pub use expansion::{ExpansionProjection, PLAYED_MONTHS};
 pub use lessons::{Lesson, LessonsProjection, lessons_for};

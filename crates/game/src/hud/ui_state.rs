@@ -87,6 +87,9 @@ pub struct UiState {
     pub links_open: bool,
     pub outlook_open: bool,
     pub payoff_open: bool,
+    pub cash_open: bool,
+    pub cash_cell: Option<domain::ids::CellCoord>,
+    pub cash_plant: Option<domain::region::PlantKind>,
     pub outlook_city: Option<domain::ids::CityId>,
     pub outlook_month: Option<SimMonth>,
     pub outlook_guide: Option<super::tutorial::OutlookGuideStep>,
@@ -155,6 +158,12 @@ impl UiState {
             }
             UiAction::ShowLinks(open) => self.links_open = *open,
             UiAction::ShowPayoff(open) => self.payoff_open = *open,
+            UiAction::OpenCashOutlook => {
+                self.cash_open = true;
+                self.cash_plant = None;
+            }
+            UiAction::CloseCashOutlook => self.cash_open = false,
+            UiAction::PreviewCashPlant(kind) => self.cash_plant = *kind,
             UiAction::ShowOutlook(open) => {
                 self.outlook_open = *open;
                 self.outlook_month = None;

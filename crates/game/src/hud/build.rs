@@ -103,6 +103,7 @@ pub enum LineSection {
 pub struct BuildModel {
     pub title: String,
     pub payoff: ButtonModel,
+    pub cash_outlook: ButtonModel,
     pub plant: PlantSection,
     pub line: LineSection,
     pub hvdc: Option<LineSection>,
@@ -212,6 +213,7 @@ fn build_model_for_tool(
     Some(BuildModel {
         title: l10n.text("build-title"),
         payoff: ButtonModel::new(l10n.text("payoff-open"), UiAction::ShowPayoff(true)),
+        cash_outlook: ButtonModel::new(l10n.text("cash-open"), UiAction::OpenCashOutlook),
         hvdc_active,
         reveal: None,
         reveal_line: false,
@@ -730,8 +732,11 @@ fn line_end_section(
 pub fn draw_build(ui: &mut egui::Ui, model: &BuildModel) -> Vec<UiAction> {
     let mut actions = Vec::new();
     ui.heading(egui::RichText::new(&model.title).color(heading_color()));
-    let payoff = button(ui, &model.payoff, &mut actions);
-    mark_visible_anchor(ui, TutorialAnchor::PayoffButton, payoff.rect);
+    ui.horizontal_wrapped(|ui| {
+        let payoff = button(ui, &model.payoff, &mut actions);
+        mark_visible_anchor(ui, TutorialAnchor::PayoffButton, payoff.rect);
+        button(ui, &model.cash_outlook, &mut actions);
+    });
     // Each line stage scrolls on its own, so switching stage starts at the top.
     let active = if model.hvdc_active {
         model.hvdc.as_ref().unwrap_or(&model.line)

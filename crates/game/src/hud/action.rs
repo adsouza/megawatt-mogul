@@ -52,6 +52,9 @@ pub enum UiAction {
     ShowLinks(bool),
     ShowOutlook(bool),
     ShowPayoff(bool),
+    OpenCashOutlook,
+    CloseCashOutlook,
+    PreviewCashPlant(Option<domain::region::PlantKind>),
     PreviewOutlookCity(Option<domain::ids::CityId>),
     SelectOutlookMonth(Option<SimMonth>),
     InspectHvdc {
@@ -681,6 +684,14 @@ pub fn dispatch(actions: impl IntoIterator<Item = UiAction>, sink: &mut ActionSi
                     sink.ui.outlook_guide = Some(super::tutorial::OutlookGuideStep::Cushion);
                 }
             }
+            UiAction::OpenCashOutlook => {
+                *sink.speed = SimSpeed::Paused;
+                sink.ui.cash_cell = match *sink.selection {
+                    Selection::Cell(cell) => Some(cell),
+                    _ => None,
+                };
+            }
+            UiAction::CloseCashOutlook | UiAction::PreviewCashPlant(_) => {}
             UiAction::ShowPayoff(open) => {
                 if open {
                     *sink.speed = SimSpeed::Paused;

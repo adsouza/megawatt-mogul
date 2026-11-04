@@ -52,10 +52,12 @@ pub use region_atlas::RegionAtlas;
 mod saves;
 mod selection;
 pub use saves::{SaveForm, SaveRowModel, SavesModel, draw_saves, save_error, saves_model};
+mod cash_outlook;
 mod outlook;
 mod outlook_day;
 mod outlook_work;
 mod payoff;
+pub use cash_outlook::{CashOutlookModel, cash_outlook_model, draw_cash_outlook};
 pub use payoff::{PayoffModel, PayoffRow, draw_payoff, payoff_model};
 mod speed;
 mod supply_chart;
@@ -407,6 +409,11 @@ impl Plugin for HudPlugin {
                         .after(prompt::prompt_overlay)
                         .after(review::review_modal)
                         .after(outlook::outlook_panel)
+                        .run_if(saves::other_overlays)
+                        .run_if(in_game.clone().and_then(has_l10n)),
+                    cash_outlook::cash_outlook_panel
+                        .in_set(HudSet::Overlays)
+                        .after(payoff::payoff_panel)
                         .run_if(saves::other_overlays)
                         .run_if(in_game.clone().and_then(has_l10n)),
                     links::links_panel
