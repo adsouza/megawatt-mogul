@@ -168,11 +168,12 @@ jobs:
         run: python3 ../tools/web/time_command.py "Build production distribution (including packaging)" -- trunk build --release --public-url "$WEB_PUBLIC_PATH"
       - name: Build native acceptance tools
         run: python3 tools/web/time_command.py "Build native acceptance tools" -- cargo build --locked -p infrastructure --example save_backup --example geothermal_acceptance
-      # Tar preserves helper executable bits. Every shard extracts this same distribution;
+      # Tar preserves helper executable bits. Exclude Trunk's lock, as Pages does.
+      # Every shard extracts this same distribution;
       # Pages receives the unchanged dist directory from this build, without a second build.
       - name: Archive the distribution and acceptance tools
         run: |
-          tar -czf "$RUNNER_TEMP/browser-acceptance.tar.gz" \
+          tar --exclude=.trunk-lock -czf "$RUNNER_TEMP/browser-acceptance.tar.gz" \
             dist target/debug/examples/save_backup target/debug/examples/geothermal_acceptance
       - uses: actions/upload-artifact@v7
         with:
