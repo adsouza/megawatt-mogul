@@ -48,7 +48,15 @@ archives the same distribution with the native acceptance tools for three `brows
 shards. The archive preserves the tools' executable permissions. Shards extract it without
 rebuilding; no Rust toolchain is installed on the test runners. Playwright's own test inventory
 proves that every test belongs to exactly one shard before the build proceeds. Individual
-tests are distributed across shards (`fullyParallel`), with one worker per runner.
+tests are assigned by estimated runtime, longest first to the least-loaded shard, using
+`tools/web/browser_test_durations.json`. Its estimates average the per-test durations from
+the two successful CI runs linked in that file. Update those measurements from successful
+`browser-results-*` JSON reports when test costs change. Keys use file, suite and test titles,
+so changing line numbers does not discard timings. New or renamed tests use a 15-second
+estimate and are still included automatically. Assignment and tie-breaking are deterministic.
+The generated `target/browser-shards/*.txt` lists travel in the acceptance archive; both the
+inventory proof and execution use Playwright's `--test-list` selection on those exact lists.
+Each runner retains one worker and `fullyParallel` test isolation.
 The required `browser` gate succeeds only when the build and every shard succeed; failed,
 skipped or cancelled dependencies cannot pass it. Pages deploys the original build's artifact.
 Main builds derive the base path from `configure-pages` metadata; PR builds use the repository

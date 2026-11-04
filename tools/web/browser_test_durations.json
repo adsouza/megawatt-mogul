@@ -1,0 +1,34 @@
+{
+  "sourceRuns": [
+    "https://github.com/adsouza/megawatt-mogul/actions/runs/41748515365",
+    "https://github.com/adsouza/megawatt-mogul/actions/runs/41749250187"
+  ],
+  "defaultDurationMs": 15000,
+  "tests": {
+    "backup.spec.js › backup import uses the rendered button in a resized window with slow game frames": 23057,
+    "backup.spec.js › file selection rejects oversized input before reading bytes": 8558,
+    "backup.spec.js › library downloads a backup and uploads it into a new slot; malformed and canceled uploads preserve saves": 28525,
+    "backup.spec.js › native backup crosses the worker boundary, keeps every state hash, and imports into fresh slots": 13476,
+    "browser.spec.js › IndexedDB retains bytes across reload and rejects an inactive transaction": 2483,
+    "browser.spec.js › a blocked third-party script does not report a failed boot": 6316,
+    "browser.spec.js › a codec worker rejects malformed data without breaking the running client": 8363,
+    "browser.spec.js › a stale page with a removed module offers reload before WASM starts": 6736,
+    "browser.spec.js › all eight regions complete a day, restore, and continue through backups on WASM": 17998,
+    "browser.spec.js › real browser client boots at the Pages project subpath": 5716,
+    "geothermal.spec.js › geothermal native and WASM exploration decline and makeup boundaries agree": 23846,
+    "save-flow.spec.js › a hidden-page visibility signal pauses play and returning stays paused": 15133,
+    "save-flow.spec.js › manual save submits with Enter, survives reload, and resumes through the library": 32795,
+    "save-flow.spec.js › monthly autosave retains Review and browser speed preferences across reload": 70294,
+    "save-flow.spec.js › player progress written as a region loads survives reload": 25310,
+    "save-flow.spec.js › unavailable storage reports a save error and keeps an unsaved session playable": 25081,
+    "storage.spec.js › an older build refuses a newer database without deleting its saves": 346,
+    "storage.spec.js › failed publication preserves cards, manifest and chart parts": 536,
+    "storage.spec.js › listing reads only metadata, and unknown newer cards cannot be overwritten": 364,
+    "storage.spec.js › publication, revision conflicts and deletion are atomic across tabs": 5055,
+    "storage.spec.js › quota failure after requests were queued rolls the whole publication back": 352,
+    "viewport.spec.js › an undersized window shows dimensions and defers startup until it fits": 12974,
+    "viewport.spec.js › dismissing the storage notice reclaims space and survives reload": 11764,
+    "viewport.spec.js › shrinking an operating game pauses it and restores the same session": 13608,
+    "viewport.spec.js › the storage notice can be dismissed when browser preferences are blocked": 12048
+  }
+}

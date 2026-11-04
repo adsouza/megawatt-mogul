@@ -174,7 +174,7 @@ jobs:
       - name: Archive the distribution and acceptance tools
         run: |
           tar --exclude=.trunk-lock -czf "$RUNNER_TEMP/browser-acceptance.tar.gz" \
-            dist target/debug/examples/save_backup target/debug/examples/geothermal_acceptance
+            dist target/browser-shards target/debug/examples/save_backup target/debug/examples/geothermal_acceptance
       - uses: actions/upload-artifact@v7
         with:
           name: browser-acceptance
@@ -225,6 +225,7 @@ jobs:
       - name: Test the distribution at its deployed subpath
         env:
           BROWSER_SHARD: ${{ matrix.partition }}
+          BROWSER_TEST_LIST: ${{ matrix.testList }}
         run: |
           python3 tools/web/serve.py > target/web-server.log 2>&1 &
           web_server_pid=$!
@@ -238,7 +239,7 @@ jobs:
           done
           curl --fail --silent --output /dev/null "http://127.0.0.1:8765${WEB_PUBLIC_PATH}index.html"
           python3 tools/web/time_command.py "Playwright shard $BROWSER_SHARD" -- \
-            docker exec browser-tests npm test --prefix web/tests -- --shard="$BROWSER_SHARD" --reporter=list,json
+            docker exec browser-tests npm test --prefix web/tests -- --test-list="$PWD/$BROWSER_TEST_LIST" --reporter=list,json
       - name: Stop Playwright container
         if: always()
         run: docker rm --force browser-tests || true
