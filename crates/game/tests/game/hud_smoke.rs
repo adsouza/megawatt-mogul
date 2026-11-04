@@ -396,7 +396,7 @@ fn the_top_bar_draws_a_real_game_and_its_menu_button_asks_first() {
         assert!(shows(&widgets, text), "{text} is not shown");
     }
     assert_eq!(
-        harness.click("Menu", draw),
+        harness.click("Leave game", draw),
         vec![UiAction::Prompt(Some(Prompt::LeaveGame))]
     );
 }

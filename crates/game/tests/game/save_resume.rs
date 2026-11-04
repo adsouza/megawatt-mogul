@@ -886,7 +886,8 @@ fn the_warning_fits_for_every_month(
         .map(|w| w.rect)
         .min_by(|a, b| a.min.x.total_cmp(&b.min.x))
         .unwrap_or_else(|| panic!("{what}: no widget {whole:?}"));
-    let buttons = ["Menu", "Milestones", SAVE].map(|name| find_button(&widgets, name).rect.min.x);
+    let buttons =
+        ["Leave game", "Milestones", SAVE].map(|name| find_button(&widgets, name).rect.min.x);
     let right = buttons.into_iter().fold(f32::INFINITY, f32::min);
     let left = widgets
         .iter()

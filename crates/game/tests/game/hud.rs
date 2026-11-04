@@ -212,7 +212,7 @@ fn the_real_pass_draws_each_phases_panels_and_only_those() {
     let review_modal = "Month in review";
 
     let widgets = pass.settled(&mut app, 1024.0, 640.0);
-    assert!(has(&widgets, "Map") && has(&widgets, "Menu"));
+    assert!(has(&widgets, "Map") && has(&widgets, "Leave game"));
     for text in planning_panels {
         assert!(has(&widgets, text), "Planning shows {text}");
     }
@@ -226,7 +226,7 @@ fn the_real_pass_draws_each_phases_panels_and_only_those() {
     update_n(&mut app, 3);
     assert_eq!(phase(&app), PhaseState::Operating);
     let widgets = pass.settled(&mut app, 1024.0, 640.0);
-    assert!(has(&widgets, "Map") && has(&widgets, "Menu"));
+    assert!(has(&widgets, "Map") && has(&widgets, "Leave game"));
     for text in operating_panels {
         assert!(has(&widgets, text), "Operating shows {text}");
     }
@@ -247,7 +247,7 @@ fn the_real_pass_draws_each_phases_panels_and_only_those() {
         !has(&widgets, "Map"),
         "Review hides the map behind its opaque modal"
     );
-    assert!(has(&widgets, "Menu") && has(&widgets, "Milestones"));
+    assert!(has(&widgets, "Leave game") && has(&widgets, "Milestones"));
     assert!(has(&widgets, review_modal) && has(&widgets, "Continue"));
     for text in planning_panels.iter().chain(&operating_panels) {
         assert!(!has(&widgets, text), "Review does not show {text}");
