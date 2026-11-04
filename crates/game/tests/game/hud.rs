@@ -210,9 +210,10 @@ fn the_real_pass_draws_each_phases_panels_and_only_those() {
     // Operating: the speed bar, the frequency gauge, the plant list and the Supply/Hydro tabs.
     let operating_panels = ["Pause", "8×", "Frequency", "Plants", "Supply", "Hydro"];
     let review_modal = "Month in review";
+    let leave = shipped_l10n().text("topbar-menu");
 
     let widgets = pass.settled(&mut app, 1024.0, 640.0);
-    assert!(has(&widgets, "Map") && has(&widgets, "Leave game"));
+    assert!(has(&widgets, "Map") && has(&widgets, &leave));
     for text in planning_panels {
         assert!(has(&widgets, text), "Planning shows {text}");
     }
@@ -226,7 +227,7 @@ fn the_real_pass_draws_each_phases_panels_and_only_those() {
     update_n(&mut app, 3);
     assert_eq!(phase(&app), PhaseState::Operating);
     let widgets = pass.settled(&mut app, 1024.0, 640.0);
-    assert!(has(&widgets, "Map") && has(&widgets, "Leave game"));
+    assert!(has(&widgets, "Map") && has(&widgets, &leave));
     for text in operating_panels {
         assert!(has(&widgets, text), "Operating shows {text}");
     }
@@ -247,7 +248,7 @@ fn the_real_pass_draws_each_phases_panels_and_only_those() {
         !has(&widgets, "Map"),
         "Review hides the map behind its opaque modal"
     );
-    assert!(has(&widgets, "Leave game") && has(&widgets, "Milestones"));
+    assert!(has(&widgets, &leave) && has(&widgets, "Milestones"));
     assert!(has(&widgets, review_modal) && has(&widgets, "Continue"));
     for text in planning_panels.iter().chain(&operating_panels) {
         assert!(!has(&widgets, text), "Review does not show {text}");

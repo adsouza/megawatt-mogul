@@ -886,8 +886,9 @@ fn the_warning_fits_for_every_month(
         .map(|w| w.rect)
         .min_by(|a, b| a.min.x.total_cmp(&b.min.x))
         .unwrap_or_else(|| panic!("{what}: no widget {whole:?}"));
+    let leave = crate::support::shipped_l10n().text("topbar-menu");
     let buttons =
-        ["Leave game", "Milestones", SAVE].map(|name| find_button(&widgets, name).rect.min.x);
+        [leave.as_str(), "Milestones", SAVE].map(|name| find_button(&widgets, name).rect.min.x);
     let right = buttons.into_iter().fold(f32::INFINITY, f32::min);
     let left = widgets
         .iter()
@@ -1208,6 +1209,7 @@ fn at_the_smallest_window_two_warnings_become_one_indicator_beside_menu_mileston
     use bevy_egui::egui;
     let (width, height) = (1024.0, 640.0);
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, height));
+    let leave = crate::support::shipped_l10n().text("topbar-menu");
     for region in ["eastern_interconnection", "western_interconnection"] {
         let logs = TempDir::new().unwrap();
         let saves = TempDir::new().unwrap();
@@ -1272,7 +1274,7 @@ fn at_the_smallest_window_two_warnings_become_one_indicator_beside_menu_mileston
                     .any(|w| w.text.starts_with('⚠') && w.text.ends_with('…')),
                 "{region} {phase}: the indicator is whole"
             );
-            let menu = find_button(&widgets, "Leave game").rect;
+            let menu = find_button(&widgets, &leave).rect;
             let milestones = find_button(&widgets, "Milestones").rect;
             let save = find_button(&widgets, SAVE).rect;
             for (name, rect) in [("Menu", menu), ("Milestones", milestones), ("Save", save)] {

@@ -194,7 +194,9 @@ fn review_save_and_menu_controls_work_above_the_opaque_background() {
         &mut app,
         width,
         height,
-        find_button(&widgets, "Leave game").rect.center(),
+        find_button(&widgets, &shipped_l10n().text("topbar-menu"))
+            .rect
+            .center(),
     );
     settle(&mut app);
     let widgets = pass.settled(&mut app, width, height);
@@ -440,7 +442,7 @@ fn the_review_modal_draws_every_section_after_a_full_day() {
         let lesson = game.projections().lessons.latest()[0].localize_money(&l10n, &usd_style());
         assert!(has(&widgets, &lesson), "{region}: {lesson}");
         assert!(!find_button(&widgets, "Continue").disabled);
-        assert!(!find_button(&widgets, "Leave game").disabled);
+        assert!(!find_button(&widgets, &l10n.text("topbar-menu")).disabled);
         assert!(!find_button(&widgets, "Milestones").disabled);
     }
 }
@@ -457,7 +459,7 @@ fn at_the_smallest_window_the_review_fits_with_continue_in_view() {
         let widgets = pass.settled(&mut app, 1024.0, 640.0);
 
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1024.0, 640.0));
-        let menu = find_button(&widgets, "Leave game").rect;
+        let menu = find_button(&widgets, &shipped_l10n().text("topbar-menu")).rect;
         let title = widgets
             .iter()
             .find(|w| w.text == "Month in review" && w.role == egui::accesskit::Role::Label)
@@ -658,7 +660,7 @@ fn the_milestones_panel_opens_from_the_top_bar_in_every_phase() {
     let close = find_button(&widgets, "Close").rect;
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, height));
     assert!(screen.contains_rect(close), "Close {close:?} is on screen");
-    let menu = find_button(&widgets, "Leave game").rect;
+    let menu = find_button(&widgets, &shipped_l10n().text("topbar-menu")).rect;
     assert!(close.top() > menu.bottom());
     // The whole window is on screen under the top bar, about as wide as its content.
     let window = pass

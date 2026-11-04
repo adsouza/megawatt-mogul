@@ -396,7 +396,7 @@ fn the_top_bar_draws_a_real_game_and_its_menu_button_asks_first() {
         assert!(shows(&widgets, text), "{text} is not shown");
     }
     assert_eq!(
-        harness.click("Leave game", draw),
+        harness.click(&l10n.text("topbar-menu"), draw),
         vec![UiAction::Prompt(Some(Prompt::LeaveGame))]
     );
 }
@@ -1358,7 +1358,7 @@ fn the_planning_screen_gives_the_map_the_space_the_panels_leave() {
     let widgets = harness.draw(draw);
 
     let map_rect = widget(&widgets, "Map").rect;
-    let menu = find_button(&widgets, "Leave game").rect;
+    let menu = find_button(&widgets, &shipped_l10n().text("topbar-menu")).rect;
     let close = find_button(&widgets, "Close").rect;
     let build_button = buttons(&widgets, "Build plant")[0].rect;
     assert!(
@@ -1621,6 +1621,7 @@ impl PlanningScreen {
 /// another's or on the map.
 #[test]
 fn at_the_smallest_window_the_map_the_panels_and_the_grid_all_fit_without_overlap() {
+    let leave = shipped_l10n().text("topbar-menu");
     for region in [EASTERN, WESTERN] {
         let screen = PlanningScreen::new(
             game_in(region),
@@ -1634,7 +1635,7 @@ fn at_the_smallest_window_the_map_the_panels_and_the_grid_all_fit_without_overla
         let widgets = screen.widgets();
 
         let map = widget(&widgets, "Map").rect;
-        let menu = find_button(&widgets, "Leave game").rect;
+        let menu = find_button(&widgets, &leave).rect;
         // The inspector's title heads its column; its Close button is further down, in the
         // scrolling part, and may be out of view.
         let inspector = widgets
@@ -2508,6 +2509,7 @@ fn at_the_smallest_window_the_operating_controls_fit_without_overlap() {
         game::window::MIN_WINDOW_SIZE.x,
         game::window::MIN_WINDOW_SIZE.y,
     );
+    let leave = shipped_l10n().text("topbar-menu");
     for region in [EASTERN, WESTERN] {
         for tab in [OperatingTab::Supply, OperatingTab::Hydro] {
             let logs = TempDir::new().unwrap();
@@ -2524,7 +2526,7 @@ fn at_the_smallest_window_the_operating_controls_fit_without_overlap() {
             let widgets = pass.settled(&mut app, width, height);
 
             let map = widget(&widgets, "Map").rect;
-            let menu = find_button(&widgets, "Leave game").rect;
+            let menu = find_button(&widgets, &leave).rect;
             let speeds = ["Pause", "1×", "2×", "4×", "8×", "16×", "32×"]
                 .map(|l| find_button(&widgets, l).rect);
             let agc = find_button(&widgets, "AGC").rect;
@@ -2681,6 +2683,7 @@ impl CommandLogSink for NoSpaceLeft {
 #[test]
 fn at_the_smallest_window_the_recording_banner_leaves_menu_and_milestones_on_screen() {
     let (width, height) = (1024.0, 640.0);
+    let leave = shipped_l10n().text("topbar-menu");
     for region in [EASTERN, WESTERN] {
         let logs = TempDir::new().unwrap();
         let mut app = hud_app(logs.path());
@@ -2715,7 +2718,7 @@ fn at_the_smallest_window_the_recording_banner_leaves_menu_and_milestones_on_scr
             .find(|w| w.text.starts_with("Recording stopped"))
             .unwrap_or_else(|| panic!("{region}: the banner is shown"))
             .rect;
-        let menu = find_button(&widgets, "Leave game").rect;
+        let menu = find_button(&widgets, &leave).rect;
         let milestones = find_button(&widgets, "Milestones").rect;
         for (name, rect) in [("Menu", menu), ("Milestones", milestones)] {
             assert!(

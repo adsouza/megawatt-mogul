@@ -97,7 +97,7 @@ fn outlook_icon_opens_selected_city_preview_and_close_leaves_simulation_unchange
     assert!(icon.width() <= 40.0, "a compact icon");
     let milestones = button(&widgets, "Milestones").rect;
     let save = button(&widgets, "Save game").rect;
-    let menu = button(&widgets, "Leave game").rect;
+    let menu = button(&widgets, &shipped_l10n().text("topbar-menu")).rect;
     assert!(
         icon.right() < milestones.left(),
         "crystal ball belongs left of Milestones"
