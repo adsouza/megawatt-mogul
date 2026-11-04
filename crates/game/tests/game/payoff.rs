@@ -16,6 +16,47 @@ use game::{
 use tempfile::TempDir;
 
 #[test]
+fn payoff_includes_geothermal_where_the_region_has_resource_sites() {
+    let l10n = crate::support::shipped_l10n();
+    let catalog = infrastructure::region::RonRegionCatalog::new(
+        crate::support::shipped_assets().join("regions"),
+    );
+    for &region in crate::support::SHIPPED_REGIONS {
+        let game = application::Game::start_new(
+            &catalog,
+            &RegionId::new(region),
+            7,
+            GameSettings::default(),
+            Box::new(application::InMemoryCommandLog::default()),
+        )
+        .unwrap();
+        let style = game::l10n::format::MoneyStyle::resolve(
+            game.session().region().currency(),
+            &l10n,
+            |_| true,
+        );
+        let model = game::hud::payoff_model(&game, &l10n, None, &style);
+        let geothermal = model
+            .rows
+            .iter()
+            .find(|row| row.kind == PlantKind::Geothermal);
+        assert_eq!(
+            geothermal.is_some(),
+            matches!(
+                region,
+                "western_interconnection" | "continental_europe_maghreb"
+            ),
+            "{region}"
+        );
+        if let Some(row) = geothermal {
+            assert_eq!(row.name, "Geothermal plant");
+            assert!(!row.points.is_empty());
+            assert_eq!(row.values[0], row.name);
+        }
+    }
+}
+
+#[test]
 fn ccgt_cards_warn_when_current_full_utilization_income_is_negative_but_allow_building() {
     let l10n = crate::support::shipped_l10n();
     let catalog = infrastructure::region::RonRegionCatalog::new(
@@ -99,6 +140,12 @@ fn payoff_build_button_opens_read_only_comparison_and_close_or_escape_dismisses_
     assert!(app.world().resource::<UiState>().payoff_open);
     let widgets = pass.settled(&mut app, 1024.0, 640.0);
     assert!(widgets.iter().any(|w| w.text == "Plant payoff comparison"));
+    let geothermal = widgets
+        .iter()
+        .find(|w| w.text == "Geothermal plant" && w.role == egui::accesskit::Role::CheckBox)
+        .expect("the geothermal curve appears in the chart key");
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1024.0, 640.0));
+    assert!(screen.contains_rect(geothermal.rect));
     let close = button(&widgets, "Close comparison").rect;
     pass.click_at(&mut app, 1024.0, 640.0, close.center());
     assert!(!app.world().resource::<UiState>().payoff_open);
@@ -108,6 +155,11 @@ fn payoff_build_button_opens_read_only_comparison_and_close_or_escape_dismisses_
     let widgets = pass.settled(&mut app, size.0, size.1);
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(size.0, size.1));
     assert!(screen.contains_rect(button(&widgets, "Close comparison").rect));
+    let geothermal = widgets
+        .iter()
+        .find(|w| w.text == "Geothermal plant" && w.role == egui::accesskit::Role::CheckBox)
+        .expect("the geothermal curve remains available at maximum UI zoom");
+    assert!(screen.contains_rect(geothermal.rect));
     for pressed in [true, false] {
         pass.run_with(
             &mut app,
