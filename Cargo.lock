@@ -252,7 +252,7 @@ dependencies = [
 
 [[package]]
 name = "application"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "domain",
  "insta",
@@ -2670,7 +2670,7 @@ dependencies = [
 
 [[package]]
 name = "domain"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "domain",
  "insta",
@@ -3126,7 +3126,7 @@ dependencies = [
 
 [[package]]
 name = "game"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "application",
  "bevy",
@@ -3554,7 +3554,7 @@ dependencies = [
 
 [[package]]
 name = "infrastructure"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "application",
  "domain",
