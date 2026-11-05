@@ -12,6 +12,9 @@ rand_chacha = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+# Integration tests (tests/portable_state.rs) use the fixtures; this keeps `-p domain` building
+# them without the workspace's downstream crates turning the feature on.
+domain = { workspace = true, features = ["test-fixtures"] }
 proptest = { workspace = true }
 insta = { workspace = true }
 

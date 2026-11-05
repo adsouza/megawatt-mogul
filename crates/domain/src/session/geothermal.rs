@@ -229,10 +229,29 @@ impl GameSession {
             }
         }
     }
+    /// Geothermal plants that drew on their reservoir in the month being closed: on an active
+    /// node, and running at some instant of the played day (the rule that also records offline
+    /// months). Take this before construction advances: a line finished at this close served no
+    /// part of the month.
+    pub(super) fn geothermal_drawing(&self) -> BTreeSet<PlantId> {
+        self.power
+            .plants()
+            .values()
+            .filter(|p| {
+                p.geothermal().is_some()
+                    && self.power.node_active(p.node())
+                    && self.month_to_date.operated(p.id())
+            })
+            .map(|p| p.id())
+            .collect()
+    }
+    /// The reservoir depletes only in months a plant drew on it (`drawing`); makeup drilling
+    /// progresses either way.
     pub(super) fn close_geothermal(
         &mut self,
         month: SimMonth,
         commissioned: &BTreeSet<PlantId>,
+        drawing: &BTreeSet<PlantId>,
         events: &mut Vec<DomainEvent>,
     ) {
         let Some(params) = self.region.geothermal() else {
@@ -251,10 +270,12 @@ impl GameSession {
             let Some(g) = p.geothermal_mut() else {
                 continue;
             };
-            g.decline(params);
-            self.company
-                .rate_base_mut()
-                .decline_additions(id, params.monthly_decline);
+            if drawing.contains(&id) {
+                g.decline(params);
+                self.company
+                    .rate_base_mut()
+                    .decline_additions(id, params.monthly_decline);
+            }
             let done = if let Some(m) = g.makeup.as_mut() {
                 m.months_left -= 1;
                 m.months_left == 0
@@ -476,6 +497,106 @@ mod tests {
         let restored = GameSession::from_snapshot_state(&s.snapshot_state(), region).unwrap();
         assert_eq!(s.snapshot_state(), restored.snapshot_state());
     }
+    /// The reservoir only depletes in months the plant could deliver power. A commissioned plant
+    /// with no finished line keeps its field, and the close that finishes its line does not count
+    /// either: that month was played disconnected.
+    #[test]
+    fn geothermal_field_declines_only_in_months_played_on_an_active_node() {
+        let mut s = session(true);
+        let (id, _) = s.build_plant(PlantKind::Geothermal, CELL).unwrap();
+        let node = s.power.plant(id).unwrap().node();
+        let field = |s: &GameSession| s.power.plant(id).unwrap().geothermal().unwrap().field;
+        for _ in 0..12 {
+            close(&mut s);
+        }
+        let initial = field(&s);
+        assert!(!s.power.node_active(node));
+        for _ in 0..3 {
+            let events = close(&mut s);
+            assert_eq!(field(&s), initial);
+            assert!(
+                !events
+                    .iter()
+                    .any(|e| matches!(e, DomainEvent::FieldDeclineThreshold { .. }))
+            );
+        }
+        // Makeup drilling still finishes off the grid, and lands exactly on its ceiling.
+        s.power
+            .plant_mut(id)
+            .unwrap()
+            .geothermal_mut()
+            .unwrap()
+            .field = Ratio::new(initial.value() * 0.8).unwrap();
+        s.drill_makeup_wells(id).unwrap();
+        let ceiling = s
+            .power
+            .plant(id)
+            .unwrap()
+            .geothermal()
+            .unwrap()
+            .makeup
+            .as_ref()
+            .unwrap()
+            .ceiling;
+        while s
+            .power
+            .plant(id)
+            .unwrap()
+            .geothermal()
+            .unwrap()
+            .makeup
+            .is_some()
+        {
+            close(&mut s);
+        }
+        let initial = field(&s);
+        assert_eq!(initial, ceiling);
+        s.build_line(s.anchor, node).unwrap();
+        while !s.power.node_active(node) {
+            close(&mut s);
+            assert_eq!(field(&s), initial, "declined before a month on the grid");
+        }
+        close(&mut s);
+        let decline = s.region.geothermal().unwrap().monthly_decline.value();
+        assert_eq!(field(&s).value(), initial.value() * (1.0 - decline));
+        assert!(s.check_invariants().is_ok());
+    }
+    /// A connected plant switched off for the whole played month draws nothing from its
+    /// reservoir. A month it ran at all (even just ramping down after the stop) still counts.
+    #[test]
+    fn geothermal_field_holds_in_months_the_connected_plant_never_ran() {
+        let mut s = session(true);
+        let (id, _) = s.build_plant(PlantKind::Geothermal, CELL).unwrap();
+        let node = s.power.plant(id).unwrap().node();
+        let field = |s: &GameSession| s.power.plant(id).unwrap().geothermal().unwrap().field;
+        for _ in 0..12 {
+            close(&mut s);
+        }
+        s.build_line(s.anchor, node).unwrap();
+        while !s.power.node_active(node) {
+            close(&mut s);
+        }
+        let decline = s.region.geothermal().unwrap().monthly_decline.value();
+        s.stop_plant(id).unwrap();
+        let mut idle_months = 0;
+        for _ in 0..3 {
+            let before = field(&s);
+            close(&mut s);
+            if s.power.plant(id).unwrap().previous_month_offline() {
+                idle_months += 1;
+                assert_eq!(field(&s), before, "declined in a month it never ran");
+            } else {
+                assert_eq!(field(&s).value(), before.value() * (1.0 - decline));
+            }
+        }
+        assert!(idle_months >= 2, "the stopped plant kept running");
+        s.start_plant(id).unwrap();
+        let before = field(&s);
+        close(&mut s);
+        assert!(!s.power.plant(id).unwrap().previous_month_offline());
+        assert_eq!(field(&s).value(), before.value() * (1.0 - decline));
+        assert!(s.check_invariants().is_ok());
+    }
     #[test]
     fn geothermal_dry_removes_project_but_only_blocks_geothermal_reuse() {
         let mut s = session(false);
@@ -527,6 +648,11 @@ mod tests {
         let mut s = session(true);
         let (id, _) = s.build_plant(PlantKind::Geothermal, CELL).unwrap();
         for _ in 0..12 {
+            close(&mut s);
+        }
+        let node = s.power.plant(id).unwrap().node();
+        s.build_line(s.anchor, node).unwrap();
+        while !s.power.node_active(node) {
             close(&mut s);
         }
         let before = s

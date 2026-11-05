@@ -130,8 +130,9 @@ impl GameSession {
         let ledger_from = self.company.ledger().len();
         self.book_month(month, days, &mut events);
         self.book_makeup(month, &mut events);
+        let drawing = self.geothermal_drawing();
         let commissioned = self.advance_construction(month, &mut events);
-        self.close_geothermal(month, &commissioned, &mut events);
+        self.close_geothermal(month, &commissioned, &drawing, &mut events);
         self.year_depreciation += self.company.rate_base_mut().depreciate_month();
 
         let acc = &self.month_to_date;
